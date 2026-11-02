@@ -472,6 +472,19 @@ public:
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
+  // Interface dielectric energy forms of the Boundaries.Postprocessing.Dielectric
+  // boundaries projected onto a basis of real fields given by their true dofs: the n × n
+  // matrices B_kl = U(v_k, v_l) of
+  // SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices, keyed by interface index
+  // (empty without interface dielectric postprocessing), and the interface energies
+  // U(u, u) of a complex field given by its true dofs. Both overwrite the electric field
+  // grid function. Collective.
+  std::map<int, Eigen::MatrixXd>
+  GetInterfaceElectricFieldEnergyMatrices(const std::vector<Vector> &basis)
+    requires(solver_t == ProblemType::DRIVEN);
+  std::map<int, double> GetInterfaceElectricFieldEnergies(const ComplexVector &u)
+    requires(solver_t == ProblemType::DRIVEN);
+
   double MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                             std::complex<double> omega, double error_abs, double error_bkwd,
                             int num_conv)
