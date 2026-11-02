@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-1-0",
+  "$id": "urn:palace:schema:4-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -411,6 +411,35 @@
           "$ref": "#/$defs/Linear",
           "title": "Linear Solver",
           "description": "Configuration for the linear solver used by all simulation types."
+        }
+      }
+    },
+    "Sensitivity": {
+      "type": "object",
+      "title": "Sensitivity",
+      "description": "Derivatives of objectives with respect to the positions of the mesh nodes and to the material permittivities, written to the `sensitivity` folder of [`/Problem/Output`](@ref config-problem-output). Only available when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`.",
+      "additionalProperties": false,
+      "required": [
+        "Objectives"
+      ],
+      "properties": {
+        "Objectives": {
+          "type": "array",
+          "description": "The objectives to differentiate.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/SensitivityObjective"
+          },
+          "minItems": 1
+        },
+        "Shape": {
+          "$ref": "#/$defs/SensitivityShape",
+          "description": "Export of the gradients of the objectives with respect to the positions of the mesh nodes in a region. Without it, only the material derivatives are computed."
+        },
+        "MaterialProperties": {
+          "type": "boolean",
+          "description": "When `true`, computes the derivatives of each objective with respect to the properties of each material of [`/Domains/Materials`](@ref config-domains-materials): for electrostatic problems, a relative change of its permittivity.",
+          "default": false
         }
       }
     }
@@ -3160,6 +3189,83 @@
           "description": "Gram-Schmidt variant used to orthogonalize vectors in Krylov subspace methods and other parts of the solver.",
           "default": "MGS"
         }
+      }
+    },
+    "SensitivityObjective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Type"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Index of this objective, which names its gradient file."
+        },
+        "Type": {
+          "type": "string",
+          "enum": [
+            "Capacitance"
+          ],
+          "description": "Type of objective. `\"Capacitance\"` is an entry of the Maxwell capacitance matrix (`terminal-C.csv`)."
+        },
+        "Terminals": {
+          "type": "array",
+          "additionalItems": false,
+          "items": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Indices `[i, j]` of the [`/Boundaries/Terminal`](@ref config-boundaries-terminal) boundaries of the capacitance matrix entry."
+        }
+      },
+      "if": {
+        "properties": {
+          "Type": {
+            "const": "Capacitance"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "Terminals"
+        ]
+      }
+    },
+    "SensitivityShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "BoundingBoxMin": {
+          "$ref": "#/$defs/Point3D",
+          "description": "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box of the exported nodes, in mesh length units."
+        },
+        "BoundingBoxMax": {
+          "$ref": "#/$defs/Point3D",
+          "description": "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box of the exported nodes, in mesh length units."
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh domain attributes: only the nodes of their elements are exported."
+        },
+        "BoundaryTags": {
+          "type": "boolean",
+          "description": "When `true`, also writes the boundary attributes of each exported node.",
+          "default": false
+        }
+      },
+      "dependencies": {
+        "BoundingBoxMin": [
+          "BoundingBoxMax"
+        ],
+        "BoundingBoxMax": [
+          "BoundingBoxMin"
+        ]
       }
     }
   },

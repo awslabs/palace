@@ -221,6 +221,12 @@ enum class InactivePortMode : char
   DEFAULT = OPEN
 };
 
+// Objectives of sensitivities.
+enum class SensitivityObjective : char
+{
+  CAPACITANCE
+};
+
 }  // namespace palace
 
 #endif  // PALACE_UTILS_LABELS_HPP
