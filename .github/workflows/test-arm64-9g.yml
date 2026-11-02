@@ -1,0 +1,37 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# TEMPORARY: smoke test for the arm64-9g (Graviton5, c9g.16xlarge) runner.
+# Do not merge.
+
+name: Test arm64-9g runner
+
+on:
+  push:
+    branches:
+      - gbozzola/test-arm64-9g
+
+permissions:
+  packages: write
+  contents: read
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build-test-arm64-9g-gcc:
+    runs-on: [self-hosted, arm64-9g]
+    steps:
+      - name: Report host
+        run: |
+          uname -a
+          nproc
+          lscpu | grep -iE 'model name|vendor|flags' || true
+          curl -s -H "X-aws-ec2-metadata-token: $(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" \
+            http://169.254.169.254/latest/meta-data/instance-type; echo
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          additional-test-cases: transmon_coarse
