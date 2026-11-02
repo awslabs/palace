@@ -1276,6 +1276,52 @@ public:
   SolverData(const json &solver);
 };
 
+struct SensitivityObjectiveData
+{
+public:
+  // Type of objective.
+  SensitivityObjective type = SensitivityObjective::CAPACITANCE;
+
+  // Terminal indices (i, j) of a capacitance matrix entry.
+  std::array<int, 2> terminals = {{0, 0}};
+
+  SensitivityObjectiveData() = default;
+  SensitivityObjectiveData(const json &objective);
+};
+
+struct SensitivityShapeData
+{
+public:
+  // Export region: the nodes in an axis-aligned box, if given, and of the elements with
+  // the given domain attributes, if any.
+  std::optional<std::array<double, 3>> bbmin, bbmax;
+  std::vector<int> attributes = {};
+
+  // Write the boundary attributes of each exported node.
+  bool boundary_tags = false;
+
+  SensitivityShapeData() = default;
+  SensitivityShapeData(const json &shape);
+};
+
+struct SensitivityData
+{
+public:
+  // Objectives, by index.
+  std::map<int, SensitivityObjectiveData> objectives = {};
+
+  // Export of the gradients with respect to the positions of the mesh nodes, if requested.
+  std::optional<SensitivityShapeData> shape;
+
+  // Compute the derivatives with respect to the properties of each material.
+  bool material_properties = false;
+
+  bool empty() const { return objectives.empty(); }
+
+  SensitivityData() = default;
+  SensitivityData(const json &sensitivity);
+};
+
 // Calculate the number of steps from [start, end) in increments of delta > 0, for end >=
 // start. Will only include end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);
@@ -1308,6 +1354,7 @@ void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
 void Nondimensionalize(const Units &units, SuperconductorData &data);
+void Nondimensionalize(const Units &units, SensitivityShapeData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);

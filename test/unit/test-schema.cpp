@@ -474,6 +474,22 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Sensitivity")
+  {
+    const json objective = {{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 2}}};
+    json sensitivity = {
+        {"Objectives", {objective}},
+        {"Shape", {{"BoundingBoxMin", {0, 0, 0}}, {"BoundingBoxMax", {1, 1, 1}}}},
+        {"MaterialProperties", true}};
+    CHECK(ValidateConfig(sensitivity, "Sensitivity").empty());
+
+    // A capacitance needs its terminals, and a box both of its corners.
+    json missing_terminals = {{"Objectives", {{{"Index", 1}, {"Type", "Capacitance"}}}}};
+    CHECK(!ValidateConfig(missing_terminals, "Sensitivity").empty());
+    sensitivity["Shape"].erase("BoundingBoxMax");
+    CHECK(!ValidateConfig(sensitivity, "Sensitivity").empty());
+  }
+
   SECTION("Valid Material")
   {
     json mat = {{"Attributes", {1}}, {"Permittivity", 2.0}};
