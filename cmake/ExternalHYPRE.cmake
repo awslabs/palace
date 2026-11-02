@@ -111,6 +111,12 @@ list(APPEND HYPRE_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_zero_guess.diff"
 )
 
+# Multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, for
+# BoomerAMG solves of several right-hand sides with one message per neighbor
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_multicomponent.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}
