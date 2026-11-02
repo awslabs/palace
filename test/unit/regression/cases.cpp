@@ -24,6 +24,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/constants.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
@@ -440,6 +441,113 @@ palace::test::CustomCheck TestWavePortMatchedLine(double atol,
     opts_tx.excluded_columns.insert(opts_tx.excluded_columns.end(),
                                     reflection_columns.begin(), reflection_columns.end());
     palace::test::CompareCSVFiles(actual, reference, opts_tx);
+  };
+}
+
+// Analytic TEM mode of a coaxial line filled with a lossy dielectric, of relative
+// permittivity eps_r and loss tangent tan_delta, between conductors of radii a < b (in m):
+// propagation constant kₙ = (ω / c₀) √(εᵣ (1 - i tanδ)) and characteristic impedance
+// Z₀ = η₀ ln(b/a) / (2π √(εᵣ (1 - i tanδ))).
+struct LossyCoaxialLine
+{
+  double eps_r, tan_delta, a, b;
+
+  std::complex<double> Kn(double f_GHz) const
+  {
+    const double k0 =
+        2.0 * std::numbers::pi * f_GHz * 1.0e9 / palace::electromagnetics::c0_;
+    return k0 * std::sqrt(std::complex<double>(eps_r, -eps_r * tan_delta));
+  }
+
+  std::complex<double> Z0() const
+  {
+    return palace::electromagnetics::Z0_ * std::log(b / a) /
+           (2.0 * std::numbers::pi *
+            std::sqrt(std::complex<double>(eps_r, -eps_r * tan_delta)));
+  }
+};
+
+// Reference-free check of the transmission of a uniform lossy line of length L (in m)
+// between two wave ports against the analytic S_21 = S_12 = exp(-i kₙ L), on top of
+// TestWavePortMatchedLine (matched ports, reciprocity, and passivity).
+palace::test::CustomCheck TestWavePortAnalyticLine(LossyCoaxialLine line, double length,
+                                                   double atol,
+                                                   palace::test::RegressionOptions opts)
+{
+  return [line, length, atol, matched = TestWavePortMatchedLine(atol, opts)](
+             palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &actual_path)
+  {
+    matched(actual, reference, actual_path);
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::Column *f = find_header(actual, "f (GHz)");
+    REQUIRE(f != nullptr);
+    for (const std::string ij : {"[2][1]", "[1][2]"})
+    {
+      palace::Column *abs_s = find_header(actual, "|S" + ij + "| (dB)");
+      palace::Column *arg_s = find_header(actual, "arg(S" + ij + ") (deg.)");
+      REQUIRE(abs_s != nullptr);
+      REQUIRE(arg_s != nullptr);
+      for (std::size_t r = 0; r < actual.n_rows(); r++)
+      {
+        const std::complex<double> S =
+            std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                       arg_s->data[r] * std::numbers::pi / 180.0);
+        const std::complex<double> S_line =
+            std::exp(std::complex<double>(0.0, -1.0) * line.Kn(f->data[r]) * length);
+        INFO("f = " << f->data[r] << " GHz: S" << ij << " = " << S
+                    << ", exp(-i kn L) = " << S_line);
+        CHECK(std::abs(S - S_line) <= atol);
+      }
+    }
+  };
+}
+
+// Reference-free check of the complex characteristic impedance Z_PV of the wave ports of a
+// lossy coaxial line in port-Z.csv against the analytic Z₀, after the reference diff.
+palace::test::CustomCheck
+TestWavePortAnalyticImpedance(LossyCoaxialLine line, double rtol,
+                              palace::test::RegressionOptions opts)
+{
+  return [line, rtol, opts](palace::Table &actual, palace::Table &reference,
+                            const std::filesystem::path &)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const std::complex<double> Z0 = line.Z0();
+    for (const int port : {1, 2})
+    {
+      const palace::Column *re_z = nullptr, *im_z = nullptr;
+      for (auto &column : actual)
+      {
+        if (column.header_text == "Re{Z_PV[" + std::to_string(port) + "]} (Ohm)")
+        {
+          re_z = &column;
+        }
+        else if (column.header_text == "Im{Z_PV[" + std::to_string(port) + "]} (Ohm)")
+        {
+          im_z = &column;
+        }
+      }
+      REQUIRE(re_z != nullptr);
+      REQUIRE(im_z != nullptr);
+      for (std::size_t r = 0; r < actual.n_rows(); r++)
+      {
+        const std::complex<double> Z_PV(re_z->data[r], im_z->data[r]);
+        INFO("row " << r + 1 << ": Z_PV[" << port << "] = " << Z_PV << ", Z0 = " << Z0);
+        CHECK(std::abs(Z_PV - Z0) <= rtol * std::abs(Z0));
+      }
+    }
   };
 }
 
@@ -1781,6 +1889,25 @@ TEST_CASE("coaxial_wave_conductivity", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(1, opts_z);
   palace::test::RunRegressionCase("coaxial", "wave_conductivity.json", "wave_conductivity",
                                   opts);
+}
+
+// Uniform coaxial line filled with a lossy dielectric (loss tangent 0.1) between two wave
+// ports, against the analytic TEM line (issue 960): the ports are matched (|S_11| below
+// 1e-5 here), S_21 = S_12 = exp(-i kₙ L) with the analytic complex kₙ to the discretization
+// error (1e-4), and the complex Z_PV is the analytic Z₀ = 49.87 + 2.49i Ω to 0.1%. With the
+// real part of kₙ in the port boundary condition and the conjugated projection onto the
+// port mode, the line had |S_11| = 0.014 to 0.024, and a real Z_PV = |Z₀|.
+TEST_CASE("coaxial_wave_losstan", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  const LossyCoaxialLine line{2.08, 0.1, 0.81915e-3, 2.7305e-3};
+  opts.custom_checks["port-S.csv"] = TestWavePortAnalyticLine(line, 40.0e-3, 2.0e-4, opts);
+  opts.custom_checks["port-Z.csv"] = TestWavePortAnalyticImpedance(line, 2.0e-3, opts);
+  palace::test::RunRegressionCase("coaxial", "wave_losstan.json", "wave_losstan", opts);
 }
 
 // Circuit synthesis of the uniform coaxial line of finite-conductivity conductors between
