@@ -268,6 +268,10 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   {
     solver = config::SolverData(*solver_it);
   }
+  if (auto sensitivity_it = config.find("Sensitivity"); sensitivity_it != config.end())
+  {
+    sensitivity = config::SensitivityData(*sensitivity_it);
+  }
 
   // Check for unsupported sections. Work on a copy since we don't own the input.
   {
@@ -277,6 +281,7 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
     remaining.erase("Domains");
     remaining.erase("Boundaries");
     remaining.erase("Solver");
+    remaining.erase("Sensitivity");
     MFEM_VERIFY(remaining.empty(), "Found an unsupported configuration file section!\n"
                                        << remaining.dump(2));
   }
@@ -804,6 +809,24 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
+  // Sensitivities are available for the capacitances of electrostatic problems.
+  if (!sensitivity.empty())
+  {
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                "\"Sensitivity\" is only available for electrostatic problems!");
+    for (const auto &[idx, data] : sensitivity.objectives)
+    {
+      for (auto i : data.terminals)
+      {
+        MFEM_VERIFY(boundaries.terminal.contains(i),
+                    "\"Sensitivity\" objective " << idx << " refers to terminal " << i
+                                                 << ", which is not a \"Terminal\"!");
+      }
+    }
+    MFEM_VERIFY(!sensitivity.shape || boundaries.periodic.boundary_pairs.empty(),
+                "\"Sensitivity\" \"Shape\" is not available with periodic boundaries!");
+  }
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
@@ -833,6 +856,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   for (auto &data : domains.materials)
   {
     config::Nondimensionalize(units, data);
+  }
+
+  // Export region of the sensitivities.
+  if (sensitivity.shape)
+  {
+    config::Nondimensionalize(units, *sensitivity.shape);
   }
 
   // Probe location coordinates.

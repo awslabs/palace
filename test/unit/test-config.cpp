@@ -1088,6 +1088,65 @@ TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
   CHECK(nonlinear.nonlinear_max_it == 500);
 }
 
+TEST_CASE("Config Sensitivity", "[config][Serial]")
+{
+  auto Config = [](const json &sensitivity)
+  {
+    return json{
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {1}}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {2}}}, {{"Index", 2}, {"Attributes", {3}}}}}}},
+        {"Solver", json::object()},
+        {"Sensitivity", sensitivity}};
+  };
+  const json objectives = {{{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 2}}}};
+
+  SECTION("Objectives, export region and defaults")
+  {
+    const auto config = Config({{"Objectives", objectives},
+                                {"Shape",
+                                 {{"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                                  {"BoundingBoxMax", {1.0, 2.0, 3.0}},
+                                  {"Attributes", {3, 1}}}}});
+    IoData iodata(config, false);
+    const auto &sensitivity = iodata.sensitivity;
+    REQUIRE(sensitivity.objectives.size() == 1);
+    CHECK(sensitivity.objectives.at(1).type == SensitivityObjective::CAPACITANCE);
+    CHECK(sensitivity.objectives.at(1).terminals == std::array<int, 2>{1, 2});
+    REQUIRE(sensitivity.shape);
+    CHECK(*sensitivity.shape->bbmax == std::array<double, 3>{1.0, 2.0, 3.0});
+    CHECK(sensitivity.shape->attributes == std::vector<int>{1, 3});
+    CHECK(!sensitivity.shape->boundary_tags);
+    CHECK(!sensitivity.material_properties);
+
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Sensitivity"]["MaterialProperties"] == false);
+    CHECK(resolved["Sensitivity"]["Shape"]["BoundaryTags"] == false);
+  }
+
+  SECTION("Invalid configurations")
+  {
+    using Catch::Matchers::ContainsSubstring;
+    const json unknown = {{{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 3}}}};
+    CHECK_THROWS_WITH(IoData(Config({{"Objectives", unknown}}), false),
+                      ContainsSubstring("refers to terminal 3"));
+    CHECK_THROWS_WITH(IoData(Config({{"Objectives", objectives},
+                                     {"Shape", {{"BoundingBoxMin", {0.0, 0.0, 0.0}}}}}),
+                             false),
+                      ContainsSubstring("\"BoundingBoxMax\""));
+    CHECK_THROWS(
+        config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Capacitance"}}));
+    auto config = Config({{"Objectives", objectives}});
+    config["Problem"]["Type"] = "Magnetostatic";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("only available for electrostatic"));
+  }
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   auto MixedConfig = []()
