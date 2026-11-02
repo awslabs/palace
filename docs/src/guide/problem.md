@@ -138,6 +138,44 @@ respectively, in the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The mutual
 capacitance matrix is also computed and written to `terminal-Cm.csv` in the same directory.
 
+Because the problem is linear, the potential for any terminal voltages ``\bm{V}`` is the
+superposition ``\sum_i V_i u_i`` of the unit terminal solutions ``u_i``, and its electric
+field energy is ``\frac{1}{2}\bm{V}^T\bm{C}\bm{V}``. The energies of the domain energy and
+interface dielectric postprocessing
+([`config["Domains"]["Postprocessing"]["Energy"]`](../config/reference.md#config-domains-postprocessing-energy)
+and
+[`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/reference.md#config-boundaries-postprocessing-dielectric))
+are also quadratic in the terminal voltages, but `domain-E.csv` and `surface-Q.csv` report
+them for the individual unit terminal excitations. For any terminal voltages, they follow
+from the participation-weighted capacitance matrices ``\bm{C}_{p,k}`` of each
+postprocessing domain or interface ``k``, which are written to `domain-Cp.csv` and
+`surface-Cp.csv`. These matrices are normalized like the Maxwell capacitance matrix: the
+energy of domain or interface ``k`` for terminal voltages ``\bm{V}`` is
+``\frac{1}{2}\bm{V}^T\bm{C}_{p,k}\bm{V}``, and its participation ratio is
+
+```math
+p_k = \frac{\bm{V}^T\bm{C}_{p,k}\bm{V}}{\bm{V}^T\bm{C}\bm{V}} \,.
+```
+
+This gives the participation ratios for any terminal voltages without additional
+simulations, for example for the voltages of the modes of a circuit model built from the
+capacitance matrix. Likewise, the conductance matrix of the dielectric loss in such a model
+is ``\omega\sum_k\tan\delta_k\bm{C}_{p,k}`` for the loss tangents ``\tan\delta_k``. Note
+that the mode of two floating conductors connected by an inductor, such as the pads of a
+floating transmon, carries opposite charges, so that
+``\bm{V} \propto \bm{C}^{-1}(1, -1)^T``: unless the conductors are symmetric, this differs
+from opposite voltages ``\bm{V} \propto (1, -1)^T``.
+
+The diagonal entries of ``\bm{C}_{p,k}`` are the participation ratios of the unit terminal
+excitations times the diagonal entries of ``\bm{C}``. The domain matrices are the parts of
+the capacitance matrix due to the field energy in each domain, so that those of a partition
+of the computational domain sum to ``\bm{C}``. The interface matrices are those of the thin
+interface layers of the interface dielectric model, which are not part of the computational
+domain and do not contribute to ``\bm{C}``. Neither kind is a Maxwell capacitance matrix:
+their off-diagonal entries can have either sign. The interface matrices require an
+evaluation of the interface integrals for each pair of terminals, so their cost grows with
+the square of the number of terminals.
+
 ## Magnetostatic problems
 
 For magnetostatic simulations

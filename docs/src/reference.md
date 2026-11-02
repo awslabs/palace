@@ -788,6 +788,26 @@ capacitance matrix, ``\bm{C}``, are given by
 \bm{C}_{ij} = \mathcal{E}(V_i+V_j)-\frac{1}{2}(\bm{C}_{ii}+\bm{C}_{jj}) \,.
 ```
 
+The energy ``\mathcal{E}_k(V)`` of a domain energy or interface dielectric postprocessing
+domain or surface ``k`` is likewise quadratic in the potential: the domain energy is
+``\frac{1}{2}\int_{\Omega_k}\varepsilon_r\bm{E}\cdot\bm{E}\,dV``, and the interface
+integrands of [Bulk and interface dielectric loss](#Bulk-and-interface-dielectric-loss) are
+quadratic in ``\bm{E}``. The participation-weighted capacitance matrices
+
+```math
+\begin{aligned}
+(\bm{C}_{p,k})_{ii} &= 2\mathcal{E}_k(V_i) \\
+(\bm{C}_{p,k})_{ij} &= \mathcal{E}_k(V_i+V_j)-\mathcal{E}_k(V_i)-\mathcal{E}_k(V_j) \,,\;
+    i\neq j
+\end{aligned}
+```
+
+are computed using the same integration for the energies of the pairwise sums of the
+terminal solutions as for the individual solutions. For the potential
+``V = \sum_i a_i V_i``, the energy of domain or surface ``k`` is then
+``\mathcal{E}_k(V) = \frac{1}{2}\bm{a}^T\bm{C}_{p,k}\bm{a}``, and its participation ratio
+is ``\bm{a}^T\bm{C}_{p,k}\bm{a} / \bm{a}^T\bm{C}\bm{a}``.
+
 ## Magnetostatic Simulations
 
 Magnetostatic problems for inductance matrix extraction are based on the magnetic vector

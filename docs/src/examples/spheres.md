@@ -101,6 +101,31 @@ The resulting capacitances are written to `postpro/terminal-C.csv`:
 include_example_file("spheres", "terminal-C.csv") # hide
 ```
 
+The configuration file also postprocesses the participation of a thin metal-air interface
+layer on each sphere, under
+[`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/reference.md#config-boundaries-postprocessing-dielectric).
+The participation ratios written to `postpro/surface-Q.csv` are those of each terminal
+excitation, with one sphere at a unit voltage and the other grounded:
+
+```@example include_example
+include_example_file("spheres", "surface-Q.csv") # hide
+```
+
+The participation-weighted capacitance matrices of the interfaces over the terminals,
+normalized like the Maxwell capacitance matrix, are written to `postpro/surface-Cp.csv`:
+
+```@example include_example
+include_example_file("spheres", "surface-Cp.csv") # hide
+```
+
+For any sphere voltages ``\bm{V}``, the participation ratio of interface ``k`` is
+``p_k = \bm{V}^T\bm{C}_{p,k}\bm{V} / \bm{V}^T\bm{C}\bm{V}``, for example for opposite
+voltages ``\bm{V} = (1, -1)^T``, or for opposite charges
+``\bm{V} = \bm{C}^{-1}(1, -1)^T`` as in the oscillation of the two spheres connected by an
+inductor. The matrix of the domain energy postprocessing, written to
+`postpro/domain-Cp.csv`, equals the Maxwell capacitance matrix in this example since the
+domain is the entire computational domain.
+
 Finally, the `postpro/paraview` directory contains files for visualizing the computed field
 solutions with ParaView. Below we present the electrostatic potential fields for each
 terminal solution.

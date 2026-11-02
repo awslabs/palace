@@ -75,7 +75,9 @@ These include:
     (associated with the specified domain attributes and indexed by the specified integer
     `"Index"`). These are from the electric and magnetic field solutions and written to the
     same `domain-E.csv` file in the specified postprocessing output directory used for the
-    global energies (described above).
+    global energies (described above). For electrostatic simulations, the corresponding
+    participation-weighted capacitance matrices over the terminals are also written to
+    `domain-Cp.csv`, see [Electrostatic problems](problem.md#Electrostatic-problems).
   - [`config["Domains"]["Postprocessing"]["Probe"]`](../config/reference.md#config-domains-postprocessing-probe) :
     Probe the values of the computed electric field and magnetic flux density solutions at
     specified locations in the computational domain. The availability of the ``\bm{E}`` and
@@ -106,7 +108,11 @@ file. These include:
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
-    written to the file `surface-Q.csv` in the specified output directory.
+    written to the file `surface-Q.csv` in the specified output directory. For electrostatic
+    simulations, the corresponding participation-weighted capacitance matrices over the
+    terminals, which give the participation ratios for any terminal voltages, are also
+    written to `surface-Cp.csv`, see
+    [Electrostatic problems](problem.md#Electrostatic-problems).
 
 ## Visualization
 

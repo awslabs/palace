@@ -19,6 +19,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Electrostatic simulations with domain energy or interface dielectric postprocessing now
+    also write the participation-weighted capacitance matrices of the postprocessed domains
+    and interfaces over the terminals, to `domain-Cp.csv` and `surface-Cp.csv`. Normalized
+    like the Maxwell capacitance matrix, they give the participation ratios of any terminal
+    voltages, for example those of the modes of a circuit model, without additional
+    simulations. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
