@@ -80,9 +80,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {runner: arm64}
-          - {runner: x64}
-          - {runner: gpu, target: x86_64_v3}
+          - {runner: x64, target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       # Two events bypass the paths-filter:
