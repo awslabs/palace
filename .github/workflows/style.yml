@@ -106,6 +106,24 @@ jobs:
           config: .github/license-check/config.json
           strict: false
 
+  # Tests of the Julia packages in scripts/julia/, which read Palace's output. They need no
+  # Palace build and few dependencies, so they run on the oldest and newest supported Julia.
+  check-julia-packages:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['lts', '1']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
+
+      - name: Test PalaceSensitivity.jl
+        run: julia --project=scripts/julia/PalaceSensitivity -e 'using Pkg; Pkg.test()'
+
   # Unit tests for the trusted container-publish scripts (.github/publish_containers/).
   # These guard the publish authorization decision, so they must run on every
   # change. Stdlib unittest only — no dependencies to install.
