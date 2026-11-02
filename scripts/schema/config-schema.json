@@ -3126,6 +3126,11 @@
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
         },
+        "AMSSmoothIts": {
+          "type": "integer",
+          "description": "Number of smoothing sweeps on the Nédélec space in each AMS iteration when AMS is the coarse solver of geometric multigrid (`\"MGMaxLevels\"` > 1). If omitted, Palace uses 8 when [`\"AMSSingularOperator\"`](@ref config-solver-linear-amssingularoperator) is enabled (magnetostatic simulations by default) and [`\"MGSmoothIts\"`](@ref config-solver-linear-mgsmoothits) otherwise.",
+          "exclusiveMinimum": 0
+        },
         "DivFreeTol": {
           "type": "number",
           "description": "Relative tolerance for divergence-free cleaning used in the eigenmode simulation type. Ignored when a nonzero Floquet wave vector is specified or when a nonzero [LondonDepth](@ref config-domains-materials-londondepth) is used.",
