@@ -79,6 +79,55 @@ using PalaceSensitivity, Test, LinearAlgebra, Random
         @test_throws ArgumentError w(objectives=[o], metadata=Dict("Version" => 2))
     end
 
+    @testset "Exports without node gradients" begin
+        dir = mktempdir()
+        write_sensitivity(
+            dir;
+            problem_type="Electrostatic",
+            length_unit=1e-6,
+            points=zeros(3, 0),
+            objectives=[(index=1, type="Capacitance", value=1.0, gradient=zeros(3, 0))]
+        )
+        @test sort(readdir(dir)) == ["sensitivity.json"]
+        s = read_sensitivity(dir)
+        @test size(s.points) == (3, 0)
+        @test objective(s, 1).value == 1.0
+        @test size(objective(s, 1).gradient) == (3, 0)
+    end
+
+    @testset "Admissible velocities" begin
+        # A unit square of points: attribute 1 on x = 0, 2 on x = 1, and 3 on y = 0.
+        X = reduce(hcat, [[x, y, 0.0] for x = 0:0.25:1 for y = 0:0.25:1])
+        boundary = [Int32[] for _ in axes(X, 2)]
+        for (k, x) in enumerate(eachcol(X))
+            x[1] == 0 && push!(boundary[k], 1)
+            x[1] == 1 && push!(boundary[k], 2)
+            x[2] == 0 && push!(boundary[k], 3)
+        end
+        dir = mktempdir()
+        write_sensitivity(
+            dir;
+            problem_type="Electrostatic",
+            length_unit=1e-6,
+            points=X,
+            objectives=[(index=1, type="Capacitance", value=0.0, gradient=zero(X))],
+            boundary=boundary
+        )
+        s = read_sensitivity(dir)
+        bulge(Y) = vcat((Y[1:1, :] .* (1 .- Y[1:1, :])), zeros(2, size(Y, 2)))
+        rotation(Y) = vcat(-Y[2:2, :], Y[1:1, :], zeros(1, size(Y, 2)))
+        stretch(Y) = vcat(zeros(1, size(Y, 2)), Y[2:2, :], zeros(1, size(Y, 2)))
+        @test isnothing(check_velocity(s, bulge; fixed=(1, 2)))
+        @test isnothing(check_velocity(s, rotation; rigid=(1, 2, 3)))
+        @test_throws r"vanish on boundary attribute 3" check_velocity(
+            s,
+            bulge;
+            fixed=(1, 3)
+        )
+        @test_throws r"attribute 2 rigidly" check_velocity(s, stretch; rigid=(3, 2))
+        @test isnothing(check_velocity(s, stretch; rigid=(3,)))
+    end
+
     @testset "Contraction with design velocities" begin
         # J(X) = Σ wₖ ⋅ xₖ has gradient wₖ and derivative Σ wₖ ⋅ V(xₖ) along any velocity V.
         n = 200
