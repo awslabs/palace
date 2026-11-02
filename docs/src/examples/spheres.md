@@ -112,6 +112,14 @@ terminal solution.
 </p>
 ```
 
+The configuration file
+[`spheres_sensitivity.json`](https://github.com/awslabs/palace/blob/main/examples/spheres/spheres_sensitivity.json)
+also computes the derivatives of the capacitances with respect to the geometry and the
+permittivity (see [Shape and Material Sensitivities](../features/sensitivity.md)). The
+derivatives with respect to the radius of sphere A agree with those of the series to the
+discretization error, and the derivatives with respect to the permittivity equal the
+capacitances, as they scale with it.
+
 ## References
 
 [1] J. Lekner, Capacitance coefficients of two spheres, _Journal of Electrostatics_ 69

@@ -43,9 +43,9 @@ end
 
 # --- Schema loading ---
 
-# The five top-level configuration sections, in document order. Each maps to a key under
-# the consolidated schema's `properties` (e.g. "Solver" => root["properties"]["Solver"]).
-const SECTION_KEYS = ["Problem", "Model", "Domains", "Boundaries", "Solver"]
+# The top-level configuration sections, in document order. Each maps to a key under the
+# consolidated schema's `properties` (e.g. "Solver" => root["properties"]["Solver"]).
+const SECTION_KEYS = ["Problem", "Model", "Domains", "Boundaries", "Solver", "Sensitivity"]
 
 """
 Load the consolidated root schema. Uses dicttype=OrderedDict to preserve JSON key
