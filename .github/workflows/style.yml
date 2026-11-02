@@ -106,8 +106,7 @@ jobs:
           config: .github/license-check/config.json
           strict: false
 
-  # Tests of the Julia packages in scripts/julia/, which read Palace's output. They need no
-  # Palace build and few dependencies, so they run on the oldest and newest supported Julia.
+  # Tests of the Julia packages in scripts/julia/, which need no Palace build.
   check-julia-packages:
     runs-on: ubuntu-latest
     strategy:
