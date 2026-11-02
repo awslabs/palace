@@ -117,6 +117,13 @@ list(APPEND HYPRE_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_multicomponent.diff"
 )
 
+# AMS: skip work on a zero initial guess; agglomerate the coarse levels of the auxiliary
+# space BoomerAMG hierarchies onto fewer processes during the solve (same hierarchy and
+# V-cycle), and run the additive Pi-space corrections concurrently
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_ams_redist.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}

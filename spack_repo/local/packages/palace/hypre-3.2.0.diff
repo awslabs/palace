@@ -1,3 +1,1087 @@
+diff --git a/src/parcsr_ls/CMakeLists.txt b/src/parcsr_ls/CMakeLists.txt
+index 48fc885de..272f5fa8d 100644
+--- a/src/parcsr_ls/CMakeLists.txt
++++ b/src/parcsr_ls/CMakeLists.txt
+@@ -90,6 +90,7 @@ set(REGULAR_SRCS
+   par_coordinates.c
+   par_cr.c
+   par_cycle.c
++  par_amg_redist.c
+   par_add_cycle.c
+   par_difconv.c
+   par_fsai.c
+diff --git a/src/parcsr_ls/_hypre_parcsr_ls.h b/src/parcsr_ls/_hypre_parcsr_ls.h
+index 594c210e0..03d8cfe4a 100644
+--- a/src/parcsr_ls/_hypre_parcsr_ls.h
++++ b/src/parcsr_ls/_hypre_parcsr_ls.h
+@@ -318,6 +318,12 @@ typedef struct
+    void          *dslu_solver;
+ #endif
+ 
++   /* solve-phase agglomeration of the coarse levels (par_amg_redist.c) */
++   void          *L_redist;
++   HYPRE_Int      L_redist_target; /* target rows per process (0: off) */
++   HYPRE_Int      L_redist_off;    /* index among hierarchies solved concurrently */
++   HYPRE_Int      L_redist_noff;   /* number of such hierarchies */
++
+ } hypre_ParAMGData;
+ 
+ /*--------------------------------------------------------------------------
+@@ -575,6 +581,10 @@ typedef struct
+ #define hypre_ParAMGDataNonGalTolArray(amg_data) ((amg_data)->nongal_tol_array)
+ 
+ #define hypre_ParAMGDataRAP2(amg_data) ((amg_data)->rap2)
++#define hypre_ParAMGDataLRedist(amg_data) ((amg_data)->L_redist)
++#define hypre_ParAMGDataLRedistTarget(amg_data) ((amg_data)->L_redist_target)
++#define hypre_ParAMGDataLRedistOff(amg_data) ((amg_data)->L_redist_off)
++#define hypre_ParAMGDataLRedistNOff(amg_data) ((amg_data)->L_redist_noff)
+ #define hypre_ParAMGDataKeepTranspose(amg_data) ((amg_data)->keepTranspose)
+ #define hypre_ParAMGDataModularizedMatMat(amg_data) ((amg_data)->modularized_matmat)
+ 
+@@ -2443,6 +2453,19 @@ HYPRE_Int hypre_BoomerAMGCoarsenCR ( hypre_ParCSRMatrix *A, hypre_IntArray **CF_
+ HYPRE_Int hypre_BoomerAMGCycle ( void *amg_vdata, hypre_ParVector **F_array,
+                                  hypre_ParVector **U_array );
+ 
++/* par_amg_redist.c */
++#define HYPRE_AMS_AMG_REDIST_TARGET 2048
++/* hypre_AMSSolve uses (and maintains) the zero flag of the initial guess */
++#define HYPRE_AMS_ZERO_GUESS_FLAG 1
++HYPRE_Int hypre_BoomerAMGRedistSetup(void *amg_vdata);
++HYPRE_Int hypre_BoomerAMGRedistDestroy(void *amg_vdata);
++HYPRE_Int hypre_BoomerAMGRedistNumLevels(void *amg_vdata, hypre_ParVector *f);
++HYPRE_Int hypre_BoomerAMGRedistCoarseSolve(void *amg_vdata, hypre_ParVector *f,
++                                           hypre_ParVector *u);
++HYPRE_Int hypre_BoomerAMGRedistSubspaceConcurrent(HYPRE_Int n, HYPRE_Solver *B,
++                                                  hypre_ParCSRMatrix **P, hypre_ParVector *r0,
++                                                  hypre_ParVector *y, hypre_ParVector *g0);
++
+ /* par_gsmg.c */
+ HYPRE_Int hypre_ParCSRMatrixFillSmooth ( HYPRE_Int nsamples, HYPRE_Real *samples,
+                                          hypre_ParCSRMatrix *S, hypre_ParCSRMatrix *A, HYPRE_Int num_functions, HYPRE_Int *dof_func );
+diff --git a/src/parcsr_ls/ams.c b/src/parcsr_ls/ams.c
+index 3e428f912..8c35828c5 100644
+--- a/src/parcsr_ls/ams.c
++++ b/src/parcsr_ls/ams.c
+@@ -7,6 +7,7 @@
+ 
+ #include "_hypre_onedpl.hpp"
+ #include "_hypre_parcsr_ls.h"
++#include <string.h>
+ #include "float.h"
+ #include "ams.h"
+ #include "_hypre_utilities.hpp"
+@@ -74,6 +75,7 @@ hypre_ParCSRRelax( hypre_ParCSRMatrix *A,              /* matrix to relax with *
+                                  omega, l1_norms, u, v, z);
+          }
+       }
++      hypre_ParVectorAllZeros(u) = 0;
+    }
+ 
+    return hypre_error_flag;
+@@ -3293,6 +3295,7 @@ hypre_AMSSetup(void *solver,
+    if (!ams_data -> beta_is_zero && ams_data -> cycle_type != 20)
+    {
+       HYPRE_BoomerAMGCreate(&ams_data -> B_G);
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_G) = HYPRE_AMS_AMG_REDIST_TARGET;
+       HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_G, ams_data -> B_G_coarsen_type);
+       HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_G, ams_data -> B_G_agg_levels);
+       HYPRE_BoomerAMGSetRelaxType(ams_data -> B_G, ams_data -> B_G_relax_type);
+@@ -3357,6 +3360,9 @@ hypre_AMSSetup(void *solver,
+       /* Create the AMG solvers on the range of Pi{x,y,z}^T */
+    {
+       HYPRE_BoomerAMGCreate(&ams_data -> B_Pix);
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Pix) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistOff((hypre_ParAMGData *) ams_data -> B_Pix) = 0;
++      hypre_ParAMGDataLRedistNOff((hypre_ParAMGData *) ams_data -> B_Pix) = 3;
+       HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_Pix, ams_data -> B_Pi_coarsen_type);
+       HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_Pix, ams_data -> B_Pi_agg_levels);
+       HYPRE_BoomerAMGSetRelaxType(ams_data -> B_Pix, ams_data -> B_Pi_relax_type);
+@@ -3370,6 +3376,9 @@ hypre_AMSSetup(void *solver,
+       HYPRE_BoomerAMGSetMinCoarseSize(ams_data -> B_Pix, 2);
+ 
+       HYPRE_BoomerAMGCreate(&ams_data -> B_Piy);
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Piy) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistOff((hypre_ParAMGData *) ams_data -> B_Piy) = 1;
++      hypre_ParAMGDataLRedistNOff((hypre_ParAMGData *) ams_data -> B_Piy) = 3;
+       HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_Piy, ams_data -> B_Pi_coarsen_type);
+       HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_Piy, ams_data -> B_Pi_agg_levels);
+       HYPRE_BoomerAMGSetRelaxType(ams_data -> B_Piy, ams_data -> B_Pi_relax_type);
+@@ -3383,6 +3392,9 @@ hypre_AMSSetup(void *solver,
+       HYPRE_BoomerAMGSetMinCoarseSize(ams_data -> B_Piy, 2);
+ 
+       HYPRE_BoomerAMGCreate(&ams_data -> B_Piz);
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Piz) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistOff((hypre_ParAMGData *) ams_data -> B_Piz) = 2;
++      hypre_ParAMGDataLRedistNOff((hypre_ParAMGData *) ams_data -> B_Piz) = 3;
+       HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_Piz, ams_data -> B_Pi_coarsen_type);
+       HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_Piz, ams_data -> B_Pi_agg_levels);
+       HYPRE_BoomerAMGSetRelaxType(ams_data -> B_Piz, ams_data -> B_Pi_relax_type);
+@@ -3945,11 +3957,22 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+       /* Compute initial residual norms */
+       if (ams_data -> maxit > 1 && i == 0)
+       {
+-         hypre_ParVectorCopy(b, ams_data -> r0);
+-         hypre_ParCSRMatrixMatvec(-1.0, ams_data -> A, x, 1.0, ams_data -> r0);
+-         r_norm = hypre_sqrt(hypre_ParVectorInnerProd(ams_data -> r0, ams_data -> r0));
+-         r0_norm = r_norm;
+-         b_norm = hypre_sqrt(hypre_ParVectorInnerProd(b, b));
++         if (hypre_ParVectorAllZeros(x))
++         {
++            /* zero initial guess: r0 = b */
++            hypre_ParVectorCopy(b, ams_data -> r0);
++            b_norm = hypre_sqrt(hypre_ParVectorInnerProd(b, b));
++            r_norm = b_norm;
++            r0_norm = r_norm;
++         }
++         else
++         {
++            hypre_ParVectorCopy(b, ams_data -> r0);
++            hypre_ParCSRMatrixMatvec(-1.0, ams_data -> A, x, 1.0, ams_data -> r0);
++            r_norm = hypre_sqrt(hypre_ParVectorInnerProd(ams_data -> r0, ams_data -> r0));
++            r0_norm = r_norm;
++            b_norm = hypre_sqrt(hypre_ParVectorInnerProd(b, b));
++         }
+          if (b_norm != 0.0)
+          {
+             relative_resid = r_norm / b_norm;
+@@ -3986,8 +4009,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+                                cycle,
+                                z);
+ 
+-      /* Compute new residual norms */
+-      if (ams_data -> maxit > 1)
++      /* Compute new residual norms (after the last cycle only needed for printing) */
++      if (ams_data -> maxit > 1 && (i < ams_data -> maxit - 1 || ams_data -> print_level > 0))
+       {
+          old_resid = r_norm;
+          hypre_ParVectorCopy(b, ams_data -> r0);
+@@ -4013,6 +4036,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+       }
+    }
+ 
++   hypre_ParVectorAllZeros(x) = 0;
++
+    if (my_id == 0 && ams_data -> print_level > 0 && ams_data -> maxit > 1)
+    {
+       hypre_printf("\n\n Average Convergence Factor = %f\n\n",
+@@ -4094,6 +4119,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+       {
+          hypre_ParVectorCopy(x, r0);
+          hypre_ParCSRMatrixMatvec(-1.0, A0, y, 1.0, r0);
++         /* additive scalar Pi-space corrections on agglomerated hierarchies: concurrently */
++         if (strncmp(op + 1, "+3+4+5)", 7) == 0 && A[2] && A[3] && A[4] &&
++             !hypre_BoomerAMGRedistSubspaceConcurrent(3, &B[2], &P[2], r0, y, g0))
++         {
++            op += 7;
++         }
+       }
+ 
+       /* switch to additive correction */
+@@ -4117,8 +4148,8 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+                            A0_cheby_order,
+                            A0_cheby_fraction,
+                            y, g0, z);
++         hypre_ParVectorAllZeros(y) = 0;
+       }
+-
+       /* subspace correction: y += P B^{-1} P^t r */
+       else
+       {
+@@ -4144,11 +4175,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+             hypre_ParCSRMatrixMatvecT(1.0, P[i], g0, 0.0, r[i]);
+          }
+ 
+-         hypre_ParVectorSetConstantValues(g[i], 0.0);
++         hypre_ParVectorSetZeros(g[i]);
+          (*HB[i]) (B[i], (HYPRE_Matrix)A[i],
+                    (HYPRE_Vector)r[i], (HYPRE_Vector)g[i]);
+          hypre_ParCSRMatrixMatvec(1.0, P[i], g[i], 0.0, g0);
+          hypre_ParVectorAxpy(1.0, g0, y);
++         hypre_ParVectorAllZeros(y) = 0;
+       }
+    }
+ 
+diff --git a/src/parcsr_ls/par_amg.c b/src/parcsr_ls/par_amg.c
+index dd49e2777..ed245b215 100644
+--- a/src/parcsr_ls/par_amg.c
++++ b/src/parcsr_ls/par_amg.c
+@@ -588,6 +588,7 @@ hypre_BoomerAMGDestroy( void *data )
+    if (amg_data)
+    {
+       HYPRE_Int     num_levels = hypre_ParAMGDataNumLevels(amg_data);
++      hypre_BoomerAMGRedistDestroy(amg_data);
+       HYPRE_Int     smooth_num_levels = hypre_ParAMGDataSmoothNumLevels(amg_data);
+       HYPRE_Solver *smoother = hypre_ParAMGDataSmoother(amg_data);
+       void         *amg = hypre_ParAMGDataCoarseSolver(amg_data);
+diff --git a/src/parcsr_ls/par_amg.h b/src/parcsr_ls/par_amg.h
+index 865fe7344..331342c8c 100644
+--- a/src/parcsr_ls/par_amg.h
++++ b/src/parcsr_ls/par_amg.h
+@@ -296,6 +296,12 @@ typedef struct
+    void          *dslu_solver;
+ #endif
+ 
++   /* solve-phase agglomeration of the coarse levels (par_amg_redist.c) */
++   void          *L_redist;
++   HYPRE_Int      L_redist_target; /* target rows per process (0: off) */
++   HYPRE_Int      L_redist_off;    /* index among hierarchies solved concurrently */
++   HYPRE_Int      L_redist_noff;   /* number of such hierarchies */
++
+ } hypre_ParAMGData;
+ 
+ /*--------------------------------------------------------------------------
+@@ -553,6 +559,10 @@ typedef struct
+ #define hypre_ParAMGDataNonGalTolArray(amg_data) ((amg_data)->nongal_tol_array)
+ 
+ #define hypre_ParAMGDataRAP2(amg_data) ((amg_data)->rap2)
++#define hypre_ParAMGDataLRedist(amg_data) ((amg_data)->L_redist)
++#define hypre_ParAMGDataLRedistTarget(amg_data) ((amg_data)->L_redist_target)
++#define hypre_ParAMGDataLRedistOff(amg_data) ((amg_data)->L_redist_off)
++#define hypre_ParAMGDataLRedistNOff(amg_data) ((amg_data)->L_redist_noff)
+ #define hypre_ParAMGDataKeepTranspose(amg_data) ((amg_data)->keepTranspose)
+ #define hypre_ParAMGDataModularizedMatMat(amg_data) ((amg_data)->modularized_matmat)
+ 
+diff --git a/src/parcsr_ls/par_amg_redist.c b/src/parcsr_ls/par_amg_redist.c
+new file mode 100644
+index 000000000..170c606c9
+--- /dev/null
++++ b/src/parcsr_ls/par_amg_redist.c
+@@ -0,0 +1,786 @@
++/******************************************************************************
++ * Copyright (c) 1998 Lawrence Livermore National Security, LLC and other
++ * HYPRE Project Developers. See the top-level COPYRIGHT file for details.
++ *
++ * SPDX-License-Identifier: (Apache-2.0 OR MIT)
++ ******************************************************************************/
++
++/******************************************************************************
++ *
++ * Solve-phase agglomeration of the coarse levels of a BoomerAMG hierarchy.
++ *
++ * The hierarchy (coarse grids, interpolation, Galerkin operators, relaxation weights,
++ * l1 norms) is the one built by hypre_BoomerAMGSetup on the full communicator. After the
++ * setup, the coarse levels are copied onto progressively fewer processes (groups of
++ * consecutive ranks gather their rows onto the first rank of the group), and the V-cycle
++ * visits these copies instead of the distributed levels. Coarse levels with a handful of
++ * rows per process are then no longer dominated by messages to many neighbours.
++ *
++ * Only configurations whose V-cycle is independent of the data distribution are handled:
++ * pointwise (lexicographic) l1-Jacobi relaxation, one pre- and post-sweep, R = P^T and
++ * Gaussian elimination on the coarsest level. The result equals the distributed V-cycle up
++ * to the summation order inside the sparse matrix-vector products.
++ *
++ *****************************************************************************/
++
++#include "_hypre_parcsr_ls.h"
++#include "par_amg.h"
++
++typedef struct hypre_AMGRedistSet_struct
++{
++   HYPRE_Int            L0;          /* first level held by this set */
++   HYPRE_Int            L1;          /* first level of the child set (or num_levels) */
++   HYPRE_Int            num_levels;  /* number of levels of the full hierarchy */
++   MPI_Comm             group_comm;  /* members of my group; rank 0 is the owner */
++   MPI_Comm             sub_comm;    /* owners of all groups (MPI_COMM_NULL otherwise) */
++   HYPRE_Int            is_owner;
++   HYPRE_Int            group_size;
++   HYPRE_Int            root;        /* owner's index in group_comm (members in rank order) */
++   HYPRE_Int            coarse_relax; /* 9: Gaussian elimination, 18: one l1-Jacobi sweep */
++   HYPRE_Int            n_local_src; /* my local size at level L0 in the source layout */
++   HYPRE_Int           *counts;      /* owner: local sizes at level L0 of the members */
++   HYPRE_Int           *displs;
++   /* owner data, index k = level - L0, levels L0 .. L1 (vectors) / L1 - 1 (matrices) */
++   hypre_ParCSRMatrix **A;
++   hypre_ParCSRMatrix **P;
++   hypre_ParVector    **F;
++   hypre_ParVector    **U;
++   hypre_ParVector    **V;
++   HYPRE_Real         **l1;
++   HYPRE_Real          *w;
++   /* dense coarsest-level matrix (row major), last set only */
++   HYPRE_Int            ge_n;
++   HYPRE_Real          *ge_A;
++   HYPRE_Real          *ge_work;
++   HYPRE_Real          *ge_b;
++   struct hypre_AMGRedistSet_struct *child;
++} hypre_AMGRedistSet;
++
++typedef struct
++{
++   HYPRE_Int           level;        /* truncated coarsest level of the parent cycle */
++   hypre_AMGRedistSet *set;
++   hypre_ParVector    *f0, *u0;      /* level-0 work vectors (level == 0 only) */
++} hypre_AMGRedist;
++
++/*--------------------------------------------------------------------------
++ * Source layout of the levels being redistributed: either the hierarchy itself
++ * (distributed over the full communicator) or the copies of a parent set.
++ *--------------------------------------------------------------------------*/
++
++typedef struct
++{
++   MPI_Comm             comm;
++   HYPRE_Int            num_levels;
++   hypre_ParCSRMatrix **A;   /* indexed by level */
++   hypre_ParCSRMatrix **P;   /* indexed by level, P[l] maps l+1 -> l */
++   HYPRE_Real         **l1;  /* indexed by level */
++   HYPRE_Int           *nrows; /* local rows per level */
++   HYPRE_Int            coarse_relax;
++} hypre_AMGRedistSource;
++
++static HYPRE_Int
++hypre_AMGRedistCompareBigInt(const void *a, const void *b)
++{
++   HYPRE_BigInt x = *(const HYPRE_BigInt *) a, y = *(const HYPRE_BigInt *) b;
++   return (x < y) ? -1 : ((x > y) ? 1 : 0);
++}
++
++/* Gather the rows of src (on the source communicator) onto the owner of my group and build
++ * the ParCSR matrix on sub_comm with the given row and column ranges (owner only). */
++static hypre_ParCSRMatrix *
++hypre_AMGRedistMatrix(hypre_ParCSRMatrix *src, hypre_AMGRedistSet *s,
++                      HYPRE_BigInt row_range[2], HYPRE_BigInt col_range[2])
++{
++   hypre_CSRMatrix    *loc = hypre_MergeDiagAndOffd(src);
++   HYPRE_Int           nrows = hypre_CSRMatrixNumRows(loc);
++   HYPRE_Int           nnz = hypre_CSRMatrixI(loc)[nrows];
++   HYPRE_Int          *loc_i = hypre_CSRMatrixI(loc);
++   HYPRE_Int           gs = s->group_size, m, i, j;
++   HYPRE_Int          *rcounts = NULL, *rdispls = NULL, *ncounts = NULL, *ndispls = NULL;
++   HYPRE_Int          *rowlen = hypre_TAlloc(HYPRE_Int, hypre_max(nrows, 1), HYPRE_MEMORY_HOST);
++   HYPRE_Int          *all_rowlen = NULL;
++   HYPRE_BigInt       *all_j = NULL;
++   HYPRE_Real         *all_v = NULL;
++   HYPRE_Int           tot_rows = 0, tot_nnz = 0;
++   hypre_ParCSRMatrix *M = NULL;
++
++   for (i = 0; i < nrows; i++) { rowlen[i] = loc_i[i + 1] - loc_i[i]; }
++   if (s->is_owner)
++   {
++      rcounts = hypre_TAlloc(HYPRE_Int, gs, HYPRE_MEMORY_HOST);
++      rdispls = hypre_TAlloc(HYPRE_Int, gs + 1, HYPRE_MEMORY_HOST);
++      ncounts = hypre_TAlloc(HYPRE_Int, gs, HYPRE_MEMORY_HOST);
++      ndispls = hypre_TAlloc(HYPRE_Int, gs + 1, HYPRE_MEMORY_HOST);
++   }
++   {
++      HYPRE_Int sz[2] = {nrows, nnz}, *allsz = NULL;
++      if (s->is_owner) { allsz = hypre_TAlloc(HYPRE_Int, 2 * gs, HYPRE_MEMORY_HOST); }
++      hypre_MPI_Gather(sz, 2, HYPRE_MPI_INT, allsz, 2, HYPRE_MPI_INT, s->root, s->group_comm);
++      if (s->is_owner)
++      {
++         rdispls[0] = ndispls[0] = 0;
++         for (m = 0; m < gs; m++)
++         {
++            rcounts[m] = allsz[2 * m];
++            ncounts[m] = allsz[2 * m + 1];
++            rdispls[m + 1] = rdispls[m] + rcounts[m];
++            ndispls[m + 1] = ndispls[m] + ncounts[m];
++         }
++         tot_rows = rdispls[gs];
++         tot_nnz = ndispls[gs];
++         hypre_TFree(allsz, HYPRE_MEMORY_HOST);
++         all_rowlen = hypre_TAlloc(HYPRE_Int, hypre_max(tot_rows, 1), HYPRE_MEMORY_HOST);
++         all_j = hypre_TAlloc(HYPRE_BigInt, hypre_max(tot_nnz, 1), HYPRE_MEMORY_HOST);
++         all_v = hypre_TAlloc(HYPRE_Real, hypre_max(tot_nnz, 1), HYPRE_MEMORY_HOST);
++      }
++   }
++   hypre_MPI_Gatherv(rowlen, nrows, HYPRE_MPI_INT, all_rowlen, rcounts, rdispls, HYPRE_MPI_INT,
++                     s->root, s->group_comm);
++   hypre_MPI_Gatherv(hypre_CSRMatrixBigJ(loc), nnz, HYPRE_MPI_BIG_INT, all_j, ncounts, ndispls,
++                     HYPRE_MPI_BIG_INT, s->root, s->group_comm);
++   hypre_MPI_Gatherv(hypre_CSRMatrixData(loc), nnz, HYPRE_MPI_REAL, all_v, ncounts, ndispls,
++                     HYPRE_MPI_REAL, s->root, s->group_comm);
++   hypre_TFree(rowlen, HYPRE_MEMORY_HOST);
++   hypre_CSRMatrixDestroy(loc);
++
++   if (s->is_owner)
++   {
++      HYPRE_BigInt  c0 = col_range[0], c1 = col_range[1];
++      HYPRE_Int     nnz_d = 0, nnz_o = 0, ncols_offd = 0, pos;
++      HYPRE_BigInt *offd_cols = hypre_TAlloc(HYPRE_BigInt, hypre_max(tot_nnz, 1), HYPRE_MEMORY_HOST);
++      HYPRE_BigInt *col_map;
++      HYPRE_Int    *d_i, *d_j, *o_i, *o_j;
++      HYPRE_Real   *d_v, *o_v;
++
++      hypre_assert(row_range[1] - row_range[0] == tot_rows);
++      for (j = 0; j < tot_nnz; j++)
++      {
++         if (all_j[j] >= c0 && all_j[j] < c1) { nnz_d++; }
++         else { offd_cols[nnz_o++] = all_j[j]; }
++      }
++      if (nnz_o > 0)
++      {
++         qsort(offd_cols, (size_t) nnz_o, sizeof(HYPRE_BigInt), hypre_AMGRedistCompareBigInt);
++         ncols_offd = 1;
++         for (j = 1; j < nnz_o; j++)
++         {
++            if (offd_cols[j] != offd_cols[ncols_offd - 1]) { offd_cols[ncols_offd++] = offd_cols[j]; }
++         }
++      }
++      M = hypre_ParCSRMatrixCreate(s->sub_comm, hypre_ParCSRMatrixGlobalNumRows(src),
++                                   hypre_ParCSRMatrixGlobalNumCols(src), row_range, col_range,
++                                   ncols_offd, nnz_d, nnz_o);
++      hypre_ParCSRMatrixInitialize_v2(M, HYPRE_MEMORY_HOST);
++      col_map = hypre_ParCSRMatrixColMapOffd(M);
++      for (j = 0; j < ncols_offd; j++) { col_map[j] = offd_cols[j]; }
++      hypre_TFree(offd_cols, HYPRE_MEMORY_HOST);
++      d_i = hypre_CSRMatrixI(hypre_ParCSRMatrixDiag(M));
++      d_j = hypre_CSRMatrixJ(hypre_ParCSRMatrixDiag(M));
++      d_v = hypre_CSRMatrixData(hypre_ParCSRMatrixDiag(M));
++      o_i = hypre_CSRMatrixI(hypre_ParCSRMatrixOffd(M));
++      o_j = hypre_CSRMatrixJ(hypre_ParCSRMatrixOffd(M));
++      o_v = hypre_CSRMatrixData(hypre_ParCSRMatrixOffd(M));
++      pos = 0;
++      nnz_d = nnz_o = 0;
++      for (i = 0; i < tot_rows; i++)
++      {
++         d_i[i] = nnz_d;
++         o_i[i] = nnz_o;
++         for (j = pos; j < pos + all_rowlen[i]; j++)
++         {
++            HYPRE_BigInt c = all_j[j];
++            if (c >= c0 && c < c1)
++            {
++               d_j[nnz_d] = (HYPRE_Int) (c - c0);
++               d_v[nnz_d++] = all_v[j];
++            }
++            else
++            {
++               HYPRE_BigInt *f = (HYPRE_BigInt *) bsearch(&c, col_map, (size_t) ncols_offd,
++                                                          sizeof(HYPRE_BigInt),
++                                                          hypre_AMGRedistCompareBigInt);
++               o_j[nnz_o] = (HYPRE_Int) (f - col_map);
++               o_v[nnz_o++] = all_v[j];
++            }
++         }
++         pos += all_rowlen[i];
++      }
++      d_i[tot_rows] = nnz_d;
++      o_i[tot_rows] = nnz_o;
++      hypre_CSRMatrixSetRownnz(hypre_ParCSRMatrixDiag(M));
++      hypre_CSRMatrixSetRownnz(hypre_ParCSRMatrixOffd(M));
++      hypre_ParCSRMatrixSetNumNonzeros(M);
++      hypre_MatvecCommPkgCreate(M);
++      hypre_TFree(rcounts, HYPRE_MEMORY_HOST);
++      hypre_TFree(rdispls, HYPRE_MEMORY_HOST);
++      hypre_TFree(ncounts, HYPRE_MEMORY_HOST);
++      hypre_TFree(ndispls, HYPRE_MEMORY_HOST);
++      hypre_TFree(all_rowlen, HYPRE_MEMORY_HOST);
++      hypre_TFree(all_j, HYPRE_MEMORY_HOST);
++      hypre_TFree(all_v, HYPRE_MEMORY_HOST);
++   }
++   return M;
++}
++
++/* Row range on the owner (sub_comm layout) of a level whose local sizes in the source
++ * layout are nloc: the owner's range starts at its own first row. */
++static void
++hypre_AMGRedistRange(hypre_AMGRedistSet *s, hypre_ParCSRMatrix *src, HYPRE_Int nloc,
++                     HYPRE_BigInt range[2])
++{
++   HYPRE_Int    tot = 0;
++   HYPRE_BigInt first = hypre_ParCSRMatrixFirstRowIndex(src), gfirst = 0;
++   hypre_MPI_Reduce(&nloc, &tot, 1, HYPRE_MPI_INT, hypre_MPI_SUM, s->root, s->group_comm);
++   hypre_MPI_Reduce(&first, &gfirst, 1, HYPRE_MPI_BIG_INT, hypre_MPI_MIN, s->root, s->group_comm);
++   range[0] = gfirst;
++   range[1] = gfirst + tot;
++}
++
++static void hypre_AMGRedistSetDestroy(hypre_AMGRedistSet *s);
++
++/* Build the set for levels L0 .. num_levels-1 (transitions[t] lists the further transition
++ * levels and group sizes; nt of them remain). Collective on src->comm. */
++static hypre_AMGRedistSet *
++hypre_AMGRedistSetCreate(hypre_AMGRedistSource *src, HYPRE_Int L0, HYPRE_Int gsize,
++                         HYPRE_Int root_off, HYPRE_Int *tlev, HYPRE_Int *tgs, HYPRE_Int nt)
++{
++   hypre_AMGRedistSet *s = hypre_CTAlloc(hypre_AMGRedistSet, 1, HYPRE_MEMORY_HOST);
++   HYPRE_Int           rank, size, color, nl = src->num_levels, l, k, nk;
++   HYPRE_BigInt        range[2], crange[2];
++
++   hypre_MPI_Comm_rank(src->comm, &rank);
++   hypre_MPI_Comm_size(src->comm, &size);
++   s->L0 = L0;
++   s->L1 = (nt > 0) ? tlev[0] : nl;
++   s->num_levels = nl;
++   s->group_size = gsize;
++   s->coarse_relax = src->coarse_relax;
++   color = rank / gsize;
++   hypre_MPI_Comm_split(src->comm, color, rank, &s->group_comm);
++   hypre_MPI_Comm_size(s->group_comm, &s->group_size);
++   s->root = hypre_min(root_off, s->group_size - 1);
++   s->is_owner = (rank % gsize == s->root);
++   hypre_MPI_Comm_split(src->comm, s->is_owner ? 0 : hypre_MPI_UNDEFINED, rank, &s->sub_comm);
++   s->n_local_src = src->nrows[L0];
++
++   /* Members' local sizes at L0 for the vector gathers/scatters */
++   if (s->is_owner)
++   {
++      s->counts = hypre_TAlloc(HYPRE_Int, s->group_size, HYPRE_MEMORY_HOST);
++      s->displs = hypre_TAlloc(HYPRE_Int, s->group_size + 1, HYPRE_MEMORY_HOST);
++   }
++   hypre_MPI_Gather(&s->n_local_src, 1, HYPRE_MPI_INT, s->counts, 1, HYPRE_MPI_INT, s->root,
++                    s->group_comm);
++   if (s->is_owner)
++   {
++      s->displs[0] = 0;
++      for (k = 0; k < s->group_size; k++) { s->displs[k + 1] = s->displs[k] + s->counts[k]; }
++   }
++
++   /* Redistribute all levels L0 .. nl-1 (the child takes over from L1 on) */
++   nk = nl - L0;
++   if (s->is_owner)
++   {
++      s->A = hypre_CTAlloc(hypre_ParCSRMatrix *, nk, HYPRE_MEMORY_HOST);
++      s->P = hypre_CTAlloc(hypre_ParCSRMatrix *, nk, HYPRE_MEMORY_HOST);
++      s->F = hypre_CTAlloc(hypre_ParVector *, nk, HYPRE_MEMORY_HOST);
++      s->U = hypre_CTAlloc(hypre_ParVector *, nk, HYPRE_MEMORY_HOST);
++      s->V = hypre_CTAlloc(hypre_ParVector *, nk, HYPRE_MEMORY_HOST);
++      s->l1 = hypre_CTAlloc(HYPRE_Real *, nk, HYPRE_MEMORY_HOST);
++      s->w = hypre_CTAlloc(HYPRE_Real, nk, HYPRE_MEMORY_HOST);
++   }
++   for (l = L0; l < nl; l++)
++   {
++      k = l - L0;
++      hypre_AMGRedistRange(s, src->A[l], src->nrows[l], range);
++      {
++         hypre_ParCSRMatrix *Al = hypre_AMGRedistMatrix(src->A[l], s, range, range);
++         if (s->is_owner)
++         {
++            s->A[k] = Al;
++            s->F[k] = hypre_ParVectorCreate(s->sub_comm, hypre_ParCSRMatrixGlobalNumRows(Al), range);
++            s->U[k] = hypre_ParVectorCreate(s->sub_comm, hypre_ParCSRMatrixGlobalNumRows(Al), range);
++            s->V[k] = hypre_ParVectorCreate(s->sub_comm, hypre_ParCSRMatrixGlobalNumRows(Al), range);
++            hypre_ParVectorInitialize_v2(s->F[k], HYPRE_MEMORY_HOST);
++            hypre_ParVectorInitialize_v2(s->U[k], HYPRE_MEMORY_HOST);
++            hypre_ParVectorInitialize_v2(s->V[k], HYPRE_MEMORY_HOST);
++         }
++      }
++      /* l1 norms */
++      if ((l < nl - 1 || src->coarse_relax == 18) && src->l1)
++      {
++         HYPRE_Int  m, nloc = src->nrows[l], *cnt = NULL, *dsp = NULL;
++         HYPRE_Real *buf = NULL;
++         if (s->is_owner)
++         {
++            HYPRE_Int tot = (HYPRE_Int) (range[1] - range[0]);
++            cnt = hypre_TAlloc(HYPRE_Int, s->group_size, HYPRE_MEMORY_HOST);
++            dsp = hypre_TAlloc(HYPRE_Int, s->group_size + 1, HYPRE_MEMORY_HOST);
++            buf = hypre_TAlloc(HYPRE_Real, hypre_max(tot, 1), HYPRE_MEMORY_HOST);
++         }
++         hypre_MPI_Gather(&nloc, 1, HYPRE_MPI_INT, cnt, 1, HYPRE_MPI_INT, s->root, s->group_comm);
++         if (s->is_owner)
++         {
++            dsp[0] = 0;
++            for (m = 0; m < s->group_size; m++) { dsp[m + 1] = dsp[m] + cnt[m]; }
++         }
++         hypre_MPI_Gatherv(src->l1[l], nloc, HYPRE_MPI_REAL, buf, cnt, dsp, HYPRE_MPI_REAL, s->root,
++                           s->group_comm);
++         if (s->is_owner) { s->l1[k] = buf; }
++         hypre_TFree(cnt, HYPRE_MEMORY_HOST);
++         hypre_TFree(dsp, HYPRE_MEMORY_HOST);
++      }
++      /* interpolation l+1 -> l */
++      if (l < nl - 1)
++      {
++         hypre_AMGRedistRange(s, src->A[l + 1], src->nrows[l + 1], crange);
++         {
++            hypre_ParCSRMatrix *Pl = hypre_AMGRedistMatrix(src->P[l], s, range, crange);
++            if (s->is_owner) { s->P[k] = Pl; }
++         }
++      }
++   }
++
++   /* Further reduction on the owners */
++   if (s->is_owner && nt > 0)
++   {
++      hypre_AMGRedistSource sub;
++      HYPRE_Int *nrows = hypre_CTAlloc(HYPRE_Int, nl, HYPRE_MEMORY_HOST);
++      hypre_ParCSRMatrix **A = hypre_CTAlloc(hypre_ParCSRMatrix *, nl, HYPRE_MEMORY_HOST);
++      hypre_ParCSRMatrix **P = hypre_CTAlloc(hypre_ParCSRMatrix *, nl, HYPRE_MEMORY_HOST);
++      HYPRE_Real **l1 = hypre_CTAlloc(HYPRE_Real *, nl, HYPRE_MEMORY_HOST);
++      for (l = L0; l < nl; l++)
++      {
++         k = l - L0;
++         A[l] = s->A[k];
++         P[l] = s->P[k];
++         l1[l] = s->l1[k];
++         nrows[l] = hypre_ParCSRMatrixNumRows(s->A[k]);
++      }
++      sub.comm = s->sub_comm;
++      sub.num_levels = nl;
++      sub.A = A;
++      sub.P = P;
++      sub.l1 = l1;
++      sub.nrows = nrows;
++      sub.coarse_relax = s->coarse_relax;
++      s->child = hypre_AMGRedistSetCreate(&sub, tlev[0], tgs[0], 0, tlev + 1, tgs + 1, nt - 1);
++      /* Keep only levels L0 .. L1-1 (matrices) and the vectors at L1 */
++      for (l = s->L1; l < nl; l++)
++      {
++         k = l - L0;
++         if (s->A[k]) { hypre_ParCSRMatrixDestroy(s->A[k]); s->A[k] = NULL; }
++         if (s->P[k]) { hypre_ParCSRMatrixDestroy(s->P[k]); s->P[k] = NULL; }
++         hypre_TFree(s->l1[k], HYPRE_MEMORY_HOST);
++         s->l1[k] = NULL;
++         if (l > s->L1)
++         {
++            hypre_ParVectorDestroy(s->F[k]); s->F[k] = NULL;
++            hypre_ParVectorDestroy(s->U[k]); s->U[k] = NULL;
++            hypre_ParVectorDestroy(s->V[k]); s->V[k] = NULL;
++         }
++      }
++      hypre_TFree(nrows, HYPRE_MEMORY_HOST);
++      hypre_TFree(A, HYPRE_MEMORY_HOST);
++      hypre_TFree(P, HYPRE_MEMORY_HOST);
++      hypre_TFree(l1, HYPRE_MEMORY_HOST);
++   }
++   else if (s->is_owner && s->coarse_relax == 9)
++   {
++      /* Last set: one owner holds the coarsest level; dense matrix as in hypre_GaussElimSetup */
++      hypre_ParCSRMatrix *Ac = s->A[nl - 1 - L0];
++      hypre_CSRMatrix    *loc = hypre_MergeDiagAndOffd(Ac);
++      HYPRE_Int           n = hypre_ParCSRMatrixNumRows(Ac), i, j;
++      HYPRE_Int          *ii = hypre_CSRMatrixI(loc);
++      HYPRE_BigInt       *jj = hypre_CSRMatrixBigJ(loc);
++      HYPRE_Real         *vv = hypre_CSRMatrixData(loc);
++      hypre_assert((HYPRE_BigInt) n == hypre_ParCSRMatrixGlobalNumRows(Ac));
++      s->ge_n = n;
++      s->ge_A = hypre_CTAlloc(HYPRE_Real, (size_t) n * n, HYPRE_MEMORY_HOST);
++      s->ge_work = hypre_CTAlloc(HYPRE_Real, (size_t) n * n, HYPRE_MEMORY_HOST);
++      s->ge_b = hypre_CTAlloc(HYPRE_Real, hypre_max(n, 1), HYPRE_MEMORY_HOST);
++      for (i = 0; i < n; i++)
++      {
++         for (j = ii[i]; j < ii[i + 1]; j++)
++         {
++            s->ge_A[(size_t) i * n + (size_t) jj[j]] = vv[j];
++         }
++      }
++      hypre_CSRMatrixDestroy(loc);
++   }
++   return s;
++}
++
++static void
++hypre_AMGRedistSetDestroy(hypre_AMGRedistSet *s)
++{
++   HYPRE_Int k, nk;
++   if (!s) { return; }
++   if (s->child) { hypre_AMGRedistSetDestroy(s->child); }
++   nk = s->num_levels - s->L0;
++   if (s->is_owner)
++   {
++      for (k = 0; k < nk; k++)
++      {
++         if (s->A[k]) { hypre_ParCSRMatrixDestroy(s->A[k]); }
++         if (s->P[k]) { hypre_ParCSRMatrixDestroy(s->P[k]); }
++         if (s->F[k]) { hypre_ParVectorDestroy(s->F[k]); }
++         if (s->U[k]) { hypre_ParVectorDestroy(s->U[k]); }
++         if (s->V[k]) { hypre_ParVectorDestroy(s->V[k]); }
++         hypre_TFree(s->l1[k], HYPRE_MEMORY_HOST);
++      }
++      hypre_TFree(s->A, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->P, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->F, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->U, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->V, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->l1, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->w, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->counts, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->displs, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->ge_A, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->ge_work, HYPRE_MEMORY_HOST);
++      hypre_TFree(s->ge_b, HYPRE_MEMORY_HOST);
++      hypre_MPI_Comm_free(&s->sub_comm);
++   }
++   hypre_MPI_Comm_free(&s->group_comm);
++   hypre_TFree(s, HYPRE_MEMORY_HOST);
++}
++
++/*--------------------------------------------------------------------------
++ * V-cycle on the copies held by the owners of set s, from level l on (F[l] given).
++ *--------------------------------------------------------------------------*/
++
++static void
++hypre_AMGRedistDown(hypre_AMGRedistSet *c, hypre_ParVector *f)
++{
++   HYPRE_Real *fdata = hypre_VectorData(hypre_ParVectorLocalVector(f));
++   HYPRE_Real *cdata = c->is_owner ? hypre_VectorData(hypre_ParVectorLocalVector(c->F[0])) : NULL;
++   hypre_MPI_Gatherv(fdata, c->n_local_src, HYPRE_MPI_REAL, cdata, c->counts, c->displs,
++                     HYPRE_MPI_REAL, c->root, c->group_comm);
++}
++
++static void
++hypre_AMGRedistUp(hypre_AMGRedistSet *c, hypre_ParVector *u)
++{
++   HYPRE_Real *udata = hypre_VectorData(hypre_ParVectorLocalVector(u));
++   HYPRE_Real *cdata = c->is_owner ? hypre_VectorData(hypre_ParVectorLocalVector(c->U[0])) : NULL;
++   hypre_MPI_Scatterv(cdata, c->counts, c->displs, HYPRE_MPI_REAL, udata, c->n_local_src,
++                      HYPRE_MPI_REAL, c->root, c->group_comm);
++   hypre_ParVectorAllZeros(u) = 0;
++}
++
++static void
++hypre_AMGRedistCycle(hypre_AMGRedistSet *s, HYPRE_Int l, HYPRE_Int zero_guess)
++{
++   HYPRE_Int k = l - s->L0, n;
++   if (l == s->num_levels - 1 && s->coarse_relax == 18)
++   {
++      /* Coarsest level without coarsening progress: one l1-Jacobi sweep as in the V-cycle */
++      if (zero_guess) { hypre_ParVectorSetZeros(s->U[k]); }
++      else { hypre_ParVectorAllZeros(s->U[k]) = 0; }
++      hypre_BoomerAMGRelax(s->A[k], s->F[k], NULL, 18, 0, s->w[k], 1.0, s->l1[k], s->U[k],
++                           s->V[k], NULL);
++      return;
++   }
++   if (l == s->num_levels - 1)
++   {
++      /* Coarsest level: Gaussian elimination as in hypre_GaussElimSolve (relax type 9) */
++      n = s->ge_n;
++      hypre_TMemcpy(s->ge_work, s->ge_A, HYPRE_Real, (size_t) n * n, HYPRE_MEMORY_HOST,
++                    HYPRE_MEMORY_HOST);
++      hypre_TMemcpy(s->ge_b, hypre_VectorData(hypre_ParVectorLocalVector(s->F[k])), HYPRE_Real, n,
++                    HYPRE_MEMORY_HOST, HYPRE_MEMORY_HOST);
++      {
++         HYPRE_Real *A = s->ge_work, *x = s->ge_b;
++         hypre_gselim(A, x, n);
++      }
++      hypre_TMemcpy(hypre_VectorData(hypre_ParVectorLocalVector(s->U[k])), s->ge_b, HYPRE_Real, n,
++                    HYPRE_MEMORY_HOST, HYPRE_MEMORY_HOST);
++      hypre_ParVectorAllZeros(s->U[k]) = 0;
++      return;
++   }
++   if (zero_guess) { hypre_ParVectorSetZeros(s->U[k]); }
++   else { hypre_ParVectorAllZeros(s->U[k]) = 0; }
++   hypre_BoomerAMGRelax(s->A[k], s->F[k], NULL, 18, 0, s->w[k], 1.0, s->l1[k], s->U[k], s->V[k],
++                        NULL);
++   hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, s->A[k], s->U[k], 1.0, s->F[k], s->V[k]);
++   hypre_ParCSRMatrixMatvecT(1.0, s->P[k], s->V[k], 0.0, s->F[k + 1]);
++   if (l + 1 == s->L1)
++   {
++      hypre_AMGRedistSet *c = s->child;
++      hypre_AMGRedistDown(c, s->F[k + 1]);
++      if (c->is_owner) { hypre_AMGRedistCycle(c, l + 1, 1); }
++      hypre_AMGRedistUp(c, s->U[k + 1]);
++   }
++   else
++   {
++      hypre_AMGRedistCycle(s, l + 1, 1);
++   }
++   hypre_ParCSRMatrixMatvec(1.0, s->P[k], s->U[k + 1], 1.0, s->U[k]);
++   hypre_BoomerAMGRelax(s->A[k], s->F[k], NULL, 18, 0, s->w[k], 1.0, s->l1[k], s->U[k], s->V[k],
++                        NULL);
++}
++
++/*--------------------------------------------------------------------------
++ * Public (internal) interface
++ *--------------------------------------------------------------------------*/
++
++HYPRE_Int
++hypre_BoomerAMGRedistSetup(void *amg_vdata)
++{
++   hypre_ParAMGData    *amg_data = (hypre_ParAMGData *) amg_vdata;
++   HYPRE_Int            nl = hypre_ParAMGDataNumLevels(amg_data);
++   hypre_ParCSRMatrix **A_array = hypre_ParAMGDataAArray(amg_data);
++   hypre_ParCSRMatrix **P_array = hypre_ParAMGDataPArray(amg_data);
++   HYPRE_Int           *grid_relax_type = hypre_ParAMGDataGridRelaxType(amg_data);
++   HYPRE_Int           *num_grid_sweeps = hypre_ParAMGDataNumGridSweeps(amg_data);
++   hypre_Vector       **l1_norms = hypre_ParAMGDataL1Norms(amg_data);
++   HYPRE_Real          *relax_weight = hypre_ParAMGDataRelaxWeight(amg_data);
++   HYPRE_Int            target, minred = 4, l, size, rank, cur, eligible;
++   HYPRE_Int            tlev[64], tgs[64], nt = 0;
++   const char          *env;
++   MPI_Comm             comm;
++
++   hypre_BoomerAMGRedistDestroy(amg_vdata);
++   /* HYPRE_AMG_REDIST overrides the target number of rows per process (0 disables) */
++   env = getenv("HYPRE_AMG_REDIST");
++   target = env ? atoi(env) : hypre_ParAMGDataLRedistTarget(amg_data);
++   if (target <= 0 || nl < 3 || !A_array || !A_array[0]) { return hypre_error_flag; }
++   comm = hypre_ParCSRMatrixComm(A_array[0]);
++   hypre_MPI_Comm_size(comm, &size);
++   hypre_MPI_Comm_rank(comm, &rank);
++   if (size < 2) { return hypre_error_flag; }
++
++   /* Configurations whose V-cycle does not depend on the data distribution */
++   eligible = (hypre_ParAMGDataCycleType(amg_data) == 1) &&
++              (hypre_ParAMGDataFCycle(amg_data) == 0) &&
++              (hypre_ParAMGDataRelaxOrder(amg_data) == 0) &&
++              (hypre_ParAMGDataRestriction(amg_data) == 0) &&
++              (hypre_ParAMGDataBlockMode(amg_data) == 0) &&
++              (hypre_ParAMGDataSmoothNumLevels(amg_data) == 0) &&
++              (hypre_ParAMGDataAdditive(amg_data) < 0) &&
++              (hypre_ParAMGDataMultAdditive(amg_data) < 0) &&
++              (hypre_ParAMGDataSimple(amg_data) < 0) &&
++              (hypre_ParAMGDataFlexibleNumLevels(amg_data) == 0) &&
++              grid_relax_type && num_grid_sweeps &&
++              grid_relax_type[1] == 18 && grid_relax_type[2] == 18 &&
++              (grid_relax_type[3] == 9 || grid_relax_type[3] == 18) &&
++              num_grid_sweeps[1] == 1 && num_grid_sweeps[2] == 1 && num_grid_sweeps[3] == 1 &&
++              l1_norms && relax_weight &&
++              hypre_ParAMGDataRArray(amg_data) == P_array &&
++              hypre_GetActualMemLocation(hypre_ParCSRMatrixMemoryLocation(A_array[0])) == hypre_MEMORY_HOST &&
++              (grid_relax_type[3] == 18 || hypre_ParCSRMatrixGlobalNumRows(A_array[nl - 1]) <= 1024);
++   for (l = 0; eligible && l < nl; l++)
++   {
++      if (l < nl - 1 || grid_relax_type[3] == 18)
++      {
++         eligible = (l1_norms[l] != NULL || hypre_ParCSRMatrixNumRows(A_array[l]) == 0);
++      }
++   }
++   {
++      /* processes without rows on a level may lack some data: decide together */
++      HYPRE_Int local = eligible;
++      hypre_MPI_Allreduce(&local, &eligible, 1, HYPRE_MPI_INT, hypre_MPI_MIN, comm);
++   }
++   if (!eligible) { return hypre_error_flag; }
++
++   /* Plan: reduce the number of active processes by >= minred when a level has fewer than
++      target rows per process, and go to a single process once a level is below target. */
++   cur = size;
++   for (l = 0; l < nl && nt < 64; l++)
++   {
++      HYPRE_BigInt n = hypre_ParCSRMatrixGlobalNumRows(A_array[l]);
++      HYPRE_Int    q = (HYPRE_Int) hypre_max(1, n / target);
++      HYPRE_Int    noff = hypre_ParAMGDataLRedistNOff(amg_data);
++      if (l == 0 && noff > 1 && size >= 2 * noff)
++      {
++         /* Hierarchies solved concurrently: always agglomerate from level 0 on, by at least
++            their number (the same work per process as solving them one after the other) */
++         HYPRE_Int g = hypre_max(noff, (cur + q - 1) / q);
++         tlev[nt] = l;
++         tgs[nt] = g;
++         nt++;
++         cur = (cur + g - 1) / g;
++      }
++      else if ((q == 1 && cur > 1) || (HYPRE_BigInt) q * minred <= cur)
++      {
++         HYPRE_Int g = (cur + q - 1) / q;
++         tlev[nt] = l;
++         tgs[nt] = g;
++         nt++;
++         cur = (cur + g - 1) / g;
++      }
++   }
++   if (nt == 0 || cur != 1) { return hypre_error_flag; }
++
++   {
++      hypre_AMGRedistSource src;
++      hypre_AMGRedist      *rd = hypre_CTAlloc(hypre_AMGRedist, 1, HYPRE_MEMORY_HOST);
++      HYPRE_Int            *nrows = hypre_CTAlloc(HYPRE_Int, nl, HYPRE_MEMORY_HOST);
++      HYPRE_Real          **l1 = hypre_CTAlloc(HYPRE_Real *, nl, HYPRE_MEMORY_HOST);
++      for (l = 0; l < nl; l++)
++      {
++         nrows[l] = hypre_ParCSRMatrixNumRows(A_array[l]);
++         l1[l] = ((l < nl - 1 || grid_relax_type[3] == 18) && l1_norms[l]) ? hypre_VectorData(l1_norms[l]) : NULL;
++      }
++      src.comm = comm;
++      src.num_levels = nl;
++      src.A = A_array;
++      src.P = P_array;
++      src.l1 = l1;
++      src.nrows = nrows;
++      src.coarse_relax = grid_relax_type[3];
++      rd->level = tlev[0];
++      {
++         /* Hierarchies solved concurrently (AMS additive Pi-space corrections) use disjoint owners */
++         HYPRE_Int noff = hypre_ParAMGDataLRedistNOff(amg_data), off = hypre_ParAMGDataLRedistOff(amg_data);
++         HYPRE_Int root_off = (tlev[0] == 0 && noff > 1) ? (off * tgs[0]) / noff : 0;
++         rd->set = hypre_AMGRedistSetCreate(&src, tlev[0], tgs[0], root_off, tlev + 1, tgs + 1, nt - 1);
++      }
++      if (tlev[0] == 0)
++      {
++         HYPRE_BigInt range[2];
++         range[0] = hypre_ParCSRMatrixFirstRowIndex(A_array[0]);
++         range[1] = range[0] + hypre_ParCSRMatrixNumRows(A_array[0]);
++         rd->f0 = hypre_ParVectorCreate(comm, hypre_ParCSRMatrixGlobalNumRows(A_array[0]), range);
++         rd->u0 = hypre_ParVectorCreate(comm, hypre_ParCSRMatrixGlobalNumRows(A_array[0]), range);
++         hypre_ParVectorInitialize_v2(rd->f0, HYPRE_MEMORY_HOST);
++         hypre_ParVectorInitialize_v2(rd->u0, HYPRE_MEMORY_HOST);
++      }
++      /* Relaxation weights per level (replicated) */
++      {
++         hypre_AMGRedistSet *s;
++         for (s = rd->set; s; s = s->child)
++         {
++            if (!s->is_owner) { break; }
++            for (l = s->L0; l < nl; l++) { s->w[l - s->L0] = relax_weight[l]; }
++         }
++      }
++      hypre_TFree(nrows, HYPRE_MEMORY_HOST);
++      hypre_TFree(l1, HYPRE_MEMORY_HOST);
++      hypre_ParAMGDataLRedist(amg_data) = rd;
++   }
++   return hypre_error_flag;
++}
++
++HYPRE_Int
++hypre_BoomerAMGRedistDestroy(void *amg_vdata)
++{
++   hypre_ParAMGData *amg_data = (hypre_ParAMGData *) amg_vdata;
++   hypre_AMGRedist  *rd = (hypre_AMGRedist *) hypre_ParAMGDataLRedist(amg_data);
++   if (rd)
++   {
++      hypre_AMGRedistSetDestroy(rd->set);
++      if (rd->f0) { hypre_ParVectorDestroy(rd->f0); }
++      if (rd->u0) { hypre_ParVectorDestroy(rd->u0); }
++      hypre_TFree(rd, HYPRE_MEMORY_HOST);
++      hypre_ParAMGDataLRedist(amg_data) = NULL;
++   }
++   return hypre_error_flag;
++}
++
++/* Number of levels the distributed V-cycle visits (the last one is solved by
++   hypre_BoomerAMGRedistCoarseSolve), or 0 if the hierarchy is not redistributed. */
++HYPRE_Int
++hypre_BoomerAMGRedistNumLevels(void *amg_vdata, hypre_ParVector *f)
++{
++   hypre_ParAMGData *amg_data = (hypre_ParAMGData *) amg_vdata;
++   hypre_AMGRedist  *rd = (hypre_AMGRedist *) hypre_ParAMGDataLRedist(amg_data);
++   if (!rd || hypre_ParVectorNumVectors(f) != 1) { return 0; }
++   return rd->level + 1;
++}
++
++HYPRE_Int
++hypre_BoomerAMGRedistCoarseSolve(void *amg_vdata, hypre_ParVector *f, hypre_ParVector *u)
++{
++   hypre_ParAMGData *amg_data = (hypre_ParAMGData *) amg_vdata;
++   hypre_AMGRedist  *rd = (hypre_AMGRedist *) hypre_ParAMGDataLRedist(amg_data);
++   hypre_AMGRedistSet *s = rd->set;
++   HYPRE_Int zero_guess = (s->L0 > 0) || hypre_ParVectorAllZeros(u);
++   hypre_AMGRedistDown(s, f);
++   if (!zero_guess)
++   {
++      /* initial guess of a full redistributed cycle (transition at level 0) */
++      HYPRE_Real *udata = hypre_VectorData(hypre_ParVectorLocalVector(u));
++      HYPRE_Real *cdata = s->is_owner ? hypre_VectorData(hypre_ParVectorLocalVector(s->U[0])) : NULL;
++      hypre_MPI_Gatherv(udata, s->n_local_src, HYPRE_MPI_REAL, cdata, s->counts, s->displs,
++                        HYPRE_MPI_REAL, s->root, s->group_comm);
++   }
++   if (s->is_owner) { hypre_AMGRedistCycle(s, s->L0, zero_guess); }
++   hypre_AMGRedistUp(s, u);
++   return hypre_error_flag;
++}
++
++/*--------------------------------------------------------------------------
++ * Additive subspace corrections y += sum_i P_i B_i^{-1} P_i^T r0 with hierarchies that are
++ * agglomerated from level 0 on disjoint owners: the V-cycles run concurrently. The result
++ * equals the sequential corrections (same V-cycles, same order of the updates of y).
++ * Returns 1 (nothing done) if not applicable.
++ *--------------------------------------------------------------------------*/
++
++HYPRE_Int
++hypre_BoomerAMGRedistSubspaceConcurrent(HYPRE_Int n, HYPRE_Solver *B, hypre_ParCSRMatrix **P,
++                                        hypre_ParVector *r0, hypre_ParVector *y,
++                                        hypre_ParVector *g0)
++{
++   hypre_AMGRedist     *rd[8];
++   hypre_MPI_Request    req[16];
++   hypre_MPI_Status     st[16];
++   HYPRE_Int            i, nreq = 0;
++   if (n > 8) { return 1; }
++   for (i = 0; i < n; i++)
++   {
++      if (!B[i]) { return 1; }
++      rd[i] = (hypre_AMGRedist *) hypre_ParAMGDataLRedist((hypre_ParAMGData *) B[i]);
++      if (!rd[i] || rd[i]->level != 0 || !rd[i]->f0 || hypre_ParVectorNumVectors(r0) != 1)
++      {
++         return 1;
++      }
++   }
++   for (i = 0; i < n; i++)
++   {
++      hypre_ParCSRMatrixMatvecT(1.0, P[i], r0, 0.0, rd[i]->f0);
++   }
++   /* gather the restricted residuals to the owners, post the receives of the corrections */
++   for (i = 0; i < n; i++)
++   {
++      hypre_AMGRedistSet *s = rd[i]->set;
++      HYPRE_Real *f = hypre_VectorData(hypre_ParVectorLocalVector(rd[i]->f0));
++      HYPRE_Real *c = s->is_owner ? hypre_VectorData(hypre_ParVectorLocalVector(s->F[0])) : NULL;
++      MPI_Igatherv(f, s->n_local_src, HYPRE_MPI_REAL, c, s->counts, s->displs,
++                         HYPRE_MPI_REAL, s->root, s->group_comm, &req[nreq++]);
++   }
++   for (i = 0; i < n; i++)
++   {
++      hypre_AMGRedistSet *s = rd[i]->set;
++      if (!s->is_owner)
++      {
++         HYPRE_Real *u = hypre_VectorData(hypre_ParVectorLocalVector(rd[i]->u0));
++         MPI_Iscatterv(NULL, NULL, NULL, HYPRE_MPI_REAL, u, s->n_local_src, HYPRE_MPI_REAL,
++                             s->root, s->group_comm, &req[nreq++]);
++      }
++   }
++   for (i = 0; i < n; i++)
++   {
++      hypre_AMGRedistSet *s = rd[i]->set;
++      if (s->is_owner)
++      {
++         HYPRE_Real *u = hypre_VectorData(hypre_ParVectorLocalVector(rd[i]->u0));
++         hypre_MPI_Wait(&req[i], &st[i]);
++         hypre_AMGRedistCycle(s, 0, 1);
++         MPI_Iscatterv(hypre_VectorData(hypre_ParVectorLocalVector(s->U[0])), s->counts,
++                             s->displs, HYPRE_MPI_REAL, u, s->n_local_src, HYPRE_MPI_REAL,
++                             s->root, s->group_comm, &req[nreq++]);
++      }
++   }
++   hypre_MPI_Waitall(nreq, req, st);
++   for (i = 0; i < n; i++)
++   {
++      hypre_ParCSRMatrixMatvec(1.0, P[i], rd[i]->u0, 0.0, g0);
++      hypre_ParVectorAxpy(1.0, g0, y);
++   }
++   hypre_ParVectorAllZeros(y) = 0;
++   return 0;
++}
+diff --git a/src/parcsr_ls/par_amg_setup.c b/src/parcsr_ls/par_amg_setup.c
+index dc3142769..b860ced10 100644
+--- a/src/parcsr_ls/par_amg_setup.c
++++ b/src/parcsr_ls/par_amg_setup.c
+@@ -4028,6 +4028,7 @@ hypre_BoomerAMGSetup( void               *amg_vdata,
+    }
+ #endif
+ 
++   hypre_BoomerAMGRedistSetup(amg_vdata);
+    hypre_SolverSetIsSetup((hypre_Solver *) amg_vdata);
+ 
+ cleanup:
+diff --git a/src/parcsr_ls/par_cycle.c b/src/parcsr_ls/par_cycle.c
+index 2d8887cae..0d942534f 100644
+--- a/src/parcsr_ls/par_cycle.c
++++ b/src/parcsr_ls/par_cycle.c
+@@ -128,6 +128,19 @@ hypre_BoomerAMGCycle( void              *amg_vdata,
+    Ptemp             = hypre_ParAMGDataPtemp(amg_data);
+    Ztemp             = hypre_ParAMGDataZtemp(amg_data);
+    num_levels        = hypre_ParAMGDataNumLevels(amg_data);
++   {
++      /* coarse levels agglomerated onto fewer processes: the distributed cycle stops early */
++      HYPRE_Int num_levels_redist = hypre_BoomerAMGRedistNumLevels(amg_data, F_array[0]);
++      if (num_levels_redist > 0) { num_levels = num_levels_redist; }
++      if (num_levels_redist == 1)
++      {
++         /* the whole hierarchy is agglomerated */
++         hypre_BoomerAMGRedistCoarseSolve(amg_data, F_array[0], U_array[0]);
++         hypre_GpuProfilingPopRange();
++         HYPRE_ANNOTATE_FUNC_END;
++         return hypre_error_flag;
++      }
++   }
+    max_levels        = hypre_ParAMGDataMaxLevels(amg_data);
+    cycle_type        = hypre_ParAMGDataCycleType(amg_data);
+    fcycle            = hypre_ParAMGDataFCycle(amg_data);
+@@ -429,6 +442,12 @@ hypre_BoomerAMGCycle( void              *amg_vdata,
+          HYPRE_ANNOTATE_REGION_BEGIN("%s", "Relaxation");
+          hypre_GpuProfilingPushRange("Relaxation");
+ 
++         if (level == num_levels - 1 && level < hypre_ParAMGDataNumLevels(amg_data) - 1)
++         {
++            /* the coarser levels are agglomerated onto fewer processes */
++            hypre_BoomerAMGRedistCoarseSolve(amg_data, F_array[level], U_array[level]);
++         }
++         else
+          for (jj = 0; jj < cg_num_sweep; jj++)
+          {
+             if (smooth_num_levels > level && smooth_type > 9)
 diff --git a/src/parcsr_ls/par_gauss_elim.c b/src/parcsr_ls/par_gauss_elim.c
 index 3988732b1..3bf2bf566 100644
 --- a/src/parcsr_ls/par_gauss_elim.c
