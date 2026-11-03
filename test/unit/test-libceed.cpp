@@ -87,7 +87,10 @@ auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, bool am
   }
 
   // Construct the parallel mesh.
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   for (int l = 0; l < ref_levels; l++)
   {
@@ -2422,6 +2425,12 @@ TEST_CASE("libCEED packed complex QData application",
                       data.active_indices.size() < data.indices.size());
     }
     Mpi::GlobalSum(1, &num_subsets, Mpi::World());
+    int max_ne = mesh.GetNE();
+    Mpi::GlobalMax(1, &max_ne, Mpi::World());
+    if (max_ne < 2)
+    {
+      SKIP("No process owns enough elements for a strict subset");
+    }
     REQUIRE(num_subsets > 0);
   }
   if (mesh_file && std::string(mesh_file) == "fichera-mixed-p2.mesh" &&
@@ -2548,6 +2557,12 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
                       data.active_indices.size() < data.indices.size());
     }
     Mpi::GlobalSum(1, &num_subsets, Mpi::World());
+    int max_ne = mesh.GetNE();
+    Mpi::GlobalMax(1, &max_ne, Mpi::World());
+    if (max_ne < 2)
+    {
+      SKIP("No process owns enough elements for a strict subset");
+    }
     REQUIRE(num_subsets > 0);
 
     long long num_packed = 0;

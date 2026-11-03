@@ -47,7 +47,10 @@ std::unique_ptr<Mesh> LoadTestMesh(MPI_Comm comm, const std::string &file)
 {
   mfem::Mesh smesh(TestMeshPath(file), 1, 1);
   smesh.EnsureNodes();
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
@@ -165,7 +168,10 @@ std::unique_ptr<Mesh> MakeInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type ele
   smesh.Finalize();
   smesh.SetAttributes();
   smesh.EnsureNodes();
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
@@ -217,7 +223,10 @@ std::unique_ptr<Mesh> MakeNCInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type e
     smesh.GeneralRefinement(refs, 1);
   }
 
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
@@ -257,7 +266,10 @@ std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_
   smesh.Finalize();
   smesh.SetAttributes();
   smesh.EnsureNodes();
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
@@ -313,7 +325,10 @@ std::unique_ptr<Mesh> MakeNCInterfaceMesh(MPI_Comm comm, mfem::Element::Type ele
     smesh.GeneralRefinement(refs, 1);
   }
 
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
@@ -365,7 +380,10 @@ std::unique_ptr<Mesh> MakeNCCoarseInterfaceMesh3D(MPI_Comm comm,
     smesh.GeneralRefinement(refs, 1);
   }
 
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
@@ -493,7 +511,10 @@ std::unique_ptr<Mesh> MakeNCMixedCoarseOwnerMesh(MPI_Comm comm,
     smesh.GeneralRefinement(refs, 1);
   }
 
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   std::vector<int> partitioning;
   if (Mpi::Size(comm) > 1)
   {
@@ -2329,7 +2350,10 @@ TEST_CASE("PointFieldEvaluator Domain Fields 2D",
   auto smesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian2D(3, 2, elem_type, false, 1.2, 0.7));
   smesh->EnsureNodes();
-  REQUIRE(Mpi::Size(comm) <= smesh->GetNE());
+  if (Mpi::Size(comm) > smesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh_ptr = std::make_unique<mfem::ParMesh>(comm, *smesh);
   Mesh mesh(std::move(pmesh_ptr));
   auto &pmesh = mesh.Get();
