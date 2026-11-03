@@ -18,7 +18,12 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      is not a class; the Unclaimed remainder = the SCP-dropped vertex coupons' in-box windows,
      CREDITED to their OWNER clusters (F2, scp_owner_credit); the exclusion export's classes are
      a SECOND partition (Excluded:<class> rows beside the physical one, EXCLUDED_ROW_PREFIX),
-     UnprobedModels among them is APPLIED energy.
+     UnprobedModels among them is APPLIED energy. v2 (fix round P1; decisions 1209 / 1230 / 1233): the ES rows
+     are read PER SOURCE (--source; a multi-source run carries every source's blocks and the union), the F2 credit
+     is CAPPED at the dropped coupons' in-box energy (the SCP clipped-correction CSV; else the SCP RAW row), the
+     uncredited remainder is the RAW row Unclaimed (unattributed), the no-energy RAW classes (UnpatchedPairs, the
+     identification-decided exclusions) carry an ESTIMATE of it by length, and a binary's `unpatched` label is read
+     as the MEASURED UnpatchedPairs row.
   B  the NAMED RESIDUAL TABLE: the terms the band does not calibrate, with their bounds of record.
   C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v5.json, written by
      coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons; the gap term
@@ -49,6 +54,16 @@ STATUS_ROW = {"Exact": "Exact", "LegacyContract": "Exact", "Interpolated": "Inte
               "GeometricNearMatched": "GeometricNearMatched"}
 RAW_ROWS = ("Missing", "SCP", "DomainBoundary", "ConductorConsistency", "GeometryFallbacks",
             "LoopRemainder", "Unclaimed")
+# The raw partition's labels that are not model groups: `unclaimed` (the remainder of the physical tree) and `unpatched`
+# (fix round 2B: the UnpatchedPair features' within-R raw energy, exported by a binary that carries the label; read as the
+# MEASURED UnpatchedPairs RAW row, superseding the reader's ESTIMATE below).
+NON_MODEL_LABELS = ("unclaimed", "unpatched")
+UNPATCHED_LABEL = "unpatched"
+UNPATCHED_ROW = "UnpatchedPairs"
+# The SCP clipped-correction export (decisions 958 (b) / 960 / 969): per dropped coupon patch its window's raw within-R
+# energy (`raw whole energy[k]`) and the part outside every cluster box (`raw outside energy[k]`); the difference is the
+# dropped coupon's IN-BOX energy = the energy the F2 owner credit may move at most (fix round 2A (i): the credit CAP).
+SCP_CLIPPED_CSV = "surface-response-spatial-cluster-priority-clipped-correction.csv"
 FALLBACK_CLASSES = ("OverlapExcluded", "UnlocatedPatch", "InterfaceMappingConflict", "KeyMismatch",
                     "NoMatchedFeature", "AllPatchesOutside", "NoPerimeter", "ContinuationUnresolved",
                     "ReferenceInGap", "MaxwellPatchExcluded", "BranchingPerimeter", "UnorientedEdge", "DegenerateFace",
@@ -64,6 +79,9 @@ FALLBACK_CLASSES = ("OverlapExcluded", "UnlocatedPatch", "InterfaceMappingConfli
 #    local cross-section deviates > 10 %, 1078), CornerArmOnArc (the arm direction read on the chord, 1081), RemainderBelowBar
 #    (sub-bar remainders left as features, 1077 Q1 (B)).
 IDENTIFICATION_RAW_EXCLUSION_CLASSES = ("UnclusterableComponent", "BranchingPerimeter")
+# The RAW classes the binary exports NO energy for (manifest-only rows; v1 printed them "(in Unclaimed)"): the reader's
+# 2A (iii) ESTIMATE splits the unattributed remainder among them by length.
+NO_ENERGY_RAW_CLASSES = (UNPATCHED_ROW,) + IDENTIFICATION_RAW_EXCLUSION_CLASSES
 NAMED_RECORD_ROWS = (
     ("TaperCrossings", "Summary", "the monotone sub-2R stretch at a taper's 2R crossing stays claimed by the isolated-edge model (ApproximatedByIsolatedEdge; decision 1069)"),
     ("TaperMeanKeys", "Summary", "features composed from a chord-group link whose separation range exceeds the 5 % pair tolerance are keyed at the link's MEAN cross-section (KeyedAtTheMean; OI-TAPER-MEAN-KEY, decision 1078)"),
@@ -105,6 +123,10 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # owner credit, UnprobedModels applied, the two partitions): the fitted numbers + LOO identical to v3; median_g and every run's
 # gap term move (the band file's "note" says which and why). v2 / v3 kept.
 DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v5.json")
+# v2 of the reader (fix round P1, decisions 1209 / 1230 / 1233 (2); DESIGN-v3 s2 2A + s6): the ES rows read PER SOURCE
+# (select_source; the multi-source union), the F2 owner credit CAPPED at the dropped coupons' in-box energy, the uncredited
+# remainder printed as Unclaimed (unattributed), the no-energy RAW classes' ESTIMATE rows, the measured `unpatched` label.
+TOOL_VERSION = "coverage_report.py v2"
 
 
 class MissingInput(Exception):
@@ -221,15 +243,43 @@ def target_interfaces(config, kind):
     return [int(i) for i in rc.get("TargetInterfaces", [])], rc
 
 
-def load_surface_energies(postpro, kind):
+def es_sources(postpro):
+    """The ES run's sources = the `i` column of surface-Q-corrected.csv (one row per terminal excitation), in file order."""
+    rows = read_csv(os.path.join(postpro, "surface-Q-corrected.csv"), required=True)
+    out = []
+    for row in rows:
+        i = row.get("i")
+        if is_number(i) and int(i) not in out:
+            out.append(int(i))
+    return out
+
+
+def select_source(rows, source):
+    """The rows of ONE source (the `source` / `i` column: an ES multi-terminal run writes one block per source). `source`
+    None = the FIRST row's source (the single-source form); rows without a source column pass unchanged (v2, decision
+    1209: the v1 reader keyed on ("f (GHz)", "exc") only and let the LAST source overwrite the first on W10 / W12 / W13)."""
+    if not rows:
+        return rows
+    col = "source" if "source" in rows[0] else ("i" if "i" in rows[0] else None)
+    if col is None:
+        return rows
+    key = rows[0].get(col) if source is None else float(source)
+    return [r for r in rows if r.get(col) == key]
+
+
+def load_surface_energies(postpro, kind, source=None):
     """Per interface index: E_surf raw / fixed-trace (ft) / fixed-flux (ff) / self-consistent (sc) in J,
-    the closure columns; evaluation = the FIRST row (ES: the one excitation; Maxwell: the first f / exc)."""
+    the closure columns; evaluation = ONE source's row (ES: --source, default the first; Maxwell: the first f / exc)."""
     rows = read_csv(os.path.join(postpro, "surface-Q-corrected.csv"), required=True)
     if not rows:
         raise MissingInput(os.path.join(postpro, "surface-Q-corrected.csv") + " (no rows)")
     out = {"interfaces": {}, "closure": {}}
     if kind == "ES":
-        row = rows[0]
+        selected = select_source(rows, source)
+        if not selected:
+            raise MissingInput(os.path.join(postpro, "surface-Q-corrected.csv") + f" (no row of source {source})")
+        row = selected[0]
+        out["source"] = int(row["i"]) if is_number(row.get("i")) else None
         raw = indexed_columns(row, "E_surf raw")
         ft = indexed_columns(row, "E_surf postprocessed fixed-trace")
         ff = indexed_columns(row, "E_surf postprocessed fixed-flux")
@@ -269,9 +319,12 @@ def load_surface_energies(postpro, kind):
     return out
 
 
-def load_edge_energies(postpro):
-    """surface-Q-edge.csv -> {interface: E_out (J)} at the library radius (the first evaluation)."""
+def load_edge_energies(postpro, source=None):
+    """surface-Q-edge.csv -> {interface: E_out (J)} at the library radius (ONE source's block: ES --source, default the
+    first; Maxwell the first f / exc)."""
     rows = read_csv(os.path.join(postpro, "surface-Q-edge.csv"), required=True)
+    if source is not None and rows and "i" in rows[0]:
+        rows = select_source(rows, source)
     out = {}
     key = None
     for row in rows:
@@ -523,9 +576,10 @@ def _eval0(rows):
     return [r for r in (rows or []) if r.get("evaluation", 0.0) == 0.0]
 
 
-def _first_eval_rows(rows):
-    """The evaluation-0 rows of the FIRST (f, exc) key (Maxwell has one block per excitation)."""
-    rows = _eval0(rows)
+def _first_eval_rows(rows, source=None):
+    """The evaluation-0 rows of ONE source (select_source: the ES `source` column; v2) and of the FIRST (f, exc) key
+    (Maxwell has one block per excitation)."""
+    rows = select_source(_eval0(rows), source)
     if not rows:
         return rows
     key = (rows[0].get("f (GHz)"), rows[0].get("exc"))
@@ -546,7 +600,7 @@ def _accumulate(dst, add):
         dst[t] = dst.get(t, 0.0) + v
 
 
-def raw_class_energies(postpro, interfaces, targets, kind):
+def raw_class_energies(postpro, interfaces, targets, kind, source=None):
     """The recorded RAW classes' within-R raw energy per Type: {row: {Type: J}} plus their locations. The binary writes a
     `Total` row (type == "Total") after the per-type rows of every raw-class CSV: it is the SUM of the rows above it, never a
     class (decision 1125: summing it doubled Missing / DomainBoundary / SCP / ConductorConsistency on every report of record)."""
@@ -557,7 +611,7 @@ def raw_class_energies(postpro, interfaces, targets, kind):
         if rows is None:
             continue
         acc = {}
-        for r in _first_eval_rows(rows):
+        for r in _first_eval_rows(rows, source):
             if str(r.get("type")) == RAW_CSV_TOTAL_ROW:
                 continue
             _accumulate(acc, _sum_by_type(indexed_columns(r, prefix), interfaces, targets))
@@ -583,19 +637,19 @@ def raw_class_energies(postpro, interfaces, targets, kind):
         loops = read_csv(os.path.join(postpro, "surface-response-loop-remainder-energy.csv"))
         if loops is not None:
             acc = {}
-            for r in _first_eval_rows(loops):
+            for r in _first_eval_rows(loops, source):
                 if str(r.get("model")) == RAW_CSV_TOTAL_ROW:
                     continue
                 _accumulate(acc, _sum_by_type(indexed_columns(r, "remainder energy"), interfaces, targets))
             rows_out["LoopRemainder"] = acc
-    exclusion = exclusion_energy_rows(postpro)
+    exclusion = exclusion_energy_rows(postpro, source)
     for cls, by_type in exclusion["classes"].items():
         rows_out[EXCLUDED_ROW_PREFIX + cls] = by_type
         locations[EXCLUDED_ROW_PREFIX + cls] = exclusion["portions"].get(cls, [])
     return rows_out, locations
 
 
-def exclusion_energy_rows(postpro):
+def exclusion_energy_rows(postpro, source=None):
     """surface-response-exclusion-energy.csv (the section-8 export, DESIGN section 8 / decision 1076; Diagnostics.ExclusionEnergy
     on): the within-R raw energy of the EXCLUDED / unclaimed portions per class x Type for the first excitation block (columns
     by NAME: class, type, class portions, class length (m), raw energy (J), interface raw energy (J)); the Claimed and Total
@@ -606,6 +660,9 @@ def exclusion_energy_rows(postpro):
     absent (the records of record carry none: the flag is OFF)."""
     rows = read_csv(os.path.join(postpro, "surface-response-exclusion-energy.csv"))
     out = {"present": rows is not None, "classes": {}, "portions": {}, "interface_raw": {}, "claimed": {}, "applied_unprobed": {}}
+    if not rows:
+        return out
+    rows = select_source(rows, source)
     if not rows:
         return out
     block_keys = [k for k in ("f (GHz)", "m", "exc", "source") if k in rows[0]]
@@ -635,24 +692,24 @@ def exclusion_energy_rows(postpro):
     return out
 
 
-def model_energies(postpro, interfaces, targets):
-    """surface-response-model-energy.csv evaluation 0 -> {model index: {Type: fabricated energy (J)}}."""
+def model_energies(postpro, interfaces, targets, source=None):
+    """surface-response-model-energy.csv evaluation 0 of ONE source -> {model index: {Type: fabricated energy (J)}}."""
     rows = read_csv(os.path.join(postpro, "surface-response-model-energy.csv"), required=True)
     out = {}
-    for r in _first_eval_rows(rows):
+    for r in _first_eval_rows(rows, source):
         idx = int(r["model"])
         out[idx] = _sum_by_type(indexed_columns(r, "fabricated surface energy"), interfaces, targets)
     return out
 
 
-def raw_partition(postpro, interfaces, targets):
+def raw_partition(postpro, interfaces, targets, source=None):
     """surface-response-model-raw-energy.csv (PatchEnergy) -> ({label: {Type: J}}, {label: [model indices]},
-    {label: weight length (m)}) for evaluation 0; None when the run has no raw partition (the PROXY path)."""
+    {label: weight length (m)}) for evaluation 0 of ONE source; None when the run has no raw partition (the PROXY path)."""
     rows = read_csv(os.path.join(postpro, "surface-response-model-raw-energy.csv"))
     if rows is None:
         return None
     labels = {}
-    for r in _first_eval_rows(rows):
+    for r in _first_eval_rows(rows, source):
         labels[str(r["label"])] = _sum_by_type(indexed_columns(r, "raw energy"), interfaces, targets)
     groups = read_csv(os.path.join(postpro, "surface-response-model-raw-groups.csv")) or []
     members = {}
@@ -662,7 +719,7 @@ def raw_partition(postpro, interfaces, targets):
         members.setdefault(label, []).append(int(g["model"]))
         weights[(label, int(g["model"]))] = g.get("weight length (m)", 0.0)
     for label in labels:
-        if label != "unclaimed" and label not in members:
+        if label not in NON_MODEL_LABELS and label not in members:
             members[label] = [int(m[1:]) for m in label.split("+") if m.startswith("m")]
     return {"labels": labels, "members": members, "weights": weights}
 
@@ -786,7 +843,53 @@ def scp_owner_credit(remainder, scp_dropped, manifest_models):
     return credited, record
 
 
-def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths, by_topology=None, scp_dropped=None):
+def scp_in_box_energy(postpro, interfaces, targets, source=None):
+    """{Type: J} = the SCP-dropped coupons' in-box raw energy (raw whole - raw outside, evaluation 0 of ONE source, summed
+    over the dropped patches) from the clipped-correction CSV; None when the run exports none (fix round 2A (i))."""
+    rows = read_csv(os.path.join(postpro, SCP_CLIPPED_CSV))
+    if rows is None:
+        return None
+    acc = {}
+    for r in _first_eval_rows(rows, source):
+        whole = indexed_columns(r, "raw whole energy")
+        outside = indexed_columns(r, "raw outside energy")
+        inside = {k: whole[k] - outside.get(k, 0.0) for k in whole if is_number(whole[k]) and is_number(outside.get(k, 0.0))}
+        _accumulate(acc, _sum_by_type(inside, interfaces, targets))
+    return acc
+
+
+def cap_scp_owner_credit(credited, record, cap, cap_source):
+    """2A (i): the F2 owner credit may not exceed the dropped coupons' in-box energy `cap` (the clipped-correction CSV; else
+    the SCP RAW row's own energy): every owner's credit is scaled by cap / credited; the record names both numbers."""
+    record["uncapped_energy"] = credited
+    record["cap_J"] = cap
+    record["cap_source"] = cap_source
+    record["capped"] = False
+    if credited <= 0.0 or credited <= cap:
+        return credited, record
+    factor = max(cap, 0.0) / credited
+    for owner in record["owners"]:
+        owner["energy"] *= factor
+    record["energy"] = credited * factor
+    record["capped"] = True
+    record["rule"] += ("; CAPPED (fix round 2A (i)) at the dropped coupons' in-box energy " + cap_source
+                       + ": the uncredited remainder is the RAW row Unclaimed (unattributed)")
+    return credited * factor, record
+
+
+def no_energy_raw_estimates(unattributed, lengths_t, energy_raw):
+    """2A (iii): the RAW classes the run exports no energy for (UnpatchedPairs, the identification-decided exclusions)
+    receive an ESTIMATE = the unattributed remainder x (their length / the sum of the no-energy RAW lengths); an upper bound
+    when one class carries the whole remainder (W31). -> {row: J} (empty when no such class has length)."""
+    no_energy = {k: v for k, v in (lengths_t.get("raw") or {}).items() if v > 0.0 and k in NO_ENERGY_RAW_CLASSES and k not in energy_raw}
+    total = sum(no_energy.values())
+    if unattributed <= 0.0 or total <= 0.0:
+        return {}
+    return {k: unattributed * v / total for k, v in no_energy.items()}
+
+
+def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths, by_topology=None, scp_dropped=None,
+                     source=None):
     """Block A ENERGY column per Type. ENERGY mode when the raw partition exists; else the PROXY
     (model rows = W_t x the LENGTH share; the recorded RAW rows' own energies; Unclaimed = the remainder).
     Two partitions of the within-R energy are read (decision 1129): the PHYSICAL-tree one (the model labels + the in-label
@@ -794,14 +897,16 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
     (Excluded:<class> RAW rows beside it, never subtracted from the label). The F2 owner credit (scp_owner_credit) moves the
     Unclaimed remainder to the owner clusters' rows; g_corner = the correction ratio over the corner-class models (the
     CornerArmTrim bound of band_table)."""
-    partition = raw_partition(postpro, interfaces, targets)
-    fab = model_energies(postpro, interfaces, targets)
-    raw_rows, locations = raw_class_energies(postpro, interfaces, targets, kind)
-    exclusion = exclusion_energy_rows(postpro)
+    partition = raw_partition(postpro, interfaces, targets, source)
+    fab = model_energies(postpro, interfaces, targets, source)
+    raw_rows, locations = raw_class_energies(postpro, interfaces, targets, kind, source)
+    exclusion = exclusion_energy_rows(postpro, source)
+    in_box = scp_in_box_energy(postpro, interfaces, targets, source)
     mode = "ENERGY" if partition is not None else "PROXY"
     anchors = anchor_models(partition, catalog, manifest_models)
     scp_dropped = scp_dropped if scp_dropped is not None else []
-    out = {"mode": mode, "types": {}, "locations": locations, "anchor_mapped_models": [],
+    out = {"mode": mode, "types": {}, "locations": locations, "anchor_mapped_models": [], "source": source,
+           "scp_in_box_energy_J": in_box,
            "exclusion_export": {"present": exclusion["present"],
                                 "classes": sorted(k[len(EXCLUDED_ROW_PREFIX):] for k in raw_rows if k.startswith(EXCLUDED_ROW_PREFIX)),
                                 "applied_unprobed_J": exclusion["applied_unprobed"],
@@ -813,7 +918,8 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
         W_t = w["W"]
         acc = {"W": W_t, "E_out": w["E_out"], "models": {}, "classes": {}, "raw": {}, "unclaimed_label": None,
                "fab_total": 0.0, "raw_models_total": 0.0, "g": None, "g_corner": None, "grown": 0.0, "mapped_models": 0.0,
-               "scp_owner_credit": None, "unprobed_applied": exclusion["applied_unprobed"].get(t, 0.0)}
+               "scp_owner_credit": None, "unprobed_applied": exclusion["applied_unprobed"].get(t, 0.0),
+               "raw_estimated": {}, "unclaimed_unattributed": None}
         fab_t = sum(v.get(t, 0.0) for v in fab.values())
         acc["fab_total"] = fab_t
         if partition is not None:
@@ -822,6 +928,11 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
                 e = by_type.get(t, 0.0)
                 if label == "unclaimed":
                     acc["unclaimed_label"] = e
+                    continue
+                if label == UNPATCHED_LABEL:
+                    # 2B: the MEASURED UnpatchedPairs raw energy (a RAW row of the physical tree, inside the unclaimed
+                    # integral of a binary without the label; here its own label)
+                    acc["raw"][UNPATCHED_ROW] = acc["raw"].get(UNPATCHED_ROW, 0.0) + e
                     continue
                 members = partition["members"].get(label, [])
                 weights = [partition["weights"].get((label, m), 0.0) for m in members]
@@ -842,9 +953,15 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
                         acc["mapped_models"] += e * share
             for row_name, by_type in raw_rows.items():
                 acc["raw"][row_name] = by_type.get(t, 0.0)
-            recorded_in_label = sum(v for k, v in acc["raw"].items() if not k.startswith(EXCLUDED_ROW_PREFIX))
+            measured_unpatched = acc["raw"].get(UNPATCHED_ROW, 0.0)
+            recorded_in_label = sum(v for k, v in acc["raw"].items() if not k.startswith(EXCLUDED_ROW_PREFIX)) - measured_unpatched
             remainder = (acc["unclaimed_label"] or 0.0) - recorded_in_label
             credited, acc["scp_owner_credit"] = scp_owner_credit(remainder, scp_dropped, manifest_models)
+            if in_box is not None:
+                cap, cap_source = in_box.get(t, 0.0), SCP_CLIPPED_CSV + " (raw whole - raw outside)"
+            else:
+                cap, cap_source = acc["raw"].get("SCP", 0.0), "the SCP RAW row's own energy (no clipped-correction CSV)"
+            credited, acc["scp_owner_credit"] = cap_scp_owner_credit(credited, acc["scp_owner_credit"], cap, cap_source)
             for owner in acc["scp_owner_credit"]["owners"]:
                 if owner["status"] is None:
                     continue
@@ -853,7 +970,13 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
                 acc["raw_models_total"] += owner["energy"]
                 if owner.get("grown"):
                     acc["grown"] += owner["energy"]
-            acc["raw"]["Unclaimed"] = remainder - credited
+            unattributed = remainder - credited
+            acc["unclaimed_unattributed"] = unattributed
+            estimates = no_energy_raw_estimates(unattributed, lengths["types"].get(t, {}), acc["raw"])
+            for row_name, e in estimates.items():
+                acc["raw"][row_name] = e
+                acc["raw_estimated"][row_name] = "ESTIMATE (2A (iii)): the unattributed remainder x its length share among the no-energy RAW classes"
+            acc["raw"]["Unclaimed"] = unattributed - sum(estimates.values())
             if acc["raw_models_total"] > 0.0:
                 acc["g"] = (fab_t - acc["raw_models_total"]) / acc["raw_models_total"]
             if raw_corner > 0.0:
@@ -906,7 +1029,7 @@ def iteration_dirs(base):
     return [d for _, d in sorted(found)]
 
 
-def ladder(postpro, interfaces, targets, kind, ladder_dir=None):
+def ladder(postpro, interfaces, targets, kind, ladder_dir=None, source=None):
     """Every iterationNN/ + the root (the FINAL solve) -> per Type the ft fraction ft / E_elec_ft and its
     step in pt relative to the final; the DOF ladder from palace.json where present."""
     base = ladder_dir or postpro
@@ -916,10 +1039,10 @@ def ladder(postpro, interfaces, targets, kind, ladder_dir=None):
         if not os.path.isfile(os.path.join(d, "surface-Q-corrected.csv")):
             continue
         try:
-            e = load_surface_energies(d, kind)
+            e = load_surface_energies(d, kind, source)
         except MissingInput:
             continue
-        edges = load_edge_energies(d) if os.path.isfile(os.path.join(d, "surface-Q-edge.csv")) else {}
+        edges = load_edge_energies(d, source) if os.path.isfile(os.path.join(d, "surface-Q-edge.csv")) else {}
         W = within_r_by_type(interfaces, targets, e, edges)
         denom = e.get("E_elec_ft")
         entry = {"dir": os.path.basename(d) if d != base else "final", "E_elec_ft": denom, "ft": {}, "raw": {}}
@@ -1394,8 +1517,11 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
 
 
 def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder_dir=None, reference_order=None,
-                 ma_reading="raw", label=None, port_form=None, near_pairs_path=None):
-    """The full report (dict) for one run. Raises MissingInput when a required input is absent."""
+                 ma_reading="raw", label=None, port_form=None, near_pairs_path=None, source=None, all_sources=True):
+    """The full report (dict) for one run. Raises MissingInput when a required input is absent.
+    `source` (v2; decision 1209): the ES source whose rows the report's blocks read (default the FIRST source = the single-
+    source form of record). With `all_sources` an ES run of several sources also carries `sources` (every source's block
+    A ENERGY / block C / label) and `source_union` (the per-Type ranges and the FAIL-CLOSED band: every source in band)."""
     config = read_json(os.path.join(postpro, "config_resolved.json"))
     palace = read_json(os.path.join(postpro, "palace.json"))
     kind = solver_kind(config)
@@ -1405,17 +1531,18 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     targets = targets or sorted(interfaces)
     types = [t for t in TYPES if any(interfaces[i]["Type"] == t for i in targets if i in interfaces)]
     untargeted = sorted(i for i in interfaces if i not in targets)
-    energies = load_surface_energies(postpro, kind)
-    edges = load_edge_energies(postpro)
+    energies = load_surface_energies(postpro, kind, source)
+    source = energies.get("source") if kind == "ES" else None
+    edges = load_edge_energies(postpro, source)
     W = within_r_by_type(interfaces, targets, energies, edges)
     catalog = load_catalog(palace)
     loaded = load_manifest(manifest_path)
     discovery = read_json(discovery_path) if discovery_path else None
     lengths = length_partition(loaded, types, discovery)
     energy = energy_partition(postpro, interfaces, targets, kind, catalog, loaded["models"], W, lengths, loaded["by_topology"],
-                              loaded["scp_dropped"])
+                              loaded["scp_dropped"], source)
     proxy = energy["mode"] == "PROXY"
-    lad = ladder(postpro, interfaces, targets, kind, ladder_dir)
+    lad = ladder(postpro, interfaces, targets, kind, ladder_dir, source)
     flags = maxwell_flags(postpro, config, energies, port_form) if kind == "Maxwell" else {}
     if kind == "Maxwell":
         flags["indicator_falls"] = indicator_falls(ladder_dir or postpro)
@@ -1424,10 +1551,12 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     residuals = named_residuals(kind, energy, lengths, lad["types"], flags, reference_order, ma_reading == "sharp",
                                loaded["models"], conductor, near_pairs)
     localize = any(v["LocalizeEdgeEnergy"] for v in interfaces.values())
+    sources = es_sources(postpro) if kind == "ES" else []
     report = {
-        "tool": "coverage_report.py", "label_name": label or os.path.basename(os.path.dirname(postpro.rstrip("/"))) or postpro,
+        "tool": TOOL_VERSION, "label_name": label or os.path.basename(os.path.dirname(postpro.rstrip("/"))) or postpro,
         "postpro": os.path.abspath(postpro), "manifest": {"path": os.path.abspath(manifest_path), "sha256": loaded["sha256"]},
         "solver": kind, "family": family, "dofs": (palace.get("Problem") or {}).get("DegreesOfFreedom"),
+        "source": source, "sources_in_run": sources,
         "interfaces": {str(i): v for i, v in interfaces.items()}, "targets": targets, "untargeted": untargeted,
         "types": types, "energy_mode": energy["mode"], "localize_edge_energy": localize,
         "W": {t: {"W_J": w["W"], "E_raw_J": w["E_raw"], "E_out_J": w["E_out"], "ft_J": w["ft"], "ff_J": w["ff"],
@@ -1464,7 +1593,48 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     else:
         report["block_C"] = None
         report["label"] = {"label": "n/a (no band file)", "reasons_low": [], "reasons_not_high": []}
+    if all_sources and len(sources) > 1:
+        report["sources"], report["source_union"] = multi_source_blocks(
+            postpro, manifest_path, sources, report, bands=bands, discovery_path=discovery_path, ladder_dir=ladder_dir,
+            reference_order=reference_order, ma_reading=ma_reading, label=label, port_form=port_form, near_pairs_path=near_pairs_path)
     return report
+
+
+LABEL_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+
+def multi_source_blocks(postpro, manifest_path, sources, first_report, **kwargs):
+    """v2 (OI-COVERAGE-READER-MULTI-SOURCE-LAST-WINS, decision 1209): every source's own block A ENERGY shares, block C and
+    label (the per-source reports of build_report(source=s, all_sources=False)); the UNION per Type = the ranges of the
+    exact / raw shares over the sources and the FAIL-CLOSED band verdict (in band only if every source is), the union label
+    = the lowest label over the sources (1210 (a): fail-closed over sources)."""
+    per_source = {}
+    for s in sources:
+        rep = first_report if s == first_report.get("source") else build_report(postpro, manifest_path, source=s, all_sources=False, **kwargs)
+        per_source[str(s)] = {"energy": {t: {k: rep["block_A"]["energy"][t].get(k) for k in ("exact_share", "raw_share_total", "raw_share",
+                                                                                                   "models_share", "classes_share", "scp_owner_credit")}
+                                         for t in rep["types"]},
+                              "block_C": rep.get("block_C"), "label": rep.get("label"),
+                              "ladder_types": rep["block_D"]["ladder"]["types"]}
+    union = {"rule": "fail-closed over sources (decision 1210 (a)): a cell is in band only if EVERY source's deviation lies in that "
+                     "source's own band (band_by_source; the grader's check); the label = the lowest over the sources", "types": {}}
+    for t in first_report["types"] + ["C"]:
+        rows = {s: ((v["block_C"] or {}).get(t) or {}) for s, v in per_source.items()}
+        entry = {"n_sources": len(per_source)}
+        if t != "C":
+            exact = [v["energy"][t]["exact_share"] for v in per_source.values()]
+            raw = [v["energy"][t]["raw_share_total"] for v in per_source.values()]
+            entry.update({"exact_share_range": [min(exact), max(exact)], "raw_share_total_range": [min(raw), max(raw)]})
+        if all("low_pt" in r for r in rows.values()) and rows:
+            entry["band_by_source"] = {s: [r["low_pt"], r["high_pt"]] for s, r in rows.items()}
+            entry["band_union_pt"] = [min(r["low_pt"] for r in rows.values()), max(r["high_pt"] for r in rows.values())]
+            entry["band_intersection_pt"] = [max(r["low_pt"] for r in rows.values()), min(r["high_pt"] for r in rows.values())]
+        union["types"][t] = entry
+    labels = [v["label"]["label"] for v in per_source.values()]
+    known = [l for l in labels if l in LABEL_ORDER]
+    union["label"] = min(known, key=lambda l: LABEL_ORDER[l]) if known and len(known) == len(labels) else "n/a"
+    union["labels_by_source"] = {s: v["label"]["label"] for s, v in per_source.items()}
+    return per_source, union
 
 
 def build_preflight_report(manifest_path, palace_path=None, discovery_path=None, label=None):
@@ -1479,7 +1649,7 @@ def build_preflight_report(manifest_path, palace_path=None, discovery_path=None,
     for t in types:
         share = lengths["types"][t]["raw_share_total"]
         ready[t] = {"uncorrected_share_by_length": share, "ready": share <= CLASS_MATERIAL_SHARE}
-    report = {"tool": "coverage_report.py", "form": "preflight", "label_name": label or os.path.basename(os.path.dirname(manifest_path)),
+    report = {"tool": TOOL_VERSION, "form": "preflight", "label_name": label or os.path.basename(os.path.dirname(manifest_path)),
               "manifest": {"path": os.path.abspath(manifest_path), "sha256": loaded["sha256"]}, "types": types,
               "block_A": {"length": lengths["types"], "length_bookkeeping_miss_um": lengths["bookkeeping_miss_um"],
                           "assigned_length_um": lengths["assigned_length"], "exclusions": lengths["exclusions"],
@@ -1563,10 +1733,14 @@ def render_markdown(report):
         for k in model_rows:
             lines.append(f"| corrected by {k} models | {fmt_pct(e.get('models_share', {}).get(k, 0.0)) if e else 'n/a'} | {fmt_pct(L.get('models_share', {}).get(k, 0.0))} |")
         for k in raw_rows:
-            # a RAW row the run exports no energy for (UnpatchedPairs, the identification-decided exclusions) sits inside
-            # the Unclaimed energy: said so, not printed as 0
-            energy_cell = (fmt_pct(e.get("raw_share", {}).get(k, 0.0)) if k in (e.get("raw") or {}) else "(in Unclaimed)") if e else "n/a"
-            lines.append(f"| RAW: {k} | {energy_cell} | {fmt_pct(L.get('raw_share', {}).get(k, 0.0))} |")
+            # a RAW row the run exports no energy for (UnpatchedPairs, the identification-decided exclusions) carries the
+            # reader's ESTIMATE (2A (iii)) when the unattributed remainder is > 0, else sits inside the Unclaimed energy
+            if e and k in (e.get("raw") or {}):
+                energy_cell = fmt_pct(e["raw_share"].get(k, 0.0)) + (" (ESTIMATE)" if k in (e.get("raw_estimated") or {}) else "")
+            else:
+                energy_cell = "(in Unclaimed)" if e else "n/a"
+            name = "Unclaimed (unattributed)" if k == "Unclaimed" else k
+            lines.append(f"| RAW: {name} | {energy_cell} | {fmt_pct(L.get('raw_share', {}).get(k, 0.0))} |")
         if e:
             lines.append(f"| RAW total | {fmt_pct(e.get('raw_share_total'))} | {fmt_pct(L.get('raw_share_total', 0.0))} |")
             miss = e.get("bookkeeping_miss_rel", 0.0)
@@ -1713,6 +1887,9 @@ def main(argv=None):
     parser.add_argument("--palace-json", help="palace.json of the preflight (optional with --preflight)")
     parser.add_argument("--near-pairs", help="the geometric_near_pairs.py record of the run's library (CorrectionDifference per in-band pair; the pairs over the 2 %% bar named)")
     parser.add_argument("--label", help="the run's name in the report")
+    parser.add_argument("--source", type=int, help="ES: the source whose rows the report's blocks read (default: the first source)")
+    parser.add_argument("--single-source", action="store_true",
+                        help="ES: no per-source blocks on a multi-source run (the selected source only; the v1 form with the source keyed)")
     parser.add_argument("--output", help="output directory (default: beside the postpro)")
     args = parser.parse_args(argv)
     try:
@@ -1724,7 +1901,8 @@ def main(argv=None):
                 parser.error("postpro is required without --preflight")
             bands = None if args.no_bands else load_bands(args.bands)
             report = build_report(args.postpro, args.manifest, bands, args.discovery, args.ladder_run, args.reference_order,
-                                  args.ma_reading, args.label, args.port_form, args.near_pairs)
+                                  args.ma_reading, args.label, args.port_form, args.near_pairs, source=args.source,
+                                  all_sources=not args.single_source)
             out_dir = args.output or args.postpro
     except MissingInput as exc:
         print(f"coverage_report: MISSING INPUT {exc}", file=sys.stderr)

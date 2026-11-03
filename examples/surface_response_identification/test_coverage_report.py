@@ -49,35 +49,46 @@ def _wide_row(values):
     return ",".join(f"{v:+.12e}" if isinstance(v, float) else str(v) for v in values)
 
 
-def write_surface_q(dirpath, scale=1.0, e_elec=1.0e-12):
-    """surface-Q-corrected.csv (ES wide form) with ft = raw x (1 + 0.1 x scale) per interface."""
+def write_surface_q(dirpath, scale=1.0, e_elec=1.0e-12, sources=(1,)):
+    """surface-Q-corrected.csv (ES wide form) with ft = raw x (1 + 0.1 x scale) per interface; one row per source (source s
+    carries the energies x s: the v2 per-source fixture)."""
     header = ["i", "E_elec raw (J)", "E_elec postprocessed fixed-trace (J)", "E_elec postprocessed fixed-flux (J)",
               "E_elec corrected (J)", "max trace closure spread", "response-weighted local trace closure spread",
               "trace-closure response fraction above limit", "confidence pass"]
-    values = [1.0, e_elec, e_elec, e_elec, float("nan"), 0.1, 0.1, 0.99, 0]
     for i in (1, 2, 3):
         header += [f"E_surf raw[{i}] (J)", f"p_surf raw[{i}]", f"Q_surf raw[{i}]",
                    f"E_surf postprocessed fixed-trace[{i}] (J)", f"p_surf postprocessed fixed-trace[{i}]",
                    f"Q_surf postprocessed fixed-trace[{i}]", f"E_surf postprocessed fixed-flux[{i}] (J)",
                    f"p_surf postprocessed fixed-flux[{i}]", f"Q_surf postprocessed fixed-flux[{i}]",
                    f"E_surf corrected[{i}] (J)", f"p_surf corrected[{i}]", f"Q_surf corrected[{i}]", f"trace closure spread[{i}]"]
-        ft = E_RAW[i] * (1.0 + 0.1 * scale)
-        values += [E_RAW[i], 1.0, 1.0, ft, 1.0, 1.0, ft * 1.01, 1.0, 1.0, float("nan"), float("nan"), float("nan"), 0.1]
+    rows = []
+    for src in sources:
+        values = [float(src), src * e_elec, src * e_elec, src * e_elec, float("nan"), 0.1, 0.1, 0.99, 0]
+        for i in (1, 2, 3):
+            ft = src * E_RAW[i] * (1.0 + 0.1 * scale)
+            values += [src * E_RAW[i], 1.0, 1.0, ft, 1.0, 1.0, ft * 1.01, 1.0, 1.0, float("nan"), float("nan"), float("nan"), 0.1]
+        rows.append(_wide_row(values))
     with open(os.path.join(dirpath, "surface-Q-corrected.csv"), "w") as f:
-        f.write(",".join(header) + "\n" + _wide_row(values) + "\n")
+        f.write(",".join(header) + "\n" + "\n".join(rows) + "\n")
     with open(os.path.join(dirpath, "surface-Q-edge.csv"), "w") as f:
         f.write("i,exc,interface,R (m),E_out (J),p_out,E_ann (J),p_ann\n")
-        for i in (1, 2, 3):
-            f.write(_wide_row([1.0, 0, i, 1.9e-6, E_OUT[i], 0.0, 0.0, 0.0]) + "\n")
+        for src in sources:
+            for i in (1, 2, 3):
+                f.write(_wide_row([float(src), 0, i, 1.9e-6, src * E_OUT[i], 0.0, 0.0, 0.0]) + "\n")
 
 
 def write_fixture(root, raw_partition=True, iterations=("quotable",), total_row=False, scp_dropped=None, export_rows=None,
-                  raw_labels=None, uncovered=None):
+                  raw_labels=None, uncovered=None, scp_in_box=None, unpatched_length=None, sources=(1,)):
     """A synthetic ES postpro + manifest. iterations: 'quotable' (steps shrinking) or 'depth' (not shrinking).
     total_row: the binary's `Total` sum row appended to the uncovered CSV (the records of record carry it; decision 1125).
     scp_dropped: Identification.Diagnostics.SpatialClusterPriority.Patches entries (the F2 record; decision 1126 (2)).
     export_rows: surface-response-exclusion-energy.csv lines after the header (class,type,...; decision 1129).
-    raw_labels / uncovered: overrides of RAW_LABELS / UNCOVERED."""
+    raw_labels / uncovered: overrides of RAW_LABELS / UNCOVERED.
+    scp_in_box: {interface: J} -> the SCP clipped-correction CSV (one dropped patch row; raw whole = in-box + outside 1e-18,
+    raw outside = 1e-18): the F2 credit's CAP (fix round 2A (i)); None = no CSV.
+    unpatched_length: an UnpatchedPairs record of that length (um) on the manifest (the no-energy RAW class of 2A (iii)).
+    sources: the ES sources written to every energy CSV; source s > 1 carries the raw labels and fabricated energies x s (the
+    v2 per-source reading, decision 1209)."""
     raw_labels = RAW_LABELS if raw_labels is None else raw_labels
     uncovered = UNCOVERED if uncovered is None else uncovered
     post = os.path.join(root, "postpro")
@@ -95,20 +106,31 @@ def write_fixture(root, raw_partition=True, iterations=("quotable",), total_row=
         {"Index": 3, "Name": "concave-corner-150deg@corner-angle157.5-cubic", "Topology": "concave corner"}],
         "Diagnostics": {}}}
     _dump(palace, os.path.join(post, "palace.json"))
-    write_surface_q(post, scale=1.0)
+    write_surface_q(post, scale=1.0, sources=sources)
     with open(os.path.join(post, "surface-response-model-energy.csv"), "w") as f:
         f.write("source,evaluation,model,patch count,patch weight,domain correction (J)," + ",".join(
             f"fabricated surface energy[{i}] (J)" for i in (1, 2, 3)) + "\n")
-        for m in (1, 2, 3):
-            for ev in (0, 1):
-                f.write(_wide_row([1.0, float(ev), float(m), 10.0, 1.0, 0.0] + [FAB[m][i] * (1.0 + 0.01 * ev) for i in (1, 2, 3)]) + "\n")
+        for src in sources:
+            for m in (1, 2, 3):
+                for ev in (0, 1):
+                    f.write(_wide_row([float(src), float(ev), float(m), 10.0, 1.0, 0.0] + [src * FAB[m][i] * (1.0 + 0.01 * ev) for i in (1, 2, 3)]) + "\n")
     if raw_partition:
         with open(os.path.join(post, "surface-response-model-raw-energy.csv"), "w") as f:
             f.write("source,evaluation,label," + ",".join(f"raw energy[{i}] (J)" for i in (1, 2, 3)) + "\n")
-            for label, by_i in raw_labels.items():
-                f.write(f"1,0,{label}," + ",".join(f"{by_i[i]:+.12e}" for i in (1, 2, 3)) + "\n")
+            for src in sources:
+                for label, by_i in raw_labels.items():
+                    f.write(f"{src},0,{label}," + ",".join(f"{src * by_i[i]:+.12e}" for i in (1, 2, 3)) + "\n")
         with open(os.path.join(post, "surface-response-model-raw-groups.csv"), "w") as f:
             f.write("label,model,patches,weight length (m)\nm1+m2,1,30,+3.0e-06\nm1+m2,2,3,+1.0e-06\nm3,3,4,+4.0e-07\n")
+    if scp_in_box is not None:
+        with open(os.path.join(post, cr.SCP_CLIPPED_CSV), "w") as f:
+            f.write("# DERIVED (test fixture)\n")
+            f.write("source,evaluation,patch,model,feature,weight," + ",".join(
+                f"fab energy[{i}] (J),raw whole energy[{i}] (J),raw outside energy[{i}] (J),ratio[{i}],clipped correction[{i}] (J)" for i in (1, 2, 3)) + "\n")
+            for src in sources:
+                for ev in (0, 1):
+                    f.write(f"{src},{ev},6,4,7,+1.0," + ",".join(
+                        f"+0.0,{src * scp_in_box[i] + 1.0e-18:+.12e},+1.0e-18,+1.0,+0.0" for i in (1, 2, 3)) + "\n")
     with open(os.path.join(post, "surface-response-uncovered-energy.csv"), "w") as f:
         f.write("source,evaluation,type,portions,length (m),clipped by spatial support (m)," + ",".join(
             f"uncovered raw energy[{i}] (J),uncovered share[{i}]" for i in (1, 2, 3)) + "\n")
@@ -126,7 +148,7 @@ def write_fixture(root, raw_partition=True, iterations=("quotable",), total_row=
     for n, sc in enumerate(steps, start=1):
         d = os.path.join(post, f"iteration{n:02d}")
         os.makedirs(d, exist_ok=True)
-        write_surface_q(d, scale=sc)
+        write_surface_q(d, scale=sc, sources=sources)
     manifest = {"Requirements": [
         {"Hash": "f" * 64, "Topology": "IsolatedEdge", "Status": "Exact", "TotalEdgeLength": 300.0, "Signature": {},
          "Interfaces": [{"Type": "SA"}, {"Type": "MS"}, {"Type": "MA"}], "SelectedModels": [{"Name": "isolated-edge"}]},
@@ -143,6 +165,11 @@ def write_fixture(root, raw_partition=True, iterations=("quotable",), total_row=
                     "Counts": {"Exact": 2, "Interpolated": 1, "Missing": 1}},
         "Identification": {"Totals": {"AssignedLength": 500.0}, "Exclusions": [{"Class": "NonManifold", "Count": 4, "Length": 40.0}],
                            "Diagnostics": {"GeometryFallbacks": {"Entries": []}}}}
+    if unpatched_length is not None:
+        manifest["Summary"]["UnpatchedPairs"] = {"Count": 1, "Length": unpatched_length}
+        manifest["Identification"]["Diagnostics"]["UnpatchedPairs"] = {
+            "Count": 1, "Length": unpatched_length, "Features": [{"Id": 7, "Type": "SameConductorGap", "Length": unpatched_length}]}
+        manifest["Identification"]["Features"] = [{"Id": 7, "Hash": "e" * 64}]
     if scp_dropped is not None:
         manifest["Identification"]["Diagnostics"]["SpatialClusterPriority"] = {
             "Count": len(scp_dropped), "OutsideLength": sum(p.get("OutsideLength", 0.0) for p in scp_dropped), "Patches": scp_dropped,
@@ -908,11 +935,14 @@ class TestCovfixRound(unittest.TestCase):
             "Owner": {"Model": "concave-corner-150deg@corner-angle157.5-cubic", "Patch": 1, "Feature": 2}}]
 
     def test_f2_unclaimed_remainder_credited_to_the_owner_clusters_by_in_box_length(self):
-        post, manifest = write_fixture(self.tmp, total_row=True, scp_dropped=self.SCP)
+        # v2 (fix round 2A (i)): the credit needs the dropped coupons' in-box energy (the clipped-correction CSV) >= the remainder
+        post, manifest = write_fixture(self.tmp, total_row=True, scp_dropped=self.SCP, scp_in_box={1: 1.0e-16, 2: 2.0e-16, 3: 0.2e-16})
         report = cr.build_report(post, manifest, None, ma_reading="sharp")
         e = report["block_A"]["energy"]["SA"]
         remainder = RAW_LABELS["unclaimed"][1] - UNCOVERED[1]          # 0.5e-16: the label minus the in-label Missing row
         credit = e["scp_owner_credit"]
+        self.assertFalse(credit["capped"])
+        self.assertAlmostEqual(credit["cap_J"], 1.0e-16, delta=1e-28)
         self.assertAlmostEqual(credit["energy"], remainder, delta=1e-28)
         self.assertAlmostEqual(credit["in_box_length_um"], 3.8 + 1.0)   # the second coupon's 2.8 um outside stay the SCP RAW row
         owners = {o["model"]: o for o in credit["owners"]}
@@ -938,7 +968,8 @@ class TestCovfixRound(unittest.TestCase):
         zero = {1: 0.0, 2: 0.0, 3: 0.0}
         labels = {"m1+m2": {1: 8.0e-16, 2: 16.0e-16, 3: 1.6e-16}, "m3": {1: 0.2e-16, 2: 0.4e-16, 3: 0.04e-16},
                   "unclaimed": {1: 0.8e-16, 2: 1.6e-16, 3: 0.16e-16}}
-        post, manifest = write_fixture(self.tmp, raw_labels=labels, uncovered=zero, scp_dropped=self.SCP)
+        in_box = {1: 1.0e-16, 2: 2.0e-16, 3: 0.2e-16}
+        post, manifest = write_fixture(self.tmp, raw_labels=labels, uncovered=zero, scp_dropped=self.SCP, scp_in_box=in_box)
         for d in cr.iteration_dirs(post):
             write_surface_q(d, scale={"iteration01": 0.9, "iteration02": 0.99, "iteration03": 0.998}[os.path.basename(d)])
         report = cr.build_report(post, manifest, bands, ma_reading="sharp")
@@ -954,7 +985,7 @@ class TestCovfixRound(unittest.TestCase):
         # ...and the same run with the credit at 0.56 % of W_t (the label sum unchanged) is HIGH
         shutil.rmtree(self.tmp)
         small = {"m1+m2": {1: 8.75e-16, 2: 17.5e-16, 3: 1.75e-16}, "m3": labels["m3"], "unclaimed": {1: 0.05e-16, 2: 0.1e-16, 3: 0.01e-16}}
-        post, manifest = write_fixture(self.tmp, raw_labels=small, uncovered=zero, scp_dropped=self.SCP)
+        post, manifest = write_fixture(self.tmp, raw_labels=small, uncovered=zero, scp_dropped=self.SCP, scp_in_box=in_box)
         for d in cr.iteration_dirs(post):
             write_surface_q(d, scale={"iteration01": 0.9, "iteration02": 0.99, "iteration03": 0.998}[os.path.basename(d)])
         report = cr.build_report(post, manifest, bands, ma_reading="sharp")
@@ -1080,3 +1111,188 @@ class TestBandFileLocation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFixRoundV2(unittest.TestCase):
+    """Fix round P1 (decisions 1209 / 1230 / 1233 (2); DESIGN-v3 s2 2A + s6): the F2 credit CAP, the Unclaimed (unattributed) row,
+    the no-energy RAW classes' ESTIMATE, the measured `unpatched` label, and the PER-SOURCE reading of a multi-source ES run."""
+    SCP = TestCovfixRound.SCP
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_f2_credit_capped_at_the_in_box_energy(self):
+        # the remainder 0.5e-16 (SA) exceeds the dropped coupons' in-box energy 0.2e-16: the credit is CAPPED there, the rest is
+        # the RAW row Unclaimed (unattributed) and enters raw_share_total
+        post, manifest = write_fixture(self.tmp, total_row=True, scp_dropped=self.SCP, scp_in_box={1: 0.2e-16, 2: 0.4e-16, 3: 0.04e-16})
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        remainder = RAW_LABELS["unclaimed"][1] - UNCOVERED[1]
+        credit = e["scp_owner_credit"]
+        self.assertTrue(credit["capped"])
+        self.assertAlmostEqual(credit["uncapped_energy"], remainder, delta=1e-28)
+        self.assertAlmostEqual(credit["energy"], 0.2e-16, delta=1e-28)
+        self.assertAlmostEqual(credit["cap_J"], 0.2e-16, delta=1e-28)
+        self.assertIn(cr.SCP_CLIPPED_CSV, credit["cap_source"])
+        owners = {o["model"]: o for o in credit["owners"]}
+        self.assertAlmostEqual(owners["spatialedgecluster_edgecount-3_a5e14f9da16f"]["energy"], 0.2e-16 * 3.8 / 4.8, delta=1e-28)
+        self.assertAlmostEqual(e["unclaimed_unattributed"], remainder - 0.2e-16, delta=1e-28)
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], remainder - 0.2e-16, delta=1e-28)
+        self.assertAlmostEqual(e["raw_share_total"], (UNCOVERED[1] + remainder - 0.2e-16) / W[1], places=9)
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        self.assertEqual(report["tool"], "coverage_report.py v2")
+        md = cr.render_markdown(report)
+        self.assertIn("RAW: Unclaimed (unattributed)", md)
+
+    def test_f2_credit_without_the_clipped_csv_is_capped_at_the_scp_raw_row(self):
+        # no clipped-correction CSV and no SCP RAW energy -> the cap is 0: nothing is credited (fail-closed); the whole remainder is
+        # Unclaimed (unattributed)
+        post, manifest = write_fixture(self.tmp, total_row=True, scp_dropped=self.SCP)
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        remainder = RAW_LABELS["unclaimed"][1] - UNCOVERED[1]
+        self.assertTrue(e["scp_owner_credit"]["capped"])
+        self.assertEqual(e["scp_owner_credit"]["energy"], 0.0)
+        self.assertIn("SCP RAW row", e["scp_owner_credit"]["cap_source"])
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], remainder, delta=1e-28)
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+
+    def test_unpatched_pairs_estimate_from_the_unattributed_remainder(self):
+        # 2A (iii): UnpatchedPairs (a no-energy RAW class of the manifest) receives the unattributed remainder as an ESTIMATE
+        # (the only no-energy class -> the whole remainder, an upper bound: W31's case); Unclaimed reads 0
+        post, manifest = write_fixture(self.tmp, total_row=True, unpatched_length=8.0)
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        remainder = RAW_LABELS["unclaimed"][1] - UNCOVERED[1]
+        self.assertAlmostEqual(e["raw"]["UnpatchedPairs"], remainder, delta=1e-28)
+        self.assertIn("UnpatchedPairs", e["raw_estimated"])
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.0, delta=1e-28)
+        self.assertAlmostEqual(e["raw_share_total"], (UNCOVERED[1] + remainder) / W[1], places=9)
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        self.assertAlmostEqual(report["block_A"]["length"]["SA"]["raw"]["UnpatchedPairs"], 8.0)
+        md = cr.render_markdown(report)
+        self.assertIn("(ESTIMATE)", md)
+        self.assertNotIn("(in Unclaimed)", md.split("### MS")[0])
+
+    def test_measured_unpatched_label_supersedes_the_estimate(self):
+        # 2B: a binary exporting the `unpatched` label -> the MEASURED UnpatchedPairs RAW row; the unclaimed label stays the remainder
+        labels = dict(RAW_LABELS, unpatched={1: 0.1e-16, 2: 0.2e-16, 3: 0.02e-16})
+        labels["m1+m2"] = {1: 6.1e-16, 2: 12.2e-16, 3: 1.22e-16}
+        post, manifest = write_fixture(self.tmp, total_row=True, raw_labels=labels, unpatched_length=8.0)
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e["raw"]["UnpatchedPairs"], 0.1e-16, delta=1e-28)
+        self.assertNotIn("UnpatchedPairs", e["raw_estimated"])
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], RAW_LABELS["unclaimed"][1] - UNCOVERED[1], delta=1e-28)
+        self.assertAlmostEqual(e["models"]["Exact"], 6.1e-16, delta=1e-28)
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+
+    def test_multi_source_run_read_per_source(self):
+        # OI-COVERAGE-READER-MULTI-SOURCE-LAST-WINS (1209): source 2 carries every energy x 2; v1 let its rows overwrite source 1's
+        # models (an Exact share > 100 % on W10). v2: the report reads ONE source (the first by default; --source), carries every
+        # source's blocks and the union.
+        post, manifest = write_fixture(self.tmp, total_row=True, sources=(1, 2))
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        self.assertEqual((report["source"], report["sources_in_run"]), (1, [1, 2]))
+        e1 = report["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e1["W"], W[1], delta=1e-28)
+        self.assertAlmostEqual(e1["models"]["Exact"], 6.2e-16, delta=1e-28)             # head 1928a4f2: source 2's 12.4e-16 over W_t of source 1
+        self.assertLess(abs(e1["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        self.assertEqual(sorted(report["sources"]), ["1", "2"])
+        s2 = report["sources"]["2"]["energy"]["SA"]
+        self.assertAlmostEqual(s2["exact_share"], e1["exact_share"], places=12)
+        u = report["source_union"]["types"]["SA"]
+        self.assertEqual(u["n_sources"], 2)
+        self.assertAlmostEqual(u["exact_share_range"][0], e1["exact_share"], places=12)
+        second = cr.build_report(post, manifest, None, ma_reading="sharp", source=2, all_sources=False)
+        self.assertEqual(second["source"], 2)
+        self.assertAlmostEqual(second["block_A"]["energy"]["SA"]["W"], 2.0 * W[1], delta=1e-28)
+        self.assertAlmostEqual(second["block_A"]["energy"]["SA"]["models"]["Exact"], 12.4e-16, delta=1e-28)
+        self.assertNotIn("sources", second)
+        # the ladder follows the source too
+        self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["solves"], second["block_D"]["ladder"]["types"]["SA"]["solves"])
+
+
+STAGE_E = "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/stageE"
+STAGE_E_MANIFESTS = os.path.join(STAGE_E, "thin", "manifests", "es-loadcheck-v3-k-2d-E")
+STAGE_E_NEAR_PAIRS = os.path.join(STAGE_E, "lib", "library", "s2-r1p9-v3-k-2d-E", "geometric-near-pairs.json")
+
+
+def _value_differences(old, new, ignore, path=""):
+    """The leaves of `old` whose value differs in `new` (added keys of `new` are not differences; NaN == NaN)."""
+    out = []
+    if isinstance(old, dict) and isinstance(new, dict):
+        for k, v in old.items():
+            if k not in new:
+                out.append(("removed", path + "/" + k))
+            else:
+                out += _value_differences(v, new[k], ignore, path + "/" + k)
+    elif isinstance(old, list) and isinstance(new, list):
+        if len(old) != len(new):
+            out.append(("length", path))
+        else:
+            for i, (a, b) in enumerate(zip(old, new)):
+                out += _value_differences(a, b, ignore, f"{path}[{i}]")
+    elif old != new and path not in ignore and not (isinstance(old, float) and isinstance(new, float) and old != old and new != new):
+        out.append(("value", path, old, new))
+    return out
+
+
+@unittest.skipUnless(os.path.isdir(os.path.join(STAGE_E, "thin", "runs")) and os.path.isdir(STAGE_E_MANIFESTS), "the stage-E records are not present")
+class TestStageERecordsV2(unittest.TestCase):
+    """The v2 reader on the stage-E records of 1215: a single-source window value-identical to its v1 report of record (every
+    pre-existing leaf; the tool string / paths / label aside), the multi-source windows' Exact share <= 100 % per source (v1 of
+    record: W12 117 % / W13 114 %), W31's UnpatchedPairs ESTIMATE (~16 % of W_t) with the F2 credit capped at the clipped CSV."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def report(self, w, **kwargs):
+        manifest = os.path.join(STAGE_E_MANIFESTS, f"{w}-new-s2-r1p9-v3-k-2d-E", "postpro", "surface-response-requirements.json")
+        bands = cr.load_bands(cr.DEFAULT_BANDS)
+        return cr.build_report(os.path.join(STAGE_E, "thin", "runs", f"{w}-thin-corr", "postpro"), manifest, bands, **kwargs)
+
+    def test_single_source_window_value_identical_to_the_report_of_record(self):
+        record = os.path.join(STAGE_E, "thin", "predicted", "W06", "coverage-report.json")
+        if not os.path.isfile(record) or not os.path.isfile(STAGE_E_NEAR_PAIRS):
+            self.skipTest("the W06 predicted report of record is not present")
+        old = _load(record)
+        if "v5" not in str(old.get("bands", {}).get("version")) or "v5" not in cr.DEFAULT_BANDS:
+            self.skipTest("the report of record and the default bands are not both v5")
+        new = self.report("W06", near_pairs_path=STAGE_E_NEAR_PAIRS)
+        self.assertEqual(new["tool"], "coverage_report.py v2")
+        self.assertEqual((new["source"], new["sources_in_run"]), (1, [1]))
+        self.assertNotIn("sources", new)
+        ignore = {"/tool", "/bands/path", "/block_D/ladder/source", "/postpro", "/label_name"}
+        self.assertEqual(_value_differences(old, new, ignore), [])
+
+    def test_multi_source_windows_exact_share_per_source(self):
+        for w, n in (("W12", 4), ("W13", 3)):
+            new = self.report(w)
+            self.assertEqual(new["sources_in_run"], list(range(1, n + 1)))
+            for s, v in new["sources"].items():
+                for t in new["types"]:
+                    self.assertLessEqual(v["energy"][t]["exact_share"], 1.0 + 1e-9, f"{w} source {s} {t}")
+                    self.assertGreater(v["energy"][t]["exact_share"], 0.99, f"{w} source {s} {t}")
+            self.assertEqual(new["source_union"]["types"]["SA"]["n_sources"], n)
+            record = os.path.join(STAGE_E, "thin", "predicted", w, "coverage-report.json")
+            if os.path.isfile(record):
+                self.assertGreater(_load(record)["block_A"]["energy"]["SA"]["exact_share"], 1.1)   # the v1 LAST-WINS over-read
+
+    def test_w31_unpatched_pairs_estimate_and_the_capped_credit(self):
+        new = self.report("W31")
+        for t in new["types"]:
+            e = new["block_A"]["energy"][t]
+            self.assertTrue(e["scp_owner_credit"]["capped"])
+            self.assertIn(cr.SCP_CLIPPED_CSV, e["scp_owner_credit"]["cap_source"])
+            self.assertLess(e["scp_owner_credit"]["energy"] / e["W"], 1e-6)
+            self.assertIn("UnpatchedPairs", e["raw_estimated"])
+            self.assertGreater(e["raw_share"]["UnpatchedPairs"], 0.15)
+            self.assertLess(e["raw_share"]["UnpatchedPairs"], 0.18)
+            self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.0, delta=1e-30)
+            self.assertGreater(e["raw_share_total"], 0.22)
+            self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
