@@ -104,8 +104,11 @@ class AttachMagneticLeavesTest(unittest.TestCase):
         model = out["Models"][0]
         self.assertEqual(out["MagneticRules"], AML.DEFAULT_RULES)
         self.assertEqual(out["Name"], "unit-mag")
-        self.assertTrue(os.path.isabs(model["MagneticFabricatedMatrix"]))
-        self.assertTrue(os.path.exists(model["MagneticThinMatrix"]))
+        # The leaf paths are RELATIVE to the output library's directory (relocatable).
+        self.assertFalse(os.path.isabs(model["MagneticFabricatedMatrix"]))
+        self.assertEqual(model["MagneticFabricatedMatrix"],
+                         os.path.join("models", "pair", "magnetic-fabricated-domain-response-matrix.csv"))
+        self.assertTrue(os.path.exists(out_dir / model["MagneticThinMatrix"]))
         source = model["MagneticSource"]
         self.assertEqual(source["Version"], 1)
         self.assertEqual(source["VacuumPermittivity"], 1.0)
@@ -125,7 +128,8 @@ class AttachMagneticLeavesTest(unittest.TestCase):
             records = json.load(handle)
         self.assertEqual(records["Models"][0]["Verdict"], "Applied")
         # The copied leaf is the twin file byte for byte.
-        self.assertEqual(AML.sha256_of(model["MagneticThinMatrix"]), AML.sha256_of(self.root / "vac-thin.csv"))
+        self.assertEqual(AML.sha256_of(out_dir / model["MagneticThinMatrix"]),
+                         AML.sha256_of(self.root / "vac-thin.csv"))
 
     def test_r1_refuses_a_twin_on_another_basis(self):
         with self.assertRaises(ValueError) as context:

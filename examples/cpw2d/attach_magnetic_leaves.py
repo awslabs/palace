@@ -113,7 +113,8 @@ def resolve(path, base_dir):
 
 
 def attach(library, library_dir, attachments, output_dir, rules, now=None):
-    """Return (the new library dict, the per-model records). Files are copied under output_dir/models/<name>/."""
+    """Return (the new library dict, the per-model records). Files are copied under output_dir/models/<name>/ and
+    the leaf paths are written RELATIVE to output_dir (the output library's directory)."""
     models_by_name = {model["Name"]: model for model in library.get("Models", [])}
     if library.get("Version") != 3:
         raise ValueError("magnetic leaves require a Version-3 library (got %r)" % library.get("Version"))
@@ -194,8 +195,11 @@ def attach(library, library_dir, attachments, output_dir, rules, now=None):
         if now:
             source["Date"] = now
         target = out_models[name]
-        target["MagneticFabricatedMatrix"] = os.path.abspath(fab_out)
-        target["MagneticThinMatrix"] = os.path.abspath(thin_out)
+        # Relative to the output library's directory (the loader resolves a relative leaf
+        # path against the library file's directory), so that the library relocates between
+        # the cluster and a laptop as the electric entries of record do (review d1227 MINOR-6).
+        target["MagneticFabricatedMatrix"] = os.path.relpath(fab_out, output_dir)
+        target["MagneticThinMatrix"] = os.path.relpath(thin_out, output_dir)
         target["MagneticSource"] = source
         records.append(record)
     out["MagneticRules"] = dict(rules)
