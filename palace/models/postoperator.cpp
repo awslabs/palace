@@ -2515,22 +2515,25 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table["fixed_trace_corrected_frequency"]
         << (magnetic && std::isfinite(shift) ? frequency_GHz * (1.0 + shift) : nan);
     table["magnetic_domain_correction"]
-        << (magnetic ? units.Dimensionalize<VT::ENERGY>(confidence.magnetic_domain_correction)
-                     : nan);
+        << (magnetic
+                ? units.Dimensionalize<VT::ENERGY>(confidence.magnetic_domain_correction)
+                : nan);
     table["magnetic_loop_residual"] << (magnetic ? confidence.magnetic_loop_residual : nan);
     table["magnetic_weighted_loop_residual"]
         << (magnetic ? confidence.magnetic_weighted_loop_residual : nan);
-    table["magnetic_confident"] << (magnetic ? (confidence.magnetic_confident ? 1.0 : 0.0)
-                                             : nan);
-    table["magnetic_patches"]
-        << (magnetic ? static_cast<double>(confidence.magnetic_patch_count) : nan);
+    table["magnetic_confident"]
+        << (magnetic ? (confidence.magnetic_confident ? 1.0 : 0.0) : nan);
+    table["magnetic_patches"] << (magnetic
+                                      ? static_cast<double>(confidence.magnetic_patch_count)
+                                      : nan);
     table["magnetic_excluded_patches"]
         << (magnetic ? static_cast<double>(confidence.magnetic_excluded_patch_count) : nan);
     // The self-consistent columns above report the corrected operator AS CONFIGURED: with
     // magnetic leaves loaded it carries dK (decision 1229 Q1 (ii)).
     table["magnetic_term_applied"]
-        << (result.has_self_consistent ? (surface_response_op->HasMagneticModels() ? 1.0 : 0.0)
-                                       : nan);
+        << (result.has_self_consistent
+                ? (surface_response_op->HasMagneticModels() ? 1.0 : 0.0)
+                : nan);
     table["self_consistent_frequency_magnetic_re"]
         << (result.has_self_consistent && surface_response_op->HasMagneticModels()
                 ? units.Dimensionalize<VT::FREQUENCY>(

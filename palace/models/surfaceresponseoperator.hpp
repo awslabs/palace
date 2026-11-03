@@ -1528,9 +1528,10 @@ private:
   GatherPatchContributions(const std::vector<double> &local_records) const;
 };
 
-// The magnetic (inductive) defect dK of a SurfaceResponseOperator as an Operator (the K-side
-// twin of the response mass, DESIGN-v2 section 2.1: it enters every corrected operator E1-E5
-// with coefficient 1, frequency-independent). Symmetric; DIAG_ZERO on the essential dofs.
+// The magnetic (inductive) defect dK of a SurfaceResponseOperator as an Operator (the
+// K-side twin of the response mass, DESIGN-v2 section 2.1: it enters every corrected
+// operator E1-E5 with coefficient 1, frequency-independent). Symmetric; DIAG_ZERO on the
+// essential dofs.
 class SurfaceResponseStiffnessOperator : public Operator
 {
 private:

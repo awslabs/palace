@@ -876,11 +876,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass",
 }
 
 // The magnetic (inductive) defect on the adaptive PROM (mx-sc-magnetic DESIGN-v2 E4; USER
-// 1221 D8): a response-corrected PROM given a K-side `response_stiffness` beside the response
-// mass carries it as an omega-independent projected matrix (coefficient 1). The stand-in dK
-// is the (DIAG_ZERO) mass itself: the corrected HDM A - omega^2 M + M differs from the
-// mass-only corrected HDM on this electrically small cube (a curl-free solution K ignores:
-// the true K would not move it), and the PROM built on one sample reproduces its own HDM.
+// 1221 D8): a response-corrected PROM given a K-side `response_stiffness` beside the
+// response mass carries it as an omega-independent projected matrix (coefficient 1). The
+// stand-in dK is the (DIAG_ZERO) mass itself: the corrected HDM A - omega^2 M + M differs
+// from the mass-only corrected HDM on this electrically small cube (a curl-free solution K
+// ignores: the true K would not move it), and the PROM built on one sample reproduces its
+// own HDM.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
                  "[romoperator][magnetic][Serial][Parallel]")
 {

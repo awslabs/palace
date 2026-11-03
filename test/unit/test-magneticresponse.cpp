@@ -70,12 +70,9 @@ constexpr std::array<std::array<double, 4>, 4> kPsdDefect = {
 
 json ProcessOfRecord()
 {
-  return {{"MetalThickness", 0.01},
-          {"OveretchDepth", 0.005},
-          {"SidewallAngle", 90.0},
-          {"TopRoundingRadius", 0.0},
-          {"BottomRoundingRadius", 0.0},
-          {"SubstratePermittivity", 11.45}};
+  return {{"MetalThickness", 0.01},      {"OveretchDepth", 0.005},
+          {"SidewallAngle", 90.0},       {"TopRoundingRadius", 0.0},
+          {"BottomRoundingRadius", 0.0}, {"SubstratePermittivity", 11.45}};
 }
 
 json DefaultMagneticSource()
@@ -95,8 +92,8 @@ json DefaultMagneticSource()
 // before it is written (root rank only; every rank returns the paths).
 MagneticLibraryFiles WriteMagneticLibrary(
     const fs::path &base_library, const fs::path &directory, const std::string &tag,
-    const std::array<std::array<double, 4>, 4> &defect, json source = DefaultMagneticSource(),
-    const std::function<void(json &)> &edit = {})
+    const std::array<std::array<double, 4>, 4> &defect,
+    json source = DefaultMagneticSource(), const std::function<void(json &)> &edit = {})
 {
   MagneticLibraryFiles files;
   files.library = directory / ("fabrication-process-magnetic-" + tag + ".json");
@@ -176,15 +173,14 @@ json MaxwellCpw3dConfig(const test::SurfaceResponseFiles &files, const fs::path 
 // loop of B . n vanishes.
 mfem::VectorFunctionCoefficient ConstantCurlField(const std::array<double, 3> &B)
 {
-  return mfem::VectorFunctionCoefficient(
-      3,
-      [B](const mfem::Vector &x, mfem::Vector &E)
-      {
-        E.SetSize(3);
-        E[0] = 0.5 * (B[1] * x[2] - B[2] * x[1]);
-        E[1] = 0.5 * (B[2] * x[0] - B[0] * x[2]);
-        E[2] = 0.5 * (B[0] * x[1] - B[1] * x[0]);
-      });
+  return mfem::VectorFunctionCoefficient(3,
+                                         [B](const mfem::Vector &x, mfem::Vector &E)
+                                         {
+                                           E.SetSize(3);
+                                           E[0] = 0.5 * (B[1] * x[2] - B[2] * x[1]);
+                                           E[1] = 0.5 * (B[2] * x[0] - B[0] * x[2]);
+                                           E[2] = 0.5 * (B[0] * x[1] - B[1] * x[0]);
+                                         });
 }
 
 }  // namespace
@@ -208,7 +204,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(response.HasMagneticModels());
   for (const auto &record : response.GetMagneticModelRecords())
   {
-    INFO(record.name << ": " << record.status << " " << record.rule << " " << record.reason);
+    INFO(record.name << ": " << record.status << " " << record.rule << " "
+                     << record.reason);
     CHECK(record.status == "Applied");
     CHECK(record.psd_ratio < 1.0e-12);
     CHECK(record.negative_eigenvalue_count == 0);
@@ -238,8 +235,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       {{-0.08, -0.06}, {0.08, -0.06}, {0.08, 0.06}, {-0.08, 0.06}}};
   // The scale of the loaded defect (the electric CSV convention, 1/2 a^T C a = the
   // nondimensional energy): C = 2 V_scale^2 / E_scale x Q.
-  const double scale = 2.0 * std::pow(iodata.units.GetScaleFactor<Units::ValueType::VOLTAGE>(), 2) /
-                       iodata.units.GetScaleFactor<Units::ValueType::ENERGY>();
+  const double scale =
+      2.0 * std::pow(iodata.units.GetScaleFactor<Units::ValueType::VOLTAGE>(), 2) /
+      iodata.units.GetScaleFactor<Units::ValueType::ENERGY>();
   double expected_form = 0.0;
   double max_difference_error = 0.0;
   if (Mpi::Root(Mpi::World()))
@@ -303,8 +301,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(linalg::Dot(space.GetComm(), z, y),
              WithinRel(linalg::Dot(space.GetComm(), x, dKz), 1.0e-9));
   CHECK(linalg::Dot(space.GetComm(), z, dKz) >= -1.0e-12 * std::abs(form));
-  // A gradient normal to every plane y = const (grad(y^2 / 2): zero on the sheet's PEC dofs,
-  // so the zeroing leaves it curl-free): dK annihilates it.
+  // A gradient normal to every plane y = const (grad(y^2 / 2): zero on the sheet's PEC
+  // dofs, so the zeroing leaves it curl-free): dK annihilates it.
   mfem::VectorFunctionCoefficient normal_gradient(3,
                                                   [](const mfem::Vector &p, mfem::Vector &E)
                                                   {
@@ -340,9 +338,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator magnetic leaves: refusal rules r1-r4 and the switch",
-                 "[surfaceresponseoperator][3d][maxwell][magnetic][Serial][Parallel]")
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator magnetic leaves: refusal rules r1-r4 and the switch",
+    "[surfaceresponseoperator][3d][maxwell][magnetic][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -480,9 +479,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 }
 
 // The Phase-1 gate G-d loader read (prereg-gates.md): the leaves of the library named by
-// PALACE_MAGNETIC_LIBRARY as the operator loads them (r1-r4 with the library's MagneticRules,
-// the PSD statistic, the scaled defect's norms), written to PALACE_MAGNETIC_LIBRARY_RECORD for
-// the lane's Python reader to cross-check against its own evaluation of the same files.
+// PALACE_MAGNETIC_LIBRARY as the operator loads them (r1-r4 with the library's
+// MagneticRules, the PSD statistic, the scaled defect's norms), written to
+// PALACE_MAGNETIC_LIBRARY_RECORD for the lane's Python reader to cross-check against its
+// own evaluation of the same files.
 TEST_CASE("DescribeMagneticLeaves of PALACE_MAGNETIC_LIBRARY", "[magnetic][Serial]")
 {
   const char *library = std::getenv("PALACE_MAGNETIC_LIBRARY");

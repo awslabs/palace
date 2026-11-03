@@ -2884,13 +2884,13 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         MFEM_VERIFY(version >= 3,
                     "Fabrication-process response model \""
                         << model.name
-                        << "\" carries magnetic leaves on a library of version "
-                        << version << " (version 3 required)!");
+                        << "\" carries magnetic leaves on a library of version " << version
+                        << " (version 3 required)!");
         ResponseModelData::MagneticLeafData leaf;
         leaf.fabricated_matrix = ResolveLibraryPath(
             directory, entry.at("MagneticFabricatedMatrix").get<std::string>());
-        leaf.thin_matrix =
-            ResolveLibraryPath(directory, entry.at("MagneticThinMatrix").get<std::string>());
+        leaf.thin_matrix = ResolveLibraryPath(
+            directory, entry.at("MagneticThinMatrix").get<std::string>());
         const auto &source = entry.at("MagneticSource");
         MFEM_VERIFY(source.is_object() && source.value("Version", 0) == 1,
                     "Fabrication-process response model \""
@@ -2915,9 +2915,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         }
         else
         {
-          double *leaf_values[6] = {&leaf.metal_thickness,       &leaf.overetch_depth,
-                                    &leaf.sidewall_angle,        &leaf.top_rounding_radius,
-                                    &leaf.bottom_rounding_radius, &leaf.substrate_permittivity};
+          double *leaf_values[6] = {
+              &leaf.metal_thickness,        &leaf.overetch_depth,
+              &leaf.sidewall_angle,         &leaf.top_rounding_radius,
+              &leaf.bottom_rounding_radius, &leaf.substrate_permittivity};
           for (std::size_t k = 0; k < process_of_record.size(); k++)
           {
             const auto &[key, of_record] = process_of_record[k];
@@ -6718,10 +6719,9 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   // R / rho_inner; both are corrected by the curvature family interpolated at kappa.
   const bool axisymmetric = mat_op.GetMesh().IsAxisymmetric();
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-  const auto library =
-      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
-                         requirements != nullptr, requirements != nullptr,
-                         request.magnetic_leaves);
+  const auto library = ReadProcessLibrary(
+      request.library, iodata.units, iodata.InputsNondimensionalized(),
+      requirements != nullptr, requirements != nullptr, request.magnetic_leaves);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -13264,10 +13264,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
               "Automatic three-dimensional fabrication-process response matching "
               "requires a three-dimensional mesh!");
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-  const auto library =
-      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
-                         requirements != nullptr, requirements != nullptr,
-                         request.magnetic_leaves);
+  const auto library = ReadProcessLibrary(
+      request.library, iodata.units, iodata.InputsNondimensionalized(),
+      requirements != nullptr, requirements != nullptr, request.magnetic_leaves);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -18890,8 +18889,7 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
   if (!config.magnetic)
   {
     if (!config.blend.empty() &&
-        std::any_of(config.blend.begin(), config.blend.end(),
-                    [](const auto &source)
+        std::any_of(config.blend.begin(), config.blend.end(), [](const auto &source)
                     { return !source.magnetic_fabricated_matrix.empty(); }))
     {
       return Refuse("blend", "an interpolated model whose sources do not all carry the "
@@ -18906,8 +18904,9 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
   }
   if (config.spatial_basis)
   {
-    return Refuse("spatial", "a spatial (three-dimensional) model has no 2D magnetostatic "
-                             "duality (the spatial families are electric-only, option (C))");
+    return Refuse("spatial",
+                  "a spatial (three-dimensional) model has no 2D magnetostatic "
+                  "duality (the spatial families are electric-only, option (C))");
   }
   if (dimension != 3)
   {
@@ -18917,24 +18916,25 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
   if (leaf.basis_point_count != expected_size - conductor_state_count ||
       leaf.conductor_state_count != conductor_state_count || !leaf.basis_points_identical)
   {
-    return Refuse("r1", "the vacuum twin's BasisPoints count " +
-                            std::to_string(leaf.basis_point_count) + " / conductor states " +
-                            std::to_string(leaf.conductor_state_count) +
-                            " / basis file identity " +
-                            (leaf.basis_points_identical ? "true" : "false") +
-                            " do not match the electric model's " +
-                            std::to_string(expected_size - conductor_state_count) + " / " +
-                            std::to_string(conductor_state_count));
+    return Refuse(
+        "r1", "the vacuum twin's BasisPoints count " +
+                  std::to_string(leaf.basis_point_count) + " / conductor states " +
+                  std::to_string(leaf.conductor_state_count) + " / basis file identity " +
+                  (leaf.basis_points_identical ? "true" : "false") +
+                  " do not match the electric model's " +
+                  std::to_string(expected_size - conductor_state_count) + " / " +
+                  std::to_string(conductor_state_count));
   }
   if (!(leaf.electric_regeneration_max_relative_deviation >= 0.0) ||
       leaf.electric_regeneration_max_relative_deviation > rules.same_mesh_tolerance)
   {
-    return Refuse("r3", "the regenerated electric matrices deviate from the model of record "
-                        "by " +
-                            std::to_string(leaf.electric_regeneration_max_relative_deviation) +
-                            " relative (SameMeshTolerance " +
-                            std::to_string(rules.same_mesh_tolerance) +
-                            "; negative = not recorded): the same-mesh proof failed");
+    return Refuse("r3",
+                  "the regenerated electric matrices deviate from the model of record "
+                  "by " +
+                      std::to_string(leaf.electric_regeneration_max_relative_deviation) +
+                      " relative (SameMeshTolerance " +
+                      std::to_string(rules.same_mesh_tolerance) +
+                      "; negative = not recorded): the same-mesh proof failed");
   }
   result.status.same_mesh_deviation = leaf.electric_regeneration_max_relative_deviation;
   mfem::DenseMatrix fabricated, thin;
@@ -18989,20 +18989,21 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
       static_cast<int>((eigenvalues.array() < 0.0).count());
   if (result.status.psd_ratio > rules.psd_refusal_ratio)
   {
-    return Refuse("r4", "-lambda_min / ||dS_m|| = " + std::to_string(result.status.psd_ratio) +
-                            " above PsdRefusalRatio " +
-                            std::to_string(rules.psd_refusal_ratio));
+    return Refuse("r4",
+                  "-lambda_min / ||dS_m|| = " + std::to_string(result.status.psd_ratio) +
+                      " above PsdRefusalRatio " + std::to_string(rules.psd_refusal_ratio));
   }
   result.status.status =
       result.status.psd_ratio > rules.psd_finding_ratio ? "Finding" : "Applied";
   if (result.status.status == "Finding")
   {
     result.status.rule = "r4";
-    result.status.reason = "-lambda_min / ||dS_m|| = " + std::to_string(result.status.psd_ratio) +
-                           " in (PsdFindingRatio " + std::to_string(rules.psd_finding_ratio) +
-                           ", PsdRefusalRatio " + std::to_string(rules.psd_refusal_ratio) +
-                           "]: a thin-vs-fabricated mesh-matching defect at the "
-                           "discretization scale (AMENDMENT 1202 (c)); the leaf is applied";
+    result.status.reason =
+        "-lambda_min / ||dS_m|| = " + std::to_string(result.status.psd_ratio) +
+        " in (PsdFindingRatio " + std::to_string(rules.psd_finding_ratio) +
+        ", PsdRefusalRatio " + std::to_string(rules.psd_refusal_ratio) +
+        "]: a thin-vs-fabricated mesh-matching defect at the "
+        "discretization scale (AMENDMENT 1202 (c)); the leaf is applied";
   }
   result.defect = std::move(defect);
   return result;
@@ -20670,13 +20671,15 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
 nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Units &units,
                                       bool nondimensionalize)
 {
-  const auto library = ReadProcessLibrary(library_path, units, nondimensionalize, true, true);
-  nlohmann::json result = {{"Library", library.name},
-                           {"Rules",
-                            {{"SameMeshTolerance", library.magnetic_rules.same_mesh_tolerance},
-                             {"PsdFindingRatio", library.magnetic_rules.psd_finding_ratio},
-                             {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio}}},
-                           {"Models", nlohmann::json::array()}};
+  const auto library =
+      ReadProcessLibrary(library_path, units, nondimensionalize, true, true);
+  nlohmann::json result = {
+      {"Library", library.name},
+      {"Rules",
+       {{"SameMeshTolerance", library.magnetic_rules.same_mesh_tolerance},
+        {"PsdFindingRatio", library.magnetic_rules.psd_finding_ratio},
+        {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio}}},
+      {"Models", nlohmann::json::array()}};
   for (const auto &model : library.models)
   {
     if (!model.response.magnetic)
@@ -20686,17 +20689,18 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
     const auto points = ReadBasisPoints(model.response.basis_points);
     const int basis_size =
         static_cast<int>(points.size()) + model.response.conductor_state_count;
-    const auto evaluation =
-        EvaluateMagneticLeaf(model.response, basis_size, model.response.conductor_state_count,
-                             3, library.magnetic_rules, units);
-    nlohmann::json entry = {{"Name", model.name},
-                            {"Status", evaluation.status.status},
-                            {"Rule", evaluation.status.rule},
-                            {"Reason", evaluation.status.reason},
-                            {"PsdRatio", evaluation.status.psd_ratio},
-                            {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
-                            {"SameMeshDeviation", evaluation.status.same_mesh_deviation},
-                            {"BasisSize", basis_size}};
+    const auto evaluation = EvaluateMagneticLeaf(model.response, basis_size,
+                                                 model.response.conductor_state_count, 3,
+                                                 library.magnetic_rules, units);
+    nlohmann::json entry = {
+        {"Name", model.name},
+        {"Status", evaluation.status.status},
+        {"Rule", evaluation.status.rule},
+        {"Reason", evaluation.status.reason},
+        {"PsdRatio", evaluation.status.psd_ratio},
+        {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
+        {"SameMeshDeviation", evaluation.status.same_mesh_deviation},
+        {"BasisSize", basis_size}};
     if (evaluation.defect.Height() == basis_size)
     {
       double trace = 0.0, frobenius = 0.0;
@@ -20777,14 +20781,15 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       const bool applied =
           evaluation.status.status == "Applied" || evaluation.status.status == "Finding";
       carries[model.idx] = applied;
-      models.push_back({{"Index", model.idx},
-                        {"Name", model.name},
-                        {"Status", evaluation.status.status},
-                        {"Rule", evaluation.status.rule},
-                        {"Reason", evaluation.status.reason},
-                        {"PsdRatio", evaluation.status.psd_ratio},
-                        {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
-                        {"SameMeshDeviation", evaluation.status.same_mesh_deviation}});
+      models.push_back(
+          {{"Index", model.idx},
+           {"Name", model.name},
+           {"Status", evaluation.status.status},
+           {"Rule", evaluation.status.rule},
+           {"Reason", evaluation.status.reason},
+           {"PsdRatio", evaluation.status.psd_ratio},
+           {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
+           {"SameMeshDeviation", evaluation.status.same_mesh_deviation}});
     }
     int electric_only_count = 0;
     double electric_only_length = 0.0;
@@ -20812,10 +20817,9 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
           {"PsdRefusalRatio", patches.magnetic_rules.psd_refusal_ratio}}},
         {"AllowElectricOnlyFallback", patches.allow_electric_only_fallback},
         {"Models", models}};
-    manifest["Summary"]["MagneticElectricOnly"] = {
-        {"Count", electric_only_count},
-        {"Length", electric_only_length},
-        {"Treatment", "ElectricOnly"}};
+    manifest["Summary"]["MagneticElectricOnly"] = {{"Count", electric_only_count},
+                                                   {"Length", electric_only_length},
+                                                   {"Treatment", "ElectricOnly"}};
   }
   // The identification is recorded on the root only; its placement records below include a
   // collective containment test, so every rank follows the root's decision.
@@ -26695,8 +26699,9 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
         assumed = {trace_real(state), trace_imag(state)};
       }
       const double deviation = std::abs(reading - assumed);
-      const double ratio = normalization > 0.0 ? deviation / normalization
-                                               : (deviation == 0.0 ? 0.0 : mfem::infinity());
+      const double ratio = normalization > 0.0
+                               ? deviation / normalization
+                               : (deviation == 0.0 ? 0.0 : mfem::infinity());
       max_ratio = std::max(max_ratio, ratio);
     }
     const bool excluded = max_ratio > kConductorConsistencyTolerance;
@@ -29640,9 +29645,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // unless AllowElectricOnlyFallback, an r4 refusal continues electric-only by name
     // (ERRATUM 1227). A model without the leaf is untouched (status Absent).
     {
-      auto magnetic = EvaluateMagneticLeaf(model_config, model.basis_size,
-                                           model.conductor_state_count, dimension,
-                                           config.magnetic_rules, iodata.units);
+      auto magnetic =
+          EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,
+                               dimension, config.magnetic_rules, iodata.units);
       model.magnetic_status = std::move(magnetic.status);
       if (model.magnetic_status.status == "Applied" ||
           model.magnetic_status.status == "Finding")
@@ -29652,7 +29657,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         has_magnetic_models = true;
         Mpi::Print(" Magnetic (inductive) leaf of model \"{}\" ({}): -lambda_min / "
                    "||dS_m|| = {:.3e}, {:d} negative eigenvalue(s) of {:d}{}\n",
-                   model.name, model.magnetic_status.status, model.magnetic_status.psd_ratio,
+                   model.name, model.magnetic_status.status,
+                   model.magnetic_status.psd_ratio,
                    model.magnetic_status.negative_eigenvalue_count, model.basis_size,
                    model.magnetic_status.status == "Finding"
                        ? " (FINDING r4: " + model.magnetic_status.reason + ")"
@@ -29663,12 +29669,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         const bool fatal = model.magnetic_status.rule != "r4" &&
                            model.magnetic_status.rule != "spatial" &&
                            !config.allow_electric_only_fallback;
-        MFEM_VERIFY(!fatal, "Magnetic (inductive) leaf of response model \""
-                                << model.name << "\" REFUSED by rule "
-                                << model.magnetic_status.rule << ": "
-                                << model.magnetic_status.reason
-                                << " (set SurfaceResponseCorrection.AllowElectricOnlyFallback "
-                                   "to continue this model electric-only)!");
+        MFEM_VERIFY(!fatal,
+                    "Magnetic (inductive) leaf of response model \""
+                        << model.name << "\" REFUSED by rule " << model.magnetic_status.rule
+                        << ": " << model.magnetic_status.reason
+                        << " (set SurfaceResponseCorrection.AllowElectricOnlyFallback "
+                           "to continue this model electric-only)!");
         Mpi::Print(" Magnetic (inductive) leaf of model \"{}\" REFUSED by rule {}: {}; the "
                    "model continues ELECTRIC-ONLY (MagneticElectricOnly)\n",
                    model.name, model.magnetic_status.rule, model.magnetic_status.reason);
@@ -30349,9 +30355,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     {
       const auto &u = local_patch_configs[patch_index]->axis_u;
       const auto &v = local_patch_configs[patch_index]->axis_v;
-      patch_plane_normals[patch_index] = {u[1] * v[2] - u[2] * v[1],
-                                          u[2] * v[0] - u[0] * v[2],
-                                          u[0] * v[1] - u[1] * v[0]};
+      patch_plane_normals[patch_index] = {
+          u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
     }
     ConfigureMaxwellLines(line_geometry, line_patches, patch_provenance,
                           patch_plane_normals, geometry_ledger);
@@ -33890,7 +33895,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
                          true);
     BuildMaxwellChainTrace(magnetic_line_real, magnetic_chain_real);
     BuildMaxwellChainTrace(magnetic_line_imag, magnetic_chain_imag);
-    Vector magnetic_trace_real(magnetic_chain_real), magnetic_trace_imag(magnetic_chain_imag);
+    Vector magnetic_trace_real(magnetic_chain_real),
+        magnetic_trace_imag(magnetic_chain_imag);
     // [0] the magnetic domain correction, [1] the weighted residual^2, [2] the patches
     // carrying the term, [3] the dual gate's exclusions, then per model its correction.
     std::vector<double> magnetic_reduction(4 + models.size(), 0.0);

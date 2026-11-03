@@ -111,8 +111,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     {
       response_stiffness_real =
           std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction);
-      response_stiffness = std::make_unique<ComplexWrapperOperator>(
-          response_stiffness_real.get(), nullptr);
+      response_stiffness =
+          std::make_unique<ComplexWrapperOperator>(response_stiffness_real.get(), nullptr);
     }
   }
   const auto &Curl = space_op.GetCurlMatrix();
@@ -290,8 +290,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
           // field, before the corrected solve reads the exclusion.
           response_correction->ApplyMagneticConductorConsistencyGate(
               E, excitation_idx,
-              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-                  (2 * M_PI));
+              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI));
         }
       }
       if (corrected_ksp)
@@ -694,8 +693,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         {
           response_correction->ApplyMagneticConductorConsistencyGate(
               E, excitation_idx,
-              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-                  (2 * M_PI));
+              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI));
         }
       }
       if (corrected_prom_op)

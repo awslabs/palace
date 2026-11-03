@@ -403,11 +403,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     corrected_M = internal::BuildResponseCorrectedMass(*M, *response_correction);
     if (response_correction->HasMagneticModels())
     {
-      Mpi::Print(" with the magnetic (inductive) defect dK of the loaded magnetic leaves\n");
+      Mpi::Print(
+          " with the magnetic (inductive) defect dK of the loaded magnetic leaves\n");
       response_stiffness_real =
           std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction);
-      response_stiffness = std::make_unique<ComplexWrapperOperator>(
-          response_stiffness_real.get(), nullptr);
+      response_stiffness =
+          std::make_unique<ComplexWrapperOperator>(response_stiffness_real.get(), nullptr);
       corrected_K = internal::BuildResponseCorrectedStiffness(*K, *response_stiffness_real);
       if (has_A2)
       {
@@ -780,8 +781,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (corrected_eigen)
     {
       std::tie(corrected_eigen, corrected_num_conv) =
-          RefineEigenproblem(std::move(corrected_eigen), corrected_num_conv,
-                             corrected_K_op, *corrected_M.op, *corrected_ksp, true);
+          RefineEigenproblem(std::move(corrected_eigen), corrected_num_conv, corrected_K_op,
+                             *corrected_M.op, *corrected_ksp, true);
     }
   }
 

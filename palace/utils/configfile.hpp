@@ -1376,11 +1376,11 @@ public:
     // magnetic energy within R as a quadratic form of the flux trace: S_m = Q_dom,vac in
     // solver units (no scale leaf). Absent = electric-only = the operator of record,
     // bitwise. The leaf is REFUSED by name when (r1) its basis / piece counts differ from
-    // the electric model's, (r2) the twin's recorded Fabrication differs from the library's,
-    // (r3) the regenerated electric matrices deviate from the model of record by more than
-    // MagneticRules.SameMeshTolerance, (r4) -lambda_min(sym dS_m) / ||dS_m||_2 exceeds
-    // MagneticRules.PsdRefusalRatio (a value in (PsdFindingRatio, PsdRefusalRatio] is a
-    // named FINDING: the leaf is applied; SUPERVISOR ERRATUM 1227).
+    // the electric model's, (r2) the twin's recorded Fabrication differs from the
+    // library's, (r3) the regenerated electric matrices deviate from the model of record by
+    // more than MagneticRules.SameMeshTolerance, (r4) -lambda_min(sym dS_m) / ||dS_m||_2
+    // exceeds MagneticRules.PsdRefusalRatio (a value in (PsdFindingRatio, PsdRefusalRatio]
+    // is a named FINDING: the leaf is applied; SUPERVISOR ERRATUM 1227).
     struct MagneticLeafData
     {
       std::string fabricated_matrix;

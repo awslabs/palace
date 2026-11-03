@@ -19,6 +19,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added the magnetic (inductive) defect of finite-thickness metal to the Maxwell
+    self-consistent surface-response correction for the 2D translational model families
+    (mx-sc-magnetic DESIGN-v2 option (C); USER decision 1221 D2-D8; decisions 1227 / 1229):
+    OPTIONAL Version-3 library leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` /
+    `MagneticSource` (the model's electrostatic coupon pair re-run at ``eps = 1``, the exact
+    2D duality ``S_m = Q_dom,vac``; assembled by `examples/cpw2d/attach_magnetic_leaves.py`)
+    with the top-level `MagneticRules`; the K-side defect ``dK = P_m^T W dS_m P_m`` on the
+    flux trace of ``curl E`` in every corrected operator (uniform and adaptive driven, the
+    self-consistent eigenproblem, its shift-invert and nonlinear refine); the refusal rules
+    r1-r4 by name (r4 two-level: FINDING / REFUSAL); the first-order fixed-trace frequency
+    shift as the corrected frequency of record (`fixed-trace frequency shift`,
+    `f fixed-trace corrected (GHz)`, `magnetic term applied`, `Re{f self-consistent
+    (magnetic)} (GHz)` in `surface-response-confidence.csv`), `surface-response-magnetic.csv`,
+    the preflight manifest's `Library.Magnetic` / `Summary.MagneticElectricOnly` and the
+    coverage report's `MagneticElectricOnly` row; the config keys
+    `SurfaceResponseCorrection.Magnetic` (default true) and `AllowElectricOnlyFallback`
+    (default false). A library without the leaves is unchanged, bitwise. The spatial
+    families stay electric-only (named); the kinetic (London) term is out of scope
+    (OI-MAGNETIC-KINETIC-LONDON-TERM).
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the
