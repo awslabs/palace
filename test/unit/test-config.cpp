@@ -1171,6 +1171,33 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     CHECK_THROWS(
         config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Frequency"}}));
   }
+
+  SECTION("Magnetostatic objectives")
+  {
+    auto config = Config(
+        {{"Objectives", {{{"Index", 1}, {"Type", "Inductance"}, {"Terminals", {1, 2}}}}}});
+    config["Problem"]["Type"] = "Magnetostatic";
+    config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}},
+                            {"SurfaceCurrent",
+                             {{{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}},
+                              {{"Index", 2}, {"Attributes", {3}}, {"Direction", "+X"}}}}};
+    IoData iodata(config, false);
+    const auto &objective = iodata.sensitivity.objectives.at(1);
+    CHECK(objective.type == SensitivityObjective::INDUCTANCE);
+    CHECK(objective.terminals == std::array<int, 2>{1, 2});
+
+    using Catch::Matchers::ContainsSubstring;
+    auto unknown = config;
+    unknown["Sensitivity"]["Objectives"][0]["Terminals"] = {1, 3};
+    CHECK_THROWS_WITH(IoData(unknown, false),
+                      ContainsSubstring("not a \"SurfaceCurrent\""));
+    auto shorted = config;
+    shorted["Solver"] = {{"Magnetostatic", {{"InactivePorts", "Short"}}}};
+    CHECK_THROWS_WITH(IoData(shorted, false), ContainsSubstring("shorted inactive ports"));
+    config["Problem"]["Type"] = "Electrostatic";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("requires a magnetostatic problem"));
+  }
 }
 
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")

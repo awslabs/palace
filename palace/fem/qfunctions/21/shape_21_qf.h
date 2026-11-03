@@ -66,4 +66,34 @@ CEED_QFUNCTION(f_shape_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
   return 0;
 }
 
+// Derivative of the linear form (f, w) with f fixed, for tangential traces of H(curl)
+// fields on a curve: S = (f ⋅ w) P - w (Pf)ᵀ + n (n ⋅ f) wᵀ. The vector f is the first
+// column of the coefficient, and w is in[1].
+CEED_QFUNCTION(f_shape_hcurl_lf_21)(void *__restrict__ ctx, CeedInt Q,
+                                    const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *w = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar coeff[4], A[2];
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack21(adjJt + i, Q, A);
+    const CeedScalar *f = coeff;
+    const CeedScalar pw[2] = {A[0] * w[i], A[1] * w[i]};
+    const CeedScalar inv_norm = 1.0 / sqrt(A[0] * A[0] + A[1] * A[1]);
+    const CeedScalar n[2] = {-A[1] * inv_norm, A[0] * inv_norm};
+    const CeedScalar s = f[0] * pw[0] + f[1] * pw[1];
+    const CeedScalar n_f = n[0] * f[0] + n[1] * f[1];
+    const CeedScalar a = A[0] * f[0] + A[1] * f[1];
+    const CeedScalar gw = A[0] * pw[0] + A[1] * pw[1];
+    for (CeedInt r = 0; r < 2; r++)
+    {
+      v[i + Q * r] = wdetJ[i] * (s * A[r] - pw[r] * a + n[r] * n_f * gw);
+    }
+  }
+  return 0;
+}
+
 #endif  // PALACE_LIBCEED_SHAPE_21_QF_H

@@ -1282,7 +1282,8 @@ public:
   // Type of objective.
   SensitivityObjective type = SensitivityObjective::CAPACITANCE;
 
-  // Terminal indices (i, j) of a capacitance matrix entry.
+  // Terminal (capacitance) or surface current source (inductance) indices (i, j) of a
+  // matrix entry.
   std::array<int, 2> terminals = {{0, 0}};
 
   // Index (1-based) of the mode of an eigenmode objective.
