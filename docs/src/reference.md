@@ -2209,22 +2209,30 @@ operator directly.
     ELECTROSTATIC coupon domain response, ``S = 2 Q_{domain}`` of the section
     *Self-consistent thin-metal response correction* above, scaled by ``\omega^2`` and
     added to the thin Maxwell operator (the driven solver's `corrected_A` in
-    `palace/drivers/drivensolver.cpp`, lines 229-233, and the eigensolver's `corrected_A`
-    in `palace/drivers/eigensolver.cpp`, line 612, both built from the one `response_mass`
-    operator). No magnetic (inductive) defect of the finite-thickness metal is modelled
+    `palace/drivers/drivensolver.cpp` and the eigensolver's `corrected_A` in
+    `palace/drivers/eigensolver.cpp`, each adding its `response_mass` wrapper of the one
+    `SurfaceResponseOperator`; the eigensolver folds the same defect into its corrected
+    mass). No magnetic (inductive) defect of the finite-thickness metal is modelled
     anywhere on this path: neither the exclusion of the magnetic field from the metal
     volume, nor the redistribution of the surface current at the thick edges, nor any
-    kinetic inductance enters the corrected stiffness or mass. Consequently the corrected
-    FREQUENCIES / eigenvalues (`f corrected (GHz)` of the eigenmode output) and the port
-    quantities of the self-consistent driven and eigenmode solves are NOT validated and can
-    be biased: a quasi-TEM estimate, not yet confirmed against a thick-metal Maxwell
-    reference, finds that the sidewall capacitance added in the vacuum gap comes with a
-    comparable decrease of the line inductance, so the true frequency shift can even have
-    the OPPOSITE sign of the electric-only correction. The fixed-trace interface
-    participations of `surface-Q-corrected.csv`, normalised by the electric energy, remain
-    the result of record and are much less affected by the omission. A correction carrying
-    the magnetic defect is under design; until it lands, treat the self-consistent Maxwell
-    frequencies and port quantities as diagnostics, not as results.
+    change of the sheet (kinetic) inductance with the metal thickness enters the corrected
+    stiffness or mass. Consequently every output derived from the self-consistent corrected
+    field is NOT validated and can be biased: the corrected FREQUENCIES / eigenvalues
+    (`f corrected (GHz)` of the eigenmode output), the self-consistent columns of
+    `surface-Q-corrected.csv` (normalization energies, interface energies, participations,
+    quality factors) and the saved `E_corrected_real` / `E_corrected_imag` fields. The
+    ordinary outputs (every port and S-parameter quantity, `surface-Q.csv`, the saved
+    `E` / `B` fields, the error indicator and the AMR sequence) are the raw thin-metal
+    result and are not touched by the correction. A quasi-TEM estimate, not yet confirmed
+    against a thick-metal Maxwell reference, finds that the sidewall capacitance added in
+    the vacuum gap comes with a relative decrease of the line inductance larger than the
+    relative capacitance increase, so the true frequency shift has the OPPOSITE sign of
+    the electric-only correction. The fixed-trace interface participations of
+    `surface-Q-corrected.csv`, evaluated on the raw field and normalised by the electric
+    energy, remain the result of record and are much less affected by the omission. A
+    correction carrying the magnetic defect is under design; until it lands, treat the
+    self-consistent Maxwell frequencies, participations and corrected fields as
+    diagnostics, not as results.
 
 Boundary modes also report raw, fixed-trace, and fixed-flux results only. Their correction
 uses the transverse field ``\bm{E}_t`` and is intended for quasi-TEM modes whose
@@ -2249,7 +2257,8 @@ spread is diagnostic of the postprocessed thin field, while the separately repor
 corrected solution is globally self-consistent. On the Maxwell path, a passing
 `self-consistent confidence pass` certifies the coupling and the contour diagnostics only;
 it does not lift the electric-only caveat above (OI-MAXWELL-SC-ELECTRIC-ONLY) on the
-corrected frequencies and port quantities.
+corrected frequencies, the self-consistent columns of `surface-Q-corrected.csv` and the
+corrected fields.
 
 | Column                                         | Meaning                                                                                                                       | Current limit                 |
 |:---------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------- |:----------------------------- |

@@ -53,8 +53,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Documented the caveat OI-MAXWELL-SC-ELECTRIC-ONLY in the Maxwell response-correction
     reference: the self-consistent driven / eigenmode correction adds only the electric
     (electrostatic-coupon) defect, no magnetic / inductive defect of the thick metal, so its
-    corrected frequencies and port quantities are not validated (the fixed-trace
-    participations of record are much less affected); a fix is under design.
+    corrected frequencies, self-consistent participations and corrected fields are not
+    validated (the ordinary port and S-parameter outputs are the raw thin-metal result; the
+    fixed-trace participations of record are much less affected); a fix is under design.
   - Accelerated aggregated electrostatic coupon response matrices with batched surface
     Gram assembly and one collective domain-matrix reduction. Added probe-only and
     concurrent-coupon controls to the process-library planner, plus exhaustive virtual
