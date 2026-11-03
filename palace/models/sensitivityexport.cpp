@@ -7,7 +7,9 @@
 #include <bit>
 #include <cstdint>
 #include <fstream>
+#include <map>
 #include <fmt/format.h>
+#include <nlohmann/json.hpp>
 #include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/enum_string.hpp"
@@ -22,49 +24,26 @@ namespace
 // Exports of more nodes than this, for the whole mesh, are flagged.
 constexpr long long int large_export = 1000000;
 
-// Mark the owned true DOFs of the first component of the mesh nodal space touched by the
-// local elements (or boundary elements) for which in_set returns true.
-template <typename InSet, typename GetDofs>
-Vector MarkNodes(const mfem::ParFiniteElementSpace &nodal_fespace, int num_elem,
-                 InSet &&in_set, GetDofs &&get_dofs)
+// Mark the owned true DOFs of the first component of the mesh nodal space at the nodes of
+// the given local elements, whose DOFs get_dofs returns.
+template <typename GetDofs>
+Vector MarkNodes(const mfem::ParFiniteElementSpace &nodal_fespace,
+                 const std::vector<int> &elements, GetDofs &&get_dofs)
 {
   Vector marker_l(nodal_fespace.GetVSize()), marker(nodal_fespace.GetTrueVSize());
   marker_l = 0.0;
+  auto *h_marker_l = marker_l.HostReadWrite();
   mfem::Array<int> dofs;
-  for (int e = 0; e < num_elem; e++)
+  for (const int e : elements)
   {
-    if (in_set(e))
+    get_dofs(e, dofs);
+    for (const int d : dofs)
     {
-      get_dofs(e, dofs);
-      for (auto d : dofs)
-      {
-        marker_l(nodal_fespace.DofToVDof(d, 0)) = 1.0;
-      }
+      h_marker_l[nodal_fespace.DofToVDof(d, 0)] = 1.0;
     }
   }
   nodal_fespace.GetProlongationMatrix()->MultTranspose(marker_l, marker);
   return marker;
-}
-
-// Gather variable-length data from all processes to the root, in rank order.
-template <typename T>
-std::vector<T> GatherToRoot(const std::vector<T> &data, MPI_Datatype type, MPI_Comm comm)
-{
-  const int size = static_cast<int>(data.size());
-  std::vector<int> counts(Mpi::Size(comm)), displs(Mpi::Size(comm));
-  MPI_Gather(&size, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-  std::vector<T> all;
-  if (Mpi::Root(comm))
-  {
-    for (std::size_t i = 1; i < counts.size(); i++)
-    {
-      displs[i] = displs[i - 1] + counts[i - 1];
-    }
-    all.resize(displs.back() + counts.back());
-  }
-  MPI_Gatherv(data.data(), size, type, all.data(), counts.data(), displs.data(), type, 0,
-              comm);
-  return all;
 }
 
 std::ofstream OpenBinary(const std::filesystem::path &path)
@@ -115,14 +94,22 @@ SensitivityExport::SensitivityExport(const IoData &iodata, const Mesh &mesh)
   Vector in_attributes;
   if (!region.attributes.empty())
   {
-    in_attributes = MarkNodes(
-        *nodal_fespace, pmesh.GetNE(), [&](int e)
-        { return std::ranges::binary_search(region.attributes, pmesh.GetAttribute(e)); },
-        [&](int e, mfem::Array<int> &dofs) { nodal_fespace->GetElementDofs(e, dofs); });
+    std::vector<int> elements;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      if (std::ranges::binary_search(region.attributes, pmesh.GetAttribute(e)))
+      {
+        elements.push_back(e);
+      }
+    }
+    in_attributes = MarkNodes(*nodal_fespace, elements, [&](int e, mfem::Array<int> &dofs)
+                              { nodal_fespace->GetElementDofs(e, dofs); });
   }
+  const auto *h_in_attributes = in_attributes.HostRead();
 
   // Owned true DOFs in the region. Constrained (hanging) nodes are not true DOFs.
   const double scale = iodata.units.GetMeshLengthRelativeScale();
+  const auto *h_nodes = nodes.HostRead();
   for (int i = 0; i < nodal_fespace->GetNDofs(); i++)
   {
     std::array<int, 3> tdof = {-1, -1, -1};
@@ -131,9 +118,9 @@ SensitivityExport::SensitivityExport(const IoData &iodata, const Mesh &mesh)
     {
       const int ldof = nodal_fespace->DofToVDof(i, c);
       tdof[c] = nodal_fespace->GetLocalTDofNumber(ldof);
-      x[c] = nodes(ldof);
+      x[c] = h_nodes[ldof];
     }
-    if (tdof[0] < 0 || (!region.attributes.empty() && in_attributes(tdof[0]) == 0.0))
+    if (tdof[0] < 0 || (!region.attributes.empty() && h_in_attributes[tdof[0]] == 0.0))
     {
       continue;
     }
@@ -160,16 +147,21 @@ SensitivityExport::SensitivityExport(const IoData &iodata, const Mesh &mesh)
   // global, so every process takes part in each marking.
   if (region.boundary_tags)
   {
+    std::map<int, std::vector<int>> bdr_elements;
+    for (int e = 0; e < pmesh.GetNBE(); e++)
+    {
+      bdr_elements[pmesh.GetBdrAttribute(e)].push_back(e);
+    }
     boundary.resize(tdofs.size());
     for (const int attr : pmesh.bdr_attributes)
     {
-      const auto on_boundary = MarkNodes(
-          *nodal_fespace, pmesh.GetNBE(), [&](int e)
-          { return pmesh.GetBdrAttribute(e) == attr; }, [&](int e, mfem::Array<int> &dofs)
-          { nodal_fespace->GetBdrElementDofs(e, dofs); });
+      const auto on_boundary =
+          MarkNodes(*nodal_fespace, bdr_elements[attr], [&](int e, mfem::Array<int> &dofs)
+                    { nodal_fespace->GetBdrElementDofs(e, dofs); });
+      const auto *h_on_boundary = on_boundary.HostRead();
       for (std::size_t k = 0; k < tdofs.size(); k++)
       {
-        if (on_boundary(tdofs[k][0]) > 0.0)
+        if (h_on_boundary[tdofs[k][0]] > 0.0)
         {
           boundary[k].push_back(attr);
         }
@@ -187,6 +179,8 @@ SensitivityExport::SensitivityExport(const IoData &iodata, const Mesh &mesh)
                  num_points);
   }
 }
+
+SensitivityExport::~SensitivityExport() = default;
 
 void SensitivityExport::AddObjective(nlohmann::json entry, const Vector *g, double scale)
 {
@@ -211,11 +205,11 @@ void SensitivityExport::AddObjective(nlohmann::json entry, const Vector *g, doub
 
 void SensitivityExport::Write(const std::filesystem::path &dir) const
 {
-  const auto all_points = GatherToRoot(points, MPI_DOUBLE, comm);
+  const auto all_points = Mpi::GatherOnRoot(points, comm);
   std::vector<std::vector<double>> all_gradients;
   for (const auto &gradient : gradients)
   {
-    all_gradients.push_back(GatherToRoot(gradient, MPI_DOUBLE, comm));
+    all_gradients.push_back(Mpi::GatherOnRoot(gradient, comm));
   }
   std::vector<int> counts, attributes;
   for (const auto &attr_list : boundary)
@@ -223,8 +217,8 @@ void SensitivityExport::Write(const std::filesystem::path &dir) const
     counts.push_back(static_cast<int>(attr_list.size()));
     attributes.insert(attributes.end(), attr_list.begin(), attr_list.end());
   }
-  const auto all_counts = GatherToRoot(counts, MPI_INT, comm);
-  const auto all_attributes = GatherToRoot(attributes, MPI_INT, comm);
+  const auto all_counts = Mpi::GatherOnRoot(counts, comm);
+  const auto all_attributes = Mpi::GatherOnRoot(attributes, comm);
   if (!Mpi::Root(comm))
   {
     return;
