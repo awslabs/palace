@@ -37,7 +37,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `SurfaceResponseCorrection.Magnetic` (default true) and `AllowElectricOnlyFallback`
     (default false). A library without the leaves is unchanged, bitwise. The spatial
     families stay electric-only (named); the kinetic (London) term is out of scope
-    (OI-MAGNETIC-KINETIC-LONDON-TERM).
+    (OI-MAGNETIC-KINETIC-LONDON-TERM). Review fix-ups (decisions 1235 / 1237): the magnetic
+    half of the shift is withheld on the electric loop-fit fallback patches (`magnetic
+    fallback patches`, `withheld magnetic domain correction (J)`), `magnetic confidence pass`
+    gains the loop-response failure fraction (`magnetic loop-response fraction above limit`),
+    the magnetic records are written whenever a leaf was read, the manifest keys are
+    Maxwell-only, `magnetic term applied` means a non-zero ``dK``, and
+    `attach_magnetic_leaves.py` writes relocatable (relative) leaf paths.
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the

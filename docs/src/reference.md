@@ -2281,19 +2281,38 @@ first-order fixed-trace frequency shift of the RAW mode,
 electric domain correction, is THE CORRECTED FREQUENCY OF RECORD (USER decision 1221 D6):
 `fixed-trace frequency shift` and `f fixed-trace corrected (GHz)` in
 `surface-response-confidence.csv`, gated by the closure-independent confidence gates and
-the magnetic term's own loop gate (the in-plane circulation of ``\bm{B} \cdot \hat{n}``
-around every closed contour, 0.05), NOT by the trace-closure spread, which is printed
-beside it. The self-consistent eigenvalue is the check: with a magnetic library,
-`Re{f self-consistent} (GHz)` is the self-consistent eigenvalue of the corrected operator
-AS CONFIGURED (electric + magnetic), the flag column `magnetic term applied` says which, and
-`Re{f self-consistent (magnetic)} (GHz)` repeats it when ``dK`` was in the operator; no
-previously recorded number changes (a magnetic library is a NEW library). To reproduce the
+the magnetic term's own loop gate (`magnetic confidence pass`: the response-weighted dual
+loop residual, the in-plane circulation of ``\bm{B} \cdot \hat{n}`` around every closed
+contour, at most 0.05, and the response-weight fraction of paths above 0.05 at most 0.01,
+the electric gate's two components), NOT by the trace-closure spread, which is printed
+beside it. Both halves are read on the SAME patch set: a patch the electric loop fit
+serves raw (`loop fallback`, share above 0.25) adds neither its electric nor its magnetic
+domain correction to the shift; the magnetic part it would have added is printed as
+`withheld magnetic domain correction (J)` with `magnetic fallback patches` (the magnetic
+image of the loop-fit CSV's `withheld domain correction (J)`), while the self-consistent
+operator carries both terms on such a patch as before. The dual residual's detector weight
+is the patch's magnetic DEFECT energy ``|\tfrac{1}{2} w_p a_m^H dS_m a_m|`` (the electric
+one weighs by the fabricated RESPONSE energy, which the magnetic leaves do not carry):
+OI-MAGNETIC-DETECTOR-WEIGHT, so the unweighted `magnetic loop residual` is printed beside
+the gated weighted one. On the Maxwell path `TranslationalDomainCorrection` is not read:
+the electric domain term and the magnetic term are both fixed-trace by construction (the
+key governs the electrostatic driver only). The self-consistent eigenvalue is the check:
+with a magnetic library, `Re{f self-consistent} (GHz)` is the self-consistent eigenvalue of
+the corrected operator AS CONFIGURED (electric + magnetic), the flag column `magnetic term
+applied` is 1 when that operator carried a NON-ZERO ``dK`` (a patch carries the term after
+the dual gate's exclusions: `magnetic patches` > 0), and `Re{f self-consistent (magnetic)}
+(GHz)` repeats the eigenvalue exactly then; no previously recorded number changes (a
+magnetic library is a NEW library). To reproduce the
 electric-only self-consistent result of the same library, run it again with
 `SurfaceResponseCorrection.Magnetic: false` (the leaves are then not read: that run is
 byte-identical to the library without leaves).
 
-Refusal rules, by name (every verdict in `surface-response-magnetic.csv` and in the
-preflight manifest's `Library.Magnetic` / `Summary.MagneticElectricOnly`): (r1) the twin's
+Refusal rules, by name (every verdict in `surface-response-magnetic.csv`, written and the
+magnetic columns present whenever a leaf was READ, also when every leaf is refused or
+continued electric-only, their numerics `nan` when no model carries the term; and in the
+preflight manifest's `Library.Magnetic` / `Summary.MagneticElectricOnly` on the MAXWELL
+preflight only: the electrostatic path carries no magnetic term by construction and its
+manifest is the leaf-less one): (r1) the twin's
 basis / piece counts or basis file differ from the model's; (r2) the twin's recorded
 process parameters differ from the library's `Fabrication` block; (r3) the regenerated
 electric matrices deviate from the model of record by more than `SameMeshTolerance` (the
