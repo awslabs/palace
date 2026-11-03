@@ -1122,9 +1122,11 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     CHECK(sensitivity.shape->attributes == std::vector<int>{1, 3});
     CHECK(!sensitivity.shape->boundary_tags);
     CHECK(!sensitivity.material_properties);
+    CHECK(!sensitivity.lumped_ports);
 
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
     CHECK(resolved["Sensitivity"]["MaterialProperties"] == false);
+    CHECK(resolved["Sensitivity"]["LumpedPorts"] == false);
     CHECK(resolved["Sensitivity"]["Shape"]["BoundaryTags"] == false);
   }
 
@@ -1154,7 +1156,9 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     config["Problem"]["Type"] = "Eigenmode";
     config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}}};
     config["Solver"] = {{"Eigenmode", {{"N", 2}, {"Target", 1.0}}}};
+    config["Sensitivity"]["LumpedPorts"] = true;
     IoData iodata(config, false);
+    CHECK(iodata.sensitivity.lumped_ports);
     const auto &objectives = iodata.sensitivity.objectives;
     REQUIRE(objectives.size() == 2);
     CHECK(objectives.at(1).type == SensitivityObjective::FREQUENCY);
@@ -1168,6 +1172,12 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     config["Problem"]["Type"] = "Electrostatic";
     CHECK_THROWS_WITH(IoData(config, false),
                       ContainsSubstring("requires an eigenmode problem"));
+    config["Sensitivity"]["Objectives"] = {
+        {{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 1}}}};
+    config["Boundaries"] = {{"Ground", {{"Attributes", {1}}}},
+                            {"Terminal", {{{"Index", 1}, {"Attributes", {2}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("\"LumpedPorts\" is only available"));
     CHECK_THROWS(
         config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Frequency"}}));
   }

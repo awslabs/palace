@@ -876,6 +876,9 @@ void IoData::CheckConfiguration()
                   "\"Sensitivity\" is not available for magnetostatic problems with flux "
                   "loops, superconductors or shorted inactive ports!");
     }
+    MFEM_VERIFY(!sensitivity.lumped_ports || problem.type == ProblemType::EIGENMODE,
+                "\"Sensitivity\" \"LumpedPorts\" is only available for eigenmode "
+                "problems!");
     MFEM_VERIFY(!sensitivity.shape || boundaries.periodic.boundary_pairs.empty(),
                 "\"Sensitivity\" \"Shape\" is not available with periodic boundaries!");
   }

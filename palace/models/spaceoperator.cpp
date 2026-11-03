@@ -513,6 +513,31 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   return ops;
 }
 
+// Add c Q to the real and imaginary coefficients fr and fi, for a complex c.
+void AddComplexCoefficient(MaterialPropertyCoefficient &fr, MaterialPropertyCoefficient &fi,
+                           const MaterialPropertyCoefficient &Q, std::complex<double> c)
+{
+  if (!Q.empty())
+  {
+    fr.AddCoefficient(Q.GetAttributeToMaterial(), Q.GetMaterialProperties(), c.real());
+    fi.AddCoefficient(Q.GetAttributeToMaterial(), Q.GetMaterialProperties(), c.imag());
+  }
+}
+
+// Restrict a coefficient to those of the given attributes to which it assigns a material.
+void RestrictToAttributes(MaterialPropertyCoefficient &Q, const mfem::Array<int> &attr_list)
+{
+  mfem::Array<int> assigned;
+  for (const int attr : attr_list)
+  {
+    if (Q.GetAttributeToMaterial()[attr - 1] >= 0)
+    {
+      assigned.Append(attr);
+    }
+  }
+  Q.RestrictCoefficient(assigned);
+}
+
 }  // namespace
 
 template <OperatorType OperType>
@@ -1092,6 +1117,163 @@ SpaceOperator::GetSystemShapeDerivative(std::complex<double> a0, std::complex<do
     return a.Assemble();
   };
   return {Assemble(dfr, fr, dfbr, fbr), Assemble(dfi, fi, dfbi, fbi)};
+}
+
+std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemMaterialDerivative(
+    MaterialProperty property, const std::vector<int> &attributes, std::complex<double> a0,
+    std::complex<double> a1, std::complex<double> a2, std::complex<double> omega)
+{
+  using namespace std::complex_literals;
+  MFEM_VERIFY(!mat_op.HasWaveVector() && wave_port_op.Size() == 0 &&
+                  floquet_port_op.Size() == 0,
+              "Material derivatives are not available with Floquet periodicity or wave "
+              "ports!");
+
+  // Relative derivatives with respect to the property of the coefficients which depend on
+  // it: μ⁻¹ and the London term in K, σ in C, ε (1 - i tan δ) in M, and those of the first-
+  // and second-order farfield boundaries next to the material, √(ε/μ) and μ⁻¹/√(εμ).
+  double muinv = 0.0, london = 0.0, sigma = 0.0, eps = 0.0, eps_imag = 0.0, farfield1 = 0.0,
+         farfield2 = 0.0;
+  switch (property)
+  {
+    case MaterialProperty::PERMITTIVITY:
+      eps = eps_imag = 1.0;
+      farfield1 = 0.5;
+      farfield2 = -0.5;
+      break;
+    case MaterialProperty::LOSS_TANGENT:
+      eps_imag = 1.0;
+      break;
+    case MaterialProperty::CONDUCTIVITY:
+      sigma = 1.0;
+      break;
+    case MaterialProperty::PERMEABILITY:
+      muinv = london = -1.0;
+      farfield1 = -0.5;
+      farfield2 = -1.5;
+      break;
+    case MaterialProperty::LONDON_DEPTH:
+      london = -2.0;
+      break;
+  }
+  const auto domain_attr = mat_op.GetCeedAttributes(attributes);
+  mfem::Array<int> bdr_attr;
+  for (const auto &[attr, bdr_attr_map] : GetMesh().GetCeedBdrAttributes())
+  {
+    for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+    {
+      if (std::ranges::find(attributes, nbr_attr) != attributes.end())
+      {
+        bdr_attr.Append(ceed_attr);
+      }
+    }
+  }
+  auto Material = [&](const mfem::DenseTensor &property_tensor)
+  {
+    MaterialPropertyCoefficient Q(mat_op.GetAttributeToMaterial(), property_tensor);
+    RestrictToAttributes(Q, domain_attr);
+    return Q;
+  };
+
+  MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
+      dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
+      dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      fbi(mat_op.MaxCeedBdrAttribute());
+  AddComplexCoefficient(dfr, dfi, Material(mat_op.GetCurlCurlInvPermeability()),
+                        muinv * a0);
+  if (mat_op.HasLondonDepth())
+  {
+    AddComplexCoefficient(fr, fi, Material(mat_op.GetInvLondonDepth()), london * a0);
+  }
+  if (mat_op.HasConductivity())
+  {
+    AddComplexCoefficient(fr, fi, Material(mat_op.GetConductivity()), sigma * a1);
+  }
+  AddComplexCoefficient(fr, fi, Material(mat_op.GetPermittivityReal()), eps * a2);
+  if (mat_op.HasLossTangent())
+  {
+    AddComplexCoefficient(fr, fi, Material(mat_op.GetPermittivityImag()),
+                          eps_imag * 1i * a2);
+  }
+  MaterialPropertyCoefficient fb1(mat_op.MaxCeedBdrAttribute()),
+      dfb2r(mat_op.MaxCeedBdrAttribute()), dfb2i(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddDampingBdrCoefficients(1.0, fb1);
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfb2r, dfb2i);
+  for (auto *Q : {&fb1, &dfb2r, &dfb2i})
+  {
+    RestrictToAttributes(*Q, bdr_attr);
+  }
+  AddComplexCoefficient(fbr, fbi, fb1, farfield1 * a1);
+  AddComplexCoefficient(dfbr, dfbi, dfb2r, farfield2);
+  AddComplexCoefficient(dfbr, dfbi, dfb2i, farfield2 * 1i);
+
+  int empty[2] = {AreExactlyZero(dfr, fr, dfbr, fbr), AreExactlyZero(dfi, fi, dfbi, fbi)};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  std::unique_ptr<Operator> ar, ai;
+  if (!empty[0])
+  {
+    ar = AssembleOperator(GetNDSpace(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
+  }
+  if (!empty[1])
+  {
+    ai = AssembleOperator(GetNDSpace(), &dfi, &fi, &dfbi, &fbi, nullptr, skip_zeros);
+  }
+  auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
+  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DIAG_ZERO);
+  return A;
+}
+
+std::array<std::unique_ptr<ComplexOperator>, 3>
+SpaceOperator::GetLumpedPortDerivatives(int idx, std::complex<double> a0,
+                                        std::complex<double> a1, std::complex<double> a2)
+{
+  // The terms of the port are 1/Rs in C, 1/Ls in K and Cs in M.
+  mfem::Array<int> port_attr;
+  for (const auto &elem : lumped_port_op.GetPort(idx).elems)
+  {
+    port_attr.Append(mat_op.GetCeedBdrAttributes(elem->GetAttrList()));
+  }
+  auto Derivative = [&](void (LumpedPortOperator::*AddBdrCoefficients)(
+                            double, MaterialPropertyCoefficient &),
+                        std::complex<double> c) -> std::unique_ptr<ComplexOperator>
+  {
+    MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute()),
+        fbr(mat_op.MaxCeedBdrAttribute()), fbi(mat_op.MaxCeedBdrAttribute());
+    (lumped_port_op.*AddBdrCoefficients)(1.0, fb);
+    RestrictToAttributes(fb, port_attr);
+    int empty = fb.IsExactlyZero();
+    Mpi::GlobalMin(1, &empty, GetComm());
+    if (empty)
+    {
+      return {};
+    }
+    AddComplexCoefficient(fbr, fbi, fb, c);
+    constexpr bool skip_zeros = false;
+    std::unique_ptr<Operator> ar, ai;
+    if (c.real() != 0.0)
+    {
+      ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fbr, nullptr,
+                            skip_zeros);
+    }
+    if (c.imag() != 0.0)
+    {
+      ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fbi, nullptr,
+                            skip_zeros);
+    }
+    auto A =
+        std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
+    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DIAG_ZERO);
+    return A;
+  };
+  return {Derivative(&LumpedPortOperator::AddDampingBdrCoefficients, -a1),
+          Derivative(&LumpedPortOperator::AddStiffnessBdrCoefficients, -a0),
+          Derivative(&LumpedPortOperator::AddMassBdrCoefficients, a2)};
 }
 
 namespace

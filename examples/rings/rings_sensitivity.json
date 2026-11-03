@@ -85,6 +85,7 @@
     "Shape":
     {
       "BoundaryTags": true
-    }
+    },
+    "MaterialProperties": true
   }
 }

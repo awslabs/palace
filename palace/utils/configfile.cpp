@@ -1715,6 +1715,7 @@ SensitivityData::SensitivityData(const json &sensitivity)
     shape = SensitivityShapeData(*it);
   }
   material_properties = sensitivity.value("MaterialProperties", material_properties);
+  lumped_ports = sensitivity.value("LumpedPorts", lumped_ports);
 }
 
 int GetNumSteps(double start, double end, double delta)

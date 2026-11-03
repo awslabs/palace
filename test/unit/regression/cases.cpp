@@ -381,8 +381,8 @@ TestSpheresSensitivity(const palace::test::RegressionOptions &opts)
 
 // Check the sensitivity export of the cylinder cavity case, next to eig.csv: zero for
 // translations and rotations, and the derivatives of the frequencies of TM010 and TM011 and
-// the quality factor of TM010 with respect to the radius and the height against their
-// analytic values, to the discretization error.
+// the quality factor of TM010 with respect to the radius, the height and the material
+// properties against their analytic values, to the discretization error.
 palace::test::CustomCheck
 TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
 {
@@ -408,7 +408,7 @@ TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
     // The cavity has radius a = 2.74 cm and height d = 5.48 cm along z, a dielectric with
     // relative permittivity 2.08, and walls of surface resistance Rs. The fields (x, y, 0)
     // and (0, 0, z) scale a and d.
-    const double a = 2.74, d = 5.48, eps_r = 2.08, Rs = 0.0184;
+    const double a = 2.74, d = 5.48, eps_r = 2.08, tan_delta = 4.0e-4, Rs = 0.0184;
     const double B = palace::electromagnetics::c0_ * 1.0e-7 / std::sqrt(eps_r) /
                      (2.0 * std::numbers::pi);  // GHz cm
     const double eta = palace::electromagnetics::Z0_ / std::sqrt(eps_r);
@@ -444,23 +444,37 @@ TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
       const double value = objective.at("Value");
       const double kd = (objective.at("Mode") == 1) ? 0.0 : std::numbers::pi / d,
                    ka = x01 / a;
+      const auto &material = objective.at("MaterialProperties")[0];
       double radial_ref, axial_ref, rtol;
       if (objective.at("Type") == "Frequency")
       {
-        // f = B √(ka² + kd²) for TM01p, with ka = x01 / a and kd = p π / d.
+        // f = B √(ka² + kd²) for TM01p, with ka = x01 / a and kd = p π / d, and f ∝ 1 /
+        // √(με) up to the small effect of the impedance of the walls.
         const double f = B * std::sqrt(ka * ka + kd * kd);
         radial_ref = -f * ka * ka / (ka * ka + kd * kd);
         axial_ref = -f * kd * kd / (ka * ka + kd * kd);
         rtol = 5.0e-3;
+        for (const auto *property : {"Permittivity", "Permeability"})
+        {
+          CHECK_THAT(material.at(property).get<double>(),
+                     Catch::Matchers::WithinRel(-0.5 * value, 1.0e-6));
+        }
       }
       else
       {
-        // 1 / Q = 1 / Qc + tan δ for TM010, with Qc = x01 η / (2 Rs (1 + a / d)).
+        // 1 / Q = 1 / Qc + tan δ for TM010, with Qc = x01 η / (2 Rs (1 + a / d)) and
+        // η = √(μ / ε).
         const double Qc = x01 * eta / (2.0 * Rs * (1.0 + a / d)),
                      s = value * value / Qc * (a / d) / (1.0 + a / d);
         radial_ref = -s;
         axial_ref = s;
         rtol = 1.0e-2;
+        CHECK_THAT(material.at("LossTan").get<double>(),
+                   Catch::Matchers::WithinRel(-value * value * tan_delta, 1.0e-5));
+        CHECK_THAT(material.at("Permittivity").get<double>(),
+                   Catch::Matchers::WithinRel(-0.5 * value * value / Qc, rtol));
+        CHECK_THAT(material.at("Permeability").get<double>(),
+                   Catch::Matchers::WithinRel(0.5 * value * value / Qc, rtol));
       }
       INFO("objective " << objective.at("Index") << ": value " << value << ", radial "
                         << radial << " (analytic " << radial_ref << "), axial " << axial
@@ -480,9 +494,9 @@ TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
 
 // Check the sensitivity export of the rings case, next to terminal-M.csv: zero for
 // translations, 3 M for a dilation (K scales as (1 + t)⁻¹, and the excitations at fixed
-// current densities as (1 + t), so M scales as (1 + t)³), and the derivatives of M_aa and
-// M_ab with respect to the radius of the inner ring against the analytic ones, to the
-// discretization error.
+// current densities as (1 + t), so M scales as (1 + t)³), M for a relative change of the
+// permeability, and the derivatives of M_aa and M_ab with respect to the radius of the
+// inner ring against the analytic ones, to the discretization error.
 palace::test::CustomCheck TestRingsSensitivity(const palace::test::RegressionOptions &opts)
 {
   return [opts](palace::Table &actual, palace::Table &reference,
@@ -547,6 +561,8 @@ palace::test::CustomCheck TestRingsSensitivity(const palace::test::RegressionOpt
         CHECK(std::abs(t) <= 1.0e-10 * norm);
       }
       CHECK_THAT(dilation, Catch::Matchers::WithinRel(3.0 * M, 1.0e-8));
+      CHECK_THAT(objective.at("MaterialProperties")[0].at("Permeability").get<double>(),
+                 Catch::Matchers::WithinRel(M, 1.0e-10));
       if (i < 2)
       {
         CHECK_THAT(radial * 1.0e6, Catch::Matchers::WithinRel(dM_dra[i], rtol[i]));
