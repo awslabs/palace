@@ -19,6 +19,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/sensitivityexport.hpp"
 #include "models/spaceoperator.hpp"
@@ -147,6 +148,38 @@ struct EigenProblem
     conductivity.attributes = {5};
     conductivity.sigma = 1.0e3;
     iodata.solver.order = order;
+    mesh = CubeMesh(iodata, type, amr);
+  }
+};
+
+// The cube as a magnetostatic problem with an anisotropic magnetic material above. The
+// faces x = 0, z = 0 and x = 1 are a connected PEC, and the faces z = 1 and y = 0 are
+// surface current sources 1 and 2 along x, which close current loops through it.
+struct MagnetostaticProblem
+{
+  IoData iodata;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+
+  MagnetostaticProblem(mfem::Element::Type type, int order, bool amr)
+    : iodata(Units(1.0, 1.0))
+  {
+    iodata.model.Lc = 1.0;
+    iodata.problem.type = ProblemType::MAGNETOSTATIC;
+    auto &lower = iodata.domains.materials.emplace_back();
+    lower.attributes = {1};
+    auto &upper = iodata.domains.materials.emplace_back();
+    upper.attributes = {2};
+    upper.mu_r.s = {1.5, 2.0, 2.5};
+    iodata.boundaries.pec.attributes = {1, 3, 5};
+    for (const auto &[idx, attr] : {std::pair{1, 6}, std::pair{2, 2}})
+    {
+      auto &element = iodata.boundaries.current[idx].elements.emplace_back();
+      element.direction = {1.0, 0.0, 0.0};
+      element.attributes = {attr};
+    }
+    iodata.solver.order = order;
+    iodata.solver.linear.tol = 1.0e-13;
+    iodata.solver.linear.max_it = 1000;
     mesh = CubeMesh(iodata, type, amr);
   }
 };
@@ -332,6 +365,115 @@ TEST_CASE("Eigenmode system shape derivatives", "[sensitivity][Serial][Parallel]
   const auto adjoint = Contract(W);
   INFO("xᵀ T x = " << Form() << ", g ⋅ W = " << adjoint << ", finite difference = " << fd);
   CHECK(std::abs(adjoint - fd) <= 1.0e-7 * std::abs(fd));
+}
+
+TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Parallel]")
+{
+  // The derivatives of the inductances need no adjoint solve. Check them against finite
+  // differences of the solved inductances on moved meshes, with the current densities of
+  // the sources fixed.
+  auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto amr = GENERATE(false, true);
+  INFO("Element type: " << type << ", order: " << order << ", AMR: " << amr);
+  MagnetostaticProblem problem(type, order, amr);
+  auto &mesh = *problem.mesh[0];
+  CurlCurlOperator curlcurl_op(problem.iodata, problem.mesh);
+
+  // The vector potentials, and the inductances M_ij = A_jᵀ K A_i for unit currents, as in
+  // MagnetostaticSolver.
+  auto Solve = [&]()
+  {
+    auto K = curlcurl_op.GetStiffnessMatrix();
+    KspSolver ksp(problem.iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
+    ksp.SetOperators(*K, *K);
+    std::vector<Vector> A;
+    Vector RHS;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+    {
+      REQUIRE(data.GetExcitationCurrent() == 1.0);
+      curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+      auto &a = A.emplace_back(RHS.Size());
+      a.UseDevice(true);
+      a = 0.0;
+      ksp.Mult(RHS, a);
+    }
+    std::vector<double> M;
+    Vector y(RHS.Size());
+    y.UseDevice(true);
+    for (const auto &[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})
+    {
+      K->Mult(A[i], y);
+      M.push_back(linalg::Dot<Vector>(Mpi::World(), A[j], y));
+    }
+    return std::pair{A, M};
+  };
+  const auto [A, M] = Solve();
+  REQUIRE(A.size() == 2);
+
+  const auto dK = curlcurl_op.GetStiffnessShapeDerivative();
+  std::vector<std::unique_ptr<ShapeDerivativeOperator>> db;
+  db.push_back(curlcurl_op.GetCurrentExcitationShapeDerivative(1));
+  db.push_back(curlcurl_op.GetCurrentExcitationShapeDerivative(2));
+  // A smooth displacement which keeps the source faces planar and their edges off the PEC
+  // along x, as the sources must be for their excitations to be compatible.
+  const auto &nodal_fespace = dK->GetNodalSpace();
+  const auto &nodes = *mesh.Get().GetNodes();
+  mfem::Vector W_l(nodal_fespace.GetVSize());
+  for (int i = 0; i < nodal_fespace.GetNDofs(); i++)
+  {
+    double x[3];
+    for (int d = 0; d < 3; d++)
+    {
+      x[d] = nodes(nodal_fespace.DofToVDof(i, d));
+    }
+    const double w[3] = {std::sin(2.0 * x[1] + x[2]),
+                         x[1] * (1.0 - x[1]) * std::cos(x[0] + 2.0 * x[2]),
+                         (1.0 - x[2]) * std::sin(x[0] - x[1])};
+    for (int d = 0; d < 3; d++)
+    {
+      W_l(nodal_fespace.DofToVDof(i, d)) = w[d];
+    }
+  }
+  Vector W(nodal_fespace.GetTrueVSize());
+  nodal_fespace.GetRestrictionMatrix()->Mult(W_l, W);
+  std::vector<double> adjoint;
+  Vector g, t;
+  for (const auto &[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})
+  {
+    // dM_ij = b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j).
+    dK->Mult(A[i], A[j], g);
+    g *= -1.0;
+    db[i]->Mult(A[j], A[j], t);
+    g += t;
+    db[j]->Mult(A[i], A[i], t);
+    g += t;
+    adjoint.push_back(linalg::Dot<Vector>(Mpi::World(), g, W));
+  }
+
+  auto CentralDifference = [&](double h)
+  {
+    MoveNodes(mesh, nodal_fespace, W, h);
+    const auto Mp = Solve().second;
+    MoveNodes(mesh, nodal_fespace, W, -2.0 * h);
+    const auto Mm = Solve().second;
+    MoveNodes(mesh, nodal_fespace, W, h);
+    std::vector<double> d;
+    for (std::size_t k = 0; k < Mp.size(); k++)
+    {
+      d.push_back((Mp[k] - Mm[k]) / (2.0 * h));
+    }
+    return d;
+  };
+  const double h = 2.0e-4;
+  const auto d1 = CentralDifference(h), d2 = CentralDifference(0.5 * h);
+  for (std::size_t k = 0; k < adjoint.size(); k++)
+  {
+    const double fd = (4.0 * d2[k] - d1[k]) / 3.0;
+    INFO("Entry " << k << ": M = " << M[k] << ", g ⋅ W = " << adjoint[k]
+                  << ", finite difference = " << fd);
+    CHECK(std::abs(adjoint[k] - fd) <= 1.0e-7 * std::abs(fd));
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Sensitivity export",

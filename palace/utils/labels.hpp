@@ -225,6 +225,7 @@ enum class InactivePortMode : char
 enum class SensitivityObjective : char
 {
   CAPACITANCE,
+  INDUCTANCE,
   FREQUENCY,
   QUALITY_FACTOR
 };

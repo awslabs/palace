@@ -383,9 +383,9 @@ public:
                 CeedOperator *op) const override;
 };
 
-// Integrator for the shape derivative of the linear form (f, v) for H(curl) elements on the
-// boundary of a 3D mesh, with f constant on each attribute (VectorFEBoundaryLFIntegrator).
-// The vector f is the first column of the coefficient, and the field u is unused.
+// Integrator for the shape derivative of the linear form (f, v) for H(curl) elements on
+// boundary elements, with f constant on each attribute (VectorFEBoundaryLFIntegrator). The
+// vector f is the first column of the coefficient, and the field u is unused.
 class VectorFEBoundaryLFShapeIntegrator : public ShapeDerivativeIntegrator
 {
 public:

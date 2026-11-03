@@ -8,8 +8,10 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -640,6 +642,48 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
     GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   }
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
+}
+
+std::unique_ptr<ShapeDerivativeOperator>
+CurlCurlOperator::GetStiffnessShapeDerivative() const
+{
+  MFEM_VERIFY(sc_sheet_op.empty() && !IsBroken(),
+              "Shape derivatives are not available with superconductor sheets!");
+  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                         mat_op.GetCurlCurlInvPermeability());
+  ShapeDerivativeForm dk(GetNDSpace());
+  dk.AddDomainIntegrator<CurlCurlShapeIntegrator>(muinv_func);
+  return dk.Assemble();
+}
+
+std::unique_ptr<ShapeDerivativeOperator>
+CurlCurlOperator::GetCurrentExcitationShapeDerivative(int idx) const
+{
+  // The source +J of GetCurrentExcitationVector, in the first column of a coefficient.
+  MFEM_VERIFY(sc_sheet_op.empty() && !IsBroken(),
+              "Shape derivatives are not available with superconductor sheets!");
+  const int sdim = GetMesh().SpaceDimension();
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  for (const auto &elem : surf_j_op.GetSource(idx).elements)
+  {
+    const auto *source = dynamic_cast<const UniformElementData *>(elem.source.get());
+    MFEM_VERIFY(source, "Shape derivatives are only available for uniform surface current "
+                        "sources!");
+    mfem::DenseMatrix J(sdim);
+    J = 0.0;
+    for (int d = 0; d < sdim; d++)
+    {
+      J(d, 0) =
+          elem.current_fraction / source->GetGeometryWidth() * source->GetDirection()(d);
+    }
+    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(source->GetAttrList()), J);
+  }
+  ShapeDerivativeForm db(GetNDSpace());
+  if (!fb.empty())
+  {
+    db.AddBoundaryIntegrator<VectorFEBoundaryLFShapeIntegrator>(fb);
+  }
+  return db.Assemble();
 }
 
 void CurlCurlOperator::EnsureSheetMass()

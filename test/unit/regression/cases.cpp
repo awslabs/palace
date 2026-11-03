@@ -478,6 +478,83 @@ TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
   };
 }
 
+// Check the sensitivity export of the rings case, next to terminal-M.csv: zero for
+// translations, 3 M for a dilation (K scales as (1 + t)⁻¹, and the excitations at fixed
+// current densities as (1 + t), so M scales as (1 + t)³), and the derivatives of M_aa and
+// M_ab with respect to the radius of the inner ring against the analytic ones, to the
+// discretization error.
+palace::test::CustomCheck TestRingsSensitivity(const palace::test::RegressionOptions &opts)
+{
+  return [opts](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto dir = path.parent_path() / "sensitivity";
+    std::ifstream fj(dir / "sensitivity.json");
+    REQUIRE(fj.is_open());
+    const auto meta = nlohmann::json::parse(fj);
+    const std::size_t n = meta.at("NumPoints");
+    auto ReadDoubles = [&](const std::string &file)
+    {
+      std::vector<double> data(3 * n);
+      std::ifstream fi(dir / file, std::ios::binary);
+      fi.read(reinterpret_cast<char *>(data.data()), data.size() * sizeof(double));
+      REQUIRE(fi.gcount() == static_cast<std::streamsize>(data.size() * sizeof(double)));
+      return data;
+    };
+    const auto x = ReadDoubles(meta.at("Points"));
+
+    // The inner ring has radius r_a = 10 μm and width w = 1 μm, in z = 0, and the outer one
+    // r_b = 100 μm. A unit radial displacement of the inner ring, 1 within 1.5 μm of its
+    // center line and 0 beyond 6 μm, keeps its width.
+    std::vector<double> V(3 * n, 0.0);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      const double r = std::hypot(x[3 * k], x[3 * k + 1]),
+                   psi = std::clamp((6.0 - std::hypot(r - 10.0, x[3 * k + 2])) / 4.5, 0.0,
+                                    1.0);
+      if (r > 0.0)
+      {
+        V[3 * k] = psi * x[3 * k] / r;
+        V[3 * k + 1] = psi * x[3 * k + 1] / r;
+      }
+    }
+    const double mu0 = palace::electromagnetics::mu0_, ra = 10.0e-6, rb = 100.0e-6,
+                 w = 1.0e-6;
+    const std::array<double, 2> dM_dra = {mu0 * (std::log(16.0 * ra / w) - 0.75),
+                                          mu0 * std::numbers::pi * ra / rb};  // H/m
+    const std::array<double, 2> rtol = {0.05, 0.03};
+    REQUIRE(meta.at("Objectives").size() == 3);
+    for (std::size_t i = 0; i < 3; i++)
+    {
+      const auto &objective = meta.at("Objectives")[i];
+      const auto g = ReadDoubles(objective.at("Gradient"));
+      double norm = 0.0, x_max = 0.0, dilation = 0.0, radial = 0.0;
+      std::array<double, 3> translation = {0.0, 0.0, 0.0};
+      for (std::size_t p = 0; p < 3 * n; p++)
+      {
+        norm += std::abs(g[p]);
+        x_max = std::max(x_max, std::abs(x[p]));
+        translation[p % 3] += g[p];
+        dilation += g[p] * x[p];
+        radial += g[p] * V[p];
+      }
+      const double M = objective.at("Value");
+      INFO("objective " << i + 1 << ": M = " << M << " H, dM/dr_a = " << radial * 1.0e6
+                        << " H/m");
+      for (const double t : translation)
+      {
+        CHECK(std::abs(t) <= 1.0e-10 * norm);
+      }
+      CHECK_THAT(dilation, Catch::Matchers::WithinRel(3.0 * M, 1.0e-8));
+      if (i < 2)
+      {
+        CHECK_THAT(radial * 1.0e6, Catch::Matchers::WithinRel(dM_dra[i], rtol[i]));
+      }
+    }
+  };
+}
+
 palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
 {
   return [rtol, atol](palace::Table &actual, palace::Table &reference,
@@ -1221,6 +1298,21 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
+}
+
+// The rings with the sensitivities of their inductances (see TestRingsSensitivity).
+TEST_CASE("rings_sensitivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.sensitivity = true;
+  opts.custom_checks["terminal-M.csv"] = TestRingsSensitivity(opts);
+  palace::test::RunRegressionCase("rings", "rings_sensitivity.json", "rings_sensitivity",
+                                  opts);
 }
 
 TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")

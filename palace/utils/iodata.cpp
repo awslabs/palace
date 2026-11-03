@@ -809,8 +809,9 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
-  // Sensitivities are available for the capacitances of electrostatic problems, and for
-  // the frequencies and quality factors of eigenmode problems.
+  // Sensitivities are available for the capacitances and inductances of electrostatic and
+  // magnetostatic problems, and for the frequencies and quality factors of eigenmode
+  // problems.
   if (!sensitivity.empty())
   {
     for (const auto &[idx, data] : sensitivity.objectives)
@@ -826,6 +827,18 @@ void IoData::CheckConfiguration()
             MFEM_VERIFY(boundaries.terminal.contains(i),
                         "\"Sensitivity\" objective " << idx << " refers to terminal " << i
                                                      << ", which is not a \"Terminal\"!");
+          }
+          break;
+        case SensitivityObjective::INDUCTANCE:
+          MFEM_VERIFY(problem.type == ProblemType::MAGNETOSTATIC,
+                      "\"Sensitivity\" objective " << idx
+                                                   << " requires a magnetostatic problem!");
+          for (auto i : data.terminals)
+          {
+            MFEM_VERIFY(boundaries.current.contains(i),
+                        "\"Sensitivity\" objective "
+                            << idx << " refers to terminal " << i
+                            << ", which is not a \"SurfaceCurrent\"!");
           }
           break;
         case SensitivityObjective::FREQUENCY:
@@ -847,6 +860,22 @@ void IoData::CheckConfiguration()
                                  [](double k) { return k == 0.0; })),
         "\"Sensitivity\" is not available for eigenmode problems with wave ports or "
         "Floquet periodicity!");
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      const bool short_ports =
+          boundaries.current.size() > 1 &&
+          std::ranges::any_of(boundaries.current,
+                              [this](const auto &source)
+                              {
+                                return source.second.inactive_port_mode.value_or(
+                                           solver.magnetostatic.inactive_port_mode) ==
+                                       InactivePortMode::SHORT;
+                              });
+      MFEM_VERIFY(boundaries.fluxloop.empty() && boundaries.superconductor.empty() &&
+                      !short_ports,
+                  "\"Sensitivity\" is not available for magnetostatic problems with flux "
+                  "loops, superconductors or shorted inactive ports!");
+    }
     MFEM_VERIFY(!sensitivity.shape || boundaries.periodic.boundary_pairs.empty(),
                 "\"Sensitivity\" \"Shape\" is not available with periodic boundaries!");
   }

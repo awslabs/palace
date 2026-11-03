@@ -11,16 +11,20 @@
 #include <set>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/sensitivityexport.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -501,8 +505,13 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(ksp);
   if (surf_flux_op.HasSingleLoopExcitations())
   {
-    PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), surf_flux_op, A, I_inc,
-                         Phi_inc, linked_flux, london_ah, london_ms_shifted);
+    const auto M =
+        PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), surf_flux_op, A,
+                             I_inc, Phi_inc, linked_flux, london_ah, london_ms_shifted);
+    if (!iodata.sensitivity.empty())
+    {
+      PostprocessSensitivities(curlcurl_op, A, I_inc, M);
+    }
   }
   else
   {
@@ -579,7 +588,7 @@ void MagnetostaticSolver::PostprocessExcitations(
   terminal_Phi.WriteFullTableTrunc();
 }
 
-void MagnetostaticSolver::PostprocessTerminals(
+mfem::DenseMatrix MagnetostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
@@ -899,7 +908,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   // Only root writes to disk
   if (!root)
   {
-    return;
+    return M;
   }
 
   // Write matrix data using existing pattern
@@ -975,6 +984,63 @@ void MagnetostaticSolver::PostprocessTerminals(
     }
     terminal_Phi.WriteFullTableTrunc();
   }
+  return M;
+}
+
+void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlcurl_op,
+                                                   const std::vector<Vector> &A,
+                                                   const std::vector<double> &I_inc,
+                                                   const mfem::DenseMatrix &M) const
+{
+  // Each M_ij = A_jᵀ K A_i / (I_i I_j) with K A_i = b_i, so
+  // dM_ij = (b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j)) / (I_i I_j): no adjoint solve is
+  // needed. The derivatives b' of the excitations are at fixed current densities.
+  const auto &sensitivity = iodata.sensitivity;
+  Mpi::Print("\nComputing the sensitivities of {:d} objective{}\n",
+             sensitivity.objectives.size(), (sensitivity.objectives.size() > 1) ? "s" : "");
+  std::map<int, int> step;
+  for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+  {
+    step.emplace(idx, static_cast<int>(step.size()));
+  }
+  SensitivityExport output(iodata, curlcurl_op.GetMesh());
+  std::unique_ptr<ShapeDerivativeOperator> dK;
+  std::map<int, std::unique_ptr<ShapeDerivativeOperator>> db;
+  if (output.HasShape())
+  {
+    dK = curlcurl_op.GetStiffnessShapeDerivative();
+  }
+
+  const double H = iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  Vector g, t;
+  for (const auto &[idx, data] : sensitivity.objectives)
+  {
+    const int i = step.at(data.terminals[0]), j = step.at(data.terminals[1]);
+    nlohmann::json entry = {{"Index", idx},
+                            {"Type", ToString(data.type)},
+                            {"Terminals", data.terminals},
+                            {"Value", M(i, j) * H},
+                            {"Unit", "H"}};
+    if (dK)
+    {
+      dK->Mult(A[i], A[j], g);
+      g *= -1.0;
+      for (const auto &[source, w] :
+           {std::pair{data.terminals[0], &A[j]}, std::pair{data.terminals[1], &A[i]}})
+      {
+        auto &op = db[source];
+        if (!op)
+        {
+          op = curlcurl_op.GetCurrentExcitationShapeDerivative(source);
+        }
+        op->Mult(*w, *w, t);
+        g += t;
+      }
+      g *= 1.0 / (I_inc[i] * I_inc[j]);
+    }
+    output.AddObjective(std::move(entry), dK ? &g : nullptr, H);
+  }
+  output.Write(post_dir / "sensitivity");
 }
 
 }  // namespace palace

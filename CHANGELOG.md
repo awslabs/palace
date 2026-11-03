@@ -162,9 +162,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     SchemaVer 4-1-0
     [PR 992](https://github.com/awslabs/palace/pull/992).
   - Added shape and material sensitivities. The `"Sensitivity"` section requests the
-    derivatives of entries of the capacitance matrix (electrostatic simulations), and of the
-    frequencies and quality factors of eigenmodes, with respect to the positions of the mesh
-    nodes in a region and to the material properties, written to the `sensitivity` folder of
+    derivatives of entries of the capacitance and inductance matrices (electrostatic and
+    magnetostatic simulations), and of the frequencies and quality factors of eigenmodes,
+    with respect to the positions of the mesh nodes in a region and to the material
+    properties, written to the `sensitivity` folder of
     the output, with no extra solve. Contracted with design velocities, for example from
     DeviceLayout.jl, the node gradients give the derivatives with respect to design
     parameters. The Julia package `scripts/julia/PalaceSensitivity` reads the export.

@@ -493,6 +493,11 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(ValidateConfig(eigenmode, "Sensitivity").empty());
     eigenmode["Objectives"][1].erase("Mode");
     CHECK(!ValidateConfig(eigenmode, "Sensitivity").empty());
+    json inductance = {
+        {"Objectives", {{{"Index", 1}, {"Type", "Inductance"}, {"Terminals", {1, 1}}}}}};
+    CHECK(ValidateConfig(inductance, "Sensitivity").empty());
+    inductance["Objectives"][0].erase("Terminals");
+    CHECK(!ValidateConfig(inductance, "Sensitivity").empty());
     sensitivity["Shape"].erase("BoundingBoxMax");
     CHECK(!ValidateConfig(sensitivity, "Sensitivity").empty());
   }
