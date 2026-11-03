@@ -27,6 +27,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     no adjoint solve. Contracted with design velocities, for example from DeviceLayout.jl, the
     node gradients give the derivatives with respect to design parameters. The Julia
     package `scripts/julia/PalaceSensitivity` reads the export. SchemaVer 4-2-0.
+    [PR 1127](https://github.com/awslabs/palace/pull/1127).
 
 #### Interface Changes
 
