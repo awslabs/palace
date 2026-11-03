@@ -26747,14 +26747,8 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
 std::vector<SurfaceResponseOperator::MagneticModelRecord>
 SurfaceResponseOperator::GetMagneticModelRecords() const
 {
+  // No collective here: the printers call this on the root rank only.
   std::vector<MagneticModelRecord> records;
-  std::vector<double> local_counts(models.size(), 0.0);
-  for (const auto &patch : patches)
-  {
-    local_counts[patch.model] += 1.0;
-  }
-  Mpi::GlobalSum(static_cast<int>(local_counts.size()), local_counts.data(),
-                 fespace.GetComm());
   for (std::size_t m = 0; m < models.size(); m++)
   {
     const auto &model = models[m];
@@ -26767,7 +26761,8 @@ SurfaceResponseOperator::GetMagneticModelRecords() const
     record.psd_ratio = model.magnetic_status.psd_ratio;
     record.negative_eigenvalue_count = model.magnetic_status.negative_eigenvalue_count;
     record.same_mesh_deviation = model.magnetic_status.same_mesh_deviation;
-    record.patches = static_cast<int>(std::llround(local_counts[m]));
+    record.patches =
+        m < magnetic_model_patch_counts.size() ? magnetic_model_patch_counts[m] : 0;
     records.push_back(std::move(record));
   }
   return records;
@@ -30345,6 +30340,18 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
     std::sort(unprobed_patches.begin(), unprobed_patches.end());
     RecordUnprobedPatchClaims(unprobed_patches);
+  }
+  if (has_magnetic_models)
+  {
+    // The global per-model applied patch counts of the magnetic records (one collective,
+    // here, on every rank; the record printers are root-only).
+    std::vector<int> counts(models.size(), 0);
+    for (const auto &patch : patches)
+    {
+      counts[patch.model]++;
+    }
+    Mpi::GlobalSum(static_cast<int>(counts.size()), counts.data(), fespace.GetComm());
+    magnetic_model_patch_counts = std::move(counts);
   }
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);

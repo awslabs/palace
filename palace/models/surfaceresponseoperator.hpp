@@ -684,6 +684,10 @@ private:
   // unless a loaded model carries a magnetic leaf.
   std::vector<double> magnetic_point_weights;
   bool has_magnetic_models = false;
+  // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
+  // when a magnetic leaf is loaded), so that the root-only record printers need no
+  // collective.
+  std::vector<int> magnetic_model_patch_counts;
   bool maxwell = false;
 
   // Maxwell postprocessing uses local coupon contour line integrals instead of H1 point
