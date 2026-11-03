@@ -17,6 +17,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added shape and material sensitivities. The `"Sensitivity"` section requests the
+    derivatives of entries of the capacitance and inductance matrices (electrostatic and
+    magnetostatic simulations), and of the frequencies and quality factors of eigenmodes,
+    with respect to the positions of the mesh nodes in a region, to the material properties
+    and to the lumped port elements, written to the `sensitivity` folder of the output, with
+    no adjoint solve. Contracted with design velocities, for example from DeviceLayout.jl, the
+    node gradients give the derivatives with respect to design parameters. The Julia
+    package `scripts/julia/PalaceSensitivity` reads the export. SchemaVer 4-2-0.
+
 #### Interface Changes
 
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
@@ -161,14 +172,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Requires the `PenetrationDepth`/`Thickness` form, a 3D mesh, and an interior film.
     SchemaVer 4-1-0
     [PR 992](https://github.com/awslabs/palace/pull/992).
-  - Added shape and material sensitivities. The `"Sensitivity"` section requests the
-    derivatives of entries of the capacitance and inductance matrices (electrostatic and
-    magnetostatic simulations), and of the frequencies and quality factors of eigenmodes,
-    with respect to the positions of the mesh nodes in a region, to the material properties
-    and to the lumped port elements, written to the `sensitivity` folder of the output, with
-    no extra solve. Contracted with design velocities, for example from DeviceLayout.jl, the
-    node gradients give the derivatives with respect to design parameters. The Julia
-    package `scripts/julia/PalaceSensitivity` reads the export. SchemaVer 4-2-0.
 
 #### Interface Changes
 
