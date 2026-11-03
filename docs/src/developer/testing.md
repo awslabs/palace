@@ -616,7 +616,7 @@ refreshing only the CSVs in the reference tree:
 ```bash
 case=cpw config=cpw_lumped_uniform.json subdir=lumped_uniform
 input="test/data/regression/input/$case"
-mpirun -n "$NUM_PROC_TEST" palace "$input/$config"
+mpirun -n "$NUM_PROC_TEST" palace "$input/$config"  # see the note below
 dst="test/data/regression/ref/$case/$subdir"
 rm -rf "$dst"
 rsync -am --include='*/' --include='*.csv' --exclude='*' \
@@ -625,6 +625,14 @@ rsync -am --include='*/' --include='*.csv' --exclude='*' \
 
 Repeat (or loop) over `case`/`config`/`subdir` to re-baseline several cases
 at once, as the old `baseline` script did.
+
+The harness sets `Solver.Linear.AlwaysComputeErrorEstimation` to `true` for cases whose
+config does not set it (`RegressionOptions::always_error_estimation`), so their references
+include `error-indicators.csv` even without AMR (allowing us to test the error indicator). A
+standalone run without AMR does not write this file: for these cases, run `palace` on a copy
+of the config with `Solver.Linear.AlwaysComputeErrorEstimation` set to `true`, or
+re-baseline from the outputs staged by `palace-unit-tests "<name>" --regression-run-dir
+DIR`.
 
 #### Adding a new regression case
 
@@ -638,7 +646,7 @@ at once, as the old `baseline` script did.
     to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
     is too slow for the always-on regression job. Set `rtol`, `atol`,
     `excluded_columns`, `abs_columns`, `skip_rowcount`, expected
-    output-directory flags, solver policies, and any `custom_checks`
-    callbacks.
+    output-directory flags, solver policies, `always_error_estimation`, and any
+    `custom_checks` callbacks.
  3. Build `unit-tests`, then run
     `mpirun -n $NUM_PROC_TEST ./palace-unit-tests "<name>"` to validate.

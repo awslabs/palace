@@ -407,6 +407,13 @@ IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
   {
     solver["Eigenmode"]["Type"] = eigen_solver;
   }
+
+  if (opts.always_error_estimation &&
+      !(solver.contains("Linear") &&
+        solver["Linear"].contains("AlwaysComputeErrorEstimation")))
+  {
+    solver["Linear"]["AlwaysComputeErrorEstimation"] = true;
+  }
   return IoData(std::move(config), /*print=*/false);
 }
 

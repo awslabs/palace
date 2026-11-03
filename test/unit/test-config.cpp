@@ -1388,6 +1388,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
+    CHECK_FALSE(iodata.solver.linear.always_error_estimation);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
     // ConcretizeDefaults should write resolved values back to JSON.
@@ -1403,6 +1404,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK(j_linear["AlwaysComputeErrorEstimation"].get<bool>() == false);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")
@@ -1671,6 +1673,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
+    CHECK(l2.always_error_estimation == l1.always_error_estimation);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
     CHECK(l2.pc_side == l1.pc_side);
     CHECK(l2.sym_factorization == l1.sym_factorization);

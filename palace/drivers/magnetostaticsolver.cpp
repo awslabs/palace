@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <vector>
 #include <mfem.hpp>
@@ -186,13 +187,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Initialize structures for storing and reducing the results of error estimation.
   // In 2D, the curl is scalar: use the L2 curl space and H1 spaces for the estimator.
-  CurlFluxErrorEstimator<Vector> estimator(
-      curlcurl_op.GetMaterialOp(),
-      curlcurl_op.GetSolutionCurlSpace(),  // RT (3D) or L2 curl (2D), broken like B
-      (curlcurl_op.GetMesh().Dimension() < 3) ? curlcurl_op.GetH1Spaces()
-                                              : curlcurl_op.GetNDSpaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
+  std::optional<CurlFluxErrorEstimator<Vector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(
+        curlcurl_op.GetMaterialOp(),
+        curlcurl_op.GetSolutionCurlSpace(),  // RT (3D) or L2 curl (2D), broken like B
+        (curlcurl_op.GetMesh().Dimension() < 3) ? curlcurl_op.GetH1Spaces()
+                                                : curlcurl_op.GetNDSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+        iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
+  }
   ErrorIndicator indicator;
   solve_converged_ = true;
   // Total London kinetic penalty energy S(A_t − a_h) summed over flux loops this solve. A
@@ -488,7 +493,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             ? std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step)->first
             : std::next(flux_excitations.begin(), step - n_current_steps)->first;
     domain_energy[step] = post_op.MeasureAndPrintAll(step, A[step], B, terminal_idx);
-    estimator.AddErrorIndicator(B, domain_energy[step], indicator);
+    if (estimator)
+    {
+      estimator->AddErrorIndicator(B, domain_energy[step], indicator);
+    }
   }
 
   // Postprocess the inductance matrix from the computed field solutions, or the stored

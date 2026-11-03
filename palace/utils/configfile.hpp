@@ -1233,6 +1233,10 @@ public:
   // of just Jacobi).
   bool estimator_mg = false;
 
+  // Compute the error indicator after each solve even without adaptive mesh refinement,
+  // which always computes it.
+  bool always_error_estimation = false;
+
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
   Orthogonalization gs_orthog = Orthogonalization::MGS;

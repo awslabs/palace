@@ -3,6 +3,7 @@
 
 #include "transientsolver.hpp"
 
+#include <optional>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
@@ -46,7 +47,11 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              space_op.GetPortExcitations().FmtLog());
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<Vector> estimator(space_op, iodata);
+  std::optional<FluxErrorEstimator<Vector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // Main time integration loop.
@@ -82,8 +87,11 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, E, B, t, J_coef(t));
 
     // Calculate and record the error indicators.
-    Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    if (estimator)
+    {
+      Mpi::Print(" Updating solution error estimates\n");
+      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+    }
   }
   // Final postprocessing & printing.
   BlockTimer bt1(Timer::POSTPRO);

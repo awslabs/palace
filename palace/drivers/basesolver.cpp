@@ -162,6 +162,13 @@ const char *GeometryKey(mfem::Geometry::Type geom)
   }
 }
 
+// Transient simulations do not support adaptive mesh refinement.
+bool UseAMR(const IoData &iodata)
+{
+  return iodata.model.refinement.max_it > 0 &&
+         iodata.problem.type != ProblemType::TRANSIENT;
+}
+
 // Returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
@@ -213,18 +220,19 @@ void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
   iodata.NondimensionalizeInputs(smesh);
 }
 
+bool BaseSolver::ComputeErrorEstimation() const
+{
+  return iodata.solver.linear.always_error_estimation || UseAMR(iodata);
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = [&]()
+  if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
   {
-    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
-    {
-      Mpi::Warning("AMR is not currently supported for transient simulations!\n");
-      return false;
-    }
-    return (refinement.max_it > 0);
-  }();
+    Mpi::Warning("AMR is not currently supported for transient simulations!\n");
+  }
+  const bool use_amr = UseAMR(iodata);
   if (use_amr && mesh.size() > 1)
   {
     Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
@@ -374,13 +382,16 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     SaveAdaptationIteration(it + 1);
   }
 
-  Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
-             " Indicator norm = {:.3e}, global unknowns = {:d}\n"
-             " Max. iterations = {:d}, tol. = {:.3e}{}\n",
-             it, (it == 1 ? "" : "s"), err, ntdof, refinement.max_it, refinement.tol,
-             (refinement.max_size > 0
-                  ? ", max. size = " + std::to_string(refinement.max_size)
-                  : ""));
+  if (use_amr)
+  {
+    Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
+               " Indicator norm = {:.3e}, global unknowns = {:d}\n"
+               " Max. iterations = {:d}, tol. = {:.3e}{}\n",
+               it, (it == 1 ? "" : "s"), err, ntdof, refinement.max_it, refinement.tol,
+               (refinement.max_size > 0
+                    ? ", max. size = " + std::to_string(refinement.max_size)
+                    : ""));
+  }
 }
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const

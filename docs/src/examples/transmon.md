@@ -232,7 +232,9 @@ modifying the solver order in the JSON configuration file or by passing the
 The `error-indicators.csv` file provides quantitative measures of numerical
 accuracy (see, the reference section on [error
 estimation](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))).
-For a second-order solution:
+Without AMR, it is only written when
+[`config["Solver"]["Linear"]["AlwaysComputeErrorEstimation"]`](../config/reference.md#config-solver-linear-alwayscomputeerrorestimation)
+is `true`, as in `transmon_coarse.json`. For a second-order solution:
 
 ```@example include_example
 include_example_file("transmon/transmon_coarse", "error-indicators.csv") #hide

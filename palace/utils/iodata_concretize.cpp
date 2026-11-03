@@ -100,6 +100,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"EstimatorTol", linear.estimator_tol},
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
+                {"AlwaysComputeErrorEstimation", linear.always_error_estimation},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});
 }
 

@@ -3,6 +3,7 @@
 
 #include "electrostaticsolver.hpp"
 
+#include <optional>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -46,10 +47,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<Vector> V(n_step);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  GradFluxErrorEstimator estimator(
-      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
+  std::optional<GradFluxErrorEstimator<Vector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(
+        laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+        iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
+  }
   ErrorIndicator indicator;
 
   // Main loop over terminal boundaries.
@@ -82,8 +87,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
 
     // Calculate and record the error indicators.
-    Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, total_domain_energy, indicator);
+    if (estimator)
+    {
+      Mpi::Print(" Updating solution error estimates\n");
+      estimator->AddErrorIndicator(E, total_domain_energy, indicator);
+    }
 
     // Next terminal.
     step++;
