@@ -233,11 +233,12 @@ documentation build generates this table from that file.
 <!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
 ```
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
-| `1-6-0`        | `0.18.0`               |                                    |
-| `1-7-0`        | `0.18.1`               |                                    |
+| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                      |
+|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                         |
+| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more. |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
