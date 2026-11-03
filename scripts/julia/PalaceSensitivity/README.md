@@ -44,7 +44,7 @@ Pkg.add(url="https://github.com/awslabs/palace", subdir="scripts/julia/PalaceSen
 `"ByteOrder": "LittleEndian"`, the optional `"Boundary"` and `"Region"` (the configured
 export region), and `"Objectives"`. Each objective has `"Index"`, `"Type"`, `"Value"`,
 `"Unit"`, `"Gradient"` (the file name) and the rest of its configuration, for example
-`"Terminals"`, and the optional `"MaterialProperties"`: for each material, its `"Index"` in
+`"Terminals"` or `"Mode"`, and the optional `"MaterialProperties"`: for each material, its `"Index"` in
 `Domains.Materials`, its `"Attributes"`, and the derivatives with respect to a relative
 change of its properties, such as `"Permittivity"` (ε ∂J/∂ε, in the objective's unit).
 Without `"Shape"` in the configuration, there are no points and no gradient files. Other

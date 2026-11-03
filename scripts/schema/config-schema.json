@@ -417,7 +417,7 @@
     "Sensitivity": {
       "type": "object",
       "title": "Sensitivity",
-      "description": "Derivatives of objectives with respect to the positions of the mesh nodes and to the material properties, written to the `sensitivity` folder of [`/Problem/Output`](@ref config-problem-output). Available when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"` or `\"Eigenmode\"`.",
+      "description": "Derivatives of objectives with respect to the positions of the mesh nodes and to the material properties, written to the `sensitivity` folder of [`/Problem/Output`](@ref config-problem-output). Available when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`, `\"Magnetostatic\"` or `\"Eigenmode\"`.",
       "additionalProperties": false,
       "required": [
         "Objectives"
@@ -3208,10 +3208,11 @@
           "type": "string",
           "enum": [
             "Capacitance",
+            "Inductance",
             "Frequency",
             "QualityFactor"
           ],
-          "description": "Type of objective. `\"Capacitance\"` is an entry of the Maxwell capacitance matrix (`terminal-C.csv`). `\"Frequency\"` is the real part of the frequency of an eigenmode, and `\"QualityFactor\"` its quality factor (`eig.csv`)."
+          "description": "Type of objective. `\"Capacitance\"` is an entry of the Maxwell capacitance matrix (`terminal-C.csv`), and `\"Inductance\"` of the inductance matrix (`terminal-M.csv`). `\"Frequency\"` is the real part of the frequency of an eigenmode, and `\"QualityFactor\"` its quality factor (`eig.csv`)."
         },
         "Terminals": {
           "type": "array",
@@ -3222,7 +3223,7 @@
           },
           "minItems": 2,
           "maxItems": 2,
-          "description": "Indices `[i, j]` of the [`/Boundaries/Terminal`](@ref config-boundaries-terminal) boundaries of the capacitance matrix entry."
+          "description": "Indices `[i, j]` of the [`/Boundaries/Terminal`](@ref config-boundaries-terminal) boundaries of the capacitance matrix entry, or of the [`/Boundaries/SurfaceCurrent`](@ref config-boundaries-surfacecurrent) boundaries of the inductance matrix entry."
         },
         "Mode": {
           "type": "integer",
@@ -3235,7 +3236,10 @@
           "if": {
             "properties": {
               "Type": {
-                "const": "Capacitance"
+                "enum": [
+                  "Capacitance",
+                  "Inductance"
+                ]
               }
             }
           },

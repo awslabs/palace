@@ -26,7 +26,7 @@ permeability of free space. The mutual inductance, ``M_{ab}``, can be easily com
 the case where ``r_a\ll r_b`` and ``w = 0`` using the Biot-Savart law as
 
 ```math
-M_{ab} = \frac{\mu_0\pi r_b^2}{2 r_a} \,.
+M_{ab} = \frac{\mu_0\pi r_a^2}{2 r_b} \,.
 ```
 
 Analytic expressions for the self inductance of this configuration can also be derived, for
@@ -156,6 +156,21 @@ current boundary. The companion configuration file
 [`rings_inactive_ports.json`](https://github.com/awslabs/palace/blob/main/examples/rings/rings_inactive_ports.json)
 demonstrates this by leaving the global default as `"Open"` while shorting the outer ring
 when it is inactive.
+
+The configuration file
+[`rings_sensitivity.json`](https://github.com/awslabs/palace/blob/main/examples/rings/rings_sensitivity.json)
+also computes the derivatives of the inductances with respect to the geometry (see
+[Shape and Material Sensitivities](../features/sensitivity.md)). Their derivatives with
+respect to the radius of the inner ring agree with those of the expressions above,
+
+```math
+\begin{aligned}
+\frac{\partial M_{aa}}{\partial r_a} &= \mu_0 \left(\log{\frac{16 r_a}{w}}-0.75\right) \\
+\frac{\partial M_{ab}}{\partial r_a} &= \frac{\mu_0\pi r_a}{r_b} \,,
+\end{aligned}
+```
+
+to the same percent level.
 
 ## References
 

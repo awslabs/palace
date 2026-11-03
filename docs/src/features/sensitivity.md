@@ -8,12 +8,14 @@ SPDX-License-Identifier: Apache-2.0
 # Shape and Material Sensitivities
 
 *Palace* can compute the derivatives of objectives with respect to the positions of the mesh
-nodes in a region, and with respect to material properties:
+nodes in a region, and with respect to material properties, for these
+[problem types](../guide/problem.md):
 
-| [Problem type](../guide/problem.md) | Objectives (`"Type"`)                                                    |
-|:----------------------------------- |:------------------------------------------------------------------------ |
-| `Electrostatic`                     | `"Capacitance"`: an entry of the Maxwell capacitance matrix              |
-| `Eigenmode`                         | `"Frequency"` and `"QualityFactor"`: the frequency and Q of an eigenmode |
+| Problem type    | Objectives (`"Type"`)                                           |
+|:--------------- |:--------------------------------------------------------------- |
+| `Electrostatic` | `"Capacitance"`: an entry of the Maxwell capacitance matrix     |
+| `Magnetostatic` | `"Inductance"`: an entry of the inductance matrix               |
+| `Eigenmode`     | `"Frequency"`, `"QualityFactor"`: the frequency and Q of a mode |
 
 The node gradients give the derivative with respect to any design parameter of the
 geometry: if a parameter ``p`` moves the geometry with velocity ``\mathbf{V}(\mathbf{x})``,
@@ -34,15 +36,23 @@ cost is a few operator applications per objective.
   - The capacitances are ``C_{ij} = V_j^T K V_i`` for the terminal potentials ``V_i``. As
     each ``V_i`` minimizes the field energy for its terminal voltages, the derivative is
     that of the stiffness form at fixed potentials.
-  - An eigenmode solves ``T(\lambda) x = 0`` with ``T(\lambda) = K + \lambda C + \lambda^2 M + A_2(\lambda)`` and ``\lambda = i\omega``. As ``T`` is complex
-    symmetric, a simple eigenvalue changes by ``d\lambda = -x^T dT\, x / x^T T'(\lambda) x``, which gives the derivatives of ``f = \mathrm{Re}\{\omega\} / 2\pi``
-    and ``Q = |\omega| / 2|\mathrm{Im}\{\omega\}|``.
+  - The inductances are ``M_{ij} = A_j^T K A_i / (I_i I_j)`` for the vector potentials
+    ``A_i`` of the surface current sources, which solve ``K A_i = b_i``, so
+    ``dM_{ij} = (b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j)) / (I_i I_j)``, with ``b'`` the
+    derivative of an excitation at a fixed current density.
+  - An eigenmode solves ``T(\lambda) x = 0`` with ``\lambda = i\omega``, where ``T`` sums
+    the stiffness, damping, mass and frequency-dependent terms,
+    ``T(\lambda) = K + \lambda C + \lambda^2 M + A_2(\lambda)``. As ``T`` is complex
+    symmetric, a simple eigenvalue changes by
+    ``d\lambda = -x^T dT\, x / x^T T'(\lambda) x``, which gives the derivatives of
+    ``f = \mathrm{Re}\{\omega\} / 2\pi`` and ``Q = |\omega| / 2|\mathrm{Im}\{\omega\}|``.
 
 ## Configuration
 
 The [`config["Sensitivity"]`](../config/reference.md#config-sensitivity) section lists the
-objectives: capacitances by the terminal indices of their entries, and eigenmode objectives
-by the index of their mode in `eig.csv`, for example
+objectives: capacitances and inductances by the `"Terminal"` or `"SurfaceCurrent"` indices
+of their entries, and eigenmode objectives by the index of their mode in `eig.csv`, for
+example
 `{ "Index": 1, "Type": "Frequency", "Mode": 1 }`:
 
 ```json
@@ -76,8 +86,8 @@ The derivatives are written to the `sensitivity` folder of
 
   - `sensitivity.json`, with each objective's value, unit and material derivatives;
   - `points.bin`, the positions of the exported nodes in mesh length units;
-  - `gradient-<index>.bin`, each objective's gradient, in its unit (F, GHz, or none for Q)
-    per mesh length unit;
+  - `gradient-<index>.bin`, each objective's gradient, in its unit (F, H, GHz, or none for
+    Q) per mesh length unit;
   - `boundary.bin`, with `"BoundaryTags"`, the boundary attributes of each node.
 
 The Julia package
@@ -115,13 +125,18 @@ attributes, from `boundary.bin`.
 
 ## Limitations
 
-  - Node gradients are not available with periodic boundaries, and eigenmode sensitivities
-    not with wave ports, Floquet ports or a Floquet wave vector.
+  - Node gradients are not available with periodic boundaries, eigenmode sensitivities not
+    with wave ports, Floquet ports or a Floquet wave vector, and magnetostatic ones not with
+    flux loops, superconductors or shorted inactive ports.
   - The derivatives of an eigenvalue are defined only if it is simple. For a degenerate
     mode, *Palace* warns, and the result is for the eigenvector it computed. The quality
     factor of a lossless mode is not defined.
-  - The gradients are at fixed impedances per square of the lumped ports, so velocities
-    should be rigid on lumped ports, which `check_velocity` can check.
+  - The gradients are at fixed impedances per square of the lumped ports and at fixed
+    current densities of the surface current sources, so velocities should be rigid on
+    them, which `check_velocity` can check. For example, a dilation by ``1 + t`` scales the
+    inductances by ``(1 + t)^3`` at fixed current densities, rather than ``1 + t``. A
+    velocity must also keep each source planar, with its edges off conductors along its
+    current, for its excitation to remain compatible.
   - The nodes are those of the mesh *Palace* solves on. Where *Palace* refines the input
     mesh or, for high-order meshes read from Gmsh, re-interpolates its nodes, morphing the
     input mesh by ``\mathbf{V}`` moves these nodes by the interpolant of ``\mathbf{V}``:

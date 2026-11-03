@@ -304,9 +304,9 @@ end
 
 Check that `velocity` is admissible for the export `s`, from the boundary attributes of its
 points: it must vanish on the nodes of each attribute in `fixed`, such as boundaries that do
-not move, and move the nodes of each attribute in `rigid` rigidly, such as ports and lumped
-elements, whose impedances depend on their size. Violations larger than `rtol` times the
-largest velocity throw an error naming the attribute.
+not move, and move the nodes of each attribute in `rigid` rigidly, such as lumped ports and
+surface current sources, whose impedances and current densities depend on their size.
+Violations larger than `rtol` times the largest velocity throw an error naming the attribute.
 """
 function check_velocity(
     s::SensitivityExport,

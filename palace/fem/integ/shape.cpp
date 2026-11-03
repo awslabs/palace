@@ -202,13 +202,24 @@ void VectorFEBoundaryLFShapeIntegrator::Assemble(
   CeedQFunctionInfo info;
   const CeedInt dims = GetDimensions(ceed, basis, geom_data_restr, CEED_FE_SPACE_HCURL,
                                      "VectorFEBoundaryLFShapeIntegrator");
-  MFEM_VERIFY(dims == 32, "VectorFEBoundaryLFShapeIntegrator is only available on the "
-                          "boundaries of 3D meshes!");
-  info.apply_qf = f_shape_hcurl_lf_32;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_shape_hcurl_lf_32_loc);
+  switch (dims)
+  {
+    case 21:
+      info.apply_qf = f_shape_hcurl_lf_21;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_shape_hcurl_lf_21_loc);
+      break;
+    case 32:
+      info.apply_qf = f_shape_hcurl_lf_32;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_shape_hcurl_lf_32_loc);
+      break;
+    default:
+      MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                 << dims % 10 << ", " << dims / 10
+                 << ") for VectorFEBoundaryLFShapeIntegrator!");
+  }
   info.test_ops = EvalMode::Interp;
 
-  auto ctx = PopulateCoefficientContext(3, Q, transpose);
+  auto ctx = PopulateCoefficientContext(dims / 10, Q, transpose);
   AssembleCeedShapeIntegrator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
                               ceed, u, w, restr, basis, mesh_restr, mesh_basis, geom_data,
                               geom_data_restr, op);

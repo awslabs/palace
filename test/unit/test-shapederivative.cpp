@@ -429,10 +429,9 @@ TEST_CASE("Shape derivatives of H(curl) forms", "[shapederivative][Serial][Paral
   auto type = GENERATE(FormType::VectorMass, FormType::VectorMassNonsymmetric,
                        FormType::BoundaryVectorMass, FormType::CurlCurl,
                        FormType::BoundaryCurlCurl, FormType::BoundaryLinearForm);
-  if (std::string(mesh).starts_with("star") &&
-      (type == FormType::BoundaryCurlCurl || type == FormType::BoundaryLinearForm))
+  if (std::string(mesh).starts_with("star") && type == FormType::BoundaryCurlCurl)
   {
-    return;  // Only on the boundaries of 3D meshes
+    return;  // The curl of a trace is only defined on the boundaries of 3D meshes
   }
   INFO("Mesh: " << mesh << ", AMR: " << amr << ", order: " << order
                 << ", form: " << static_cast<int>(type));

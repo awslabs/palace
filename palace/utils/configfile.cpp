@@ -1693,6 +1693,7 @@ SensitivityObjectiveData::SensitivityObjectiveData(const json &objective)
   switch (type)
   {
     case SensitivityObjective::CAPACITANCE:
+    case SensitivityObjective::INDUCTANCE:
       terminals = objective.at("Terminals").get<std::array<int, 2>>();  // Required
       break;
     case SensitivityObjective::FREQUENCY:
