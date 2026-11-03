@@ -209,6 +209,30 @@ int LocalPieceOfOffset(const std::vector<double> &offsets,
 class SurfaceResponseOperator : public Operator
 {
 public:
+  // The load-time verdict on a model's magnetic leaf (DESIGN-v2 section 3 r1-r4; ERRATUM
+  // 1227): "Absent", "Applied", "Finding" (applied; r4 in (finding, refusal]) or "Refused"
+  // with `rule` one of r1 / r2 / r3 / r4 / blend / spatial / dimension.
+  struct MagneticLeafStatus
+  {
+    std::string status = "Absent";
+    std::string rule;
+    std::string reason;
+    double psd_ratio = 0.0;  // -lambda_min(sym dS_m) / ||dS_m||_2 (0 without a leaf)
+    int negative_eigenvalue_count = 0;
+    double same_mesh_deviation = -1.0;
+  };
+
+  // The dual R0-a gate's record of one patch at one source (the magnetic term only).
+  struct MagneticGateRecord
+  {
+    int patch = -1;
+    int model = 0;
+    int source = 0;
+    double frequency = 0.0;
+    double max_ratio = 0.0;
+    bool excluded = false;
+  };
+
   struct PatchAssignment
   {
     int model = 0;
@@ -555,6 +579,14 @@ private:
     std::vector<std::array<double, 3>> maxwell_probe_points;
     std::vector<int> maxwell_probe_conductors;
     std::vector<int> maxwell_probe_vertices;
+    // The magnetic (inductive) defect (mx-sc-magnetic DESIGN-v2; USER 1221 D3): dS_m =
+    // S_m,fab - S_m,thin of the model's vacuum twin, scaled like domain_defect (the CSV
+    // convention of the electric matrices: S_m = Q_dom,vac in solver units), applied as
+    // the K-side term dK = P_m^T W dS_m P_m on the model's patches when `magnetic`; the
+    // load-time record of the leaf (the r1-r4 verdict, the PSD statistic of ERRATUM 1227).
+    bool magnetic = false;
+    mfem::DenseMatrix magnetic_domain_defect;
+    MagneticLeafStatus magnetic_status;
   };
 
   struct Patch
@@ -603,6 +635,10 @@ private:
     int feature = -1;
     double claim_length = 0.0;
     double cell_length = 0.0;
+    // The dual R0-a gate on the MAGNETIC term only (DESIGN-v2 section 3): the flux trace
+    // read at the patch's conductor probes departs from the piece's flux state; the patch
+    // keeps its electric term and loses its magnetic one (sticky, named).
+    bool magnetic_excluded = false;
   };
 
   const FiniteElementSpace &fespace;
@@ -641,6 +677,13 @@ private:
   std::vector<int> point_dof_offsets;
   std::vector<int> point_dofs;
   std::vector<double> point_weights;
+  // The magnetic trace stencil (DESIGN-v2 section 2 (A), device side): the same points,
+  // dofs and communication plan as point_weights with the integrand n . (curl N_j) in
+  // place of t . N_j (n = the in-plane normal t x w of the patch's cross-section), so that
+  // the SAME chain / least-squares lift reads the flux trace a_m = int B . n ds. Empty
+  // unless a loaded model carries a magnetic leaf.
+  std::vector<double> magnetic_point_weights;
+  bool has_magnetic_models = false;
   bool maxwell = false;
 
   // Maxwell postprocessing uses local coupon contour line integrals instead of H1 point
@@ -816,10 +859,12 @@ private:
   void ConfigurePointCommunication(
       DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr,
-      const std::vector<double> *point_band = nullptr);
+      const std::vector<double> *point_band = nullptr,
+      const std::vector<std::array<double, 3>> *weighted_normals = nullptr);
   void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry,
                              const std::vector<int> &line_patches,
                              const std::vector<MaxwellPatchProvenance> &patch_provenance,
+                             const std::vector<std::array<double, 3>> &patch_plane_normals,
                              GeometryFallbackLedger &geometry_ledger);
   // H14a: a line ConfigureMaxwellLines could not cover, on the rank that owns its patch.
   struct MaxwellUncoveredLine
@@ -840,15 +885,22 @@ private:
   // patches named by their global indices, labelled UnprobedModels, into
   // unprobed_model_portions (+ the count / claimed length under the gate's diagnostics).
   void RecordUnprobedPatchClaims(const std::vector<int> &global_indices);
-  void EvaluatePointValues(const Vector &x, Vector &values) const;
-  void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr,
-                           Vector &vi) const;
-  void AddPointValuesTranspose(const Vector &values, Vector &y) const;
+  void EvaluatePointValues(const Vector &x, Vector &values, bool magnetic = false) const;
+  void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr, Vector &vi,
+                           bool magnetic = false) const;
+  void AddPointValuesTranspose(const Vector &values, Vector &y,
+                               bool magnetic = false) const;
   void EvaluatePoints(const Vector &x, Vector &values) const;
-  void EvaluateMaxwellLines(const Vector &x, Vector &values) const;
-  void EvaluateMaxwellLines(const Vector &xr, const Vector &xi, Vector &vr,
-                            Vector &vi) const;
-  void AddMaxwellLinesTranspose(const Vector &values, Vector &y) const;
+  void EvaluateMaxwellLines(const Vector &x, Vector &values, bool magnetic = false) const;
+  void EvaluateMaxwellLines(const Vector &xr, const Vector &xi, Vector &vr, Vector &vi,
+                            bool magnetic = false) const;
+  void AddMaxwellLinesTranspose(const Vector &values, Vector &y,
+                                bool magnetic = false) const;
+  // The magnetic trace a_m = (the chain + fit lift) of the flux line integrals, and its
+  // transpose: the Maxwell trace with the magnetic stencil.
+  void ApplyMagneticTrace(const Vector &x, Vector &values) const;
+  void ApplyMagneticTraceTranspose(const Vector &values, Vector &y) const;
+  std::vector<MagneticGateRecord> magnetic_gate_records;
   // The chain lift (one route per knot; the loop-residual detector's trace, decision 955
   // D3) and its transpose.
   void BuildMaxwellChainTrace(const Vector &line_values, Vector &values) const;
@@ -1060,6 +1112,24 @@ public:
     double response_weighted_loop_fit_share = 0.0;
     int loop_remainder_patch_count = 0;
     int loop_fallback_patch_count = 0;
+    // The magnetic (inductive) term (DESIGN-v2 section 2; USER 1221 D6): the fixed-trace
+    // MAGNETIC domain correction 1/2 sum_p w_p a_m^H dS_m a_m with a_m = (the flux trace of
+    // curl E) / |omega| (the magnetic image of domain_correction, nondimensional energy);
+    // its dual loop residual (the in-plane circulation of B . n around every closed
+    // contour, gated like the electric one at 0.05) and the response-weighted form; the
+    // patch count carrying the term; and magnetic_confident = the magnetic term's own gate
+    // (the dual loop residual) AND closure_independent_confident. All 0 / true without a
+    // magnetic model (has_magnetic false).
+    bool has_magnetic = false;
+    double magnetic_domain_correction = 0.0;
+    double magnetic_loop_residual = 0.0;
+    double magnetic_weighted_loop_residual = 0.0;
+    int magnetic_patch_count = 0;
+    int magnetic_excluded_patch_count = 0;
+    bool magnetic_confident = true;
+    // Per model (model-index order, as model_contributions): the magnetic domain
+    // correction of the model's applied patches.
+    std::vector<double> model_magnetic_domain_corrections;
     // The domain defects the fallback patches would have added (both closures; 0 without
     // a fallback): domain_correction + this is the self-consistent operator's energy
     // 0.5 <x, Mult x>, which applies the fit without the fallback.
@@ -1108,6 +1178,40 @@ public:
 
   void Mult(const Vector &x, Vector &y) const override;
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+
+  // The magnetic (inductive) defect dK = P_m^T W dS_m P_m (DESIGN-v2 section 2; K-side,
+  // frequency-independent, symmetric PSD by construction of dS_m, DIAG_ZERO on the
+  // essential dofs): the action on a true-dof vector, through SurfaceResponseStiffness-
+  // Operator below. Zero (and never called) for a library without magnetic leaves.
+  void MagneticStiffnessMult(const Vector &x, Vector &y) const;
+  bool HasMagneticModels() const { return has_magnetic_models; }
+  // The dual R0-a gate (the magnetic term only; DESIGN-v2 section 3): the flux read along
+  // the R0-a probe legs against the piece's flux state, on the magnetic chain trace, with
+  // the electric gate's tolerance and floor; a failing patch loses its magnetic term
+  // (Patch::magnetic_excluded, sticky), keeps its electric one. Called where the electric
+  // gate is, on the raw field of the source.
+  void ApplyMagneticConductorConsistencyGate(const ComplexVector &E, int source,
+                                             double frequency);
+  // Per model the leaf's load-time record (surface-response-magnetic.csv; the manifest).
+  struct MagneticModelRecord
+  {
+    int model = 0;
+    std::string name;
+    std::string status;
+    std::string rule;
+    std::string reason;
+    double psd_ratio = 0.0;
+    int negative_eigenvalue_count = 0;
+    double same_mesh_deviation = -1.0;
+    int patches = 0;
+  };
+  std::vector<MagneticModelRecord> GetMagneticModelRecords() const;
+  // The dual R0-a gate's per-patch records (the magnetic term's exclusions), gathered on
+  // every rank in global patch order; grows with the sources.
+  const std::vector<MagneticGateRecord> &GetMagneticGateRecords() const
+  {
+    return magnetic_gate_records;
+  }
 
   // Add the contribution from prescribed essential values to an already assembled
   // thin-metal right-hand side.
@@ -1175,9 +1279,16 @@ public:
   // real vector x (the contour line integrals of that one field); no production Maxwell
   // caller, a unit-test read (decision 821).
   std::vector<PatchTrace> GetPatchTraces(const Vector &x) const;
+  // The magnetic flux trace (the chain + fit of the n . curl x line integrals) of every
+  // applied patch, in the same form; a unit-test read of the magnetic stencil.
+  std::vector<PatchTrace> GetMagneticPatchTraces(const Vector &x) const
+  {
+    return GatherPatchTraces(x, false, true);
+  }
 
 private:
-  std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only) const;
+  std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,
+                                            bool magnetic = false) const;
   // Every rank's local records concatenated in rank order (Allgatherv), the per-patch
   // record gathers' shared step.
   std::vector<double> AllgatherRecords(const std::vector<double> &local_records) const;
@@ -1417,11 +1528,40 @@ private:
   GatherPatchContributions(const std::vector<double> &local_records) const;
 };
 
+// The magnetic (inductive) defect dK of a SurfaceResponseOperator as an Operator (the K-side
+// twin of the response mass, DESIGN-v2 section 2.1: it enters every corrected operator E1-E5
+// with coefficient 1, frequency-independent). Symmetric; DIAG_ZERO on the essential dofs.
+class SurfaceResponseStiffnessOperator : public Operator
+{
+private:
+  const SurfaceResponseOperator &response;
+
+public:
+  explicit SurfaceResponseStiffnessOperator(const SurfaceResponseOperator &response)
+    : Operator(response.Height(), response.Width()), response(response)
+  {
+  }
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    response.MagneticStiffnessMult(x, y);
+  }
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+};
+
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest
 // reports exact, interpolated, and missing process-library requirements.
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
+
+// The magnetic (inductive) leaves of a fabrication-process library as the operator would
+// load them, without a device (mx-sc-magnetic DESIGN-v2 section 3; the Phase-1 gate G-d
+// reader): per model its leaf verdict (Status / Rule / Reason, r1-r4 with the library's
+// MagneticRules), the PSD statistic, the negative eigenvalue count, the recorded same-mesh
+// deviation, the basis size and, for an applied leaf, the scaled defect's trace and
+// Frobenius norm (the loader's scale: the electric CSV convention of `units`).
+nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Units &units,
+                                      bool nondimensionalize);
 
 // Geometry fallbacks (readiness hardening; USER decision 1000 (b), supervisor 1001; DESIGN
 // readiness-20261029/hardening): the GeometryFailurePolicy of a run and the ledger every

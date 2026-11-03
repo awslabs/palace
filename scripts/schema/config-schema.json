@@ -3458,6 +3458,16 @@
               "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`; and `surface-response-model-raw-energy.csv` / `-groups.csv`, the raw field's within-R energy partitioned exactly over the applied patches' claims by model set plus the unclaimed remainder. Electrostatic, driven and eigenmode (per frequency / per mode, with the `f (GHz)` / `m` and `exc` keys after the electrostatic columns; the Maxwell path also writes `surface-response-patches.csv`, `surface-response-traces.csv` with the complex spatial traces and `surface-response-patch-loops.csv`, the per-path loop residuals of the line-integral trace lift); a three-dimensional export: not supported by boundary mode or on a two-dimensional mesh. Every other output is unchanged.",
               "default": false
             },
+            "Magnetic": {
+              "type": "boolean",
+              "description": "Read the library's OPTIONAL magnetic (inductive) leaves (`MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` of a Version-3 model; mx-sc-magnetic DESIGN-v2, decision 1229). Default true: a model carrying them adds the K-side defect dK = P_m^T W dS_m P_m to every CORRECTED operator (the uniform and adaptive driven sweeps, the self-consistent eigenproblem, its shift-invert and nonlinear refine), the `fixed-trace frequency shift` column (the corrected frequency of record, USER 1221 D6) and `surface-response-magnetic.csv`. False: the leaves are not read, the run is the electric-only run of the same library (byte-identical to the library without leaves), so the electric-only self-consistent result can be reproduced beside the magnetic one. A library without leaves is unaffected either way.",
+              "default": true
+            },
+            "AllowElectricOnlyFallback": {
+              "type": "boolean",
+              "description": "The magnetic (inductive) defect of finite-thickness metal (mx-sc-magnetic DESIGN-v2; USER 1221 D3): a Version-3 library model may carry the OPTIONAL leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (the vacuum twin of its 2D electrostatic coupon pair; 2D translational models only). A leaf refused by rule r1 (basis / piece counts), r2 (the twin's Fabrication differs from the library's) or r3 (the same-mesh proof exceeds the library's `MagneticRules.SameMeshTolerance`) ABORTS the run by name unless this key is true, in which case that model continues ELECTRIC-ONLY and is named in `surface-response-magnetic.csv` and the preflight manifest (`Summary.MagneticElectricOnly`). An r4 refusal (the leaf's -lambda_min / ||dS_m|| above `MagneticRules.PsdRefusalRatio`) always continues electric-only by name. Ignored by a library without magnetic leaves (its outputs are byte-identical to a run without this key).",
+              "default": false
+            },
             "Diagnostics": {
               "type": "object",
               "additionalProperties": false,

@@ -529,8 +529,10 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation,
-                         std::unique_ptr<ComplexOperator> response_mass)
+                         std::unique_ptr<ComplexOperator> response_mass,
+                         std::unique_ptr<ComplexOperator> response_stiffness)
   : space_op(space_op), response_mass(std::move(response_mass)),
+    response_stiffness(std::move(response_stiffness)),
     orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are
@@ -544,6 +546,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   MFEM_VERIFY(!this->response_mass || (this->response_mass->Height() == M->Height() &&
                                        this->response_mass->Width() == M->Width()),
               "Invalid fabrication-response mass dimensions when constructing PROM!");
+  MFEM_VERIFY(!this->response_stiffness ||
+                  (this->response_mass &&
+                   this->response_stiffness->Height() == K->Height() &&
+                   this->response_stiffness->Width() == K->Width()),
+              "Invalid fabrication-response magnetic stiffness when constructing PROM!");
 
   // Per-port boundary masses for wave ports (ω-independent). The wave-port contribution
   // to A(ω) is then assembled at each ω as Σ_p k_{n,p}(ω)·M_{μ⁻¹,r,p}, where M_{r,p} is
@@ -750,6 +757,10 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   {
     corrected_A = std::make_unique<SumComplexOperator>(*A);
     corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
+    if (response_stiffness)
+    {
+      corrected_A->AddOperator(*response_stiffness, 1.0 + 0.0i);
+    }
   }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
@@ -990,6 +1001,12 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   {
     response_mass_r.conservativeResize(dim_V_new, dim_V_new);
     ProjectMatInternal(comm, V, *response_mass, response_mass_r, r, dim_V_old, true);
+  }
+  if (response_stiffness)
+  {
+    response_stiffness_r.conservativeResize(dim_V_new, dim_V_new);
+    ProjectMatInternal(comm, V, *response_stiffness, response_stiffness_r, r, dim_V_old,
+                       true);
   }
   // Per-port wave-port masses. M_{r,p} is initialized lazily so the map only contains
   // entries when the per-port HDM operator was non-null on this rank.
@@ -1293,6 +1310,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   if (response_mass)
   {
     Ar += (-omega * omega) * response_mass_r;
+  }
+  if (response_stiffness)
+  {
+    Ar += response_stiffness_r;  // omega-independent, beside Kr
   }
   // Wave-port contribution: A_wp(ω) = i·Σ_p k_{n,p}(ω)·M_{μ⁻¹,p}. GetWavePortKn re-solves
   // the per-port cross-section EVP at this ω and refreshes the modal post-processing state

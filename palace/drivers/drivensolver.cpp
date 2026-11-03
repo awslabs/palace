@@ -99,9 +99,21 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
   std::unique_ptr<ComplexWrapperOperator> response_mass;
+  // The magnetic (inductive) defect dK (mx-sc-magnetic DESIGN-v2 section 2.1, E1): the
+  // K-side twin of the response mass, present only when a loaded model carries a magnetic
+  // leaf (a library without them: the operator of record, bitwise).
+  std::unique_ptr<SurfaceResponseStiffnessOperator> response_stiffness_real;
+  std::unique_ptr<ComplexWrapperOperator> response_stiffness;
   if (self_consistent_response)
   {
     response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
+    if (response_correction->HasMagneticModels())
+    {
+      response_stiffness_real =
+          std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction);
+      response_stiffness = std::make_unique<ComplexWrapperOperator>(
+          response_stiffness_real.get(), nullptr);
+    }
   }
   const auto &Curl = space_op.GetCurlMatrix();
 
@@ -230,6 +242,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       {
         corrected_A = std::make_unique<SumComplexOperator>(*A);
         corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
+        if (response_stiffness)
+        {
+          corrected_A->AddOperator(*response_stiffness, 1.0 + 0.0i);
+        }
       }
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
@@ -268,6 +284,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
             E, excitation_idx,
             iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
             false);
+        if (response_correction->HasMagneticModels())
+        {
+          // The dual R0-a gate on the magnetic term (DESIGN-v2 section 3): the same raw
+          // field, before the corrected solve reads the exclusion.
+          response_correction->ApplyMagneticConductorConsistencyGate(
+              E, excitation_idx,
+              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                  (2 * M_PI));
+        }
       }
       if (corrected_ksp)
       {
@@ -459,9 +484,19 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   std::unique_ptr<RomOperator> corrected_prom_op;
   if (self_consistent_response)
   {
+    // E4 (USER 1221 D8): the adaptive PROM carries dK as a projected, omega-independent
+    // reduced matrix beside the projected response mass.
+    std::unique_ptr<ComplexOperator> prom_stiffness;
+    if (response_correction->HasMagneticModels())
+    {
+      prom_stiffness = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction),
+          std::unique_ptr<Operator>());
+    }
     corrected_prom_op = std::make_unique<RomOperator>(
         iodata, space_op, max_size_per_excitation,
-        std::make_unique<ComplexWrapperOperator>(response_correction, nullptr));
+        std::make_unique<ComplexWrapperOperator>(response_correction, nullptr),
+        std::move(prom_stiffness));
   }
   space_op.GetWavePortOp().SetSuppressOutput(true);
 
@@ -655,6 +690,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
             E, excitation_idx,
             iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
             corrected_prom_op != nullptr);
+        if (response_correction->HasMagneticModels())
+        {
+          response_correction->ApplyMagneticConductorConsistencyGate(
+              E, excitation_idx,
+              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                  (2 * M_PI));
+        }
       }
       if (corrected_prom_op)
       {

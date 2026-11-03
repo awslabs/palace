@@ -1654,6 +1654,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
                 "Response-correction \"MortarOversampling\" must be between 1 and 8!");
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
+    data.allow_electric_only_fallback =
+        correction.value("AllowElectricOnlyFallback", data.allow_electric_only_fallback);
+    data.magnetic_leaves = correction.value("Magnetic", data.magnetic_leaves);
     if (auto gate = correction.find("ConductorConsistency"); gate != correction.end())
     {
       MFEM_VERIFY(gate->is_object(),

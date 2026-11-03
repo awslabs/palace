@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -350,6 +351,15 @@ protected:
     double self_consistent_mode_overlap = 0.0;
     bool has_postprocessed = false;
     bool has_self_consistent = false;
+    // The magnetic (inductive) term (mx-sc-magnetic DESIGN-v2; USER 1221 D6; decision
+    // 1229): the first-order fixed-trace frequency shift of the raw mode / frequency,
+    // d omega / omega = (U_m,defect - U_e,defect) / (2 U_raw) with U_e,defect the electric
+    // domain correction, U_m,defect the magnetic one and U_raw the raw normalization
+    // energy; gated by closure_independent_confident AND the magnetic term's own loop gate
+    // (NOT by the trace-closure spread, which is printed beside it): NaN when withheld.
+    // Written only when a loaded model carries a magnetic leaf (the columns exist then).
+    double fixed_trace_frequency_shift = std::numeric_limits<double>::quiet_NaN();
+    double magnetic_domain_correction = 0.0;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;
     SurfaceResponseOperator::MaxwellResponse self_consistent_confidence;
@@ -379,6 +389,11 @@ protected:
   mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_energy;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_traces;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_loops;
+  // surface-response-magnetic.csv (DESIGN-v2 section 3; decision 1229 Q4): only when a
+  // loaded model carries a magnetic leaf; rewritten at every print (root only) with the
+  // per-model leaf status rows and the dual R0-a gate's per-patch rows so far.
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_magnetic;
+  void PrintSurfaceResponseMagnetic() const;
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
   mutable bool surface_response_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;

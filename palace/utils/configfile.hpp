@@ -1362,8 +1362,52 @@ public:
       std::string thin_matrix;
       std::string fabricated_surface_matrix;
       std::string thin_surface_matrix;
+      // The source's magnetic leaves (empty = none): a blend carries the magnetic term only
+      // when EVERY source carries them (else electric-only, named MagneticBlendIncomplete).
+      std::string magnetic_fabricated_matrix;
+      std::string magnetic_thin_matrix;
     };
     std::vector<BlendSourceData> blend;
+
+    // The magnetic (inductive) defect of finite-thickness metal (mx-sc-magnetic DESIGN-v2
+    // section 3; USER 1221 D3): OPTIONAL per-model leaves on a Version-3 library. The
+    // vacuum twin of the model's electrostatic coupon pair (the same meshes, hats and piece
+    // states at eps = 1) gives, by the 2D magnetostatic / electrostatic duality, the
+    // magnetic energy within R as a quadratic form of the flux trace: S_m = Q_dom,vac in
+    // solver units (no scale leaf). Absent = electric-only = the operator of record,
+    // bitwise. The leaf is REFUSED by name when (r1) its basis / piece counts differ from
+    // the electric model's, (r2) the twin's recorded Fabrication differs from the library's,
+    // (r3) the regenerated electric matrices deviate from the model of record by more than
+    // MagneticRules.SameMeshTolerance, (r4) -lambda_min(sym dS_m) / ||dS_m||_2 exceeds
+    // MagneticRules.PsdRefusalRatio (a value in (PsdFindingRatio, PsdRefusalRatio] is a
+    // named FINDING: the leaf is applied; SUPERVISOR ERRATUM 1227).
+    struct MagneticLeafData
+    {
+      std::string fabricated_matrix;
+      std::string thin_matrix;
+      // MagneticSource: the vacuum twin's provenance as the generator recorded it.
+      // The ELECTRIC pair's process parameters the twin was regenerated at (r2).
+      double metal_thickness = 0.0;
+      double overetch_depth = 0.0;
+      double sidewall_angle = 0.0;
+      double top_rounding_radius = 0.0;
+      double bottom_rounding_radius = 0.0;
+      double substrate_permittivity = 0.0;
+      // The twin's own domain permittivity (must be 1).
+      double vacuum_permittivity = 0.0;
+      // The regenerated electric matrices' maximum relative deviation from the model of
+      // record (the same-mesh proof, r3); negative = not recorded (refused).
+      double electric_regeneration_max_relative_deviation = -1.0;
+      // The twin's BasisPoints count and conductor-state count (r1), and whether its basis
+      // file was byte-identical to the model's (r1).
+      int basis_point_count = 0;
+      int conductor_state_count = 0;
+      bool basis_points_identical = false;
+      // The catalog reader's refusal (r2 against the library's Fabrication block; a
+      // malformed record): empty = none so far.
+      std::string catalog_refusal;
+    };
+    std::optional<MagneticLeafData> magnetic;
   };
 
   struct ResponseCorrectionData
@@ -1454,6 +1498,31 @@ public:
     // leg and the hardening fixtures (B.4 (F)): a run of record with it set is refused by
     // the comparator, never by this reader.
     bool conductor_consistency_record_only = false;
+
+    // The magnetic (inductive) defect (mx-sc-magnetic DESIGN-v2 section 3; USER 1221 D3):
+    // AllowElectricOnlyFallback (default false): a model whose magnetic leaf is REFUSED by
+    // rule r1 / r2 / r3 continues ELECTRIC-ONLY (named in the records) instead of aborting.
+    // An r4 refusal (SUPERVISOR ERRATUM 1227: -lambda_min / ||dS_m|| above the library's
+    // PsdRefusalRatio) always continues electric-only by name; a library without magnetic
+    // leaves never reads this key.
+    bool allow_electric_only_fallback = false;
+    // Magnetic (default true; decision 1229 Q1 (i)): false = the library's magnetic leaves
+    // are NOT read for this run, so the electric-only self-consistent result of the SAME
+    // library can be reproduced (bitwise with the leaf-less library: no new column / file).
+    bool magnetic_leaves = true;
+    // MagneticRules of the library (Version 3, top level; written by
+    // attach_magnetic_leaves.py from the Phase-0 calibration, SUPERVISOR AMENDMENT 1202 /
+    // ERRATUM 1227): the r3 same-mesh tolerance (the regenerated electric matrices' maximum
+    // relative deviation; R3_TOL = 1e-12 measured), the r4 FINDING ratio (R4_TOL = 1e-2)
+    // and the r4 REFUSAL ratio (R4_REFUSE, provisionally 0.1; fixed by the Phase-2 mismatch
+    // control). Library-level, never compiled constants.
+    struct MagneticRulesData
+    {
+      double same_mesh_tolerance = 1.0e-12;
+      double psd_finding_ratio = 1.0e-2;
+      double psd_refusal_ratio = 0.1;
+    };
+    MagneticRulesData magnetic_rules;
 
     // Diagnostics.ExclusionEnergy (OI-COVERAGE-EXCLUSION-ENERGY, idfix DESIGN section 8;
     // decisions 1064 (2) / 1072 Q3 / 1074 / 1076): write

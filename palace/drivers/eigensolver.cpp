@@ -47,6 +47,21 @@ internal::BuildResponseCorrectedMass(const ComplexOperator &mass, const Operator
   return corrected;
 }
 
+internal::ResponseCorrectedMass
+internal::BuildResponseCorrectedStiffness(const ComplexOperator &stiffness,
+                                          const Operator &response_stiffness)
+{
+  MFEM_VERIFY(stiffness.Real(),
+              "Response-corrected eigenmode stiffness requires a real part!");
+  ResponseCorrectedMass corrected;
+  auto corrected_real = std::make_unique<SumOperator>(*stiffness.Real());
+  corrected_real->AddOperator(response_stiffness);
+  corrected.real = ApplyEssentialDiagonal(std::move(corrected_real), *stiffness.Real());
+  corrected.op =
+      std::make_unique<ComplexWrapperOperator>(corrected.real.get(), stiffness.Imag());
+  return corrected;
+}
+
 internal::EigenvalueTarget
 internal::GetEigenvalueTarget(double target, bool lambda_eigenproblem,
                               EigenSolverBackend backend,
@@ -374,12 +389,32 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
   std::unique_ptr<ComplexWrapperOperator> response_mass;
   internal::ResponseCorrectedMass corrected_M, corrected_Mp;
+  // The magnetic (inductive) defect dK (mx-sc-magnetic DESIGN-v2 section 2.1, E2 / E3 /
+  // E5): K + dK and Kp + dK as the corrected twins of K / Kp; the RAW eigenproblem is
+  // untouched. Null without magnetic leaves (then corrected_K.op is K itself).
+  std::unique_ptr<SurfaceResponseStiffnessOperator> response_stiffness_real;
+  std::unique_ptr<ComplexWrapperOperator> response_stiffness;
+  internal::ResponseCorrectedMass corrected_K, corrected_Kp;
   std::unique_ptr<EigenvalueSolver> corrected_eigen;
   if (self_consistent_response)
   {
     Mpi::Print("Configuring self-consistent response-corrected eigenvalue solver:\n");
     response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
     corrected_M = internal::BuildResponseCorrectedMass(*M, *response_correction);
+    if (response_correction->HasMagneticModels())
+    {
+      Mpi::Print(" with the magnetic (inductive) defect dK of the loaded magnetic leaves\n");
+      response_stiffness_real =
+          std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction);
+      response_stiffness = std::make_unique<ComplexWrapperOperator>(
+          response_stiffness_real.get(), nullptr);
+      corrected_K = internal::BuildResponseCorrectedStiffness(*K, *response_stiffness_real);
+      if (has_A2)
+      {
+        corrected_Kp =
+            internal::BuildResponseCorrectedStiffness(*Kp, *response_stiffness_real);
+      }
+    }
     corrected_eigen = MakeEigenvalueSolver();
     E_corrected.SetSize(Curl.Width());
     E_corrected.UseDevice(true);
@@ -421,18 +456,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, scale);
     }
   }
+  // E3: the corrected eigenproblem's stiffness is K + dK (Kp + dK with A2) when magnetic
+  // leaves are loaded, else the raw K / Kp (the operator of record).
+  const ComplexOperator &corrected_K_op = corrected_K.op ? *corrected_K.op : *K;
   if (corrected_eigen)
   {
     if (nonlinear_type == NonlinearEigenSolver::SLP)
     {
       if (C)
       {
-        corrected_eigen->SetOperators(*K, *C, *corrected_M.op,
+        corrected_eigen->SetOperators(corrected_K_op, *C, *corrected_M.op,
                                       EigenvalueSolver::ScaleType::NONE);
       }
       else
       {
-        corrected_eigen->SetOperators(*K, *corrected_M.op,
+        corrected_eigen->SetOperators(corrected_K_op, *corrected_M.op,
                                       EigenvalueSolver::ScaleType::NONE);
       }
       corrected_eigen->SetExtraSystemMatrix(funcA2);
@@ -441,15 +479,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else if (has_A2)
     {
       corrected_Mp = internal::BuildResponseCorrectedMass(*Mp, *response_correction);
-      corrected_eigen->SetOperators(*Kp, *Cp, *corrected_Mp.op, scale);
+      corrected_eigen->SetOperators(corrected_Kp.op ? *corrected_Kp.op : *Kp, *Cp,
+                                    *corrected_Mp.op, scale);
     }
     else if (C)
     {
-      corrected_eigen->SetOperators(*K, *C, *corrected_M.op, scale);
+      corrected_eigen->SetOperators(corrected_K_op, *C, *corrected_M.op, scale);
     }
     else
     {
-      corrected_eigen->SetOperators(*K, *corrected_M.op, scale);
+      corrected_eigen->SetOperators(corrected_K_op, *corrected_M.op, scale);
     }
   }
   const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
@@ -608,8 +647,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<ComplexKspSolver> corrected_ksp;
   if (corrected_eigen)
   {
-    corrected_A = BuildComplexSumOperator(
-        {{1.0 + 0.0i, A.get()}, {-target * target + 0.0i, response_mass.get()}}, *K);
+    // E2: the shift-invert operator of the corrected problem gains dK with coefficient 1.
+    corrected_A =
+        response_stiffness
+            ? BuildComplexSumOperator({{1.0 + 0.0i, A.get()},
+                                       {-target * target + 0.0i, response_mass.get()},
+                                       {1.0 + 0.0i, response_stiffness.get()}},
+                                      *K)
+            : BuildComplexSumOperator(
+                  {{1.0 + 0.0i, A.get()}, {-target * target + 0.0i, response_mass.get()}},
+                  *K);
     corrected_ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                        &space_op.GetH1Spaces());
     corrected_ksp->SetOperators(*corrected_A, *P);
@@ -689,9 +736,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
+    // E5: the refine's stiffness is the corrected K + dK for the corrected call, the raw K
+    // for the raw one.
     auto RefineEigenproblem =
         [&](std::unique_ptr<EigenvalueSolver> linear_eigen, int linear_num_conv,
-            const ComplexOperator &mass, ComplexKspSolver &linear_solver,
+            const ComplexOperator &stiffness, const ComplexOperator &mass,
+            ComplexKspSolver &linear_solver,
             bool corrected) -> std::pair<std::unique_ptr<EigenvalueSolver>, int>
     {
       Mpi::Print("\n Refining {}eigenvalues with Quasi-Newton solver\n",
@@ -703,11 +753,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       qn->SetMaxIter(iodata.solver.eigenmode.max_it);
       if (C)
       {
-        qn->SetOperators(*K, *C, mass, EigenvalueSolver::ScaleType::NONE);
+        qn->SetOperators(stiffness, *C, mass, EigenvalueSolver::ScaleType::NONE);
       }
       else
       {
-        qn->SetOperators(*K, mass, EigenvalueSolver::ScaleType::NONE);
+        qn->SetOperators(stiffness, mass, EigenvalueSolver::ScaleType::NONE);
       }
       qn->SetExtraSystemMatrix(funcA2);
       qn->SetPreconditionerUpdate(funcP);
@@ -726,12 +776,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     };
 
     std::tie(eigen, num_conv) =
-        RefineEigenproblem(std::move(eigen), num_conv, *M, *ksp, false);
+        RefineEigenproblem(std::move(eigen), num_conv, *K, *M, *ksp, false);
     if (corrected_eigen)
     {
       std::tie(corrected_eigen, corrected_num_conv) =
           RefineEigenproblem(std::move(corrected_eigen), corrected_num_conv,
-                             *corrected_M.op, *corrected_ksp, true);
+                             corrected_K_op, *corrected_M.op, *corrected_ksp, true);
     }
   }
 
@@ -870,6 +920,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
               (2 * M_PI),
           self_consistent_response);
+      if (response_correction->HasMagneticModels())
+      {
+        // The dual R0-a gate on the magnetic term (the same pre-gate caveat).
+        response_correction->ApplyMagneticConductorConsistencyGate(
+            E, i,
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
+                (2 * M_PI));
+      }
     }
 
     Curl.Mult(E.Real(), B.Real());

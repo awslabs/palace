@@ -1307,7 +1307,52 @@ struct ProcessLibrary
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
+  // The magnetic (inductive) leaves (DESIGN-v2 section 3): the top-level MagneticRules
+  // (defaults = the Phase-0 calibration of record) and whether any model carries a leaf.
+  config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData magnetic_rules;
+  bool has_magnetic_leaves = false;
 };
+
+// The magnetic leaves of an interpolated (blend) runtime model (DESIGN-v2 section 3): every
+// source's leaf matrices join its BlendSourceData; the model carries the magnetic term only
+// when EVERY source carries a leaf (the first source's provenance stands for the blend: the
+// family shares one basis and one process), else EvaluateMagneticLeaf names
+// MagneticBlendIncomplete (when any source has one) or stays Absent.
+void AttachBlendMagneticLeaves(ResponseModelData &model,
+                               const std::vector<const LibraryModel *> &coupons)
+{
+  MFEM_ASSERT(coupons.size() == model.blend.size(), "Inconsistent blend sources!");
+  bool all = !coupons.empty();
+  for (std::size_t k = 0; k < coupons.size(); k++)
+  {
+    const auto &leaf = coupons[k]->response.magnetic;
+    if (leaf)
+    {
+      model.blend[k].magnetic_fabricated_matrix = leaf->fabricated_matrix;
+      model.blend[k].magnetic_thin_matrix = leaf->thin_matrix;
+    }
+    else
+    {
+      all = false;
+    }
+  }
+  if (all)
+  {
+    model.magnetic = coupons.front()->response.magnetic;
+    for (const auto *coupon : coupons)
+    {
+      if (!coupon->response.magnetic->catalog_refusal.empty())
+      {
+        model.magnetic->catalog_refusal = coupon->response.magnetic->catalog_refusal;
+      }
+    }
+  }
+  else
+  {
+    // The anchor's leaf copied with its response does not stand for an incomplete blend.
+    model.magnetic.reset();
+  }
+}
 
 struct EdgeGroup2D
 {
@@ -2155,7 +2200,7 @@ DeriveConsistentMortarBands(const LibraryModel &model,
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
-                                  bool geometry_only = false)
+                                  bool geometry_only = false, bool magnetic_leaves = true)
 {
   std::ifstream input(path);
   MFEM_VERIFY(input,
@@ -2206,6 +2251,62 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   MFEM_VERIFY(version < 3 || (interface_layers && interface_layers->is_object()),
               "Version-3 fabrication-process response libraries require "
               "Fabrication.InterfaceLayers metadata!");
+  // The magnetic (inductive) leaves (DESIGN-v2 section 3; USER 1221 D3): the top-level
+  // MagneticRules (absent = the Phase-0 calibration of record: SameMeshTolerance 1e-12,
+  // PsdFindingRatio 1e-2, PsdRefusalRatio 0.1) and the Fabrication block's process values
+  // the r2 rule compares every leaf's MagneticSource against.
+  if (auto rules = data.find("MagneticRules"); rules != data.end())
+  {
+    MFEM_VERIFY(version >= 3 && rules->is_object(),
+                "Fabrication-process response-library MagneticRules must be an object of a "
+                "version-3 library!");
+    auto &magnetic_rules = library.magnetic_rules;
+    magnetic_rules.same_mesh_tolerance =
+        rules->value("SameMeshTolerance", magnetic_rules.same_mesh_tolerance);
+    magnetic_rules.psd_finding_ratio =
+        rules->value("PsdFindingRatio", magnetic_rules.psd_finding_ratio);
+    magnetic_rules.psd_refusal_ratio =
+        rules->value("PsdRefusalRatio", magnetic_rules.psd_refusal_ratio);
+    MFEM_VERIFY(magnetic_rules.same_mesh_tolerance >= 0.0 &&
+                    magnetic_rules.psd_finding_ratio >= 0.0 &&
+                    magnetic_rules.psd_refusal_ratio >= magnetic_rules.psd_finding_ratio,
+                "Fabrication-process response-library MagneticRules must be nonnegative "
+                "with PsdRefusalRatio >= PsdFindingRatio!");
+    for (const auto &[key, value] : rules->items())
+    {
+      (void)value;
+      MFEM_VERIFY(key == "SameMeshTolerance" || key == "PsdFindingRatio" ||
+                      key == "PsdRefusalRatio",
+                  "Fabrication-process response-library MagneticRules has an unknown key \""
+                      << key << "\"!");
+    }
+  }
+  auto FabricationValue = [&](const char *key) -> std::optional<double>
+  {
+    if (fabrication == data.end())
+    {
+      return std::nullopt;
+    }
+    auto value = fabrication->find(key);
+    if (value == fabrication->end() && std::string_view(key) == "SidewallAngle")
+    {
+      // The coupon generators' libraries record the angle as SidewallAngleDegrees (the
+      // library of record carries both keys).
+      value = fabrication->find("SidewallAngleDegrees");
+    }
+    if (value == fabrication->end() || !value->is_number())
+    {
+      return std::nullopt;
+    }
+    return value->get<double>();
+  };
+  const std::array<std::pair<const char *, std::optional<double>>, 6> process_of_record = {
+      {{"MetalThickness", FabricationValue("MetalThickness")},
+       {"OveretchDepth", FabricationValue("OveretchDepth")},
+       {"SidewallAngle", FabricationValue("SidewallAngle")},
+       {"TopRoundingRadius", FabricationValue("TopRoundingRadius")},
+       {"BottomRoundingRadius", FabricationValue("BottomRoundingRadius")},
+       {"SubstratePermittivity", FabricationValue("SubstratePermittivity")}}};
   if (interface_layers)
   {
     MFEM_VERIFY(interface_layers->is_object(),
@@ -2762,6 +2863,92 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                 "fabrication-process response model!");
     model.response.basis_points =
         ResolveLibraryPath(directory, entry.at("BasisPoints").get<std::string>());
+    // The magnetic (inductive) leaves (DESIGN-v2 section 3; USER 1221 D3): both matrices
+    // and the MagneticSource provenance together, on a version-3 library; the r2 rule
+    // (the twin's recorded process = the library's Fabrication block) and a malformed
+    // record are decided here by name (the model loads electric-only or aborts at the
+    // operator per AllowElectricOnlyFallback); r1 / r3 / r4 at the operator.
+    {
+      const bool has_fabricated = entry.contains("MagneticFabricatedMatrix");
+      const bool has_thin = entry.contains("MagneticThinMatrix");
+      const bool has_source = entry.contains("MagneticSource");
+      MFEM_VERIFY(has_fabricated == has_thin && has_thin == has_source,
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" must carry MagneticFabricatedMatrix, MagneticThinMatrix and "
+                         "MagneticSource together!");
+      // SurfaceResponseCorrection.Magnetic = false (decision 1229 Q1 (i)): the leaves are
+      // not read, so the run is the leaf-less library's, bitwise (nothing is recorded).
+      if (has_fabricated && magnetic_leaves)
+      {
+        MFEM_VERIFY(version >= 3,
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" carries magnetic leaves on a library of version "
+                        << version << " (version 3 required)!");
+        ResponseModelData::MagneticLeafData leaf;
+        leaf.fabricated_matrix = ResolveLibraryPath(
+            directory, entry.at("MagneticFabricatedMatrix").get<std::string>());
+        leaf.thin_matrix =
+            ResolveLibraryPath(directory, entry.at("MagneticThinMatrix").get<std::string>());
+        const auto &source = entry.at("MagneticSource");
+        MFEM_VERIFY(source.is_object() && source.value("Version", 0) == 1,
+                    "Fabrication-process response model \""
+                        << model.name << "\" MagneticSource must be a version-1 object!");
+        leaf.vacuum_permittivity = source.value("VacuumPermittivity", 0.0);
+        leaf.electric_regeneration_max_relative_deviation =
+            source.value("ElectricRegenerationMaxRelativeDeviation", -1.0);
+        leaf.basis_point_count = source.value("BasisPointCount", 0);
+        leaf.conductor_state_count = source.value("ConductorStateCount", -1);
+        leaf.basis_points_identical = source.value("BasisPointsIdentical", false);
+        std::string refusal;
+        if (std::abs(leaf.vacuum_permittivity - 1.0) > 1.0e-12)
+        {
+          refusal = "MagneticSource.VacuumPermittivity " +
+                    std::to_string(leaf.vacuum_permittivity) +
+                    " is not 1 (the twin must be the vacuum coupon)";
+        }
+        const auto twin = source.find("Fabrication");
+        if (twin == source.end() || !twin->is_object())
+        {
+          refusal = "MagneticSource.Fabrication (the twin's process parameters) is missing";
+        }
+        else
+        {
+          double *leaf_values[6] = {&leaf.metal_thickness,       &leaf.overetch_depth,
+                                    &leaf.sidewall_angle,        &leaf.top_rounding_radius,
+                                    &leaf.bottom_rounding_radius, &leaf.substrate_permittivity};
+          for (std::size_t k = 0; k < process_of_record.size(); k++)
+          {
+            const auto &[key, of_record] = process_of_record[k];
+            const auto value = twin->find(key);
+            if (value == twin->end() || !value->is_number())
+            {
+              refusal = std::string("MagneticSource.Fabrication.") + key + " is missing";
+              break;
+            }
+            *leaf_values[k] = value->get<double>();
+            if (!of_record)
+            {
+              refusal = std::string("the library's Fabrication.") + key +
+                        " is absent: the twin's process cannot be verified";
+              break;
+            }
+            if (std::abs(*leaf_values[k] - *of_record) >
+                1.0e-12 * std::max(1.0, std::abs(*of_record)))
+            {
+              refusal = std::string("the twin's Fabrication.") + key + " = " +
+                        std::to_string(*leaf_values[k]) + " differs from the library's " +
+                        std::to_string(*of_record);
+              break;
+            }
+          }
+        }
+        leaf.catalog_refusal = refusal;
+        model.response.magnetic = std::move(leaf);
+        library.has_magnetic_leaves = true;
+      }
+    }
     if (auto trace_mesh = entry.find("TraceMesh"); trace_mesh != entry.end())
     {
       MFEM_VERIFY(version >= 3 && trace_mesh->is_object() &&
@@ -6533,7 +6720,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
       ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
-                         requirements != nullptr, requirements != nullptr);
+                         requirements != nullptr, requirements != nullptr,
+                         request.magnetic_leaves);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -7118,6 +7306,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
           // per unit edge length and rescaled to the anchor's coupon depth.
           model.topology = selection.blend->topology;
           std::ostringstream nodes;
+          std::vector<const LibraryModel *> blend_coupons;
           for (const auto &node : selection.blend->nodes)
           {
             const auto &coupon = library.models[node.index];
@@ -7128,9 +7317,11 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
                                    coupon.response.thin_matrix,
                                    coupon.response.fabricated_surface_matrix,
                                    coupon.response.thin_surface_matrix});
+            blend_coupons.push_back(&coupon);
             nodes << (model.blend.size() == 1 ? "" : ", ") << coupon.name << " x "
                   << std::setprecision(6) << node.weight;
           }
+          AttachBlendMagneticLeaves(model, blend_coupons);
           Mpi::Print(" Curvature interpolation {}: {}\n", key, nodes.str());
         }
         MapLibraryInterfaces(source, {{0, group.targets}}, model);
@@ -11618,6 +11809,7 @@ FeaturePatchSummary BuildFeaturePatches(
         MFEM_VERIFY(!blend->per_unit_length || source.coupon_depth > 0.0,
                     "Curvature interpolation requires CouponDepth on the straight anchor!");
         std::ostringstream nodes;
+        std::vector<const LibraryModel *> blend_coupons;
         for (const auto &node : blend->nodes)
         {
           const auto &coupon = library.models[node.index];
@@ -11632,9 +11824,11 @@ FeaturePatchSummary BuildFeaturePatches(
                                  coupon.response.thin_matrix,
                                  coupon.response.fabricated_surface_matrix,
                                  coupon.response.thin_surface_matrix});
+          blend_coupons.push_back(&coupon);
           nodes << (model.blend.size() == 1 ? "" : ", ") << coupon.name << " x "
                 << std::setprecision(6) << node.weight;
         }
+        AttachBlendMagneticLeaves(model, blend_coupons);
         Mpi::Print(" {} {}: {}\n", blend->label, blend->name, nodes.str());
         if (blend->interpolation_fallback && !blend->interpolation_fallback->is_null())
         {
@@ -13072,7 +13266,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
       ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
-                         requirements != nullptr, requirements != nullptr);
+                         requirements != nullptr, requirements != nullptr,
+                         request.magnetic_leaves);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -13321,6 +13516,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.mortar_oversampling = request.mortar_oversampling;
   result.patch_energy = request.patch_energy;
   result.matching_radius = library.matching_radius;
+  // The magnetic (inductive) leaves' rules and the electric-only fallback switch
+  // (DESIGN-v2 section 3): the library's MagneticRules, the request's key.
+  result.magnetic_rules = library.magnetic_rules;
+  result.allow_electric_only_fallback = request.allow_electric_only_fallback;
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the matching-time ledger; the
   // deferred FailClosed abort is the constructor's / the preflight's (after the manifest).
   GeometryFallbackLedger geometry_ledger(geometry_policy, requirements != nullptr,
@@ -18661,6 +18860,154 @@ DomainResponseMatrices BuildDomainResponseMatrices(
       .first->second;
 }
 
+// The magnetic (inductive) defect leaf of a model (mx-sc-magnetic DESIGN-v2 section 3;
+// SUPERVISOR AMENDMENT 1202; ERRATUM 1227): dS_m = scale x (S_m,fab - S_m,thin) of the
+// vacuum twin (the SAME CSV convention and scale as the electric matrices: S_m = Q_dom,vac
+// in solver units, 1.1 item 4) with the refusal rules r1-r4 evaluated by name. A model
+// without the leaf, a blend whose sources do not all carry it, a spatial model or a
+// two-dimensional device mesh carries no magnetic term (status Absent / Refused by name).
+struct MagneticLeafEvaluation
+{
+  SurfaceResponseOperator::MagneticLeafStatus status;
+  mfem::DenseMatrix defect;  // empty unless applied
+};
+
+MagneticLeafEvaluation EvaluateMagneticLeaf(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    int expected_size, int conductor_state_count, int dimension,
+    const config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData &rules,
+    const Units &units)
+{
+  MagneticLeafEvaluation result;
+  auto Refuse = [&](const std::string &rule, const std::string &reason)
+  {
+    result.status.status = "Refused";
+    result.status.rule = rule;
+    result.status.reason = reason;
+    result.defect.SetSize(0);
+    return result;
+  };
+  if (!config.magnetic)
+  {
+    if (!config.blend.empty() &&
+        std::any_of(config.blend.begin(), config.blend.end(),
+                    [](const auto &source)
+                    { return !source.magnetic_fabricated_matrix.empty(); }))
+    {
+      return Refuse("blend", "an interpolated model whose sources do not all carry the "
+                             "magnetic leaves (MagneticBlendIncomplete)");
+    }
+    return result;  // Absent
+  }
+  const auto &leaf = *config.magnetic;
+  if (!leaf.catalog_refusal.empty())
+  {
+    return Refuse("r2", leaf.catalog_refusal);
+  }
+  if (config.spatial_basis)
+  {
+    return Refuse("spatial", "a spatial (three-dimensional) model has no 2D magnetostatic "
+                             "duality (the spatial families are electric-only, option (C))");
+  }
+  if (dimension != 3)
+  {
+    return Refuse("dimension", "the magnetic trace n . curl E of a two-dimensional device "
+                               "mesh is identically zero (no in-plane B)");
+  }
+  if (leaf.basis_point_count != expected_size - conductor_state_count ||
+      leaf.conductor_state_count != conductor_state_count || !leaf.basis_points_identical)
+  {
+    return Refuse("r1", "the vacuum twin's BasisPoints count " +
+                            std::to_string(leaf.basis_point_count) + " / conductor states " +
+                            std::to_string(leaf.conductor_state_count) +
+                            " / basis file identity " +
+                            (leaf.basis_points_identical ? "true" : "false") +
+                            " do not match the electric model's " +
+                            std::to_string(expected_size - conductor_state_count) + " / " +
+                            std::to_string(conductor_state_count));
+  }
+  if (!(leaf.electric_regeneration_max_relative_deviation >= 0.0) ||
+      leaf.electric_regeneration_max_relative_deviation > rules.same_mesh_tolerance)
+  {
+    return Refuse("r3", "the regenerated electric matrices deviate from the model of record "
+                        "by " +
+                            std::to_string(leaf.electric_regeneration_max_relative_deviation) +
+                            " relative (SameMeshTolerance " +
+                            std::to_string(rules.same_mesh_tolerance) +
+                            "; negative = not recorded): the same-mesh proof failed");
+  }
+  result.status.same_mesh_deviation = leaf.electric_regeneration_max_relative_deviation;
+  mfem::DenseMatrix fabricated, thin;
+  if (config.blend.empty())
+  {
+    fabricated = ReadDenseDomainResponseMatrix(leaf.fabricated_matrix, expected_size);
+    thin = ReadDenseDomainResponseMatrix(leaf.thin_matrix, expected_size);
+  }
+  else
+  {
+    fabricated.SetSize(expected_size);
+    thin.SetSize(expected_size);
+    fabricated = 0.0;
+    thin = 0.0;
+    for (const auto &source : config.blend)
+    {
+      if (source.magnetic_fabricated_matrix.empty() || source.magnetic_thin_matrix.empty())
+      {
+        return Refuse("blend", "an interpolated model whose sources do not all carry the "
+                               "magnetic leaves (MagneticBlendIncomplete)");
+      }
+      fabricated.Add(source.weight, ReadDenseDomainResponseMatrix(
+                                        source.magnetic_fabricated_matrix, expected_size));
+      thin.Add(source.weight,
+               ReadDenseDomainResponseMatrix(source.magnetic_thin_matrix, expected_size));
+    }
+  }
+  const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
+  const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
+  const double scale = 2.0 * voltage_scale * voltage_scale / energy_scale;
+  mfem::DenseMatrix defect(fabricated);
+  defect.Add(-1.0, thin);
+  defect *= scale;
+  // r4 (ERRATUM 1227, two-level): -lambda_min(sym dS_m) / ||dS_m||_2 against the library's
+  // PsdFindingRatio (a FINDING, applied) and PsdRefusalRatio (refused by name).
+  Eigen::MatrixXd symmetric(expected_size, expected_size);
+  for (int i = 0; i < expected_size; i++)
+  {
+    for (int j = 0; j < expected_size; j++)
+    {
+      symmetric(i, j) = 0.5 * (defect(i, j) + defect(j, i));
+    }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(symmetric,
+                                                             Eigen::EigenvaluesOnly);
+  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
+              "Failed to diagonalize the magnetic defect matrix of a response model!");
+  const auto eigenvalues = eigensystem.eigenvalues();
+  const double norm = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
+  result.status.psd_ratio = std::max(0.0, -eigenvalues.minCoeff()) / norm;
+  result.status.negative_eigenvalue_count =
+      static_cast<int>((eigenvalues.array() < 0.0).count());
+  if (result.status.psd_ratio > rules.psd_refusal_ratio)
+  {
+    return Refuse("r4", "-lambda_min / ||dS_m|| = " + std::to_string(result.status.psd_ratio) +
+                            " above PsdRefusalRatio " +
+                            std::to_string(rules.psd_refusal_ratio));
+  }
+  result.status.status =
+      result.status.psd_ratio > rules.psd_finding_ratio ? "Finding" : "Applied";
+  if (result.status.status == "Finding")
+  {
+    result.status.rule = "r4";
+    result.status.reason = "-lambda_min / ||dS_m|| = " + std::to_string(result.status.psd_ratio) +
+                           " in (PsdFindingRatio " + std::to_string(rules.psd_finding_ratio) +
+                           ", PsdRefusalRatio " + std::to_string(rules.psd_refusal_ratio) +
+                           "]: a thin-vs-fabricated mesh-matching defect at the "
+                           "discretization scale (AMENDMENT 1202 (c)); the leaf is applied";
+  }
+  result.defect = std::move(defect);
+  return result;
+}
+
 // The coupon interface energy a model adds to the device. A translational (2D cross-
 // section) coupon spans exactly the matching radius on either side of its edges, so its
 // whole-box `Q_total_ij (J)` is the energy within R of its edges. A spatial (3D box)
@@ -20320,6 +20667,55 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
   MFEM_VERIFY(output.good(), "Failed writing the surface-response patch dry run!");
 }
 
+nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Units &units,
+                                      bool nondimensionalize)
+{
+  const auto library = ReadProcessLibrary(library_path, units, nondimensionalize, true, true);
+  nlohmann::json result = {{"Library", library.name},
+                           {"Rules",
+                            {{"SameMeshTolerance", library.magnetic_rules.same_mesh_tolerance},
+                             {"PsdFindingRatio", library.magnetic_rules.psd_finding_ratio},
+                             {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio}}},
+                           {"Models", nlohmann::json::array()}};
+  for (const auto &model : library.models)
+  {
+    if (!model.response.magnetic)
+    {
+      continue;
+    }
+    const auto points = ReadBasisPoints(model.response.basis_points);
+    const int basis_size =
+        static_cast<int>(points.size()) + model.response.conductor_state_count;
+    const auto evaluation =
+        EvaluateMagneticLeaf(model.response, basis_size, model.response.conductor_state_count,
+                             3, library.magnetic_rules, units);
+    nlohmann::json entry = {{"Name", model.name},
+                            {"Status", evaluation.status.status},
+                            {"Rule", evaluation.status.rule},
+                            {"Reason", evaluation.status.reason},
+                            {"PsdRatio", evaluation.status.psd_ratio},
+                            {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
+                            {"SameMeshDeviation", evaluation.status.same_mesh_deviation},
+                            {"BasisSize", basis_size}};
+    if (evaluation.defect.Height() == basis_size)
+    {
+      double trace = 0.0, frobenius = 0.0;
+      for (int i = 0; i < basis_size; i++)
+      {
+        trace += evaluation.defect(i, i);
+        for (int j = 0; j < basis_size; j++)
+        {
+          frobenius += evaluation.defect(i, j) * evaluation.defect(i, j);
+        }
+      }
+      entry["DefectTrace"] = trace;
+      entry["DefectFrobenius"] = std::sqrt(frobenius);
+    }
+    result["Models"].push_back(std::move(entry));
+  }
+  return result;
+}
+
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path)
 {
@@ -20359,6 +20755,68 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   auto manifest = requirements.Build();
   manifest["MeshDimension"] = parallel_mesh.Dimension();
   manifest["Maxwell"] = maxwell;
+  // The magnetic (inductive) leaves (DESIGN-v2 section 3; decision 1229 Q4): the library's
+  // rules and every model's leaf verdict (r1-r4, on the model data; the same evaluation the
+  // operator runs), and Summary.MagneticElectricOnly = the applied patches whose model
+  // carries NO magnetic term (absent / refused / spatial), by count and claimed length
+  // (mesh-file units, as the other Summary rows). Written only when a model carries a leaf
+  // (an electric-only library keeps its manifest bytes).
+  if (std::any_of(patches.models.begin(), patches.models.end(),
+                  [](const auto &model) { return model.magnetic.has_value(); }))
+  {
+    const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+    nlohmann::json models = nlohmann::json::array();
+    std::map<int, bool> carries;
+    for (const auto &model : patches.models)
+    {
+      const auto points = ReadBasisPoints(model.basis_points);
+      const int basis_size = static_cast<int>(points.size()) + model.conductor_state_count;
+      const auto evaluation = EvaluateMagneticLeaf(
+          model, basis_size, model.conductor_state_count,
+          maxwell ? parallel_mesh.Dimension() : 3, patches.magnetic_rules, iodata.units);
+      const bool applied =
+          evaluation.status.status == "Applied" || evaluation.status.status == "Finding";
+      carries[model.idx] = applied;
+      models.push_back({{"Index", model.idx},
+                        {"Name", model.name},
+                        {"Status", evaluation.status.status},
+                        {"Rule", evaluation.status.rule},
+                        {"Reason", evaluation.status.reason},
+                        {"PsdRatio", evaluation.status.psd_ratio},
+                        {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
+                        {"SameMeshDeviation", evaluation.status.same_mesh_deviation}});
+    }
+    int electric_only_count = 0;
+    double electric_only_length = 0.0;
+    for (const auto &patch : patches.patches)
+    {
+      if (carries[patch.model])
+      {
+        continue;
+      }
+      electric_only_count++;
+      for (const auto &claim : patch.provenance.claims)
+      {
+        double length2 = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          length2 += (claim.p1[d] - claim.p0[d]) * (claim.p1[d] - claim.p0[d]);
+        }
+        electric_only_length += std::sqrt(length2) * coordinate_scale;
+      }
+    }
+    manifest["Library"]["Magnetic"] = {
+        {"Rules",
+         {{"SameMeshTolerance", patches.magnetic_rules.same_mesh_tolerance},
+          {"PsdFindingRatio", patches.magnetic_rules.psd_finding_ratio},
+          {"PsdRefusalRatio", patches.magnetic_rules.psd_refusal_ratio}}},
+        {"AllowElectricOnlyFallback", patches.allow_electric_only_fallback},
+        {"Models", models}};
+    manifest["Summary"]["MagneticElectricOnly"] = {
+        {"Count", electric_only_count},
+        {"Length", electric_only_length},
+        {"Treatment", "ElectricOnly"}};
+  }
   // The identification is recorded on the root only; its placement records below include a
   // collective containment test, so every rank follows the root's decision.
   int identification_recorded =
@@ -26165,6 +26623,151 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const ComplexVector &E, i
                                         largest_applied_amplitude);
 }
 
+void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const ComplexVector &E,
+                                                                    int source,
+                                                                    double frequency)
+{
+  MFEM_VERIFY(maxwell && has_magnetic_models && maxwell_probes.size() == patches.size(),
+              "The magnetic conductor-consistency gate requires a configured Maxwell "
+              "surface response with magnetic leaves!");
+  // The dual of the R0-a Maxwell gate on the MAGNETIC term only (DESIGN-v2 section 3): the
+  // flux trace a_m along the probe legs (the same legs, the magnetic stencil) against the
+  // piece's flux state; A_z is constant on a PEC piece, so real metal reads ~0 as the
+  // electric probe does. The same tolerance and floor; the verdict excludes the patch's
+  // magnetic term (magnetic_excluded, sticky), never its electric one (a patch R0-a has
+  // excluded carries neither: weight 0 skips it here).
+  Vector line_real, line_imag, trace_real, trace_imag;
+  EvaluateMaxwellLines(E.Real(), E.Imag(), line_real, line_imag, true);
+  BuildMaxwellChainTrace(line_real, trace_real);
+  BuildMaxwellChainTrace(line_imag, trace_imag);
+  std::vector<double> amplitudes(patches.size(), 0.0);
+  double largest_applied_amplitude = 0.0;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    const auto &patch = patches[patch_index];
+    const auto &model = models[patch.model];
+    if (!model.magnetic)
+    {
+      continue;
+    }
+    AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real);
+    AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag);
+    for (int i = 0; i < model.basis_size; i++)
+    {
+      amplitudes[patch_index] =
+          std::max(amplitudes[patch_index], std::hypot(trace_real(patch.trace_offset + i),
+                                                       trace_imag(patch.trace_offset + i)));
+    }
+    if (patch.weight > 0.0 || patch.magnetic_excluded)
+    {
+      largest_applied_amplitude =
+          std::max(largest_applied_amplitude, amplitudes[patch_index]);
+    }
+  }
+  Mpi::GlobalMax(1, &largest_applied_amplitude, fespace.GetComm());
+  const double amplitude_floor =
+      kConductorConsistencyAmplitudeFloor * largest_applied_amplitude;
+  std::vector<double> local_records;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    auto &patch = patches[patch_index];
+    const auto &model = models[patch.model];
+    const auto &probes = maxwell_probes[patch_index];
+    if (!model.magnetic || probes.empty() || patch.weight <= 0.0)
+    {
+      continue;
+    }
+    const double normalization = std::max(amplitudes[patch_index], amplitude_floor);
+    double max_ratio = 0.0;
+    for (const auto &probe : probes)
+    {
+      std::complex<double> reading = 0.0;
+      for (const auto &[line, sign] : probe.legs)
+      {
+        reading -= sign * std::complex<double>(line_real[line], line_imag[line]);
+      }
+      std::complex<double> assumed = 0.0;
+      const int reference =
+          probe.kind == 1 && model.local_piece_references ? probe.piece : probe.conductor;
+      if (probe.kind == 1 && reference > 1)
+      {
+        const int state = patch.trace_offset + model.contour_size + reference - 2;
+        assumed = {trace_real(state), trace_imag(state)};
+      }
+      const double deviation = std::abs(reading - assumed);
+      const double ratio = normalization > 0.0 ? deviation / normalization
+                                               : (deviation == 0.0 ? 0.0 : mfem::infinity());
+      max_ratio = std::max(max_ratio, ratio);
+    }
+    const bool excluded = max_ratio > kConductorConsistencyTolerance;
+    if (excluded && !conductor_consistency_record_only)
+    {
+      patch.magnetic_excluded = true;
+    }
+    local_records.insert(local_records.end(),
+                         {static_cast<double>(patch.global_index),
+                          static_cast<double>(model.idx), static_cast<double>(source),
+                          frequency, max_ratio, excluded ? 1.0 : 0.0});
+  }
+  const std::vector<double> gathered = AllgatherRecords(local_records);
+  std::vector<MagneticGateRecord> records;
+  for (std::size_t offset = 0; offset + 6 <= gathered.size(); offset += 6)
+  {
+    MagneticGateRecord record;
+    record.patch = static_cast<int>(std::llround(gathered[offset]));
+    record.model = static_cast<int>(std::llround(gathered[offset + 1]));
+    record.source = static_cast<int>(std::llround(gathered[offset + 2]));
+    record.frequency = gathered[offset + 3];
+    record.max_ratio = gathered[offset + 4];
+    record.excluded = gathered[offset + 5] > 0.5;
+    records.push_back(record);
+  }
+  std::sort(records.begin(), records.end(),
+            [](const auto &a, const auto &b) { return a.patch < b.patch; });
+  int excluded_count = 0;
+  for (const auto &record : records)
+  {
+    excluded_count += record.excluded ? 1 : 0;
+  }
+  if (excluded_count > 0)
+  {
+    Mpi::Print(" Magnetic conductor-consistency gate (the dual R0-a gate): {:d} patch(es) "
+               "lose their MAGNETIC term at source {:d} (f = {:.6e}); the electric term is "
+               "kept\n",
+               excluded_count, source, frequency);
+  }
+  magnetic_gate_records.insert(magnetic_gate_records.end(), records.begin(), records.end());
+}
+
+std::vector<SurfaceResponseOperator::MagneticModelRecord>
+SurfaceResponseOperator::GetMagneticModelRecords() const
+{
+  std::vector<MagneticModelRecord> records;
+  std::vector<double> local_counts(models.size(), 0.0);
+  for (const auto &patch : patches)
+  {
+    local_counts[patch.model] += 1.0;
+  }
+  Mpi::GlobalSum(static_cast<int>(local_counts.size()), local_counts.data(),
+                 fespace.GetComm());
+  for (std::size_t m = 0; m < models.size(); m++)
+  {
+    const auto &model = models[m];
+    MagneticModelRecord record;
+    record.model = model.idx;
+    record.name = model.name;
+    record.status = model.magnetic_status.status;
+    record.rule = model.magnetic_status.rule;
+    record.reason = model.magnetic_status.reason;
+    record.psd_ratio = model.magnetic_status.psd_ratio;
+    record.negative_eigenvalue_count = model.magnetic_status.negative_eigenvalue_count;
+    record.same_mesh_deviation = model.magnetic_status.same_mesh_deviation;
+    record.patches = static_cast<int>(std::llround(local_counts[m]));
+    records.push_back(std::move(record));
+  }
+  return records;
+}
+
 std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
 SurfaceResponseOperator::FinishConductorConsistencyGate(
     std::vector<ConductorConsistencyRecord> patch_records, int source,
@@ -29032,6 +29635,45 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         model_config, model.basis_size, iodata.units, target_matching_radius);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
     model.surface_defects = std::move(surface_response.defects);
+    // The magnetic (inductive) leaf (DESIGN-v2 section 3; USER 1221 D3): evaluated by the
+    // rules r1-r4 on every rank from the model data; a refusal by r1 / r2 / r3 is fatal
+    // unless AllowElectricOnlyFallback, an r4 refusal continues electric-only by name
+    // (ERRATUM 1227). A model without the leaf is untouched (status Absent).
+    {
+      auto magnetic = EvaluateMagneticLeaf(model_config, model.basis_size,
+                                           model.conductor_state_count, dimension,
+                                           config.magnetic_rules, iodata.units);
+      model.magnetic_status = std::move(magnetic.status);
+      if (model.magnetic_status.status == "Applied" ||
+          model.magnetic_status.status == "Finding")
+      {
+        model.magnetic = true;
+        model.magnetic_domain_defect = std::move(magnetic.defect);
+        has_magnetic_models = true;
+        Mpi::Print(" Magnetic (inductive) leaf of model \"{}\" ({}): -lambda_min / "
+                   "||dS_m|| = {:.3e}, {:d} negative eigenvalue(s) of {:d}{}\n",
+                   model.name, model.magnetic_status.status, model.magnetic_status.psd_ratio,
+                   model.magnetic_status.negative_eigenvalue_count, model.basis_size,
+                   model.magnetic_status.status == "Finding"
+                       ? " (FINDING r4: " + model.magnetic_status.reason + ")"
+                       : "");
+      }
+      else if (model.magnetic_status.status == "Refused")
+      {
+        const bool fatal = model.magnetic_status.rule != "r4" &&
+                           model.magnetic_status.rule != "spatial" &&
+                           !config.allow_electric_only_fallback;
+        MFEM_VERIFY(!fatal, "Magnetic (inductive) leaf of response model \""
+                                << model.name << "\" REFUSED by rule "
+                                << model.magnetic_status.rule << ": "
+                                << model.magnetic_status.reason
+                                << " (set SurfaceResponseCorrection.AllowElectricOnlyFallback "
+                                   "to continue this model electric-only)!");
+        Mpi::Print(" Magnetic (inductive) leaf of model \"{}\" REFUSED by rule {}: {}; the "
+                   "model continues ELECTRIC-ONLY (MagneticElectricOnly)\n",
+                   model.name, model.magnetic_status.rule, model.magnetic_status.reason);
+      }
+    }
     model_indices.emplace(model.idx, static_cast<int>(models.size()));
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
@@ -29700,7 +30342,19 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
-    ConfigureMaxwellLines(line_geometry, line_patches, patch_provenance, geometry_ledger);
+    // The magnetic trace's in-plane normal (DESIGN-v2 section 2 (A)): per local patch the
+    // unit normal w = u x v of its cross-section plane; n = t x w for every contour line.
+    std::vector<std::array<double, 3>> patch_plane_normals(patches.size());
+    for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+    {
+      const auto &u = local_patch_configs[patch_index]->axis_u;
+      const auto &v = local_patch_configs[patch_index]->axis_v;
+      patch_plane_normals[patch_index] = {u[1] * v[2] - u[2] * v[1],
+                                          u[2] * v[0] - u[0] * v[2],
+                                          u[0] * v[1] - u[1] * v[0]};
+    }
+    ConfigureMaxwellLines(line_geometry, line_patches, patch_provenance,
+                          patch_plane_normals, geometry_ledger);
   }
   // OI-MX-LOOPGATE (decision 955): the step lengths weight the least-squares lift.
   maxwell_line_lengths.resize(line_geometry.size());
@@ -30184,6 +30838,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     const std::vector<MaxwellLineGeometry> &line_geometry,
     const std::vector<int> &line_patches,
     const std::vector<MaxwellPatchProvenance> &patch_provenance,
+    const std::vector<std::array<double, 3>> &patch_plane_normals,
     GeometryFallbackLedger &geometry_ledger)
 {
   MFEM_ASSERT(line_geometry.size() == maxwell_lines.size(),
@@ -30463,6 +31118,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   {
     std::array<double, 3> coordinate{};
     std::array<double, 3> weighted_tangent{};
+    std::array<double, 3> weighted_normal{};
   };
   std::vector<PendingQuadraturePoint> pending_points;
   int closed_crack_count = 0;
@@ -30537,6 +31193,13 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     {
       tangent[d] = line.end[d] - line.begin[d];
     }
+    // The magnetic integrand's direction n = t x w (the same length weight as t: w is a
+    // unit vector normal to the cross-section plane the contour lines lie in; a line
+    // leaving that plane would read a reduced |n|, which no translational contour does).
+    const auto &w = patch_plane_normals[line_patches[line_index]];
+    const std::array<double, 3> normal = {tangent[1] * w[2] - tangent[2] * w[1],
+                                          tangent[2] * w[0] - tangent[0] * w[2],
+                                          tangent[0] * w[1] - tangent[1] * w[0]};
     const auto &integration_intervals = line_integration_intervals[line_index];
 
     for (const auto &[begin, end] : integration_intervals)
@@ -30551,6 +31214,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
         {
           point.coordinate[d] = line.begin[d] + parameter * tangent[d];
           point.weighted_tangent[d] = interval_length * ip.weight * tangent[d];
+          point.weighted_normal[d] = interval_length * ip.weight * normal[d];
         }
         pending_points.push_back(point);
       }
@@ -30585,9 +31249,15 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
 
   mfem::Vector xyz(dimension * pending_points.size());
   std::vector<std::array<double, 3>> weighted_tangents(pending_points.size());
+  std::vector<std::array<double, 3>> weighted_normals(
+      has_magnetic_models ? pending_points.size() : 0);
   for (std::size_t i = 0; i < pending_points.size(); i++)
   {
     weighted_tangents[i] = pending_points[i].weighted_tangent;
+    if (has_magnetic_models)
+    {
+      weighted_normals[i] = pending_points[i].weighted_normal;
+    }
     for (int d = 0; d < dimension; d++)
     {
       xyz(d * pending_points.size() + i) = pending_points[i].coordinate[d];
@@ -30595,13 +31265,15 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   }
   DistributedPointLocator point_locator(const_cast<mfem::ParMesh &>(fespace.GetParMesh()),
                                         dimension);
-  ConfigurePointCommunication(point_locator, xyz, dimension, &weighted_tangents);
+  ConfigurePointCommunication(point_locator, xyz, dimension, &weighted_tangents, nullptr,
+                              has_magnetic_models ? &weighted_normals : nullptr);
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
     DistributedPointLocator &locator, const mfem::Vector &xyz_in, int dimension,
     const std::vector<std::array<double, 3>> *weighted_tangents,
-    const std::vector<double> *point_band)
+    const std::vector<double> *point_band,
+    const std::vector<std::array<double, 3>> *weighted_normals)
 {
   MFEM_VERIFY(dimension == 2 || dimension == 3,
               "Surface response points require dimension two or three!");
@@ -30611,6 +31283,11 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   MFEM_VERIFY(!weighted_tangents ||
                   static_cast<int>(weighted_tangents->size()) == point_query_count,
               "Invalid surface-response point-tangent array!");
+  MFEM_VERIFY(!weighted_normals ||
+                  (weighted_tangents && dimension == 3 &&
+                   static_cast<int>(weighted_normals->size()) == point_query_count),
+              "The magnetic surface-response stencil requires the Maxwell line tangents "
+              "on a three-dimensional mesh!");
   // Mirror-point evaluation (boundary-cut DESIGN 2.2.3): a sample point beyond a Natural
   // truncation plane within the band is evaluated at its reflection (the even extension of
   // the potential: V(p) = V(sigma p)). The Maxwell line integrals carry tangents whose
@@ -30732,6 +31409,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   std::vector<int> send_elements(send_total);
   std::vector<double> send_references(dimension * send_total);
   std::vector<double> send_tangents(weighted_tangents ? 3 * send_total : 0);
+  std::vector<double> send_normals(weighted_normals ? 3 * send_total : 0);
   point_send_indices.resize(send_total);
   std::vector<int> cursor(point_send_offsets);
   for (int i = 0; i < point_query_count; i++)
@@ -30750,6 +31428,13 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
       {
         send_tangents[3 * packed + d] =
             (*weighted_tangents)[i][static_cast<std::size_t>(d)];
+      }
+    }
+    if (weighted_normals)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        send_normals[3 * packed + d] = (*weighted_normals)[i][static_cast<std::size_t>(d)];
       }
     }
   }
@@ -30771,6 +31456,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                  fespace.GetComm());
 
   std::vector<double> receive_tangents(weighted_tangents ? 3 * receive_total : 0);
+  std::vector<double> receive_normals(weighted_normals ? 3 * receive_total : 0);
   if (weighted_tangents)
   {
     const auto send_tangent_counts = ScaleCommunicationPlan(point_send_counts, 3);
@@ -30781,15 +31467,23 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                    send_tangent_offsets.data(), receive_tangents.data(),
                    receive_tangent_counts.data(), receive_tangent_offsets.data(),
                    fespace.GetComm());
+    if (weighted_normals)
+    {
+      Mpi::Alltoallv(send_normals.data(), send_tangent_counts.data(),
+                     send_tangent_offsets.data(), receive_normals.data(),
+                     receive_tangent_counts.data(), receive_tangent_offsets.data(),
+                     fespace.GetComm());
+    }
   }
 
   point_dof_offsets.resize(receive_total + 1);
   point_dofs.clear();
   point_weights.clear();
+  magnetic_point_weights.clear();
   mfem::Array<int> element_dofs;
   mfem::DofTransformation dof_transform;
-  mfem::DenseMatrix vector_shape;
-  Vector shape;
+  mfem::DenseMatrix vector_shape, curl_shape;
+  Vector shape, magnetic_shape;
   for (int i = 0; i < receive_total; i++)
   {
     mfem::IntegrationPoint point;
@@ -30823,6 +31517,24 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
       }
       fespace.Get().GetElementVDofs(element, element_dofs, dof_transform);
       dof_transform.TransformDual(shape);
+      if (weighted_normals)
+      {
+        // The magnetic stencil: n . (curl N_j) at the same point with the same quadrature
+        // weight (the physical curl of the ND shape functions; the dof transformation acts
+        // on the coefficients, so the dual transform is the same as the tangential one).
+        curl_shape.SetSize(fe.GetDof(), 3);
+        fe.CalcPhysCurlShape(transformation, curl_shape);
+        magnetic_shape.SetSize(fe.GetDof());
+        magnetic_shape = 0.0;
+        for (int j = 0; j < fe.GetDof(); j++)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            magnetic_shape[j] += curl_shape(j, d) * receive_normals[3 * i + d];
+          }
+        }
+        dof_transform.TransformDual(magnetic_shape);
+      }
     }
     else
     {
@@ -30839,6 +31551,11 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
       const int signed_dof = element_dofs[j];
       point_dofs.push_back(signed_dof >= 0 ? signed_dof : -1 - signed_dof);
       point_weights.push_back((signed_dof >= 0 ? 1.0 : -1.0) * shape[j]);
+      if (weighted_normals)
+      {
+        magnetic_point_weights.push_back((signed_dof >= 0 ? 1.0 : -1.0) *
+                                         magnetic_shape[j]);
+      }
     }
   }
   point_dof_offsets[receive_total] = static_cast<int>(point_dofs.size());
@@ -30853,8 +31570,12 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   point_receive_offsets_pair = ScaleCommunicationPlan(point_receive_offsets, 2);
 }
 
-void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &values) const
+void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &values,
+                                                  bool magnetic) const
 {
+  MFEM_ASSERT(!magnetic || magnetic_point_weights.size() == point_weights.size(),
+              "The magnetic surface-response stencil was not configured!");
+  const auto &weights = magnetic ? magnetic_point_weights : point_weights;
   local_x.SetSize(fespace.GetVSize());
   fespace.GetProlongationMatrix()->Mult(x, local_x);
   const auto *local_data = local_x.HostRead();
@@ -30864,7 +31585,7 @@ void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &value
   {
     for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
     {
-      point_owned_values[i] += point_weights[j] * local_data[point_dofs[j]];
+      point_owned_values[i] += weights[j] * local_data[point_dofs[j]];
     }
   }
 
@@ -30880,8 +31601,12 @@ void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &value
 }
 
 void SurfaceResponseOperator::EvaluatePointValues(const Vector &xr, const Vector &xi,
-                                                  Vector &vr, Vector &vi) const
+                                                  Vector &vr, Vector &vi,
+                                                  bool magnetic) const
 {
+  MFEM_ASSERT(!magnetic || magnetic_point_weights.size() == point_weights.size(),
+              "The magnetic surface-response stencil was not configured!");
+  const auto &weights = magnetic ? magnetic_point_weights : point_weights;
   local_x.SetSize(fespace.GetVSize());
   local_x_imag.SetSize(fespace.GetVSize());
   fespace.GetProlongationMatrix()->Mult(xr, local_x);
@@ -30894,7 +31619,7 @@ void SurfaceResponseOperator::EvaluatePointValues(const Vector &xr, const Vector
   {
     for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
     {
-      const double weight = point_weights[j];
+      const double weight = weights[j];
       const int dof = point_dofs[j];
       point_owned_values_pair[2 * i] += weight * local_real[dof];
       point_owned_values_pair[2 * i + 1] += weight * local_imag[dof];
@@ -30917,10 +31642,14 @@ void SurfaceResponseOperator::EvaluatePointValues(const Vector &xr, const Vector
   }
 }
 
-void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vector &y) const
+void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vector &y,
+                                                      bool magnetic) const
 {
   MFEM_ASSERT(values.Size() == point_query_count,
               "Invalid surface-response point-functional vector size!");
+  MFEM_ASSERT(!magnetic || magnetic_point_weights.size() == point_weights.size(),
+              "The magnetic surface-response stencil was not configured!");
+  const auto &weights = magnetic ? magnetic_point_weights : point_weights;
   const auto *value_data = values.HostRead();
   for (int i = 0; i < point_query_count; i++)
   {
@@ -30943,7 +31672,7 @@ void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vect
     }
     for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
     {
-      local_data[point_dofs[j]] += value * point_weights[j];
+      local_data[point_dofs[j]] += value * weights[j];
     }
   }
   y.SetSize(fespace.GetTrueVSize());
@@ -30955,9 +31684,10 @@ void SurfaceResponseOperator::EvaluatePoints(const Vector &x, Vector &values) co
   EvaluatePointValues(x, values);
 }
 
-void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &values) const
+void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &values,
+                                                   bool magnetic) const
 {
-  EvaluatePointValues(x, maxwell_point_values);
+  EvaluatePointValues(x, maxwell_point_values, magnetic);
   const auto *point_data = maxwell_point_values.HostRead();
   values.SetSize(static_cast<int>(maxwell_lines.size()));
   values = 0.0;
@@ -30973,10 +31703,11 @@ void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &valu
 }
 
 void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &xr, const Vector &xi,
-                                                   Vector &vr, Vector &vi) const
+                                                   Vector &vr, Vector &vi,
+                                                   bool magnetic) const
 {
   Vector point_real, point_imag;
-  EvaluatePointValues(xr, xi, point_real, point_imag);
+  EvaluatePointValues(xr, xi, point_real, point_imag, magnetic);
   const auto *point_real_data = point_real.HostRead();
   const auto *point_imag_data = point_imag.HostRead();
   vr.SetSize(static_cast<int>(maxwell_lines.size()));
@@ -30996,8 +31727,8 @@ void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &xr, const Vecto
   }
 }
 
-void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
-                                                       Vector &y) const
+void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values, Vector &y,
+                                                       bool magnetic) const
 {
   MFEM_ASSERT(values.Size() == static_cast<int>(maxwell_lines.size()),
               "Invalid Maxwell line-functional vector size!");
@@ -31013,7 +31744,7 @@ void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
       point_data[line.point_offset + q] = value_data[line_index];
     }
   }
-  AddPointValuesTranspose(maxwell_point_values, y);
+  AddPointValuesTranspose(maxwell_point_values, y, magnetic);
 }
 
 void SurfaceResponseOperator::BuildMaxwellChainTrace(const Vector &line_values,
@@ -32027,6 +32758,57 @@ void SurfaceResponseOperator::Mult(const Vector &x, Vector &y) const
   y.SetSubVector(dbc_tdof_list, 0.0);
 }
 
+void SurfaceResponseOperator::ApplyMagneticTrace(const Vector &x, Vector &values) const
+{
+  MFEM_VERIFY(maxwell && has_magnetic_models,
+              "The magnetic surface-response trace requires a Maxwell surface response "
+              "with magnetic leaves!");
+  trace_forward_count++;
+  EvaluateMaxwellLines(x, correction, true);
+  BuildMaxwellTrace(correction, values);
+}
+
+void SurfaceResponseOperator::ApplyMagneticTraceTranspose(const Vector &values,
+                                                          Vector &y) const
+{
+  MFEM_VERIFY(maxwell && has_magnetic_models,
+              "The magnetic surface-response trace requires a Maxwell surface response "
+              "with magnetic leaves!");
+  trace_transpose_count++;
+  BuildMaxwellTraceTranspose(values, correction);
+  AddMaxwellLinesTranspose(correction, y, true);
+}
+
+void SurfaceResponseOperator::MagneticStiffnessMult(const Vector &x, Vector &y) const
+{
+  BlockTimer timer(Timer::RESPONSE_APPLY);
+  operator_mult_count++;
+  x_free.SetSize(x.Size());
+  x_free = x;
+  x_free.SetSubVector(dbc_tdof_list, 0.0);
+  // dK = P_m^T W dS_m P_m: the flux trace of curl E on every patch whose model carries the
+  // magnetic term (and the dual gate has not excluded), the fixed-trace magnetic defect,
+  // the transpose. The electric path's patch weights (W, the gate-updated weight and the
+  // domain weight) apply unchanged: the same contour, the same cell.
+  ApplyMagneticTrace(x_free, trace);
+  response.SetSize(trace.Size());
+  for (const auto &patch : patches)
+  {
+    const auto &model = models[patch.model];
+    Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
+    Vector patch_response(response.GetData() + patch.trace_offset, model.basis_size);
+    if (!model.magnetic || patch.magnetic_excluded)
+    {
+      patch_response = 0.0;
+      continue;
+    }
+    model.magnetic_domain_defect.Mult(patch_trace, patch_response);
+    patch_response *= patch.weight * patch.domain_weight;
+  }
+  ApplyMagneticTraceTranspose(response, y);
+  y.SetSubVector(dbc_tdof_list, 0.0);
+}
+
 void SurfaceResponseOperator::EliminateRHS(const Vector &x, Vector &rhs) const
 {
   eliminate_rhs_count++;
@@ -32521,11 +33303,20 @@ SurfaceResponseOperator::GetPatchTraces(const Vector &x) const
 }
 
 std::vector<SurfaceResponseOperator::PatchTrace>
-SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) const
+SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only,
+                                           bool magnetic) const
 {
   // On the Maxwell Collocated path the coefficients are the trace ApplyTrace builds from
-  // the real vector x it is given (the line integrals of that one field; decision 821).
-  ApplyTrace(x, trace);
+  // the real vector x it is given (the line integrals of that one field; decision 821);
+  // `magnetic` reads the flux trace of curl x instead (a unit-test read).
+  if (magnetic)
+  {
+    ApplyMagneticTrace(x, trace);
+  }
+  else
+  {
+    ApplyTrace(x, trace);
+  }
   std::vector<double> local_records;
   for (const auto &patch : patches)
   {
@@ -33084,6 +33875,142 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   constexpr double maximum_kR = 0.1;
   constexpr double maximum_weighted_loop_residual = 0.05;
   constexpr double maximum_loop_response_failure_fraction = 0.01;
+  if (has_magnetic_models)
+  {
+    // The magnetic (inductive) term (DESIGN-v2 section 2; USER 1221 D6): the flux trace
+    // a_m of B = curl E / (i omega) by the SAME lines, chain and fit with the magnetic
+    // stencil; the fixed-trace magnetic domain correction 1/2 w a_m^H dS_m a_m per patch
+    // carrying the term; its dual loop residual (the in-plane circulation of B . n around
+    // a closed contour: zero in quasi-TEM) weighted by the patch's magnetic response, gated
+    // like the electric one. A separate reduction: the electric records above are bitwise.
+    result.has_magnetic = true;
+    const double omega_abs2 = std::max(std::norm(omega), 1.0e-300);
+    Vector magnetic_line_real, magnetic_line_imag, magnetic_chain_real, magnetic_chain_imag;
+    EvaluateMaxwellLines(field_real, field_imag, magnetic_line_real, magnetic_line_imag,
+                         true);
+    BuildMaxwellChainTrace(magnetic_line_real, magnetic_chain_real);
+    BuildMaxwellChainTrace(magnetic_line_imag, magnetic_chain_imag);
+    Vector magnetic_trace_real(magnetic_chain_real), magnetic_trace_imag(magnetic_chain_imag);
+    // [0] the magnetic domain correction, [1] the weighted residual^2, [2] the patches
+    // carrying the term, [3] the dual gate's exclusions, then per model its correction.
+    std::vector<double> magnetic_reduction(4 + models.size(), 0.0);
+    double magnetic_loop_weight_local = 0.0;
+    for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+    {
+      const auto &patch = patches[patch_index];
+      const auto &model = models[patch.model];
+      if (!model.magnetic)
+      {
+        continue;
+      }
+      if (patch.magnetic_excluded)
+      {
+        magnetic_reduction[3] += 1.0;
+        continue;
+      }
+      magnetic_reduction[2] += 1.0;
+      AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real);
+      AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag);
+      Vector patch_real(magnetic_trace_real.GetData() + patch.trace_offset,
+                        model.basis_size);
+      Vector patch_imag(magnetic_trace_imag.GetData() + patch.trace_offset,
+                        model.basis_size);
+      const double magnetic_weight = 0.5 * patch.weight * patch.domain_weight / omega_abs2;
+      const double magnetic_form =
+          QuadraticForm(model.magnetic_domain_defect, patch_real, workspace) +
+          QuadraticForm(model.magnetic_domain_defect, patch_imag, workspace);
+      magnetic_reduction[0] += magnetic_weight * magnetic_form;
+      magnetic_reduction[4 + patch.model] += magnetic_weight * magnetic_form;
+      // The dual loop residuals on the magnetic CHAIN trace (the detector's trace), the
+      // detector weight = |the patch's magnetic response| (the loop-RMS weight).
+      const double detector = std::abs(magnetic_weight * magnetic_form);
+      std::vector<std::pair<double, double>> magnetic_diagnostics;
+      const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
+      for (int path_index = path_begin; path_index < path_begin + path_count; path_index++)
+      {
+        const auto &path = maxwell_paths[path_index];
+        if (path.hat_check_line >= 0)
+        {
+          continue;
+        }
+        std::complex<double> loop_integral = 0.0;
+        double loop_scale = 0.0;
+        auto AddLine = [&](int line)
+        {
+          if (line >= 0)
+          {
+            const std::complex<double> integral = {magnetic_line_real[line],
+                                                   magnetic_line_imag[line]};
+            loop_integral += integral;
+            loop_scale += std::abs(integral);
+          }
+        };
+        auto AddTrace = [&](int trace_index, double scale)
+        {
+          if (trace_index >= 0)
+          {
+            const std::complex<double> value = {magnetic_chain_real[trace_index],
+                                                magnetic_chain_imag[trace_index]};
+            loop_integral += scale * value;
+            loop_scale += std::abs(value);
+          }
+        };
+        if (!path.closed)
+        {
+          AddLine(path.anchor_line);
+        }
+        for (int i = 0; i < path.contour_line_count; i++)
+        {
+          AddLine(path.contour_line_offset + i);
+        }
+        if (!path.closed)
+        {
+          AddLine(path.end_line);
+          AddLine(path.return_line);
+          AddTrace(path.start_trace, -1.0);
+          AddTrace(path.end_conductor_trace, 1.0);
+        }
+        if (loop_scale > 0.0)
+        {
+          const double residual = std::abs(loop_integral) / loop_scale;
+          result.magnetic_loop_residual = std::max(result.magnetic_loop_residual, residual);
+          magnetic_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+        }
+      }
+      double scale_squared = 0.0;
+      for (const auto &[residual, scale2] : magnetic_diagnostics)
+      {
+        (void)residual;
+        scale_squared += scale2;
+      }
+      if (detector > 0.0 && scale_squared > 0.0)
+      {
+        for (const auto &[residual, scale2] : magnetic_diagnostics)
+        {
+          const double weight = detector * scale2 / scale_squared;
+          magnetic_reduction[1] += weight * residual * residual;
+          magnetic_loop_weight_local += weight;
+        }
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(magnetic_reduction.size()), magnetic_reduction.data(),
+                   fespace.GetComm());
+    Mpi::GlobalSum(1, &magnetic_loop_weight_local, fespace.GetComm());
+    Mpi::GlobalMax(1, &result.magnetic_loop_residual, fespace.GetComm());
+    result.magnetic_domain_correction = magnetic_reduction[0];
+    result.magnetic_patch_count = static_cast<int>(std::llround(magnetic_reduction[2]));
+    result.magnetic_excluded_patch_count =
+        static_cast<int>(std::llround(magnetic_reduction[3]));
+    if (magnetic_loop_weight_local > 0.0)
+    {
+      result.magnetic_weighted_loop_residual =
+          std::sqrt(magnetic_reduction[1] / magnetic_loop_weight_local);
+    }
+    result.model_magnetic_domain_corrections.assign(magnetic_reduction.begin() + 4,
+                                                    magnetic_reduction.end());
+    result.magnetic_confident =
+        result.magnetic_weighted_loop_residual <= maximum_weighted_loop_residual;
+  }
   constexpr double maximum_corner_fraction = 0.1;
   constexpr double maximum_curvature = 0.25;
   constexpr double minimum_coverage = 1.0 - 1.0e-10;
