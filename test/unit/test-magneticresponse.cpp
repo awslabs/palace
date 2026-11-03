@@ -430,6 +430,71 @@ TEST_CASE_METHOD(
     CHECK(status.status == "Applied");
     CHECK_THAT(status.same_mesh_deviation, WithinAbs(8.1e-5, 1.0e-20));
   }
+  // r3, TWO-TIER (decision 1242): MagneticRules.SameMeshToleranceWithMeshIdentity applies
+  // only to a twin whose MagneticSource.MeshOfRecordSha256Match proves BOTH meshes
+  // identical to the model's meshes of record; absent (the default), SameMeshTolerance
+  // applies everywhere.
+  auto r3_rounding_source = DefaultMagneticSource();
+  r3_rounding_source["ElectricRegenerationMaxRelativeDeviation"] = 1.0e-10;
+  const auto two_tier = [](json &library)
+  { library["MagneticRules"] = {{"SameMeshToleranceWithMeshIdentity", 1.0e-9}}; };
+  // (a) 1e-10 WITHOUT the identity: refused by r3 at the 1e-12 tier.
+  const auto r3_no_identity =
+      WriteMagneticLibrary(library_3d_path, temp.temp_dir, "r3-two-tier-no-identity",
+                           kPsdDefect, r3_rounding_source, two_tier);
+  {
+    const auto status = Status(*Load(r3_no_identity.library, true));
+    CHECK(status.status == "Refused");
+    CHECK(status.rule == "r3");
+    CHECK(status.reason.find("mesh identity not proven") != std::string::npos);
+  }
+  // (b) 1e-10 WITH the identity: admitted at the 1e-9 tier.
+  auto r3_identity_source = r3_rounding_source;
+  r3_identity_source["MeshOfRecordSha256Match"] = {{"Thin", true}, {"Fabricated", true}};
+  const auto r3_identity =
+      WriteMagneticLibrary(library_3d_path, temp.temp_dir, "r3-two-tier-identity",
+                           kPsdDefect, r3_identity_source, two_tier);
+  {
+    const auto response = Load(r3_identity.library, false);
+    CHECK(response->HasMagneticModels());
+    const auto status = Status(*response);
+    CHECK(status.status == "Applied");
+    CHECK_THAT(status.same_mesh_deviation, WithinAbs(1.0e-10, 1.0e-25));
+  }
+  // (c) 1e-8 WITH the identity: refused (above the 1e-9 tier).
+  auto r3_identity_large = r3_identity_source;
+  r3_identity_large["ElectricRegenerationMaxRelativeDeviation"] = 1.0e-8;
+  const auto r3_identity_refused =
+      WriteMagneticLibrary(library_3d_path, temp.temp_dir, "r3-two-tier-identity-refused",
+                           kPsdDefect, r3_identity_large, two_tier);
+  CHECK_THROWS_WITH(Load(r3_identity_refused.library, false),
+                    Catch::Matchers::ContainsSubstring("REFUSED by rule r3"));
+  {
+    const auto status = Status(*Load(r3_identity_refused.library, true));
+    CHECK(status.status == "Refused");
+    CHECK(status.rule == "r3");
+    CHECK(status.reason.find("SameMeshToleranceWithMeshIdentity") != std::string::npos);
+  }
+  // (d) the identity WITHOUT the leaf: SameMeshTolerance (1e-12) applies everywhere.
+  const auto r3_identity_default =
+      WriteMagneticLibrary(library_3d_path, temp.temp_dir, "r3-identity-default-rules",
+                           kPsdDefect, r3_identity_source);
+  {
+    const auto status = Status(*Load(r3_identity_default.library, true));
+    CHECK(status.status == "Refused");
+    CHECK(status.rule == "r3");
+  }
+  // (e) a leaf below SameMeshTolerance is malformed.
+  const auto r3_bad_rules = WriteMagneticLibrary(
+      library_3d_path, temp.temp_dir, "r3-two-tier-bad", kPsdDefect, r3_identity_source,
+      [](json &library)
+      {
+        library["MagneticRules"] = {{"SameMeshTolerance", 1.0e-9},
+                                    {"SameMeshToleranceWithMeshIdentity", 1.0e-10}};
+      });
+  CHECK_THROWS_WITH(
+      Load(r3_bad_rules.library, true),
+      Catch::Matchers::ContainsSubstring("SameMeshToleranceWithMeshIdentity"));
   // r4, two-level (ERRATUM 1227): a defect with one negative eigenvalue; its ratio
   // -lambda_min / ||dS_m|| against PsdFindingRatio (1e-2) and PsdRefusalRatio (0.1).
   auto finding_defect = kPsdDefect;

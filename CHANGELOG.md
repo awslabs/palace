@@ -44,6 +44,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the magnetic records are written whenever a leaf was read, the manifest keys are
     Maxwell-only, `magnetic term applied` means a non-zero ``dK``, and
     `attach_magnetic_leaves.py` writes relocatable (relative) leaf paths.
+    Phase 2 (decision 1242): the r3 same-mesh rule is TWO-TIER: the optional
+    `MagneticRules.SameMeshToleranceWithMeshIdentity` applies to a twin whose
+    `MagneticSource.MeshOfRecordSha256Match` records both coupon meshes identical to the
+    model's meshes of record (absent = `SameMeshTolerance` everywhere).
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the

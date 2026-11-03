@@ -2267,16 +2267,25 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         rules->value("PsdFindingRatio", magnetic_rules.psd_finding_ratio);
     magnetic_rules.psd_refusal_ratio =
         rules->value("PsdRefusalRatio", magnetic_rules.psd_refusal_ratio);
+    magnetic_rules.same_mesh_tolerance_with_mesh_identity =
+        rules->value("SameMeshToleranceWithMeshIdentity",
+                     magnetic_rules.same_mesh_tolerance_with_mesh_identity);
     MFEM_VERIFY(magnetic_rules.same_mesh_tolerance >= 0.0 &&
                     magnetic_rules.psd_finding_ratio >= 0.0 &&
                     magnetic_rules.psd_refusal_ratio >= magnetic_rules.psd_finding_ratio,
                 "Fabrication-process response-library MagneticRules must be nonnegative "
                 "with PsdRefusalRatio >= PsdFindingRatio!");
+    MFEM_VERIFY(magnetic_rules.same_mesh_tolerance_with_mesh_identity < 0.0 ||
+                    magnetic_rules.same_mesh_tolerance_with_mesh_identity >=
+                        magnetic_rules.same_mesh_tolerance,
+                "Fabrication-process response-library MagneticRules."
+                "SameMeshToleranceWithMeshIdentity must be >= SameMeshTolerance!");
     for (const auto &[key, value] : rules->items())
     {
       (void)value;
       MFEM_VERIFY(key == "SameMeshTolerance" || key == "PsdFindingRatio" ||
-                      key == "PsdRefusalRatio",
+                      key == "PsdRefusalRatio" ||
+                      key == "SameMeshToleranceWithMeshIdentity",
                   "Fabrication-process response-library MagneticRules has an unknown key \""
                       << key << "\"!");
     }
@@ -2901,6 +2910,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         leaf.basis_point_count = source.value("BasisPointCount", 0);
         leaf.conductor_state_count = source.value("ConductorStateCount", -1);
         leaf.basis_points_identical = source.value("BasisPointsIdentical", false);
+        if (const auto match = source.find("MeshOfRecordSha256Match");
+            match != source.end() && match->is_object())
+        {
+          leaf.mesh_of_record_identity =
+              match->value("Thin", false) && match->value("Fabricated", false);
+        }
         std::string refusal;
         if (std::abs(leaf.vacuum_permittivity - 1.0) > 1.0e-12)
         {
@@ -18925,16 +18940,26 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
                   std::to_string(expected_size - conductor_state_count) + " / " +
                   std::to_string(conductor_state_count));
   }
+  // r3, two-tier (decision 1242): SameMeshToleranceWithMeshIdentity applies only when the
+  // twin's meshes are recorded sha256-identical to the model's meshes of record.
+  const bool identity_tier =
+      leaf.mesh_of_record_identity && rules.same_mesh_tolerance_with_mesh_identity >= 0.0;
+  const double same_mesh_tolerance = identity_tier
+                                         ? rules.same_mesh_tolerance_with_mesh_identity
+                                         : rules.same_mesh_tolerance;
   if (!(leaf.electric_regeneration_max_relative_deviation >= 0.0) ||
-      leaf.electric_regeneration_max_relative_deviation > rules.same_mesh_tolerance)
+      leaf.electric_regeneration_max_relative_deviation > same_mesh_tolerance)
   {
-    return Refuse("r3",
-                  "the regenerated electric matrices deviate from the model of record "
-                  "by " +
-                      std::to_string(leaf.electric_regeneration_max_relative_deviation) +
-                      " relative (SameMeshTolerance " +
-                      std::to_string(rules.same_mesh_tolerance) +
-                      "; negative = not recorded): the same-mesh proof failed");
+    return Refuse(
+        "r3",
+        "the regenerated electric matrices deviate from the model of record "
+        "by " +
+            std::to_string(leaf.electric_regeneration_max_relative_deviation) +
+            " relative (" +
+            (identity_tier ? "SameMeshToleranceWithMeshIdentity " : "SameMeshTolerance ") +
+            std::to_string(same_mesh_tolerance) + "; mesh identity " +
+            (leaf.mesh_of_record_identity ? "proven" : "not proven") +
+            "; negative = not recorded): the same-mesh proof failed");
   }
   result.status.same_mesh_deviation = leaf.electric_regeneration_max_relative_deviation;
   mfem::DenseMatrix fabricated, thin;
@@ -20677,6 +20702,8 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
       {"Library", library.name},
       {"Rules",
        {{"SameMeshTolerance", library.magnetic_rules.same_mesh_tolerance},
+        {"SameMeshToleranceWithMeshIdentity",
+         library.magnetic_rules.same_mesh_tolerance_with_mesh_identity},
         {"PsdFindingRatio", library.magnetic_rules.psd_finding_ratio},
         {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio}}},
       {"Models", nlohmann::json::array()}};
@@ -20700,6 +20727,7 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
         {"PsdRatio", evaluation.status.psd_ratio},
         {"NegativeEigenvalues", evaluation.status.negative_eigenvalue_count},
         {"SameMeshDeviation", evaluation.status.same_mesh_deviation},
+        {"MeshOfRecordIdentity", model.response.magnetic->mesh_of_record_identity},
         {"BasisSize", basis_size}};
     if (evaluation.defect.Height() == basis_size)
     {
@@ -20815,6 +20843,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     manifest["Library"]["Magnetic"] = {
         {"Rules",
          {{"SameMeshTolerance", patches.magnetic_rules.same_mesh_tolerance},
+          {"SameMeshToleranceWithMeshIdentity",
+           patches.magnetic_rules.same_mesh_tolerance_with_mesh_identity},
           {"PsdFindingRatio", patches.magnetic_rules.psd_finding_ratio},
           {"PsdRefusalRatio", patches.magnetic_rules.psd_refusal_ratio}}},
         {"AllowElectricOnlyFallback", patches.allow_electric_only_fallback},

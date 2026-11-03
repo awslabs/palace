@@ -11,7 +11,9 @@ assembles those vacuum domain-response matrices onto a COPY of a library as the 
 `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (a library without them loads and behaves bitwise as
 today) and writes the top-level `MagneticRules` (the r3 same-mesh tolerance and the two-level r4 PSD ratios). It
 REFUSES a twin whose basis file is not byte-identical to the model's (r1), records the regenerated electric matrices'
-maximum relative deviation from the model of record (the r3 statistic the loader gates) and the PSD statistic of
+maximum relative deviation from the model of record (the r3 statistic the loader gates; TWO-TIER per decision 1242: the
+optional MagneticRules.SameMeshToleranceWithMeshIdentity applies to a twin whose MeshOfRecordSha256Match proves BOTH
+meshes identical to the model's meshes of record, SameMeshTolerance to every other) and the PSD statistic of
 dS_m = S_fab - S_thin (the r4 statistic; information here, the loader recomputes it). Nothing of the input library is
 rewritten (475 / 501): the output is a NEW library file whose electric entries are the input's.
 
@@ -164,7 +166,16 @@ def attach(library, library_dir, attachments, output_dir, rules, now=None):
         psd_ratio, negative = psd_statistic(vacuum_fabricated - vacuum_thin)
         record["PsdRatio"] = psd_ratio
         record["NegativeEigenvalues"] = negative
-        record["Verdict"] = ("Refused r3" if deviation < 0.0 or deviation > rules["SameMeshTolerance"] else
+        # r3, two-tier (decision 1242): SameMeshToleranceWithMeshIdentity applies only when the manifest
+        # records BOTH twin meshes sha256-identical to the model's meshes of record (as the loader reads it).
+        match = entry.get("MeshOfRecordSha256Match") or {}
+        identity = bool(match.get("Thin")) and bool(match.get("Fabricated"))
+        record["MeshOfRecordIdentity"] = identity
+        same_mesh_tolerance = (rules["SameMeshToleranceWithMeshIdentity"]
+                               if identity and rules.get("SameMeshToleranceWithMeshIdentity") is not None
+                               else rules["SameMeshTolerance"])
+        record["SameMeshToleranceApplied"] = same_mesh_tolerance
+        record["Verdict"] = ("Refused r3" if deviation < 0.0 or deviation > same_mesh_tolerance else
                              "Refused r4" if psd_ratio > rules["PsdRefusalRatio"] else
                              "Finding" if psd_ratio > rules["PsdFindingRatio"] else "Applied")
         # Copy the twin files under the new library.
@@ -202,7 +213,7 @@ def attach(library, library_dir, attachments, output_dir, rules, now=None):
         target["MagneticThinMatrix"] = os.path.relpath(thin_out, output_dir)
         target["MagneticSource"] = source
         records.append(record)
-    out["MagneticRules"] = dict(rules)
+    out["MagneticRules"] = {key: value for key, value in rules.items() if value is not None}
     out["Name"] = library.get("Name", "library") + "-mag"
     out["DerivedFrom"] = {"Library": library.get("Name"), "Tool": "attach_magnetic_leaves.py",
                           "Models": [r["Model"] for r in records]}
@@ -220,6 +231,10 @@ def main(argv=None):
                         help="MagneticRules.PsdFindingRatio (r4 FINDING above it; 1e-2)")
     parser.add_argument("--psd-refusal-ratio", type=float, default=DEFAULT_RULES["PsdRefusalRatio"],
                         help="MagneticRules.PsdRefusalRatio (r4 REFUSAL above it; provisionally 0.1, ERRATUM 1227)")
+    parser.add_argument("--same-mesh-tolerance-with-mesh-identity", type=float, default=None,
+                        help="MagneticRules.SameMeshToleranceWithMeshIdentity (decision 1242, the r3 second tier: the "
+                             "tolerance for a twin whose MeshOfRecordSha256Match proves both meshes identical to the "
+                             "model's meshes of record; default absent = SameMeshTolerance everywhere)")
     parser.add_argument("--records", help="write the per-model records JSON here (default: beside --output)")
     args = parser.parse_args(argv)
     if os.path.exists(args.output):
@@ -229,9 +244,13 @@ def main(argv=None):
     with open(args.attach) as handle:
         attachments = json.load(handle)
     rules = {"SameMeshTolerance": args.same_mesh_tolerance, "PsdFindingRatio": args.psd_finding_ratio,
-             "PsdRefusalRatio": args.psd_refusal_ratio}
+             "PsdRefusalRatio": args.psd_refusal_ratio,
+             "SameMeshToleranceWithMeshIdentity": args.same_mesh_tolerance_with_mesh_identity}
     if not rules["PsdRefusalRatio"] >= rules["PsdFindingRatio"] >= 0.0 or rules["SameMeshTolerance"] < 0.0:
         parser.error("the rules must be nonnegative with PsdRefusalRatio >= PsdFindingRatio")
+    if (rules["SameMeshToleranceWithMeshIdentity"] is not None
+            and rules["SameMeshToleranceWithMeshIdentity"] < rules["SameMeshTolerance"]):
+        parser.error("SameMeshToleranceWithMeshIdentity must be >= SameMeshTolerance")
     output_dir = os.path.dirname(os.path.abspath(args.output))
     os.makedirs(output_dir, exist_ok=True)
     out, records = attach(library, os.path.dirname(os.path.abspath(args.library)), attachments, output_dir, rules)

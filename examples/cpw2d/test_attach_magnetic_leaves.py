@@ -172,6 +172,39 @@ class AttachMagneticLeavesTest(unittest.TestCase):
             self.assertEqual(record["NegativeEigenvalues"], 1)
             self.assertAlmostEqual(record["PsdRatio"], ratio, places=12)
 
+    def test_r3_two_tier_with_mesh_identity(self):
+        # Decision 1242: a rounding-class deviation (1e-10) is Refused r3 at the 1e-12 tier, admitted at the
+        # SameMeshToleranceWithMeshIdentity tier (1e-9) ONLY with both meshes recorded identical, refused at 1e-8;
+        # the leaf is written iff requested, and must be >= SameMeshTolerance.
+        write_matrix(self.root / "regen-thin-1e-10.csv", self.thin * (1.0 + 1.0e-10))
+        write_matrix(self.root / "regen-thin-1e-8.csv", self.thin * (1.0 + 1.0e-8))
+        identity = {"Thin": True, "Fabricated": True}
+        cases = (("1e-10", None, "Refused r3", []), ("1e-10", identity, "Refused r3", []),
+                 ("1e-10", None, "Refused r3", ["--same-mesh-tolerance-with-mesh-identity", "1e-9"]),
+                 ("1e-10", identity, "Applied", ["--same-mesh-tolerance-with-mesh-identity", "1e-9"]),
+                 ("1e-10", {"Thin": True, "Fabricated": False}, "Refused r3",
+                  ["--same-mesh-tolerance-with-mesh-identity", "1e-9"]),
+                 ("1e-8", identity, "Refused r3", ["--same-mesh-tolerance-with-mesh-identity", "1e-9"]))
+        for k, (dev, match, verdict, extra) in enumerate(cases):
+            out_dir = self.root / ("out-two-tier-%d" % k)
+            overrides = {"RegeneratedElectricThin": str(self.root / ("regen-thin-%s.csv" % dev))}
+            if match is not None:
+                overrides["MeshOfRecordSha256Match"] = match
+            AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(**overrides),
+                      "--output", str(out_dir / "library-mag.json")] + extra)
+            with open(out_dir / "library-mag-magnetic-records.json") as handle:
+                record = json.load(handle)["Models"][0]
+            self.assertEqual(record["Verdict"], verdict, (k, record))
+            self.assertEqual(record["MeshOfRecordIdentity"], match == identity)
+            with open(out_dir / "library-mag.json") as handle:
+                rules = json.load(handle)["MagneticRules"]
+            self.assertEqual("SameMeshToleranceWithMeshIdentity" in rules, bool(extra))
+            self.assertAlmostEqual(record["SameMeshToleranceApplied"], 1e-9 if verdict == "Applied" or (extra and k == 5) else 1e-12)
+        with self.assertRaises(SystemExit):
+            AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                      "--output", str(self.root / "out-bad" / "library-mag.json"),
+                      "--same-mesh-tolerance", "1e-9", "--same-mesh-tolerance-with-mesh-identity", "1e-10"])
+
     def test_refuses_an_existing_output_and_a_blend_entry(self):
         with self.assertRaises(SystemExit):
             AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),

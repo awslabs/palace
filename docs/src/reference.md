@@ -2259,8 +2259,9 @@ the library by `examples/cpw2d/attach_magnetic_leaves.py` as the OPTIONAL Versio
 `MagneticFabricatedMatrix`, `MagneticThinMatrix` and `MagneticSource` (the twin's
 provenance: its process parameters, the regenerated electric matrices' maximum relative
 deviation from the model of record, the basis / piece counts, the mesh digests) with the
-top-level `MagneticRules` (`SameMeshTolerance`, `PsdFindingRatio`, `PsdRefusalRatio`;
-library parameters, never compiled constants). A library WITHOUT the leaves loads and
+top-level `MagneticRules` (`SameMeshTolerance`, the optional
+`SameMeshToleranceWithMeshIdentity`, `PsdFindingRatio`, `PsdRefusalRatio`; library
+parameters, never compiled constants). A library WITHOUT the leaves loads and
 behaves bitwise as before.
 
 The device side reads the FLUX trace ``a_m = \int \bm{B} \cdot \hat{n}\, ds``
@@ -2316,7 +2317,11 @@ manifest is the leaf-less one): (r1) the twin's
 basis / piece counts or basis file differ from the model's; (r2) the twin's recorded
 process parameters differ from the library's `Fabrication` block; (r3) the regenerated
 electric matrices deviate from the model of record by more than `SameMeshTolerance` (the
-same-mesh proof); (r4) ``-\lambda_{min}(\mathrm{sym}\, dS_m) / \|dS_m\|_2`` above
+same-mesh proof; TWO-TIER: a twin whose `MagneticSource.MeshOfRecordSha256Match` records
+BOTH coupon meshes identical to the model's meshes of record is read against the optional
+`SameMeshToleranceWithMeshIdentity` instead, when the library sets it — a cross-binary /
+cross-rank regeneration of the same mesh deviates at the rounding level, never at the
+different-mesh level; absent, `SameMeshTolerance` applies everywhere); (r4) ``-\lambda_{min}(\mathrm{sym}\, dS_m) / \|dS_m\|_2`` above
 `PsdRefusalRatio` (a value in (`PsdFindingRatio`, `PsdRefusalRatio`] is a named FINDING,
 the leaf applied: the thin-vs-fabricated mesh-matching error at the discretization
 scale). An r1 / r2 / r3 refusal aborts the run unless

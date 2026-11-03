@@ -1398,6 +1398,10 @@ public:
       // The regenerated electric matrices' maximum relative deviation from the model of
       // record (the same-mesh proof, r3); negative = not recorded (refused).
       double electric_regeneration_max_relative_deviation = -1.0;
+      // Whether MagneticSource.MeshOfRecordSha256Match records both coupon meshes of the
+      // twin as sha256-IDENTICAL to the electric model's meshes of record (decision 1242:
+      // the second r3 tier applies only with this proof).
+      bool mesh_of_record_identity = false;
       // The twin's BasisPoints count and conductor-state count (r1), and whether its basis
       // file was byte-identical to the model's (r1).
       int basis_point_count = 0;
@@ -1519,6 +1523,12 @@ public:
     struct MagneticRulesData
     {
       double same_mesh_tolerance = 1.0e-12;
+      // Decision 1242 (the r3 TWO-TIER): the same-mesh tolerance applied to a twin whose
+      // MagneticSource.MeshOfRecordSha256Match proves both meshes identical to the model's
+      // meshes of record (a cross-binary / cross-rank electric regeneration deviates at the
+      // rounding level, 1e-13..1e-11 measured in Phase 0, never at the different-mesh
+      // level 8e-5). Negative = absent: SameMeshTolerance applies everywhere.
+      double same_mesh_tolerance_with_mesh_identity = -1.0;
       double psd_finding_ratio = 1.0e-2;
       double psd_refusal_ratio = 0.1;
     };
