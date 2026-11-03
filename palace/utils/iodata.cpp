@@ -875,6 +875,17 @@ void IoData::CheckConfiguration()
                       !short_ports,
                   "\"Sensitivity\" is not available for magnetostatic problems with flux "
                   "loops, superconductors or shorted inactive ports!");
+      const bool coaxial_sources = std::ranges::any_of(
+          boundaries.current,
+          [](const auto &source)
+          {
+            return std::ranges::any_of(
+                source.second.elements, [](const auto &element)
+                { return element.coordinate_system == CoordinateSystem::CYLINDRICAL; });
+          });
+      MFEM_VERIFY(!sensitivity.shape || !coaxial_sources,
+                  "\"Sensitivity\" \"Shape\" is not available with coaxial surface "
+                  "current sources!");
     }
     MFEM_VERIFY(!sensitivity.lumped_ports || problem.type == ProblemType::EIGENMODE,
                 "\"Sensitivity\" \"LumpedPorts\" is only available for eigenmode "

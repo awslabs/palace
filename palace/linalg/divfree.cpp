@@ -41,31 +41,36 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
   return std::make_unique<ComplexParOperator>(std::move(a), nullptr, fespace);
 }
 
-// Apply an operator, or its transpose, to a vector or to the parts of a complex vector.
-void MultParts(const Operator &A, const Vector &x, Vector &y, double a = 0.0)
+// Apply a real operator, or its transpose, to a vector or to both parts of a complex
+// vector.
+void Apply(const Operator &A, const Vector &x, Vector &y)
 {
-  if (a == 0.0)
-  {
-    A.Mult(x, y);
-  }
-  else
-  {
-    A.AddMult(x, y, a);
-  }
+  A.Mult(x, y);
 }
 
-void MultParts(const Operator &A, const ComplexVector &x, ComplexVector &y, double a = 0.0)
+void Apply(const Operator &A, const ComplexVector &x, ComplexVector &y)
 {
-  MultParts(A, x.Real(), y.Real(), a);
-  MultParts(A, x.Imag(), y.Imag(), a);
+  A.Mult(x.Real(), y.Real());
+  A.Mult(x.Imag(), y.Imag());
 }
 
-void MultTransposeParts(const Operator &A, const Vector &x, Vector &y)
+void AddApply(const Operator &A, const Vector &x, Vector &y, double a)
+{
+  A.AddMult(x, y, a);
+}
+
+void AddApply(const Operator &A, const ComplexVector &x, ComplexVector &y, double a)
+{
+  A.AddMult(x.Real(), y.Real(), a);
+  A.AddMult(x.Imag(), y.Imag(), a);
+}
+
+void ApplyTranspose(const Operator &A, const Vector &x, Vector &y)
 {
   A.MultTranspose(x, y);
 }
 
-void MultTransposeParts(const Operator &A, const ComplexVector &x, ComplexVector &y)
+void ApplyTranspose(const Operator &A, const ComplexVector &x, ComplexVector &y)
 {
   A.MultTranspose(x.Real(), y.Real());
   A.MultTranspose(x.Imag(), y.Imag());
@@ -103,9 +108,9 @@ public:
     {
       linalg::SetSubVector(x_free, *dbc_tdof_list, 0.0);
     }
-    MultParts(Grad, x_free, u);
+    Apply(Grad, x_free, u);
     B.Mult(u, Bu);
-    MultTransposeParts(Grad, Bu, y);
+    ApplyTranspose(Grad, Bu, y);
     if (dbc_tdof_list)
     {
       linalg::SetSubVector(y, *dbc_tdof_list, x);
@@ -297,7 +302,7 @@ void DivFreeSolver<VecType>::Mult(const OperType &B, VecType &y) const
   VecType By(y.Size());
   By.UseDevice(true);
   B.Mult(y, By);
-  MultTransposeParts(*Grad, By, rhs);
+  ApplyTranspose(*Grad, By, rhs);
   if (bdr_tdof_list_M)
   {
     linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
@@ -319,7 +324,7 @@ void DivFreeSolver<VecType>::Mult(const OperType &B, VecType &y) const
                  "(relative residual {:.3e})!\n",
                  gmres.GetNumIterations(), gmres.GetFinalRes() / gmres.GetInitialRes());
   }
-  MultParts(*Grad, psi, y, -1.0);
+  AddApply(*Grad, psi, y, -1.0);
 }
 
 template class DivFreeSolver<Vector>;
