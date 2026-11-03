@@ -66,7 +66,11 @@ SPATIAL_DEFAULT_TAIL = (0.0302, 0.0200, 0.0340)
 SHELLS_BASE = 500
 C_FORMS = ("direct", "static-limit", "information")
 P_DENOMINATORS = ("E_norm", "E_norm-minus-E_cap")
+# The two implementation tolerances of the scorer of record (R-7; REFREEZE-ROWS-P1.md; review d1230 MINOR-3). Neither affects a
+# record: the frequencies of record are exact decimals and no cell sits within 1e-12 pt of a band edge.
+# FREQ_TOL_GHZ: a CSV row belongs to frequency F when |f - F| < 1e-6 GHz (the frequency-row match of the Maxwell readers).
 FREQ_TOL_GHZ = 1e-6
+# BAND_TOL_PT: a cell is in band when low - 1e-12 <= x <= high + 1e-12 pt (the band-edge comparison of band_check).
 BAND_TOL_PT = 1e-12
 
 
@@ -491,7 +495,9 @@ def reference_from_values(values, member):
 
 
 def static_limit_fit(freqs_ghz, c_eff):
-    """C_eff(f) = C_s (1 + a f^2) fitted by unweighted least squares on f^2 (USER 1230 Q1) -> {C_s, a, residual_pct}."""
+    """C_eff(f) = C_s (1 + a f^2) fitted by unweighted least squares on f^2 (USER 1230 Q1) -> {C_s, a, residual_pct}.
+    The FORM of record (REFREEZE-ROWS-P1.md, R-7 row; review d1230 MINOR-1): unweighted LSQ of C_eff on f^2 over the window's
+    frequencies (3 points of record), 2 parameters (C_s, C_s a), per side; x = 100 (C_s,thin / C_s,thick - 1) at the 0.5 % bar."""
     n = len(freqs_ghz)
     if n < 2:
         raise ValueError("the static-limit fit needs >= 2 frequencies")
