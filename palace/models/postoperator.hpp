@@ -50,6 +50,18 @@ struct SolverData;
 
 }  // namespace config
 
+// D6 (USER 1221; decision 1229): the first-order fixed-trace frequency shift of the raw
+// mode from a postprocessed Maxwell response, d omega / omega = (U_m,defect - U_e,defect) /
+// (2 U_raw) with U_e,defect = response.domain_correction (the electric fixed-trace domain
+// correction, lowering the frequency when positive), U_m,defect =
+// response.magnetic_domain_correction (the magnetic one, raising it) and U_raw the raw
+// normalization energy (1/2 E^H M E plus the lumped-port capacitor energy); NaN unless the
+// response carries the magnetic term and passes closure_independent_confident AND
+// magnetic_confident (never gated by the trace-closure spread). One function, so that the
+// column of record and its unit test read the same formula (review d1227 MAJOR-2).
+double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
+                                double raw_normalization_energy);
+
 // Statically specify if solver uses real or complex fields.
 
 template <ProblemType solver_t>
@@ -356,8 +368,9 @@ protected:
     // d omega / omega = (U_m,defect - U_e,defect) / (2 U_raw) with U_e,defect the electric
     // domain correction, U_m,defect the magnetic one and U_raw the raw normalization
     // energy; gated by closure_independent_confident AND the magnetic term's own loop gate
-    // (NOT by the trace-closure spread, which is printed beside it): NaN when withheld.
-    // Written only when a loaded model carries a magnetic leaf (the columns exist then).
+    // (NOT by the trace-closure spread, which is printed beside it): NaN when withheld
+    // (FixedTraceFrequencyShift). Written only when a magnetic leaf was read (the columns
+    // exist then; NaN when no model carries the term).
     double fixed_trace_frequency_shift = std::numeric_limits<double>::quiet_NaN();
     double magnetic_domain_correction = 0.0;
     std::map<int, Interface> interfaces;
@@ -390,8 +403,9 @@ protected:
   mutable std::unique_ptr<TableWithCSVFile> surface_response_traces;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_loops;
   // surface-response-magnetic.csv (DESIGN-v2 section 3; decision 1229 Q4): only when a
-  // loaded model carries a magnetic leaf; rewritten at every print (root only) with the
-  // per-model leaf status rows and the dual R0-a gate's per-patch rows so far.
+  // magnetic leaf was read (every verdict, also when every leaf is refused; decision 1235);
+  // rewritten at every print (root only) with the per-model leaf status rows and the dual
+  // R0-a gate's per-patch rows so far.
   mutable std::unique_ptr<TableWithCSVFile> surface_response_magnetic;
   void PrintSurfaceResponseMagnetic() const;
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;

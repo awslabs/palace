@@ -880,8 +880,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass",
 // response mass carries it as an omega-independent projected matrix (coefficient 1). The
 // stand-in dK is the (DIAG_ZERO) mass itself: the corrected HDM A - omega^2 M + M differs
 // from the mass-only corrected HDM on this electrically small cube (a curl-free solution K
-// ignores: the true K would not move it), and the PROM built on one sample reproduces its
-// own HDM.
+// ignores: the true K would not move it), equals the HDM of a mass-only PROM whose response
+// mass is (1 - 1 / omega^2) M (the coefficient 1 pinned: a wrong but consistent coefficient
+// fails here; review d1227 MINOR-7), and the PROM built on one sample reproduces its own
+// HDM.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
                  "[romoperator][magnetic][Serial][Parallel]")
 {
@@ -953,6 +955,21 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
   const double corrected_norm = linalg::Norml2(space_op.GetComm(), corrected_hdm);
   REQUIRE(corrected_norm > 0.0);
   CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm > 1.0e-6);
+
+  // The pin: -omega^2 dM + 1.0 dK with dM = dK = M is -omega^2 (1 - 1 / omega^2) M, the
+  // mass-only corrected HDM with the scaled response mass (the same solver, the same
+  // preconditioner: equal to the solver tolerance).
+  auto scaled_mass = std::make_unique<SumComplexOperator>(
+      space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO),
+      std::complex<double>(1.0 - 1.0 / (omega * omega), 0.0));
+  RomOperator equivalent(iodata, space_op, 4, std::move(scaled_mass));
+  ComplexVector equivalent_hdm(space_op.GetNDSpace().GetTrueVSize());
+  equivalent_hdm.UseDevice(true);
+  equivalent_hdm = 0.0;
+  equivalent.SolveHDM(excitation, omega, equivalent_hdm);
+  difference = corrected_hdm;
+  linalg::AXPY(-1.0, equivalent_hdm, difference);
+  CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm < 1.0e-8);
 
   corrected.UpdatePROM(corrected_hdm, "corrected_sample");
   corrected.SolvePROM(excitation, omega, corrected_prom);

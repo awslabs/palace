@@ -22,6 +22,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/postoperator.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -325,9 +326,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(result.has_magnetic);
   CHECK(result.magnetic_loop_residual < 1.0e-10);
   CHECK(result.magnetic_weighted_loop_residual < 1.0e-10);
+  CHECK(result.magnetic_loop_response_failure_fraction == 0.0);
   CHECK(result.magnetic_confident);
   CHECK(result.magnetic_patch_count == response.GetPatchCount());
   CHECK(result.magnetic_excluded_patch_count == 0);
+  // No electric loop-fit fallback on a closed-loop field: nothing withheld (decision 1235).
+  CHECK(result.magnetic_fallback_patch_count == 0);
+  CHECK(result.loop_fallback_magnetic_domain_correction == 0.0);
   CHECK_THAT(result.magnetic_domain_correction, WithinRel(0.5 * form, 1.0e-9));
   // |omega| = 2 halves nothing of E but the trace is B = curl E / omega: a quarter.
   const auto result_2 = response.GetMaxwellResponse(field, 2.0);
@@ -476,6 +481,59 @@ TEST_CASE_METHOD(
   CHECK_THROWS_WITH(Load(incomplete.library, true),
                     Catch::Matchers::ContainsSubstring("MagneticSource together"));
 #endif
+}
+
+// D6 (USER 1221; decision 1229), the corrected frequency of record, against the Phase-0
+// measurement (measure/REPORT.md RESULTS; prereg-gates.md G-d FORM; review d1227 MAJOR-2):
+// the fixed-trace shift (U_m,defect - U_e,defect) / (2 U_raw) on the measured within-R
+// defects. In the quasi-TEM reading U_e,defect / U = dC'/C' (N1) at fixed voltage and
+// U_m,defect / U = dC'_0/C'_0 (N2) at fixed flux, so the shift is -1/2 (N1 - N2) = the
+// REPORT's MAGNETIC (TRUE) df/f: +3.257 % (3 / 3 / 3, N1 -2.434 %, N2 +4.080 %) and
+// +4.584 % (2 / 2 / 2, N1 -3.378 %, N2 +5.790 %), to the REPORT's printed 1e-3 pt and the
+// gate's 1e-4 pt on the derived value; the gates withhold it (NaN), never the trace-closure
+// spread; the electric half alone gives the REPORT's ELECTRIC-ONLY +1.217 % / +1.689 %.
+TEST_CASE("FixedTraceFrequencyShift on the Phase-0 numbers", "[magnetic][Serial]")
+{
+  struct Cell
+  {
+    double dC_over_C;      // N1 = a^T dQ a / W_full
+    double dC0_over_C0;    // N2 = a_m^T dS_m a_m / W_full,vac
+    double expected;       // the REPORT's MAGNETIC (TRUE) df/f
+    double electric_only;  // the REPORT's ELECTRIC-ONLY df/f
+  };
+  const std::array<Cell, 2> cells = {{{-2.434e-2, 4.080e-2, 3.257e-2, 1.217e-2},
+                                      {-3.378e-2, 5.790e-2, 4.584e-2, 1.689e-2}}};
+  // An arbitrary raw energy (nondimensional): the shift is scale-free.
+  const double raw_energy = 2.0811e-13 * 7.3;
+  for (const auto &cell : cells)
+  {
+    SurfaceResponseOperator::MaxwellResponse response;
+    response.has_magnetic = true;
+    response.closure_independent_confident = true;
+    response.magnetic_confident = true;
+    response.confident = false;  // the trace-closure spread fails: NOT a gate of D6
+    response.maximum_trace_closure_spread = 0.085;
+    response.domain_correction = cell.dC_over_C * raw_energy;
+    response.magnetic_domain_correction = cell.dC0_over_C0 * raw_energy;
+    const double shift = FixedTraceFrequencyShift(response, raw_energy);
+    CHECK_THAT(shift, WithinAbs(-0.5 * (cell.dC_over_C - cell.dC0_over_C0), 1.0e-6));
+    CHECK_THAT(shift, WithinAbs(cell.expected, 1.0e-5));
+    // The electric half alone (no magnetic leaf applied) is the electric-only reading.
+    SurfaceResponseOperator::MaxwellResponse electric = response;
+    electric.magnetic_domain_correction = 0.0;
+    CHECK_THAT(FixedTraceFrequencyShift(electric, raw_energy),
+               WithinAbs(cell.electric_only, 1.0e-5));
+    // The gates: closure_independent_confident, magnetic_confident, has_magnetic.
+    SurfaceResponseOperator::MaxwellResponse gated = response;
+    gated.closure_independent_confident = false;
+    CHECK(std::isnan(FixedTraceFrequencyShift(gated, raw_energy)));
+    gated = response;
+    gated.magnetic_confident = false;
+    CHECK(std::isnan(FixedTraceFrequencyShift(gated, raw_energy)));
+    gated = response;
+    gated.has_magnetic = false;
+    CHECK(std::isnan(FixedTraceFrequencyShift(gated, raw_energy)));
+  }
 }
 
 // The Phase-1 gate G-d loader read (prereg-gates.md): the leaves of the library named by

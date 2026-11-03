@@ -684,6 +684,11 @@ private:
   // unless a loaded model carries a magnetic leaf.
   std::vector<double> magnetic_point_weights;
   bool has_magnetic_models = false;
+  // A magnetic leaf was READ for some model (Applied / Finding / Refused, incl. a blend
+  // whose sources carry leaves): gates the magnetic OUTPUT records (decision 1235, write-
+  // when-read), while has_magnetic_models gates the operator dK. False when the library
+  // carries no leaf or `Magnetic` is false (nothing read, nothing written).
+  bool has_magnetic_leaves = false;
   // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
   // when a magnetic leaf is loaded), so that the root-only record printers need no
   // collective.
@@ -1120,14 +1125,18 @@ public:
     // MAGNETIC domain correction 1/2 sum_p w_p a_m^H dS_m a_m with a_m = (the flux trace of
     // curl E) / |omega| (the magnetic image of domain_correction, nondimensional energy);
     // its dual loop residual (the in-plane circulation of B . n around every closed
-    // contour, gated like the electric one at 0.05) and the response-weighted form; the
-    // patch count carrying the term; and magnetic_confident = the magnetic term's own gate
-    // (the dual loop residual) AND closure_independent_confident. All 0 / true without a
-    // magnetic model (has_magnetic false).
+    // contour, gated like the electric one at 0.05) and the response-weighted form, the
+    // response-weight fraction of paths above 0.05 (gated like the electric one at 0.01);
+    // the patch count carrying the term; and magnetic_confident = the magnetic term's own
+    // gate (the dual loop residual and its failure fraction). All 0 / true without a
+    // magnetic model (has_magnetic false). The detector weight of the dual residuals is
+    // |the patch's magnetic DEFECT energy| (the electric one is the fabricated RESPONSE
+    // energy; S_m,fab is not loaded): OI-MAGNETIC-DETECTOR-WEIGHT, named in the docs.
     bool has_magnetic = false;
     double magnetic_domain_correction = 0.0;
     double magnetic_loop_residual = 0.0;
     double magnetic_weighted_loop_residual = 0.0;
+    double magnetic_loop_response_failure_fraction = 0.0;
     int magnetic_patch_count = 0;
     int magnetic_excluded_patch_count = 0;
     bool magnetic_confident = true;
@@ -1139,6 +1148,12 @@ public:
     // 0.5 <x, Mult x>, which applies the fit without the fallback.
     double loop_fallback_domain_correction = 0.0;
     double loop_fallback_domain_correction_fixed_flux = 0.0;
+    // The magnetic image (decision 1235, review d1227 MAJOR-1): a patch the electric loop
+    // fit serves raw (fallback) adds no magnetic term to magnetic_domain_correction either
+    // (the D6 shift reads both halves on the SAME patch set); what it would have added is
+    // recorded here, and the operator dK carries it as dM does.
+    int magnetic_fallback_patch_count = 0;
+    double loop_fallback_magnetic_domain_correction = 0.0;
   };
   // OI-MX-LOOPGATE (decision 955 D5 / D6, pre-registered): a patch whose circulating share
   // is at most the floor contributes no remainder (the uncounted part is at most the floor
@@ -1189,6 +1204,7 @@ public:
   // Operator below. Zero (and never called) for a library without magnetic leaves.
   void MagneticStiffnessMult(const Vector &x, Vector &y) const;
   bool HasMagneticModels() const { return has_magnetic_models; }
+  bool HasMagneticLeaves() const { return has_magnetic_leaves; }
   // The dual R0-a gate (the magnetic term only; DESIGN-v2 section 3): the flux read along
   // the R0-a probe legs against the piece's flux state, on the magnetic chain trace, with
   // the electric gate's tolerance and floor; a failing patch loses its magnetic term

@@ -20764,9 +20764,11 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   // operator runs), and Summary.MagneticElectricOnly = the applied patches whose model
   // carries NO magnetic term (absent / refused / spatial), by count and claimed length
   // (mesh-file units, as the other Summary rows). Written only when a model carries a leaf
-  // (an electric-only library keeps its manifest bytes).
-  if (std::any_of(patches.models.begin(), patches.models.end(),
-                  [](const auto &model) { return model.magnetic.has_value(); }))
+  // (an electric-only library keeps its manifest bytes) and only on the MAXWELL path: the
+  // electrostatic path carries no magnetic term by construction, so its manifest is the
+  // leaf-less one (decision 1235, review d1227 MINOR-4).
+  if (maxwell && std::any_of(patches.models.begin(), patches.models.end(),
+                             [](const auto &model) { return model.magnetic.has_value(); }))
   {
     const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
     nlohmann::json models = nlohmann::json::array();
@@ -20776,8 +20778,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       const auto points = ReadBasisPoints(model.basis_points);
       const int basis_size = static_cast<int>(points.size()) + model.conductor_state_count;
       const auto evaluation = EvaluateMagneticLeaf(
-          model, basis_size, model.conductor_state_count,
-          maxwell ? parallel_mesh.Dimension() : 3, patches.magnetic_rules, iodata.units);
+          model, basis_size, model.conductor_state_count, parallel_mesh.Dimension(),
+          patches.magnetic_rules, iodata.units);
       const bool applied =
           evaluation.status.status == "Applied" || evaluation.status.status == "Finding";
       carries[model.idx] = applied;
@@ -29644,6 +29646,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,
                                dimension, config.magnetic_rules, iodata.units);
       model.magnetic_status = std::move(magnetic.status);
+      has_magnetic_leaves = has_magnetic_leaves || model.magnetic_status.status != "Absent";
       if (model.magnetic_status.status == "Applied" ||
           model.magnetic_status.status == "Finding")
       {
@@ -33442,6 +33445,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   // arithmetic is untouched: the records read the values the loop computes anyway.
   std::vector<double> local_patch_records, local_loop_records, local_trace_records;
   std::vector<double> local_share_records, local_remainder_records;
+  // The per-patch fallback verdicts, read by the magnetic block below (decision 1235).
+  std::vector<bool> patch_loop_fallback(patches.size(), false);
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
     const auto &patch = patches[patch_index];
@@ -33462,6 +33467,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     // rho_p = 0 for every patch, the fit applied, no fallback; the share still reports.
     const bool fallback =
         maxwell_loop_remainder_measured && loop_share > kLoopFitFallbackShare;
+    patch_loop_fallback[patch_index] = fallback;
     const double rho =
         fallback ? 1.0
                  : (maxwell_loop_remainder_measured && loop_share > kLoopFitShareFloor
@@ -33894,7 +33900,10 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     // stencil; the fixed-trace magnetic domain correction 1/2 w a_m^H dS_m a_m per patch
     // carrying the term; its dual loop residual (the in-plane circulation of B . n around
     // a closed contour: zero in quasi-TEM) weighted by the patch's magnetic response, gated
-    // like the electric one. A separate reduction: the electric records above are bitwise.
+    // like the electric one (the weighted residual and the failure fraction). A patch the
+    // electric loop fit serves raw (fallback, decision 955 D6) adds no magnetic term either
+    // (decision 1235): the D6 shift reads both halves on the same patch set; its term is
+    // recorded as withheld. A separate reduction: the electric records above are bitwise.
     result.has_magnetic = true;
     const double omega_abs2 = std::max(std::norm(omega), 1.0e-300);
     Vector magnetic_line_real, magnetic_line_imag, magnetic_chain_real, magnetic_chain_imag;
@@ -33904,10 +33913,12 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     BuildMaxwellChainTrace(magnetic_line_imag, magnetic_chain_imag);
     Vector magnetic_trace_real(magnetic_chain_real),
         magnetic_trace_imag(magnetic_chain_imag);
-    // [0] the magnetic domain correction, [1] the weighted residual^2, [2] the patches
-    // carrying the term, [3] the dual gate's exclusions, then per model its correction.
-    std::vector<double> magnetic_reduction(4 + models.size(), 0.0);
-    double magnetic_loop_weight_local = 0.0;
+    // [0] the magnetic domain correction, [1] the weighted residual^2, [2] the loop weight,
+    // [3] the failed loop weight, [4] the patches carrying the term, [5] the dual gate's
+    // exclusions, [6] the fallback patches, [7] their withheld correction, then per model
+    // its correction.
+    constexpr std::size_t magnetic_totals = 8;
+    std::vector<double> magnetic_reduction(magnetic_totals + models.size(), 0.0);
     for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
     {
       const auto &patch = patches[patch_index];
@@ -33918,10 +33929,10 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       }
       if (patch.magnetic_excluded)
       {
-        magnetic_reduction[3] += 1.0;
+        magnetic_reduction[5] += 1.0;
         continue;
       }
-      magnetic_reduction[2] += 1.0;
+      magnetic_reduction[4] += 1.0;
       AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real);
       AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag);
       Vector patch_real(magnetic_trace_real.GetData() + patch.trace_offset,
@@ -33932,10 +33943,20 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       const double magnetic_form =
           QuadraticForm(model.magnetic_domain_defect, patch_real, workspace) +
           QuadraticForm(model.magnetic_domain_defect, patch_imag, workspace);
-      magnetic_reduction[0] += magnetic_weight * magnetic_form;
-      magnetic_reduction[4 + patch.model] += magnetic_weight * magnetic_form;
+      if (patch_loop_fallback[patch_index])
+      {
+        magnetic_reduction[6] += 1.0;
+        magnetic_reduction[7] += magnetic_weight * magnetic_form;
+      }
+      else
+      {
+        magnetic_reduction[0] += magnetic_weight * magnetic_form;
+        magnetic_reduction[magnetic_totals + patch.model] +=
+            magnetic_weight * magnetic_form;
+      }
       // The dual loop residuals on the magnetic CHAIN trace (the detector's trace), the
-      // detector weight = |the patch's magnetic response| (the loop-RMS weight).
+      // detector weight = |the patch's magnetic response| (the loop-RMS weight), a property
+      // of the field: read on every patch carrying the term, fallback or not.
       const double detector = std::abs(magnetic_weight * magnetic_form);
       std::vector<std::pair<double, double>> magnetic_diagnostics;
       const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
@@ -34002,27 +34023,37 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         {
           const double weight = detector * scale2 / scale_squared;
           magnetic_reduction[1] += weight * residual * residual;
-          magnetic_loop_weight_local += weight;
+          magnetic_reduction[2] += weight;
+          if (residual > maximum_path_loop_residual)
+          {
+            magnetic_reduction[3] += weight;
+          }
         }
       }
     }
     Mpi::GlobalSum(static_cast<int>(magnetic_reduction.size()), magnetic_reduction.data(),
                    fespace.GetComm());
-    Mpi::GlobalSum(1, &magnetic_loop_weight_local, fespace.GetComm());
     Mpi::GlobalMax(1, &result.magnetic_loop_residual, fespace.GetComm());
     result.magnetic_domain_correction = magnetic_reduction[0];
-    result.magnetic_patch_count = static_cast<int>(std::llround(magnetic_reduction[2]));
+    result.magnetic_patch_count = static_cast<int>(std::llround(magnetic_reduction[4]));
     result.magnetic_excluded_patch_count =
-        static_cast<int>(std::llround(magnetic_reduction[3]));
-    if (magnetic_loop_weight_local > 0.0)
+        static_cast<int>(std::llround(magnetic_reduction[5]));
+    result.magnetic_fallback_patch_count =
+        static_cast<int>(std::llround(magnetic_reduction[6]));
+    result.loop_fallback_magnetic_domain_correction = magnetic_reduction[7];
+    if (magnetic_reduction[2] > 0.0)
     {
       result.magnetic_weighted_loop_residual =
-          std::sqrt(magnetic_reduction[1] / magnetic_loop_weight_local);
+          std::sqrt(magnetic_reduction[1] / magnetic_reduction[2]);
+      result.magnetic_loop_response_failure_fraction =
+          magnetic_reduction[3] / magnetic_reduction[2];
     }
-    result.model_magnetic_domain_corrections.assign(magnetic_reduction.begin() + 4,
-                                                    magnetic_reduction.end());
+    result.model_magnetic_domain_corrections.assign(
+        magnetic_reduction.begin() + magnetic_totals, magnetic_reduction.end());
     result.magnetic_confident =
-        result.magnetic_weighted_loop_residual <= maximum_weighted_loop_residual;
+        result.magnetic_weighted_loop_residual <= maximum_weighted_loop_residual &&
+        result.magnetic_loop_response_failure_fraction <=
+            maximum_loop_response_failure_fraction;
   }
   constexpr double maximum_corner_fraction = 0.1;
   constexpr double maximum_curvature = 0.25;
