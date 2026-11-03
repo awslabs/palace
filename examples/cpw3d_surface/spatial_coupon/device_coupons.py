@@ -343,12 +343,13 @@ MIRROR_FORMED_ENTRY_RULE = ("decision 557 / round-3 DESIGN 4.4 (MF): the library
 
 
 def signature_key_hash(signature):
-    """The LEGACY float re-dump of the identification's Key of a signature (json.dumps(signature,
-    separators=(',', ':'), sort_keys=True) hashed): equal to the requirement Hash only when every
-    double's nlohmann (Grisu2) lexeme is Python's shortest repr — NOT always (the R2-failure
-    diagnosis F-4: 7fd482e5adfc differs on three lexemes). The check of a key against its
-    Signature is verify_requirement_key, which uses the record's KeyText when it carries one."""
-    return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+    """The identification's Key of a signature re-computed on the Python side: sha256 of the C++ writer's print
+    (signature_library.signature_hash = the nlohmann 3.12.0 Grisu2 port; fix round, decisions 1228 M2 / 1233 (4)).
+    Before the fix round this was the LEGACY float re-dump (json.dumps sort_keys), equal to the requirement Hash
+    only when every double's Grisu2 lexeme was Python's shortest repr -- NOT always (the R2-failure diagnosis F-4:
+    7fd482e5adfc differed on three lexemes). The check of a key against its Signature is verify_requirement_key,
+    which uses the record's KeyText when it carries one."""
+    return signature_library.signature_hash(signature)
 
 
 def verify_requirement_key(requirement, signature=None, *, name=None):
