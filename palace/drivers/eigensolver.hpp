@@ -13,6 +13,9 @@ namespace palace
 {
 
 class ComplexOperator;
+class ComplexVector;
+template <typename VecType>
+class DivFreeSolver;
 class EigenvalueSolver;
 class ErrorIndicator;
 class Mesh;
@@ -31,7 +34,7 @@ private:
   // configured objectives, for the modes of angular frequencies omega.
   void PostprocessSensitivities(SpaceOperator &space_op, const EigenvalueSolver &eigen,
                                 const ComplexOperator *C, const ComplexOperator &M,
-                                bool has_A2,
+                                bool has_A2, const DivFreeSolver<ComplexVector> *divfree,
                                 const std::vector<std::complex<double>> &omega) const;
 
 public:

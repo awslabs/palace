@@ -17,8 +17,10 @@
 #include "fem/mesh.hpp"
 #include "fem/shapederivativeform.hpp"
 #include "fixtures.hpp"
+#include "linalg/divfree.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -499,6 +501,69 @@ TEST_CASE("Eigenmode system material and lumped port derivatives",
                                  (e == 0 ? port.R : (e == 1 ? port.L : port.C)) *= s;
                                }));
   }
+}
+
+TEST_CASE("Divergence-free projection with losses", "[sensitivity][Serial][Parallel]")
+{
+  // The projection of the eigenvalue solve is with respect to the permittivity. With
+  // losses, the correction for the sensitivities makes a vector divergence-free with
+  // respect to B = M + C / λ instead, changing it by a gradient.
+  EigenProblem problem(mfem::Element::TETRAHEDRON, 2, false);
+  SpaceOperator space_op(problem.iodata, problem.mesh);
+  DivFreeSolver<ComplexVector> divfree(space_op.GetMaterialOp(), space_op.GetNDSpace(),
+                                       space_op.GetH1Spaces(),
+                                       space_op.GetAuxBdrTDofLists(), 1.0e-14, 1000, 0);
+  const std::complex<double> lambda(0.05, 1.3);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const auto B =
+      BuildParSumOperator(std::vector<std::complex<double>>{1.0, 1.0 / lambda},
+                          std::vector<const ComplexOperator *>{M.get(), C.get()});
+
+  std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector x(size), y(size), By(size);
+  for (int i = 0; i < size; i++)
+  {
+    x.Real()(i) = dist(gen);
+    x.Imag()(i) = dist(gen);
+  }
+  for (const int i : space_op.GetNDDbcTDofLists().back())
+  {
+    x.Real()(i) = x.Imag()(i) = 0.0;
+  }
+  divfree.Mult(x);
+  y = x;
+  divfree.Mult(*B, y);
+
+  // The divergence Gᵀ B y vanishes away from the essential boundaries of the potential.
+  const auto &Grad = space_op.GetGradMatrix();
+  auto Divergence = [&](const ComplexVector &v)
+  {
+    B->Mult(v, By);
+    ComplexVector div(Grad.Width());
+    Grad.MultTranspose(By.Real(), div.Real());
+    Grad.MultTranspose(By.Imag(), div.Imag());
+    linalg::SetSubVector(div, space_op.GetAuxBdrTDofLists().back(), 0.0);
+    return linalg::Norml2(Mpi::World(), div);
+  };
+  const double div_x = Divergence(x);
+  CHECK(div_x > 0.0);
+  CHECK(Divergence(y) <= 1.0e-10 * div_x);
+
+  // The correction is a gradient, so the curl is unchanged.
+  const auto &Curl = space_op.GetCurlMatrix();
+  ComplexVector d(size), curl(Curl.Height()), curl_x(Curl.Height());
+  d = y;
+  d -= x;
+  Curl.Mult(d.Real(), curl.Real());
+  Curl.Mult(d.Imag(), curl.Imag());
+  Curl.Mult(x.Real(), curl_x.Real());
+  Curl.Mult(x.Imag(), curl_x.Imag());
+  CHECK(linalg::Norml2(Mpi::World(), d) > 0.0);
+  CHECK(linalg::Norml2(Mpi::World(), curl) <=
+        1.0e-12 * linalg::Norml2(Mpi::World(), curl_x));
 }
 
 TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Parallel]")
