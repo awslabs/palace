@@ -1394,6 +1394,33 @@ def raise_recorded_heldout_failure(qualification, key, qualification_path, args,
         )
 
 
+# Fix round R-10 (OI-STRAIGHT-FAMILY-NAME-COLLISION; decisions 1168 / 1230 / 1233 (5)): a NEW straight pair build's model Name
+# carries the 12-hex hash of its requirement (`<topology>-<sep>um-<hash12>`; generate_edge_pair_response.pair_model_name). The
+# builder works per (topology, separation float): when several requirements share one separation the F-22 representative
+# (device length desc, hash asc; the frozen dedup rule of 1168) names the model and the others are served by Separation.
+def straight_requirement_hashes(coupons):
+    """{(builder topology option, separation): the F-22 representative's requirement Hash} over the paired coupons that carry a
+    Hash (a record-era coupon without one keeps the record-form Name)."""
+    by_key = {}
+    for coupon in coupons:
+        topology = coupon["Topology"]
+        if topology not in PAIRED_TOPOLOGIES or not coupon.get("Hash"):
+            continue
+        key = (PAIRED_TOPOLOGIES[topology], float(coupon["Geometry"]["Separation"]))
+        by_key.setdefault(key, []).append(coupon)
+    out = {}
+    for key, members in by_key.items():
+        representative = sorted(members, key=lambda c: (-float(c.get("DeviceEdgeLength") or 0.0), str(c["Hash"])))[0]
+        out[key] = str(representative["Hash"])
+    return out
+
+
+def straight_requirement_hash_options(coupons):
+    """The --requirement-hash TOPOLOGY:WIDTH=HASH options of build_surface_process_library.py (WIDTH = repr(float): exact)."""
+    return [f"{topology[:-1]}:{separation!r}={digest}"
+            for (topology, separation), digest in sorted(straight_requirement_hashes(coupons).items())]
+
+
 def build_straight(coupons, args, parameters, cache):
     for coupon in coupons:
         require_verified_boundary_conditions(coupon)
@@ -1492,6 +1519,8 @@ def build_straight(coupons, args, parameters, cache):
         for topology, option in PAIRED_TOPOLOGIES.items():
             command.append(f"--{option}")
             command.extend(separations[topology])
+        for option in straight_requirement_hash_options(coupons):
+            command.extend(["--requirement-hash", option])
         run(command)
 
     if getattr(args, "coverage_only", False):
@@ -2877,6 +2906,25 @@ def build_spatial(coupon, args, parameters, cache):
     return library_path, qualification_path
 
 
+# Fix round R-3 (OI-PLANNER-EXECUTE-SPATIAL-ONE-REFERENCE; decisions 1157 Q1 / 1230; DESIGN-v3 s5): build_spatial passes no
+# --local-pieces, so a SpatialCoupon planned in the piece form (Preparation.LocalPieces) would be built ONE-REFERENCE silently.
+# --execute REFUSES it before any build; the path of record for the piece form is device_coupons.py (coupon-library build
+# --device), or --skip-methods SpatialCoupon leaves the family to it.
+PIECE_FORM_SPATIAL_PATH_OF_RECORD = ("examples/cpw3d_surface/spatial_coupon/device_coupons.py (coupon-library build --device: "
+                                     "generate_spatial_response --local-pieces, Name <Id>-pieces<P>)")
+
+
+def refuse_piece_form_spatial_coupons(coupons):
+    """Fail closed: a SpatialCoupon planned in the piece form is not built by --execute (R-3)."""
+    offending = sorted(coupon["Id"] for coupon in coupons
+                       if coupon["Preparation"]["Method"] == "SpatialCoupon" and coupon_local_pieces(coupon))
+    if offending:
+        raise ValueError(
+            f"--execute refuses the SpatialCoupon(s) planned in the piece form (Preparation.LocalPieces): {offending}. "
+            f"build_spatial builds the ONE-REFERENCE form only; the piece form is built by {PIECE_FORM_SPATIAL_PATH_OF_RECORD}, "
+            "or pass --skip-methods SpatialCoupon to leave the family to it (fix round R-3; decision 1157 Q1)")
+
+
 def execute(plan, library_path, args):
     parameters = process_parameters(load_json(library_path))
     cache = args.cache.expanduser().resolve()
@@ -2899,6 +2947,7 @@ def execute(plan, library_path, args):
         if coupon["Preparation"]["Method"] in skip_methods
     ]
     missing = [coupon for coupon in missing if coupon["Preparation"]["Method"] not in skip_methods]
+    refuse_piece_form_spatial_coupons(missing)
     libraries = [library_path]
     qualifications = []
     failures = [

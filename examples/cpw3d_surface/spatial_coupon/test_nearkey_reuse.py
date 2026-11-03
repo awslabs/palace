@@ -487,6 +487,31 @@ class ReuseRecords(unittest.TestCase):
                 reuse.reuse_requirement(mode="default", **{**common, "rule": predictor.load_rule(override)})
             self.assertIn("refuses a rule-file override", str(context.exception))
 
+    def test_default_mode_skips_a_piece_form_basis(self):
+        """Fix round R-2 (OI-NEARKEY-DEFAULT-PIECE-FORM-BASIS; decisions 1218 (ii) / 1230): a piece-form exact basis (the entry
+        carries LocalPiecesRule) is SKIPPED in default mode with the NearkeyReuseSkipped record before any basis is read (the
+        1218 STOP was the TraceBasis states check); fallback is unchanged (it reaches the basis read as before)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            library = {"Name": "x", "Version": 3, "MatchingRadius": RADIUS, "Models": []}
+            library_path = Path(tmp) / "process-library.json"
+            library_path.write_text(json.dumps(library))
+            pieces = dict(FIXTURE["Exact"], LocalPiecesRule="pieces by local metal piece (decision 1142)",
+                          ConductorReferences=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+            self.assertTrue(reuse.is_piece_form_basis(pieces))
+            self.assertFalse(reuse.is_piece_form_basis(FIXTURE["Exact"]))
+            common = {"exact_signature": FIXTURE["Exact"]["Signature"], "exact_basis_dir": tmp, "exact_model_entry": pieces,
+                      "library": library, "library_path": library_path, "rule": rule(), "output": Path(tmp) / "out", "log": lambda *_: None}
+            record = reuse.reuse_requirement(mode="default", **common)
+            self.assertFalse(record["Reused"])
+            self.assertIsNone(record["Refused"])
+            self.assertEqual(record["Skipped"]["Reason"], reuse.PIECE_FORM_SKIP_REASON)
+            self.assertEqual(record["Skipped"]["ConductorReferences"], 3)
+            written = json.loads((Path(tmp) / "out" / reuse.SKIPPED_RECORD).read_text())
+            self.assertEqual(written["Skipped"]["Reason"], reuse.PIECE_FORM_SKIP_REASON)
+            # fallback unchanged: it proceeds to the (absent) exact basis
+            with self.assertRaises(FileNotFoundError):
+                reuse.reuse_requirement(mode="fallback", stop_record={"Path": "p", "SHA256": "s"}, approval="x", **common)
+
     def test_stop_record_class_and_key_fields_are_checked(self):
         """Decision 438 (4): the STOP record's Status / StoppedBy class and its binding to the exact key."""
         name, case = "spatialedgecluster_edgecount-19_5ae3dbdd2c3d", "spatial-19-edge-5163ddf143c2"

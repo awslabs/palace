@@ -544,6 +544,24 @@ def curved_model_fields(topology, topology_name, separation, radius):
     }
 
 
+# Fix round R-10 (OI-STRAIGHT-FAMILY-NAME-COLLISION, decisions 1168 / 1230; DESIGN-v3 s6): the straight pair Name
+# `<topology>-{separation:g}um` collided for in-band twins (729ca8684d87 2.9999993 um / a11f82ccc415 3.0000012 um both
+# print "3um"; the frozen combine refuses a repeated Name). A NEW build carries the requirement's 12-hex hash in its Name;
+# existing Names are untouched (identity = sha + Signature).
+REQUIREMENT_HASH_NAME_DIGITS = 12
+
+
+def pair_model_name(topology_name, separation, requirement_hash=None):
+    """`<topology>-{separation:g}um` (the record form), `-<hash12>` appended when the requirement hash is given (R-10)."""
+    name = f"{topology_name}-{separation:g}um"
+    if requirement_hash is None:
+        return name
+    digest = str(requirement_hash).strip().lower()
+    if len(digest) < REQUIREMENT_HASH_NAME_DIGITS or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError(f"--requirement-hash expects >= {REQUIREMENT_HASH_NAME_DIGITS} hex digits, not {requirement_hash!r}")
+    return f"{name}-{digest[:REQUIREMENT_HASH_NAME_DIGITS]}"
+
+
 def write_library(
     output,
     name,
@@ -558,6 +576,7 @@ def write_library(
     substrate_permittivity,
     interface_layers,
     local_pieces=False,
+    requirement_hash=None,
 ):
     half_gap = 0.5 * separation
     topology = (
@@ -575,7 +594,7 @@ def write_library(
         else "same-conductor-gap"
     )
     model = {
-        "Name": f"{topology_name}-{separation:g}um",
+        "Name": pair_model_name(topology_name, separation, requirement_hash),
         "Topology": topology,
         "Separation": separation,
         "SeparationTolerance": separation_tolerance,
@@ -670,6 +689,9 @@ def main():
                                "pieces: the two-conductor basis / configs (the meshes must be tagged in the mesher's 'different' mode) "
                                "and a SameConductorGap library entry with LocalPieces = 2, two ConductorReferences and OpenContourPaths. "
                                "Default OFF: the one-reference form, byte-identical")
+    parser.add_argument("--requirement-hash", default=None,
+                        help="fix round R-10 (decision 1168 / 1230): the requirement hash whose first 12 hex digits the straight pair "
+                             "model Name carries (`<topology>-<sep>um-<hash12>`); default: the record form `<topology>-<sep>um`")
     parser.add_argument("--axisymmetric-radius", type=float, default=0.0,
                         help="curved coupon: inner edge radius rho (um) in the (r, z) half-plane "
                              "(0 = straight); the mesh must be placed the same way")
@@ -804,6 +826,7 @@ def main():
             args.substrate_permittivity,
             interface_layers,
             args.local_pieces,
+            args.requirement_hash,
         )
     )
 
