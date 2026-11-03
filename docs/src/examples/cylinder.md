@@ -168,6 +168,16 @@ for the ``\text{TE}_{011}`` mode is shown below.
 </p>
 ```
 
+The configuration file
+[`cavity_sensitivity.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_sensitivity.json)
+solves the cavity with impedance walls at a lower order, and computes the derivatives of the
+frequencies of the ``\text{TM}_{010}`` and ``\text{TM}_{011}`` modes and of the quality
+factor of the ``\text{TM}_{010}`` mode with respect to the geometry (see
+[Shape and Material Sensitivities](../features/sensitivity.md)). Their derivatives with
+respect to the radius and the height agree with the analytic ones,
+``a\,\partial f/\partial a = -f`` for the ``\text{TM}_{010}`` mode for example, to the
+discretization error.
+
 ### Mesh convergence
 
 The effect of mesh size can be investigated for the cylindrical cavity resonator using

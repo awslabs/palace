@@ -77,6 +77,12 @@ public:
   std::unique_ptr<ShapeDerivativeOperator> Assemble() const;
 };
 
+// Compute the gradient gr + i gi of xᵀ (R + i I) x for a complex true DOF vector x, from
+// the derivatives dR and dI of the real forms R and I.
+void GetComplexShapeGradient(const ShapeDerivativeOperator &dR,
+                             const ShapeDerivativeOperator &dI, const ComplexVector &x,
+                             Vector &gr, Vector &gi);
+
 }  // namespace palace
 
 #endif  // PALACE_FEM_SHAPE_DERIVATIVE_FORM_HPP

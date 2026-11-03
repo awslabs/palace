@@ -224,7 +224,9 @@ enum class InactivePortMode : char
 // Objectives of sensitivities.
 enum class SensitivityObjective : char
 {
-  CAPACITANCE
+  CAPACITANCE,
+  FREQUENCY,
+  QUALITY_FACTOR
 };
 
 }  // namespace palace

@@ -483,9 +483,16 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
         {"MaterialProperties", true}};
     CHECK(ValidateConfig(sensitivity, "Sensitivity").empty());
 
-    // A capacitance needs its terminals, and a box both of its corners.
+    // A capacitance needs its terminals, an eigenmode objective its mode, and a box both
+    // of its corners.
     json missing_terminals = {{"Objectives", {{{"Index", 1}, {"Type", "Capacitance"}}}}};
     CHECK(!ValidateConfig(missing_terminals, "Sensitivity").empty());
+    json eigenmode = {{"Objectives",
+                       {{{"Index", 1}, {"Type", "Frequency"}, {"Mode", 1}},
+                        {{"Index", 2}, {"Type", "QualityFactor"}, {"Mode", 2}}}}};
+    CHECK(ValidateConfig(eigenmode, "Sensitivity").empty());
+    eigenmode["Objectives"][1].erase("Mode");
+    CHECK(!ValidateConfig(eigenmode, "Sensitivity").empty());
     sensitivity["Shape"].erase("BoundingBoxMax");
     CHECK(!ValidateConfig(sensitivity, "Sensitivity").empty());
   }
