@@ -122,7 +122,11 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # v5 (idfix covfix, decisions 1125 / 1126 (4) / 1128 / 1129): the v3 fit re-run with the corrected reader (the Total row, the F2
 # owner credit, UnprobedModels applied, the two partitions): the fitted numbers + LOO identical to v3; median_g and every run's
 # gap term move (the band file's "note" says which and why). v2 / v3 kept.
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v5.json")
+# v6 (fix round P1; DESIGN-v3 s7; decisions 1230 / 1233 (6) / 1236): the ES block re-fit on the 20 v5 inputs + the 8 stage-E ES windows
+# (W31 excluded, named) with the v2 reader, the candidate M3 and the 0.85 UNCALIBRATED rule (M0 on every Type; the C band holds the
+# measured +0.15..+0.33); the Maxwell block UNCALIBRATED (the 12 PROXY inputs: best unwidened LOO 10 / 12 = 0.833 < 0.85 -> LOW)
+# until the ENERGY-form re-fit v6.1 (P0's PatchEnergy-ON runs). The records: readiness-20261029/fixround/P1/bands/records-v6.json.
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v6.json")
 # v2 of the reader (fix round P1, decisions 1209 / 1230 / 1233 (2); DESIGN-v3 s2 2A + s6): the ES rows read PER SOURCE
 # (select_source; the multi-source union), the F2 owner credit CAPPED at the dropped coupons' in-box energy, the uncredited
 # remainder printed as Unclaimed (unattributed), the no-energy RAW classes' ESTIMATE rows, the measured `unpatched` label.
@@ -1338,7 +1342,8 @@ def class_predictors(lengths_t):
 
 
 def predict_bias(band_t, predictors):
-    """b_t(x) for the selected model: M0 beta0; M1 beta0 + beta1 x last step; M2 beta0 + beta1 sec + beta2 corner."""
+    """b_t(x) for the selected model: M0 beta0; M1 beta0 + beta1 x last step; M2 beta0 + beta1 sec + beta2 corner; M3 beta0 +
+    beta1 x corner share (the corner-share trend alone; bands v6, decision 1233 (6) (b))."""
     coef = band_t.get("coefficients", {})
     model = band_t.get("model", "M0")
     b = coef.get("beta0", 0.0)
@@ -1347,6 +1352,8 @@ def predict_bias(band_t, predictors):
         b += coef.get("beta1", 0.0) * (step if step is not None else 0.0)
     elif model == "M2":
         b += coef.get("beta1", 0.0) * predictors.get("sec_share", 0.0) + coef.get("beta2", 0.0) * predictors.get("corner_share", 0.0)
+    elif model == "M3":
+        b += coef.get("beta1", 0.0) * predictors.get("corner_share", 0.0)
     return b
 
 
@@ -1367,9 +1374,14 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
         lad = ladder_types.get(t, {})
         pred = class_predictors(lengths["types"].get(t))
         pred["last_step_pt"] = lad.get("last_step_pt")
-        row = {"calibrated": cal is not None, "predictors": pred}
+        row = {"calibrated": cal is not None and not cal.get("uncalibrated"), "predictors": pred}
         if cal is None:
             row["note"] = f"no calibration for {family} / {t}"
+            out[t] = row
+            continue
+        if cal.get("uncalibrated"):
+            row["note"] = f"UNCALIBRATED {family} / {t} (bands v6 rule (5)): {cal.get('reason')}"
+            row["uncalibrated"] = True
             out[t] = row
             continue
         b = predict_bias(cal, pred)
@@ -1446,7 +1458,9 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
                     "median_residual_pt": cal.get("median_residual_pt")})
         out[t] = row
     c = types_cal.get("C")
-    if c:
+    if c and c.get("uncalibrated"):
+        out["C"] = {"calibrated": False, "uncalibrated": True, "note": f"UNCALIBRATED {family} / C (bands v6 rule (5)): {c.get('reason')}"}
+    elif c:
         # DESIGN 5.5: C gets the M0 band (coverage_calibration.py fits C with M0 only); the band printed IS the band
         # validated: beta0 (the median) +- H x widened. A C entry of another model is a calibration-file error.
         if c.get("model") != "M0":
@@ -1472,11 +1486,16 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
     census = (bands_family or {}).get("class_census") or {}
     reasons_low = []
     reasons_not_high = []
+    types_cal = (bands_family or {}).get("types") or {}
     for t, acc in energy["types"].items():
         column = acc["classes_share"] if not proxy else lengths["types"].get(t, {}).get("classes_share", {})
         exact = acc["exact_share"] if not proxy else lengths["types"].get(t, {}).get("models_share", {}).get("Exact", 0.0)
         if exact < HIGH_EXACT_SHARE:
             reasons_not_high.append(f"{t}: Exact share {fmt_pct(exact)} < 95 %")
+        if (types_cal.get(t) or {}).get("uncalibrated"):
+            # bands v6 rule (5) (DESIGN-v3 s7; decision 1233 (6)): a Type whose LOO coverage stayed below 0.85 is UNCALIBRATED
+            reasons_low.append(f"{t}: UNCALIBRATED Type (the band file's LOO coverage < {types_cal[t].get('uncalibrated_below')}: "
+                               f"{types_cal[t].get('reason')})")
         for cls, share in column.items():
             if share > CLASS_MATERIAL_SHARE and census.get(cls, 0) < CALIBRATED_MIN_WINDOWS:
                 reasons_low.append(f"{t}: UNCALIBRATED class {cls} {fmt_pct(share)} > 5 % (n_c = {census.get(cls, 0)})")
@@ -1517,13 +1536,14 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
 
 
 def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder_dir=None, reference_order=None,
-                 ma_reading="raw", label=None, port_form=None, near_pairs_path=None, source=None, all_sources=True):
-    """The full report (dict) for one run. Raises MissingInput when a required input is absent.
+                 ma_reading="raw", label=None, port_form=None, near_pairs_path=None, source=None, all_sources=True, palace_json=None):
+    """The full report (dict) for one run. Raises MissingInput when a required input is absent. `palace_json`: a substitute for
+    postpro/palace.json (the ModelCatalog + Problem.DegreesOfFreedom extracted from a run whose palace.json was not kept locally).
     `source` (v2; decision 1209): the ES source whose rows the report's blocks read (default the FIRST source = the single-
     source form of record). With `all_sources` an ES run of several sources also carries `sources` (every source's block
     A ENERGY / block C / label) and `source_union` (the per-Type ranges and the FAIL-CLOSED band: every source in band)."""
     config = read_json(os.path.join(postpro, "config_resolved.json"))
-    palace = read_json(os.path.join(postpro, "palace.json"))
+    palace = read_json(palace_json or os.path.join(postpro, "palace.json"))
     kind = solver_kind(config)
     family = "ES" if kind == "ES" else "Maxwell"
     interfaces = load_interfaces(config)
@@ -1596,7 +1616,8 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     if all_sources and len(sources) > 1:
         report["sources"], report["source_union"] = multi_source_blocks(
             postpro, manifest_path, sources, report, bands=bands, discovery_path=discovery_path, ladder_dir=ladder_dir,
-            reference_order=reference_order, ma_reading=ma_reading, label=label, port_form=port_form, near_pairs_path=near_pairs_path)
+            reference_order=reference_order, ma_reading=ma_reading, label=label, port_form=port_form, near_pairs_path=near_pairs_path,
+            palace_json=palace_json)
     return report
 
 
@@ -1873,7 +1894,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("postpro", nargs="?", help="the run's postpro directory (omit with --preflight)")
     parser.add_argument("--manifest", required=True, help="the preflight manifest surface-response-requirements.json")
-    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v5.json)")
+    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v6.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
     parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")
@@ -1884,7 +1905,8 @@ def main(argv=None):
     parser.add_argument("--ma-reading", choices=("raw", "sharp"), default="raw",
                         help="sharp = the MA_sharp transformation (thin_ma_sharp) is applied to this run's reading")
     parser.add_argument("--preflight", action="store_true", help="the preflight-only form (manifest + palace.json)")
-    parser.add_argument("--palace-json", help="palace.json of the preflight (optional with --preflight)")
+    parser.add_argument("--palace-json", help="palace.json of the preflight (optional with --preflight), or a substitute for postpro/palace.json "
+                                              "(the ModelCatalog + Problem.DegreesOfFreedom) on the full form")
     parser.add_argument("--near-pairs", help="the geometric_near_pairs.py record of the run's library (CorrectionDifference per in-band pair; the pairs over the 2 %% bar named)")
     parser.add_argument("--label", help="the run's name in the report")
     parser.add_argument("--source", type=int, help="ES: the source whose rows the report's blocks read (default: the first source)")
@@ -1902,7 +1924,7 @@ def main(argv=None):
             bands = None if args.no_bands else load_bands(args.bands)
             report = build_report(args.postpro, args.manifest, bands, args.discovery, args.ladder_run, args.reference_order,
                                   args.ma_reading, args.label, args.port_form, args.near_pairs, source=args.source,
-                                  all_sources=not args.single_source)
+                                  all_sources=not args.single_source, palace_json=args.palace_json)
             out_dir = args.output or args.postpro
     except MissingInput as exc:
         print(f"coverage_report: MISSING INPUT {exc}", file=sys.stderr)

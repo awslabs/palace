@@ -1261,9 +1261,12 @@ class TestStageERecordsV2(unittest.TestCase):
         if not os.path.isfile(record) or not os.path.isfile(STAGE_E_NEAR_PAIRS):
             self.skipTest("the W06 predicted report of record is not present")
         old = _load(record)
-        if "v5" not in str(old.get("bands", {}).get("version")) or "v5" not in cr.DEFAULT_BANDS:
-            self.skipTest("the report of record and the default bands are not both v5")
-        new = self.report("W06", near_pairs_path=STAGE_E_NEAR_PAIRS)
+        if "v5" not in str(old.get("bands", {}).get("version")):
+            self.skipTest("the report of record is not a v5 report")
+        v5 = os.path.join(os.path.dirname(os.path.abspath(cr.__file__)), "data", "coverage_bands_v5.json")
+        manifest = os.path.join(STAGE_E_MANIFESTS, "W06-new-s2-r1p9-v3-k-2d-E", "postpro", "surface-response-requirements.json")
+        new = cr.build_report(os.path.join(STAGE_E, "thin", "runs", "W06-thin-corr", "postpro"), manifest, cr.load_bands(v5),
+                              near_pairs_path=STAGE_E_NEAR_PAIRS)
         self.assertEqual(new["tool"], "coverage_report.py v2")
         self.assertEqual((new["source"], new["sources_in_run"]), (1, [1]))
         self.assertNotIn("sources", new)
