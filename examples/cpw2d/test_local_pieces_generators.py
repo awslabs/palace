@@ -342,3 +342,32 @@ class StraightFamilyNameRule(unittest.TestCase):
         self.assertNotIn("--requirement-hash", self.BUILDER.pair_response_command(args, 1.0, None, Path("/tmp/x")))
         with self.assertRaises(ValueError):
             self.BUILDER.requirement_hashes(types.SimpleNamespace(requirement_hash=["corner:1.0=abc"]))
+
+    def test_straight_cache_spec_carries_the_hashes_only_when_a_coupon_has_one(self):
+        """Review d1230 MINOR-2 / decision 1239 Q-B (a): the straight-family cache fingerprint reads the requirement hashes the Name
+        rule writes, so a hashed build gets its own cache root; a record-era (hash-less) spec is byte-identical to before."""
+        args = types.SimpleNamespace(matching_radius=1.9, orders=[2], mesh_order=2, basis_size=6, samples=12, coupon_depth=1.0,
+                                     straight_lc_fine=0.01, straight_lc_far=0.5, min_process_feature_elements=4)
+        parameters = {"metal_thickness": 0.1, "overetch": 0.05}
+        record_era = [{"Topology": "DifferentConductorGap", "Geometry": {"Separation": 3.0}, "BoundaryCondition": {"Type": "PEC"}},
+                      {"Topology": "IsolatedEdge", "Geometry": {}, "BoundaryCondition": {"Type": "PEC"}}]
+        spec_record = PLANNER.straight_spec(record_era, args, parameters, local_pieces=False)
+        self.assertNotIn("RequirementHashes", spec_record)
+        self.assertNotIn("LocalPieces", spec_record)
+        hashed = [dict(record_era[0], Hash="729ca8684d87" + "0" * 52, DeviceEdgeLength=515.0),
+                  dict(record_era[0], Geometry={"Separation": 3.0000012}, Hash="a11f82ccc415" + "0" * 52, DeviceEdgeLength=6193.0),
+                  record_era[1]]
+        spec_hashed = PLANNER.straight_spec(hashed, args, parameters, local_pieces=False)
+        self.assertEqual(spec_hashed["RequirementHashes"],
+                         {"different-conductor-gaps:3.0": "729ca8684d87", "different-conductor-gaps:3.0000012": "a11f82ccc415"})
+        without = {key: value for key, value in spec_hashed.items() if key != "RequirementHashes"}
+        # the two specs differ by that key and by the second (twin) coupon only: strip it and the rest is the record-era spec
+        without["Coupons"] = [c for c in without["Coupons"] if c["Geometry"] != {"Separation": 3.0000012}]
+        self.assertEqual(without, spec_record)
+        self.assertNotEqual(PLANNER.fingerprint(spec_hashed), PLANNER.fingerprint(spec_record))
+        # the same hashed coupons with a changed hash -> a different cache root; the same hashes -> the same root
+        rehashed = [dict(hashed[0], Hash="ffffffffffff" + "0" * 52)] + hashed[1:]
+        self.assertNotEqual(PLANNER.fingerprint(PLANNER.straight_spec(rehashed, args, parameters, local_pieces=False)),
+                            PLANNER.fingerprint(spec_hashed))
+        self.assertEqual(PLANNER.fingerprint(PLANNER.straight_spec(list(hashed), args, parameters, local_pieces=False)),
+                         PLANNER.fingerprint(spec_hashed))

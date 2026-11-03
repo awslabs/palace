@@ -1169,6 +1169,19 @@ def straight_spec(coupons, args, parameters, local_pieces=None):
         ),
     }
     add_local_pieces_form(spec, local_pieces)
+    add_requirement_hashes(spec, coupons)
+    return spec
+
+
+def add_requirement_hashes(spec, coupons):
+    """Fix round R-10 (review d1230 MINOR-2; decision 1239 Q-B (a)): the straight-family cache fingerprint carries the requirement
+    hashes the Name rule writes (straight_requirement_hashes: the F-22 representative's 12-hex hash per (topology, separation)), so
+    a NEW hashed build never reuses a completed cache of the same spec whose SelectedModels carry the record-form Names; the key is
+    added ONLY when a coupon carries a Hash, so every record-era spec (and its cache root) stays byte-identical."""
+    hashes = straight_requirement_hashes(coupons)
+    if hashes:
+        spec["RequirementHashes"] = {f"{topology}:{separation!r}": digest[:12]
+                                     for (topology, separation), digest in sorted(hashes.items())}
     return spec
 
 
