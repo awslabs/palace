@@ -6,10 +6,9 @@
 
 #include <array>
 #include <filesystem>
-#include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -46,6 +45,7 @@ private:
 
 public:
   SensitivityExport(const IoData &iodata, const Mesh &mesh);
+  ~SensitivityExport();
 
   // Whether gradients with respect to the node positions are exported.
   bool HasShape() const { return shape; }

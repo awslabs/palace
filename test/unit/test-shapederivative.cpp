@@ -25,7 +25,8 @@ namespace
 
 // Load a test mesh with alternating domain and boundary attributes. Its nodes are moved by
 // a smooth map, so that the elements are not affine (and are curved for high-order nodes).
-std::unique_ptr<Mesh> LoadMesh(MPI_Comm comm, const std::string &name)
+// With amr, it is refined nonconformally, with hanging nodes.
+std::unique_ptr<Mesh> LoadMesh(MPI_Comm comm, const std::string &name, bool amr)
 {
   mfem::Mesh smesh(TestMeshPath(name), 1, 1);
   smesh.EnsureNodes();
@@ -54,8 +55,17 @@ std::unique_ptr<Mesh> LoadMesh(MPI_Comm comm, const std::string &name)
           0.02 * std::sin(1.3 * x[(d + 1) % dim] + 0.7 * x[(d + 2) % dim] + d);
     }
   }
+  if (amr)
+  {
+    smesh.EnsureNCMesh(true);
+  }
   REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
-  return std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, smesh));
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+  if (amr)
+  {
+    pmesh->RandomRefinement(0.5);
+  }
+  return std::make_unique<Mesh>(std::move(pmesh));
 }
 
 // A piecewise constant coefficient on the domain or boundary attributes of the mesh, with
@@ -156,9 +166,9 @@ enum class FormType
   BoundaryMass
 };
 
-void TestShapeDerivative(const std::string &mesh_name, int order, FormType type)
+void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, FormType type)
 {
-  auto mesh = LoadMesh(Mpi::World(), mesh_name);
+  auto mesh = LoadMesh(Mpi::World(), mesh_name, amr);
   const int dim = mesh->Dimension();
   fem::DefaultIntegrationOrder::p_trial = order;
   fem::DefaultIntegrationOrder::q_order_jac = true;
@@ -264,7 +274,7 @@ void TestShapeDerivative(const std::string &mesh_name, int order, FormType type)
     MoveNodes(*mesh, nodal_fespace, V, h);
     return (ap - am) / (2.0 * h);
   };
-  const double h = 1.0e-3;
+  const double h = 2.5e-4;
   const double fd = (4.0 * CentralDifference(0.5 * h) - CentralDifference(h)) / 3.0;
   const double dv = Contract(V);
   INFO("a = " << a0 << ", g ⋅ V = " << dv << ", finite difference = " << fd);
@@ -278,12 +288,18 @@ TEST_CASE("Shape derivatives of H1 forms", "[shapederivative][Serial][Parallel]"
   auto mesh =
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "fichera-hex.mesh",
                "fichera-tet.mesh", "fichera-mixed-p2.mesh", "tinyzoo-3d.mesh");
+  auto amr = GENERATE(false, true);
+  if (amr && std::string(mesh) == "tinyzoo-3d.mesh")
+  {
+    return;  // The forward forms are NaN on nonconforming refinements of its pyramid
+  }
   auto order = GENERATE(1, 2, 3);
   auto type =
       GENERATE(FormType::Diffusion, FormType::DiffusionIsotropic,
                FormType::DiffusionNonsymmetric, FormType::Mass, FormType::BoundaryMass);
-  INFO("Mesh: " << mesh << ", order: " << order << ", form: " << static_cast<int>(type));
-  TestShapeDerivative(mesh, order, type);
+  INFO("Mesh: " << mesh << ", AMR: " << amr << ", order: " << order
+                << ", form: " << static_cast<int>(type));
+  TestShapeDerivative(mesh, amr, order, type);
 }
 
 }  // namespace palace

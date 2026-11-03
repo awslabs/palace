@@ -8,6 +8,7 @@
 #include <complex>
 #include <cstdint>
 #include <limits>
+#include <vector>
 #include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/printf.h>
@@ -360,6 +361,23 @@ public:
   {
     MPI_Allgatherv(sendbuf, sendcount, mpi::DataType<T>(), recvbuf, recvcounts, displs,
                    mpi::DataType<T>(), comm);
+  }
+
+  // Gather the values of all processes on the root, in rank order (empty elsewhere).
+  template <typename T>
+  static std::vector<T> GatherOnRoot(const std::vector<T> &local, MPI_Comm comm)
+  {
+    int count = static_cast<int>(local.size());
+    std::vector<int> counts(Root(comm) ? Size(comm) : 0), displs(counts.size(), 0);
+    MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+    for (std::size_t p = 1; p < counts.size(); p++)
+    {
+      displs[p] = displs[p - 1] + counts[p - 1];
+    }
+    std::vector<T> global(counts.empty() ? 0 : displs.back() + counts.back());
+    MPI_Gatherv(local.data(), count, mpi::DataType<T>(), global.data(), counts.data(),
+                displs.data(), mpi::DataType<T>(), 0, comm);
+    return global;
   }
 
   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.
