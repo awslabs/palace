@@ -32,13 +32,14 @@ namespace
 
 // A unit cube with two dielectrics, the upper one anisotropic. Terminals 1 and 2 are the
 // faces z = 0 and z = 1, the faces y = 0 and y = 1 are grounded, and the others have zero
-// charge. The nodes are moved by a smooth map, so the elements are curved.
+// charge. The nodes are moved by a smooth map, so the elements are curved. With amr, the
+// mesh is refined nonconformally, with hanging nodes.
 struct Problem
 {
   IoData iodata;
   std::vector<std::unique_ptr<Mesh>> mesh;
 
-  Problem(mfem::Element::Type type, int order) : iodata(Units(1.0, 1.0))
+  Problem(mfem::Element::Type type, int order, bool amr) : iodata(Units(1.0, 1.0))
   {
     iodata.model.Lc = 1.0;
     iodata.problem.type = ProblemType::ELECTROSTATIC;
@@ -81,8 +82,16 @@ struct Problem
     }
     iodata.NondimensionalizeInputs(smesh);
     iodata.CheckConfiguration();
-    mesh.push_back(
-        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *smesh)));
+    if (amr)
+    {
+      smesh->EnsureNCMesh(true);
+    }
+    auto pmesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *smesh);
+    if (amr)
+    {
+      pmesh->RandomRefinement(0.5);
+    }
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
   }
 };
 
@@ -134,8 +143,9 @@ TEST_CASE("Electrostatic capacitance sensitivities", "[sensitivity][Serial][Para
   // differences of the solved capacitances on moved meshes.
   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
   auto order = GENERATE(1, 2);
-  INFO("Element type: " << type << ", order: " << order);
-  Problem problem(type, order);
+  auto amr = GENERATE(false, true);
+  INFO("Element type: " << type << ", order: " << order << ", AMR: " << amr);
+  Problem problem(type, order, amr);
   auto &mesh = *problem.mesh[0];
 
   LaplaceOperator laplace_op(problem.iodata, problem.mesh);
@@ -200,7 +210,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Sensitivity export",
   // The exported gradients of the capacitances satisfy the exact discrete identities: zero
   // for translations, and C for a dilation, since C scales with length. So does the sum of
   // the derivatives with respect to the permittivities.
-  Problem problem(mfem::Element::HEXAHEDRON, 2);
+  auto amr = GENERATE(false, true);
+  INFO("AMR: " << amr);
+  Problem problem(mfem::Element::HEXAHEDRON, 2, amr);
   problem.iodata.sensitivity.shape.emplace().boundary_tags = true;
   LaplaceOperator laplace_op(problem.iodata, problem.mesh);
   const auto V = SolveTerminals(problem.iodata, laplace_op);
