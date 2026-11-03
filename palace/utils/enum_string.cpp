@@ -153,7 +153,9 @@ PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
 PALACE_ENUM_STRING_DEFINE(SensitivityObjective,
-                          {{SensitivityObjective::CAPACITANCE, "Capacitance"}})
+                          {{SensitivityObjective::CAPACITANCE, "Capacitance"},
+                           {SensitivityObjective::FREQUENCY, "Frequency"},
+                           {SensitivityObjective::QUALITY_FACTOR, "QualityFactor"}})
 
 #undef PALACE_ENUM_STRING_DEFINE
 

@@ -1141,9 +1141,35 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     CHECK_THROWS(
         config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Capacitance"}}));
     auto config = Config({{"Objectives", objectives}});
-    config["Problem"]["Type"] = "Magnetostatic";
+    config["Problem"]["Type"] = "Eigenmode";
     CHECK_THROWS_WITH(IoData(config, false),
-                      ContainsSubstring("only available for electrostatic"));
+                      ContainsSubstring("requires an electrostatic problem"));
+  }
+
+  SECTION("Eigenmode objectives")
+  {
+    auto config = Config({{"Objectives",
+                           {{{"Index", 1}, {"Type", "Frequency"}, {"Mode", 2}},
+                            {{"Index", 2}, {"Type", "QualityFactor"}, {"Mode", 1}}}}});
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}}};
+    config["Solver"] = {{"Eigenmode", {{"N", 2}, {"Target", 1.0}}}};
+    IoData iodata(config, false);
+    const auto &objectives = iodata.sensitivity.objectives;
+    REQUIRE(objectives.size() == 2);
+    CHECK(objectives.at(1).type == SensitivityObjective::FREQUENCY);
+    CHECK(objectives.at(1).mode == 2);
+    CHECK(objectives.at(2).type == SensitivityObjective::QUALITY_FACTOR);
+    CHECK(objectives.at(2).mode == 1);
+
+    using Catch::Matchers::ContainsSubstring;
+    config["Sensitivity"]["Objectives"][0]["Mode"] = 3;
+    CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("refers to mode 3"));
+    config["Problem"]["Type"] = "Electrostatic";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("requires an eigenmode problem"));
+    CHECK_THROWS(
+        config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Frequency"}}));
   }
 }
 
