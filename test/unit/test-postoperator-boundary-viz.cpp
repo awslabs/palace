@@ -812,7 +812,10 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "[postoperator][boundary-viz][Parallel]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
-  REQUIRE(Mpi::Size(comm) == 2);
+  if (Mpi::Size(comm) != 2)
+  {
+    SKIP("Needs exactly two processes");
+  }
 
   // Two disconnected tetrahedra are assigned one per rank, while the only boundary
   // element belongs to rank zero. This models a selected boundary surface which has no
