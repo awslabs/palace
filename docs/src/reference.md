@@ -2218,9 +2218,11 @@ operator directly.
     change of the sheet (kinetic) inductance with the metal thickness enters the corrected
     stiffness or mass. Consequently every output derived from the self-consistent corrected
     field is NOT validated and can be biased: the corrected FREQUENCIES / eigenvalues
-    (`f corrected (GHz)` of the eigenmode output), the self-consistent columns of
-    `surface-Q-corrected.csv` (normalization energies, interface energies, participations,
-    quality factors) and the saved `E_corrected_real` / `E_corrected_imag` fields. The
+    (`f corrected (GHz)` of the eigenmode console output; `Re{f self-consistent} (GHz)` /
+    `Im{f self-consistent} (GHz)` in `surface-response-confidence.csv`), the self-consistent
+    columns of `surface-Q-corrected.csv` (normalization energies, interface energies,
+    participations, quality factors) and the saved `E_corrected_real` / `E_corrected_imag`
+    fields (and `D_corrected_real` / `D_corrected_imag` when flux recovery runs). The
     ordinary outputs (every port and S-parameter quantity, `surface-Q.csv`, the saved
     `E` / `B` fields, the error indicator and the AMR sequence) are the raw thin-metal
     result and are not touched by the correction. A quasi-TEM estimate, not yet confirmed
