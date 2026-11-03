@@ -303,9 +303,9 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Base class for libCEED-based integrators of the derivative of a bilinear form a(u, w)
-// with respect to the positions of the mesh nodes, for given fields u and w. Each has the
-// coefficient of the integrator whose form it differentiates.
+// Base class for libCEED-based integrators of the derivative of a form a(u, w) with respect
+// to the positions of the mesh nodes, for given fields u and w. Each has the coefficient of
+// the integrator whose form it differentiates.
 class ShapeDerivativeIntegrator
 {
 protected:
@@ -347,6 +347,46 @@ public:
 // Integrator for the shape derivative of a(u, v) = (Q u, v) for scalar H1 elements, on
 // domain or boundary elements (MassIntegrator).
 class MassShapeIntegrator : public ShapeDerivativeIntegrator
+{
+public:
+  using ShapeDerivativeIntegrator::ShapeDerivativeIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction restr, CeedBasis basis, CeedVector u,
+                CeedVector w, CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                CeedOperator *op) const override;
+};
+
+// Integrator for the shape derivative of a(u, v) = (Q u, v) for H(curl) elements, on
+// domain or boundary elements (VectorFEMassIntegrator).
+class VectorFEMassShapeIntegrator : public ShapeDerivativeIntegrator
+{
+public:
+  using ShapeDerivativeIntegrator::ShapeDerivativeIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction restr, CeedBasis basis, CeedVector u,
+                CeedVector w, CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                CeedOperator *op) const override;
+};
+
+// Integrator for the shape derivative of a(u, v) = (Q curl u, curl v) for H(curl)
+// elements, on domain or boundary elements (CurlCurlIntegrator).
+class CurlCurlShapeIntegrator : public ShapeDerivativeIntegrator
+{
+public:
+  using ShapeDerivativeIntegrator::ShapeDerivativeIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction restr, CeedBasis basis, CeedVector u,
+                CeedVector w, CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                CeedOperator *op) const override;
+};
+
+// Integrator for the shape derivative of the linear form (f, v) for H(curl) elements on the
+// boundary of a 3D mesh, with f constant on each attribute (VectorFEBoundaryLFIntegrator).
+// The vector f is the first column of the coefficient, and the field u is unused.
+class VectorFEBoundaryLFShapeIntegrator : public ShapeDerivativeIntegrator
 {
 public:
   using ShapeDerivativeIntegrator::ShapeDerivativeIntegrator;

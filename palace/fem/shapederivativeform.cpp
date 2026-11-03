@@ -85,8 +85,9 @@ std::unique_ptr<ShapeDerivativeOperator> ShapeDerivativeForm::Assemble() const
               "Shape derivatives require a mesh with continuous nodes (periodic meshes are "
               "not supported)!");
   MFEM_VERIFY(fespace.GetVDim() == 1 &&
-                  dynamic_cast<const mfem::H1_FECollection *>(&fespace.GetFEColl()),
-              "Shape derivatives are only available for scalar H1 spaces!");
+                  (dynamic_cast<const mfem::H1_FECollection *>(&fespace.GetFEColl()) ||
+                   dynamic_cast<const mfem::ND_FECollection *>(&fespace.GetFEColl())),
+              "Shape derivatives are only available for scalar H1 and H(curl) spaces!");
 
   std::unique_ptr<ShapeDerivativeOperator> sd_op(
       new ShapeDerivativeOperator(fespace, *nodal_fespace));

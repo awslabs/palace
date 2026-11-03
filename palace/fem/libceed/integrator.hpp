@@ -72,9 +72,10 @@ void AssembleCeedInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
                               CeedElemRestriction test_restr, CeedBasis interp_basis,
                               CeedOperator *op, CeedOperator *op_t);
 
-// Construct a libCEED operator for the derivative of a bilinear form a(u, w) with respect
-// to the positions of the mesh nodes. The fields u and w are passive inputs with the given
-// restriction and basis, and the output is on the mesh nodal restriction and basis.
+// Construct a libCEED operator for the derivative of a form a(u, w) with respect to the
+// positions of the mesh nodes. The fields u and w are passive inputs with the given
+// restriction and basis (u is omitted if info.trial_ops has no evaluation mode), and the
+// output is on the mesh nodal restriction and basis.
 void AssembleCeedShapeIntegrator(const CeedQFunctionInfo &info, void *ctx,
                                  std::size_t ctx_size, Ceed ceed, CeedVector u,
                                  CeedVector w, CeedElemRestriction restr, CeedBasis basis,

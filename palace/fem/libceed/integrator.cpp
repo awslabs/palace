@@ -578,6 +578,10 @@ void AssembleCeedShapeIntegrator(const CeedQFunctionInfo &info, void *ctx,
     PalaceCeedCall(
         ceed, CeedQFunctionAddInput(apply_qf, "geom_data", geom_data_size, CEED_EVAL_NONE));
   }
+  if (info.trial_ops & EvalMode::Weight)
+  {
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "q_w", 1, CEED_EVAL_WEIGHT));
+  }
   AddQFunctionActiveInputs(info.trial_ops, ceed, basis, apply_qf, "u");
   AddQFunctionActiveInputs(info.test_ops, ceed, basis, apply_qf, "w");
   {
@@ -595,6 +599,11 @@ void AssembleCeedShapeIntegrator(const CeedQFunctionInfo &info, void *ctx,
 
   PalaceCeedCall(ceed, CeedOperatorSetField(*op, "geom_data", geom_data_restr,
                                             CEED_BASIS_NONE, geom_data));
+  if (info.trial_ops & EvalMode::Weight)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "q_w", CEED_ELEMRESTRICTION_NONE, basis,
+                                              CEED_VECTOR_NONE));
+  }
   AddOperatorActiveInputFields(info.trial_ops, ceed, restr, basis, *op, "u", u);
   AddOperatorActiveInputFields(info.test_ops, ceed, restr, basis, *op, "w", w);
   PalaceCeedCall(ceed, CeedOperatorSetField(*op, "grad_x", mesh_restr, mesh_basis,

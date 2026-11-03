@@ -17,10 +17,9 @@ namespace palace
 class FiniteElementSpace;
 
 //
-// The derivative of a bilinear form a(u, w) with respect to the positions of the mesh
-// nodes: for fields u and w, the gradient g = ∂a(u, w)/∂X on the true DOFs of the mesh
-// nodal space, so that a displacement V of the nodes changes a(u, w) by g ⋅ V to first
-// order.
+// The derivative of a form a(u, w) with respect to the positions of the mesh nodes: for
+// fields u and w, the gradient g = ∂a(u, w)/∂X on the true DOFs of the mesh nodal space, so
+// that a displacement V of the nodes changes a(u, w) by g ⋅ V to first order.
 //
 class ShapeDerivativeOperator
 {
@@ -50,9 +49,9 @@ public:
 };
 
 //
-// Integrators of the derivative of a bilinear form with respect to the positions of the
-// mesh nodes, one for each integrator of the form (see fem/integrator.hpp). The form must
-// be on a scalar H1 space of a mesh with continuous nodes.
+// Integrators of the derivative of a form with respect to the positions of the mesh nodes,
+// one for each integrator of the form (see fem/integrator.hpp). The form must be on a
+// scalar H1 or H(curl) space of a mesh with continuous nodes.
 //
 class ShapeDerivativeForm
 {
