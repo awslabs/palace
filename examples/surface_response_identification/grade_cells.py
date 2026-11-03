@@ -41,7 +41,6 @@ stored CSVs (test_grade_cells.py). Pure Python; exit 0 when the grade was writte
 import argparse
 import csv
 import json
-import math
 import os
 import re
 import sys
