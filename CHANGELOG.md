@@ -15,6 +15,15 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Bug Fixes
+
+  - Added an MFEM patch for [mfem/mfem#5717](https://github.com/mfem/mfem/pull/5717),
+    which fixes hangs and memory corruption on nonconforming meshes with triangular faces
+    when the face neighbors of some processes have only quadrilateral faces.
+    [PR 1124](https://github.com/awslabs/palace/pull/1124).
+
 ## [0.19.0] - 2026-11-02
 
 #### New Features

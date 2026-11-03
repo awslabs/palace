@@ -102,9 +102,15 @@ TEST_CASE("SurfaceConductivityOperator interior sheets",
   // "External" flag only affects the thickness correction, of the exterior attributes (it
   // does not apply to interior sheets, where it is ignored with a warning).
   auto serial_mesh = MakeInteriorBoundaryMesh();
+  if (Mpi::Size(Mpi::World()) > serial_mesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
   Mesh palace_mesh(std::move(par_mesh));
-  REQUIRE(palace_mesh.GetNE() > 0);
+  int min_ne = palace_mesh.GetNE();
+  Mpi::GlobalMin(1, &min_ne, Mpi::World());
+  REQUIRE(min_ne > 0);
   config::MaterialData material;
   material.attributes = {1};
   config::PeriodicBoundaryData periodic;
@@ -178,12 +184,18 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  if (Mpi::Size(Mpi::World()) > serial_mesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
   Mesh palace_mesh(std::move(par_mesh));
 
   // Sanity check: ParMesh's METIS partitioning must give every rank at least one element,
   // otherwise this rank contributes nothing and the [Parallel] run is misleading.
-  REQUIRE(palace_mesh.GetNE() > 0);
+  int min_ne = palace_mesh.GetNE();
+  Mpi::GlobalMin(1, &min_ne, Mpi::World());
+  REQUIRE(min_ne > 0);
 
   config::MaterialData material;
   material.attributes = {1};

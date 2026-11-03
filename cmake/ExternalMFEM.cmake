@@ -494,6 +494,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff"
   3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5
 )
+# https://github.com/mfem/mfem/pull/5717
+# All processes take part in the exchange of the face neighbor orientations of
+# nonconforming meshes with triangular faces.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5717.diff
+  "https://github.com/mfem/mfem/commit/d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff"
+  f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
