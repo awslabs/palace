@@ -152,6 +152,12 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
+PALACE_ENUM_STRING_DEFINE(MaterialProperty,
+                          {{MaterialProperty::PERMITTIVITY, "Permittivity"},
+                           {MaterialProperty::LOSS_TANGENT, "LossTan"},
+                           {MaterialProperty::CONDUCTIVITY, "Conductivity"},
+                           {MaterialProperty::PERMEABILITY, "Permeability"},
+                           {MaterialProperty::LONDON_DEPTH, "LondonDepth"}})
 PALACE_ENUM_STRING_DEFINE(SensitivityObjective,
                           {{SensitivityObjective::CAPACITANCE, "Capacitance"},
                            {SensitivityObjective::INDUCTANCE, "Inductance"},

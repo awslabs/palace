@@ -46,7 +46,9 @@ export region), and `"Objectives"`. Each objective has `"Index"`, `"Type"`, `"Va
 `"Unit"`, `"Gradient"` (the file name) and the rest of its configuration, for example
 `"Terminals"` or `"Mode"`, and the optional `"MaterialProperties"`: for each material, its `"Index"` in
 `Domains.Materials`, its `"Attributes"`, and the derivatives with respect to a relative
-change of its properties, such as `"Permittivity"` (ε ∂J/∂ε, in the objective's unit).
+change of its properties, such as `"Permittivity"` (ε ∂J/∂ε, in the objective's unit), and
+the optional `"LumpedPorts"`: for each lumped port, its `"Index"` and the derivatives with
+respect to relative changes of its `"R"`, `"L"` and `"C"`.
 Without `"Shape"` in the configuration, there are no points and no gradient files. Other
 entries are read as metadata.
 

@@ -434,11 +434,16 @@
         },
         "Shape": {
           "$ref": "#/$defs/SensitivityShape",
-          "description": "Export of the gradients of the objectives with respect to the positions of the mesh nodes in a region. Without it, only the material derivatives are computed."
+          "description": "Export of the gradients of the objectives with respect to the positions of the mesh nodes in a region. Without it, only the material and lumped port derivatives are computed."
         },
         "MaterialProperties": {
           "type": "boolean",
-          "description": "When `true`, computes the derivatives of each objective with respect to the properties of each material of [`/Domains/Materials`](@ref config-domains-materials): for electrostatic problems, a relative change of its permittivity.",
+          "description": "When `true`, computes the derivatives of each objective with respect to relative changes of the properties of each material of [`/Domains/Materials`](@ref config-domains-materials): its permittivity (electrostatic and eigenmode problems), its permeability (magnetostatic and eigenmode problems), and its loss tangent, conductivity and London depth (eigenmode problems), where nonzero.",
+          "default": false
+        },
+        "LumpedPorts": {
+          "type": "boolean",
+          "description": "When `true`, computes the derivatives of each objective of an eigenmode problem with respect to relative changes of the resistance, inductance and capacitance of each [`/Boundaries/LumpedPort`](@ref config-boundaries-lumpedport).",
           "default": false
         }
       }

@@ -1317,8 +1317,10 @@ public:
   // Export of the gradients with respect to the positions of the mesh nodes, if requested.
   std::optional<SensitivityShapeData> shape;
 
-  // Compute the derivatives with respect to the properties of each material.
+  // Compute the derivatives with respect to the properties of each material, and to the
+  // resistance, inductance and capacitance of each lumped port.
   bool material_properties = false;
+  bool lumped_ports = false;
 
   bool empty() const { return objectives.empty(); }
 

@@ -1010,7 +1010,20 @@ void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlc
   {
     dK = curlcurl_op.GetStiffnessShapeDerivative();
   }
+  std::vector<std::unique_ptr<Operator>> K_mat;
+  if (sensitivity.material_properties)
+  {
+    for (const auto &material : iodata.domains.materials)
+    {
+      K_mat.push_back(curlcurl_op.GetStiffness(material.attributes));
+    }
+  }
 
+  const auto &nd_fespace = curlcurl_op.GetNDSpace();
+  Vector u_l(nd_fespace.GetVSize()), w_l(nd_fespace.GetVSize()), y_l(nd_fespace.GetVSize());
+  u_l.UseDevice(true);
+  w_l.UseDevice(true);
+  y_l.UseDevice(true);
   const double H = iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   Vector g, t;
   for (const auto &[idx, data] : sensitivity.objectives)
@@ -1021,6 +1034,24 @@ void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlc
                             {"Terminals", data.terminals},
                             {"Value", M(i, j) * H},
                             {"Unit", "H"}};
+    if (!K_mat.empty())
+    {
+      // K scales with the inverse permeability of each material, and the excitations do not
+      // depend on it, so μ ∂M_ij/∂μ = A_jᵀ K_m A_i / (I_i I_j).
+      nd_fespace.GetProlongationMatrix()->Mult(A[i], u_l);
+      nd_fespace.GetProlongationMatrix()->Mult(A[j], w_l);
+      auto materials = nlohmann::json::array();
+      for (std::size_t m = 0; m < K_mat.size(); m++)
+      {
+        K_mat[m]->Mult(u_l, y_l);
+        const double dM =
+            linalg::Dot<Vector>(curlcurl_op.GetComm(), w_l, y_l) / (I_inc[i] * I_inc[j]);
+        materials.push_back({{"Index", m + 1},
+                             {"Attributes", iodata.domains.materials[m].attributes},
+                             {"Permeability", dM * H}});
+      }
+      entry["MaterialProperties"] = materials;
+    }
     if (dK)
     {
       dK->Mult(A[i], A[j], g);

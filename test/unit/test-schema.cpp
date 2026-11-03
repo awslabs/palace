@@ -480,7 +480,8 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     json sensitivity = {
         {"Objectives", {objective}},
         {"Shape", {{"BoundingBoxMin", {0, 0, 0}}, {"BoundingBoxMax", {1, 1, 1}}}},
-        {"MaterialProperties", true}};
+        {"MaterialProperties", true},
+        {"LumpedPorts", true}};
     CHECK(ValidateConfig(sensitivity, "Sensitivity").empty());
 
     // A capacitance needs its terminals, an eigenmode objective its mode, and a box both

@@ -39,6 +39,7 @@ PALACE_ENUM_STRING_DECL(Orthogonalization)
 PALACE_ENUM_STRING_DECL(DomainOrthogonalizationWeight)
 PALACE_ENUM_STRING_DECL(Device)
 PALACE_ENUM_STRING_DECL(InactivePortMode)
+PALACE_ENUM_STRING_DECL(MaterialProperty)
 PALACE_ENUM_STRING_DECL(SensitivityObjective)
 
 #undef PALACE_ENUM_STRING_DECL
