@@ -53,6 +53,7 @@ private:
 
   // Workspace objects for solver application.
   mutable VecType psi, rhs;
+  MPI_Comm comm;
 
 public:
   DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
@@ -73,6 +74,10 @@ public:
     y = x;
     Mult(y);
   }
+
+  // Remove the irrotational part of y with respect to an operator B close to the mass
+  // operator of the permittivity, instead of the latter, so that Gᵀ B y = 0.
+  void Mult(const OperType &B, VecType &y) const;
 };
 
 }  // namespace palace

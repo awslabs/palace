@@ -568,7 +568,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       omega[i] = GetOmega(i);
     }
-    PostprocessSensitivities(space_op, *eigen, C.get(), *M, has_A2, omega);
+    PostprocessSensitivities(space_op, *eigen, C.get(), *M, has_A2, divfree.get(), omega);
   }
 
   if (stage_eigenvectors)
@@ -635,7 +635,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 void EigenSolver::PostprocessSensitivities(
     SpaceOperator &space_op, const EigenvalueSolver &eigen, const ComplexOperator *C,
-    const ComplexOperator &M, bool has_A2,
+    const ComplexOperator &M, bool has_A2, const DivFreeSolver<ComplexVector> *divfree,
     const std::vector<std::complex<double>> &omega) const
 {
   // T(λ) = K + λ C + λ² M + A2(λ), with λ = iω, is complex symmetric, so its left
@@ -681,6 +681,30 @@ void EigenSolver::PostprocessSensitivities(
     }
     const std::complex<double> lambda = 1i * omega[m], lambda2 = lambda * lambda;
     eigen.GetEigenvector(m, x);
+    if (divfree)
+    {
+      // The projection of the eigenvalue solve makes x divergence-free with respect to the
+      // permittivity, while the eigenvector satisfies Gᵀ (T(λ) - K) x = 0 with the losses:
+      // restore its irrotational part, to which the derivatives of the forms are sensitive.
+      std::vector<std::complex<double>> a = {1.0};
+      std::vector<const ComplexOperator *> ops = {&M};
+      if (C)
+      {
+        a.push_back(1.0 / lambda);
+        ops.push_back(C);
+      }
+      std::unique_ptr<ComplexOperator> A2;
+      if (has_A2)
+      {
+        A2 = space_op.GetExtraSystemMatrix(omega[m], Operator::DIAG_ZERO);
+        if (A2)
+        {
+          a.push_back(1.0 / lambda2);
+          ops.push_back(A2.get());
+        }
+      }
+      divfree->Mult(*BuildParSumOperator(a, ops), x);
+    }
     std::complex<double> d = 2.0 * lambda * TransposeProduct(comm, M, x, y);
     if (C)
     {
