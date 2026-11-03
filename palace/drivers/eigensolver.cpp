@@ -3,10 +3,12 @@
 
 #include "eigensolver.hpp"
 
+#include <algorithm>
 #include <array>
 #include <complex>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -40,6 +42,28 @@ using namespace std::complex_literals;
 
 namespace
 {
+
+// The properties of a material which the eigenmodes depend on.
+std::vector<MaterialProperty> GetMaterialProperties(const config::MaterialData &material)
+{
+  auto IsNonzero = [](const auto &tensor)
+  { return std::ranges::any_of(tensor.s, [](double v) { return v != 0.0; }); };
+  std::vector<MaterialProperty> properties = {MaterialProperty::PERMITTIVITY};
+  if (IsNonzero(material.tandelta))
+  {
+    properties.push_back(MaterialProperty::LOSS_TANGENT);
+  }
+  if (IsNonzero(material.sigma))
+  {
+    properties.push_back(MaterialProperty::CONDUCTIVITY);
+  }
+  properties.push_back(MaterialProperty::PERMEABILITY);
+  if (material.lambda_L > 0.0)
+  {
+    properties.push_back(MaterialProperty::LONDON_DEPTH);
+  }
+  return properties;
+}
 
 // The unconjugated product xᵀ A x.
 std::complex<double> TransposeProduct(MPI_Comm comm, const ComplexOperator &A,
@@ -627,19 +651,23 @@ void EigenSolver::PostprocessSensitivities(
   x.UseDevice(true);
   y.UseDevice(true);
 
-  // The real and imaginary parts of the gradient of ω, for each mode of an objective.
-  std::map<int, std::array<Vector, 2>> domega;
-  auto GetGradient = [&](int m) -> const std::array<Vector, 2> &
+  // The derivatives of ω of a mode: the real and imaginary parts of its gradient, and its
+  // derivatives with respect to relative changes of the properties of each material and of
+  // the elements (R, L, C) of each lumped port.
+  struct ModeDerivatives
   {
-    if (auto it = domega.find(m); it != domega.end())
+    std::array<Vector, 2> shape;
+    std::vector<std::vector<std::pair<MaterialProperty, std::complex<double>>>> materials;
+    std::map<int, std::array<std::optional<std::complex<double>>, 3>> ports;
+  };
+  std::map<int, ModeDerivatives> derivatives;
+  auto GetDerivatives = [&](int m) -> const ModeDerivatives &
+  {
+    if (auto it = derivatives.find(m); it != derivatives.end())
     {
       return it->second;
     }
-    auto &g = domega[m];
-    if (!output.HasShape())
-    {
-      return g;
-    }
+    auto &dm = derivatives[m];
     for (std::size_t k = 0; k < omega.size(); k++)
     {
       if (static_cast<int>(k) != m &&
@@ -651,7 +679,7 @@ void EigenSolver::PostprocessSensitivities(
         break;
       }
     }
-    const std::complex<double> lambda = 1i * omega[m];
+    const std::complex<double> lambda = 1i * omega[m], lambda2 = lambda * lambda;
     eigen.GetEigenvector(m, x);
     std::complex<double> d = 2.0 * lambda * TransposeProduct(comm, M, x, y);
     if (C)
@@ -670,42 +698,74 @@ void EigenSolver::PostprocessSensitivities(
       d += (8.0 * (A2(h) - A2(-h)) - (A2(2.0 * h) - A2(-2.0 * h))) / (12.0 * h);
     }
 
-    // ∂(xᵀ T x)/∂X = gr + i gi.
-    const auto dT =
-        space_op.GetSystemShapeDerivative(1.0, lambda, lambda * lambda, omega[m]);
-    Vector gr, gi;
-    GetComplexShapeGradient(*dT[0], *dT[1], x, gr, gi);
-
-    // dω = -i dλ = c (gr + i gi), with c = i / xᵀ T'(λ) x.
+    // dω = -i dλ = c xᵀ ∂T x, with c = i / xᵀ T'(λ) x.
     const std::complex<double> c = 1i / d;
-    g[0] = gr;
-    g[0] *= c.real();
-    g[0].Add(-c.imag(), gi);
-    g[1] = gr;
-    g[1] *= c.imag();
-    g[1].Add(c.real(), gi);
-    return g;
+    auto Derivative = [&](const ComplexOperator *dT) -> std::complex<double>
+    { return dT ? c * TransposeProduct(comm, *dT, x, y) : 0.0; };
+    if (output.HasShape())
+    {
+      const auto dT = space_op.GetSystemShapeDerivative(1.0, lambda, lambda2, omega[m]);
+      Vector gr, gi;
+      GetComplexShapeGradient(*dT[0], *dT[1], x, gr, gi);
+      dm.shape[0] = gr;
+      dm.shape[0] *= c.real();
+      dm.shape[0].Add(-c.imag(), gi);
+      dm.shape[1] = gr;
+      dm.shape[1] *= c.imag();
+      dm.shape[1].Add(c.real(), gi);
+    }
+    if (sensitivity.material_properties)
+    {
+      for (const auto &material : iodata.domains.materials)
+      {
+        auto &dmat = dm.materials.emplace_back();
+        for (const auto property : GetMaterialProperties(material))
+        {
+          const auto dT = space_op.GetSystemMaterialDerivative(
+              property, material.attributes, 1.0, lambda, lambda2, omega[m]);
+          dmat.emplace_back(property, Derivative(dT.get()));
+        }
+      }
+    }
+    if (sensitivity.lumped_ports)
+    {
+      for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+      {
+        const auto dT = space_op.GetLumpedPortDerivatives(idx, 1.0, lambda, lambda2);
+        auto &dport = dm.ports[idx];
+        for (int e = 0; e < 3; e++)
+        {
+          if (dT[e])
+          {
+            dport[e] = Derivative(dT[e].get());
+          }
+        }
+      }
+    }
+    return dm;
   };
 
   const double GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
                      (2.0 * std::numbers::pi);
+  constexpr std::array<const char *, 3> port_elements = {"R", "L", "C"};
   for (const auto &[idx, data] : sensitivity.objectives)
   {
+    // The derivative of f = Re{ω} / 2π or Q = |ω| / 2 |Im{ω}| is ar Re{dω} + ai Im{dω}.
     const int m = data.mode - 1;
     const auto w = omega[m];
     nlohmann::json entry = {
         {"Index", idx}, {"Type", ToString(data.type)}, {"Mode", data.mode}};
+    double ar, ai, scale;
     if (data.type == SensitivityObjective::FREQUENCY)
     {
-      // f = Re{ω} / 2π.
       entry["Value"] = w.real() * GHz;
       entry["Unit"] = "GHz";
-      const auto &g = GetGradient(m);
-      output.AddObjective(std::move(entry), &g[0], GHz);
+      ar = 1.0;
+      ai = 0.0;
+      scale = GHz;
     }
     else
     {
-      // Q = |ω| / 2 |Im{ω}|.
       if (w.imag() == 0.0)
       {
         Mpi::Warning("Mode {:d} has no losses, so the quality factor of sensitivity "
@@ -716,18 +776,53 @@ void EigenSolver::PostprocessSensitivities(
       const double Q = 0.5 * std::abs(w) / std::abs(w.imag());
       entry["Value"] = Q;
       entry["Unit"] = "";
-      const auto &g = GetGradient(m);
-      Vector dQ;
-      if (output.HasShape())
-      {
-        const double ar = Q * w.real() / std::norm(w),
-                     ai = Q * (w.imag() / std::norm(w) - 1.0 / w.imag());
-        dQ = g[0];
-        dQ *= ar;
-        dQ.Add(ai, g[1]);
-      }
-      output.AddObjective(std::move(entry), output.HasShape() ? &dQ : nullptr, 1.0);
+      ar = Q * w.real() / std::norm(w);
+      ai = Q * (w.imag() / std::norm(w) - 1.0 / w.imag());
+      scale = 1.0;
     }
+    auto Objective = [&](std::complex<double> dw)
+    { return (ar * dw.real() + ai * dw.imag()) * scale; };
+    const auto &dm = GetDerivatives(m);
+    if (sensitivity.material_properties)
+    {
+      auto materials = nlohmann::json::array();
+      for (std::size_t k = 0; k < dm.materials.size(); k++)
+      {
+        nlohmann::json material = {{"Index", k + 1},
+                                   {"Attributes", iodata.domains.materials[k].attributes}};
+        for (const auto &[property, dw] : dm.materials[k])
+        {
+          material[ToString(property)] = Objective(dw);
+        }
+        materials.push_back(std::move(material));
+      }
+      entry["MaterialProperties"] = std::move(materials);
+    }
+    if (sensitivity.lumped_ports)
+    {
+      auto ports = nlohmann::json::array();
+      for (const auto &[port, dport] : dm.ports)
+      {
+        nlohmann::json p = {{"Index", port}};
+        for (int e = 0; e < 3; e++)
+        {
+          if (dport[e])
+          {
+            p[port_elements[e]] = Objective(*dport[e]);
+          }
+        }
+        ports.push_back(std::move(p));
+      }
+      entry["LumpedPorts"] = std::move(ports);
+    }
+    Vector g;
+    if (output.HasShape())
+    {
+      g = dm.shape[0];
+      g *= ar;
+      g.Add(ai, dm.shape[1]);
+    }
+    output.AddObjective(std::move(entry), output.HasShape() ? &g : nullptr, scale);
   }
   output.Write(post_dir / "sensitivity");
 }

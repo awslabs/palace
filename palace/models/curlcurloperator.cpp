@@ -644,6 +644,17 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
+std::unique_ptr<Operator>
+CurlCurlOperator::GetStiffness(const std::vector<int> &attributes) const
+{
+  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                         mat_op.GetCurlCurlInvPermeability());
+  muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(attributes));
+  BilinearForm k(GetNDSpace());
+  k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  return k.PartialAssemble();
+}
+
 std::unique_ptr<ShapeDerivativeOperator>
 CurlCurlOperator::GetStiffnessShapeDerivative() const
 {

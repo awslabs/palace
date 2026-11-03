@@ -51,17 +51,15 @@ cost is a few operator applications per objective.
 
 The [`config["Sensitivity"]`](../config/reference.md#config-sensitivity) section lists the
 objectives: capacitances and inductances by the `"Terminal"` or `"SurfaceCurrent"` indices
-of their entries, and eigenmode objectives by the index of their mode in `eig.csv`, for
-example
-`{ "Index": 1, "Type": "Frequency", "Mode": 1 }`:
+of their entries, and eigenmode objectives by the index of their mode in `eig.csv`:
 
 ```json
 "Sensitivity":
 {
   "Objectives":
   [
-    { "Index": 1, "Type": "Capacitance", "Terminals": [1, 1] },
-    { "Index": 2, "Type": "Capacitance", "Terminals": [1, 2] }
+    { "Index": 1, "Type": "Frequency", "Mode": 1 },
+    { "Index": 2, "Type": "QualityFactor", "Mode": 1 }
   ],
   "Shape":
   {
@@ -69,22 +67,35 @@ example
     "BoundingBoxMax": [5.0, 5.0, 5.0],
     "BoundaryTags": true
   },
-  "MaterialProperties": true
+  "MaterialProperties": true,
+  "LumpedPorts": true
 }
 ```
 
 `"Shape"` requests the gradients with respect to the node positions, for the nodes in a box
 (in mesh length units) and of the elements with the given domain `"Attributes"`, or of the
-whole mesh. The region must contain every node a velocity moves. `"MaterialProperties"`
-requests the derivative with respect to a relative change of the permittivity of each
-material, ``\varepsilon \, \partial C_{ij} / \partial \varepsilon``.
+whole mesh. The region must contain every node a velocity moves.
+
+`"MaterialProperties"` requests the derivatives with respect to relative changes of the
+properties of each material, such as ``\varepsilon \, \partial J / \partial \varepsilon``:
+its `"Permittivity"` (electrostatic and eigenmode simulations), its `"Permeability"`
+(magnetostatic and eigenmode simulations), and its `"LossTan"`, `"Conductivity"` and
+`"LondonDepth"` (eigenmode simulations), where nonzero. In eigenmode simulations,
+`"LumpedPorts"` requests the derivatives with respect to relative changes of the `"R"`,
+`"L"` and `"C"` of each lumped port. As the impedances per square of a port scale with its
+width-to-length ratio ``q``, they also give the derivative with respect to it:
+
+```math
+\frac{\partial J}{\partial \log q} = R \frac{\partial J}{\partial R} + L \frac{\partial J}{\partial L} - C \frac{\partial J}{\partial C}
+```
 
 ## Output
 
 The derivatives are written to the `sensitivity` folder of
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem-output):
 
-  - `sensitivity.json`, with each objective's value, unit and material derivatives;
+  - `sensitivity.json`, with each objective's value, unit, and material and lumped port
+    derivatives;
   - `points.bin`, the positions of the exported nodes in mesh length units;
   - `gradient-<index>.bin`, each objective's gradient, in its unit (F, H, GHz, or none for
     Q) per mesh length unit;
@@ -131,12 +142,14 @@ attributes, from `boundary.bin`.
   - The derivatives of an eigenvalue are defined only if it is simple. For a degenerate
     mode, *Palace* warns, and the result is for the eigenvector it computed. The quality
     factor of a lossless mode is not defined.
-  - The gradients are at fixed impedances per square of the lumped ports and at fixed
-    current densities of the surface current sources, so velocities should be rigid on
-    them, which `check_velocity` can check. For example, a dilation by ``1 + t`` scales the
-    inductances by ``(1 + t)^3`` at fixed current densities, rather than ``1 + t``. A
-    velocity must also keep each source planar, with its edges off conductors along its
-    current, for its excitation to remain compatible.
+  - The gradients are at fixed impedances per square of the lumped ports, and at fixed
+    current densities of the surface current sources. A velocity which changes the width or
+    length of a port must add the derivative with respect to its width-to-length ratio
+    above; others should be rigid on the ports and the sources, which `check_velocity` can
+    check. For example, a dilation by ``1 + t`` scales the inductances by ``(1 + t)^3`` at
+    fixed current densities, rather than ``1 + t``. A velocity must also keep each source
+    planar, with its edges off conductors along its current, for its excitation to remain
+    compatible.
   - The nodes are those of the mesh *Palace* solves on. Where *Palace* refines the input
     mesh or, for high-order meshes read from Gmsh, re-interpolates its nodes, morphing the
     input mesh by ``\mathbf{V}`` moves these nodes by the interpolant of ``\mathbf{V}``:

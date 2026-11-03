@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <random>
 #include <set>
@@ -116,8 +117,11 @@ struct EigenProblem
   IoData iodata;
   std::vector<std::unique_ptr<Mesh>> mesh;
 
-  EigenProblem(mfem::Element::Type type, int order, bool amr) : iodata(Units(1.0, 1.0))
+  EigenProblem(mfem::Element::Type type, int order, bool amr,
+               const std::function<void(IoData &)> &modify = {})
+    : iodata(Units(1.0, 1.0))
   {
+    iodata.model.L0 = 1.0;  // m, so that every term is of order one
     iodata.model.Lc = 1.0;
     iodata.problem.type = ProblemType::EIGENMODE;
     auto &lower = iodata.domains.materials.emplace_back();
@@ -148,6 +152,10 @@ struct EigenProblem
     conductivity.attributes = {5};
     conductivity.sigma = 1.0e3;
     iodata.solver.order = order;
+    if (modify)
+    {
+      modify(iodata);
+    }
     mesh = CubeMesh(iodata, type, amr);
   }
 };
@@ -365,6 +373,132 @@ TEST_CASE("Eigenmode system shape derivatives", "[sensitivity][Serial][Parallel]
   const auto adjoint = Contract(W);
   INFO("xᵀ T x = " << Form() << ", g ⋅ W = " << adjoint << ", finite difference = " << fd);
   CHECK(std::abs(adjoint - fd) <= 1.0e-7 * std::abs(fd));
+}
+
+TEST_CASE("Eigenmode system material and lumped port derivatives",
+          "[sensitivity][Serial][Parallel]")
+{
+  // The derivatives of xᵀ T(λ) x with respect to relative changes of the material
+  // properties and of the lumped port elements, against finite differences of the form with
+  // the property scaled in the configuration.
+  auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+  INFO("Element type: " << type);
+  const std::complex<double> lambda(0.05, 1.3),
+      omega = lambda / std::complex<double>(0.0, 1.0);
+  EigenProblem problem(type, 1, false);
+  SpaceOperator space_op(problem.iodata, problem.mesh);
+  std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector x(size), y(size);
+  for (int i = 0; i < size; i++)
+  {
+    x.Real()(i) = dist(gen);
+    x.Imag()(i) = dist(gen);
+  }
+  for (const int i : space_op.GetNDDbcTDofLists().back())
+  {
+    x.Real()(i) = x.Imag()(i) = 0.0;
+  }
+  auto Product = [&](const ComplexOperator &A)
+  {
+    A.Mult(x, y);
+    std::complex<double> dot = {
+        linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
+        linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
+    Mpi::GlobalSum(1, &dot, Mpi::World());
+    return dot;
+  };
+  auto CentralDifference = [&](const std::function<void(IoData &, double)> &scale)
+  {
+    auto Form = [&](double s)
+    {
+      EigenProblem scaled(type, 1, false, [&](IoData &iodata) { scale(iodata, s); });
+      SpaceOperator op(scaled.iodata, scaled.mesh);
+      auto K = op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto C = op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto M = op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto A2 = op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+      return Product(*op.GetSystemMatrix(std::complex<double>(1.0), lambda, lambda * lambda,
+                                         K.get(), C.get(), M.get(), A2.get()));
+    };
+    auto Difference = [&](double h) { return (Form(1.0 + h) - Form(1.0 - h)) / (2.0 * h); };
+    const double h = 1.0e-2;
+    return std::pair{(4.0 * Difference(0.5 * h) - Difference(h)) / 3.0,
+                     std::abs(Form(1.0))};
+  };
+  auto Check =
+      [](std::complex<double> derivative, const std::pair<std::complex<double>, double> &fd)
+  {
+    // The finite differences of the form F have a rounding error of about ε |F| / h.
+    INFO("derivative = " << derivative << ", finite difference = " << fd.first
+                         << ", |xᵀ T x| = " << fd.second);
+    CHECK(std::abs(derivative - fd.first) <=
+          1.0e-8 * std::abs(fd.first) + 1.0e-12 * fd.second);
+  };
+
+  // Each material property, as a scaling of its configuration.
+  auto Scale = [](auto &tensor, double s)
+  {
+    for (auto &v : tensor.s)
+    {
+      v *= s;
+    }
+  };
+  const std::vector<std::pair<MaterialProperty, std::vector<int>>> properties = {
+      {MaterialProperty::PERMITTIVITY, {0, 1}},
+      {MaterialProperty::LOSS_TANGENT, {0}},
+      {MaterialProperty::CONDUCTIVITY, {1}},
+      {MaterialProperty::PERMEABILITY, {0, 1}},
+      {MaterialProperty::LONDON_DEPTH, {1}}};
+  for (const auto &[property, materials] : properties)
+  {
+    for (const int k : materials)
+    {
+      INFO("Property " << static_cast<int>(property) << " of material " << k);
+      const auto dT = space_op.GetSystemMaterialDerivative(
+          property, problem.iodata.domains.materials[k].attributes, 1.0, lambda,
+          lambda * lambda, omega);
+      REQUIRE(dT);
+      Check(Product(*dT), CentralDifference(
+                              [&, property, k](IoData &iodata, double s)
+                              {
+                                auto &material = iodata.domains.materials[k];
+                                switch (property)
+                                {
+                                  case MaterialProperty::PERMITTIVITY:
+                                    Scale(material.epsilon_r, s);
+                                    break;
+                                  case MaterialProperty::LOSS_TANGENT:
+                                    Scale(material.tandelta, s);
+                                    break;
+                                  case MaterialProperty::CONDUCTIVITY:
+                                    Scale(material.sigma, s);
+                                    break;
+                                  case MaterialProperty::PERMEABILITY:
+                                    Scale(material.mu_r, s);
+                                    break;
+                                  case MaterialProperty::LONDON_DEPTH:
+                                    material.lambda_L *= s;
+                                    break;
+                                }
+                              }));
+    }
+  }
+
+  // The resistance, inductance and capacitance of the lumped port.
+  const auto dT = space_op.GetLumpedPortDerivatives(1, 1.0, lambda, lambda * lambda);
+  for (int e = 0; e < 3; e++)
+  {
+    INFO("Lumped port element " << e);
+    REQUIRE(dT[e]);
+    Check(Product(*dT[e]), CentralDifference(
+                               [e](IoData &iodata, double s)
+                               {
+                                 auto &port = iodata.boundaries.lumpedport.at(1);
+                                 (e == 0 ? port.R : (e == 1 ? port.L : port.C)) *= s;
+                               }));
+  }
 }
 
 TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Parallel]")

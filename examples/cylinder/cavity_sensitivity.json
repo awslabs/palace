@@ -80,6 +80,7 @@
         "Mode": 1
       }
     ],
-    "Shape": {}
+    "Shape": {},
+    "MaterialProperties": true
   }
 }
