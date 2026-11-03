@@ -74,6 +74,37 @@ void ShapeDerivativeOperator::Mult(const Vector &u, const Vector &w, Vector &g) 
   nodal_fespace.GetProlongationMatrix()->MultTranspose(g_l, g);
 }
 
+void GetComplexShapeGradient(const ShapeDerivativeOperator &dR,
+                             const ShapeDerivativeOperator &dI, const ComplexVector &x,
+                             Vector &gr, Vector &gi)
+{
+  // With x = xr + i xi, xᵀ (R + i I) x = xrᵀ R xr - xiᵀ R xi - xrᵀ I xi - xiᵀ I xr
+  //                                    + i (xrᵀ R xi + xiᵀ R xr + xrᵀ I xr - xiᵀ I xi).
+  const auto &xr = x.Real(), &xi = x.Imag();
+  const int size = dR.GetNodalSpace().GetTrueVSize();
+  for (auto *g : {&gr, &gi})
+  {
+    g->SetSize(size);
+    g->UseDevice(true);
+    *g = 0.0;
+  }
+  Vector t;
+  auto Add = [&t](const ShapeDerivativeOperator &op, const Vector &u, const Vector &w,
+                  double a, Vector &g)
+  {
+    op.Mult(u, w, t);
+    g.Add(a, t);
+  };
+  Add(dR, xr, xr, 1.0, gr);
+  Add(dR, xi, xi, -1.0, gr);
+  Add(dI, xi, xr, -1.0, gr);
+  Add(dI, xr, xi, -1.0, gr);
+  Add(dR, xi, xr, 1.0, gi);
+  Add(dR, xr, xi, 1.0, gi);
+  Add(dI, xr, xr, 1.0, gi);
+  Add(dI, xi, xi, -1.0, gi);
+}
+
 std::unique_ptr<ShapeDerivativeOperator> ShapeDerivativeForm::Assemble() const
 {
   const auto &mesh = fespace.GetMesh();

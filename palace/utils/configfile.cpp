@@ -1676,9 +1676,15 @@ SolverData::SolverData(const json &solver)
 SensitivityObjectiveData::SensitivityObjectiveData(const json &objective)
 {
   type = objective.at("Type");  // Required
-  if (type == SensitivityObjective::CAPACITANCE)
+  switch (type)
   {
-    terminals = objective.at("Terminals").get<std::array<int, 2>>();  // Required
+    case SensitivityObjective::CAPACITANCE:
+      terminals = objective.at("Terminals").get<std::array<int, 2>>();  // Required
+      break;
+    case SensitivityObjective::FREQUENCY:
+    case SensitivityObjective::QUALITY_FACTOR:
+      mode = objective.at("Mode");  // Required
+      break;
   }
 }
 

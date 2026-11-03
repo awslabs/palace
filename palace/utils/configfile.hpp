@@ -1285,6 +1285,9 @@ public:
   // Terminal indices (i, j) of a capacitance matrix entry.
   std::array<int, 2> terminals = {{0, 0}};
 
+  // Index (1-based) of the mode of an eigenmode objective.
+  int mode = 0;
+
   SensitivityObjectiveData() = default;
   SensitivityObjectiveData(const json &objective);
 };

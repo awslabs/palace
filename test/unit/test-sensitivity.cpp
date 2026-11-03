@@ -17,9 +17,11 @@
 #include "fem/shapederivativeform.hpp"
 #include "fixtures.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/sensitivityexport.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -30,10 +32,56 @@ namespace palace
 namespace
 {
 
-// A unit cube with two dielectrics, the upper one anisotropic. Terminals 1 and 2 are the
-// faces z = 0 and z = 1, the faces y = 0 and y = 1 are grounded, and the others have zero
-// charge. The nodes are moved by a smooth map, so the elements are curved. With amr, the
-// mesh is refined nonconformally, with hanging nodes.
+// A unit cube of two halves, with attribute 1 below z = 0.5 and 2 above, and the boundary
+// attributes of mfem::Mesh::MakeCartesian3D. The nodes are moved by a smooth map which
+// keeps the faces planar, so the elements are curved. With amr, the mesh is refined
+// nonconformally, with hanging nodes.
+std::vector<std::unique_ptr<Mesh>> CubeMesh(IoData &iodata, mfem::Element::Type type,
+                                            bool amr)
+{
+  auto smesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, type, 1.0, 1.0, 1.0));
+  for (int e = 0; e < smesh->GetNE(); e++)
+  {
+    mfem::Vector center;
+    smesh->GetElementCenter(e, center);
+    smesh->SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+  }
+  smesh->SetAttributes();
+  smesh->SetCurvature(2);
+  auto &nodes = *smesh->GetNodes();
+  const auto &nodal_fespace = *nodes.FESpace();
+  for (int i = 0; i < nodal_fespace.GetNDofs(); i++)
+  {
+    double x[3];
+    for (int d = 0; d < 3; d++)
+    {
+      x[d] = nodes(nodal_fespace.DofToVDof(i, d));
+    }
+    for (int d = 0; d < 3; d++)
+    {
+      nodes(nodal_fespace.DofToVDof(i, d)) +=
+          0.12 * x[d] * (1.0 - x[d]) * std::sin(2.0 * x[(d + 1) % 3] + x[(d + 2) % 3] + d);
+    }
+  }
+  iodata.NondimensionalizeInputs(smesh);
+  iodata.CheckConfiguration();
+  if (amr)
+  {
+    smesh->EnsureNCMesh(true);
+  }
+  auto pmesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *smesh);
+  if (amr)
+  {
+    pmesh->RandomRefinement(0.5);
+  }
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+  return mesh;
+}
+
+// The cube with two dielectrics, the upper one anisotropic. Terminals 1 and 2 are the faces
+// z = 0 and z = 1, the faces y = 0 and y = 1 are grounded, and the others have zero charge.
 struct Problem
 {
   IoData iodata;
@@ -54,44 +102,52 @@ struct Problem
     iodata.solver.order = order;
     iodata.solver.linear.tol = 1.0e-13;
     iodata.solver.linear.max_it = 1000;
+    mesh = CubeMesh(iodata, type, amr);
+  }
+};
 
-    auto smesh = std::make_unique<mfem::Mesh>(
-        mfem::Mesh::MakeCartesian3D(4, 4, 4, type, 1.0, 1.0, 1.0));
-    for (int e = 0; e < smesh->GetNE(); e++)
-    {
-      mfem::Vector center;
-      smesh->GetElementCenter(e, center);
-      smesh->SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
-    }
-    smesh->SetAttributes();
-    smesh->SetCurvature(2);
-    auto &nodes = *smesh->GetNodes();
-    const auto &nodal_fespace = *nodes.FESpace();
-    for (int i = 0; i < nodal_fespace.GetNDofs(); i++)
-    {
-      double x[3];
-      for (int d = 0; d < 3; d++)
-      {
-        x[d] = nodes(nodal_fespace.DofToVDof(i, d));
-      }
-      for (int d = 0; d < 3; d++)
-      {
-        nodes(nodal_fespace.DofToVDof(i, d)) +=
-            0.03 * std::sin(2.0 * x[(d + 1) % 3] + x[(d + 2) % 3] + d);
-      }
-    }
-    iodata.NondimensionalizeInputs(smesh);
-    iodata.CheckConfiguration();
-    if (amr)
-    {
-      smesh->EnsureNCMesh(true);
-    }
-    auto pmesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *smesh);
-    if (amr)
-    {
-      pmesh->RandomRefinement(0.5);
-    }
-    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+// The cube as an eigenmode problem with every kind of term of T(λ) = K + λ C + λ² M +
+// A2(λ): an anisotropic lossy dielectric below, an anisotropic magnetic conductor with a
+// London depth above, and PEC, impedance, lumped port, second-order farfield and finite
+// conductivity boundaries.
+struct EigenProblem
+{
+  IoData iodata;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+
+  EigenProblem(mfem::Element::Type type, int order, bool amr) : iodata(Units(1.0, 1.0))
+  {
+    iodata.model.Lc = 1.0;
+    iodata.problem.type = ProblemType::EIGENMODE;
+    auto &lower = iodata.domains.materials.emplace_back();
+    lower.attributes = {1};
+    lower.epsilon_r.s = {2.0, 3.0, 4.0};
+    lower.tandelta.s = {0.01, 0.02, 0.03};
+    auto &upper = iodata.domains.materials.emplace_back();
+    upper.attributes = {2};
+    upper.mu_r.s = {1.5, 2.0, 2.5};
+    upper.sigma.s = {1.0e-3, 2.0e-3, 3.0e-3};
+    upper.lambda_L = 0.3;
+    iodata.boundaries.pec.attributes = {2};
+    auto &impedance = iodata.boundaries.impedance.emplace_back();
+    impedance.attributes = {4};
+    impedance.Rs = 100.0;
+    impedance.Ls = 1.0e-6;
+    impedance.Cs = 1.0e-11;
+    auto &port = iodata.boundaries.lumpedport[1];
+    port.R = 50.0;
+    port.L = 1.0e-6;
+    port.C = 1.0e-11;
+    auto &element = port.elements.emplace_back();
+    element.direction = {0.0, 1.0, 0.0};
+    element.attributes = {3};
+    iodata.boundaries.farfield.order = 2;
+    iodata.boundaries.farfield.attributes = {6};
+    auto &conductivity = iodata.boundaries.conductivity.emplace_back();
+    conductivity.attributes = {5};
+    conductivity.sigma = 1.0e3;
+    iodata.solver.order = order;
+    mesh = CubeMesh(iodata, type, amr);
   }
 };
 
@@ -202,6 +258,80 @@ TEST_CASE("Electrostatic capacitance sensitivities", "[sensitivity][Serial][Para
                    << "): g ⋅ W = " << adjoint[k] << ", finite difference = " << fd);
     CHECK(std::abs(adjoint[k] - fd) <= 1.0e-7 * std::abs(fd));
   }
+}
+
+TEST_CASE("Eigenmode system shape derivatives", "[sensitivity][Serial][Parallel]")
+{
+  // The gradient of xᵀ T(λ) x for a complex λ and vector x, against finite differences of
+  // the assembled form on moved meshes.
+  auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto amr = GENERATE(false, true);
+  INFO("Element type: " << type << ", order: " << order << ", AMR: " << amr);
+  EigenProblem problem(type, order, amr);
+  auto &mesh = *problem.mesh[0];
+  SpaceOperator space_op(problem.iodata, problem.mesh);
+  const std::complex<double> lambda(0.05, 1.3),
+      omega = lambda / std::complex<double>(0.0, 1.0);
+
+  std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector x(size), y(size);
+  for (int i = 0; i < size; i++)
+  {
+    x.Real()(i) = dist(gen);
+    x.Imag()(i) = dist(gen);
+  }
+  for (const int i : space_op.GetNDDbcTDofLists().back())
+  {
+    x.Real()(i) = x.Imag()(i) = 0.0;
+  }
+  auto Form = [&]()
+  {
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    REQUIRE((K && C && M && A2));
+    auto T = space_op.GetSystemMatrix(std::complex<double>(1.0), lambda, lambda * lambda,
+                                      K.get(), C.get(), M.get(), A2.get());
+    T->Mult(x, y);
+    std::complex<double> dot = {
+        linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
+        linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
+    Mpi::GlobalSum(1, &dot, Mpi::World());
+    return dot;
+  };
+
+  const auto dT = space_op.GetSystemShapeDerivative(1.0, lambda, lambda * lambda, omega);
+  Vector gr, gi;
+  GetComplexShapeGradient(*dT[0], *dT[1], x, gr, gi);
+  const auto &nodal_fespace = dT[0]->GetNodalSpace();
+  auto Contract = [&](const Vector &W)
+  {
+    return std::complex<double>(linalg::Dot<Vector>(Mpi::World(), gr, W),
+                                linalg::Dot<Vector>(Mpi::World(), gi, W));
+  };
+  Vector W(nodal_fespace.GetTrueVSize());
+  for (int i = 0; i < W.Size(); i++)
+  {
+    W(i) = dist(gen);
+  }
+  auto CentralDifference = [&](double h)
+  {
+    MoveNodes(mesh, nodal_fespace, W, h);
+    const auto Fp = Form();
+    MoveNodes(mesh, nodal_fespace, W, -2.0 * h);
+    const auto Fm = Form();
+    MoveNodes(mesh, nodal_fespace, W, h);
+    return (Fp - Fm) / (2.0 * h);
+  };
+  const double h = 2.0e-4;
+  const auto fd = (4.0 * CentralDifference(0.5 * h) - CentralDifference(h)) / 3.0;
+  const auto adjoint = Contract(W);
+  INFO("xᵀ T x = " << Form() << ", g ⋅ W = " << adjoint << ", finite difference = " << fd);
+  CHECK(std::abs(adjoint - fd) <= 1.0e-7 * std::abs(fd));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Sensitivity export",

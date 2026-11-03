@@ -379,6 +379,105 @@ TestSpheresSensitivity(const palace::test::RegressionOptions &opts)
   };
 }
 
+// Check the sensitivity export of the cylinder cavity case, next to eig.csv: zero for
+// translations and rotations, and the derivatives of the frequencies of TM010 and TM011 and
+// the quality factor of TM010 with respect to the radius and the height against their
+// analytic values, to the discretization error.
+palace::test::CustomCheck
+TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
+{
+  return [opts](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto dir = path.parent_path() / "sensitivity";
+    std::ifstream fj(dir / "sensitivity.json");
+    REQUIRE(fj.is_open());
+    const auto meta = nlohmann::json::parse(fj);
+    const std::size_t n = meta.at("NumPoints");
+    auto ReadDoubles = [&](const std::string &file)
+    {
+      std::vector<double> data(3 * n);
+      std::ifstream fi(dir / file, std::ios::binary);
+      fi.read(reinterpret_cast<char *>(data.data()), data.size() * sizeof(double));
+      REQUIRE(fi.gcount() == static_cast<std::streamsize>(data.size() * sizeof(double)));
+      return data;
+    };
+    const auto x = ReadDoubles(meta.at("Points"));
+
+    // The cavity has radius a = 2.74 cm and height d = 5.48 cm along z, a dielectric with
+    // relative permittivity 2.08, and walls of surface resistance Rs. The fields (x, y, 0)
+    // and (0, 0, z) scale a and d.
+    const double a = 2.74, d = 5.48, eps_r = 2.08, Rs = 0.0184;
+    const double B = palace::electromagnetics::c0_ * 1.0e-7 / std::sqrt(eps_r) /
+                     (2.0 * std::numbers::pi);  // GHz cm
+    const double eta = palace::electromagnetics::Z0_ / std::sqrt(eps_r);
+    const double x01 = 2.404825557695773;
+    REQUIRE(meta.at("Objectives").size() == 3);
+    for (const auto &objective : meta.at("Objectives"))
+    {
+      const auto g = ReadDoubles(objective.at("Gradient"));
+      double norm = 0.0, rigid = 0.0, radial = 0.0, axial = 0.0;
+      std::array<double, 3> translation = {0.0, 0.0, 0.0};
+      double rotation_x = 0.0, rotation_z = 0.0, x_max = 0.0;
+      for (std::size_t k = 0; k < n; k++)
+      {
+        const double *gk = &g[3 * k], *xk = &x[3 * k];
+        for (int c = 0; c < 3; c++)
+        {
+          norm += std::abs(gk[c]);
+          translation[c] += gk[c];
+          x_max = std::max(x_max, std::abs(xk[c]));
+        }
+        rotation_x += gk[2] * xk[1] - gk[1] * xk[2];
+        rotation_z += gk[1] * xk[0] - gk[0] * xk[1];
+        radial += gk[0] * xk[0] + gk[1] * xk[1];
+        axial += gk[2] * xk[2];
+      }
+      for (const double r : translation)
+      {
+        rigid = std::max(rigid, std::abs(r) * x_max);
+      }
+      rigid = std::max({rigid, std::abs(rotation_x), std::abs(rotation_z)});
+      CHECK(rigid <= 1.0e-10 * norm * x_max);
+
+      const double value = objective.at("Value");
+      const double kd = (objective.at("Mode") == 1) ? 0.0 : std::numbers::pi / d,
+                   ka = x01 / a;
+      double radial_ref, axial_ref, rtol;
+      if (objective.at("Type") == "Frequency")
+      {
+        // f = B √(ka² + kd²) for TM01p, with ka = x01 / a and kd = p π / d.
+        const double f = B * std::sqrt(ka * ka + kd * kd);
+        radial_ref = -f * ka * ka / (ka * ka + kd * kd);
+        axial_ref = -f * kd * kd / (ka * ka + kd * kd);
+        rtol = 5.0e-3;
+      }
+      else
+      {
+        // 1 / Q = 1 / Qc + tan δ for TM010, with Qc = x01 η / (2 Rs (1 + a / d)).
+        const double Qc = x01 * eta / (2.0 * Rs * (1.0 + a / d)),
+                     s = value * value / Qc * (a / d) / (1.0 + a / d);
+        radial_ref = -s;
+        axial_ref = s;
+        rtol = 1.0e-2;
+      }
+      INFO("objective " << objective.at("Index") << ": value " << value << ", radial "
+                        << radial << " (analytic " << radial_ref << "), axial " << axial
+                        << " (analytic " << axial_ref << ")");
+      CHECK_THAT(radial, Catch::Matchers::WithinRel(radial_ref, rtol));
+      if (axial_ref == 0.0)
+      {
+        CHECK(std::abs(axial) <= 1.0e-6 * std::abs(value));
+      }
+      else
+      {
+        CHECK_THAT(axial, Catch::Matchers::WithinRel(axial_ref, rtol));
+      }
+    }
+  };
+}
+
 palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
 {
   return [rtol, atol](palace::Table &actual, palace::Table &reference,
@@ -1387,6 +1486,22 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cylinder", "cavity_impedance.json", "cavity_impedance",
                                   opts);
+}
+
+// The cylinder cavity with impedance walls, with the sensitivities of its eigenmodes (see
+// TestCylinderSensitivity).
+TEST_CASE("cylinder_cavity_sensitivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.sensitivity = true;
+  opts.custom_checks["eig.csv"] = TestCylinderSensitivity(opts);
+  palace::test::RunRegressionCase("cylinder", "cavity_sensitivity.json",
+                                  "cavity_sensitivity", opts);
 }
 
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")

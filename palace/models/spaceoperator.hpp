@@ -29,6 +29,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class ShapeDerivativeOperator;
 
 namespace config
 {
@@ -363,6 +364,13 @@ public:
   template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);
+
+  // Construct the derivatives with respect to the positions of the mesh nodes of the real
+  // and imaginary parts of the form a0 K + a1 C + a2 M + A2(ω), with A2 at complex ω as for
+  // the eigenmode solve. Not available with Floquet periodicity or wave ports.
+  std::array<std::unique_ptr<ShapeDerivativeOperator>, 2>
+  GetSystemShapeDerivative(std::complex<double> a0, std::complex<double> a1,
+                           std::complex<double> a2, std::complex<double> omega);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const

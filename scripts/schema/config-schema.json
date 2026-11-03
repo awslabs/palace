@@ -417,7 +417,7 @@
     "Sensitivity": {
       "type": "object",
       "title": "Sensitivity",
-      "description": "Derivatives of objectives with respect to the positions of the mesh nodes and to the material permittivities, written to the `sensitivity` folder of [`/Problem/Output`](@ref config-problem-output). Only available when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`.",
+      "description": "Derivatives of objectives with respect to the positions of the mesh nodes and to the material properties, written to the `sensitivity` folder of [`/Problem/Output`](@ref config-problem-output). Available when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"` or `\"Eigenmode\"`.",
       "additionalProperties": false,
       "required": [
         "Objectives"
@@ -3207,9 +3207,11 @@
         "Type": {
           "type": "string",
           "enum": [
-            "Capacitance"
+            "Capacitance",
+            "Frequency",
+            "QualityFactor"
           ],
-          "description": "Type of objective. `\"Capacitance\"` is an entry of the Maxwell capacitance matrix (`terminal-C.csv`)."
+          "description": "Type of objective. `\"Capacitance\"` is an entry of the Maxwell capacitance matrix (`terminal-C.csv`). `\"Frequency\"` is the real part of the frequency of an eigenmode, and `\"QualityFactor\"` its quality factor (`eig.csv`)."
         },
         "Terminals": {
           "type": "array",
@@ -3221,20 +3223,46 @@
           "minItems": 2,
           "maxItems": 2,
           "description": "Indices `[i, j]` of the [`/Boundaries/Terminal`](@ref config-boundaries-terminal) boundaries of the capacitance matrix entry."
+        },
+        "Mode": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Index of the eigenmode (the `m` column of `eig.csv`), at most [`/Solver/Eigenmode/N`](@ref config-solver-eigenmode-n)."
         }
       },
-      "if": {
-        "properties": {
-          "Type": {
-            "const": "Capacitance"
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "Type": {
+                "const": "Capacitance"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "Terminals"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "Type": {
+                "enum": [
+                  "Frequency",
+                  "QualityFactor"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "Mode"
+            ]
           }
         }
-      },
-      "then": {
-        "required": [
-          "Terminals"
-        ]
-      }
+      ]
     },
     "SensitivityShape": {
       "type": "object",

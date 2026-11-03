@@ -12,6 +12,7 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -1038,6 +1039,59 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
   const auto *PtAP_M = (M) ? dynamic_cast<const ComplexParOperator *>(M) : nullptr;
   return BuildParSumOperator(
       {a0, a2}, {PtAP_K ? PtAP_K->Real() : nullptr, PtAP_M ? PtAP_M->Real() : nullptr});
+}
+
+std::array<std::unique_ptr<ShapeDerivativeOperator>, 2>
+SpaceOperator::GetSystemShapeDerivative(std::complex<double> a0, std::complex<double> a1,
+                                        std::complex<double> a2, std::complex<double> omega)
+{
+  MFEM_VERIFY(
+      !mat_op.HasWaveVector() && wave_port_op.Size() == 0 && floquet_port_op.Size() == 0,
+      "Shape derivatives are not available with Floquet periodicity or wave ports!");
+  MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
+      dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
+      dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      fbi(mat_op.MaxCeedBdrAttribute());
+  AddStiffnessCoefficients(a0.real(), dfr, fr);
+  AddStiffnessCoefficients(a0.imag(), dfi, fi);
+  AddStiffnessBdrCoefficients(a0.real(), fbr);
+  AddStiffnessBdrCoefficients(a0.imag(), fbi);
+  AddDampingCoefficients(a1.real(), fr);
+  AddDampingCoefficients(a1.imag(), fi);
+  AddDampingBdrCoefficients(a1.real(), fbr);
+  AddDampingBdrCoefficients(a1.imag(), fbi);
+  AddRealMassCoefficients(a2.real(), fr);
+  AddRealMassCoefficients(a2.imag(), fi);
+  AddRealMassBdrCoefficients(a2.real(), fbr);
+  AddRealMassBdrCoefficients(a2.imag(), fbi);
+  AddImagMassCoefficients(a2.real(), fi);
+  AddImagMassCoefficients(-a2.imag(), fr);
+  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  auto Assemble =
+      [this](const MaterialPropertyCoefficient &df, const MaterialPropertyCoefficient &f,
+             const MaterialPropertyCoefficient &dfb, const MaterialPropertyCoefficient &fb)
+  {
+    ShapeDerivativeForm a(GetNDSpace());
+    if (!df.IsExactlyZero())
+    {
+      a.AddDomainIntegrator<CurlCurlShapeIntegrator>(df);
+    }
+    if (!f.IsExactlyZero())
+    {
+      a.AddDomainIntegrator<VectorFEMassShapeIntegrator>(f);
+    }
+    if (!dfb.IsExactlyZero())
+    {
+      a.AddBoundaryIntegrator<CurlCurlShapeIntegrator>(dfb);
+    }
+    if (!fb.IsExactlyZero())
+    {
+      a.AddBoundaryIntegrator<VectorFEMassShapeIntegrator>(fb);
+    }
+    return a.Assemble();
+  };
+  return {Assemble(dfr, fr, dfbr, fbr), Assemble(dfi, fi, dfbi, fbi)};
 }
 
 namespace

@@ -809,20 +809,44 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
-  // Sensitivities are available for the capacitances of electrostatic problems.
+  // Sensitivities are available for the capacitances of electrostatic problems, and for
+  // the frequencies and quality factors of eigenmode problems.
   if (!sensitivity.empty())
   {
-    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
-                "\"Sensitivity\" is only available for electrostatic problems!");
     for (const auto &[idx, data] : sensitivity.objectives)
     {
-      for (auto i : data.terminals)
+      switch (data.type)
       {
-        MFEM_VERIFY(boundaries.terminal.contains(i),
-                    "\"Sensitivity\" objective " << idx << " refers to terminal " << i
-                                                 << ", which is not a \"Terminal\"!");
+        case SensitivityObjective::CAPACITANCE:
+          MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                      "\"Sensitivity\" objective "
+                          << idx << " requires an electrostatic problem!");
+          for (auto i : data.terminals)
+          {
+            MFEM_VERIFY(boundaries.terminal.contains(i),
+                        "\"Sensitivity\" objective " << idx << " refers to terminal " << i
+                                                     << ", which is not a \"Terminal\"!");
+          }
+          break;
+        case SensitivityObjective::FREQUENCY:
+        case SensitivityObjective::QUALITY_FACTOR:
+          MFEM_VERIFY(problem.type == ProblemType::EIGENMODE,
+                      "\"Sensitivity\" objective " << idx
+                                                   << " requires an eigenmode problem!");
+          MFEM_VERIFY(data.mode >= 1 && data.mode <= solver.eigenmode.n,
+                      "\"Sensitivity\" objective " << idx << " refers to mode " << data.mode
+                                                   << ", but only " << solver.eigenmode.n
+                                                   << " modes are computed!");
+          break;
       }
     }
+    MFEM_VERIFY(
+        problem.type != ProblemType::EIGENMODE ||
+            (boundaries.waveport.empty() && boundaries.floquetport.empty() &&
+             std::ranges::all_of(boundaries.periodic.wave_vector,
+                                 [](double k) { return k == 0.0; })),
+        "\"Sensitivity\" is not available for eigenmode problems with wave ports or "
+        "Floquet periodicity!");
     MFEM_VERIFY(!sensitivity.shape || boundaries.periodic.boundary_pairs.empty(),
                 "\"Sensitivity\" \"Shape\" is not available with periodic boundaries!");
   }

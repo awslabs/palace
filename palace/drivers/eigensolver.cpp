@@ -3,13 +3,17 @@
 
 #include "eigensolver.hpp"
 
+#include <array>
 #include <complex>
+#include <map>
 #include <numbers>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -22,8 +26,10 @@
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/sensitivityexport.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -31,6 +37,23 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// The unconjugated product xᵀ A x.
+std::complex<double> TransposeProduct(MPI_Comm comm, const ComplexOperator &A,
+                                      const ComplexVector &x, ComplexVector &y)
+{
+  A.Mult(x, y);
+  std::complex<double> dot = {
+      linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
+      linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
+  Mpi::GlobalSum(1, &dot, comm);
+  return dot;
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -509,6 +532,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       E.Get(eigenvectors[i].data(), E.Size(), false);
     }
   }
+  auto GetOmega = [&](int i)
+  {
+    // The linear EVP has eigenvalue μ = -λ² = ω², the quadratic one λ = iω.
+    return (!has_C && !has_A2) ? std::sqrt(eigenvalues[i]) : eigenvalues[i] / 1i;
+  };
+  if (!iodata.sensitivity.empty())
+  {
+    std::vector<std::complex<double>> omega(num_report);
+    for (int i = 0; i < num_report; i++)
+    {
+      omega[i] = GetOmega(i);
+    }
+    PostprocessSensitivities(space_op, *eigen, C.get(), *M, has_A2, omega);
+  }
 
   if (stage_eigenvectors)
   {
@@ -535,19 +572,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigenvalues[i];
+    const std::complex<double> omega = GetOmega(i);
     double error_bkwd = errors_bkwd[i];
     double error_abs = errors_abs[i];
-    if (!has_C && !has_A2)
-    {
-      // Linear EVP has eigenvalue μ = -λ² = ω².
-      omega = std::sqrt(omega);
-    }
-    else
-    {
-      // Quadratic EVP solves for eigenvalue λ = iω.
-      omega /= 1i;
-    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
@@ -580,6 +607,129 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};
+}
+
+void EigenSolver::PostprocessSensitivities(
+    SpaceOperator &space_op, const EigenvalueSolver &eigen, const ComplexOperator *C,
+    const ComplexOperator &M, bool has_A2,
+    const std::vector<std::complex<double>> &omega) const
+{
+  // T(λ) = K + λ C + λ² M + A2(λ), with λ = iω, is complex symmetric, so its left
+  // eigenvectors are its right ones: a simple eigenvalue changes by
+  // dλ = -xᵀ ∂T x / xᵀ T'(λ) x, and no adjoint solve is needed.
+  const auto &sensitivity = iodata.sensitivity;
+  Mpi::Print("\nComputing the sensitivities of {:d} objective{}\n",
+             sensitivity.objectives.size(), (sensitivity.objectives.size() > 1) ? "s" : "");
+  SensitivityExport output(iodata, space_op.GetMesh());
+  const auto comm = space_op.GetComm();
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector x(size), y(size);
+  x.UseDevice(true);
+  y.UseDevice(true);
+
+  // The real and imaginary parts of the gradient of ω, for each mode of an objective.
+  std::map<int, std::array<Vector, 2>> domega;
+  auto GetGradient = [&](int m) -> const std::array<Vector, 2> &
+  {
+    if (auto it = domega.find(m); it != domega.end())
+    {
+      return it->second;
+    }
+    auto &g = domega[m];
+    if (!output.HasShape())
+    {
+      return g;
+    }
+    for (std::size_t k = 0; k < omega.size(); k++)
+    {
+      if (static_cast<int>(k) != m &&
+          std::abs(omega[k] - omega[m]) < 1.0e-6 * std::abs(omega[m]))
+      {
+        Mpi::Warning("Mode {:d} is degenerate, so its derivatives are not defined: the "
+                     "result is for its computed eigenvector!\n",
+                     m + 1);
+        break;
+      }
+    }
+    const std::complex<double> lambda = 1i * omega[m];
+    eigen.GetEigenvector(m, x);
+    std::complex<double> d = 2.0 * lambda * TransposeProduct(comm, M, x, y);
+    if (C)
+    {
+      d += TransposeProduct(comm, *C, x, y);
+    }
+    if (has_A2)
+    {
+      // Fourth-order central difference in λ of xᵀ A2(λ) x.
+      const double h = 1.0e-3 * std::abs(lambda);
+      auto A2 = [&](double t)
+      {
+        auto A = space_op.GetExtraSystemMatrix((lambda + t) / 1i, Operator::DIAG_ZERO);
+        return A ? TransposeProduct(comm, *A, x, y) : 0.0;
+      };
+      d += (8.0 * (A2(h) - A2(-h)) - (A2(2.0 * h) - A2(-2.0 * h))) / (12.0 * h);
+    }
+
+    // ∂(xᵀ T x)/∂X = gr + i gi.
+    const auto dT =
+        space_op.GetSystemShapeDerivative(1.0, lambda, lambda * lambda, omega[m]);
+    Vector gr, gi;
+    GetComplexShapeGradient(*dT[0], *dT[1], x, gr, gi);
+
+    // dω = -i dλ = c (gr + i gi), with c = i / xᵀ T'(λ) x.
+    const std::complex<double> c = 1i / d;
+    g[0] = gr;
+    g[0] *= c.real();
+    g[0].Add(-c.imag(), gi);
+    g[1] = gr;
+    g[1] *= c.imag();
+    g[1].Add(c.real(), gi);
+    return g;
+  };
+
+  const double GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                     (2.0 * std::numbers::pi);
+  for (const auto &[idx, data] : sensitivity.objectives)
+  {
+    const int m = data.mode - 1;
+    const auto w = omega[m];
+    nlohmann::json entry = {
+        {"Index", idx}, {"Type", ToString(data.type)}, {"Mode", data.mode}};
+    if (data.type == SensitivityObjective::FREQUENCY)
+    {
+      // f = Re{ω} / 2π.
+      entry["Value"] = w.real() * GHz;
+      entry["Unit"] = "GHz";
+      const auto &g = GetGradient(m);
+      output.AddObjective(std::move(entry), &g[0], GHz);
+    }
+    else
+    {
+      // Q = |ω| / 2 |Im{ω}|.
+      if (w.imag() == 0.0)
+      {
+        Mpi::Warning("Mode {:d} has no losses, so the quality factor of sensitivity "
+                     "objective {:d} is not defined!\n",
+                     data.mode, idx);
+        continue;
+      }
+      const double Q = 0.5 * std::abs(w) / std::abs(w.imag());
+      entry["Value"] = Q;
+      entry["Unit"] = "";
+      const auto &g = GetGradient(m);
+      Vector dQ;
+      if (output.HasShape())
+      {
+        const double ar = Q * w.real() / std::norm(w),
+                     ai = Q * (w.imag() / std::norm(w) - 1.0 / w.imag());
+        dQ = g[0];
+        dQ *= ar;
+        dQ.Add(ai, g[1]);
+      }
+      output.AddObjective(std::move(entry), output.HasShape() ? &dQ : nullptr, 1.0);
+    }
+  }
+  output.Write(post_dir / "sensitivity");
 }
 
 }  // namespace palace
