@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
@@ -146,6 +147,19 @@ double EvaluateForm(const BilinearForm &a, const FiniteElementSpace &fespace,
   return linalg::Dot<Vector>(fespace.GetComm(), w_l, y_l);
 }
 
+// The linear form b(w) = ∫ f ⋅ w ds on the boundary, with f constant on each attribute.
+double EvaluateLinearForm(FiniteElementSpace &fespace, mfem::VectorCoefficient &f,
+                          const Vector &w)
+{
+  mfem::LinearForm b(&fespace.Get());
+  b.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(f));
+  b.UseFastAssembly(false);
+  b.Assemble();
+  Vector w_l(fespace.GetVSize());
+  fespace.GetProlongationMatrix()->Mult(w, w_l);
+  return linalg::Dot<Vector>(fespace.GetComm(), w_l, b);
+}
+
 // Move the mesh nodes by h V, for V on the true DOFs of the mesh nodal space.
 void MoveNodes(Mesh &mesh, const mfem::ParFiniteElementSpace &nodal_fespace,
                const Vector &V, double h)
@@ -163,8 +177,54 @@ enum class FormType
   DiffusionIsotropic,
   DiffusionNonsymmetric,
   Mass,
-  BoundaryMass
+  BoundaryMass,
+  VectorMass,
+  VectorMassNonsymmetric,
+  BoundaryVectorMass,
+  CurlCurl,
+  BoundaryCurlCurl,
+  BoundaryLinearForm
 };
+
+bool IsVectorForm(FormType type)
+{
+  return type >= FormType::VectorMass;
+}
+
+bool IsBoundaryForm(FormType type)
+{
+  return type == FormType::BoundaryMass || type == FormType::BoundaryVectorMass ||
+         type == FormType::BoundaryCurlCurl || type == FormType::BoundaryLinearForm;
+}
+
+// The exponent n of the scaling (1 + t)^n of the form under a dilation by (1 + t): dim - 2
+// for diffusion, dim for H1 mass, dim - 2 for H(curl) mass (covariant fields), dim - 4 for
+// curl-curl (contravariant curls), one less on boundaries, and dim - 2 for the boundary
+// linear form with a fixed f.
+int DilationExponent(FormType type, int dim)
+{
+  switch (type)
+  {
+    case FormType::Diffusion:
+    case FormType::DiffusionIsotropic:
+    case FormType::DiffusionNonsymmetric:
+    case FormType::VectorMass:
+    case FormType::VectorMassNonsymmetric:
+    case FormType::BoundaryLinearForm:
+      return dim - 2;
+    case FormType::Mass:
+      return dim;
+    case FormType::BoundaryMass:
+      return dim - 1;
+    case FormType::BoundaryVectorMass:
+      return dim - 3;
+    case FormType::CurlCurl:
+      return dim - 4;
+    case FormType::BoundaryCurlCurl:
+      return dim - 5;
+  }
+  return 0;
+}
 
 void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, FormType type)
 {
@@ -175,16 +235,31 @@ void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, Form
   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
   fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
 
-  mfem::H1_FECollection fec(order, dim);
-  FiniteElementSpace fespace(*mesh, &fec);
-  const bool bdr = (type == FormType::BoundaryMass);
-  const bool diffusion =
-      (type == FormType::Diffusion || type == FormType::DiffusionIsotropic ||
-       type == FormType::DiffusionNonsymmetric);
-  auto Q = BuildCoefficient(*mesh, bdr, diffusion ? dim : 1,
-                            type != FormType::DiffusionNonsymmetric);
+  std::unique_ptr<mfem::FiniteElementCollection> fec;
+  if (IsVectorForm(type))
+  {
+    fec = std::make_unique<mfem::ND_FECollection>(order, dim);
+  }
+  else
+  {
+    fec = std::make_unique<mfem::H1_FECollection>(order, dim);
+  }
+  FiniteElementSpace fespace(*mesh, fec.get());
+  const bool bdr = IsBoundaryForm(type);
+  const bool symmetric =
+      (type != FormType::DiffusionNonsymmetric && type != FormType::VectorMassNonsymmetric);
+  int coeff_dim = 1;
+  if (type == FormType::Diffusion || type == FormType::DiffusionNonsymmetric ||
+      type == FormType::VectorMass || type == FormType::VectorMassNonsymmetric ||
+      type == FormType::BoundaryVectorMass || type == FormType::BoundaryLinearForm ||
+      (type == FormType::CurlCurl && dim == 3))
+  {
+    coeff_dim = dim;
+  }
+  auto Q = BuildCoefficient(*mesh, bdr, coeff_dim, symmetric);
   BilinearForm a(fespace);
   ShapeDerivativeForm da(fespace);
+  SumVectorCoefficient f(dim);
   switch (type)
   {
     case FormType::Diffusion:
@@ -204,6 +279,40 @@ void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, Form
       a.AddBoundaryIntegrator<MassIntegrator>(Q);
       da.AddBoundaryIntegrator<MassShapeIntegrator>(Q);
       break;
+    case FormType::VectorMass:
+    case FormType::VectorMassNonsymmetric:
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
+      da.AddDomainIntegrator<VectorFEMassShapeIntegrator>(Q);
+      break;
+    case FormType::BoundaryVectorMass:
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(Q);
+      da.AddBoundaryIntegrator<VectorFEMassShapeIntegrator>(Q);
+      break;
+    case FormType::CurlCurl:
+      a.AddDomainIntegrator<CurlCurlIntegrator>(Q);
+      da.AddDomainIntegrator<CurlCurlShapeIntegrator>(Q);
+      break;
+    case FormType::BoundaryCurlCurl:
+      a.AddBoundaryIntegrator<CurlCurlIntegrator>(Q);
+      da.AddBoundaryIntegrator<CurlCurlShapeIntegrator>(Q);
+      break;
+    case FormType::BoundaryLinearForm:
+      // The vector of each attribute is the first column of its coefficient.
+      for (int k = 0; k < mesh->Get().bdr_attributes.Max(); k++)
+      {
+        mfem::Array<int> attr_list(1);
+        attr_list[0] = k + 1;
+        mfem::Vector f_k(dim);
+        for (int d = 0; d < dim; d++)
+        {
+          f_k(d) = Q.GetMaterialProperties()(d, 0, k);
+        }
+        f.AddCoefficient(
+            std::make_unique<RestrictedVectorCoefficient<mfem::VectorConstantCoefficient>>(
+                attr_list, f_k));
+      }
+      da.AddBoundaryIntegrator<VectorFEBoundaryLFShapeIntegrator>(Q);
+      break;
   }
 
   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
@@ -214,7 +323,12 @@ void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, Form
   Vector g;
   da_op->Mult(u, w, g);
   REQUIRE(g.Size() == nodal_fespace.GetTrueVSize());
-  const double a0 = EvaluateForm(a, fespace, u, w);
+  auto Evaluate = [&]()
+  {
+    return (type == FormType::BoundaryLinearForm) ? EvaluateLinearForm(fespace, f, w)
+                                                  : EvaluateForm(a, fespace, u, w);
+  };
+  const double a0 = Evaluate();
   const auto &nodes = *mesh->Get().GetNodes();
   auto Contract = [&](const Vector &V) { return linalg::Dot<Vector>(Mpi::World(), g, V); };
   double g_scale = 0.0;
@@ -225,8 +339,7 @@ void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, Form
   Mpi::GlobalSum(1, &g_scale, Mpi::World());
 
   // Translations leave the form unchanged, and a dilation by (1 + t) scales it by
-  // (1 + t)^n with n = dim - 2 for diffusion, dim for domain mass, dim - 1 for boundary
-  // mass. Both are exact for the discrete form.
+  // (1 + t)^n. Both are exact for the discrete form.
   mfem::DenseMatrix A(dim), I(dim);
   mfem::Vector b(dim), zero(dim);
   A = 0.0;
@@ -240,12 +353,12 @@ void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, Form
     CHECK(std::abs(Contract(AffineDisplacement(nodal_fespace, nodes, A, b))) <=
           1.0e-12 * g_scale);
   }
-  const int n = diffusion ? dim - 2 : (bdr ? dim - 1 : dim);
+  const int n = DilationExponent(type, dim);
   CHECK(std::abs(Contract(AffineDisplacement(nodal_fespace, nodes, I, zero)) - n * a0) <=
         1.0e-11 * (std::abs(a0) + g_scale));
 
   // Rotations leave forms with isotropic coefficients unchanged.
-  if (type != FormType::Diffusion && type != FormType::DiffusionNonsymmetric)
+  if (coeff_dim == 1 || type == FormType::DiffusionIsotropic)
   {
     mfem::DenseMatrix W(dim);
     W = 0.0;
@@ -268,9 +381,9 @@ void TestShapeDerivative(const std::string &mesh_name, bool amr, int order, Form
   auto CentralDifference = [&](double h)
   {
     MoveNodes(*mesh, nodal_fespace, V, h);
-    const double ap = EvaluateForm(a, fespace, u, w);
+    const double ap = Evaluate();
     MoveNodes(*mesh, nodal_fespace, V, -2.0 * h);
-    const double am = EvaluateForm(a, fespace, u, w);
+    const double am = Evaluate();
     MoveNodes(*mesh, nodal_fespace, V, h);
     return (ap - am) / (2.0 * h);
   };
@@ -297,6 +410,30 @@ TEST_CASE("Shape derivatives of H1 forms", "[shapederivative][Serial][Parallel]"
   auto type =
       GENERATE(FormType::Diffusion, FormType::DiffusionIsotropic,
                FormType::DiffusionNonsymmetric, FormType::Mass, FormType::BoundaryMass);
+  INFO("Mesh: " << mesh << ", AMR: " << amr << ", order: " << order
+                << ", form: " << static_cast<int>(type));
+  TestShapeDerivative(mesh, amr, order, type);
+}
+
+TEST_CASE("Shape derivatives of H(curl) forms", "[shapederivative][Serial][Parallel]")
+{
+  auto mesh =
+      GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "fichera-hex.mesh",
+               "fichera-tet.mesh", "fichera-mixed-p2.mesh", "tinyzoo-3d.mesh");
+  auto amr = GENERATE(false, true);
+  if (amr && std::string(mesh) == "tinyzoo-3d.mesh")
+  {
+    return;  // The forward forms are NaN on nonconforming refinements of its pyramid
+  }
+  auto order = GENERATE(1, 2, 3);
+  auto type = GENERATE(FormType::VectorMass, FormType::VectorMassNonsymmetric,
+                       FormType::BoundaryVectorMass, FormType::CurlCurl,
+                       FormType::BoundaryCurlCurl, FormType::BoundaryLinearForm);
+  if (std::string(mesh).starts_with("star") &&
+      (type == FormType::BoundaryCurlCurl || type == FormType::BoundaryLinearForm))
+  {
+    return;  // Only on the boundaries of 3D meshes
+  }
   INFO("Mesh: " << mesh << ", AMR: " << amr << ", order: " << order
                 << ", form: " << static_cast<int>(type));
   TestShapeDerivative(mesh, amr, order, type);
