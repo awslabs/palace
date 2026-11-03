@@ -30,8 +30,8 @@ where ``\mathbf{g}_k`` is the gradient of ``J`` with respect to the position
 simulation gives the derivatives with respect to every parameter.
 
 The derivatives are those of the discrete objectives *Palace* computes, so they agree with
-finite differences of simulations on moved meshes, and none needs an additional solve: the
-cost is a few operator applications per objective.
+finite differences of simulations on moved meshes, and none needs an adjoint solve: the cost
+is a few operator applications per objective.
 
   - The capacitances are ``C_{ij} = V_j^T K V_i`` for the terminal potentials ``V_i``. As
     each ``V_i`` minimizes the field energy for its terminal voltages, the derivative is
@@ -136,9 +136,10 @@ attributes, from `boundary.bin`.
 
 ## Limitations
 
-  - Node gradients are not available with periodic boundaries, eigenmode sensitivities not
-    with wave ports, Floquet ports or a Floquet wave vector, and magnetostatic ones not with
-    flux loops, superconductors or shorted inactive ports.
+  - Node gradients are not available with periodic boundaries or coaxial surface current
+    sources, eigenmode sensitivities not with wave ports, Floquet ports or a Floquet wave
+    vector, and magnetostatic ones not with flux loops, superconductors or shorted inactive
+    ports.
   - The derivatives of an eigenvalue are defined only if it is simple. For a degenerate
     mode, *Palace* warns, and the result is for the eigenvector it computed. The quality
     factor of a lossless mode is not defined.

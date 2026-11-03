@@ -60,7 +60,10 @@ std::unique_ptr<Mesh> LoadMesh(MPI_Comm comm, const std::string &name, bool amr)
   {
     smesh.EnsureNCMesh(true);
   }
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   if (amr)
   {
