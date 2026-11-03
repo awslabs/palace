@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -27,6 +28,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -475,6 +477,33 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THROWS_WITH(Load(incomplete.library, true),
                     Catch::Matchers::ContainsSubstring("MagneticSource together"));
 #endif
+}
+
+// The Phase-1 gate G-d loader read (prereg-gates.md): the leaves of the library named by
+// PALACE_MAGNETIC_LIBRARY as the operator loads them (r1-r4 with the library's MagneticRules,
+// the PSD statistic, the scaled defect's norms), written to PALACE_MAGNETIC_LIBRARY_RECORD for
+// the lane's Python reader to cross-check against its own evaluation of the same files.
+TEST_CASE("DescribeMagneticLeaves of PALACE_MAGNETIC_LIBRARY", "[magnetic][Serial]")
+{
+  const char *library = std::getenv("PALACE_MAGNETIC_LIBRARY");
+  const char *record = std::getenv("PALACE_MAGNETIC_LIBRARY_RECORD");
+  if (!library || !record)
+  {
+    SKIP("PALACE_MAGNETIC_LIBRARY / PALACE_MAGNETIC_LIBRARY_RECORD are not set");
+  }
+  const auto description = DescribeMagneticLeaves(library, Units(1.0, 1.0), false);
+  REQUIRE(description.contains("Models"));
+  CHECK(!description["Models"].empty());
+  for (const auto &model : description["Models"])
+  {
+    INFO(model.dump());
+    CHECK(model["Status"].get<std::string>() != "Refused");
+  }
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream output(record);
+    output << description.dump(1) << "\n";
+  }
 }
 
 }  // namespace palace
