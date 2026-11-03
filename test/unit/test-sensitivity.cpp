@@ -74,6 +74,10 @@ std::vector<std::unique_ptr<Mesh>> CubeMesh(IoData &iodata, mfem::Element::Type 
   {
     smesh->EnsureNCMesh(true);
   }
+  if (Mpi::Size(Mpi::World()) > smesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto pmesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *smesh);
   if (amr)
   {
@@ -223,6 +227,36 @@ double Capacitance(const LaplaceOperator &laplace_op, const std::vector<int> &at
   return linalg::Dot<Vector>(laplace_op.GetComm(), w, y);
 }
 
+// A random complex vector on the true DOFs of the H(curl) space, zero on its essential true
+// DOFs.
+ComplexVector RandomComplexVector(const SpaceOperator &space_op, std::mt19937 &gen)
+{
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  ComplexVector x(space_op.GetNDSpace().GetTrueVSize());
+  for (int i = 0; i < x.Size(); i++)
+  {
+    x.Real()(i) = dist(gen);
+    x.Imag()(i) = dist(gen);
+  }
+  for (const int i : space_op.GetNDDbcTDofLists().back())
+  {
+    x.Real()(i) = x.Imag()(i) = 0.0;
+  }
+  return x;
+}
+
+// The unconjugated product xᵀ A x.
+std::complex<double> TransposeProduct(const ComplexOperator &A, const ComplexVector &x)
+{
+  ComplexVector y(x.Size());
+  A.Mult(x, y);
+  std::complex<double> dot = {
+      linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
+      linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
+  Mpi::GlobalSum(1, &dot, Mpi::World());
+  return dot;
+}
+
 // Move the mesh nodes by h W, for W on the true DOFs of the mesh nodal space.
 void MoveNodes(Mesh &mesh, const mfem::ParFiniteElementSpace &nodal_fespace,
                const Vector &W, double h)
@@ -319,17 +353,7 @@ TEST_CASE("Eigenmode system shape derivatives", "[sensitivity][Serial][Parallel]
 
   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
   std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  const int size = space_op.GetNDSpace().GetTrueVSize();
-  ComplexVector x(size), y(size);
-  for (int i = 0; i < size; i++)
-  {
-    x.Real()(i) = dist(gen);
-    x.Imag()(i) = dist(gen);
-  }
-  for (const int i : space_op.GetNDDbcTDofLists().back())
-  {
-    x.Real()(i) = x.Imag()(i) = 0.0;
-  }
+  const auto x = RandomComplexVector(space_op, gen);
   auto Form = [&]()
   {
     auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -337,14 +361,10 @@ TEST_CASE("Eigenmode system shape derivatives", "[sensitivity][Serial][Parallel]
     auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     auto A2 = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
     REQUIRE((K && C && M && A2));
-    auto T = space_op.GetSystemMatrix(std::complex<double>(1.0), lambda, lambda * lambda,
-                                      K.get(), C.get(), M.get(), A2.get());
-    T->Mult(x, y);
-    std::complex<double> dot = {
-        linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
-        linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
-    Mpi::GlobalSum(1, &dot, Mpi::World());
-    return dot;
+    return TransposeProduct(*space_op.GetSystemMatrix(std::complex<double>(1.0), lambda,
+                                                      lambda * lambda, K.get(), C.get(),
+                                                      M.get(), A2.get()),
+                            x);
   };
 
   const auto dT = space_op.GetSystemShapeDerivative(1.0, lambda, lambda * lambda, omega);
@@ -390,27 +410,8 @@ TEST_CASE("Eigenmode system material and lumped port derivatives",
   EigenProblem problem(type, 1, false);
   SpaceOperator space_op(problem.iodata, problem.mesh);
   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
-  std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  const int size = space_op.GetNDSpace().GetTrueVSize();
-  ComplexVector x(size), y(size);
-  for (int i = 0; i < size; i++)
-  {
-    x.Real()(i) = dist(gen);
-    x.Imag()(i) = dist(gen);
-  }
-  for (const int i : space_op.GetNDDbcTDofLists().back())
-  {
-    x.Real()(i) = x.Imag()(i) = 0.0;
-  }
-  auto Product = [&](const ComplexOperator &A)
-  {
-    A.Mult(x, y);
-    std::complex<double> dot = {
-        linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
-        linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
-    Mpi::GlobalSum(1, &dot, Mpi::World());
-    return dot;
-  };
+  const auto x = RandomComplexVector(space_op, gen);
+  auto Product = [&x](const ComplexOperator &A) { return TransposeProduct(A, x); };
   auto CentralDifference = [&](const std::function<void(IoData &, double)> &scale)
   {
     auto Form = [&](double s)
@@ -521,18 +522,9 @@ TEST_CASE("Divergence-free projection with losses", "[sensitivity][Serial][Paral
                           std::vector<const ComplexOperator *>{M.get(), C.get()});
 
   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));
-  std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  const int size = space_op.GetNDSpace().GetTrueVSize();
-  ComplexVector x(size), y(size), By(size);
-  for (int i = 0; i < size; i++)
-  {
-    x.Real()(i) = dist(gen);
-    x.Imag()(i) = dist(gen);
-  }
-  for (const int i : space_op.GetNDDbcTDofLists().back())
-  {
-    x.Real()(i) = x.Imag()(i) = 0.0;
-  }
+  auto x = RandomComplexVector(space_op, gen);
+  const int size = x.Size();
+  ComplexVector y(size), By(size);
   divfree.Mult(x);
   y = x;
   divfree.Mult(*B, y);
