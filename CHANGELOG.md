@@ -53,7 +53,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     uncovered requirements kept raw): it is no longer withheld by the closure-independent
     confidence gate (whose coverage criterion >= 1 - 1e-10 made it NaN on every device
     with ends); the magnetic loop gate stays; `fixed-trace shift coverage` prints the
-    matched energy share the shift rests on.
+    matched energy share the shift rests on. Decision 1251 (INTERIM): the optional library
+    rule `MagneticRules.ConductorConsistencyTolerance` sets the MAGNETIC conductor-consistency
+    gate's tolerance (absent = the electric gate's 0.02, bitwise as before); the probe form is
+    OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the

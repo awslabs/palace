@@ -1531,6 +1531,14 @@ public:
       double same_mesh_tolerance_with_mesh_identity = -1.0;
       double psd_finding_ratio = 1.0e-2;
       double psd_refusal_ratio = 0.1;
+      // Decision 1251 (mx-sc-magnetic Phase 2, INTERIM): the tolerance of the MAGNETIC
+      // conductor-consistency gate (the dual R0-a gate) as a library parameter. Negative =
+      // absent: the electric gate's kConductorConsistencyTolerance (0.02) applies, bitwise
+      // as before. The dual gate's probe line integrals read the discretisation error of
+      // the singular edge field on a device (ratio medians 7.1e-2 / 3.7e-2 / 2.3e-2 at
+      // p = 2 / 3 / 4 on the (ii) stub), so a library sets the tolerance it has calibrated;
+      // the probe form itself is OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
+      double conductor_consistency_tolerance = -1.0;
     };
     MagneticRulesData magnetic_rules;
 

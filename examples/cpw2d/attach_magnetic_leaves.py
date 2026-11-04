@@ -9,7 +9,8 @@ model's magnetic energy within R as a quadratic form of the flux trace is S_m = 
 pair (thin / fabricated, the same meshes, hats and piece states) re-run with --substrate-permittivity 1.0. This tool
 assembles those vacuum domain-response matrices onto a COPY of a library as the OPTIONAL per-model leaves
 `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (a library without them loads and behaves bitwise as
-today) and writes the top-level `MagneticRules` (the r3 same-mesh tolerance and the two-level r4 PSD ratios). It
+today) and writes the top-level `MagneticRules` (the r3 same-mesh tolerance and the two-level r4 PSD ratios; optionally the
+dual gate's `ConductorConsistencyTolerance`, decision 1251). It
 REFUSES a twin whose basis file is not byte-identical to the model's (r1), records the regenerated electric matrices'
 maximum relative deviation from the model of record (the r3 statistic the loader gates; TWO-TIER per decision 1242: the
 optional MagneticRules.SameMeshToleranceWithMeshIdentity applies to a twin whose MeshOfRecordSha256Match proves BOTH
@@ -235,6 +236,10 @@ def main(argv=None):
                         help="MagneticRules.SameMeshToleranceWithMeshIdentity (decision 1242, the r3 second tier: the "
                              "tolerance for a twin whose MeshOfRecordSha256Match proves both meshes identical to the "
                              "model's meshes of record; default absent = SameMeshTolerance everywhere)")
+    parser.add_argument("--conductor-consistency-tolerance", type=float, default=None,
+                        help="MagneticRules.ConductorConsistencyTolerance (decision 1251, INTERIM): the tolerance of "
+                             "the loader's MAGNETIC conductor-consistency gate; default None = absent (the electric "
+                             "gate's 0.02 applies)")
     parser.add_argument("--records", help="write the per-model records JSON here (default: beside --output)")
     args = parser.parse_args(argv)
     if os.path.exists(args.output):
@@ -245,9 +250,12 @@ def main(argv=None):
         attachments = json.load(handle)
     rules = {"SameMeshTolerance": args.same_mesh_tolerance, "PsdFindingRatio": args.psd_finding_ratio,
              "PsdRefusalRatio": args.psd_refusal_ratio,
-             "SameMeshToleranceWithMeshIdentity": args.same_mesh_tolerance_with_mesh_identity}
+             "SameMeshToleranceWithMeshIdentity": args.same_mesh_tolerance_with_mesh_identity,
+             "ConductorConsistencyTolerance": args.conductor_consistency_tolerance}
     if not rules["PsdRefusalRatio"] >= rules["PsdFindingRatio"] >= 0.0 or rules["SameMeshTolerance"] < 0.0:
         parser.error("the rules must be nonnegative with PsdRefusalRatio >= PsdFindingRatio")
+    if rules["ConductorConsistencyTolerance"] is not None and rules["ConductorConsistencyTolerance"] < 0.0:
+        parser.error("ConductorConsistencyTolerance must be nonnegative")
     if (rules["SameMeshToleranceWithMeshIdentity"] is not None
             and rules["SameMeshToleranceWithMeshIdentity"] < rules["SameMeshTolerance"]):
         parser.error("SameMeshToleranceWithMeshIdentity must be >= SameMeshTolerance")

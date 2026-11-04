@@ -689,6 +689,12 @@ private:
   // when-read), while has_magnetic_models gates the operator dK. False when the library
   // carries no leaf or `Magnetic` is false (nothing read, nothing written).
   bool has_magnetic_leaves = false;
+  // The tolerance of the MAGNETIC conductor-consistency gate (the dual R0-a gate): the
+  // library's MagneticRules.ConductorConsistencyTolerance when set (decision 1251, an
+  // INTERIM library parameter; the probe form is
+  // OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION), else kConductorConsistencyTolerance
+  // (bitwise as before).
+  double magnetic_conductor_consistency_tolerance = kConductorConsistencyTolerance;
   // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
   // when a magnetic leaf is loaded), so that the root-only record printers need no
   // collective.
@@ -1205,6 +1211,10 @@ public:
   void MagneticStiffnessMult(const Vector &x, Vector &y) const;
   bool HasMagneticModels() const { return has_magnetic_models; }
   bool HasMagneticLeaves() const { return has_magnetic_leaves; }
+  double MagneticConductorConsistencyTolerance() const
+  {
+    return magnetic_conductor_consistency_tolerance;
+  }
   // The dual R0-a gate (the magnetic term only; DESIGN-v2 section 3): the flux read along
   // the R0-a probe legs against the piece's flux state, on the magnetic chain trace, with
   // the electric gate's tolerance and floor; a failing patch loses its magnetic term

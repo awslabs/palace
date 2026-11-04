@@ -532,7 +532,29 @@ TEST_CASE_METHOD(
     const auto response = Load(r4_moved.library, false);
     CHECK(response->HasMagneticModels());
     CHECK(Status(*response).status == "Finding");
+    // Decision 1251: without MagneticRules.ConductorConsistencyTolerance the dual gate
+    // reads the electric gate's constant (bitwise as before).
+    CHECK_THAT(response->MagneticConductorConsistencyTolerance(),
+               WithinAbs(SurfaceResponseOperator::kConductorConsistencyTolerance, 0.0));
   }
+  // Decision 1251 (INTERIM): the dual gate's tolerance as a library parameter; a negative
+  // value in the file is malformed.
+  const auto gate_moved = WriteMagneticLibrary(
+      library_3d_path, temp.temp_dir, "gate-moved", finding_defect, DefaultMagneticSource(),
+      [](json &library)
+      { library["MagneticRules"] = {{"ConductorConsistencyTolerance", 0.25}}; });
+  {
+    const auto response = Load(gate_moved.library, false);
+    CHECK(response->HasMagneticModels());
+    CHECK(Status(*response).status == "Finding");
+    CHECK_THAT(response->MagneticConductorConsistencyTolerance(), WithinAbs(0.25, 0.0));
+  }
+  const auto gate_bad = WriteMagneticLibrary(
+      library_3d_path, temp.temp_dir, "gate-bad", finding_defect, DefaultMagneticSource(),
+      [](json &library)
+      { library["MagneticRules"] = {{"ConductorConsistencyTolerance", -0.5}}; });
+  CHECK_THROWS_WITH(Load(gate_bad.library, true),
+                    Catch::Matchers::ContainsSubstring("ConductorConsistencyTolerance"));
   // The switch (decision 1229 Q1 (i)): Magnetic = false reads no leaf at all.
   {
     const auto response = Load(r4_finding.library, false, false);

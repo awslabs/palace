@@ -2270,6 +2270,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     magnetic_rules.same_mesh_tolerance_with_mesh_identity =
         rules->value("SameMeshToleranceWithMeshIdentity",
                      magnetic_rules.same_mesh_tolerance_with_mesh_identity);
+    magnetic_rules.conductor_consistency_tolerance = rules->value(
+        "ConductorConsistencyTolerance", magnetic_rules.conductor_consistency_tolerance);
+    MFEM_VERIFY(!rules->contains("ConductorConsistencyTolerance") ||
+                    magnetic_rules.conductor_consistency_tolerance >= 0.0,
+                "Fabrication-process response-library MagneticRules."
+                "ConductorConsistencyTolerance must be nonnegative!");
     MFEM_VERIFY(magnetic_rules.same_mesh_tolerance >= 0.0 &&
                     magnetic_rules.psd_finding_ratio >= 0.0 &&
                     magnetic_rules.psd_refusal_ratio >= magnetic_rules.psd_finding_ratio,
@@ -2285,7 +2291,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       (void)value;
       MFEM_VERIFY(key == "SameMeshTolerance" || key == "PsdFindingRatio" ||
                       key == "PsdRefusalRatio" ||
-                      key == "SameMeshToleranceWithMeshIdentity",
+                      key == "SameMeshToleranceWithMeshIdentity" ||
+                      key == "ConductorConsistencyTolerance",
                   "Fabrication-process response-library MagneticRules has an unknown key \""
                       << key << "\"!");
     }
@@ -20705,7 +20712,9 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
         {"SameMeshToleranceWithMeshIdentity",
          library.magnetic_rules.same_mesh_tolerance_with_mesh_identity},
         {"PsdFindingRatio", library.magnetic_rules.psd_finding_ratio},
-        {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio}}},
+        {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio},
+        {"ConductorConsistencyTolerance",
+         library.magnetic_rules.conductor_consistency_tolerance}}},
       {"Models", nlohmann::json::array()}};
   for (const auto &model : library.models)
   {
@@ -20846,7 +20855,9 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
           {"SameMeshToleranceWithMeshIdentity",
            patches.magnetic_rules.same_mesh_tolerance_with_mesh_identity},
           {"PsdFindingRatio", patches.magnetic_rules.psd_finding_ratio},
-          {"PsdRefusalRatio", patches.magnetic_rules.psd_refusal_ratio}}},
+          {"PsdRefusalRatio", patches.magnetic_rules.psd_refusal_ratio},
+          {"ConductorConsistencyTolerance",
+           patches.magnetic_rules.conductor_consistency_tolerance}}},
         {"AllowElectricOnlyFallback", patches.allow_electric_only_fallback},
         {"Models", models}};
     manifest["Summary"]["MagneticElectricOnly"] = {{"Count", electric_only_count},
@@ -26736,7 +26747,7 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
                                : (deviation == 0.0 ? 0.0 : mfem::infinity());
       max_ratio = std::max(max_ratio, ratio);
     }
-    const bool excluded = max_ratio > kConductorConsistencyTolerance;
+    const bool excluded = max_ratio > magnetic_conductor_consistency_tolerance;
     if (excluded && !conductor_consistency_record_only)
     {
       patch.magnetic_excluded = true;
@@ -26768,10 +26779,10 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
   }
   if (excluded_count > 0)
   {
-    Mpi::Print(" Magnetic conductor-consistency gate (the dual R0-a gate): {:d} patch(es) "
-               "lose their MAGNETIC term at source {:d} (f = {:.6e}); the electric term is "
-               "kept\n",
-               excluded_count, source, frequency);
+    Mpi::Print(" Magnetic conductor-consistency gate (the dual R0-a gate, tolerance "
+               "{:.3e}): {:d} patch(es) lose their MAGNETIC term at source {:d} (f = "
+               "{:.6e}); the electric term is kept\n",
+               magnetic_conductor_consistency_tolerance, excluded_count, source, frequency);
   }
   magnetic_gate_records.insert(magnetic_gate_records.end(), records.begin(), records.end());
 }
@@ -29670,7 +29681,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // The magnetic (inductive) leaf (DESIGN-v2 section 3; USER 1221 D3): evaluated by the
     // rules r1-r4 on every rank from the model data; a refusal by r1 / r2 / r3 is fatal
     // unless AllowElectricOnlyFallback, an r4 refusal continues electric-only by name
-    // (ERRATUM 1227). A model without the leaf is untouched (status Absent).
+    // (ERRATUM 1227). A model without the leaf is untouched (status Absent). The dual
+    // gate's tolerance is the library's MagneticRules.ConductorConsistencyTolerance when
+    // set (decision 1251), else the electric gate's constant.
+    magnetic_conductor_consistency_tolerance =
+        config.magnetic_rules.conductor_consistency_tolerance >= 0.0
+            ? config.magnetic_rules.conductor_consistency_tolerance
+            : kConductorConsistencyTolerance;
     {
       auto magnetic =
           EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,

@@ -2303,7 +2303,18 @@ operator carries both terms on such a patch as before. The dual residual's detec
 is the patch's magnetic DEFECT energy ``|\tfrac{1}{2} w_p a_m^H dS_m a_m|`` (the electric
 one weighs by the fabricated RESPONSE energy, which the magnetic leaves do not carry):
 OI-MAGNETIC-DETECTOR-WEIGHT, so the unweighted `magnetic loop residual` is printed beside
-the gated weighted one. On the Maxwell path `TranslationalDomainCorrection` is not read:
+the gated weighted one. The MAGNETIC conductor-consistency gate (the dual R0-a gate: the
+probes' H-line integrals at the conductor cross-sections against the conductor's flux
+state) reads the optional library rule `MagneticRules.ConductorConsistencyTolerance`
+(decision 1251, INTERIM; absent = the electric gate's 0.02, bitwise as before): on a device
+its probe line integrals read the discretisation error of the singular edge field (the
+(ii) stub: ratio medians 7.1e-2 / 3.7e-2 / 2.3e-2 at ``p = 2 / 3 / 4``, excluding 96 / 84 /
+57 % of a line whose unwithheld term sits inside the Phase-0 band), so a library sets the
+tolerance it has calibrated with a discrimination control; the per-patch ratios stay
+printed in `surface-response-magnetic.csv` and the magnetic LOOP gate stays the term's gate
+of record. The probe form (legs off the singular edge / a wider integral) is
+OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3). At ``p = 2`` the magnetic loop gate
+fails on the (ii) stub (the shift is NaN there): a device-order floor ``p \geq 3``, named. On the Maxwell path `TranslationalDomainCorrection` is not read:
 the electric domain term and the magnetic term are both fixed-trace by construction (the
 key governs the electrostatic driver only). The self-consistent eigenvalue is the check:
 with a magnetic library, `Re{f self-consistent} (GHz)` is the self-consistent eigenvalue of
