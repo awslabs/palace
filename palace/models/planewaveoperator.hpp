@@ -55,8 +55,6 @@ private:
   // elsewhere) for each source.
   mutable std::map<int, Vector> tf_markers;
 
-  const Vector &GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fespace) const;
-
   // Marker of the local (vector) dofs of the closure of the total-field region, combined
   // across the processes sharing each dof.
   void GetLocalTotalFieldMarker(int idx, const mfem::ParFiniteElementSpace &fes,
@@ -84,6 +82,10 @@ public:
                          const mfem::Array<int> &bdr_attr_marker) const;
 
   const PlaneWaveSource &GetSource(int idx) const { return sources.at(idx); }
+
+  // True-dof marker of the plane wave with the given index: 1 on the dofs of the closure
+  // of the total-field region, 0 elsewhere.
+  const Vector &GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fespace) const;
 };
 
 }  // namespace palace

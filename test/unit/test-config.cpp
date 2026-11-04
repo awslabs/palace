@@ -186,6 +186,57 @@ TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Plane Wave", "[config][Serial]")
+{
+  json domains = {{"Materials", {{{"Attributes", {1, 2, 3}}}}},
+                  {"PlaneWave",
+                   {{{"Index", 2},
+                     {"Attributes", {3, 1}},
+                     {"Direction", "+Z"},
+                     {"Polarization", {1.0, 0.0, 0.5}}},
+                    {{"Index", 1},
+                     {"Attributes", {2}},
+                     {"Direction", {0.0, -1.0, 0.0}},
+                     {"Polarization", "-X"},
+                     {"Amplitude", 2.5},
+                     {"Origin", {0.1, 0.2, 0.3}}}}}};
+
+  SECTION("Plane waves are parsed by index")
+  {
+    config::DomainData data(domains);
+    REQUIRE(data.plane_wave.size() == 2);
+    const auto &pw1 = data.plane_wave.at(1);
+    CHECK(pw1.attributes == std::vector<int>{2});
+    CHECK(pw1.direction == std::array<double, 3>{0.0, -1.0, 0.0});
+    CHECK(pw1.polarization == std::array<double, 3>{-1.0, 0.0, 0.0});
+    CHECK(pw1.amplitude == 2.5);
+    CHECK(pw1.origin == std::array<double, 3>{0.1, 0.2, 0.3});
+
+    // Attributes are sorted; the amplitude and the origin have defaults. The polarization
+    // is made orthogonal to the direction by the operator, not by the parser.
+    const auto &pw2 = data.plane_wave.at(2);
+    CHECK(pw2.attributes == std::vector<int>{1, 3});
+    CHECK(pw2.direction == std::array<double, 3>{0.0, 0.0, 1.0});
+    CHECK(pw2.polarization == std::array<double, 3>{1.0, 0.0, 0.5});
+    CHECK(pw2.amplitude == 1.0);
+    CHECK(pw2.origin == std::array<double, 3>{0.0, 0.0, 0.0});
+  }
+
+  SECTION("Required fields and unique indices")
+  {
+    for (const auto *key : {"Attributes", "Direction", "Polarization", "Index"})
+    {
+      json missing = domains;
+      missing["PlaneWave"][0].erase(key);
+      CHECK_THROWS(config::DomainData(missing));
+    }
+    json repeated = domains;
+    repeated["PlaneWave"][1]["Index"] = 2;
+    CHECK_THROWS_WITH(config::DomainData(repeated),
+                      Catch::Matchers::ContainsSubstring("Repeated \"Index\""));
+  }
+}
+
 TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
 {
   // Sheets (for error estimation and interface dielectric postprocessing) and the
