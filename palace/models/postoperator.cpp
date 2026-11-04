@@ -2497,6 +2497,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseExclusionEnergies(double output
   if (!surface_response_exclusion_energy_started)
   {
     surface_response_exclusion_energy_started = true;
+    // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): a previous adaptive iteration's
+    // SaveIteration left a symlink here into its archive folder; truncating through it
+    // would overwrite the archived table and leave no real top-level file (the loop-fit
+    // writer's form: remove first, then write a real file).
+    fs::remove(path);
     std::ofstream output(path);
     MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
     output
@@ -2590,6 +2595,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
   if (!surface_response_model_raw_started)
   {
     surface_response_model_raw_started = true;
+    // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): never write through the symlink
+    // SaveIteration left (see PrintSurfaceResponseExclusionEnergies).
+    fs::remove(energy_path);
+    fs::remove(groups_path);
     std::ofstream energy(energy_path);
     MFEM_VERIFY(energy, "Unable to open " << energy_path.string() << " for writing!");
     energy << "source,evaluation,label";
