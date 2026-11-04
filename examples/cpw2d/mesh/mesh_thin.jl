@@ -19,6 +19,9 @@ function generate_cpw2d_thin_mesh(;
     lc_far::Float64      = 35.0,
     mesh_order::Int      = 2,
     filename::String     = "cpw2d_thin.msh",
+    # OI-CPW2D-MESHER-WRITES-REPO-TREE (fix round P2): the output directory; the default
+    # (this file's directory) is unchanged.
+    output_dir::String   = @__DIR__,
     verbose::Int         = 0
 )
     w_gap = (w_total_cpw - w_trace) / 2.0
@@ -178,7 +181,7 @@ function generate_cpw2d_thin_mesh(;
 
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
-    gmsh.write(joinpath(@__DIR__, filename))
+    gmsh.write(joinpath(output_dir, filename))
 
     println("=== CPW 2D Thin Metal Mesh ===")
     println("  Trace: $w_trace μm, Gap: $w_gap μm, Ground: $w_ground μm")

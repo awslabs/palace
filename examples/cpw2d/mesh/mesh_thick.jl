@@ -31,6 +31,9 @@ function generate_cpw2d_mesh(;
 
     # Output.
     filename::String="cpw2d_thick.msh",
+    # OI-CPW2D-MESHER-WRITES-REPO-TREE (fix round P2): the output directory; the default
+    # (this file's directory) is unchanged.
+    output_dir::String=@__DIR__,
     verbose::Int=0
 )
     # Derived dimensions.
@@ -335,7 +338,7 @@ function generate_cpw2d_mesh(;
     # Write mesh.
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
-    gmsh.write(joinpath(@__DIR__, filename))
+    gmsh.write(joinpath(output_dir, filename))
 
     # Print summary.
     println("=== CPW 2D Cross-Section Mesh ===")
