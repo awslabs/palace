@@ -127,12 +127,12 @@ class MonitorTransportFailureTest(unittest.TestCase):
         remote_side = qualify_library.remote_side
         saved = remote_side.ssh
         try:
-            remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
+            remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
             unreachable = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
-            remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(
+            remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(
                 ["ssh"], 1, stdout="---STATUS---\n\n" + remote_side.POLL_MARKER + "\n", stderr="")
             finished = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
-            remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(
+            remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(
                 ["ssh"], 0, stdout="job_state = R\n---STATUS---\n{\"State\": \"running\", \"Stages\": []}\n" + remote_side.POLL_MARKER + "\n", stderr="")
             running = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
         finally:
@@ -188,7 +188,7 @@ class MonitorTransportFailureTest(unittest.TestCase):
         commands = []
         saved_ssh = remote_side.ssh
         try:
-            remote_side.ssh = lambda host, command, check=True: (commands.append(command) or subprocess.CompletedProcess(
+            remote_side.ssh = lambda host, command, check=True, **_timeout_options: (commands.append(command) or subprocess.CompletedProcess(
                 ["ssh"], 0, stdout="job_state = H\nHold_Types = u\ncomment = Job held by root\nResource_List.error_message = CF:ROLLBACK_COMPLETE:retry=1\n"
                                    "---STATUS---\n\n" + remote_side.POLL_MARKER + "\n", stderr=""))
             polled = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
@@ -341,7 +341,7 @@ class RemoteFailClosedTest(unittest.TestCase):
         remote_side.upload = lambda host, local, remote: uploads.append(("upload", remote)) or ["rsync", remote]
         remote_side.upload_file = lambda host, local, remote: uploads.append(("file", remote)) or ["rsync", remote]
         # The shared root still holds the Oct-5 case directory: refused before any upload.
-        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.EXISTS_MARKER + "\n", stderr="")
+        remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.EXISTS_MARKER + "\n", stderr="")
         self.assertTrue(remote_side.path_exists("h", remote_case))
         with self.assertRaises(qualify_library.CaseStop) as stop:
             qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
@@ -356,23 +356,23 @@ class RemoteFailClosedTest(unittest.TestCase):
         self.assertEqual([kind for kind, _ in uploads], ["upload", "file"])
         # A fresh case directory uploads as before, nothing adopted.
         uploads.clear()
-        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.ABSENT_MARKER + "\n", stderr="")
+        remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.ABSENT_MARKER + "\n", stderr="")
         upload = qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
         self.assertEqual((upload["RemoteCaseExisted"], upload["AdoptedRemoteCase"]), (False, False))
         self.assertEqual(len(uploads), 2)
         # A lost connection is no answer: the coupon stops (never "absent" from silence).
-        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
+        remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
         with self.assertRaisesRegex(RuntimeError, "no answer"):
             remote_side.path_exists("h", remote_case)
         # The marker-based JSON reader (decision 495 (3)): silence -> (False, None); an absent file -> (True, None); content -> parsed.
         self.assertEqual(remote_side.read_json_reachable("h", "/r/x.json"), (False, None))
-        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.READ_MARKER + "\n", stderr="")
+        remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.READ_MARKER + "\n", stderr="")
         self.assertEqual(remote_side.read_json_reachable("h", "/r/x.json"), (True, None))
         self.assertIsNone(remote_side.read_json("h", "/r/x.json"))
-        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout='{"ExitCode": 0}\n' + remote_side.READ_MARKER + "\n", stderr="")
+        remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 0, stdout='{"ExitCode": 0}\n' + remote_side.READ_MARKER + "\n", stderr="")
         self.assertEqual(remote_side.read_json_reachable("h", "/r/x.json"), (True, {"ExitCode": 0}))
         self.assertEqual(remote_side.read_json("h", "/r/x.json"), {"ExitCode": 0})
-        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
+        remote_side.ssh = lambda host, command, check=True, **_timeout_options: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
         with self.assertRaises(qualify_library.CaseStop) as stop:
             qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
         self.assertEqual(stop.exception.record["Kind"], "RemoteCase")

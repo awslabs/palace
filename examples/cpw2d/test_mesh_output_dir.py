@@ -6,6 +6,7 @@ meshers (mesh_surface_calibration.jl, mesh_thin.jl, mesh_thick.jl) take an `outp
 keyword; the default (the mesher's own directory, i.e. the repository tree) is unchanged, so
 a caller that needs the mesh elsewhere passes the directory instead of moving the file after
 the fact (the fix-round P0 narrow-gap D3 incident, STEP 25 of its REPORT)."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -37,9 +38,11 @@ class MesherOutputDirTest(unittest.TestCase):
             self.skipTest("the Gmsh Julia package is not available: " + probe.stderr.strip()[-200:])
         before = sorted(os.listdir(MESH_DIR))
         with tempfile.TemporaryDirectory() as temp:
-            script = (f'include({str(MESH_DIR / "mesh_surface_calibration.jl")!r})\n'
+            # Julia string literals are double-quoted (a single-quoted literal is a Char).
+            mesher = json.dumps(str(MESH_DIR / "mesh_surface_calibration.jl"))
+            script = (f'include({mesher})\n'
                       f'generate_cpw2d_mesh(; w_ground=60.0, h_substrate=60.0, h_vacuum=60.0, lc_fine=0.5, '
-                      f'lc_far=30.0, mesh_order=1, filename="unit-test-output-dir.msh", output_dir={temp!r})\n')
+                      f'lc_far=30.0, mesh_order=1, filename="unit-test-output-dir.msh", output_dir={json.dumps(temp)})\n')
             env = dict(os.environ, JULIA_NUM_THREADS="1")
             result = subprocess.run([julia, "--startup-file=no", "-t", "1", "-e", script], capture_output=True,
                                     text=True, timeout=900, env=env)
