@@ -27,7 +27,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Nonconforming meshes are now rebalanced with a ParMETIS partition of the element
     adjacency graph, instead of MFEM's split of the refinement tree leaves into equal
     chunks, which fragmented the subdomains over the AMR iterations. Processes have fewer
-    neighbors and exchange less data after a rebalance.
+    neighbors, more of them on the same node, and exchange less data after a rebalance.
     [PR 1130](https://github.com/awslabs/palace/pull/1130).
 
 #### Bug Fixes

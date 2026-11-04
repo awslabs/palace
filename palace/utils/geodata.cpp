@@ -2679,9 +2679,9 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 // Partition the elements of a nonconforming mesh with ParMETIS, on the element adjacency
 // graph through all conforming and nonconforming faces. MFEM's default partition splits the
 // sequence of refinement tree leaves into equal chunks, which fragments the subdomains over
-// the AMR iterations. The parts are numbered along a Hilbert curve through their centroids,
-// so that consecutive ranks, and in particular the ranks of a node, hold neighboring
-// subdomains. Returns false if ParMETIS fails or would leave a process without elements.
+// the AMR iterations. The parts are numbered so that the ranks of a node hold neighboring
+// subdomains (see NumberPartsOnNodes). Returns false if ParMETIS fails or would leave a
+// process without elements.
 bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
                                            mfem::Array<int> &partitioning)
 {
@@ -2703,37 +2703,47 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     }
   }
 
-  // Global indices of the face neighbor elements, from a piecewise constant field.
+  // Calls f(e1, e2, v2) for each face between elements e1 and e2 != e1, where v2 is
+  // value(e2) exchanged in a piecewise constant field, and e2 < 0 for a face neighbor.
   mfem::L2_FECollection fec(0, mesh.Dimension());
   mfem::ParFiniteElementSpace fes(&mesh, &fec);
-  mfem::ParGridFunction gid(&fes);
+  mfem::ParGridFunction field(&fes);
   mfem::Array<int> vdofs;
+  auto ForEachFace = [&](auto &&value, auto &&f)
   {
-    double *h_gid = gid.HostWrite();
+    double *h_field = field.HostWrite();
     for (int e = 0; e < ne; e++)
     {
       fes.GetElementVDofs(e, vdofs);
-      h_gid[vdofs[0]] = static_cast<double>(vtxdist[rank] + e);
+      h_field[vdofs[0]] = static_cast<double>(value(e));
     }
-  }
-  gid.ExchangeFaceNbrData();
-  const double *nbr_gid = gid.FaceNbrData().HostRead();
+    field.ExchangeFaceNbrData();
+    const double *nbr = field.FaceNbrData().HostRead();
+    for (int i = 0; i < mesh.GetNumFacesWithGhost(); i++)
+    {
+      const auto info = mesh.GetFaceInformation(i);
+      const int e1 = info.element[0].index, e2 = info.element[1].index;
+      if (info.IsLocal() && e1 != e2)  // A periodic face can connect an element to itself
+      {
+        f(e1, e2, static_cast<double>(value(e2)));
+      }
+      else if (info.IsShared())
+      {
+        fes.GetFaceNbrElementVDofs(e2, vdofs);
+        f(e1, -1, nbr[vdofs[0]]);
+      }
+    }
+  };
   std::vector<std::vector<idx_t>> adj(ne);
-  for (int f = 0; f < mesh.GetNumFacesWithGhost(); f++)
-  {
-    const auto info = mesh.GetFaceInformation(f);
-    const int e1 = info.element[0].index, e2 = info.element[1].index;
-    if (info.IsLocal() && e1 != e2)  // A periodic face can connect an element to itself
-    {
-      adj[e1].push_back(vtxdist[rank] + e2);
-      adj[e2].push_back(vtxdist[rank] + e1);
-    }
-    else if (info.IsShared())
-    {
-      fes.GetFaceNbrElementVDofs(e2, vdofs);
-      adj[e1].push_back(static_cast<idx_t>(nbr_gid[vdofs[0]]));
-    }
-  }
+  ForEachFace([&](int e) { return vtxdist[rank] + e; },
+              [&](int e1, int e2, double g2)
+              {
+                adj[e1].push_back(static_cast<idx_t>(g2));
+                if (e2 >= 0)
+                {
+                  adj[e2].push_back(vtxdist[rank] + e1);
+                }
+              });
   std::vector<idx_t> xadj(ne + 1, 0), adjncy;
   for (int e = 0; e < ne; e++)
   {
@@ -2765,10 +2775,13 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     return false;
   }
 
-  // Number the parts along a Hilbert curve through their centroids, instead of ParMETIS's
-  // remapping which minimizes the migration but loses the node locality. This assumes that
-  // consecutive ranks share a node, as does MFEM's default partition.
-  std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0);
+  // Number the parts so that the ranks of a node hold neighboring subdomains, instead of
+  // ParMETIS's remapping which minimizes the migration but loses the node locality. Start
+  // from three orders of the parts: along a Hilbert curve through their centroids, with
+  // per-axis and with isotropic scaling, and by the mean current global index of their
+  // elements.
+  std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0),
+      gidx(size, 0.0);
   mfem::Array<int> verts;
   for (int e = 0; e < ne; e++)
   {
@@ -2782,9 +2795,11 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
       }
     }
     cnt[part[e]] += 1.0;
+    gidx[part[e]] += static_cast<double>(vtxdist[rank] + e);
   }
   Mpi::GlobalSum(static_cast<int>(xc.size()), xc.data(), comm);
   Mpi::GlobalSum(size, cnt.data(), comm);
+  Mpi::GlobalSum(size, gidx.data(), comm);
   if (std::find(cnt.begin(), cnt.end(), 0.0) != cnt.end())
   {
     return false;  // Do not leave a process without elements
@@ -2800,28 +2815,86 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
       lo[d] = std::min(lo[d], xc[p * dim + d]);
       hi[d] = std::max(hi[d], xc[p * dim + d]);
     }
+    gidx[p] /= cnt[p];
+  }
+  double len_max = 0.0;
+  for (int d = 0; d < dim; d++)
+  {
+    len_max = std::max(len_max, hi[d] - lo[d]);
   }
   const int b = (dim == 3) ? 21 : 31;
   const double nb = std::ldexp(1.0, b);
+  std::vector<std::vector<int>> orders(3, std::vector<int>(size));
   std::vector<std::uint64_t> key(size, 0);
-  for (int p = 0; p < size; p++)
+  for (int s = 0; s < 2; s++)
   {
-    std::array<std::uint32_t, 3> X = {0, 0, 0};
-    for (int d = 0; d < dim; d++)
+    for (int p = 0; p < size; p++)
     {
-      const double len = hi[d] - lo[d];
-      const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
-      X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+      std::array<std::uint32_t, 3> X = {0, 0, 0};
+      for (int d = 0; d < dim; d++)
+      {
+        const double len = (s == 0) ? hi[d] - lo[d] : len_max;
+        const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
+        X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+      }
+      key[p] = HilbertIndex(X, dim, b);
     }
-    key[p] = HilbertIndex(X, dim, b);
+    std::iota(orders[s].begin(), orders[s].end(), 0);
+    std::ranges::stable_sort(orders[s], {}, [&key](int p) { return key[p]; });
   }
-  std::vector<int> order(size), new_part(size);
-  std::iota(order.begin(), order.end(), 0);
-  std::stable_sort(order.begin(), order.end(),
-                   [&key](int i, int j) { return key[i] < key[j]; });
+  std::iota(orders[2].begin(), orders[2].end(), 0);
+  std::ranges::stable_sort(orders[2], {}, [&gidx](int p) { return gidx[p]; });
+
+  // Gather on the root the faces between the parts, with weight 2 for a local face and 1 on
+  // each side of a shared face, and the node of each rank, labeled by its lowest rank.
+  std::map<std::pair<int, int>, int> faces;
+  ForEachFace([&](int e) { return part[e]; },
+              [&](int e1, int e2, double p2)
+              {
+                const int p = static_cast<int>(part[e1]), q = static_cast<int>(p2);
+                if (p != q)
+                {
+                  faces[{std::min(p, q), std::max(p, q)}] += (e2 >= 0) ? 2 : 1;
+                }
+              });
+  std::vector<int> loc, all, counts(size), displs(size + 1, 0);
+  for (const auto &[pq, w] : faces)
+  {
+    loc.insert(loc.end(), {pq.first, pq.second, w});
+  }
+  const int nloc = static_cast<int>(loc.size());
+  MPI_Gather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
   for (int i = 0; i < size; i++)
   {
-    new_part[order[i]] = i;
+    displs[i + 1] = displs[i] + counts[i];
+  }
+  all.resize(rank == 0 ? displs[size] : 0);
+  MPI_Gatherv(loc.data(), nloc, MPI_INT, all.data(), counts.data(), displs.data(), MPI_INT,
+              0, comm);
+  std::vector<int> rank_node(size);
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node_comm);
+    int node = rank;
+    Mpi::Broadcast(1, &node, 0, node_comm);
+    MPI_Comm_free(&node_comm);
+    MPI_Gather(&node, 1, MPI_INT, rank_node.data(), 1, MPI_INT, 0, comm);
+  }
+  std::vector<int> new_part(size);
+  if (rank == 0)
+  {
+    std::map<std::pair<int, int>, int> all_faces;
+    for (std::size_t i = 0; i < all.size(); i += 3)
+    {
+      all_faces[{all[i], all[i + 1]}] += all[i + 2];
+    }
+    std::vector<std::array<int, 3>> pairs;
+    pairs.reserve(all_faces.size());
+    for (const auto &[pq, w] : all_faces)
+    {
+      pairs.push_back({pq.first, pq.second, w});
+    }
+    new_part = NumberPartsOnNodes(orders, pairs, rank_node);
   }
   Mpi::Broadcast(size, new_part.data(), 0, comm);  // Same numbering on every process
   partitioning.SetSize(ne);

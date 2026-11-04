@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -155,6 +156,167 @@ TEST_CASE("HilbertIndex", "[geodata][Serial]")
       }
       CHECK(dist == 1);
     }
+  }
+}
+
+TEST_CASE("NumberPartsOnNodes", "[geodata][Serial]")
+{
+  using Pairs = std::vector<std::array<int, 3>>;
+  auto Cut = [](const Pairs &pairs, const std::vector<int> &rank,
+                const std::vector<int> &rank_node)
+  {
+    int cut = 0;
+    for (const auto &[p, q, w] : pairs)
+    {
+      cut += (rank_node[rank[p]] != rank_node[rank[q]]) ? w : 0;
+    }
+    return cut;
+  };
+
+  // Two clusters of four strongly connected parts, with a weak link between them.
+  Pairs clusters = {{3, 4, 1}};
+  for (int c = 0; c < 2; c++)
+  {
+    for (int i = 0; i < 4; i++)
+    {
+      for (int j = i + 1; j < 4; j++)
+      {
+        clusters.push_back({4 * c + i, 4 * c + j, 10});
+      }
+    }
+  }
+  const std::vector<int> interleaved = {0, 4, 1, 5, 2, 6, 3, 7},
+                         grouped = {0, 1, 2, 3, 4, 5, 6, 7};
+
+  SECTION("Clusters on the wrong nodes are regrouped")
+  {
+    // The first blocks of the order split both clusters over the two nodes.
+    const std::vector<int> rank_node = {0, 0, 0, 0, 1, 1, 1, 1};
+    const auto rank = mesh::NumberPartsOnNodes({interleaved}, clusters, rank_node);
+    CHECK(rank == std::vector<int>{4, 5, 6, 7, 0, 1, 2, 3});
+    CHECK(Cut(clusters, rank, rank_node) == 1);
+  }
+
+  SECTION("A single node keeps the order")
+  {
+    const std::vector<int> rank_node(8, 0);
+    const auto rank = mesh::NumberPartsOnNodes({interleaved}, clusters, rank_node);
+    for (int i = 0; i < 8; i++)
+    {
+      CHECK(rank[interleaved[i]] == i);
+    }
+  }
+
+  SECTION("Round-robin ranks")
+  {
+    // Each cluster gets the ranks of one node, in the order.
+    const std::vector<int> rank_node = {0, 1, 0, 1, 0, 1, 0, 1};
+    const auto rank = mesh::NumberPartsOnNodes({interleaved}, clusters, rank_node);
+    CHECK(rank == std::vector<int>{1, 3, 5, 7, 0, 2, 4, 6});
+  }
+
+  SECTION("Ties go to the first part")
+  {
+    // On a ring of four parts, swapping part 0 with part 1 or 3 is equally good.
+    const Pairs ring = {{0, 1, 2}, {1, 2, 2}, {2, 3, 2}, {0, 3, 2}};
+    CHECK(mesh::NumberPartsOnNodes({{0, 2, 1, 3}}, ring, {0, 0, 1, 1}) ==
+          std::vector<int>{2, 1, 0, 3});
+  }
+
+  SECTION("Several orders")
+  {
+    // Both orders separate the clusters, the first wins the tie.
+    const std::vector<int> rank_node = {0, 0, 0, 0, 1, 1, 1, 1};
+    CHECK(mesh::NumberPartsOnNodes({interleaved, grouped}, clusters, rank_node) ==
+          std::vector<int>{4, 5, 6, 7, 0, 1, 2, 3});
+    CHECK(mesh::NumberPartsOnNodes({grouped, interleaved}, clusters, rank_node) == grouped);
+  }
+
+  SECTION("Grid of parts on uneven nodes")
+  {
+    // A 6 x 4 grid of parts, on nodes 0 to 3 of 3, 7, 5 and 9 ranks, out of rank order.
+    constexpr int nx = 6, ny = 4, n = nx * ny;
+    Pairs grid;
+    for (int j = 0; j < ny; j++)
+    {
+      for (int i = 0; i < nx; i++)
+      {
+        if (i + 1 < nx)
+        {
+          grid.push_back({j * nx + i, j * nx + i + 1, 2});
+        }
+        if (j + 1 < ny)
+        {
+          grid.push_back({j * nx + i, (j + 1) * nx + i, 2});
+        }
+      }
+    }
+    std::vector<int> rank_node(n), sizes = {5, 3, 9, 7}, labels = {2, 0, 3, 1};
+    for (int k = 0, r = 0; k < 4; k++)
+    {
+      for (int i = 0; i < sizes[k]; i++)
+      {
+        rank_node[r++] = labels[k];
+      }
+    }
+    std::vector<int> scrambled(n), rows(n), columns(n);
+    for (int i = 0; i < n; i++)
+    {
+      scrambled[i] = (7 * i) % n;
+      rows[i] = i;
+      columns[i] = (i % ny) * nx + i / ny;
+    }
+    const std::vector<std::vector<int>> orders = {scrambled, rows, columns};
+    const auto rank = mesh::NumberPartsOnNodes(orders, grid, rank_node);
+
+    // Each node keeps its number of ranks.
+    auto sorted = rank;
+    std::ranges::sort(sorted);
+    for (int r = 0; r < n; r++)
+    {
+      CHECK(sorted[r] == r);
+    }
+
+    // The swaps reduce the weight between nodes of the first blocks of the order, until no
+    // swap of two parts on different nodes reduces it, and the chosen order has the least.
+    std::vector<int> blocks(n);
+    for (int k = 0, i = 0; k < 4; k++)
+    {
+      for (int r = 0; r < n; r++)
+      {
+        if (rank_node[r] == k)
+        {
+          blocks[scrambled[i++]] = r;
+        }
+      }
+    }
+    const auto first = mesh::NumberPartsOnNodes({scrambled}, grid, rank_node);
+    CHECK(Cut(grid, first, rank_node) < Cut(grid, blocks, rank_node));
+    for (const auto &order : orders)
+    {
+      const auto single = mesh::NumberPartsOnNodes({order}, grid, rank_node);
+      const int cut = Cut(grid, single, rank_node);
+      CHECK(Cut(grid, rank, rank_node) <= cut);
+      int improving = 0;
+      for (int p = 0; p < n; p++)
+      {
+        for (int q = p + 1; q < n; q++)
+        {
+          auto swapped = single;
+          std::swap(swapped[p], swapped[q]);
+          improving += (Cut(grid, swapped, rank_node) < cut);
+        }
+      }
+      CHECK(improving == 0);
+    }
+
+    // The result does not depend on the order or orientation of the pairs.
+    Pairs flipped(grid.rbegin(), grid.rend());
+    for (auto &[p, q, w] : flipped)
+    {
+      std::swap(p, q);
+    }
+    CHECK(mesh::NumberPartsOnNodes(orders, flipped, rank_node) == rank);
   }
 }
 
