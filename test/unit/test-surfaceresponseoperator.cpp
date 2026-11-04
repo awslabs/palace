@@ -8481,12 +8481,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                 ["Cells"]["Interpolated"] == cells["Interpolated"]);
   }
 
-  // Pass C: a NON-uniform member (span 1.1, middle edge 1.3): above the mean the bracket's
-  // interpolant misses the local middle edge by w x 0.3 x 1.375 R - accepted only where its
-  // weight w is small enough to stay within the near band (the cells just above the mean
-  // section), NonUniform beyond; nothing brackets below the mean; the cells within the band
-  // of the mean section itself read NearMatched (the mean key); every other cell keeps the
-  // mean key (MeanKeyFallback). The member's rows = the accepted interpolated cells only.
+  // Pass C (decision 1303): a NON-uniform member (span 1.1, middle edge 1.3) is NOT
+  // eligible for the bracket (its section is not a uniform scaling of the keyed section
+  // within the near band): the family keys name it (IneligibleKeys 1) but no cell
+  // interpolates with it; with the mean key alone eligible there is no bracket -> every
+  // cell keeps the mean key (MeanKeyFallback, or NearMatched / Exact within the mean
+  // section's own band); the skew member places 0 rows; NonUniform 0 (no bracket was ever
+  // tried against it).
   const fs::path skew_library = temp.temp_dir / "fabrication-process-cluster-r9b-skew.json";
   WriteLibrary(skew_library, "unit-test-process-cluster-r9b-skew",
                {{"parallel-edge-cluster-mean", {1.0, 1.0, 1.0}},
@@ -8495,21 +8496,46 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     const auto record = Record(skew);
     const auto &cells = record["Family"]["Cells"];
-    const int interpolated = cells["Interpolated"].get<int>();
-    CHECK(cells["NonUniform"].get<int>() > 0);
-    CHECK(cells["NonUniform"].get<int>() > interpolated);
-    CHECK(cells["MeanKeyFallback"].get<int>() > record["Cells"].get<int>() / 2);
+    CHECK(record["Family"]["IneligibleKeys"].get<int>() == 1);
+    CHECK(record["Family"]["Keys"].size() == 2);
+    CHECK(cells["Interpolated"].get<int>() == 0);
+    CHECK(cells["NonUniform"].get<int>() == 0);
     CHECK(cells["MeanKeyFallback"].get<int>() + cells["NearMatched"].get<int>() +
-              cells["Exact"].get<int>() + interpolated ==
+              cells["Exact"].get<int>() ==
           record["Cells"].get<int>());
-    const auto skew_it = skew_rows.by_model.find("parallel-edge-cluster-skew");
-    CHECK((skew_it == skew_rows.by_model.end() ? 0 : skew_it->second) == interpolated);
-    CHECK(skew_rows.by_model.at("parallel-edge-cluster-mean") == alone_rows.cluster_rows);
-    CHECK(skew_rows.cluster_rows == alone_rows.cluster_rows + interpolated);
+    CHECK(cells["MeanKeyFallback"].get<int>() > record["Cells"].get<int>() / 2);
+    CHECK(skew_rows.by_model.count("parallel-edge-cluster-skew") == 0);
+    CHECK(skew_rows.by_model.at("parallel-edge-cluster-mean") == skew_rows.cluster_rows);
+    CHECK(skew_rows.cluster_rows == alone_rows.cluster_rows);
     CHECK(*skew_rows.model_indices.at("parallel-edge-cluster-mean").begin() ==
           mean_model_index);
-    CHECK(skew["Summary"]["PlacedByLocalSeparation"]["Families"]["ParallelEdgeCluster"]
-              ["Cells"]["NonUniform"] == cells["NonUniform"]);
+  }
+
+  // Pass D (decision 1303): an eligible member FARTHER from the cells (s 1.3) is chosen
+  // over a NEARER skew one (span 1.1, middle edge 1.3): every cell above the mean
+  // interpolates between the mean key and the s 1.3 member (never the skew), the cells
+  // below between the mean key and the s 0.9 member; NonUniform 0; the skew member places 0
+  // rows.
+  const fs::path farther_library =
+      temp.temp_dir / "fabrication-process-cluster-r9b-farther.json";
+  WriteLibrary(farther_library, "unit-test-process-cluster-r9b-farther",
+               {{"parallel-edge-cluster-mean", {1.0, 1.0, 1.0}},
+                {"parallel-edge-cluster-s0.9", {1.0, 0.9, 0.9}},
+                {"parallel-edge-cluster-skew", {1.0, 1.3, 1.1}},
+                {"parallel-edge-cluster-s1.3", {1.0, 1.3, 1.3}}});
+  const auto [farther, farther_rows] = Preflight("farther", farther_library);
+  {
+    const auto record = Record(farther);
+    const auto &cells = record["Family"]["Cells"];
+    CHECK(record["Family"]["IneligibleKeys"].get<int>() == 1);
+    CHECK(cells["Interpolated"].get<int>() + cells["Exact"].get<int>() ==
+          record["Cells"].get<int>());
+    CHECK(cells["NonUniform"].get<int>() == 0);
+    CHECK(cells["MeanKeyFallback"].get<int>() == 0);
+    CHECK(farther_rows.by_model.count("parallel-edge-cluster-skew") == 0);
+    CHECK(farther_rows.by_model.at("parallel-edge-cluster-s1.3") > 0);
+    CHECK(farther_rows.by_model.at("parallel-edge-cluster-s0.9") > 0);
+    CHECK(farther_rows.by_model.at("parallel-edge-cluster-mean") > 0);
   }
 #endif
 }

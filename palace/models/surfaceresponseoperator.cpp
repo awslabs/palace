@@ -10498,6 +10498,8 @@ struct FeaturePatchSummary
                                // section by more than the near band (fell through)
     int mean_key_fallback_cells = 0;  // 1291: today's placement by the mean-keyed model
     int unpatched_cells = 0;
+    int ineligible_members =
+        0;  // 1303: family keys not uniform scalings of the keyed section
   };
   std::map<int, PlacedByLocalSeparation> placed_by_local_separation;
   // R-9b: KeyedAtTheMean features of a type the rule does not place cell-wise (curved
@@ -12572,7 +12574,14 @@ FeaturePatchSummary BuildFeaturePatches(
       std::size_t index = 0;
       std::vector<double> offsets_over_R;
     };
+    // The bracket members (decision 1303, the SCALE family of 1286 Q-1): a model of the
+    // topology key is ELIGIBLE iff its own section is a uniform scaling of the KEYED
+    // section within the near band (|offsets_m - s_m x keyed| <=
+    // kGeometricNearMatchClaimsOverRadius on every offset); a non-uniform member of the key
+    // (another window's flare) is named in the Family keys but never brackets a cell (it
+    // would fail the interpolant's acceptance and hide the next uniform bracket).
     std::vector<Member> members;
+    int ineligible_members = 0;
     for (const auto &entry : cluster.family)
     {
       const auto it = model_by_name.find(entry.name);
@@ -12589,9 +12598,22 @@ FeaturePatchSummary BuildFeaturePatches(
       {
         continue;
       }
-      members.push_back({offsets.back() * R / keyed_span, it->second, offsets});
       record.family_keys.push_back(entry.name);
+      const double s_member = offsets.back() * R / keyed_span;
+      bool uniform_member = true;
+      for (std::size_t j = 1; j < n && uniform_member; j++)
+      {
+        uniform_member = std::abs(offsets[j] - s_member * cluster.keyed_offsets[j] / R) <=
+                         kGeometricNearMatchClaimsOverRadius;
+      }
+      if (!uniform_member)
+      {
+        ineligible_members++;
+        continue;
+      }
+      members.push_back({s_member, it->second, offsets});
     }
+    record.ineligible_members = ineligible_members;
     std::sort(members.begin(), members.end(),
               [](const Member &a, const Member &b) { return a.s < b.s; });
     std::vector<const std::vector<FramedPortion> *> probe_sides;
@@ -12750,12 +12772,13 @@ FeaturePatchSummary BuildFeaturePatches(
     Mpi::Print(" R-9b feature {:d} ({}): keyed at the taper's mean (span {:.6e}); {:d} "
                "cells placed at their local cross-section, span [{:.4g}, {:.4g}] R ({:d} "
                "exact, {:d} interpolated, {:d} near-matched, {:d} mean-key fallback, {:d} "
-               "non-uniform; {:d} family keys)\n",
+               "non-uniform; {:d} eligible family keys, {:d} ineligible)\n",
                feature.id, feature.type, keyed_span, record.placed_cells,
                record.min_separation_over_R, record.max_separation_over_R,
                record.exact_cells, record.interpolated_cells, record.near_matched_cells,
                record.mean_key_fallback_cells, record.nonuniform_cells,
-               static_cast<int>(record.family_keys.size()));
+               static_cast<int>(record.family_keys.size()) - record.ineligible_members,
+               record.ineligible_members);
   };
 
   for (const auto &feature : identification.features)
@@ -15270,6 +15293,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           // R-9b: the Family sub-record (decisions 1286 Q-4 / 1291) on R-9b features ONLY.
           records.back()["Family"] = {{"Parameter", record.family_parameter},
                                       {"Keys", record.family_keys},
+                                      {"IneligibleKeys", record.ineligible_members},
                                       {"Cells",
                                        {{"Exact", record.exact_cells},
                                         {"Interpolated", record.interpolated_cells},
