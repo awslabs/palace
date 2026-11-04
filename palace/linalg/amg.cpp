@@ -102,14 +102,20 @@ void BoomerAmgSolver::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
     std::copy(XK, XK + n, b + k * n);
   }
   hypre_ParVectorSetZeros(hX);
-  if (HYPRE_BoomerAMGSolve(*this, *A, B_mv, X_mv))
+  // An error of the multicomponent solve itself means that multicomponent vectors are not
+  // supported for this configuration (relaxation type, threads): use separate solves.
+  // Errors raised by earlier hypre calls are kept.
+  const HYPRE_Int prev_error = hypre_error_flag;
+  hypre_error_flag = 0;
+  HYPRE_BoomerAMGSolve(*this, *A, B_mv, X_mv);
+  if (hypre_error_flag & HYPRE_ERROR_GENERIC)
   {
-    // Not supported for this configuration (relaxation type): use separate solves.
-    hypre_error_flag = 0;
+    hypre_error_flag = prev_error;
     mv_failed = true;
     mfem::HypreBoomerAMG::ArrayMult(X, Y);
     return;
   }
+  hypre_error_flag |= prev_error;
   const HYPRE_Real *x = hypre_VectorData(hypre_ParVectorLocalVector(hX));
   for (int k = 0; k < nv; k++)
   {
