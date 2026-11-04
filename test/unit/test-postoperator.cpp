@@ -748,6 +748,10 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 
   // Create parallel mesh.
   auto comm = Mpi::World();
+  if (Mpi::Size(comm) > serial_mesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
   iodata.NondimensionalizeInputs(serial_mesh);
   Mesh mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
