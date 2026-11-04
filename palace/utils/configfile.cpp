@@ -1700,14 +1700,38 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           data.control_flip_probe_pieces.push_back(std::move(entry));
         }
       }
+      if (gate->contains("ControlStateAnchorSetbackOverR"))
+      {
+        // Decision 1302: a diagnostic CONTROL admitted only with RecordOnly true on a
+        // PostprocessOnly run.
+        data.control_state_anchor_setback_over_r =
+            gate->at("ControlStateAnchorSetbackOverR").get<double>();
+        MFEM_VERIFY(
+            data.control_state_anchor_setback_over_r > 0.0 &&
+                data.control_state_anchor_setback_over_r <= 1.0,
+            "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
+            "must be in (0, 1]!");
+        MFEM_VERIFY(
+            data.conductor_consistency_record_only,
+            "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
+            "is a diagnostic CONTROL admitted only with \"RecordOnly\": true "
+            "(decision 1302)!");
+        MFEM_VERIFY(
+            data.correction_mode ==
+                ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY,
+            "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
+            "is admitted only with \"CorrectionMode\": \"PostprocessOnly\" (the term "
+            "is not of record under the control; decision 1302)!");
+      }
       for (const auto &[key, value] : gate->items())
       {
         (void)value;
-        MFEM_VERIFY(key == "RecordOnly" || key == "ControlFlipProbePiece",
+        MFEM_VERIFY(key == "RecordOnly" || key == "ControlFlipProbePiece" ||
+                        key == "ControlStateAnchorSetbackOverR",
                     "Response-correction \"ConductorConsistency\" has an unknown key \""
                         << key
-                        << "\" (RecordOnly and ControlFlipProbePiece are the only "
-                           "keys)!");
+                        << "\" (RecordOnly, ControlFlipProbePiece and "
+                           "ControlStateAnchorSetbackOverR are the only keys)!");
       }
     }
     if (auto diagnostics = correction.find("Diagnostics"); diagnostics != correction.end())

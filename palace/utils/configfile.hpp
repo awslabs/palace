@@ -1517,6 +1517,15 @@ public:
       int piece = -1;
     };
     std::vector<ControlFlipProbePieceData> control_flip_probe_pieces;
+    // ControlStateAnchorSetbackOverR (mx-sc-magnetic Phase 3 (a); supervisor decision
+    // 1302): a DIAGNOSTIC CONTROL, not a modelling option. The MAGNETIC chain trace's
+    // conductor-path anchor lines (the STATE operand of the dual gate) start from the
+    // patch's conductor anchors SET BACK into their piece by this fraction of R (the probe
+    // form's generic setback + sheet nudge) instead of the edge anchors; the electric lines
+    // are untouched. Admitted ONLY with RecordOnly true and CorrectionMode PostprocessOnly
+    // (the term is NOT of record under it; refused by name otherwise); in (0, 1]; negative
+    // = absent = bitwise.
+    double control_state_anchor_setback_over_r = -1.0;
 
     // The magnetic (inductive) defect (mx-sc-magnetic DESIGN-v2 section 3; USER 1221 D3):
     // AllowElectricOnlyFallback (default false): a model whose magnetic leaf is REFUSED by

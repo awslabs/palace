@@ -21174,6 +21174,44 @@ std::vector<int> LocalPiecesOfParallelEdges(const std::vector<double> &offsets,
   return pieces;
 }
 
+// Phase 3 (a) (DESIGN-v2 a.2 + AMENDMENT 1275 MAJOR-A; decisions 1284 Q-1 / 1292 / 1302):
+// the GENERIC lateral setback of a point at offset `u0` in piece `piece` of a
+// cross-section: a point closer than `setback` to a bounding edge of its piece moves to
+// `setback` inside along -GapDirection x axis_u (the returned signed move along u); a piece
+// bounded on both sides caps the setback at `width_fraction` x its width; the unbounded
+// ground side binds no cap; a point already >= setback inside is unchanged (0).
+double LateralSetbackMove(const std::vector<double> &offsets,
+                          const std::vector<int> &gap_directions,
+                          const std::vector<int> &pieces, double u0, int piece,
+                          double setback, double width_fraction)
+{
+  double lower = -mfem::infinity(), upper = mfem::infinity();
+  for (std::size_t k = 0; k < offsets.size(); k++)
+  {
+    if (pieces[k] != piece)
+    {
+      continue;
+    }
+    // GapDirection -1: the gap on the -u side, the piece STARTS here; +1: the piece ENDS
+    // here.
+    (gap_directions[k] < 0 ? lower : upper) = offsets[k];
+  }
+  double s = setback;
+  if (std::isfinite(lower) && std::isfinite(upper))
+  {
+    s = std::min(s, width_fraction * (upper - lower));
+  }
+  if (std::isfinite(lower) && u0 - lower < s)
+  {
+    return s - (u0 - lower);
+  }
+  if (std::isfinite(upper) && upper - u0 < s)
+  {
+    return -(s - (upper - u0));
+  }
+  return 0.0;
+}
+
 int LocalPieceOfOffset(const std::vector<double> &offsets,
                        const std::vector<int> &gap_directions,
                        const std::vector<int> &pieces, double u)
@@ -27320,8 +27358,8 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
   // excluded carries neither: weight 0 skips it here).
   Vector line_real, line_imag, trace_real, trace_imag;
   EvaluateMaxwellLines(E.Real(), E.Imag(), line_real, line_imag, true);
-  BuildMaxwellChainTrace(line_real, trace_real);
-  BuildMaxwellChainTrace(line_imag, trace_imag);
+  BuildMaxwellChainTrace(line_real, trace_real, true);
+  BuildMaxwellChainTrace(line_imag, trace_imag, true);
   std::vector<double> amplitudes(patches.size(), 0.0);
   double largest_applied_amplitude = 0.0;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
@@ -27332,8 +27370,16 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
     {
       continue;
     }
-    AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real);
-    AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag);
+    if (control_state_anchor_setback_over_r <= 0.0)
+    {
+      // Decision 1302: under the state-anchor CONTROL the chain's anchor lines are the
+      // magnetic twins, which the loop fit's tree (built on the electric lines) does not
+      // know: the fit is NOT applied to the re-anchored chain (its correction is bounded by
+      // the loop residual, ~1e-3 of the states on the (ii) stub; the control is a
+      // diagnostic).
+      AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real);
+      AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag);
+    }
     for (int i = 0; i < model.basis_size; i++)
     {
       amplitudes[patch_index] =
@@ -30556,6 +30602,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
             ? config.magnetic_rules.conductor_consistency_tolerance
             : kConductorConsistencyTolerance;
     magnetic_probe_rules = config.magnetic_rules;
+    control_state_anchor_setback_over_r = request->control_state_anchor_setback_over_r;
     {
       auto magnetic =
           EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,
@@ -30870,6 +30917,51 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "Inconsistent Maxwell response contour size!");
     MFEM_ASSERT(static_cast<int>(anchors.size()) == model.conductor_state_count + 1,
                 "Inconsistent Maxwell conductor-anchor count!");
+    // Decision 1302 (the ControlStateAnchorSetbackOverR CONTROL, RecordOnly only): the
+    // MAGNETIC chain's anchor / end / return lines of a translational magnetic patch start
+    // from its conductor anchors SET BACK into their piece (the probe form's generic rule
+    // and sheet nudge); `state_anchors` = the anchors (electric form) or their set-back
+    // twins; `twin_lines` = whether the magnetic twin lines are appended for this patch.
+    std::vector<mfem::Vector> state_anchors(anchors.begin(), anchors.end());
+    const bool twin_lines = control_state_anchor_setback_over_r > 0.0 && model.magnetic &&
+                            !patch.conductor_probe_edges.empty();
+    if (twin_lines)
+    {
+      const auto &patch_config = *local_patch_configs[patch_index];
+      std::vector<double> offsets;
+      std::vector<int> gap_directions, pieces;
+      for (const auto &edge : patch.conductor_probe_edges)
+      {
+        offsets.push_back(edge.offset);
+        gap_directions.push_back(edge.gap_direction);
+        pieces.push_back(edge.piece);
+      }
+      const double R = matching_radius;
+      for (auto &state_anchor : state_anchors)
+      {
+        double u0 = 0.0;
+        for (int d = 0; d < dimension; d++)
+        {
+          u0 += (state_anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
+        }
+        const int piece = LocalPieceOfOffset(offsets, gap_directions, pieces, u0);
+        MFEM_VERIFY(piece > 0,
+                    "ControlStateAnchorSetbackOverR: a conductor anchor of patch "
+                        << patch.global_index << " lies in a gap!");
+        const double move =
+            LateralSetbackMove(offsets, gap_directions, pieces, u0, piece,
+                               control_state_anchor_setback_over_r * R,
+                               magnetic_probe_rules.probe_setback_width_fraction);
+        for (int d = 0; d < dimension; d++)
+        {
+          state_anchor[d] +=
+              move * patch_config.axis_u[d] +
+              magnetic_probe_rules.probe_sheet_nudge_over_r * R * patch_config.axis_v[d];
+        }
+      }
+      control_state_anchor_patch_count++;
+    }
+    const auto &state_anchor = state_anchors.front();
     // The lines of one step along the ring edge from knot `from` to knot `to` (decision
     // 818 R3): through the edge's slave vertices in their order along the edge (weight_a
     // is the trace weight of parent_a, 1 at parent_a and 0 at parent_b), else the one
@@ -30942,6 +31034,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
             path.trace_indices.push_back(patch.trace_offset + free_index);
           }
           path.anchor_line = AppendLineIfDistinct(anchor, contour[free_indices.front()]);
+          path.magnetic_anchor_line =
+              twin_lines ? AppendLineIfDistinct(state_anchor, contour[free_indices.front()])
+                         : -1;
           path.contour_line_offset = static_cast<int>(maxwell_lines.size());
           path.step_line_counts.reserve(free_indices.size() - 1);
           for (std::size_t i = 1; i < free_indices.size(); i++)
@@ -30952,6 +31047,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           }
           path.contour_line_count += AppendStep(free_indices.back(), end);
           path.return_line = AppendLineIfDistinct(contour[end], anchor);
+          path.magnetic_return_line =
+              twin_lines ? AppendLineIfDistinct(contour[end], state_anchor) : -1;
           maxwell_paths.push_back(std::move(path));
         }
         group_offset += group_size;
@@ -30979,6 +31076,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                                      (start + offset) % group_size);
       }
       path.anchor_line = AppendLineIfDistinct(anchor, contour[group_offset + start]);
+      path.magnetic_anchor_line =
+          twin_lines ? AppendLineIfDistinct(state_anchor, contour[group_offset + start])
+                     : -1;
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
       path.step_line_counts.reserve(group_size - 1);
       for (int offset = 0; offset < group_size; offset++)
@@ -31023,6 +31123,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       const auto &first = contour[path_config.indices.front()];
       const auto &last = contour[path_config.indices.back()];
       path.anchor_line = AppendLineIfDistinct(start_anchor, first);
+      path.magnetic_anchor_line =
+          twin_lines
+              ? AppendLineIfDistinct(state_anchors[path_config.start_conductor], first)
+              : -1;
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
       path.step_line_counts.reserve(path_config.indices.size() - 1);
       for (std::size_t i = 1; i < path_config.indices.size(); i++)
@@ -31032,6 +31136,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         path.contour_line_count += path.step_line_counts.back();
       }
       path.end_line = AppendLineIfDistinct(last, end_anchor);
+      path.magnetic_end_line =
+          twin_lines ? AppendLineIfDistinct(last, state_anchors[path_config.end_conductor])
+                     : -1;
       open_path_indices.push_back(static_cast<int>(maxwell_paths.size()));
       maxwell_paths.push_back(std::move(path));
     }
@@ -31167,31 +31274,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       // The lateral move of a point at offset u0 in piece p (0 when unchanged).
       auto SetbackMove = [&](double u0, int piece)
       {
-        double lower = -mfem::infinity(), upper = mfem::infinity();
-        for (std::size_t k = 0; k < edges.size(); k++)
-        {
-          if (pieces[k] != piece)
-          {
-            continue;
-          }
-          // GapDirection -1: the gap on the -u side, the piece STARTS here; +1: the piece
-          // ENDS here.
-          (gap_directions[k] < 0 ? lower : upper) = offsets[k];
-        }
-        double s = setback;
-        if (std::isfinite(lower) && std::isfinite(upper))
-        {
-          s = std::min(s, rules.probe_setback_width_fraction * (upper - lower));
-        }
-        if (std::isfinite(lower) && u0 - lower < s)
-        {
-          return s - (u0 - lower);
-        }
-        if (std::isfinite(upper) && upper - u0 < s)
-        {
-          return -(s - (upper - u0));
-        }
-        return 0.0;
+        return LateralSetbackMove(offsets, gap_directions, pieces, u0, piece, setback,
+                                  rules.probe_setback_width_fraction);
       };
       // The Gauss heights (ascending) and their weights (summing to 1): one height h_m for
       // LIFTED, `ProbeBandHeights` Gauss-Legendre points on [h_m / 2, 3 h_m / 2] for BAND.
@@ -31586,6 +31670,20 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                magnetic_probe_rules.probe_setback_width_fraction,
                magnetic_probe_rules.probe_sheet_nudge_over_r,
                magnetic_probe_rules.probe_band_heights, global_magnetic_probe_line_count);
+    if (control_state_anchor_setback_over_r > 0.0)
+    {
+      int patches_reanchored = control_state_anchor_patch_count;
+      Mpi::GlobalSum(1, &patches_reanchored, fespace.GetComm());
+      MFEM_VERIFY(patches_reanchored > 0,
+                  "ConductorConsistency.ControlStateAnchorSetbackOverR re-anchored no "
+                  "patch (no translational magnetic patch placed; decision 1302: a control "
+                  "that applies nowhere is refused)!");
+      Mpi::Print(
+          " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e} (decision 1302): "
+          "the magnetic chain's anchor lines of {:d} patch(es) start from set-back "
+          "anchors; the magnetic term is NOT of record\n",
+          control_state_anchor_setback_over_r, patches_reanchored);
+    }
     if (total_control_flips > 0)
     {
       Mpi::Print(" DIAGNOSTIC CONTROL ControlFlipProbePiece (decision 1292): {:d} probe "
@@ -32932,26 +33030,37 @@ void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values, Vec
 }
 
 void SurfaceResponseOperator::BuildMaxwellChainTrace(const Vector &line_values,
-                                                     Vector &values) const
+                                                     Vector &values, bool magnetic) const
 {
   MFEM_ASSERT(line_values.Size() == static_cast<int>(maxwell_lines.size()),
               "Inconsistent Maxwell contour-path data!");
   values.SetSize(basis_size);
   values = 0.0;
+  // Decision 1302: the magnetic chain reads a path's twin anchor / end lines where the
+  // ControlStateAnchorSetbackOverR control built them (-1 = the electric line).
+  auto AnchorLine = [&](const MaxwellContourPath &path)
+  {
+    return magnetic && path.magnetic_anchor_line >= 0 ? path.magnetic_anchor_line
+                                                      : path.anchor_line;
+  };
+  auto EndLine = [&](const MaxwellContourPath &path)
+  {
+    return magnetic && path.magnetic_end_line >= 0 ? path.magnetic_end_line : path.end_line;
+  };
   auto PathIntegral = [&](const MaxwellContourPath &path)
   {
     double value = 0.0;
-    if (path.anchor_line >= 0)
+    if (AnchorLine(path) >= 0)
     {
-      value += line_values[path.anchor_line];
+      value += line_values[AnchorLine(path)];
     }
     for (int i = 0; i < path.contour_line_count; i++)
     {
       value += line_values[path.contour_line_offset + i];
     }
-    if (path.end_line >= 0)
+    if (EndLine(path) >= 0)
     {
-      value += line_values[path.end_line];
+      value += line_values[EndLine(path)];
     }
     return value;
   };
@@ -32975,9 +33084,9 @@ void SurfaceResponseOperator::BuildMaxwellChainTrace(const Vector &line_values,
       // A conductor state, or the rim knot of a hat: set by a path built before this one.
       value = values[path.start_trace];
     }
-    if (path.anchor_line >= 0)
+    if (AnchorLine(path) >= 0)
     {
-      value -= line_values[path.anchor_line];
+      value -= line_values[AnchorLine(path)];
     }
     values[path.trace_indices.front()] = value;
     int line = path.contour_line_offset;
@@ -35078,8 +35187,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     Vector magnetic_line_real, magnetic_line_imag, magnetic_chain_real, magnetic_chain_imag;
     EvaluateMaxwellLines(field_real, field_imag, magnetic_line_real, magnetic_line_imag,
                          true);
-    BuildMaxwellChainTrace(magnetic_line_real, magnetic_chain_real);
-    BuildMaxwellChainTrace(magnetic_line_imag, magnetic_chain_imag);
+    BuildMaxwellChainTrace(magnetic_line_real, magnetic_chain_real, true);
+    BuildMaxwellChainTrace(magnetic_line_imag, magnetic_chain_imag, true);
     Vector magnetic_trace_real(magnetic_chain_real),
         magnetic_trace_imag(magnetic_chain_imag);
     // [0] the magnetic domain correction, [1] the weighted residual^2, [2] the loop weight,
@@ -35098,8 +35207,12 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       {
         continue;
       }
-      AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real);
-      AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag);
+      if (control_state_anchor_setback_over_r <= 0.0)
+      {
+        // Decision 1302: no loop-fit correction on the re-anchored chain (see the gate).
+        AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real);
+        AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag);
+      }
       Vector patch_real(magnetic_trace_real.GetData() + patch.trace_offset,
                         model.basis_size);
       Vector patch_imag(magnetic_trace_imag.GetData() + patch.trace_offset,
@@ -35184,7 +35297,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         };
         if (!path.closed)
         {
-          AddLine(path.anchor_line);
+          AddLine(path.magnetic_anchor_line >= 0 ? path.magnetic_anchor_line
+                                                 : path.anchor_line);
         }
         for (int i = 0; i < path.contour_line_count; i++)
         {
@@ -35192,8 +35306,9 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         }
         if (!path.closed)
         {
-          AddLine(path.end_line);
-          AddLine(path.return_line);
+          AddLine(path.magnetic_end_line >= 0 ? path.magnetic_end_line : path.end_line);
+          AddLine(path.magnetic_return_line >= 0 ? path.magnetic_return_line
+                                                 : path.return_line);
           AddTrace(path.start_trace, -1.0);
           AddTrace(path.end_conductor_trace, 1.0);
         }
@@ -35463,9 +35578,26 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
       // and the applied ControlFlipProbePiece CONTROL (decision 1292).
       result["Correction"]["MagneticProbeLines"] = Distribution(magnetic_probe_line_count);
       result["Correction"]["MagneticProbeForm"] = MagneticProbeForm();
-      if (!control_flipped_probe_records.empty())
       {
-        result["Correction"]["ControlFlipProbePiece"] = control_flipped_probe_records;
+        // The flips of EVERY rank (the first A run recorded the root rank's list only, a
+        // record defect named in the lane's REPORT step a16): the global count and the
+        // distinct "<model>:<edge>:<from>-><to>" forms.
+        auto flips =
+            Distribution(static_cast<long long int>(control_flipped_probe_records.size()));
+        if (flips["Total"].get<long long int>() > 0)
+        {
+          std::set<std::string> forms(control_flipped_probe_records.begin(),
+                                      control_flipped_probe_records.end());
+          result["Correction"]["ControlFlipProbePiece"] = {
+              {"Count", flips["Total"]},
+              {"Forms", std::vector<std::string>(forms.begin(), forms.end())}};
+        }
+      }
+      if (control_state_anchor_setback_over_r > 0.0)
+      {
+        result["Correction"]["ControlStateAnchorSetbackOverR"] = {
+            {"OverR", control_state_anchor_setback_over_r},
+            {"Patches", Distribution(control_state_anchor_patch_count)}};
       }
     }
     // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (decision 1072 Q2): the FROZEN crack tolerance

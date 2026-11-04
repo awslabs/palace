@@ -382,6 +382,12 @@ private:
     int end_line = -1;
     int return_line = -1;
     int hat_check_line = -1;
+    // Decision 1302 (the ControlStateAnchorSetbackOverR CONTROL): the MAGNETIC twins of the
+    // anchor / end / return lines, from the set-back conductor anchors; -1 = the electric
+    // line is used (the default: bitwise).
+    int magnetic_anchor_line = -1;
+    int magnetic_end_line = -1;
+    int magnetic_return_line = -1;
     int start_trace = -1;
     int end_conductor_trace = -1;
     bool closed = true;
@@ -709,6 +715,10 @@ private:
   // flipped probe: "<model>:<edge>:<piece from>-><piece to>"), gathered on every rank at
   // the Maxwell configuration; empty when the control is absent.
   std::vector<std::string> control_flipped_probe_records;
+  // Decision 1302: the ControlStateAnchorSetbackOverR CONTROL (negative = absent) and the
+  // local patches whose magnetic state lines it re-anchored.
+  double control_state_anchor_setback_over_r = -1.0;
+  int control_state_anchor_patch_count = 0;
   // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
   // when a magnetic leaf is loaded), so that the root-only record printers need no
   // collective.
@@ -957,7 +967,10 @@ private:
   std::vector<MagneticGateRecord> magnetic_gate_records;
   // The chain lift (one route per knot; the loop-residual detector's trace, decision 955
   // D3) and its transpose.
-  void BuildMaxwellChainTrace(const Vector &line_values, Vector &values) const;
+  // `magnetic` (decision 1302): the paths' magnetic twin lines where present (the
+  // ControlStateAnchorSetbackOverR control; otherwise identical to the electric chain).
+  void BuildMaxwellChainTrace(const Vector &line_values, Vector &values,
+                              bool magnetic = false) const;
   void BuildMaxwellChainTraceTranspose(const Vector &values, Vector &line_values) const;
   // The least-squares lift (the chain plus the cycle-space correction of every patch) and
   // its transpose: the trace of the energies and of the self-consistent Mult.

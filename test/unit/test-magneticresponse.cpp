@@ -1089,7 +1089,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         CHECK(record.excluded);  // the verdict is recorded; RecordOnly excludes nothing
       }
       const auto statistics = response.GetStatistics();
-      CHECK(statistics["Correction"]["ControlFlipProbePiece"].size() == flips.size());
+      int global_flips = static_cast<int>(flips.size());
+      Mpi::GlobalSum(1, &global_flips, Mpi::World());
+      CHECK(statistics["Correction"]["ControlFlipProbePiece"]["Count"].get<int>() ==
+            global_flips);
+      CHECK(statistics["Correction"]["ControlFlipProbePiece"]["Forms"].size() == 1);
       // The electric gate's twin reading (information): the flipped probe departs there
       // too.
       const auto electric =
@@ -1115,6 +1119,100 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
                         Catch::Matchers::ContainsSubstring("flipped no probe"));
     }
+  }
+#endif
+}
+
+// Decision 1302: the ControlStateAnchorSetbackOverR DIAGNOSTIC CONTROL re-anchors the
+// MAGNETIC chain's anchor / end / return lines at set-back conductor anchors (RecordOnly +
+// PostprocessOnly only). On the piece-form stub under the gap-flux field the re-anchored
+// states equal the edge-anchored ones in the continuum (path independence is exact for this
+// field); on the HEXAHEDRAL fixture the twin anchor lines cross the slot edge where the
+// integrand f'(z) jumps and the line quadrature samples a hexahedral mesh blindly (no face
+// split: the exact segment intersections exist on simplices only, the H9a site), so the
+// twins read the jump with a ~2 % quadrature error: every gate ratio stays below the
+// tolerance and nearly uniform (the same re-anchored geometry on every cell). The twin
+// lines are counted as contour lines; the control is recorded; it is refused without
+// RecordOnly, on a self-consistent run and out of range.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator magnetic gate: the state-anchor setback control "
+                 "(ControlStateAnchorSetbackOverR, decision 1302)",
+                 "[surfaceresponseoperator][maxwell][magnetic][probeform][control][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  const auto library = WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path,
+                                                "pieces-stateanchor", true);
+  json config = StubMaxwellConfig(*this, library);
+  config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "PostprocessOnly";
+  long long electric_lines = 0;
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(config, meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    electric_lines =
+        response.GetStatistics()["Correction"]["ContourLines"]["Total"].get<long long>();
+    CHECK_FALSE(
+        response.GetStatistics()["Correction"].contains("ControlStateAnchorSetbackOverR"));
+  }
+  {
+    json control = config;
+    control["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+        {"RecordOnly", true}, {"ControlStateAnchorSetbackOverR", 0.5}};
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(control, meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    const auto statistics = response.GetStatistics();
+    REQUIRE(statistics["Correction"].contains("ControlStateAnchorSetbackOverR"));
+    CHECK(statistics["Correction"]["ControlStateAnchorSetbackOverR"]["Patches"]["Total"]
+              .get<long long>() == response.GetPatchCount());
+    // The twin anchor / end / return lines are contour lines beside the electric ones.
+    CHECK(statistics["Correction"]["ContourLines"]["Total"].get<long long>() >
+          electric_lines);
+    auto field = GapFluxField(1.0);
+    response.ApplyMagneticConductorConsistencyGate(ProjectField(space, field), 0, 5.0);
+    const auto &records = response.GetMagneticGateRecords();
+    REQUIRE(records.size() == static_cast<std::size_t>(response.GetPatchCount()));
+    double lowest = mfem::infinity(), highest = 0.0;
+    for (const auto &record : records)
+    {
+      INFO("patch " << record.patch << " ratio " << record.max_ratio);
+      CHECK(record.max_ratio < SurfaceResponseOperator::kConductorConsistencyTolerance);
+      CHECK_FALSE(record.excluded);
+      lowest = std::min(lowest, record.max_ratio);
+      highest = std::max(highest, record.max_ratio);
+    }
+    CHECK(highest - lowest < 1.0e-6);  // the same re-anchored geometry on every cell
+  }
+  {
+    json bad = config;
+    bad["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+        {"ControlStateAnchorSetbackOverR", 0.5}};
+    CHECK_THROWS_WITH(IoData(bad, false), Catch::Matchers::ContainsSubstring("RecordOnly"));
+    json self_consistent = config;
+    self_consistent["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
+    self_consistent["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+        {"RecordOnly", true}, {"ControlStateAnchorSetbackOverR", 0.5}};
+    CHECK_THROWS_WITH(IoData(self_consistent, false),
+                      Catch::Matchers::ContainsSubstring("PostprocessOnly"));
+    json out_of_range = config;
+    out_of_range["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+        {"RecordOnly", true}, {"ControlStateAnchorSetbackOverR", 1.5}};
+    CHECK_THROWS_WITH(IoData(out_of_range, false),
+                      Catch::Matchers::ContainsSubstring("(0, 1]"));
   }
 #endif
 }
