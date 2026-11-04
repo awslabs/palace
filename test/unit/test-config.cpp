@@ -1005,6 +1005,21 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
       "SelfConsistent";
   CHECK_THROWS(IoData(boundary_mode_config, false));
+  // OI-MAXWELL-TRANSLATIONAL-MODE-INERT (decisions 1237 / 1260): the Maxwell path never
+  // reads TranslationalDomainCorrection, so only the default FixedTrace is accepted (an
+  // explicit FixedTrace parses; Disabled / FixedFlux are refused by name).
+  auto translational_maxwell = maxwell_config;
+  translational_maxwell["Solver"]["SurfaceResponseCorrection"]
+                       ["TranslationalDomainCorrection"] = "FixedTrace";
+  CHECK_NOTHROW(IoData(translational_maxwell, false));
+  for (const char *mode : {"Disabled", "FixedFlux"})
+  {
+    translational_maxwell["Solver"]["SurfaceResponseCorrection"]
+                         ["TranslationalDomainCorrection"] = mode;
+    CHECK_THROWS_WITH(
+        IoData(translational_maxwell, false),
+        Catch::Matchers::ContainsSubstring("OI-MAXWELL-TRANSLATIONAL-MODE-INERT"));
+  }
 
   maxwell_config["Problem"]["Type"] = "Electrostatic";
   maxwell_config["Solver"].erase("Eigenmode");

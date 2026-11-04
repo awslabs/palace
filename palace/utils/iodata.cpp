@@ -319,6 +319,18 @@ void IoData::CheckConfiguration()
                   !solver.surface_response_correction->patch_energy,
               "Boundary mode does not support SurfaceResponseCorrection \"PatchEnergy\" "
               "(the per-patch export is a driven / eigenmode option)!");
+  // OI-MAXWELL-TRANSLATIONAL-MODE-INERT (decision 1237; fix round P2, decision 1260): the
+  // Maxwell path never reads TranslationalDomainCorrection (its domain correction is always
+  // the fixed-trace form), so a non-default value would be silently inert; it is refused
+  // here, by name, instead (no Maxwell configuration of record sets the key).
+  MFEM_VERIFY(
+      !solver.surface_response_correction ||
+          solver.surface_response_correction->translational_domain_correction ==
+              config::ElectrostaticSolverData::ResponseCorrectionData::
+                  TranslationalDomainCorrection::FIXED_TRACE,
+      "Maxwell \"SurfaceResponseCorrection\" supports \"TranslationalDomainCorrection\" "
+      "\"FixedTrace\" only (the driven / eigenmode / boundary mode domain correction is "
+      "always fixed-trace; OI-MAXWELL-TRANSLATIONAL-MODE-INERT)!");
 
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
