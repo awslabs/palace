@@ -2703,16 +2703,17 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     }
   }
 
-  // Global indices of the face neighbor elements, from a piecewise constant field (one DOF
-  // per element).
+  // Global indices of the face neighbor elements, from a piecewise constant field.
   mfem::L2_FECollection fec(0, mesh.Dimension());
   mfem::ParFiniteElementSpace fes(&mesh, &fec);
   mfem::ParGridFunction gid(&fes);
+  mfem::Array<int> vdofs;
   {
     double *h_gid = gid.HostWrite();
     for (int e = 0; e < ne; e++)
     {
-      h_gid[e] = static_cast<double>(vtxdist[rank] + e);
+      fes.GetElementVDofs(e, vdofs);
+      h_gid[vdofs[0]] = static_cast<double>(vtxdist[rank] + e);
     }
   }
   gid.ExchangeFaceNbrData();
@@ -2722,14 +2723,15 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   {
     const auto info = mesh.GetFaceInformation(f);
     const int e1 = info.element[0].index, e2 = info.element[1].index;
-    if (info.IsLocal())
+    if (info.IsLocal() && e1 != e2)  // A periodic face can connect an element to itself
     {
       adj[e1].push_back(vtxdist[rank] + e2);
       adj[e2].push_back(vtxdist[rank] + e1);
     }
     else if (info.IsShared())
     {
-      adj[e1].push_back(static_cast<idx_t>(nbr_gid[e2]));
+      fes.GetFaceNbrElementVDofs(e2, vdofs);
+      adj[e1].push_back(static_cast<idx_t>(nbr_gid[vdofs[0]]));
     }
   }
   std::vector<idx_t> xadj(ne + 1, 0), adjncy;
@@ -2821,6 +2823,7 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   {
     new_part[order[i]] = i;
   }
+  Mpi::Broadcast(size, new_part.data(), 0, comm);  // Same numbering on every process
   partitioning.SetSize(ne);
   for (int e = 0; e < ne; e++)
   {
@@ -2947,7 +2950,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       }
       else
       {
-        Mpi::Warning(comm, "Could not partition the nonconforming mesh with ParMETIS, "
+        Mpi::Warning(comm, "No valid ParMETIS partition of the nonconforming mesh, "
                            "rebalancing it with MFEM's default partition!\n");
         mesh->Rebalance();
       }

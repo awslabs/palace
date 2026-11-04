@@ -35,14 +35,14 @@ struct BoundingBall
   bool planar;
 };
 
-// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
-// bounding balls. Returns the dominant rank, for which the vertices argument will be
-// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
-// certain floating point precision.
 // Index along a Hilbert curve of a point with dim coordinates of b bits each (Skilling,
 // "Programming the Hilbert curve", AIP Conf. Proc. 707, 2004).
 std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b);
 
+// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
+// bounding balls. Returns the dominant rank, for which the vertices argument will be
+// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
+// certain floating point precision.
 int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, std::vector<Eigen::Vector3d> &vertices);
 

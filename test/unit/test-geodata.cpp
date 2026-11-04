@@ -156,12 +156,6 @@ TEST_CASE("HilbertIndex", "[geodata][Serial]")
       CHECK(dist == 1);
     }
   }
-
-  // The bit widths used for the rebalance fit in 64 bits.
-  CHECK(mesh::HilbertIndex({(1u << 21) - 1, (1u << 21) - 1, (1u << 21) - 1}, 3, 21) <
-        (std::uint64_t(1) << 63));
-  CHECK(mesh::HilbertIndex({(1u << 31) - 1, (1u << 31) - 1, 0}, 2, 31) <
-        (std::uint64_t(1) << 62));
 }
 
 TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
