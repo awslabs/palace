@@ -6,6 +6,7 @@
 #include "geodata_impl.hpp"
 
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <random>
 #include <unordered_set>
@@ -29,6 +30,53 @@ bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 // bounding balls. Returns the dominant rank, for which the vertices argument will be
 // filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
 // certain floating point precision.
+std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b)
+{
+  const std::uint32_t M = 1u << (b - 1);
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    const std::uint32_t P = Q - 1;
+    for (int i = 0; i < dim; i++)
+    {
+      if (X[i] & Q)
+      {
+        X[0] ^= P;
+      }
+      else
+      {
+        const std::uint32_t t = (X[0] ^ X[i]) & P;
+        X[0] ^= t;
+        X[i] ^= t;
+      }
+    }
+  }
+  for (int i = 1; i < dim; i++)
+  {
+    X[i] ^= X[i - 1];
+  }
+  std::uint32_t t = 0;
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    if (X[dim - 1] & Q)
+    {
+      t ^= Q - 1;
+    }
+  }
+  for (int i = 0; i < dim; i++)
+  {
+    X[i] ^= t;
+  }
+  std::uint64_t key = 0;
+  for (int j = b - 1; j >= 0; j--)
+  {
+    for (int i = 0; i < dim; i++)
+    {
+      key = (key << 1) | ((X[i] >> j) & 1u);
+    }
+  }
+  return key;
+}
+
 int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, std::vector<Eigen::Vector3d> &vertices)
 {

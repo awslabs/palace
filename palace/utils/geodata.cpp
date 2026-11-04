@@ -2676,55 +2676,6 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
-// Hilbert curve index of a point with dim coordinates of b bits each (Skilling,
-// "Programming the Hilbert curve", AIP Conf. Proc. 707, 2004).
-std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b)
-{
-  const std::uint32_t M = 1u << (b - 1);
-  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
-  {
-    const std::uint32_t P = Q - 1;
-    for (int i = 0; i < dim; i++)
-    {
-      if (X[i] & Q)
-      {
-        X[0] ^= P;
-      }
-      else
-      {
-        const std::uint32_t t = (X[0] ^ X[i]) & P;
-        X[0] ^= t;
-        X[i] ^= t;
-      }
-    }
-  }
-  for (int i = 1; i < dim; i++)
-  {
-    X[i] ^= X[i - 1];
-  }
-  std::uint32_t t = 0;
-  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
-  {
-    if (X[dim - 1] & Q)
-    {
-      t ^= Q - 1;
-    }
-  }
-  for (int i = 0; i < dim; i++)
-  {
-    X[i] ^= t;
-  }
-  std::uint64_t key = 0;
-  for (int j = b - 1; j >= 0; j--)
-  {
-    for (int i = 0; i < dim; i++)
-    {
-      key = (key << 1) | ((X[i] >> j) & 1u);
-    }
-  }
-  return key;
-}
-
 // Partition the elements of a nonconforming mesh with ParMETIS, on the element adjacency
 // graph through all conforming and nonconforming faces. MFEM's default partition splits the
 // sequence of refinement tree leaves into equal chunks, which fragments the subdomains over

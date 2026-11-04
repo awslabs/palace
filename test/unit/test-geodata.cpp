@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <numbers>
@@ -117,6 +118,51 @@ void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coo
 //     }
 //   }
 // }
+
+TEST_CASE("HilbertIndex", "[geodata][Serial]")
+{
+  // The curve visits every cell of a 2^b grid once, starting at the origin, and consecutive
+  // cells are face neighbors.
+  for (const auto &[dim, b] : {std::pair{2, 4}, std::pair{3, 3}})
+  {
+    const std::uint32_t m = 1u << b, mz = (dim == 3) ? m : 1u;
+    const std::uint64_t n = std::uint64_t(1) << (dim * b);
+    std::vector<std::array<std::uint32_t, 3>> cell(n);
+    std::vector<bool> seen(n, false);
+    for (std::uint32_t i = 0; i < m; i++)
+    {
+      for (std::uint32_t j = 0; j < m; j++)
+      {
+        for (std::uint32_t k = 0; k < mz; k++)
+        {
+          const std::array<std::uint32_t, 3> X = {i, j, k};
+          const auto key = mesh::HilbertIndex(X, dim, b);
+          REQUIRE(key < n);
+          REQUIRE_FALSE(seen[key]);
+          seen[key] = true;
+          cell[key] = X;
+        }
+      }
+    }
+    CHECK(cell[0] == std::array<std::uint32_t, 3>{0, 0, 0});
+    for (std::uint64_t key = 1; key < n; key++)
+    {
+      int dist = 0;
+      for (int d = 0; d < 3; d++)
+      {
+        dist +=
+            std::abs(static_cast<int>(cell[key][d]) - static_cast<int>(cell[key - 1][d]));
+      }
+      CHECK(dist == 1);
+    }
+  }
+
+  // The bit widths used for the rebalance fit in 64 bits.
+  CHECK(mesh::HilbertIndex({(1u << 21) - 1, (1u << 21) - 1, (1u << 21) - 1}, 3, 21) <
+        (std::uint64_t(1) << 63));
+  CHECK(mesh::HilbertIndex({(1u << 31) - 1, (1u << 31) - 1, 0}, 2, 31) <
+        (std::uint64_t(1) << 62));
+}
 
 TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 {

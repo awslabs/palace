@@ -5,6 +5,7 @@
 #define PALACE_UTILS_GEODATA_IMPL_HPP
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -38,6 +39,10 @@ struct BoundingBall
 // bounding balls. Returns the dominant rank, for which the vertices argument will be
 // filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
 // certain floating point precision.
+// Index along a Hilbert curve of a point with dim coordinates of b bits each (Skilling,
+// "Programming the Hilbert curve", AIP Conf. Proc. 707, 2004).
+std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b);
+
 int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, std::vector<Eigen::Vector3d> &vertices);
 
