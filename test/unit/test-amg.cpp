@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <tuple>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "linalg/amg.hpp"
@@ -50,21 +51,72 @@ TEST_CASE("BoomerAMG zero initial guess", "[amg][Serial][Parallel]")
   std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
   std::unique_ptr<mfem::HypreParMatrix> Ae(A->EliminateRowsCols(dbc_tdof_list));
 
-  BoomerAmgSolver amg(1, 1, true, 0);
-  amg.SetOperator(*A);
   const int n = A->Height();
   mfem::Vector b0(n), x0(n), z0(n);
   b0.Randomize(1 + Mpi::Rank(comm));
 
-  // Zero initial guess marked as zero for the first relaxation.
-  amg.Mult(b0, x0);
+  // One or several V-cycles and sweeps (the zero flag must not survive the first
+  // relaxation), with and without aggressive coarsening.
+  for (auto [cycle_it, smooth_it, agg_coarsen] :
+       {std::tuple{1, 1, true}, std::tuple{2, 2, true}, std::tuple{3, 1, false}})
+  {
+    BoomerAmgSolver amg(cycle_it, smooth_it, agg_coarsen, 0);
+    amg.SetOperator(*A);
+    for (int rep = 0; rep < 2; rep++)
+    {
+      // Zero initial guess marked as zero for the first relaxation.
+      x0 = 1.0;
+      amg.Mult(b0, x0);
 
-  // Same result when the zero initial guess is given explicitly (not marked).
-  amg.iterative_mode = true;
-  z0 = 0.0;
-  amg.Mult(b0, z0);
-  amg.iterative_mode = false;
-  CHECK(RelMaxDiff(comm, z0, x0) == 0.0);
+      // Same result when the zero initial guess is given explicitly (not marked).
+      amg.iterative_mode = true;
+      z0 = 0.0;
+      amg.Mult(b0, z0);
+      amg.iterative_mode = false;
+      CHECK(RelMaxDiff(comm, z0, x0) == 0.0);
+    }
+  }
+}
+
+// The hybrid Gauss-Seidel relaxation skips the exchange of a vector flagged as zero. AMS
+// relaxes its iterate on the Nedelec space with several sweeps of hybrid Gauss-Seidel
+// directly (hypre_ParCSRRelax, not through hypre_BoomerAMGRelax), so the flag must be
+// cleared once the iterate is updated, or later sweeps use zero off-processor values.
+TEST_CASE("AMS relaxation of a zero-flagged initial guess", "[amg][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto smesh = mfem::Mesh::MakeCartesian3D(6, 5, 4, mfem::Element::TETRAHEDRON);
+  mfem::ParMesh pmesh(comm, smesh);
+  mfem::ND_FECollection fec(1, pmesh.Dimension());
+  mfem::ParFiniteElementSpace fespace(&pmesh, &fec);
+
+  mfem::ConstantCoefficient one(1.0);
+  mfem::ParBilinearForm a(&fespace);
+  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(one));
+  a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(one));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+
+  mfem::HypreAMS ams(*A, &fespace);
+  ams.SetPrintLevel(0);
+  // l1-scaled hybrid symmetric Gauss-Seidel with several sweeps.
+  HYPRE_AMSSetSmoothingOptions(ams, 2, 3, 1.0, 1.0);
+  ams.iterative_mode = true;
+
+  mfem::HypreParVector b(*A), x(*A), z(*A);
+  b.Randomize(1 + Mpi::Rank(comm));
+
+  // Explicit zero initial guess, not flagged.
+  z = 0.0;
+  hypre_ParVectorAllZeros((hypre_ParVector *)z) = 0;
+  ams.Mult(b, z);
+
+  // Same initial guess flagged as zero.
+  x.HypreWrite();
+  hypre_ParVectorSetZeros(x);
+  ams.Mult(b, x);
+  CHECK(RelMaxDiff(comm, x, z) == 0.0);
 }
 
 }  // namespace palace

@@ -1,5 +1,5 @@
 diff --git a/src/parcsr_ls/par_relax.c b/src/parcsr_ls/par_relax.c
-index e223b0f20..d7e40735f 100644
+index e223b0f20..aa6bde76e 100644
 --- a/src/parcsr_ls/par_relax.c
 +++ b/src/parcsr_ls/par_relax.c
 @@ -797,36 +797,53 @@ hypre_BoomerAMGRelaxHybridGaussSeidel_core( hypre_ParCSRMatrix *A,
@@ -70,3 +70,14 @@ index e223b0f20..d7e40735f 100644
     }
  
     if (Topo_order)
+@@ -941,6 +958,10 @@ hypre_BoomerAMGRelaxHybridGaussSeidel_core( hypre_ParCSRMatrix *A,
+    hypre_profile_times[HYPRE_TIMER_ID_RELAX] += hypre_MPI_Wtime();
+ #endif
+ 
++   /* u is no longer known to be zero, also for callers which do not go through
++      hypre_BoomerAMGRelax (for example hypre_ParCSRRelax in AMS) */
++   hypre_ParVectorAllZeros(u) = 0;
++
+    return hypre_error_flag;
+ }
+ 
