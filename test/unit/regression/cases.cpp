@@ -1302,7 +1302,7 @@ TEST_CASE("spheres_sensitivity", "[Serial][Parallel][GPU][Regression]")
   opts.paraview_fields = false;
   opts.sensitivity = true;
   opts.custom_checks["terminal-C.csv"] = TestSpheresSensitivity(opts);
-  palace::test::RunRegressionCase("spheres", "spheres_sensitivity.json",
+  palace::test::RunRegressionCase("spheres_sensitivity", "spheres_sensitivity.json",
                                   "spheres_sensitivity", opts);
 }
 
@@ -1327,8 +1327,8 @@ TEST_CASE("rings_sensitivity", "[Serial][Parallel][GPU][Regression]")
   opts.paraview_fields = false;
   opts.sensitivity = true;
   opts.custom_checks["terminal-M.csv"] = TestRingsSensitivity(opts);
-  palace::test::RunRegressionCase("rings", "rings_sensitivity.json", "rings_sensitivity",
-                                  opts);
+  palace::test::RunRegressionCase("rings_sensitivity", "rings_sensitivity.json",
+                                  "rings_sensitivity", opts);
 }
 
 TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")
