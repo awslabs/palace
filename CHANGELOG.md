@@ -19,6 +19,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `Solver.Linear.AMSSmoothIts`, the number of smoothing sweeps on the Nédélec space
+    in each AMS iteration when AMS is the coarse solver of geometric multigrid. It defaults
+    to 8 when `Solver.Linear.AMSSingularOperator` is enabled (magnetostatic simulations by
+    default), which reduces the number of linear solver iterations, and to
+    `Solver.Linear.MGSmoothIts` otherwise, as before. SchemaVer 4-3-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
