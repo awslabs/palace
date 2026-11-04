@@ -2759,9 +2759,17 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   }
 
   idx_t wgtflag = 0, numflag = 0, ncon = 1, nparts = size, edgecut = 0;
+  // ParMETIS requires the target part weights to sum to 1 within 1e-3 in ::real_t, which
+  // equal single precision weights miss from about 67000 processes. Differences of the
+  // rounded cumulative weights sum to exactly 1.
+  std::vector<::real_t> tpwgts(size);
+  for (int i = 0; i < size; i++)
+  {
+    tpwgts[i] = static_cast<::real_t>(static_cast<double>(i + 1) / size) -
+                static_cast<::real_t>(static_cast<double>(i) / size);
+  }
   // ParMETIS bounds the largest part but not the smallest, so the max/min element ratio
   // can exceed MaximumImbalance and trigger a rebalance at the next AMR iteration.
-  std::vector<::real_t> tpwgts(size, static_cast<::real_t>(1.0 / size));
   ::real_t ubvec = 1.02;
   idx_t options[3] = {1, 0, 1};  // User options, no output, fixed seed
   std::vector<idx_t> part(ne);
@@ -2782,17 +2790,13 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   // elements.
   std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0),
       gidx(size, 0.0);
-  mfem::Array<int> verts;
+  mfem::Vector center;
   for (int e = 0; e < ne; e++)
   {
-    mesh.GetElementVertices(e, verts);
-    for (int i = 0; i < verts.Size(); i++)
+    mesh.GetElementCenter(e, center);  // From the nodes, correct on periodic meshes
+    for (int d = 0; d < dim; d++)
     {
-      const double *v = mesh.GetVertex(verts[i]);
-      for (int d = 0; d < dim; d++)
-      {
-        xc[part[e] * dim + d] += v[d] / verts.Size();
-      }
+      xc[part[e] * dim + d] += center(d);
     }
     cnt[part[e]] += 1.0;
     gidx[part[e]] += static_cast<double>(vtxdist[rank] + e);
@@ -3023,7 +3027,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       }
       else
       {
-        Mpi::Warning(comm, "No valid ParMETIS partition of the nonconforming mesh, "
+        Mpi::Warning(comm, "Could not partition the nonconforming mesh with ParMETIS, "
                            "rebalancing it with MFEM's default partition!\n");
         mesh->Rebalance();
       }
