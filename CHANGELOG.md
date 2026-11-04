@@ -17,6 +17,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Performance Improvements
+
+  - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
+    flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
+    This speeds up the construction of the error estimator, which is repeated at every
+    adaptive mesh refinement iteration.
+    [PR 1134](https://github.com/awslabs/palace/pull/1134).
+
 #### Bug Fixes
 
   - Added an MFEM patch for [mfem/mfem#5717](https://github.com/mfem/mfem/pull/5717),
