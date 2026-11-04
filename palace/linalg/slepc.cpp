@@ -1982,9 +1982,11 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
                      0.0);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-      ctx->opProj->Mult(ctx->y1);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      // Without this projection, gradients are eigenvectors with λ = 0, which dominate the
+      // targeted eigenvalues when these are farther from σ than σ from 0. The divergence of
+      // y1 is already at round-off for a projected basis, so a loose relative tolerance
+      // suffices to keep it from growing.
+      ctx->opProj->Mult(ctx->y1, 1.0e-3);
     }
   }
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
