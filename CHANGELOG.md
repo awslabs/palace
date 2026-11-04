@@ -46,7 +46,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which makes the refinement and rebalancing of nonconforming meshes in parallel
     independent of the arrival order of MPI messages. The numbering of adapted meshes, the
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
-    them no longer vary from run to run.
+    them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
 
 ## [0.19.0] - 2026-11-02
