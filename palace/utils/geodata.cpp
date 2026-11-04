@@ -18,6 +18,7 @@
 #include <unordered_set>
 #include <utility>
 #include <Eigen/Dense>
+#include <parmetis.h>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
@@ -2673,6 +2674,119 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
+// Partition the elements of a nonconforming mesh with ParMETIS, on the element adjacency
+// graph through all conforming and nonconforming faces. MFEM's default partition splits the
+// sequence of refinement tree leaves into equal chunks, which fragments the subdomains over
+// the AMR iterations. The parts are numbered in the order of the mean current index of
+// their elements, so that the new numbering follows the current one and the ranks of a node
+// keep neighboring subdomains. Returns false if ParMETIS fails or would leave a process
+// without elements.
+bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
+                                           mfem::Array<int> &partitioning)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm), ne = mesh.GetNE();
+  std::vector<idx_t> vtxdist(size + 1, 0);
+  {
+    long long ne_ll = ne;
+    std::vector<long long> counts(size);
+    MPI_Allgather(&ne_ll, 1, MPI_LONG_LONG, counts.data(), 1, MPI_LONG_LONG, comm);
+    for (int i = 0; i < size; i++)
+    {
+      vtxdist[i + 1] = vtxdist[i] + static_cast<idx_t>(counts[i]);
+    }
+    if (std::ranges::min(counts) == 0)
+    {
+      return false;  // ParMETIS requires a nonempty graph on every process
+    }
+  }
+
+  // Global indices of the face neighbor elements, from a piecewise constant field (one DOF
+  // per element).
+  mfem::L2_FECollection fec(0, mesh.Dimension());
+  mfem::ParFiniteElementSpace fes(&mesh, &fec);
+  mfem::ParGridFunction gid(&fes);
+  for (int e = 0; e < ne; e++)
+  {
+    gid(e) = static_cast<double>(vtxdist[rank] + e);
+  }
+  gid.ExchangeFaceNbrData();
+  const mfem::Vector &nbr_gid = gid.FaceNbrData();
+  std::vector<std::vector<idx_t>> adj(ne);
+  for (int f = 0; f < mesh.GetNumFacesWithGhost(); f++)
+  {
+    const auto info = mesh.GetFaceInformation(f);
+    const int e1 = info.element[0].index, e2 = info.element[1].index;
+    if (info.IsLocal())
+    {
+      adj[e1].push_back(vtxdist[rank] + e2);
+      adj[e2].push_back(vtxdist[rank] + e1);
+    }
+    else if (info.IsShared())
+    {
+      adj[e1].push_back(static_cast<idx_t>(nbr_gid(e2)));
+    }
+  }
+  std::vector<idx_t> xadj(ne + 1, 0), adjncy;
+  for (int e = 0; e < ne; e++)
+  {
+    std::ranges::sort(adj[e]);
+    const auto dup = std::ranges::unique(adj[e]);
+    adj[e].erase(dup.begin(), dup.end());
+    xadj[e + 1] = xadj[e] + static_cast<idx_t>(adj[e].size());
+    adjncy.insert(adjncy.end(), adj[e].begin(), adj[e].end());
+  }
+  if (adjncy.empty())
+  {
+    adjncy.push_back(0);  // ParMETIS dereferences the array
+  }
+
+  idx_t wgtflag = 0, numflag = 0, ncon = 1, nparts = size, edgecut = 0;
+  std::vector<real_t> tpwgts(size, static_cast<real_t>(1.0 / size));
+  real_t ubvec = 1.02;
+  idx_t options[3] = {1, 0, 1};  // User options, no output, fixed seed
+  std::vector<idx_t> part(ne);
+  int ok =
+      (ParMETIS_V3_PartKway(vtxdist.data(), xadj.data(), adjncy.data(), nullptr, nullptr,
+                            &wgtflag, &numflag, &ncon, &nparts, tpwgts.data(), &ubvec,
+                            options, &edgecut, part.data(), &comm) == METIS_OK);
+  Mpi::GlobalMin(1, &ok, comm);
+  if (!ok)
+  {
+    return false;
+  }
+
+  // Number the parts by the mean current index of their elements.
+  std::vector<double> sum(2 * size, 0.0);  // Sum of the indices and number of elements
+  for (int e = 0; e < ne; e++)
+  {
+    sum[2 * part[e]] += static_cast<double>(vtxdist[rank] + e);
+    sum[2 * part[e] + 1] += 1.0;
+  }
+  MPI_Allreduce(MPI_IN_PLACE, sum.data(), 2 * size, MPI_DOUBLE, MPI_SUM, comm);
+  std::vector<int> order(size), new_part(size);
+  for (int p = 0; p < size; p++)
+  {
+    if (sum[2 * p + 1] == 0.0)
+    {
+      return false;
+    }
+    order[p] = p;
+  }
+  std::ranges::stable_sort(order, {},
+                           [&sum](int p) { return sum[2 * p] / sum[2 * p + 1]; });
+  for (int i = 0; i < size; i++)
+  {
+    new_part[order[i]] = i;
+  }
+  partitioning.SetSize(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    partitioning[e] = new_part[part[e]];
+  }
+  return true;
+}
+
 }  // namespace
 
 void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
@@ -2784,7 +2898,15 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   {
     if (mesh->Nonconforming())
     {
-      mesh->Rebalance();
+      mfem::Array<int> partitioning;
+      if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
+      {
+        mesh->Rebalance(partitioning);
+      }
+      else
+      {
+        mesh->Rebalance();
+      }
     }
     else
     {

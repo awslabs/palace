@@ -56,6 +56,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
 
+#### Performance Improvements
+
+  - Nonconforming meshes are now rebalanced with a ParMETIS partition of the element
+    adjacency graph, instead of MFEM's split of the refinement tree leaves into equal
+    chunks, which fragmented the subdomains over the AMR iterations. Processes have fewer
+    neighbors and exchange less data after a rebalance.
+
 ## [0.19.0] - 2026-11-02
 
 #### New Features
