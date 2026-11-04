@@ -173,6 +173,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
+    # The STRUMPACK version of the superbuild. Kept off the `with` blocks so the Palace
+    # variants are not folded into the conditions of the patches added later.
+    depends_on("strumpack@8.1.0", when="@develop+strumpack")
+
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
     with when("+slepc"):
