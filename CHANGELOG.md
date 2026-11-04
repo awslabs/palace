@@ -42,11 +42,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     update the unknowns of strongly stretched PML elements (`"PMLSmootherThreshold"`), and
     the complex-valued PML subdomain and coarse-level (`"ComplexCoarseSolve"`) matrices are
     factored in complex arithmetic by SuperLU_DIST, STRUMPACK, and MUMPS, with half of the
-    memory of the equivalent real-valued systems (optionally in single precision for the
-    PML subdomain with STRUMPACK, `"PMLSubdomainSinglePrecision"`). The superbuild now
-    builds MUMPS with complex double precision (`zmumps`), which is required with
-    `PALACE_WITH_MUMPS`. SchemaVer 4-4-0
-    [PR 1058](https://github.com/awslabs/palace/pull/1058).
+    memory of the equivalent real-valued systems. The superbuild now builds MUMPS with
+    complex double precision (`zmumps`), which is required with `PALACE_WITH_MUMPS`.
+    SchemaVer 4-4-0 [PR 1058](https://github.com/awslabs/palace/pull/1058).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
 

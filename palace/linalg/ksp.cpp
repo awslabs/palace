@@ -136,12 +136,10 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 // the matrix in complex arithmetic, with half of the memory of the equivalent real-valued
 // system factored by the others). The PML subdomain matrix is always factored in complex
 // form, and is symmetric (but indefinite) unless the system matrix is not. The
-// factorization is never compressed, in double precision unless
-// "PMLSubdomainSinglePrecision" (with iterative refinement, STRUMPACK only), and the
-// accuracy of SuperLU_DIST factorizations is checked (its static pivoting can be unstable
-// for this indefinite matrix, in which case tiny pivot replacement and iterative refinement
-// are used): approximate solves can lead the (left-preconditioned) Krylov solver to
-// converge to an inaccurate solution.
+// factorization is never compressed, and the accuracy of SuperLU_DIST factorizations is
+// checked (its static pivoting can be unstable for this indefinite matrix, in which case
+// tiny pivot replacement and iterative refinement are used): approximate solves can lead
+// the (left-preconditioned) Krylov solver to converge to an inaccurate solution.
 std::unique_ptr<Solver<ComplexOperator>>
 ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
                             MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm)
@@ -189,9 +187,7 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = std::make_unique<StrumpackComplexSolver>(
-          comm, linear.sym_factorization, linear.pml_subdomain_single_precision,
-          linear.pml_subdomain_single_precision ? 2 : 0, print);
+      pc = std::make_unique<StrumpackComplexSolver>(comm, linear.sym_factorization, print);
 #endif
       break;
     case LinearSolver::MUMPS:
@@ -273,7 +269,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             linear.strumpack_compression_type == SparseCompression::NONE)
         {
           pc = std::make_unique<StrumpackComplexSolver>(comm, linear.sym_factorization,
-                                                        false, 0, print);
+                                                        print);
           break;
         }
       }
