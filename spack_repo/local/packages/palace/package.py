@@ -20,6 +20,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
+    version("0.19.0", tag="v0.19.0", commit="ca9a6a2d1e64a410229c3d7538507e5eae975cc6")
     version("0.18.1", tag="v0.18.1", commit="0dc74cdf8c36c58b69b21c4a06e816048ec0b83f")
     version("0.18.0", tag="v0.18.0", commit="b92aef83ecfe6d360c4b3d83e2122986297f6778")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
