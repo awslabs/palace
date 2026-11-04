@@ -112,6 +112,46 @@ def parse_supersede(spec):
     return name, {"Path": str(path.resolve()), "SHA256": sha256(path)}
 
 
+def parse_pending_allow(spec):
+    """NAME=DECISION of --pending-allow (R-5, fix round P2; USER decision 1230 Q8 / supervisor 1260): the admission of
+    a model whose explicit QualificationStatus is not "Qualified", by Name with the curator's decision text (the loader
+    refuses such a model unless the library lists it under AllowPendingModels)."""
+    name, separator, decision = spec.partition("=")
+    if not separator or not name.strip() or not decision.strip():
+        raise ValueError(f"--pending-allow {spec!r} is not NAME=DECISION (a nonempty name and a nonempty decision text)")
+    return {"Name": name.strip(), "Decision": decision.strip()}
+
+
+def allow_pending_models(admissions, models):
+    """The AllowPendingModels leaf for the output: every admission must name a DISTINCT model of the output whose
+    explicit QualificationStatus is not "Qualified" (a stale or misspelt admission is refused at assembly, never carried
+    silently); the status-less models (the 2D planner's record form) need no admission."""
+    pending = {model["Name"]: model["QualificationStatus"] for model in models
+               if isinstance(model.get("QualificationStatus"), str) and model["QualificationStatus"] != "Qualified"}
+    names = [entry["Name"] for entry in admissions]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"--pending-allow names a model twice: {', '.join(duplicates)}")
+    for entry in admissions:
+        if entry["Name"] not in pending:
+            raise ValueError(f"--pending-allow {entry['Name']}: not a model of the output with an explicit non-Qualified "
+                             f"QualificationStatus (the non-Qualified models: {sorted(pending) or 'none'})")
+    return admissions
+
+
+def warn_unadmitted_pending_models(admissions, models):
+    """The non-Qualified models of the output no --pending-allow admits: named on stdout (the loader refuses them at
+    load, R-5); the output itself is unchanged (the flag is opt-in)."""
+    admitted = {entry["Name"] for entry in admissions}
+    unadmitted = [(model["Name"], model["QualificationStatus"]) for model in models
+                  if isinstance(model.get("QualificationStatus"), str) and model["QualificationStatus"] != "Qualified"
+                  and model["Name"] not in admitted]
+    if unadmitted:
+        print("Warning: the output carries non-Qualified models no --pending-allow admits; the loader refuses them "
+              "(R-5, USER decision 1230 Q8): " + ", ".join(f"{name} ({status})" for name, status in unadmitted))
+    return unadmitted
+
+
 def supersede_decision(text, supersedes):
     """The decision text that rules every --supersede / --replace-by-signature replacement (decision 513 (2)):
     mandatory and non-blank whenever either is given, refused without one."""
@@ -272,9 +312,20 @@ def main():
         help="the decision that rules every --supersede / --replace-by-signature replacement (mandatory with either; "
              "recorded as Supersedes.Decision)",
     )
+    parser.add_argument(
+        "--pending-allow",
+        action="append",
+        default=[],
+        metavar="NAME=DECISION",
+        help="admit the output model NAME whose explicit QualificationStatus is not \"Qualified\" (R-5, fix round P2; "
+             "USER decision 1230 Q8 / supervisor 1260): recorded as the top-level AllowPendingModels [{Name, Decision}] the "
+             "loader reads (it refuses such a model unless listed); every non-Qualified model of the output must be admitted "
+             "or the assembly is refused; without the flag the output is unchanged",
+    )
     parser.add_argument("libraries", type=Path, nargs="+")
     args = parser.parse_args()
     supersedes = [parse_supersede(spec) for spec in args.supersede]
+    admissions = [parse_pending_allow(spec) for spec in args.pending_allow]
     replacements = [parse_supersede(spec) for spec in args.replace_by_signature]
     decision = supersede_decision(args.supersede_decision, supersedes + replacements)
 
@@ -452,6 +503,9 @@ def main():
     ):
         raise ValueError("Combined library contains no response models")
 
+    if admissions:
+        result["AllowPendingModels"] = allow_pending_models(admissions, result["Models"])
+    warn_unadmitted_pending_models(admissions, result["Models"])
     output = destination / "process-library.json"
     output.write_text(json.dumps(result, indent=2) + "\n")
     print(

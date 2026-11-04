@@ -55,6 +55,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-interfaceownership.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-interfaceregion.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-libraryqualification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-loaderconductors.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
