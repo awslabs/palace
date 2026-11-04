@@ -48,6 +48,17 @@ MODE_MEASUREMENT = "measurement-only"
 BASIS_FILES = ("trace-vertices.csv", "trace-triangles.csv", "basis-points.csv", "basis-contract.json", "zero-trace.csv")
 REUSED_MODEL_RECORD = "reused-model.json"
 REFUSAL_RECORD = "nearkey-refusal.json"
+# Fix round R-2 (OI-NEARKEY-DEFAULT-PIECE-FORM-BASIS, decisions 1218 (ii) / 1230; DESIGN-v3 s5): the near-key rule is
+# calibrated on ONE-reference bases (TraceBasis: "the rule's class has states [2]"); a PIECE-FORM basis (the exact model
+# entry carries LocalPiecesRule: one reference per local metal piece) is NOT a reuse candidate. In `default` mode the reuse
+# is SKIPPED with this record (the fresh basis is built); `fallback` is unchanged (its transplant stops as before).
+SKIPPED_RECORD = "nearkey-reuse-skipped.json"
+PIECE_FORM_SKIP_REASON = "NearkeyReuseSkipped: piece-form basis uncalibrated (the near-key rule's class has states [2]; the calibration on piece-form bases is post-F)"
+
+
+def is_piece_form_basis(model_entry):
+    """True for a model generated in the piece form (generate_spatial_response --local-pieces stamps LocalPiecesRule)."""
+    return "LocalPiecesRule" in (model_entry or {})
 
 
 class NearKeyReuseError(ValueError):
@@ -251,6 +262,16 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     library_root = Path(library_path).resolve().parent
     radius = float(library["MatchingRadius"])
     exact_name = exact_model_entry["Name"]
+    if mode == "default" and is_piece_form_basis(exact_model_entry):
+        record = {"Requirement": exact_name, "Mode": mode, "RuleVersion": rule["RuleVersion"], "RuleFileSHA256": rule["_sha256"],
+                  "Candidates": [], "Reused": False, "Model": None, "Refused": None,
+                  "Skipped": {"Reason": PIECE_FORM_SKIP_REASON, "LocalPiecesRule": exact_model_entry.get("LocalPiecesRule"),
+                              "ConductorReferences": len(exact_model_entry.get("ConductorReferences") or []),
+                              "Rule": "fix round R-2 (decision 1230; DESIGN-v3 s5): default reuse skips a piece-form basis; the fresh basis "
+                                      "is built; fallback unchanged"}}
+        (output / SKIPPED_RECORD).write_text(json.dumps(record, indent=1) + "\n")
+        log(f"{exact_name}: near-key reuse SKIPPED: {PIECE_FORM_SKIP_REASON}")
+        return record
     # decision 438 (3) / DESIGN 4.1 item 1: the requirement key IS the signature's key (the manifest records it, possibly as a
     # prefix); the generated basis's stamped Signature must be the requirement's too; both comparisons recorded on the model.
     # With KeyText (decision 605 (2) F-4 (c)) the key is verified as sha256(KeyText) == key and json.loads(KeyText) == Signature,

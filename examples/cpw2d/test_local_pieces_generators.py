@@ -273,3 +273,101 @@ class PlannerCacheForm(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StraightFamilyNameRule(unittest.TestCase):
+    """Fix round R-10 (OI-STRAIGHT-FAMILY-NAME-COLLISION; decisions 1168 / 1230 / 1233 (5)): a NEW straight pair build's Name
+    carries the requirement's 12-hex hash, so the 1168 twins 729ca8684d87 (2.9999993 um) / a11f82ccc415 (3.0000012 um) -- both
+    "different-conductor-gap-3um" in the record form -- get DISTINCT Names; a build without a hash keeps the record-form Name
+    (existing Names untouched); the planner passes the F-22 representative's hash per (topology, separation); the straight builder
+    threads it to the pair generator."""
+
+    def setUp(self):
+        import generate_edge_pair_response as PAIR
+        import build_surface_process_library as BUILDER
+        self.PAIR, self.BUILDER = PAIR, BUILDER
+
+    def test_pair_model_name_record_form_and_hash_form(self):
+        self.assertEqual(self.PAIR.pair_model_name("different-conductor-gap", 2.9999993), "different-conductor-gap-3um")
+        self.assertEqual(self.PAIR.pair_model_name("different-conductor-gap", 3.0000012), "different-conductor-gap-3um")   # the 1168 collision
+        self.assertEqual(self.PAIR.pair_model_name("different-conductor-gap", 2.9999993, "729ca8684d87" + "0" * 52),
+                         "different-conductor-gap-3um-729ca8684d87")
+        self.assertEqual(self.PAIR.pair_model_name("different-conductor-gap", 3.0000012, "A11F82CCC415" + "0" * 52),
+                         "different-conductor-gap-3um-a11f82ccc415")
+        self.assertEqual(self.PAIR.pair_model_name("same-conductor-strip", 2.0), "same-conductor-strip-2um")
+        with self.assertRaises(ValueError):
+            self.PAIR.pair_model_name("same-conductor-gap", 1.0, "xyz")
+
+    def test_write_library_name_with_and_without_the_hash(self):
+        layers = {"SA": (0.002, 4.0), "MS": (0.002, 11.45), "MA": (0.002, 10.0)}
+        with tempfile.TemporaryDirectory(prefix="r10-") as tmp:
+            tmp = Path(tmp)
+            names = []
+            for sub, digest in (("a", None), ("b", "729ca8684d87" + "0" * 52), ("c", "a11f82ccc415" + "0" * 52)):
+                (tmp / sub).mkdir()
+                path = self.PAIR.write_library(tmp / sub, "t", 3.0, 1.0e-3, 1.9, 1055.0, True, False, [], 0.1, 11.45, layers,
+                                               requirement_hash=digest)
+                names.append(json.loads(Path(path).read_text())["Models"][0]["Name"])
+            self.assertEqual(names, ["different-conductor-gap-3um", "different-conductor-gap-3um-729ca8684d87", "different-conductor-gap-3um-a11f82ccc415"])
+
+    def test_planner_passes_the_f22_representative_hash_per_separation(self):
+        coupons = [
+            {"Topology": "DifferentConductorGap", "Geometry": {"Separation": 2.9999993}, "Hash": "729ca8684d87" + "0" * 52, "DeviceEdgeLength": 515.0},
+            {"Topology": "DifferentConductorGap", "Geometry": {"Separation": 3.0000012}, "Hash": "a11f82ccc415" + "0" * 52, "DeviceEdgeLength": 6193.0},
+            # two requirements of ONE separation float: the representative = length desc, hash asc (F-22)
+            {"Topology": "SameConductorStrip", "Geometry": {"Separation": 2.0}, "Hash": "8389" + "0" * 60, "DeviceEdgeLength": 614.0},
+            {"Topology": "SameConductorStrip", "Geometry": {"Separation": 2.0}, "Hash": "1111" + "0" * 60, "DeviceEdgeLength": 700.0},
+            {"Topology": "SameConductorGap", "Geometry": {"Separation": 1.0}},   # a record-era coupon without a Hash: no option
+            {"Topology": "IsolatedEdge", "Geometry": {}},
+        ]
+        hashes = PLANNER.straight_requirement_hashes(coupons)
+        self.assertEqual(hashes[("different-conductor-gaps", 2.9999993)][:12], "729ca8684d87")
+        self.assertEqual(hashes[("different-conductor-gaps", 3.0000012)][:12], "a11f82ccc415")
+        self.assertEqual(hashes[("same-conductor-strips", 2.0)][:4], "1111")
+        self.assertNotIn(("same-conductor-gaps", 1.0), hashes)
+        options = PLANNER.straight_requirement_hash_options(coupons)
+        self.assertEqual([o.split("=")[0] for o in options],
+                         ["different-conductor-gap:2.9999993", "different-conductor-gap:3.0000012", "same-conductor-strip:2.0"])
+        # the straight builder reads them back exactly (repr floats) and threads the hash to the pair generator
+        args = types.SimpleNamespace(requirement_hash=options, matching_radius=1.9, metal_thickness=0.1, basis_size=6, samples=12, order=2,
+                                     coupon_depth=1.0, separation_tolerance=1.0e-3, name="t", overetch=0.0, sidewall_angle=90.0, top_radius=0.0,
+                                     bottom_radius=0.0, substrate_permittivity=11.45, sa_thickness=0.002, sa_permittivity=4.0, ms_thickness=0.002,
+                                     ms_permittivity=11.45, ma_thickness=0.002, ma_permittivity=10.0, edge_distances=None)
+        parsed = self.BUILDER.requirement_hashes(args)
+        self.assertEqual(parsed[("different-conductor-gap", 2.9999993)][:12], "729ca8684d87")
+        self.assertEqual(parsed[("different-conductor-gap", 3.0000012)][:12], "a11f82ccc415")
+        command = self.BUILDER.pair_response_command(args, 3.0000012, "--different-conductors", Path("/tmp/x"),
+                                                     parsed[("different-conductor-gap", 3.0000012)])
+        self.assertEqual(command[command.index("--requirement-hash") + 1][:12], "a11f82ccc415")
+        self.assertNotIn("--requirement-hash", self.BUILDER.pair_response_command(args, 1.0, None, Path("/tmp/x")))
+        with self.assertRaises(ValueError):
+            self.BUILDER.requirement_hashes(types.SimpleNamespace(requirement_hash=["corner:1.0=abc"]))
+
+    def test_straight_cache_spec_carries_the_hashes_only_when_a_coupon_has_one(self):
+        """Review d1230 MINOR-2 / decision 1239 Q-B (a): the straight-family cache fingerprint reads the requirement hashes the Name
+        rule writes, so a hashed build gets its own cache root; a record-era (hash-less) spec is byte-identical to before."""
+        args = types.SimpleNamespace(matching_radius=1.9, orders=[2], mesh_order=2, basis_size=6, samples=12, coupon_depth=1.0,
+                                     straight_lc_fine=0.01, straight_lc_far=0.5, min_process_feature_elements=4)
+        parameters = {"metal_thickness": 0.1, "overetch": 0.05}
+        record_era = [{"Topology": "DifferentConductorGap", "Geometry": {"Separation": 3.0}, "BoundaryCondition": {"Type": "PEC"}},
+                      {"Topology": "IsolatedEdge", "Geometry": {}, "BoundaryCondition": {"Type": "PEC"}}]
+        spec_record = PLANNER.straight_spec(record_era, args, parameters, local_pieces=False)
+        self.assertNotIn("RequirementHashes", spec_record)
+        self.assertNotIn("LocalPieces", spec_record)
+        hashed = [dict(record_era[0], Hash="729ca8684d87" + "0" * 52, DeviceEdgeLength=515.0),
+                  dict(record_era[0], Geometry={"Separation": 3.0000012}, Hash="a11f82ccc415" + "0" * 52, DeviceEdgeLength=6193.0),
+                  record_era[1]]
+        spec_hashed = PLANNER.straight_spec(hashed, args, parameters, local_pieces=False)
+        self.assertEqual(spec_hashed["RequirementHashes"],
+                         {"different-conductor-gaps:3.0": "729ca8684d87", "different-conductor-gaps:3.0000012": "a11f82ccc415"})
+        without = {key: value for key, value in spec_hashed.items() if key != "RequirementHashes"}
+        # the two specs differ by that key and by the second (twin) coupon only: strip it and the rest is the record-era spec
+        without["Coupons"] = [c for c in without["Coupons"] if c["Geometry"] != {"Separation": 3.0000012}]
+        self.assertEqual(without, spec_record)
+        self.assertNotEqual(PLANNER.fingerprint(spec_hashed), PLANNER.fingerprint(spec_record))
+        # the same hashed coupons with a changed hash -> a different cache root; the same hashes -> the same root
+        rehashed = [dict(hashed[0], Hash="ffffffffffff" + "0" * 52)] + hashed[1:]
+        self.assertNotEqual(PLANNER.fingerprint(PLANNER.straight_spec(rehashed, args, parameters, local_pieces=False)),
+                            PLANNER.fingerprint(spec_hashed))
+        self.assertEqual(PLANNER.fingerprint(PLANNER.straight_spec(list(hashed), args, parameters, local_pieces=False)),
+                         PLANNER.fingerprint(spec_hashed))

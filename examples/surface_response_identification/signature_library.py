@@ -442,9 +442,264 @@ def cluster_support_box(signature):
     return [quantize(x0 - SUPPORT_PADDING_OVER_R), quantize(y0 - SUPPORT_PADDING_OVER_R), quantize(x1 + SUPPORT_PADDING_OVER_R), quantize(y1 + SUPPORT_PADDING_OVER_R)]
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# The C++ writer's float print (fix round, OI-SIGNATURE-FLOAT-PRINT, decisions 1157 Q4 / 1228 M2 / 1233 (4)): palace hashes
+# the KeyText `nlohmann::json::dump()` prints (SignatureKeyAndHash), whose doubles come from nlohmann/json 3.12.0
+# detail/conversions/to_chars.hpp = the GRISU2 algorithm (Loitsch 2010) with nlohmann's cached powers and format_buffer. Grisu2
+# is NOT the shortest round-trip print (Python's repr): 2.9192109999999998 (nlohmann) vs 2.919211 (repr) on W06's manifest. The
+# functions below are a faithful port (64-bit integer arithmetic; the same table, rounding and formatting), so that every
+# Python-side serialisation of a Signature / KeyText (cpp_json_dump) is BIT-EQUAL to the C++ writer: 0 device re-keys and 0
+# library-signature changes by construction (AMENDMENT 1228). The equivalence fixture (test_signature_library.py) re-prints
+# every KeyText of the manifests of record.
+# --------------------------------------------------------------------------------------------------------------------
+
+_U64 = (1 << 64) - 1
+_GRISU_ALPHA = -60
+_GRISU_GAMMA = -32
+_CACHED_POWERS_MIN_DEC_EXP = -300
+_CACHED_POWERS_DEC_STEP = 8
+# nlohmann dtoa_impl::kCachedPowers (79 entries: f, e, k) -- 10^k ~= f x 2^e, f normalized.
+_CACHED_POWERS = (
+    (0xAB70FE17C79AC6CA, -1060, -300), (0xFF77B1FCBEBCDC4F, -1034, -292), (0xBE5691EF416BD60C, -1007, -284), (0x8DD01FAD907FFC3C, -980, -276),
+    (0xD3515C2831559A83, -954, -268), (0x9D71AC8FADA6C9B5, -927, -260), (0xEA9C227723EE8BCB, -901, -252), (0xAECC49914078536D, -874, -244),
+    (0x823C12795DB6CE57, -847, -236), (0xC21094364DFB5637, -821, -228), (0x9096EA6F3848984F, -794, -220), (0xD77485CB25823AC7, -768, -212),
+    (0xA086CFCD97BF97F4, -741, -204), (0xEF340A98172AACE5, -715, -196), (0xB23867FB2A35B28E, -688, -188), (0x84C8D4DFD2C63F3B, -661, -180),
+    (0xC5DD44271AD3CDBA, -635, -172), (0x936B9FCEBB25C996, -608, -164), (0xDBAC6C247D62A584, -582, -156), (0xA3AB66580D5FDAF6, -555, -148),
+    (0xF3E2F893DEC3F126, -529, -140), (0xB5B5ADA8AAFF80B8, -502, -132), (0x87625F056C7C4A8B, -475, -124), (0xC9BCFF6034C13053, -449, -116),
+    (0x964E858C91BA2655, -422, -108), (0xDFF9772470297EBD, -396, -100), (0xA6DFBD9FB8E5B88F, -369, -92), (0xF8A95FCF88747D94, -343, -84),
+    (0xB94470938FA89BCF, -316, -76), (0x8A08F0F8BF0F156B, -289, -68), (0xCDB02555653131B6, -263, -60), (0x993FE2C6D07B7FAC, -236, -52),
+    (0xE45C10C42A2B3B06, -210, -44), (0xAA242499697392D3, -183, -36), (0xFD87B5F28300CA0E, -157, -28), (0xBCE5086492111AEB, -130, -20),
+    (0x8CBCCC096F5088CC, -103, -12), (0xD1B71758E219652C, -77, -4), (0x9C40000000000000, -50, 4), (0xE8D4A51000000000, -24, 12),
+    (0xAD78EBC5AC620000, 3, 20), (0x813F3978F8940984, 30, 28), (0xC097CE7BC90715B3, 56, 36), (0x8F7E32CE7BEA5C70, 83, 44),
+    (0xD5D238A4ABE98068, 109, 52), (0x9F4F2726179A2245, 136, 60), (0xED63A231D4C4FB27, 162, 68), (0xB0DE65388CC8ADA8, 189, 76),
+    (0x83C7088E1AAB65DB, 216, 84), (0xC45D1DF942711D9A, 242, 92), (0x924D692CA61BE758, 269, 100), (0xDA01EE641A708DEA, 295, 108),
+    (0xA26DA3999AEF774A, 322, 116), (0xF209787BB47D6B85, 348, 124), (0xB454E4A179DD1877, 375, 132), (0x865B86925B9BC5C2, 402, 140),
+    (0xC83553C5C8965D3D, 428, 148), (0x952AB45CFA97A0B3, 455, 156), (0xDE469FBD99A05FE3, 481, 164), (0xA59BC234DB398C25, 508, 172),
+    (0xF6C69A72A3989F5C, 534, 180), (0xB7DCBF5354E9BECE, 561, 188), (0x88FCF317F22241E2, 588, 196), (0xCC20CE9BD35C78A5, 614, 204),
+    (0x98165AF37B2153DF, 641, 212), (0xE2A0B5DC971F303A, 667, 220), (0xA8D9D1535CE3B396, 694, 228), (0xFB9B7CD9A4A7443C, 720, 236),
+    (0xBB764C4CA7A44410, 747, 244), (0x8BAB8EEFB6409C1A, 774, 252), (0xD01FEF10A657842C, 800, 260), (0x9B10A4E5E9913129, 827, 268),
+    (0xE7109BFBA19C0C9D, 853, 276), (0xAC2820D9623BF429, 880, 284), (0x80444B5E7AA7CF85, 907, 292), (0xBF21E44003ACDD2D, 933, 300),
+    (0x8E679C2F5E44FF8F, 960, 308), (0xD433179D9C8CB841, 986, 316), (0x9E19DB92B4E31BA9, 1013, 324),
+)
+
+
+def _diyfp_mul(xf, xe, yf, ye):
+    """diyfp::mul: the upper 64 bits of the 128-bit product, rounded (ties up) at bit 63 of the low half."""
+    u_lo, u_hi = xf & 0xFFFFFFFF, xf >> 32
+    v_lo, v_hi = yf & 0xFFFFFFFF, yf >> 32
+    p0, p1, p2, p3 = u_lo * v_lo, u_lo * v_hi, u_hi * v_lo, u_hi * v_hi
+    q = (p0 >> 32) + (p1 & 0xFFFFFFFF) + (p2 & 0xFFFFFFFF)
+    q += 1 << 31
+    h = p3 + (p2 >> 32) + (p1 >> 32) + (q >> 32)
+    return h & _U64, xe + ye + 64
+
+
+def _diyfp_normalize(f, e):
+    while (f >> 63) == 0:
+        f <<= 1
+        e -= 1
+    return f, e
+
+
+def _grisu2_boundaries(value):
+    """compute_boundaries for a positive finite double -> (v, m_minus, m_plus) as (f, e) pairs, normalized, m+/m- sharing e."""
+    import struct
+    bits = struct.unpack("<Q", struct.pack("<d", value))[0]
+    precision = 53
+    bias = 1024 - 1 + (precision - 1)
+    hidden = 1 << (precision - 1)
+    E = bits >> (precision - 1)
+    F = bits & (hidden - 1)
+    if E == 0:
+        vf, ve = F, 1 - bias
+    else:
+        vf, ve = F + hidden, E - bias
+    lower_closer = F == 0 and E > 1
+    mpf, mpe = 2 * vf + 1, ve - 1
+    if lower_closer:
+        mmf, mme = 4 * vf - 1, ve - 2
+    else:
+        mmf, mme = 2 * vf - 1, ve - 1
+    wpf, wpe = _diyfp_normalize(mpf, mpe)
+    delta = mme - wpe
+    wmf = mmf << delta
+    v = _diyfp_normalize(vf, ve)
+    return v, (wmf, wpe), (wpf, wpe)
+
+
+def _cached_power_for_binary_exponent(e):
+    f = _GRISU_ALPHA - e - 1
+    k = ((f * 78913) >> 18) + (1 if f > 0 else 0)
+    # C++ integer division truncates toward zero; f * 78913 / 2^18 with f < 0 must round toward zero, not floor
+    if f * 78913 < 0:
+        k = -((-f * 78913) >> 18) + (1 if f > 0 else 0)
+    index = (-_CACHED_POWERS_MIN_DEC_EXP + k + (_CACHED_POWERS_DEC_STEP - 1)) // _CACHED_POWERS_DEC_STEP
+    return _CACHED_POWERS[index]
+
+
+def _grisu2_round(buf, dist, delta, rest, ten_k):
+    while rest < dist and delta - rest >= ten_k and (rest + ten_k < dist or dist - rest > rest + ten_k - dist):
+        buf[-1] -= 1
+        rest += ten_k
+
+
+def _grisu2_digit_gen(buf, decimal_exponent, m_minus, w, m_plus):
+    """grisu2_digit_gen: the decimal digits of V = buf x 10^decimal_exponent with M- <= V <= M+ (returns the exponent)."""
+    delta = (m_plus[0] - m_minus[0]) & _U64
+    dist = (m_plus[0] - w[0]) & _U64
+    e = m_plus[1]
+    one_f = 1 << -e
+    p1 = m_plus[0] >> -e
+    p2 = m_plus[0] & (one_f - 1)
+    pow10 = 1
+    k = 1
+    for digits, p in ((10, 1000000000), (9, 100000000), (8, 10000000), (7, 1000000), (6, 100000), (5, 10000), (4, 1000), (3, 100), (2, 10)):
+        if p1 >= p:
+            pow10, k = p, digits
+            break
+    n = k
+    while n > 0:
+        d, r = divmod(p1, pow10)
+        buf.append(d)
+        p1 = r
+        n -= 1
+        rest = (p1 << -e) + p2
+        if rest <= delta:
+            decimal_exponent += n
+            _grisu2_round(buf, dist, delta, rest, pow10 << -e)
+            return decimal_exponent
+        pow10 //= 10
+    m = 0
+    while True:
+        p2 *= 10
+        d = p2 >> -e
+        r = p2 & (one_f - 1)
+        buf.append(d)
+        p2 = r
+        m += 1
+        delta *= 10
+        dist *= 10
+        if p2 <= delta:
+            break
+    decimal_exponent -= m
+    _grisu2_round(buf, dist, delta, p2, one_f)
+    return decimal_exponent
+
+
+def _grisu2(value):
+    """grisu2(double) -> (digits list, decimal_exponent) with value = digits x 10^decimal_exponent."""
+    v, m_minus, m_plus = _grisu2_boundaries(value)
+    cf, ce, ck = _cached_power_for_binary_exponent(m_plus[1])
+    w = _diyfp_mul(v[0], v[1], cf, ce)
+    w_minus = _diyfp_mul(m_minus[0], m_minus[1], cf, ce)
+    w_plus = _diyfp_mul(m_plus[0], m_plus[1], cf, ce)
+    big_minus = (w_minus[0] + 1, w_minus[1])
+    big_plus = (w_plus[0] - 1, w_plus[1])
+    buf = []
+    exponent = _grisu2_digit_gen(buf, -ck, big_minus, w, big_plus)
+    return buf, exponent
+
+
+def _format_buffer(digits, decimal_exponent, min_exp=-4, max_exp=15):
+    """nlohmann dtoa_impl::format_buffer (kMinExp -4, kMaxExp digits10 = 15): fixed notation in [10^min_exp, 10^max_exp), else
+    the exponent form d.ddde+XX (at least two exponent digits)."""
+    text = "".join(chr(48 + d) for d in digits)
+    k = len(digits)
+    n = k + decimal_exponent
+    if k <= n <= max_exp:
+        return text + "0" * (n - k) + ".0"
+    if 0 < n <= max_exp:
+        return text[:n] + "." + text[n:]
+    if min_exp < n <= 0:
+        return "0." + "0" * (-n) + text
+    mantissa = text if k == 1 else text[0] + "." + text[1:]
+    e = n - 1
+    sign = "-" if e < 0 else "+"
+    e = abs(e)
+    return mantissa + "e" + sign + (f"{e:02d}" if e < 100 else f"{e:d}")
+
+
+def cpp_to_chars(value):
+    """nlohmann::detail::to_chars(double): the text `json::dump()` writes for a finite double (the C++ writer's print)."""
+    import math
+    if not isinstance(value, float):
+        value = float(value)
+    if not math.isfinite(value):
+        return "null"
+    sign = "-" if math.copysign(1.0, value) < 0 else ""
+    value = abs(value)
+    if value == 0.0:
+        return sign + "0.0"
+    digits, exponent = _grisu2(value)
+    return sign + _format_buffer(digits, exponent)
+
+
+def cpp_json_string(text):
+    """nlohmann's string escaping with ensure_ascii = false: the two-character escapes, \\u00XX for the other control characters,
+    every other code point written as is (UTF-8)."""
+    out = ['"']
+    for ch in text:
+        code = ord(ch)
+        if ch == '"':
+            out.append('\\"')
+        elif ch == "\\":
+            out.append("\\\\")
+        elif ch == "\b":
+            out.append("\\b")
+        elif ch == "\f":
+            out.append("\\f")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif code <= 0x1F:
+            out.append(f"\\u{code:04x}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def cpp_json_dump(value):
+    """`nlohmann::json::dump()` (no indent) of a JSON value parsed by Python's json: objects with their keys in std::map order
+    (byte order of the UTF-8 key; Python's sort_keys order for ASCII keys), ',' / ':' without spaces, integers as integers,
+    doubles by cpp_to_chars, true / false / null. A Python float that is integral prints "N.0" as nlohmann does for a double."""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
+        return "null"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return cpp_to_chars(value)
+    if isinstance(value, str):
+        return cpp_json_string(value)
+    if isinstance(value, dict):
+        items = sorted(value.items(), key=lambda kv: kv[0].encode("utf-8"))
+        return "{" + ",".join(cpp_json_string(k) + ":" + cpp_json_dump(v) for k, v in items) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(cpp_json_dump(v) for v in value) + "]"
+    raise TypeError(f"cpp_json_dump: unsupported value {type(value).__name__}")
+
+
+def signature_key_text(signature, feature_type=None):
+    """The exact text palace hashes into a feature's key (SignatureKeyAndHash: the Signature with "Type" set, dumped by the C++
+    writer); `feature_type` None keeps the Signature's own Type."""
+    body = dict(signature)
+    if feature_type is not None:
+        body["Type"] = feature_type
+    return cpp_json_dump(body)
+
+
 def signature_hash(signature):
+    """sha256 of the C++ writer's print of the signature (cpp_json_dump; decision 1233 (4): the legacy float-hash path now equals
+    the C++ hash where Python's repr and nlohmann's Grisu2 differed)."""
     import hashlib
-    return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(cpp_json_dump(signature).encode("utf-8")).hexdigest()
 
 
 class DuplicateSignatureError(ValueError):
