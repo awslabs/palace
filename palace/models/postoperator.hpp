@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -89,10 +90,18 @@ consteval bool HasBGridFunction()
   return solver_t != ProblemType::ELECTROSTATIC;
 }
 
-// Scale gridfunctions after redimensionalizing the mesh.
-void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
-                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
-                        std::unique_ptr<GridFunction> &A);
+// Scale a grid function after redimensionalizing its mesh by L, undoing the effect of the
+// mesh scaling on the field values mapped from the reference element through the element
+// Jacobians. The scaling is L^p, where p depends on the map type of the finite element
+// space: 0 for H1, 1 for H(curl), dim - 1 for H(div), and dim for L2 with INTEGRAL map
+// type, with dim the dimension of the mesh. Boundary output evaluates fields in the
+// neighboring domain elements, so the same scaling applies to the domain and boundary data
+// collections. Wave port fields need no rescaling, since their submesh remains
+// nondimensionalized.
+void ScaleGridFunction(double L, GridFunction &u);
+
+// Apply ScaleGridFunction to each of the given grid functions which is not null.
+void ScaleGridFunctions(double L, std::initializer_list<GridFunction *> fields);
 
 // Scale gridfunctions from non-dimensional to SI units.
 void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
