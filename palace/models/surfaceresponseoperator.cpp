@@ -6133,6 +6133,11 @@ private:
   nlohmann::json identification;
   nlohmann::json unpatched_pairs = nlohmann::json::array();
   nlohmann::json placed_local_deviation = nlohmann::json::array();
+  // R-9 (fix round P2): the refused straight pairs placed cell by cell at their local
+  // separation, per feature; the manifest's
+  // Identification.Diagnostics.PlacedByLocalSeparation
+  // + Summary.PlacedByLocalSeparation and Features[].Match.PlacedByLocalSeparation.
+  nlohmann::json placed_by_local_separation = nlohmann::json::array();
   nlohmann::json geometric_near_pairs = nlohmann::json::array();
   bool identification_active = false;
   std::string library_path;
@@ -6306,6 +6311,10 @@ public:
   void SetPlacedLocalDeviation(nlohmann::json value)
   {
     placed_local_deviation = std::move(value);
+  }
+  void SetPlacedByLocalSeparation(nlohmann::json value)
+  {
+    placed_by_local_separation = std::move(value);
   }
   // The library's model pairs within the geometric near-match bands (DESIGN 5 (b) / A.4
   // (c); decision 1079 Q1 (ii)), written by Build as Library.GeometricNearPairs.
@@ -6578,9 +6587,18 @@ public:
         {
           length += entry.value("Length", 0.0);
           const int id = entry.value("Id", -1);
+          // R-9: a pair placed cell by cell keeps its key status unless NO cell was placed;
+          // its record here is the unplaced remainder.
+          const bool remainder = entry.value("PlacedByLocalSeparation", false);
+          bool any_placed = false;
+          for (const auto &record : placed_by_local_separation)
+          {
+            any_placed = any_placed || (record.value("Id", -2) == id &&
+                                        record.value("PlacedCells", 0) > 0);
+          }
           for (auto &feature : result["Identification"]["Features"])
           {
-            if (feature.value("Id", -2) == id)
+            if (feature.value("Id", -2) == id && !(remainder && any_placed))
             {
               feature["Match"]["Status"] = "Unpatched";
               feature["Match"]["Reason"] =
@@ -6593,7 +6611,10 @@ public:
                   " of the separation, tolerance " +
                   fmt::format("{:.3g}", kPairPatchSeparationTolerance) +
                   "); omitted by the placement, recorded (decision 1075 Q3; "
-                  "OI-PAIR-SEPARATION-MISMATCH)";
+                  "OI-PAIR-SEPARATION-MISMATCH)" +
+                  std::string(remainder ? "; R-9: no library model at any cell's local "
+                                          "separation (PlacedByLocalSeparation)"
+                                        : "");
             }
           }
         }
@@ -6610,6 +6631,51 @@ public:
                      "coverage as unmodelled; the A7 audit reads this record"}};
         result["Summary"]["UnpatchedPairs"] = {
             {"Count", static_cast<int>(unpatched_pairs.size())}, {"Length", length}};
+      }
+      if (!placed_by_local_separation.empty())
+      {
+        // R-9 (fix round P2; USER decision 1230 Q3 / supervisor 1260; DESIGN-v3 s2 2C (a)):
+        // the refused straight pairs placed cell by cell at their local separation.
+        double placed = 0.0, unplaced = 0.0;
+        for (const auto &record : placed_by_local_separation)
+        {
+          placed += record.value("PlacedLength", 0.0);
+          unplaced += record.value("UnplacedLength", 0.0);
+          const int id = record.value("Id", -1);
+          for (auto &feature : result["Identification"]["Features"])
+          {
+            if (feature.value("Id", -2) == id)
+            {
+              auto match = record;
+              match.erase("Id");
+              match.erase("Type");
+              feature["Match"]["PlacedByLocalSeparation"] = std::move(match);
+            }
+          }
+        }
+        result["Identification"]["Diagnostics"]["PlacedByLocalSeparation"] = {
+            {"Count", static_cast<int>(placed_by_local_separation.size())},
+            {"PlacedLength", placed},
+            {"UnplacedLength", unplaced},
+            {"Features", placed_by_local_separation},
+            {"ToleranceRelative", kPairPatchSeparationTolerance},
+            {"Rule",
+             "R-9 (fix round P2; USER decision 1230 Q3 / supervisor 1260; DESIGN-v3 s2 2C "
+             "(a); OI-TAPER-MEAN-KEY): a straight SameConductorGap / DifferentConductorGap "
+             "/ SameConductorStrip pair refused by the separation test "
+             "(PairPatchSeparationTolerance) is placed CELL BY CELL at its local "
+             "separation: each quadrature cell's sample reads its side-to-side distance "
+             "and takes the library's model there by the 2D placement path (Exact within "
+             "the model's SeparationTolerance -> the bracketing nodes interpolated as two "
+             "weighted patches of one interpolation group -> the GDS scatter near-match); "
+             "a cell with no selection stays unpatched (Diagnostics.UnpatchedPairs lists "
+             "the remainder; the raw partition's `unpatched` label carries its energy); "
+             "the first-order curvature split is not applied on these cells "
+             "(UnsplitTurn); a placement rule change COUNTED by the re-freeze"}};
+        result["Summary"]["PlacedByLocalSeparation"] = {
+            {"Count", static_cast<int>(placed_by_local_separation.size())},
+            {"PlacedLength", placed},
+            {"UnplacedLength", unplaced}};
       }
     }
     if (fallback_placed_count > 0)
@@ -10307,8 +10373,38 @@ struct FeaturePatchSummary
     double separation_over_R = 0.0;          // the signature's
     double geometric_separation_over_R = 0;  // the mean sampled side-to-side distance
     double max_deviation_relative = 0.0;     // max |sample - separation| / separation
+    // R-9: true when the feature was placed cell by cell at its local separation and this
+    // record carries the UNPLACED remainder only (Length).
+    bool placed_by_local_separation = false;
   };
   std::vector<UnpatchedPair> unpatched_pairs;
+  // R-9 (fix round P2; USER decision 1230 Q3, supervisor 1260; DESIGN-v3 s2 2C (a)): a
+  // straight pair (SameConductorGap / DifferentConductorGap / SameConductorStrip) refused
+  // by the separation test is placed CELL BY CELL at its local separation: each quadrature
+  // cell reads the side-to-side distance at its sample and takes FindLibraryModel's
+  // selection there (Exact -> the bracket interpolation as two weighted patches sharing an
+  // interpolation group -> the GDS scatter near-match); a cell with no selection stays
+  // unpatched (the `unpatched` raw-partition label, 2B). Per feature: the cells, the side
+  // length placed / unplaced (mesh units), the separation range, the models used with the
+  // side length they cover, and the portion turn whose first-order curvature split was not
+  // applied on these cells (the split's node is the keyed anchor's).
+  struct PlacedByLocalSeparation
+  {
+    std::string type;
+    std::string keyed_model;
+    int cells = 0;
+    int placed_cells = 0;
+    int interpolated_cells = 0;
+    int near_matched_cells = 0;
+    double placed_length = 0.0;
+    double unplaced_length = 0.0;
+    double min_separation_over_R = std::numeric_limits<double>::infinity();
+    double max_separation_over_R = 0.0;
+    std::map<std::string, double> model_lengths;
+    double unsplit_turn = 0.0;
+    int unusable_models = 0;  // local models refused (a reference in a gap / no slot map)
+  };
+  std::map<int, PlacedByLocalSeparation> placed_by_local_separation;
   // The placed pair / strip / stack side length whose LOCAL side separation (the
   // placement's foot test at the sample) deviates from the keyed offset by more than
   // kPairPatchSeparationTolerance (OI-TAPER-MEAN-KEY, decision 1078; record-only): per
@@ -11674,6 +11770,7 @@ FeaturePatchSummary BuildFeaturePatches(
   };
   std::map<std::pair<std::string, std::string>, int> runtime_models;
   int next_model_index = 1;
+  int next_interpolation_group = 1;  // R-9: the co-located patches of an interpolated cell
   auto RuntimeModel =
       [&](std::size_t model_index,
           const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot,
@@ -11822,11 +11919,22 @@ FeaturePatchSummary BuildFeaturePatches(
   // the local side separation deviates from the keyed offset by more than
   // kPairPatchSeparationTolerance; unset by the other placers.
   std::optional<bool> sample_local_deviation;
+  // R-9: the per-cell model terms of a pair placed at its local separation (the cell's
+  // sample point -> (model, runtime, weight) terms and, for an interpolated selection, the
+  // interpolation group its co-located patches share; an empty list = the cell stays
+  // unpatched and its own-edge pre-image becomes an `unpatched` raw-partition portion).
+  struct LocalTerms
+  {
+    std::vector<std::tuple<std::size_t, int, double>> terms;
+    int interpolation_group = 0;
+  };
+  using LocalTermsOf = std::function<LocalTerms(const Point3D &, double)>;
   auto Quadrature = [&](const FramedPortion &fp, double side_factor,
                         std::size_t model_index, int runtime,
                         const IdentifiedFeature &feature, const auto &Place,
                         const std::optional<FirstOrderSplit> &split = std::nullopt,
-                        const std::function<void(ResponsePatchData &)> &Probe = {})
+                        const std::function<void(ResponsePatchData &)> &Probe = {},
+                        const LocalTermsOf &local_terms = {})
   {
     const auto &model = library.models[model_index];
     MFEM_VERIFY(model.coupon_depth > 0.0,
@@ -11846,6 +11954,26 @@ FeaturePatchSummary BuildFeaturePatches(
       const auto &ip = quadrature.IntPoint(q);
       const double t = fp.a + (fp.b - fp.a) * ip.x;
       const Point3D point = Interpolate(*fp.segment, t);
+      int interpolation_group = 0;
+      if (local_terms)
+      {
+        // The cell's side length (its arc-length interval on the side's segment).
+        const double cell_length =
+            (fp.b - fp.a) * (quadrature_cells[q][1] - quadrature_cells[q][0]);
+        LocalTerms local = local_terms(point, cell_length);
+        if (local.terms.empty())
+        {
+          // 2B: the unpatched cell's own-edge pre-image as the raw partition's `unpatched`
+          // portion.
+          result.unpatched_pair_portions.push_back(
+              {feature.id, "unpatched", static_cast<int>(fp.geometry_index),
+               Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][0]),
+               Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][1])});
+          continue;
+        }
+        terms = std::move(local.terms);
+        interpolation_group = local.interpolation_group;
+      }
       bool first_term = true;
       for (const auto &[term_model, term_runtime, model_weight] : terms)
       {
@@ -11872,6 +12000,7 @@ FeaturePatchSummary BuildFeaturePatches(
         }
         first_term = false;
         patch.conductor_references = term.conductor_references;
+        patch.interpolation_group = interpolation_group;
         patch.weight =
             model_weight * side_factor * (fp.b - fp.a) * ip.weight / term.coupon_depth;
         patch.longitudinal_cell = LongitudinalCellOffsets(
@@ -12427,23 +12556,199 @@ FeaturePatchSummary BuildFeaturePatches(
           }
         }
       }
-      if (!consistent)
+      const bool straight_pair_topology =
+          !blend && (model.topology == LibraryTopology::SAME_CONDUCTOR_GAP ||
+                     model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+                     model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP);
+      if (!consistent && !straight_pair_topology)
       {
         // UnpatchedPair (DESIGN section 4 I-5 as ruled by decision 1075 Q3): recorded on
         // the manifest, never patched, never dropped silently; the formation defect behind
-        // the mismatch is OI-PAIR-SEPARATION-MISMATCH.
+        // the mismatch is OI-PAIR-SEPARATION-MISMATCH. A curved pair stays here (R-9 below
+        // is the straight families' rule); its cells are the raw partition's `unpatched`.
         summary.inconsistent_features.push_back(feature.id);
         summary.inconsistent_length += feature_length;
         summary.unpatched_pairs.push_back(
             {feature.id, feature.type, feature_length, separation / R,
              sampled > 0 ? sampled_sum / sampled / R : 0.0,
-             separation > 0.0 ? max_deviation / separation : 0.0});
+             separation > 0.0 ? max_deviation / separation : 0.0, false});
+        for (const auto &fp : portions)
+        {
+          if (!fp.image)
+          {
+            result.unpatched_pair_portions.push_back(
+                {feature.id, "unpatched", static_cast<int>(fp.geometry_index),
+                 Interpolate(*fp.segment, fp.a), Interpolate(*fp.segment, fp.b)});
+          }
+        }
         Mpi::Warning(
             "Feature {:d} ({}, {:.6e} length units): the two sides do not face each "
             "other at its separation {:.6e} (sampled mean {:.6e}); the pair is omitted "
             "(not patched; recorded UnpatchedPair).\n",
             feature.id, feature.type, feature_length, separation,
             sampled > 0 ? sampled_sum / sampled : 0.0);
+        continue;
+      }
+      if (!consistent)
+      {
+        // R-9 (fix round P2; USER decision 1230 Q3 / supervisor 1260; DESIGN-v3 s2 2C (a);
+        // OI-TAPER-MEAN-KEY / OI-PAIR-SEPARATION-MISMATCH): the refused straight pair is
+        // placed CELL BY CELL at its local separation: each cell's sample reads its
+        // side-to-side distance d and takes FindLibraryModel(topology, d, law) = the 2D
+        // placement path Exact -> the bracket interpolation (two weighted patches sharing
+        // an interpolation group) -> the GDS scatter near-match; a cell with no selection
+        // stays unpatched (recorded; its raw energy is the `unpatched` label, 2B). The
+        // first-order curvature split is not applied on these cells (its node is the keyed
+        // anchor's); the portion turn left unsplit is recorded.
+        auto &record = summary.placed_by_local_separation[feature.id];
+        record.type = feature.type;
+        record.keyed_model = model.name;
+        const bool strip = model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP;
+        const bool different_conductor =
+            model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
+        const std::vector<int> probe_gaps =
+            strip ? std::vector<int>{-1, 1} : std::vector<int>{1, -1};
+        // A local model is usable when it carries a coupon depth and the keyed model's
+        // conductor-reference count, its interface slots map the feature's targets, and its
+        // conductor references lie on metal of its own cross-section (the R0-a library
+        // defect test of RejectIfReferenceInGap, read per model, never aborting here).
+        std::map<std::size_t, bool> usable;
+        auto Usable = [&](std::size_t index)
+        {
+          auto it = usable.find(index);
+          if (it != usable.end())
+          {
+            return it->second;
+          }
+          const auto &candidate = library.models[index];
+          const std::vector<double> offsets = {-0.5 * candidate.separation,
+                                               0.5 * candidate.separation};
+          const auto pieces = LocalPiecesOfParallelEdges(offsets, probe_gaps);
+          bool ok =
+              candidate.coupon_depth > 0.0 &&
+              candidate.conductor_references.size() == model.conductor_references.size() &&
+              CanMapLibraryInterfaces(candidate, targets_by_slot);
+          for (std::size_t k = 0; ok && k < candidate.conductor_references.size(); k++)
+          {
+            ok = LocalPieceOfOffset(offsets, probe_gaps, pieces,
+                                    candidate.conductor_references[k][0]) > 0;
+          }
+          record.unusable_models += ok ? 0 : 1;
+          return usable.emplace(index, ok).first->second;
+        };
+        for (int k = 0; k < 2; k++)
+        {
+          const auto &side = *ordered[k].second;
+          const auto &other = *ordered[1 - k].second;
+          const std::vector<const std::vector<FramedPortion> *> probe_sides = {
+              ordered[0].second, ordered[1].second};
+          const std::vector<int> probe_conductors =
+              different_conductor ? std::vector<int>{1, 2} : std::vector<int>{1, 1};
+          auto Probe = [&](ResponsePatchData &patch)
+          { ConductorProbes(patch, probe_sides, probe_gaps, probe_conductors); };
+          for (const auto &fp : side)
+          {
+            if (fp.image)
+            {
+              continue;  // a mirror image side: the real side's cells carry the real half
+            }
+            if (straight_like_bend && std::abs(fp.turn) > 0.0)
+            {
+              record.unsplit_turn += std::abs(fp.turn);
+            }
+            auto LocalSelection = [&](const Point3D &point, double cell_length)
+            {
+              LocalTerms local;
+              const Foot foot = ClosestFoot(point, other);
+              const double d = Distance(point, foot.point);
+              record.cells++;
+              record.min_separation_over_R = std::min(record.min_separation_over_R, d / R);
+              record.max_separation_over_R = std::max(record.max_separation_over_R, d / R);
+              const auto selection = FindLibraryModel(library, model.topology, d,
+                                                      fp.segment->boundary_condition);
+              bool ok = selection.has_value();
+              for (std::size_t m = 0; ok && m < selection->models.size(); m++)
+              {
+                ok = Usable(selection->models[m].index);
+              }
+              if (!ok)
+              {
+                record.unplaced_length += cell_length;
+                return local;
+              }
+              for (const auto &weighted : selection->models)
+              {
+                local.terms.emplace_back(weighted.index,
+                                         RuntimeModel(weighted.index, targets_by_slot),
+                                         weighted.weight);
+                record.model_lengths[library.models[weighted.index].name] +=
+                    weighted.weight * cell_length;
+              }
+              if (selection->IsInterpolated())
+              {
+                local.interpolation_group = next_interpolation_group++;
+                record.interpolated_cells++;
+              }
+              record.near_matched_cells += selection->near_matched ? 1 : 0;
+              record.placed_cells++;
+              record.placed_length += cell_length;
+              return local;
+            };
+            auto Place = [&](const Point3D &point, ResponsePatchData &patch)
+            {
+              const Foot foot = ClosestFoot(point, other);
+              const Point3D e1 = k == 0 ? point : foot.point;
+              const Point3D e2 = k == 0 ? foot.point : point;
+              const EdgeSegment3D &first = k == 0 ? *fp.segment : *foot.segment;
+              const EdgeSegment3D &second = k == 0 ? *foot.segment : *fp.segment;
+              patch.origin = Scale(0.5, Add(e1, e2));
+              patch.axis_u = Normalize(Subtract(e2, e1));
+              patch.axis_v = Normalize(Add(first.axis_v, second.axis_v));
+              patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+              patch.maxwell_reference_is_pec = IsPec(first) && IsPec(second);
+              if (!patch.maxwell_reference_is_pec)
+              {
+                patch.maxwell_conductor_anchors = {e1};
+              }
+              else if (model.conductor_references.size() > 1)
+              {
+                // The physical edge points as local conductor anchors so that the Maxwell
+                // quadrature spans only the dielectric gap (every usable local model
+                // carries the keyed model's reference count).
+                patch.maxwell_conductor_anchors = {e1, e2};
+              }
+              else
+              {
+                patch.maxwell_conductor_anchors = {Add(e1, Scale(-R, patch.axis_u))};
+              }
+            };
+            Quadrature(fp, 0.5, model_index, runtime, feature, Place, std::nullopt, Probe,
+                       LocalSelection);
+          }
+        }
+        if (record.placed_cells < record.cells)
+        {
+          // The unplaced remainder (both sides) stays an UnpatchedPair record; a pair with
+          // no placed cell is omitted as before (the warning and the Error policy count).
+          summary.unpatched_pairs.push_back(
+              {feature.id, feature.type, record.unplaced_length, separation / R,
+               sampled > 0 ? sampled_sum / sampled / R : 0.0,
+               separation > 0.0 ? max_deviation / separation : 0.0, true});
+          if (record.placed_cells == 0)
+          {
+            summary.inconsistent_features.push_back(feature.id);
+            summary.inconsistent_length += feature_length;
+          }
+        }
+        Mpi::Print(" R-9 feature {:d} ({}): refused at the keyed separation {:.6e} (max "
+                   "deviation {:.3g}); {:d} of {:d} cells placed at their local separation "
+                   "[{:.4g}, {:.4g}] R ({:d} interpolated, {:d} near-matched; {:.6e} of "
+                   "{:.6e} side length unplaced)\n",
+                   feature.id, feature.type, separation,
+                   separation > 0.0 ? max_deviation / separation : 0.0, record.placed_cells,
+                   record.cells, record.min_separation_over_R, record.max_separation_over_R,
+                   record.interpolated_cells, record.near_matched_cells,
+                   record.unplaced_length, record.placed_length + record.unplaced_length);
         continue;
       }
       // ReferenceInGap: the pair's cross-section = its two edges at -+ separation / 2 (a
@@ -14359,8 +14664,42 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                            {"SeparationOverR", pair.separation_over_R},
                            {"GeometricSeparationOverR", pair.geometric_separation_over_R},
                            {"MaxDeviationRelative", pair.max_deviation_relative}});
+        if (pair.placed_by_local_separation)
+        {
+          // R-9: this record is the UNPLACED remainder of a pair placed cell by cell.
+          records.back()["PlacedByLocalSeparation"] = true;
+        }
       }
       requirements->SetUnpatchedPairs(std::move(records));
+    }
+    if (requirements && !summary.placed_by_local_separation.empty())
+    {
+      nlohmann::json records = nlohmann::json::array();
+      for (const auto &[id, record] : summary.placed_by_local_separation)
+      {
+        nlohmann::json models = nlohmann::json::array();
+        for (const auto &[name, model_length] : record.model_lengths)
+        {
+          models.push_back(
+              {{"Name", name}, {"Length", requirements->ScaleLength(model_length)}});
+        }
+        records.push_back(
+            {{"Id", id},
+             {"Type", record.type},
+             {"KeyedModel", record.keyed_model},
+             {"Cells", record.cells},
+             {"PlacedCells", record.placed_cells},
+             {"InterpolatedCells", record.interpolated_cells},
+             {"NearMatchedCells", record.near_matched_cells},
+             {"PlacedLength", requirements->ScaleLength(record.placed_length)},
+             {"UnplacedLength", requirements->ScaleLength(record.unplaced_length)},
+             {"MinSeparationOverR", record.cells > 0 ? record.min_separation_over_R : 0.0},
+             {"MaxSeparationOverR", record.max_separation_over_R},
+             {"Models", models},
+             {"UnsplitTurn", record.unsplit_turn},
+             {"UnusableModels", record.unusable_models}});
+      }
+      requirements->SetPlacedByLocalSeparation(std::move(records));
     }
     if (requirements)
     {
@@ -19558,7 +19897,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 22},
+  nlohmann::json cache = {{"Version", 23},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -19636,6 +19975,18 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                             {"P1", portion.p1}});
     }
     cache["ExclusionPortions"] = std::move(exclusions);
+    // 2B (fix round P2): the UnpatchedPair features' unpatched cells (a required leaf of
+    // version 23; empty on a run without one).
+    nlohmann::json unpatched = nlohmann::json::array();
+    for (const auto &portion : config.unpatched_pair_portions)
+    {
+      unpatched.push_back({{"Feature", portion.feature},
+                           {"Topology", portion.topology},
+                           {"Segment", portion.segment},
+                           {"P0", portion.p0},
+                           {"P1", portion.p1}});
+    }
+    cache["UnpatchedPairPortions"] = std::move(unpatched);
     // Mirror band (boundary-cut DESIGN 2.2): the planes, the record and the virtual-corner
     // trims.
     nlohmann::json planes = nlohmann::json::array();
@@ -19724,10 +20075,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 22,
+      data.value("Version", 0) == 23,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 22 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 23 = version 22 + the fix round P2's placement rule R-9 (the "
+             "refused pairs' cells placed at their local separation) and the "
+             "UnpatchedPairPortions leaf (2B); version 22 carries the feature, mesh "
+             "segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
@@ -19863,6 +20217,22 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     portion.p0 = entry.at("P0");
     portion.p1 = entry.at("P1");
     result.exclusion_portions.push_back(std::move(portion));
+  }
+  // 2B (fix round P2): the UnpatchedPair features' unpatched cells, a REQUIRED leaf of
+  // version 23 (a cache without it was written by another binary: refused by name).
+  MFEM_VERIFY(data.contains("UnpatchedPairPortions"),
+              "Response-geometry cache version 23 without UnpatchedPairPortions (fix round "
+              "P2, 2B): delete the stale cache!");
+  result.unpatched_pair_portions.clear();
+  for (const auto &entry : data.at("UnpatchedPairPortions"))
+  {
+    ResponseCorrectionData::UncoveredPortionData portion;
+    portion.feature = entry.at("Feature");
+    portion.topology = entry.at("Topology");
+    portion.segment = entry.at("Segment");
+    portion.p0 = entry.at("P0");
+    portion.p1 = entry.at("P1");
+    result.unpatched_pair_portions.push_back(std::move(portion));
   }
   for (const auto &entry : data.value("MirrorPlanes", nlohmann::json::array()))
   {
@@ -20007,7 +20377,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Distance").get<double>()});
     }
     MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
-                "Response-geometry cache version 22 patch of model "
+                "Response-geometry cache version 23 patch of model "
                     << patch.model
                     << " carries no ProbeSnapsComputed (a cache written before decision "
                        "632); delete the stale cache!");
@@ -27239,6 +27609,15 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         model_raw_claim_portions = CollectModelRawClaimPortions(
             spatially_owned_patches, placed_patches, config, ownership,
             uncovered_spatial_support_clipping, config.matching_radius);
+        // 2B (fix round P2; OI-COVERAGE-UNPATCHEDPAIRS-NO-ENERGY-ROW): the UnpatchedPair
+        // features' unpatched cells under the `unpatched` label (by feature Id), carved out
+        // of the partition's `unclaimed` remainder; absent on a run without one (every
+        // existing label and the groups table unchanged).
+        for (const auto &portion : config.unpatched_pair_portions)
+        {
+          model_raw_claim_portions.portions.push_back(portion);
+          model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
+        }
       }
       if (!config.mirror_band.empty())
       {
