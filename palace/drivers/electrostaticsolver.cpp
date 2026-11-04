@@ -1115,6 +1115,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     if (!geometry_fallback_csv)
     {
+      // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): a real top-level file on
+      // every adaptive cycle (see the exclusion-energy table below).
+      std::filesystem::remove(post_dir / "surface-response-geometry-fallbacks.csv");
       geometry_fallback_csv = std::make_unique<std::ofstream>(
           post_dir / "surface-response-geometry-fallbacks.csv");
       *geometry_fallback_csv
@@ -1217,6 +1220,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     if (!exclusion_energy_csv)
     {
+      // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): on a later adaptive cycle the
+      // path is the symlink SaveIteration left into the previous cycle's archive folder;
+      // remove it first so this cycle's table is a real top-level file (the F-18 SaveMesh
+      // form) and the archived one keeps its cycle's content.
+      std::filesystem::remove(post_dir / "surface-response-exclusion-energy.csv");
       exclusion_energy_csv = std::make_unique<std::ofstream>(
           post_dir / "surface-response-exclusion-energy.csv");
       *exclusion_energy_csv << "source,class,type,class portions,class length (m),raw "
