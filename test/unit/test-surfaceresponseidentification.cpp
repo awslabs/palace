@@ -6878,6 +6878,126 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBand",
   }
 }
 
+// R-1 (fix round P2; OI-IDENT-CHAIN-VERTEX-DEGREE, decisions 1158 / 1260): the stage-E FE6s
+// -50 um preflight aborted at the identification's vertex-degree verify in the
+// MIRROR-EXTENDED run (a chain vertex with more than two chain segments the mirror band
+// formed; the real run had passed). The operator's BranchingPerimeter pre-pass
+// (ExcludeBranchingVertices, the H13-I2 form) now runs on the extended input too: the
+// incident segments are excluded, one ledger entry per vertex is recorded, and the
+// identification completes. The branching vertex here is synthetic (a spur of the same
+// chain on an interior vertex of a subdivided edge: the configuration the extraction never
+// produces and the extension can).
+TEST_CASE("SurfaceResponseIdentificationBranchingVertexPrePass",
+          "[surfaceresponseidentification][geometryfallback][mirror][Serial]")
+{
+  const double R = 2.0;
+  LoopSpec pad{Rectangle(-10.0, -3.0, 10.0, 3.0), 0, 1.0};
+  auto Branch = [&](IdentificationInput &input)
+  {
+    // An interior vertex of the bottom edge (y = -3) with exactly two physical segments of
+    // one chain; a third segment of THAT chain is attached there (the spur toward -y).
+    for (std::size_t v = 0; v < input.vertices.size(); v++)
+    {
+      const auto &vertex = input.vertices[v];
+      if (vertex.segments.size() != 2 || std::abs(vertex.coordinate[1] + 3.0) > 1.0e-12 ||
+          std::abs(vertex.coordinate[0]) > 1.0e-12)
+      {
+        continue;
+      }
+      const auto &a = input.segments[vertex.segments[0]];
+      REQUIRE(a.chain == input.segments[vertex.segments[1]].chain);
+      IdentificationVertex tip;
+      tip.coordinate = {vertex.coordinate[0], vertex.coordinate[1] - 1.0,
+                        vertex.coordinate[2]};
+      const std::size_t t = input.vertices.size();
+      input.vertices.push_back(tip);
+      IdentificationSegment spur = a;
+      spur.p0 = vertex.coordinate;
+      spur.p1 = tip.coordinate;
+      spur.vertices = {v, t};
+      spur.gap_direction = {1.0, 0.0, 0.0};
+      const std::size_t s = input.segments.size();
+      input.segments.push_back(spur);
+      input.vertices[v].segments.push_back(s);
+      input.vertices[t].segments.push_back(s);
+      return std::pair{v, s};
+    }
+    FAIL("no interior vertex at (0, -3)");
+    return std::pair{std::size_t(0), std::size_t(0)};
+  };
+  SECTION("a vertex with three segments of one chain: the verify, then the pre-pass")
+  {
+    auto input = MakeInput({pad}, R);
+    const auto [v, spur] = Branch(input);
+    // Without the pre-pass the identification's own verify fires (the ledger-less path).
+    CHECK_THROWS_WITH(IdentifyMetalPerimeter(input),
+                      ContainsSubstring("more than two chain segments"));
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    CHECK(ExcludeBranchingVertices(input, "R-1/test:branching-vertex", &ledger) == 1);
+    REQUIRE(entries.size() == 1);
+    CHECK(entries[0].cls == "BranchingPerimeter");
+    CHECK(entries[0].site == "R-1/test:branching-vertex");
+    CHECK(entries[0].what == "segment");
+    CHECK_THAT(entries[0].length, WithinAbs(3.0, 1.0e-12));  // 1 + 1 + the spur 1
+    CHECK_THAT(entries[0].example_origin[0], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(entries[0].example_origin[1], WithinAbs(-3.0, 1.0e-12));
+    int excluded = 0;
+    for (const std::size_t s : input.vertices[v].segments)
+    {
+      REQUIRE(input.segments[s].exclusion.has_value());
+      CHECK(input.segments[s].exclusion->first == "BranchingPerimeter");
+      excluded++;
+    }
+    CHECK(excluded == 3);
+    // Idempotent: the excluded segments no longer count.
+    CHECK(ExcludeBranchingVertices(input, "R-1/test:branching-vertex", nullptr) == 0);
+    // The identification now completes: the chain is cut at the vertex, the three
+    // segments are the BranchingPerimeter exclusion class, the rest is identified.
+    const auto result = IdentifyMetalPerimeter(input);
+    bool found = false;
+    for (const auto &exclusion : result.exclusions)
+    {
+      if (exclusion.cls == "BranchingPerimeter")
+      {
+        found = true;
+        CHECK(exclusion.count == 3);
+        CHECK_THAT(exclusion.length, WithinAbs(3.0, 1.0e-12));
+      }
+    }
+    CHECK(found);
+    CHECK(result.segments[spur].exclusion.has_value());
+    CHECK_FALSE(result.features.empty());
+  }
+  SECTION("a mirror-extended lead without a branching vertex: the pre-pass is inert")
+  {
+    std::vector<MirrorPlane> planes(1);
+    planes[0].attribute = 7;
+    planes[0].normal = {1.0, 0.0, 0.0};
+    planes[0].offset = 0.0;
+    planes[0].faces = 1;
+    planes[0].status = "Natural";
+    planes[0].box_min = {-1.0e9, -1.0e9, -1.0e9};
+    planes[0].box_max = {1.0e9, 1.0e9, 1.0e9};
+    LoopSpec lead{Rectangle(-20.0, -3.0, 0.0, 3.0), 0, 1.0};
+    lead.truncation_edges = {1};
+    const auto input = MakeInput({lead}, R);
+    auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    REQUIRE(extension.image_segments > 0);
+    const auto before = extension.input.segments;
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::FAIL_CLOSED, true, entries);
+    CHECK(ExcludeBranchingVertices(extension.input, "R-1/test:mirror", &ledger) == 0);
+    CHECK(entries.empty());
+    for (std::size_t s = 0; s < before.size(); s++)
+    {
+      CHECK(extension.input.segments[s].exclusion == before[s].exclusion);
+      CHECK(extension.input.segments[s].chain == before[s].chain);
+    }
+    CHECK_NOTHROW(IdentifyMetalPerimeter(extension.input));
+  }
+}
+
 TEST_CASE("SurfaceResponseIdentificationMirrorBandTwoWalls",
           "[surfaceresponseidentification][mirror][Serial]")
 {

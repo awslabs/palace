@@ -8832,60 +8832,16 @@ IdentificationResult RunGeometryIdentification(
   // degree <= 2 by construction) and one entry per branching vertex is recorded; under
   // FailClosed the ledger's deferred Enforce aborts. Without a ledger the identification's
   // own verify stands. The input is replicated, so the record is rank-consistent.
+  // R-1 (fix round P2; OI-IDENT-CHAIN-VERTEX-DEGREE, decision 1158): the same pre-pass runs
+  // on the MIRROR-EXTENDED input below (the image segments reflected into the band can meet
+  // a real chain at a joint vertex of degree > 2; the stage-E FE6s -50 um reproducer
+  // aborted in that second identification), so the extension is withdrawn at such a vertex
+  // and the real identification stands there; the extended input is a pure function of the
+  // replicated input, so the record stays rank-consistent.
   if (geometry_ledger)
   {
-    // PER CHAIN (the identification's own incidence, BuildRuns): chains of different metal
-    // meeting at one vertex (a point contact) each have two segments there.
-    std::map<std::pair<int, std::size_t>, std::vector<std::size_t>> incident;
-    for (std::size_t i = 0; i < input.segments.size(); i++)
-    {
-      const auto &segment = input.segments[i];
-      if (segment.truncation || segment.exclusion || segment.chain < 0)
-      {
-        continue;
-      }
-      for (const std::size_t v : segment.vertices)
-      {
-        incident[{segment.chain, v}].push_back(i);
-      }
-    }
-    std::set<std::size_t> excluded;
-    for (const auto &[key, list] : incident)
-    {
-      const std::size_t v = key.second;
-      if (list.size() <= 2)
-      {
-        continue;
-      }
-      GeometryFallbackData entry;
-      entry.cls = "BranchingPerimeter";
-      entry.site = "H13-I2/RunGeometryIdentification:branching-vertex";
-      entry.what = "segment";
-      entry.example_origin = input.vertices[v].coordinate;
-      std::set<int> chains;
-      for (const std::size_t i : list)
-      {
-        auto &segment = input.segments[i];
-        chains.insert(segment.chain);
-        if (excluded.insert(i).second)
-        {
-          entry.length += Norm(Subtract(segment.p1, segment.p0));
-          segment.exclusion = std::make_pair(
-              "BranchingPerimeter",
-              "metal perimeter segment incident to a chain vertex where more than two "
-              "chain segments meet (a branching perimeter cannot be ordered into a simple "
-              "path or loop); the chain is cut there and its pieces identified (H13-I2)");
-        }
-      }
-      entry.reason = fmt::format(
-          "A perimeter chain has a vertex with more than two chain segments: {:d} segments "
-          "of chain(s) {} meet at ({}, {}, {}); the incident segments are excluded "
-          "(BranchingPerimeter) and the chain is cut there",
-          static_cast<int>(list.size()), fmt::join(chains, " / "),
-          input.vertices[v].coordinate[0], input.vertices[v].coordinate[1],
-          input.vertices[v].coordinate[2]);
-      geometry_ledger->Record(std::move(entry));
-    }
+    ExcludeBranchingVertices(input, "H13-I2/RunGeometryIdentification:branching-vertex",
+                             geometry_ledger);
   }
   // Mirror band (boundary-cut DESIGN 2.2): the truncation planes of the simulation-cut
   // attributes (collective; identical on every rank) and the extension of the input across
@@ -8916,6 +8872,14 @@ IdentificationResult RunGeometryIdentification(
     mirror_band.extension = ExtendIdentificationInputAcrossMirrorPlanes(
         input, mirror_band.planes, band_over_radius);
     mirror_band.extended = mirror_band.extension.image_segments > 0;
+    if (geometry_ledger && mirror_band.extended)
+    {
+      // R-1: the branching vertices the image segments form (recorded once, here, on every
+      // rank; the root's recomputation below repeats the same exclusions without a record).
+      ExcludeBranchingVertices(mirror_band.extension.input,
+                               "R-1/RunGeometryIdentification:mirror-branching-vertex",
+                               geometry_ledger);
+    }
   }
   // The identification runs on the root only (the global metal faces exist there alone;
   // decision 82 infrastructure) and the result is broadcast: every rank builds the same
@@ -8949,6 +8913,12 @@ IdentificationResult RunGeometryIdentification(
         // formed (DESIGN 2.2.2 (a)-(c)).
         auto extension = ExtendIdentificationInputAcrossMirrorPlanes(
             input, mirror_band.planes, band_over_radius);
+        if (geometry_ledger)
+        {
+          ExcludeBranchingVertices(extension.input,
+                                   "R-1/RunGeometryIdentification:mirror-branching-vertex",
+                                   nullptr);
+        }
         extension.input.log = input.log;
         extension.input.knife_edge_census = input.knife_edge_census;
         const IdentificationResult extended = IdentifyMetalPerimeter(extension.input);
@@ -20029,6 +19999,75 @@ void GeometryFallbackLedger::Enforce(const std::string &where) const
              << (preflight ? "Identification.Diagnostics.GeometryFallbacks of the manifest"
                            : "SurfaceResponse.Diagnostics.GeometryFallbacks")
              << " (" << where << ")!");
+}
+
+// H13-I2 / R-1: the BranchingPerimeter pre-pass of RunGeometryIdentification on one
+// identification input (the real input, or the mirror-extended one): the incident segments
+// of every chain vertex where more than two non-excluded chain segments meet are excluded
+// BranchingPerimeter and, with a ledger, one entry per vertex is recorded. Returns the
+// number of branching vertices found.
+std::size_t ExcludeBranchingVertices(IdentificationInput &target, const char *site,
+                                     GeometryFallbackLedger *geometry_ledger)
+{
+  const bool record = geometry_ledger != nullptr;
+  std::size_t vertices = 0;
+  // PER CHAIN (the identification's own incidence, BuildRuns): chains of different metal
+  // meeting at one vertex (a point contact) each have two segments there.
+  std::map<std::pair<int, std::size_t>, std::vector<std::size_t>> incident;
+  for (std::size_t i = 0; i < target.segments.size(); i++)
+  {
+    const auto &segment = target.segments[i];
+    if (segment.truncation || segment.exclusion || segment.chain < 0)
+    {
+      continue;
+    }
+    for (const std::size_t v : segment.vertices)
+    {
+      incident[{segment.chain, v}].push_back(i);
+    }
+  }
+  std::set<std::size_t> excluded;
+  for (const auto &[key, list] : incident)
+  {
+    const std::size_t v = key.second;
+    if (list.size() <= 2)
+    {
+      continue;
+    }
+    GeometryFallbackData entry;
+    entry.cls = "BranchingPerimeter";
+    entry.site = site;
+    entry.what = "segment";
+    entry.example_origin = target.vertices[v].coordinate;
+    std::set<int> chains;
+    for (const std::size_t i : list)
+    {
+      auto &segment = target.segments[i];
+      chains.insert(segment.chain);
+      if (excluded.insert(i).second)
+      {
+        entry.length += Norm(Subtract(segment.p1, segment.p0));
+        segment.exclusion = std::make_pair(
+            "BranchingPerimeter",
+            "metal perimeter segment incident to a chain vertex where more than two "
+            "chain segments meet (a branching perimeter cannot be ordered into a simple "
+            "path or loop); the chain is cut there and its pieces identified (H13-I2)");
+      }
+    }
+    entry.reason = fmt::format(
+        "A perimeter chain has a vertex with more than two chain segments: {:d} segments "
+        "of chain(s) {} meet at ({}, {}, {}); the incident segments are excluded "
+        "(BranchingPerimeter) and the chain is cut there",
+        static_cast<int>(list.size()), fmt::join(chains, " / "),
+        target.vertices[v].coordinate[0], target.vertices[v].coordinate[1],
+        target.vertices[v].coordinate[2]);
+    vertices++;
+    if (record)
+    {
+      geometry_ledger->Record(std::move(entry));
+    }
+  }
+  return vertices;
 }
 
 nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
