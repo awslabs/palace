@@ -17,12 +17,31 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Performance Improvements
+
+  - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
+    flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
+    This speeds up the construction of the error estimator, which is repeated at every
+    adaptive mesh refinement iteration.
+    [PR 1134](https://github.com/awslabs/palace/pull/1134).
+
 #### Bug Fixes
 
   - Added an MFEM patch for [mfem/mfem#5717](https://github.com/mfem/mfem/pull/5717),
     which fixes hangs and memory corruption on nonconforming meshes with triangular faces
     when the face neighbors of some processes have only quadrilateral faces.
     [PR 1124](https://github.com/awslabs/palace/pull/1124).
+  - Fixed the Floquet port MaxOrder cap reading past the boundary element Jacobian, which
+    gave a garbage element size and could randomly drop Floquet orders from the solve and
+    the `port-floquet-S.csv` output.
+    [PR 1091](https://github.com/awslabs/palace/pull/1091).
+  - Fixed the ParaView and grid function output of the out-of-plane magnetic flux density
+    `B` of 2D simulations and boundary modes, which was scaled by `L0 / Lc`, the mesh length
+    unit over the reference length, along with the surface current `J_s` (and the Poynting
+    vector `S` of 2D simulations), while the magnetic energy density `U_m` was scaled by
+    `(L0 / Lc)^2`. This put them off by orders of magnitude for meshes in micrometers with
+    the default `Lc`. The CSV postprocessing was not affected.
+    [PR 1098](https://github.com/awslabs/palace/pull/1098).
 
 #### Build system
 
