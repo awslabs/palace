@@ -1109,17 +1109,13 @@ TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
 
 TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
 {
-  // Threshold of the stretch magnitude for the smoother masks and the precision of the PML
-  // subdomain factorization.
+  // Threshold of the stretch magnitude for the smoother masks.
   const config::LinearSolverData defaults(json::object());
   CHECK(defaults.pml_smoother_threshold == 2.0);
-  CHECK_FALSE(defaults.pml_subdomain_single_precision);
   CHECK_FALSE(defaults.complex_coarse_solve);
-  const config::LinearSolverData linear(json{{"PMLSmootherThreshold", 3.0},
-                                             {"PMLSubdomainSinglePrecision", true},
-                                             {"ComplexCoarseSolve", false}});
+  const config::LinearSolverData linear(
+      json{{"PMLSmootherThreshold", 3.0}, {"ComplexCoarseSolve", false}});
   CHECK(linear.pml_smoother_threshold == 3.0);
-  CHECK(linear.pml_subdomain_single_precision);
   CHECK_FALSE(linear.complex_coarse_solve);
   CHECK(config::LinearSolverData(json{{"PMLSmootherThreshold", 0.0}})
             .pml_smoother_threshold == 0.0);

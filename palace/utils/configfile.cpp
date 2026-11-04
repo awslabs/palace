@@ -1856,8 +1856,6 @@ LinearSolverData::LinearSolverData(const json &linear)
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
   pml_subdomain_solver = linear.value("PMLSubdomainSolver", pml_subdomain_solver);
   pml_smoother_threshold = linear.value("PMLSmootherThreshold", pml_smoother_threshold);
-  pml_subdomain_single_precision =
-      linear.value("PMLSubdomainSinglePrecision", pml_subdomain_single_precision);
   reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
   pc_side = linear.value("PCSide", pc_side);
   sym_factorization = linear.value("ColumnOrdering", sym_factorization);

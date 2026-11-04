@@ -285,10 +285,8 @@ stretched elements (above
 of the magnitude of the stretch factors). SuperLU_DIST (except with
 [`"SuperLU3DCommunicator"`](../config/reference.md#config-solver-linear-superlu3dcommunicator)),
 STRUMPACK, and MUMPS factor the complex-valued PML subdomain matrix in complex arithmetic,
-with half of the memory of the equivalent real-valued system, and with STRUMPACK,
-[`"PMLSubdomainSinglePrecision"`](../config/reference.md#config-solver-linear-pmlsubdomainsingleprecision)
-further reduces the memory of this factorization. The coarse-level solve uses the
-real-valued approximation of the operator, which does not absorb in the PML. A
+with half of the memory of the equivalent real-valued system. The coarse-level solve uses
+the real-valued approximation of the operator, which does not absorb in the PML. A
 complex-valued coarse solve
 ([`"ComplexCoarseSolve"`](../config/reference.md#config-solver-linear-complexcoarsesolve))
 typically reduces the number of iterations further, at the cost of a coarse-level

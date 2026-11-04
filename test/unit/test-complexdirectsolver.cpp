@@ -131,16 +131,13 @@ void TestComplexDirectSolver(Solver<ComplexOperator> &solver, Solver<ComplexOper
 #if defined(MFEM_USE_STRUMPACK)
 TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]")
 {
-  // Double precision, and single precision with iterative refinement.
   MPI_Comm comm = Mpi::World();
-  const bool single = GENERATE(false, true);
-  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, single,
-                                single ? 2 : 0, 0);
+  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, 0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
       true, true, false, true);
-  TestComplexDirectSolver(solver, ref, single ? 1.0e-8 : 1.0e-11);
+  TestComplexDirectSolver(solver, ref, 1.0e-11);
 }
 #endif
 

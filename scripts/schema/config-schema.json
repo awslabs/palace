@@ -2600,7 +2600,7 @@
         },
         {
           "const": "Direct",
-          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision unless `\"PMLSubdomainSinglePrecision\"`), in complex arithmetic with SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), STRUMPACK, and MUMPS, otherwise as the equivalent real-valued system of twice the size."
+          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`), in complex arithmetic with SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), STRUMPACK, and MUMPS, otherwise as the equivalent real-valued system of twice the size."
         }
       ]
     },
@@ -3349,12 +3349,6 @@
           "type": "number",
           "description": "Threshold of the PML stretch magnitude max |s| (the largest magnitude of the stretch factors at the vertices of an element) above which the multigrid smoothers do not update the unknowns of a PML element (except those shared with other elements), which are then only updated by the coarse-level correction and by the PML subdomain correction: in strongly stretched elements, the polynomial smoothers amplify the error instead of reducing it. Only used with the PML subdomain correction (see `\"PMLSubdomainSolver\"`). A value of 0 disables it.",
           "default": 2.0,
-          "x-palace-advanced": true
-        },
-        "PMLSubdomainSinglePrecision": {
-          "type": "boolean",
-          "description": "When `true`, factors the PML subdomain matrix in single precision with iterative refinement in double precision, which reduces the memory of the factorization (only for STRUMPACK).",
-          "default": false,
           "x-palace-advanced": true
         },
         "ReorderingReuse": {
