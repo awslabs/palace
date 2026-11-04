@@ -21,7 +21,7 @@ IDENTIFICATION_TOOLS = ROOT.parent / "surface_response_identification"
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
 import local_pieces as local_pieces_module  # noqa: E402
-from signature_library import refuse_duplicate_signatures  # noqa: E402
+from signature_library import refuse_duplicate_signatures, signature_key_text  # noqa: E402
 
 STRAIGHT_BUILDER = ROOT / "build_surface_process_library.py"
 STRAIGHT_QUALIFIER = ROOT / "qualify_surface_response.py"
@@ -310,6 +310,123 @@ def preparation(requirement, spatial_mesh=SPATIAL_MESH):
             ),
         }
     return {"Method": "Unsupported", "Reason": "Unknown coupon topology"}
+
+
+TAPER_FAMILY_RULE = ("R-9b (fix round P3; decisions 1265 / 1269 / 1286 Q-5 / 1291): for every KeyedAtTheMean feature "
+                     "(Identification.Diagnostics.TaperMeanKeys) whose MEAN key the library serves today (its requirement not "
+                     "Missing) and whose taper links are UNIFORMLY scaled (the per-link s-ranges MinOverR / MeanOverR and "
+                     "MaxOverR / MeanOverR agree within the near band 1e-2 R on every offset at both ends; a non-uniform flare "
+                     "gets NO rows: the position family is not implemented, 1291), the piece-form requirement rows of the SCALE "
+                     "family: s_min = min over links MinOverR / MeanOverR, s_max = max over links MaxOverR / MeanOverR, keys "
+                     "{s_min} U {1 -/+ 0.10 k strictly inside (s_min, s_max)} U {s_max}, the mean (s = 1) = the existing key; a "
+                     "row = the served requirement with every Signature OffsetOverR / SeparationOverR and Geometry Offset / "
+                     "Separation scaled by s (OffsetOverR quantised to the 1e-6 R key grid), KeyText / Hash re-derived by the C++ "
+                     "writer's print (signature_key_text: Grisu2), Status Missing, Count / TotalEdgeLength 0, TaperFamily "
+                     "{FeatureId, Scale, MeanHash, MeanModel}")
+TAPER_FAMILY_SPACING = 0.10
+TAPER_FAMILY_NEAR_BAND_OVER_R = 1.0e-2
+SIGNATURE_LENGTH_QUANTUM_OVER_R = 1.0e-6
+
+
+def taper_family_scales(links, spacing=TAPER_FAMILY_SPACING):
+    """The scale grid of one KeyedAtTheMean feature from its TaperMeanKeys links: {s_min} U {1 -/+ k x spacing strictly inside
+    (s_min, s_max)} U {s_max}, s = 1 (the mean key) excluded; sorted."""
+    s_min = min(float(link["MinOverR"]) / float(link["MeanOverR"]) for link in links)
+    s_max = max(float(link["MaxOverR"]) / float(link["MeanOverR"]) for link in links)
+    scales = {round(s_min, 6), round(s_max, 6)}
+    k = 1
+    while 1.0 + k * spacing < s_max - 1.0e-12 or 1.0 - k * spacing > s_min + 1.0e-12:
+        for s in (1.0 - k * spacing, 1.0 + k * spacing):
+            if s_min + 1.0e-12 < s < s_max - 1.0e-12:
+                scales.add(round(s, 6))
+        k += 1
+    return sorted(scales)
+
+
+def taper_links_uniform(links, keyed_offsets_over_R, band_over_R=TAPER_FAMILY_NEAR_BAND_OVER_R):
+    """Whether the feature's taper links are uniformly scaled (decision 1291 (vi)): at both ends of the taper the per-link scale
+    (Min / Mean, Max / Mean) applied to the keyed span deviates from the feature's s_min / s_max by less than the near band on
+    every offset."""
+    span = max(keyed_offsets_over_R)
+    lows = [float(link["MinOverR"]) / float(link["MeanOverR"]) for link in links]
+    highs = [float(link["MaxOverR"]) / float(link["MeanOverR"]) for link in links]
+    return all((max(values) - min(values)) * span <= band_over_R for values in (lows, highs))
+
+
+def taper_family_requirements(manifest, feature_ids=None):
+    """The family rows (TAPER_FAMILY_RULE) for the manifest's KeyedAtTheMean features; returns (rows, report)."""
+    diagnostics = manifest.get("Identification", {}).get("Diagnostics", {})
+    keyed = diagnostics.get("TaperMeanKeys", {}).get("Features", [])
+    features = {feature["Id"]: feature for feature in manifest.get("Identification", {}).get("Features", [])}
+    requirements = {requirement.get("Hash"): requirement for requirement in manifest["Requirements"]}
+    rows, report = [], []
+    seen = set()
+    for entry in keyed:
+        feature_id = entry["Id"]
+        if feature_ids is not None and feature_id not in feature_ids:
+            continue
+        feature = features.get(feature_id)
+        requirement = requirements.get(feature.get("Hash")) if feature else None
+        if requirement is None or requirement.get("Status") == "Missing":
+            report.append({"Id": feature_id, "Type": entry["Type"], "Rows": 0, "Reason": "mean key Missing (stays Missing)"})
+            continue
+        if requirement.get("Topology") not in ("ParallelEdgeCluster", "SameConductorGap", "DifferentConductorGap",
+                                               "SameConductorStrip"):
+            report.append({"Id": feature_id, "Type": entry["Type"], "Rows": 0, "Reason": "NotEligible type"})
+            continue
+        signature = requirement["Signature"]
+        offsets = [float(edge["OffsetOverR"]) for edge in signature["Edges"]]
+        if not taper_links_uniform(entry["Links"], offsets):
+            report.append({"Id": feature_id, "Type": entry["Type"], "Rows": 0,
+                           "Reason": "NON-UNIFORM taper (the position family is not implemented; decision 1291)"})
+            continue
+        if requirement["Hash"] in seen:
+            report.append({"Id": feature_id, "Type": entry["Type"], "Rows": 0, "Reason": "family already emitted (shared key)"})
+            continue
+        seen.add(requirement["Hash"])
+        scales = taper_family_scales(entry["Links"])
+        for s in scales:
+            row = copy.deepcopy(requirement)
+            for edge in row["Signature"]["Edges"]:
+                edge["OffsetOverR"] = quantize_over_R(float(edge["OffsetOverR"]) * s)
+            if "SeparationOverR" in row["Signature"]:
+                row["Signature"]["SeparationOverR"] = quantize_over_R(float(row["Signature"]["SeparationOverR"]) * s)
+            # The coupon geometry (length units) IS the quantised key's cross-section (as the manifest writes the mean
+            # row's Geometry from its Signature: OffsetOverR x R).
+            radius = float(manifest["Library"]["MatchingRadius"])
+            geometry = row.get("Geometry") or {}
+            for edge, scaled in zip(geometry.get("Edges", []), row["Signature"]["Edges"]):
+                offset = edge["Offset"]
+                if isinstance(offset, list):
+                    edge["Offset"] = [float(scaled["OffsetOverR"]) * radius] + [float(x) for x in offset[1:]]
+                else:
+                    edge["Offset"] = float(scaled["OffsetOverR"]) * radius
+            if "Separation" in geometry and "SeparationOverR" in row["Signature"]:
+                geometry["Separation"] = float(row["Signature"]["SeparationOverR"]) * radius
+            for key in ("PlanViewFacets", "PlanViewBoundary"):
+                geometry.pop(key, None)
+            row["KeyText"] = signature_key_text(row["Signature"])
+            row["Hash"] = hashlib.sha256(row["KeyText"].encode("utf-8")).hexdigest()
+            row["Status"] = "Missing"
+            row["Count"] = 0
+            row["TotalEdgeLength"] = 0.0
+            row["Instances"] = 0
+            row["ExactParameters"] = True
+            row.pop("SelectedModels", None)
+            row.pop("Reason", None)
+            row["TaperFamily"] = {"FeatureId": feature_id, "Scale": s, "MeanHash": requirement["Hash"],
+                                  "MeanModel": [m.get("Name") for m in requirement.get("SelectedModels", [])],
+                                  "Rule": TAPER_FAMILY_RULE, "MatchingRadius": radius}
+            rows.append(row)
+        report.append({"Id": feature_id, "Type": entry["Type"], "Rows": len(scales), "Scales": scales,
+                       "MeanHash": requirement["Hash"][:12]})
+    return rows, report
+
+
+def quantize_over_R(value, quantum=SIGNATURE_LENGTH_QUANTUM_OVER_R):
+    """The identification's RoundTo on the 1e-6 R key grid (-0 -> 0)."""
+    rounded = round(value / quantum) * quantum
+    return 0.0 if rounded == 0.0 else rounded
 
 
 def plan_from_manifest(
@@ -3313,6 +3430,14 @@ def parse_args():
                              "view holds a label with >= 2 pieces (Preparation.LocalPieces in the plan): this flag is the explicit NAME "
                              "of that default and has NO effect beyond refusing --one-reference (kept for command-line compatibility "
                              "with the records; decision 1145 Q2)")
+    parser.add_argument("--taper-families", action="store_true",
+                        help="R-9b (fix round P3; decisions 1286 Q-5 / 1291): plan the SCALE-FAMILY rows of every served, uniformly "
+                             "scaled KeyedAtTheMean feature of the manifest (TAPER_FAMILY_RULE) and ONLY those rows (the "
+                             "manifest's own Missing requirements stay Missing: the family build is a library ADDITION); the plan "
+                             "records TaperFamilies {Rule, Report, Rows}")
+    parser.add_argument("--taper-family-features", default="",
+                        help="with --taper-families: the feature Ids (comma-separated) whose families are planned = the staged "
+                             "build order (default: every eligible feature)")
     parser.add_argument("--one-reference", action="store_true",
                         help="opt out of the piece-form default (decision 1136 (4)): every coupon in the one-reference form (the ES "
                              "record form of v3-j; every output byte-identical to the pre-1136 planner)")
@@ -3453,6 +3578,19 @@ def main():
     if not library_path.is_absolute():
         library_path = (manifest_path.parent / library_path).resolve()
     library = load_json(library_path)
+    taper_families = None
+    if args.taper_families:
+        feature_ids = None
+        if args.taper_family_features.strip():
+            feature_ids = {int(x) for x in args.taper_family_features.split(",") if x.strip()}
+        rows, report = taper_family_requirements(manifest, feature_ids)
+        if args.include_matched:
+            raise ValueError("--taper-families plans the family rows only (not --include-matched)")
+        manifest["Requirements"] = rows
+        taper_families = {"Rule": TAPER_FAMILY_RULE, "FeatureIds": sorted(feature_ids) if feature_ids else "all",
+                          "Report": report, "Rows": [{"Hash": row["Hash"], "KeyText": row["KeyText"],
+                                                      "TaperFamily": {k: v for k, v in row["TaperFamily"].items() if k != "Rule"}}
+                                                     for row in rows]}
     plan = plan_from_manifest(
         manifest_path,
         manifest,
@@ -3462,6 +3600,8 @@ def main():
         spatial_mesh_path(args),
         one_reference=args.one_reference,
     )
+    if taper_families is not None:
+        plan["TaperFamilies"] = taper_families
     args.output.mkdir(parents=True, exist_ok=True)
     destination = args.output / "coupon-plan.json"
     write_json(destination, plan)

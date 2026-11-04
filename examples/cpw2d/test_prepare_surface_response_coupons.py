@@ -3846,5 +3846,129 @@ class LabelAwareStampMatcher(unittest.TestCase):
             PREPARE.model_matches_coupon(one_label, one_coupon)
 
 
+# R-9b (fix round P3; decisions 1286 Q-5 / 1291): the scale-family planner (--taper-families).
+FE6_MEAN_SIGNATURE = {
+    "Edges": [
+        {"Conductor": 1, "GapSide": 1, "Interfaces": ["MA", "MS", "SA"], "Law": "{\"Type\":\"PEC\"}", "OffsetOverR": 0.0},
+        {"Conductor": 1, "GapSide": -1, "Interfaces": ["MA", "MS", "SA"], "Law": "{\"Type\":\"PEC\"}", "OffsetOverR": 0.826394},
+        {"Conductor": 1, "GapSide": 1, "Interfaces": ["MA", "MS", "SA"], "Law": "{\"Type\":\"PEC\"}", "OffsetOverR": 2.203837},
+        {"Conductor": 1, "GapSide": -1, "Interfaces": ["MA", "MS", "SA"], "Law": "{\"Type\":\"PEC\"}", "OffsetOverR": 3.030321},
+    ],
+    "Type": "ParallelEdgeCluster",
+}
+# The FE6 f32f taper links of record (stageE v3-k-E manifest, Diagnostics.TaperMeanKeys Features[Id 4]).
+FE6_LINKS = [
+    {"ChainA": 8, "ChainB": 9, "MaxOverR": 0.9884556875908009, "MeanOverR": 0.826484413913262, "MinOverR": 0.6627821054090914},
+    {"ChainA": 9, "ChainB": 10, "MaxOverR": 1.648232649033465, "MeanOverR": 1.3774433284248642, "MinOverR": 1.105236372461749},
+    {"ChainA": 10, "ChainB": 11, "MaxOverR": 0.9883964815993282, "MeanOverR": 0.8263936130716772, "MinOverR": 0.6631963869399218},
+]
+# ctx003-C1 feature 1 (04b96becaa33): the CPW flare whose gap and strip scale differently (decision 1291's discovery).
+C1_FLARE_LINKS = [
+    {"MinOverR": 0.552, "MeanOverR": 1.278, "MaxOverR": 1.999},
+    {"MinOverR": 1.104, "MeanOverR": 1.552, "MaxOverR": 2.0},
+    {"MinOverR": 0.552, "MeanOverR": 1.273, "MaxOverR": 2.0},
+]
+# The cross-language contract of the family keys (the FP-1 form): the C++ unit case
+# "SignatureKeyAndHash R-9b family keys" (test-signaturekeytext.cpp) pins the same scaled
+# signatures to the same KeyText / Hash through SignatureKeyAndHash (Grisu2 lexemes).
+FE6_FAMILY_KEYS = {
+    0.801929: ("0.0,0.662709,1.767321,2.4301019999999998", "6eb211ccce87ea1a"),
+    0.9: ("0.0,0.7437549999999999,1.983453,2.727289", "a5ef2edf3ce909a6"),
+    1.1: ("0.0,0.909033,2.4242209999999997,3.333353", "9915bcf3b40d8133"),
+    1.196588: ("0.0,0.988853,2.637085,3.6260459999999997", "e339af1d9c33c94d"),
+}
+
+
+def fe6_manifest():
+    requirement = {
+        "Topology": "ParallelEdgeCluster",
+        "Status": "Exact",
+        "Hash": "f32f48576bfa3bf68f5b1066ebda2405f3b00b6a17bbffa7dec012d36a8aaf2d",
+        "KeyText": PREPARE.signature_key_text(FE6_MEAN_SIGNATURE),
+        "Signature": copy.deepcopy(FE6_MEAN_SIGNATURE),
+        "Geometry": {"EdgeCount": 4,
+                     "Edges": [{"Conductor": 1, "GapDirection": [e["GapSide"], 0.0], "Offset": [e["OffsetOverR"] * 1.9, 0.0]}
+                               for e in FE6_MEAN_SIGNATURE["Edges"]],
+                     "PlanViewFacets": [], "PlanViewBoundary": []},
+        "Interfaces": [{"Slot": 0, "Target": 1, "Type": "SA"}],
+        "BoundaryCondition": {"Type": "PEC"},
+        "Count": 1760, "TotalEdgeLength": 4793.66, "Instances": 1,
+        "SelectedModels": [{"Name": "parallel-edge-cluster-95b13e7fdc7c-pieces3", "Topology": "ParallelEdgeCluster", "Weight": 1.0}],
+    }
+    missing = dict(requirement, Status="Missing", Hash="91783ad93142" + "0" * 52, Topology="SameConductorGap")
+    missing.pop("SelectedModels")
+    return {
+        "Version": 2,
+        "Library": {"MatchingRadius": 1.9, "Path": "lib.json"},
+        "Requirements": [requirement, missing],
+        "Identification": {
+            "Features": [{"Id": 4, "Type": "ParallelEdgeCluster", "Hash": requirement["Hash"]},
+                         {"Id": 2, "Type": "SameConductorGap", "Hash": missing["Hash"]},
+                         {"Id": 7, "Type": "ParallelEdgeCluster", "Hash": requirement["Hash"]}],
+            "Diagnostics": {"TaperMeanKeys": {"Count": 3, "Features": [
+                {"Id": 4, "Type": "ParallelEdgeCluster", "Length": 4793.66, "Links": FE6_LINKS},
+                {"Id": 2, "Type": "SameConductorGap", "Length": 0.39, "Links": FE6_LINKS[:1]},
+                {"Id": 7, "Type": "ParallelEdgeCluster", "Length": 1.0, "Links": C1_FLARE_LINKS}]}},
+        },
+    }
+
+
+class TaperFamilyPlanner(unittest.TestCase):
+    def test_the_scale_grid_of_fe6_is_min_the_tenths_about_the_mean_and_max(self):
+        self.assertEqual(PREPARE.taper_family_scales(FE6_LINKS), [0.801929, 0.9, 1.1, 1.196588])
+        # a wider family: the 0.10 steps about the mean strictly inside (s_min, s_max)
+        wide = [{"MinOverR": 0.55, "MeanOverR": 1.0, "MaxOverR": 2.0}]
+        self.assertEqual(PREPARE.taper_family_scales(wide), [0.55, 0.6, 0.7, 0.8, 0.9, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0])
+        # consecutive keys (the mean included) differ by <= 0.10 of the mean
+        keys = sorted(PREPARE.taper_family_scales(wide) + [1.0])
+        self.assertTrue(all(b - a <= 0.10 + 1e-9 for a, b in zip(keys, keys[1:])))
+
+    def test_uniformity_reads_fe6_uniform_and_the_c1_flare_non_uniform(self):
+        offsets = [e["OffsetOverR"] for e in FE6_MEAN_SIGNATURE["Edges"]]
+        self.assertTrue(PREPARE.taper_links_uniform(FE6_LINKS, offsets))
+        self.assertFalse(PREPARE.taper_links_uniform(C1_FLARE_LINKS, [0.0, 1.278, 2.83, 4.103]))
+
+    def test_fe6_family_rows_carry_the_cpp_key_text_and_hash(self):
+        rows, report = PREPARE.taper_family_requirements(fe6_manifest())
+        self.assertEqual([r["Rows"] for r in report], [4, 0, 0])
+        self.assertIn("Missing", report[1]["Reason"])
+        self.assertIn("NON-UNIFORM", report[2]["Reason"])
+        self.assertEqual([row["TaperFamily"]["Scale"] for row in rows], sorted(FE6_FAMILY_KEYS))
+        for row in rows:
+            lexemes, hash16 = FE6_FAMILY_KEYS[row["TaperFamily"]["Scale"]]
+            offsets = [e["OffsetOverR"] for e in row["Signature"]["Edges"]]
+            self.assertEqual(",".join(PREPARE.signature_key_text({"x": o})[5:-1] for o in offsets), lexemes)
+            self.assertEqual(row["Hash"][:16], hash16)
+            self.assertEqual(row["KeyText"], PREPARE.signature_key_text(row["Signature"]))
+            self.assertEqual(PREPARE.hashlib.sha256(row["KeyText"].encode()).hexdigest(), row["Hash"])
+            self.assertEqual(json.loads(row["KeyText"]), row["Signature"])
+            self.assertEqual(row["Status"], "Missing")
+            self.assertEqual(row["Count"], 0)
+            self.assertNotIn("SelectedModels", row)
+            self.assertEqual(row["TaperFamily"]["MeanHash"][:12], "f32f48576bfa")
+            self.assertEqual(row["TaperFamily"]["MeanModel"], ["parallel-edge-cluster-95b13e7fdc7c-pieces3"])
+            # the coupon geometry is the quantised key's cross-section (OffsetOverR x R), facets dropped
+            for edge, scaled in zip(row["Geometry"]["Edges"], row["Signature"]["Edges"]):
+                self.assertAlmostEqual(edge["Offset"][0], scaled["OffsetOverR"] * 1.9, places=12)
+            self.assertNotIn("PlanViewFacets", row["Geometry"])
+            self.assertEqual(PREPARE.coupon_id(row)[:len("paralleledgecluster_edgecount-4_")], "paralleledgecluster_edgecount-4_")
+        self.assertEqual(len({row["Hash"] for row in rows}), 4)
+
+    def test_the_feature_selection_is_the_staged_build_order(self):
+        rows, report = PREPARE.taper_family_requirements(fe6_manifest(), feature_ids={2})
+        self.assertEqual(rows, [])
+        self.assertEqual([r["Id"] for r in report], [2])
+
+    def test_the_plan_holds_the_family_rows_only(self):
+        manifest = fe6_manifest()
+        rows, _ = PREPARE.taper_family_requirements(manifest)
+        manifest["Requirements"] = rows
+        plan = PREPARE.plan_from_manifest(Path("m.json"), manifest, Path("lib.json"), {"Version": 2, "Models": []}, False,
+                                          one_reference=True)
+        self.assertEqual(plan["Summary"]["CouponCount"], 4)
+        self.assertEqual({c["Topology"] for c in plan["Coupons"]}, {"ParallelEdgeCluster"})
+        self.assertEqual(sorted(c["Hash"] for c in plan["Coupons"]), sorted(r["Hash"] for r in rows))
+
+
 if __name__ == "__main__":
     unittest.main()
