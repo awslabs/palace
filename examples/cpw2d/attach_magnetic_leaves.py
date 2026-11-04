@@ -10,7 +10,8 @@ pair (thin / fabricated, the same meshes, hats and piece states) re-run with --s
 assembles those vacuum domain-response matrices onto a COPY of a library as the OPTIONAL per-model leaves
 `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (a library without them loads and behaves bitwise as
 today) and writes the top-level `MagneticRules` (the r3 same-mesh tolerance and the two-level r4 PSD ratios; optionally the
-dual gate's `ConductorConsistencyTolerance`, decision 1251). It
+dual gate's `ConductorConsistencyTolerance`, decision 1251, and its PROBE FORM leaves `ProbeLiftOverR` /
+`ProbeSetbackOverR` / `ProbeSetbackWidthFraction` / `ProbeSheetNudgeOverR` / `ProbeBandHeights`, Phase 3 (a)). It
 REFUSES a twin whose basis file is not byte-identical to the model's (r1), records the regenerated electric matrices'
 maximum relative deviation from the model of record (the r3 statistic the loader gates; TWO-TIER per decision 1242: the
 optional MagneticRules.SameMeshToleranceWithMeshIdentity applies to a twin whose MeshOfRecordSha256Match proves BOTH
@@ -240,6 +241,22 @@ def main(argv=None):
                         help="MagneticRules.ConductorConsistencyTolerance (decision 1251, INTERIM): the tolerance of "
                              "the loader's MAGNETIC conductor-consistency gate; default None = absent (the electric "
                              "gate's 0.02 applies)")
+    # The PROBE FORM of the dual gate (mx-sc-magnetic Phase 3 (a), DESIGN-v2 a.2; decisions 1284 Q-1 / 1292): library
+    # leaves, never compiled constants. Default None = absent (the loader's defaults: LIFTED 0.5 / 0.5 / 0.45 / 1e-6 / 1).
+    parser.add_argument("--probe-lift", type=float, default=None,
+                        help="MagneticRules.ProbeLiftOverR (h_m / R, the lifted horizontal leg's height; in [0, 1])")
+    parser.add_argument("--probe-setback", type=float, default=None,
+                        help="MagneticRules.ProbeSetbackOverR (s / R, both the probe end and the anchor end set back "
+                             "into their piece; in [0, 1]; 0 with --probe-lift 0 = FLAT, the electric legs verbatim)")
+    parser.add_argument("--probe-width-fraction", type=float, default=None,
+                        help="MagneticRules.ProbeSetbackWidthFraction (the per-piece cap s <= fraction x the piece's "
+                             "local metal width; in (0, 0.5))")
+    parser.add_argument("--probe-nudge", type=float, default=None,
+                        help="MagneticRules.ProbeSheetNudgeOverR (eps / R, the sheet points nudged to the vacuum side; "
+                             "in [0, 1])")
+    parser.add_argument("--probe-band-heights", type=int, default=None,
+                        help="MagneticRules.ProbeBandHeights (the Gauss-height count: 1 = LIFTED at h_m, >= 2 = BAND "
+                             "averaged over that many Gauss heights in [h_m / 2, 3 h_m / 2])")
     parser.add_argument("--records", help="write the per-model records JSON here (default: beside --output)")
     args = parser.parse_args(argv)
     if os.path.exists(args.output):
@@ -251,9 +268,19 @@ def main(argv=None):
     rules = {"SameMeshTolerance": args.same_mesh_tolerance, "PsdFindingRatio": args.psd_finding_ratio,
              "PsdRefusalRatio": args.psd_refusal_ratio,
              "SameMeshToleranceWithMeshIdentity": args.same_mesh_tolerance_with_mesh_identity,
-             "ConductorConsistencyTolerance": args.conductor_consistency_tolerance}
+             "ConductorConsistencyTolerance": args.conductor_consistency_tolerance,
+             "ProbeLiftOverR": args.probe_lift, "ProbeSetbackOverR": args.probe_setback,
+             "ProbeSetbackWidthFraction": args.probe_width_fraction, "ProbeSheetNudgeOverR": args.probe_nudge,
+             "ProbeBandHeights": args.probe_band_heights}
     if not rules["PsdRefusalRatio"] >= rules["PsdFindingRatio"] >= 0.0 or rules["SameMeshTolerance"] < 0.0:
         parser.error("the rules must be nonnegative with PsdRefusalRatio >= PsdFindingRatio")
+    for key in ("ProbeLiftOverR", "ProbeSetbackOverR", "ProbeSheetNudgeOverR"):
+        if rules[key] is not None and not 0.0 <= rules[key] <= 1.0:
+            parser.error("%s must be in [0, 1]" % key)
+    if rules["ProbeSetbackWidthFraction"] is not None and not 0.0 < rules["ProbeSetbackWidthFraction"] < 0.5:
+        parser.error("ProbeSetbackWidthFraction must be in (0, 0.5)")
+    if rules["ProbeBandHeights"] is not None and rules["ProbeBandHeights"] < 1:
+        parser.error("ProbeBandHeights must be a Gauss-height count >= 1")
     if rules["ConductorConsistencyTolerance"] is not None and rules["ConductorConsistencyTolerance"] < 0.0:
         parser.error("ConductorConsistencyTolerance must be nonnegative")
     if (rules["SameMeshToleranceWithMeshIdentity"] is not None

@@ -3477,6 +3477,11 @@
                   "type": "boolean",
                   "description": "Write `surface-response-exclusion-energy.csv`: the raw field's within-R energy per exclusion class by name (the identification's Port / SimulationBoundary / NonPlanar / NonManifold / TruncationCut / Untargeted / UndeterminedProcessSide / Unchained / CrossLayer, CornerArmTrim, Unclaimed-other, UnprobedModels, MaxwellPatchExcluded; plus `Claimed` = the feature-claimed perimeter's and `Total` = the within-R energy by one integral, which the classes and Claimed sum to) x interface type x source (electrostatic) / frequency or mode (Maxwell). The partition reads the CLASSIFIED edge tree: every metal edge segment of the interface, physical or not, so the field near a fold / non-manifold / truncation / port edge is attributed to that edge. Every OTHER energy table (uncovered, domain-boundary, spatial-cluster-priority, conductor-consistency, model-raw, the surface-Q edge columns) reads the PHYSICAL edge tree and attributes the field near such an edge to the nearest PHYSICAL edge: a named limitation of those tables. Off by default (the partition costs one surface integral per class and interface, +45 % of the postprocess categories on the S1 stage-1 window: above the 10 % bar of decision 1076); the stage E / F configurations set it true (OI-COVERAGE-EXCLUSION-ENERGY; decisions 1064 (2) / 1074 / 1076).",
                   "default": false
+                },
+                "WithinRVolumeEnergy": {
+                  "type": "boolean",
+                  "description": "Write per placed patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box into `surface-response-patch-energy.csv` (`within-R magnetic energy (J)` = 1/2 int mu^-1 |B|^2, `within-R electric energy (J)` = 1/2 int eps |E|^2, `within-R volume (m^3)` = the box volume the quadrature resolves): a translational patch's box = its model's edge span +- R laterally, +- R normally, its longitudinal cell; a spatial patch's = its support box x [-R, R]. Summed over the element quadrature points inside the box (a point is in or out: the box faces are resolved to ~h, an ESTIMATE for a share census, not a trace form; a patch without a box prints NaN). Requires `PatchEnergy: true`. Off by default: bitwise off (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15: the census of the spatial families' magnetic energy that decides the (A)-3D scope).",
+                  "default": false
                 }
               }
             },
@@ -3489,6 +3494,21 @@
                   "type": "boolean",
                   "description": "DIAGNOSTIC: record every probe reading and verdict but exclude nothing (every patch keeps its weight); the run prints a DIAGNOSTIC banner and writes `ConductorConsistency.RecordOnly: true` into its diagnostics. Admitted only for the named ITEM-0 test leg and the hardening fixtures; a run of record with it set is refused by the comparator.",
                   "default": false
+                },
+                "ControlFlipProbePiece": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "DIAGNOSTIC CONTROL, not a modelling option (mx-sc-magnetic Phase 3 (a), decisions 1256 / 1292): every entry flips the LOCAL PIECE label of one model edge's conductor-consistency probes at the probe construction (the level both gates read) on every patch of that model, so that the gates' discrimination of a one-label mis-mapping is MEASURED on a device (the flipped probe is compared with the wrong piece's state). Admitted ONLY with `RecordOnly: true` (refused by name otherwise); a `Model` / `Edge` that does not exist in the loaded library is refused (no silent no-op); printed on the gate lines and recorded as a CONTROL in the manifest / records. A run of record never carries it.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["Model", "Edge", "Piece"],
+                    "properties": {
+                      "Model": { "type": "string", "description": "The library model's Name." },
+                      "Edge": { "type": "integer", "minimum": 0, "description": "The model edge index (into the model's Edges, increasing Offset)." },
+                      "Piece": { "type": "integer", "minimum": 1, "description": "The local piece label the edge's probes are given instead of their own." }
+                    }
+                  }
                 }
               }
             },

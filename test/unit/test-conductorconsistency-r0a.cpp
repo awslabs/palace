@@ -43,63 +43,11 @@ using namespace Catch::Matchers;
 namespace
 {
 
-// The SHORTED CPW STUB of the ITEM-0 test (idfix DESIGN B.2) in the unit box: a 2 x 1 x 2
-// box (hexahedra, h = 0.125) whose plane y = 0.5 is PEC metal (attribute 9) EXCEPT two
-// slots of bare dielectric, x in [0.5, 2] x z in [0.75, 0.875] and x in [0.5, 2] x z in
-// [1.125, 1.25], running into the wall x = 2 (the open end); the strip z in [0.875, 1.125]
-// between them is the ground plane itself continuing at x = 0.5 (the SHORT): ONE metal
-// component, so every edge of the 4-edge cross-section (offsets 0 / 0.125 / 0.375 / 0.5,
-// gaps 0.125, strip 0.25, all below 2R = 0.4) carries conductor 1 - the one-label
-// ParallelEdgeCluster of the CHR-012 key a670c49a86d8 (gaps and strip 3 um = 1.58 R).
-// The metal plane of the stub: attribute 9 on the interior faces of y = 0.5 outside the two
-// slots; the mesh finalized.
-void AddShortedCpwMetalPlane(mfem::Mesh &serial)
-{
-  for (int face = 0; face < serial.GetNumFaces(); face++)
-  {
-    int element1, element2;
-    serial.GetFaceElements(face, &element1, &element2);
-    if (element1 < 0 || element2 < 0)
-    {
-      continue;
-    }
-    mfem::Array<int> vertices;
-    serial.GetFaceVertices(face, vertices);
-    bool on_plane = true;
-    double xmin = 2.0, xmax = 0.0, zmin = 2.0, zmax = 0.0;
-    for (const int vertex : vertices)
-    {
-      const double *point = serial.GetVertex(vertex);
-      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
-      xmin = std::min(xmin, point[0]);
-      xmax = std::max(xmax, point[0]);
-      zmin = std::min(zmin, point[2]);
-      zmax = std::max(zmax, point[2]);
-    }
-    if (!on_plane)
-    {
-      continue;
-    }
-    const bool in_slot_x = xmin >= 0.5 - 1.0e-12;
-    const bool in_slot_a = zmin >= 0.75 - 1.0e-12 && zmax <= 0.875 + 1.0e-12;
-    const bool in_slot_b = zmin >= 1.125 - 1.0e-12 && zmax <= 1.25 + 1.0e-12;
-    if (in_slot_x && (in_slot_a || in_slot_b))
-    {
-      continue;  // bare dielectric
-    }
-    serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
-    serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
-  }
-  serial.FinalizeTopology();
-  serial.Finalize();
-}
-
-mfem::Mesh MakeSerialShortedCpwMesh(mfem::Element::Type type = mfem::Element::HEXAHEDRON)
-{
-  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, type, 2.0, 1.0, 2.0);
-  AddShortedCpwMetalPlane(serial);
-  return serial;
-}
+// The SHORTED CPW STUB mesh and its metal plane are the shared fixtures
+// test::MakeSerialShortedCpwMesh / test::AddShortedCpwMetalPlane (surfaceresponse-fixtures;
+// Phase 3 (a) of mx-sc-magnetic shares them with test-magneticresponse.cpp).
+using test::AddShortedCpwMetalPlane;
+using test::MakeSerialShortedCpwMesh;
 
 // The stub with a VOID (U-H14a), TETRAHEDRAL (the exact segment intersections the line
 // coverage reads exist on simplices only; a hexahedral mesh samples the lines blindly and

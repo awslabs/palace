@@ -205,6 +205,28 @@ class AttachMagneticLeavesTest(unittest.TestCase):
                       "--output", str(self.root / "out-bad" / "library-mag.json"),
                       "--same-mesh-tolerance", "1e-9", "--same-mesh-tolerance-with-mesh-identity", "1e-10"])
 
+    def test_probe_form_leaves_are_written_only_when_given_and_bounded(self):
+        # Phase 3 (a) (decisions 1284 Q-1 / 1292): absent flags write NO Probe* leaf (the loader's defaults = LIFTED
+        # 0.5 / 0.5 / 0.45 / 1e-6 / 1 apply; the output is byte-identical to before); given flags are written; FLAT =
+        # 0 / 0; malformed values are refused.
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-form" / "library-mag.json"),
+                       "--probe-lift", "0.0", "--probe-setback", "0.0", "--probe-width-fraction", "0.3",
+                       "--probe-nudge", "1e-5", "--probe-band-heights", "3"])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-form" / "library-mag.json") as handle:
+            rules = json.load(handle)["MagneticRules"]
+        self.assertEqual({key: rules[key] for key in ("ProbeLiftOverR", "ProbeSetbackOverR",
+                                                      "ProbeSetbackWidthFraction", "ProbeSheetNudgeOverR",
+                                                      "ProbeBandHeights")},
+                         {"ProbeLiftOverR": 0.0, "ProbeSetbackOverR": 0.0, "ProbeSetbackWidthFraction": 0.3,
+                          "ProbeSheetNudgeOverR": 1e-5, "ProbeBandHeights": 3})
+        for flag, value in (("--probe-lift", "1.5"), ("--probe-setback", "-0.1"), ("--probe-width-fraction", "0.5"),
+                            ("--probe-nudge", "2"), ("--probe-band-heights", "0")):
+            with self.assertRaises(SystemExit):
+                AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                          "--output", str(self.root / ("out-bad" + flag) / "library-mag.json"), flag, value])
+
     def test_refuses_an_existing_output_and_a_blend_entry(self):
         with self.assertRaises(SystemExit):
             AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),

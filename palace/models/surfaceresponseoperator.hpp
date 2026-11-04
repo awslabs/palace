@@ -586,6 +586,9 @@ private:
     // load-time record of the leaf (the r1-r4 verdict, the PSD statistic of ERRATUM 1227).
     bool magnetic = false;
     mfem::DenseMatrix magnetic_domain_defect;
+    // S_m,thin scaled like the defect (Phase 3 (a) COL-1 / COL-2, R-MAG-14): the patch's
+    // within-R magnetic THIN energy 1/2 w a_m^H S_m,thin a_m beside its correction.
+    mfem::DenseMatrix magnetic_thin_domain;
     MagneticLeafStatus magnetic_status;
   };
 
@@ -695,6 +698,17 @@ private:
   // OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION), else kConductorConsistencyTolerance
   // (bitwise as before).
   double magnetic_conductor_consistency_tolerance = kConductorConsistencyTolerance;
+  // The PROBE FORM of the magnetic gate (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-
+  // DISCRETISATION; decisions 1256 / 1284 Q-1 / 1292): the library's MagneticRules.Probe*
+  // leaves copied at the Maxwell configuration (FLAT / LIFTED / BAND by
+  // MagneticProbeFormName). The magnetic probe legs are built from them beside the
+  // electric legs (MaxwellProbe::magnetic_legs); with no magnetic model nothing is built.
+  config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData
+      magnetic_probe_rules;
+  // Decision 1292 (B): the ControlFlipProbePiece CONTROL's applied flips (one record per
+  // flipped probe: "<model>:<edge>:<piece from>-><piece to>"), gathered on every rank at
+  // the Maxwell configuration; empty when the control is absent.
+  std::vector<std::string> control_flipped_probe_records;
   // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
   // when a magnetic leaf is loaded), so that the root-only record printers need no
   // collective.
@@ -729,8 +743,29 @@ private:
     int conductor = 1;  // the canonical conductor label the probe's metal carries
     int piece = 0;      // the local metal piece (translational; 0 spatial)
     std::vector<std::pair<int, double>> legs;  // (line, sign) from the anchor to the probe
+    // Phase 3 (a): the MAGNETIC gate's legs (line, weight) from the set-back anchor to the
+    // set-back probe along the lifted path (anchor* -> A -> B -> probe*; BAND: the
+    // vertical segments weighted by the Gauss heights they serve), built only for a
+    // magnetic model's translational probes; FLAT = `legs` verbatim. magnetic_path holds
+    // the polyline's points (mesh coordinates) for the records and the tests.
+    std::vector<std::pair<int, double>> magnetic_legs;
+    std::vector<std::array<double, 3>> magnetic_path;
   };
   std::vector<std::vector<MaxwellProbe>> maxwell_probes;
+  // COL-3 (Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per LOCAL patch its
+  // own BOX in the patch frame (mesh coordinates: origin + axes; the local extents along
+  // u / v / w), the integration domain of the within-R volume energies. A translational
+  // patch: u over its model's edge span +- R, v in [-R, R] (AxisV the sheet normal), w over
+  // its longitudinal cell; a spatial patch: (u, v) = its support box (units of R), w in
+  // [-R, R] (AxisW the sheet normal). `defined` false = no edge list and no support box (a
+  // legacy / explicit patch: the basis points' bounding box is NOT used; NaN in the CSV).
+  struct PatchBox
+  {
+    std::array<double, 3> origin{}, axis_u{}, axis_v{}, axis_w{};
+    std::array<double, 2> u{}, v{}, w{};
+    bool defined = false;
+  };
+  std::vector<PatchBox> patch_boxes;
   // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): per LOCAL patch, the
   // provenance of a MaxwellPatchExcluded record (the OverlapExcluded form: the claimed +
   // raw-claimed length, the origin).
@@ -824,6 +859,7 @@ private:
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
       exclusion_portions;
   ExcludedPatchPortions unprobed_model_portions;
+  bool within_r_volume_energy = false;  // COL-3 (R-MAG-15), from the request
   bool exclusion_energy = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
@@ -866,6 +902,9 @@ private:
   // R0-a: the conductor-consistency probes' legs among maxwell_lines (in no path, no fit):
   // ContourLines counts the contour lines only, ProbeLines these.
   long long int probe_line_count = 0;
+  // Phase 3 (a): the MAGNETIC probe legs among them (the lifted paths; 0 under FLAT, whose
+  // magnetic legs are the electric ones).
+  long long int magnetic_probe_line_count = 0;
   mutable long long int operator_mult_count = 0;
   mutable long long int eliminate_rhs_count = 0;
   mutable long long int trace_forward_count = 0;
@@ -1147,8 +1186,22 @@ public:
     int magnetic_excluded_patch_count = 0;
     bool magnetic_confident = true;
     // Per model (model-index order, as model_contributions): the magnetic domain
-    // correction of the model's applied patches.
+    // correction of the model's applied patches, and (COL-1, R-MAG-14) its within-R
+    // magnetic THIN energy 1/2 w a_m^H S_m,thin a_m / |omega|^2 summed over the same
+    // patches.
     std::vector<double> model_magnetic_domain_corrections;
+    std::vector<double> model_magnetic_thin_energies;
+    // COL-2 (R-MAG-14; only with Diagnostics.PatchEnergy, gathered on every rank in global
+    // patch order): per patch carrying a magnetic leaf its APPLIED magnetic domain
+    // correction (0 on a dual-gate-excluded or loop-fallback patch: withheld) and its
+    // within-R magnetic thin energy (read on every leaf patch, excluded or not).
+    struct PatchMagneticEnergy
+    {
+      int patch = 0;
+      double domain_correction = 0.0;
+      double thin_energy = 0.0;
+    };
+    std::vector<PatchMagneticEnergy> patch_magnetic_energies;
     // The domain defects the fallback patches would have added (both closures; 0 without
     // a fallback): domain_correction + this is the self-consistent operator's energy
     // 0.5 <x, Mult x>, which applies the fit without the fallback.
@@ -1215,6 +1268,49 @@ public:
   {
     return magnetic_conductor_consistency_tolerance;
   }
+  // Phase 3 (a): the probe form of record ("FLAT" / "LIFTED" / "BAND") with its leaves, the
+  // local patches' probes (their electric and magnetic legs and the magnetic path points)
+  // and the applied ControlFlipProbePiece records (decision 1292).
+  std::string MagneticProbeForm() const;
+  const config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData &
+  GetMagneticProbeRules() const
+  {
+    return magnetic_probe_rules;
+  }
+  const std::vector<std::vector<MaxwellProbe>> &GetMaxwellProbes() const
+  {
+    return maxwell_probes;
+  }
+  const std::vector<std::string> &GetControlFlippedProbeRecords() const
+  {
+    return control_flipped_probe_records;
+  }
+  // Per local patch the complex reading -(sum over the probe's legs of weight x the line
+  // integral) of every probe on the field E: the MAGNETIC legs with the magnetic stencil
+  // (the dual gate's reading) when `magnetic`, else the electric legs with the electric
+  // stencil (the R0-a gate's). Collective (every rank evaluates the lines); a diagnostic
+  // and test surface of the probe form.
+  std::vector<std::vector<std::complex<double>>>
+  EvaluateProbeReadings(const ComplexVector &E, bool magnetic) const;
+  // COL-3 (Phase 3 (b), R-MAG-15): per placed patch (global index, every rank the whole
+  // sorted list) the device field's energies by a volume integral over its PatchBox at
+  // quadrature-point resolution: electric = 1/2 int eps |E|^2, magnetic = 1/2 int mu^-1
+  // |B|^2 (the domain postoperator's conventions on the complex fields, nondimensional),
+  // volume = the box volume the quadrature resolves; `defined` false = the patch has no
+  // box. One pass over the local elements against a grid hash of every patch's box.
+  // Collective.
+  struct PatchVolumeEnergy
+  {
+    int patch = 0;
+    double electric = 0.0;
+    double magnetic = 0.0;
+    double volume = 0.0;
+    bool defined = false;
+  };
+  std::vector<PatchVolumeEnergy>
+  GetWithinRVolumeEnergies(const GridFunction &E, const GridFunction &B,
+                           const MaterialOperator &mat_op) const;
+  bool WithinRVolumeEnergyRequested() const { return within_r_volume_energy; }
   // The dual R0-a gate (the magnetic term only; DESIGN-v2 section 3): the flux read along
   // the R0-a probe legs against the piece's flux state, on the magnetic chain trace, with
   // the electric gate's tolerance and floor; a failing patch loses its magnetic term

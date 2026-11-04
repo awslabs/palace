@@ -11,8 +11,11 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -182,6 +185,188 @@ mfem::VectorFunctionCoefficient ConstantCurlField(const std::array<double, 3> &B
                                            E[1] = 0.5 * (B[2] * x[0] - B[0] * x[2]);
                                            E[2] = 0.5 * (B[0] * x[1] - B[1] * x[0]);
                                          });
+}
+
+// Phase 3 (a) (DESIGN-v2 a.2 / a.3 / a.5; decisions 1284 Q-1 / 1292): the SHORTED CPW STUB
+// of the R0-a tests (test::MakeSerialShortedCpwMesh; the one-label 4-edge PEC-cluster
+// model, offsets 0 / 0.125 / 0.375 / 0.5, R 0.2, the 4-knot ring with its top knots at v =
+// 0.1) WITH magnetic leaves (diagonal 1e-12 thin / PSD defect), the PEC-cluster anchor =
+// the ground's edge point (MAJOR-1's case). `piece_form` = Edges[].LocalPiece 1 / 2 / 2 / 3
+// + three ConductorReferences (-0.05 / 0.25 / 0.55: ground-left / strip / ground-right) +
+// OpenContourPaths (knot 1: 1 -> 2; knot 2: 2 -> 3; knots 4, 3: 1 -> 3), so the gate
+// compares a probe with its PIECE's flux state (the a.3 control's substrate); `rules` are
+// written as the library's MagneticRules. Written by the root; returns the library path.
+fs::path WriteStubMagneticLibrary(const fs::path &directory,
+                                  const fs::path &template_library,
+                                  const std::string &suffix, bool piece_form,
+                                  const json &rules = json::object())
+{
+  const int basis_size = piece_form ? 6 : 4;
+  const auto library_path =
+      directory / fmt::format("fabrication-process-magnetic-stub-{}.json", suffix);
+  const auto points_path = directory / fmt::format("magstub-basis-points-{}.csv", suffix);
+  const auto domain_path = directory / fmt::format("magstub-domain-{}.csv", suffix);
+  const auto surface_path = directory / fmt::format("magstub-surface-{}.csv", suffix);
+  const auto thin_path = directory / fmt::format("magstub-magnetic-thin-{}.csv", suffix);
+  const auto fab_path = directory / fmt::format("magstub-magnetic-fab-{}.csv", suffix);
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(points_path);
+      output << "x,y,z\n0.0625,0.1,0.0\n0.4375,0.1,0.0\n0.4375,-0.1,0.0\n0.0625,-0.1,0.0\n";
+    }
+    auto write_diagonal = [&](const fs::path &path, double diagonal)
+    {
+      std::ofstream output(path);
+      output.precision(17);
+      output << "basis_i,basis_j,Q_ij (J)\n";
+      for (int i = 1; i <= basis_size; i++)
+      {
+        for (int j = i; j <= basis_size; j++)
+        {
+          output << i << "," << j << "," << (i == j ? diagonal : 0.0) << "\n";
+        }
+      }
+    };
+    write_diagonal(domain_path, 1.0e-12);
+    write_diagonal(thin_path, 1.0e-12);
+    write_diagonal(fab_path, 3.0e-12);  // dS_m = 2e-12 I: PSD, Applied
+    {
+      std::ofstream output(surface_path);
+      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
+      for (int edge = 1; edge <= 4; edge++)
+      {
+        for (int i = 1; i <= basis_size; i++)
+        {
+          for (int j = i; j <= basis_size; j++)
+          {
+            output << "1," << edge << ",0.2," << i << "," << j << ","
+                   << (i == j ? 0.25e-12 : 0.0) << "," << (i == j ? 0.25e-12 : 0.0) << "\n";
+          }
+        }
+      }
+    }
+    std::ifstream input(template_library);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-magnetic-stub-" + suffix;
+    const json process = ProcessOfRecord();
+    for (const auto &[key, value] : process.items())
+    {
+      library["Fabrication"][key] = value;
+    }
+    json model = library["Models"][0];
+    model["Name"] =
+        piece_form ? "cpw-one-label-four-edge-pieces" : "cpw-one-label-four-edge";
+    model["Topology"] = "ParallelEdgeCluster";
+    model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    model["BasisPoints"] = points_path.string();
+    model["FabricatedMatrix"] = domain_path.string();
+    model["ThinMatrix"] = domain_path.string();
+    model["FabricatedSurfaceMatrix"] = surface_path.string();
+    model["ThinSurfaceMatrix"] = surface_path.string();
+    model["EdgeOffsetTolerance"] = 1.0e-6;
+    model["Edges"] = {{{"Offset", 0.0}, {"GapDirection", 1}, {"Conductor", 1}},
+                      {{"Offset", 0.125}, {"GapDirection", -1}, {"Conductor", 1}},
+                      {{"Offset", 0.375}, {"GapDirection", 1}, {"Conductor", 1}},
+                      {{"Offset", 0.5}, {"GapDirection", -1}, {"Conductor", 1}}};
+    for (const char *key : {"Separation", "SeparationTolerance", "Angle", "AngleTolerance",
+                            "TraceMesh", "TraceMeshTriangles", "ConductorReferences",
+                            "Reference", "OpenContourPaths", "ContourGroups"})
+    {
+      model.erase(key);
+    }
+    if (piece_form)
+    {
+      const int pieces[4] = {1, 2, 2, 3};
+      for (int k = 0; k < 4; k++)
+      {
+        model["Edges"][k]["LocalPiece"] = pieces[k];
+      }
+      model["ConductorReferences"] = {
+          {-0.05, 0.0, 0.0}, {0.25, 0.0, 0.0}, {0.55, 0.0, 0.0}};
+      model["OpenContourPaths"] = {
+          {{"Indices", {1}}, {"StartConductor", 1}, {"EndConductor", 2}},
+          {{"Indices", {2}}, {"StartConductor", 2}, {"EndConductor", 3}},
+          {{"Indices", {4, 3}}, {"StartConductor", 1}, {"EndConductor", 3}}};
+    }
+    else
+    {
+      model["Reference"] = {0.25, 0.0, 0.0};
+    }
+    json source = DefaultMagneticSource();
+    source["ConductorStateCount"] = piece_form ? 2 : 0;
+    model["MagneticFabricatedMatrix"] = fab_path.string();
+    model["MagneticThinMatrix"] = thin_path.string();
+    model["MagneticSource"] = source;
+    library["Models"] = {model};
+    if (!rules.empty())
+    {
+      library["MagneticRules"] = rules;
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  return library_path;
+}
+
+// The stub's Maxwell config on `library` (the R0-a Maxwell form: the automatic patches,
+// collocated trace coupling, the short's corner cluster unmatched = raw).
+json StubMaxwellConfig(const test::SurfaceResponseFiles &files, const fs::path &library)
+{
+  json config = files.ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  return config;
+}
+
+// The stub's GAP-FLUX field: E = f(z) x_hat (the LONGITUDINAL component) with f = 0 on the
+// grounds, rising linearly across slot A (z in [0.75, 0.875]) to V on the strip and falling
+// across slot B (z in [1.125, 1.25]); the kinks lie on element faces (h = 0.125), so the
+// field is exact in ND1 on the hexahedra and B = curl E = f'(z) y_hat is the gap flux
+// (normal to the sheet, in the slots only; zero elsewhere). int (w x B) . dl = f(end) -
+// f(start): a probe on the strip reads V against the ground anchor; the piece-form strip
+// state reads V too.
+mfem::VectorFunctionCoefficient GapFluxField(double voltage)
+{
+  return mfem::VectorFunctionCoefficient(3,
+                                         [voltage](const mfem::Vector &x, mfem::Vector &E)
+                                         {
+                                           E.SetSize(3);
+                                           E = 0.0;
+                                           const double z = x[2];
+                                           double f = 0.0;
+                                           if (z > 0.75 && z < 0.875)
+                                           {
+                                             f = voltage * (z - 0.75) / 0.125;
+                                           }
+                                           else if (z >= 0.875 && z <= 1.125)
+                                           {
+                                             f = voltage;
+                                           }
+                                           else if (z > 1.125 && z < 1.25)
+                                           {
+                                             f = voltage * (1.25 - z) / 0.125;
+                                           }
+                                           E[0] = f;
+                                         });
+}
+
+ComplexVector ProjectField(SpaceOperator &space,
+                           mfem::VectorFunctionCoefficient &coefficient)
+{
+  GridFunction field(space.GetNDSpace(), true);
+  field.Real().ProjectCoefficient(coefficient);
+  field.Imag() = 0.0;
+  ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+  field.Real().GetTrueDofs(E.Real());
+  field.Imag().GetTrueDofs(E.Imag());
+  return E;
 }
 
 }  // namespace
@@ -579,6 +764,538 @@ TEST_CASE_METHOD(
 // +4.584 % (2 / 2 / 2, N1 -3.378 %, N2 +5.790 %), to the REPORT's printed 1e-3 pt and the
 // gate's 1e-4 pt on the derived value; the gates withhold it (NaN), never the trace-closure
 // spread; the electric half alone gives the REPORT's ELECTRIC-ONLY +1.217 % / +1.689 %.
+// Phase 3 (a) t1 / t3 / t4 / t5 (DESIGN-v2 a.5; AMENDMENT 1275 MAJOR-A): the LIFTED
+// magnetic probe legs on the shorted CPW stub with a magnetic leaf.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator magnetic probe form: LIFTED legs, FLAT, BAND and "
+    "the setbacks (Phase 3 (a))",
+    "[surfaceresponseoperator][maxwell][magnetic][probeform][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  constexpr double R = 0.2;
+  const std::array<double, 3> B = {0.3, -0.5, 0.8};
+  const double B_norm = std::sqrt(B[0] * B[0] + B[1] * B[1] + B[2] * B[2]);
+  // One operator per probe form on the SAME mesh / config (the library differs by its
+  // MagneticRules only): FLAT (0 / 0), LIFTED without setback (0.5 / 0), LIFTED (the
+  // defaults 0.5 / 0.5), LIFTED with a setback above the strip's width cap (0.5 / 1.0) and
+  // BAND (3 Gauss heights, no setback).
+  struct Form
+  {
+    std::string name;
+    json rules;
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    std::unique_ptr<IoData> iodata;
+    std::unique_ptr<SpaceOperator> space;
+    std::unique_ptr<SurfaceResponseOperator> response;
+    std::vector<std::vector<std::complex<double>>> uniform_readings;
+  };
+  std::vector<Form> forms;
+  for (const auto &[name, rules] : std::vector<std::pair<std::string, json>>{
+           {"flat", {{"ProbeLiftOverR", 0.0}, {"ProbeSetbackOverR", 0.0}}},
+           {"lift", {{"ProbeLiftOverR", 0.5}, {"ProbeSetbackOverR", 0.0}}},
+           {"lifted", json::object()},
+           {"capped", {{"ProbeLiftOverR", 0.5}, {"ProbeSetbackOverR", 1.0}}},
+           {"band",
+            {{"ProbeLiftOverR", 0.5},
+             {"ProbeSetbackOverR", 0.0},
+             {"ProbeBandHeights", 3}}}})
+  {
+    Form form;
+    form.name = name;
+    form.rules = rules;
+    const auto library =
+        WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path, name, false, rules);
+    form.iodata =
+        std::make_unique<IoData>(Build(StubMaxwellConfig(*this, library), form.meshes));
+    form.space = std::make_unique<SpaceOperator>(*form.iodata, form.meshes);
+    form.response = std::make_unique<SurfaceResponseOperator>(*form.iodata, *form.space);
+    REQUIRE(form.response->GetPatchCount() > 0);
+    REQUIRE(form.response->HasMagneticModels());
+    REQUIRE(form.response->HasConductorConsistencyProbes());
+    auto uniform = ConstantCurlField(B);
+    form.uniform_readings =
+        form.response->EvaluateProbeReadings(ProjectField(*form.space, uniform), true);
+    forms.push_back(std::move(form));
+  }
+  auto &flat = forms[0];
+  auto &lift = forms[1];
+  auto &lifted = forms[2];
+  auto &capped = forms[3];
+  auto &band = forms[4];
+  CHECK(flat.response->MagneticProbeForm() == "FLAT");
+  CHECK(lift.response->MagneticProbeForm() == "LIFTED");
+  CHECK(lifted.response->MagneticProbeForm() == "LIFTED");
+  CHECK(band.response->MagneticProbeForm() == "BAND");
+  const auto &flat_probes = flat.response->GetMaxwellProbes();
+  const std::size_t local_patches = flat_probes.size();
+  for (const auto &form : forms)
+  {
+    REQUIRE(form.response->GetMaxwellProbes().size() == local_patches);
+    REQUIRE(form.uniform_readings.size() == local_patches);
+  }
+  const double tolerance = 1.0e-10 * B_norm * R;
+  int compared = 0;
+  for (std::size_t patch = 0; patch < local_patches; patch++)
+  {
+    REQUIRE(flat_probes[patch].size() == 8);  // 4 edges x 2 end faces
+    for (std::size_t q = 0; q < flat_probes[patch].size(); q++)
+    {
+      const auto &flat_probe = flat_probes[patch][q];
+      // t3: FLAT's magnetic legs ARE the electric legs (the a92686289e gate verbatim).
+      CHECK(flat_probe.magnetic_legs == flat_probe.legs);
+      CHECK(flat_probe.magnetic_path.empty());
+      // t1: path independence on the uniform B (closed loop flat -> lifted = zero flux):
+      // the lifted reading without setback equals the flat reading; BAND (every height
+      // reads the same value, the weights sum to 1) equals it too.
+      const auto flat_reading = flat.uniform_readings[patch][q];
+      CHECK(std::abs(lift.uniform_readings[patch][q] - flat_reading) < tolerance);
+      CHECK(std::abs(band.uniform_readings[patch][q] - flat_reading) < tolerance);
+      // The lifted paths: anchor* -> A -> B -> probe* (4 points for one height; the BAND
+      // path climbs through its 3 heights on both sides: 8 points).
+      const auto &lift_probe = lift.response->GetMaxwellProbes()[patch][q];
+      const auto &band_probe = band.response->GetMaxwellProbes()[patch][q];
+      REQUIRE(lift_probe.magnetic_path.size() == 4);
+      REQUIRE(band_probe.magnetic_path.size() == 8);
+      // The reading of a lifted path on the uniform B is -(probe* - anchor*) . (w x B)
+      // with w = u x n (the patch frame); u and n read from the path itself (the vertical
+      // leg gives n, the horizontal leg u) wherever the horizontal leg exists.
+      auto Expected = [&](const auto &probe)
+      {
+        const auto &path = probe.magnetic_path;
+        const auto &a0 = path.front();
+        const auto &a1 = path[1];
+        const auto &b1 = path[path.size() - 2];
+        std::array<double, 3> n{}, u{}, delta{};
+        double n_norm = 0.0, u_norm = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          n[d] = a1[d] - a0[d];
+          u[d] = b1[d] - a1[d];
+          delta[d] = path.back()[d] - a0[d];
+          n_norm += n[d] * n[d];
+          u_norm += u[d] * u[d];
+        }
+        n_norm = std::sqrt(n_norm);
+        u_norm = std::sqrt(u_norm);
+        if (u_norm < 1.0e-12)
+        {
+          return std::optional<double>();  // anchor* and probe* coincide: a zero path
+        }
+        for (int d = 0; d < 3; d++)
+        {
+          n[d] /= n_norm;
+          u[d] /= u_norm;
+        }
+        const std::array<double, 3> w = {u[1] * n[2] - u[2] * n[1],
+                                         u[2] * n[0] - u[0] * n[2],
+                                         u[0] * n[1] - u[1] * n[0]};
+        const std::array<double, 3> wxB = {w[1] * B[2] - w[2] * B[1],
+                                           w[2] * B[0] - w[0] * B[2],
+                                           w[0] * B[1] - w[1] * B[0]};
+        return std::optional<double>(
+            -(delta[0] * wxB[0] + delta[1] * wxB[1] + delta[2] * wxB[2]));
+      };
+      for (const auto *form : {&lift, &lifted, &capped})
+      {
+        const auto &probe = form->response->GetMaxwellProbes()[patch][q];
+        const auto expected = Expected(probe);
+        const auto reading = form->uniform_readings[patch][q];
+        CHECK(std::abs(reading.imag()) < tolerance);
+        if (expected)
+        {
+          INFO(form->name << " patch " << patch << " probe " << q);
+          CHECK_THAT(reading.real(), WithinAbs(*expected, tolerance));
+          compared++;
+        }
+        else
+        {
+          CHECK(std::abs(reading) < tolerance);
+        }
+      }
+      // t4 / t5 geometry (the defaults 0.5 / 0.5 / 0.45 / 1e-6): every path point sits off
+      // the sheet (y = 0.5) by eps = 1e-6 R at its ends and by h_m = 0.5 R on the
+      // horizontal leg; probe* is set back s = 0.5 R = 0.1 from its edge point on every
+      // edge (the strip's cap 0.45 x 0.25 = 0.1125 does not bind); under 1.0 R the cap
+      // binds on the strip (0.1125) and not on the grounds (0.2).
+      const auto &lifted_probe = lifted.response->GetMaxwellProbes()[patch][q];
+      const auto &capped_probe = capped.response->GetMaxwellProbes()[patch][q];
+      const double eps = 1.0e-6 * R, h_m = 0.5 * R;
+      for (const auto *probe : {&lifted_probe, &capped_probe})
+      {
+        const auto &path = probe->magnetic_path;
+        CHECK_THAT(std::abs(path[0][1] - 0.5), WithinAbs(eps, 1.0e-12));
+        CHECK_THAT(std::abs(path[1][1] - 0.5), WithinAbs(eps + h_m, 1.0e-12));
+        CHECK_THAT(std::abs(path[2][1] - 0.5), WithinAbs(eps + h_m, 1.0e-12));
+        CHECK_THAT(std::abs(path[3][1] - 0.5), WithinAbs(eps, 1.0e-12));
+        // The vertical legs are vertical (x and z unchanged).
+        CHECK_THAT(path[1][0], WithinAbs(path[0][0], 1.0e-12));
+        CHECK_THAT(path[1][2], WithinAbs(path[0][2], 1.0e-12));
+        CHECK_THAT(path[2][0], WithinAbs(path[3][0], 1.0e-12));
+        CHECK_THAT(path[2][2], WithinAbs(path[3][2], 1.0e-12));
+      }
+      auto LateralSetback = [](const auto &probe)
+      {
+        // probe* - the probe point along the lateral axis z (the stub's cross-section).
+        return std::abs(probe.magnetic_path.back()[2] - probe.point[2]);
+      };
+      CHECK_THAT(LateralSetback(lifted_probe), WithinAbs(0.1, 1.0e-12));
+      const bool strip_edge = lifted_probe.edge == 1 || lifted_probe.edge == 2;
+      CHECK_THAT(LateralSetback(capped_probe),
+                 WithinAbs(strip_edge ? 0.1125 : 0.2, 1.0e-12));
+      // t5 (MAJOR-1): the anchor is the ground's edge point (offset 0, piece 1); anchor* is
+      // set back INTO the ground (toward -u, the unbounded side: no cap): the edge-0
+      // probe's probe* coincides laterally with anchor* (both 0.1 into the ground).
+      if (lifted_probe.edge == 0)
+      {
+        CHECK_THAT(lifted_probe.magnetic_path.back()[2],
+                   WithinAbs(lifted_probe.magnetic_path.front()[2], 1.0e-12));
+        CHECK_THAT(capped_probe.magnetic_path.back()[2],
+                   WithinAbs(capped_probe.magnetic_path.front()[2], 1.0e-12));
+      }
+      else
+      {
+        // anchor* lies 0.1 (0.2) outside the ground's edge, i.e. 0.1 (0.2) further from the
+        // strip than the edge-0 point: |anchor* - probe*_edge0| = 0 and the anchor* of this
+        // probe equals that of the edge-0 probe of the same end face.
+        for (const auto &other : lifted.response->GetMaxwellProbes()[patch])
+        {
+          if (other.edge == 0 && other.end_face == lifted_probe.end_face)
+          {
+            CHECK_THAT(lifted_probe.magnetic_path.front()[2],
+                       WithinAbs(other.magnetic_path.front()[2], 1.0e-12));
+            CHECK_THAT(std::abs(other.magnetic_path.back()[2] - other.point[2]),
+                       WithinAbs(0.1, 1.0e-12));
+          }
+        }
+      }
+    }
+  }
+  int global_compared = compared;
+  Mpi::GlobalSum(1, &global_compared, Mpi::World());
+  CHECK(global_compared > 0);
+  // The statistics name the form and count the magnetic legs (FLAT adds none).
+  CHECK(flat.response->GetStatistics()["Correction"]["MagneticProbeLines"]["Total"]
+            .get<long long int>() == 0);
+  CHECK(lifted.response->GetStatistics()["Correction"]["MagneticProbeLines"]["Total"]
+            .get<long long int>() > 0);
+  CHECK(lifted.response->GetStatistics()["Correction"]["MagneticProbeForm"] == "LIFTED");
+#endif
+}
+
+// Phase 3 (a) t2 = the a.3 DISCRIMINATION CONTROL (decisions 1256 / 1292 (B)): on the
+// piece-form stub (the gate compares a probe with its PIECE's flux state) under the
+// gap-flux field, the correctly mapped probes read ratio ~0 at FLAT and LIFTED, and
+// ConductorConsistency.ControlFlipProbePiece (RecordOnly) relabelling the strip's right
+// edge (edge 2) as the right ground (piece 3) makes every patch read ratio ~1 (the strip's
+// flux V against the ground's ~0) at both forms: the gate catches a one-label mis-mapping
+// by >= 2x its tolerance. The control is refused without RecordOnly and when it applies
+// nowhere.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator magnetic gate: the flipped-label control "
+                 "(ControlFlipProbePiece, Phase 3 (a))",
+                 "[surfaceresponseoperator][maxwell][magnetic][probeform][control][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  const double tolerance = SurfaceResponseOperator::kConductorConsistencyTolerance;
+  const json flat_rules = {{"ProbeLiftOverR", 0.0}, {"ProbeSetbackOverR", 0.0}};
+  for (const auto &[form, rules] :
+       std::vector<std::pair<std::string, json>>{{"FLAT", flat_rules}, {"LIFTED", {}}})
+  {
+    const auto library = WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path,
+                                                  "pieces-" + form, true, rules);
+    json config = StubMaxwellConfig(*this, library);
+    // The correctly mapped piece form: every probe within the tolerance, nothing excluded.
+    {
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      IoData iodata = Build(config, meshes);
+      SpaceOperator space(iodata, meshes);
+      SurfaceResponseOperator response(iodata, space);
+      REQUIRE(response.GetPatchCount() > 0);
+      REQUIRE(response.HasMagneticModels());
+      CHECK(response.MagneticProbeForm() == form);
+      CHECK(response.GetControlFlippedProbeRecords().empty());
+      auto field = GapFluxField(1.0);
+      response.ApplyMagneticConductorConsistencyGate(ProjectField(space, field), 0, 5.0);
+      const auto &records = response.GetMagneticGateRecords();
+      REQUIRE(records.size() == static_cast<std::size_t>(response.GetPatchCount()));
+      for (const auto &record : records)
+      {
+        INFO(form << " patch " << record.patch << " ratio " << record.max_ratio);
+        CHECK(record.max_ratio < 0.5 * tolerance);
+        CHECK_FALSE(record.excluded);
+      }
+    }
+    // The CONTROL: edge 2 (the strip's right edge, piece 2) relabelled piece 3.
+    {
+      json control = config;
+      control["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+          {"RecordOnly", true},
+          {"ControlFlipProbePiece",
+           {{{"Model", "cpw-one-label-four-edge-pieces"}, {"Edge", 2}, {"Piece", 3}}}}};
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      IoData iodata = Build(control, meshes);
+      SpaceOperator space(iodata, meshes);
+      SurfaceResponseOperator response(iodata, space);
+      // One flip per end face of every local patch, recorded by name.
+      const auto &flips = response.GetControlFlippedProbeRecords();
+      CHECK(flips.size() == 2 * response.GetMaxwellProbes().size());
+      for (const auto &flip : flips)
+      {
+        CHECK(flip == "cpw-one-label-four-edge-pieces:2:2->3");
+      }
+      const int flipped_pieces[4] = {1, 2, 3, 3};  // edges 0..3; edge 2's own piece is 2
+      for (const auto &probes : response.GetMaxwellProbes())
+      {
+        for (const auto &probe : probes)
+        {
+          CHECK(probe.piece == flipped_pieces[probe.edge]);
+        }
+      }
+      auto field = GapFluxField(1.0);
+      response.ApplyMagneticConductorConsistencyGate(ProjectField(space, field), 0, 5.0);
+      const auto &records = response.GetMagneticGateRecords();
+      REQUIRE(records.size() == static_cast<std::size_t>(response.GetPatchCount()));
+      for (const auto &record : records)
+      {
+        INFO(form << " patch " << record.patch << " ratio " << record.max_ratio);
+        // The flipped probe reads the strip's flux V against the right ground's state (~0):
+        // ratio ~1 = V / the trace amplitude (the strip state), >= 2x the tolerance.
+        CHECK(record.max_ratio > 2.0 * tolerance);
+        CHECK_THAT(record.max_ratio, WithinAbs(1.0, 0.2));
+        CHECK(record.excluded);  // the verdict is recorded; RecordOnly excludes nothing
+      }
+      const auto statistics = response.GetStatistics();
+      CHECK(statistics["Correction"]["ControlFlipProbePiece"].size() == flips.size());
+      // The electric gate's twin reading (information): the flipped probe departs there
+      // too.
+      const auto electric =
+          response.ApplyConductorConsistencyGate(ProjectField(space, field), 0, 5.0, false);
+      CHECK_FALSE(electric.empty());
+    }
+    // REFUSED: the control without RecordOnly; a Model / Edge that flips nothing.
+    {
+      json bad = config;
+      bad["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+          {"ControlFlipProbePiece",
+           {{{"Model", "cpw-one-label-four-edge-pieces"}, {"Edge", 2}, {"Piece", 3}}}}};
+      CHECK_THROWS_WITH(IoData(bad, false),
+                        Catch::Matchers::ContainsSubstring("RecordOnly"));
+      json dangling = config;
+      dangling["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
+          {"RecordOnly", true},
+          {"ControlFlipProbePiece",
+           {{{"Model", "cpw-one-label-four-edge-pieces"}, {"Edge", 7}, {"Piece", 3}}}}};
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      IoData iodata = Build(dangling, meshes);
+      SpaceOperator space(iodata, meshes);
+      CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
+                        Catch::Matchers::ContainsSubstring("flipped no probe"));
+    }
+  }
+#endif
+}
+
+// Phase 3 (a) t6: the probe-form leaves (R-MAG-10 / 12): absent = the defaults (LIFTED
+// 0.5 / 0.5 / 0.45 / 1e-6 / 1), 0 / 0 = FLAT, a Gauss-height count >= 2 = BAND, and a value
+// outside its bounds is MALFORMED (refused at load by name).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator magnetic probe-form leaves: defaults, FLAT, BAND, "
+    "malformed (Phase 3 (a))",
+    "[surfaceresponseoperator][3d][maxwell][magnetic][probeform][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Load = [&](const std::string &tag, const json &rules)
+  {
+    const auto files = WriteMagneticLibrary(library_3d_path, temp.temp_dir, tag, kPsdDefect,
+                                            DefaultMagneticSource(),
+                                            [&](json &library)
+                                            {
+                                              if (!rules.empty())
+                                              {
+                                                library["MagneticRules"] = rules;
+                                              }
+                                            });
+    IoData iodata(MaxwellCpw3dConfig(*this, files.library), false);
+    auto device_mesh = mesh::ReadMesh(iodata, Mpi::World());
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(std::move(device_mesh)));
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    return std::make_pair(response.MagneticProbeForm(), response.GetMagneticProbeRules());
+  };
+  {
+    const auto [form, rules] = Load("defaults", json::object());
+    CHECK(form == "LIFTED");
+    CHECK(rules.probe_lift_over_r == 0.5);
+    CHECK(rules.probe_setback_over_r == 0.5);
+    CHECK(rules.probe_setback_width_fraction == 0.45);
+    CHECK(rules.probe_sheet_nudge_over_r == 1.0e-6);
+    CHECK(rules.probe_band_heights == 1);
+  }
+  {
+    const auto [form, rules] =
+        Load("flat", {{"ProbeLiftOverR", 0.0}, {"ProbeSetbackOverR", 0.0}});
+    CHECK(form == "FLAT");
+    CHECK(rules.probe_lift_over_r == 0.0);
+  }
+  {
+    const auto [form, rules] = Load("band", {{"ProbeBandHeights", 3},
+                                             {"ProbeSetbackWidthFraction", 0.3},
+                                             {"ProbeSheetNudgeOverR", 1.0e-5}});
+    CHECK(form == "BAND");
+    CHECK(rules.probe_band_heights == 3);
+    CHECK(rules.probe_setback_width_fraction == 0.3);
+    CHECK(rules.probe_sheet_nudge_over_r == 1.0e-5);
+  }
+  for (const auto &[tag, rules] : std::vector<std::pair<std::string, json>>{
+           {"lift-high", {{"ProbeLiftOverR", 1.5}}},
+           {"setback-negative", {{"ProbeSetbackOverR", -0.1}}},
+           {"fraction-half", {{"ProbeSetbackWidthFraction", 0.5}}},
+           {"nudge-negative", {{"ProbeSheetNudgeOverR", -1.0e-6}}},
+           {"heights-zero", {{"ProbeBandHeights", 0}}},
+           {"unknown-key", {{"ProbeLift", 0.5}}}})
+  {
+    INFO(tag);
+    CHECK_THROWS_WITH(Load(tag, rules),
+                      Catch::Matchers::ContainsSubstring(rules.begin().key().substr(0, 9)));
+  }
+#endif
+}
+
+// Phase 3 (b) COL-3 (R-MAG-15): the within-R VOLUME energies per patch box on the stub (the
+// one-label 4-edge PEC cluster: the box u in [0 - R, 0.5 + R], v in [-R, R], w = the cell).
+// Uniform E and B: the densities are exact at every quadrature point (energy / resolved
+// volume = the density to roundoff), the resolved volume is the exact box volume to the
+// quadrature resolution (the boundary layer of one element, h = 0.125, around the box).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator within-R volume energies per patch box (COL-3, "
+                 "Phase 3 (b))",
+                 "[surfaceresponseoperator][maxwell][magnetic][withinr][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto library =
+      WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path, "withinr", false);
+  json config = StubMaxwellConfig(*this, library);
+  // The leaf without PatchEnergy is refused; with it, read.
+  {
+    json bad = config;
+    bad["Solver"]["SurfaceResponseCorrection"]["Diagnostics"] = {
+        {"WithinRVolumeEnergy", true}};
+    CHECK_THROWS_WITH(IoData(bad, false),
+                      Catch::Matchers::ContainsSubstring("PatchEnergy"));
+  }
+  config["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
+  config["Solver"]["SurfaceResponseCorrection"]["Diagnostics"] = {
+      {"WithinRVolumeEnergy", true}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+  meshes.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  SpaceOperator space(iodata, meshes);
+  SurfaceResponseOperator response(iodata, space);
+  REQUIRE(response.GetPatchCount() > 0);
+  CHECK(response.WithinRVolumeEnergyRequested());
+  const std::array<double, 3> E0 = {0.7, -0.2, 0.4}, B0 = {0.3, 0.9, -0.5};
+  mfem::VectorConstantCoefficient e_coefficient(
+      mfem::Vector(const_cast<double *>(E0.data()), 3));
+  mfem::VectorConstantCoefficient b_coefficient(
+      mfem::Vector(const_cast<double *>(B0.data()), 3));
+  GridFunction E(space.GetNDSpace(), true), B(space.GetRTSpace(), true);
+  E.Real().ProjectCoefficient(e_coefficient);
+  E.Imag() = 0.0;
+  B.Real().ProjectCoefficient(b_coefficient);
+  B.Imag() = 0.0;
+  const auto &mat_op = space.GetMaterialOp();
+  const mfem::DenseMatrix epsilon = mat_op.GetPermittivityReal(1);
+  const mfem::DenseMatrix muinv = mat_op.GetInvPermeability(1);
+  mfem::Vector e(const_cast<double *>(E0.data()), 3), b(const_cast<double *>(B0.data()), 3),
+      tmp(3);
+  epsilon.Mult(e, tmp);
+  const double electric_density = 0.5 * (e * tmp);
+  muinv.Mult(b, tmp);
+  const double magnetic_density = 0.5 * (b * tmp);
+  const auto energies = response.GetWithinRVolumeEnergies(E, B, mat_op);
+  REQUIRE(energies.size() == static_cast<std::size_t>(response.GetPatchCount()));
+  // The local patches' boxes give the exact volumes (every rank checks its own patches
+  // against the gathered, sorted global list).
+  const auto &probes = response.GetMaxwellProbes();
+  constexpr double R = 0.2, h = 0.125;
+  double total_volume = 0.0, total_exact = 0.0;
+  int resolved = 0, unresolved = 0;
+  for (const auto &entry : energies)
+  {
+    REQUIRE(entry.defined);
+    if (entry.volume == 0.0)
+    {
+      // A cell thinner than the quadrature spacing resolves no point (the quadrature-
+      // resolution limitation of the estimate, named in the schema): its energies are 0.
+      CHECK(entry.electric == 0.0);
+      CHECK(entry.magnetic == 0.0);
+      unresolved++;
+      continue;
+    }
+    resolved++;
+    CHECK_THAT(entry.electric / entry.volume, WithinRel(electric_density, 1.0e-10));
+    CHECK_THAT(entry.magnetic / entry.volume, WithinRel(magnetic_density, 1.0e-10));
+    total_volume += entry.volume;
+  }
+  CHECK(resolved > unresolved);
+  // The exact box volume of every LOCAL patch: (0.5 + 2R) x 2R x the cell length (the two
+  // end-face probes of edge 0 give the cell along x).
+  for (const auto &patch_probes : probes)
+  {
+    double x0 = mfem::infinity(), x1 = -mfem::infinity();
+    for (const auto &probe : patch_probes)
+    {
+      x0 = std::min(x0, probe.point[0]);
+      x1 = std::max(x1, probe.point[0]);
+    }
+    const double cell = x1 - x0;
+    REQUIRE(cell > 0.0);
+    total_exact += (0.5 + 2.0 * R) * (2.0 * R) * cell;
+  }
+  Mpi::GlobalSum(1, &total_exact, Mpi::World());
+  // The quadrature resolves the box faces to one element: the boundary layer bound h x the
+  // boxes' total surface (the cross-section A = (0.5 + 2R) x 2R, the placed length L).
+  const double A = (0.5 + 2.0 * R) * (2.0 * R);
+  const double L = total_exact / A;
+  const double surface = 2.0 * A + 2.0 * ((0.5 + 2.0 * R) + 2.0 * R) * L;
+  CHECK(std::abs(total_volume - total_exact) <= h * surface);
+  CHECK(total_volume > 0.5 * total_exact);
+#endif
+}
+
 TEST_CASE("FixedTraceFrequencyShift on the Phase-0 numbers", "[magnetic][Serial]")
 {
   struct Cell

@@ -385,6 +385,9 @@ PostOperator<solver_t>::PostOperator(
       }
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();
+      surface_response_within_r_volume_energy_enabled =
+          surface_response_patch_energy_enabled &&
+          surface_response_op->WithinRVolumeEnergyRequested();
       if (surface_response_exclusion_energy_enabled)
       {
         for (const auto &portion : surface_response_op->GetExclusionEnergyPortions())
@@ -1952,6 +1955,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           }
         }
       }
+      if (surface_response_within_r_volume_energy_enabled)
+      {
+        // COL-3 (R-MAG-15): the raw field's within-box volume energies per patch (E and
+        // B of this measurement; the material operator's eps / mu^-1).
+        result.within_r_volume_energies =
+            surface_response_op->GetWithinRVolumeEnergies(*E, *B, fem_op->GetMaterialOp());
+      }
       if (!result.confidence.loop_remainders.empty())
       {
         // OI-MX-LOOPGATE (decision 955): the circulating remainders' share of their
@@ -2592,6 +2602,32 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   surface_response_confidence->WriteFullTableTrunc();
   if (surface_response_op->HasMagneticLeaves())
   {
+    // COL-1 (R-MAG-14): the per-model energy rows of this measurement (the raw field's
+    // postprocessing; models in model-index order as the model contributions).
+    if (result.has_postprocessed && confidence.has_magnetic)
+    {
+      const double frequency_GHz =
+          units.Dimensionalize<VT::FREQUENCY>(measurement_cache.freq.real()) / (2 * M_PI);
+      const int source = solver_t == ProblemType::DRIVEN
+                             ? excitation
+                             : static_cast<int>(std::lround(output_index));
+      for (std::size_t m = 0; m < confidence.model_contributions.size() &&
+                              m < confidence.model_magnetic_domain_corrections.size() &&
+                              m < confidence.model_magnetic_thin_energies.size();
+           m++)
+      {
+        if (confidence.model_magnetic_thin_energies[m] == 0.0 &&
+            confidence.model_magnetic_domain_corrections[m] == 0.0)
+        {
+          continue;  // a model without the term (no leaf, or no patch carrying it)
+        }
+        surface_response_magnetic_energy_rows.push_back(
+            {confidence.model_contributions[m].model, source, frequency_GHz,
+             units.Dimensionalize<VT::ENERGY>(
+                 confidence.model_magnetic_domain_corrections[m]),
+             units.Dimensionalize<VT::ENERGY>(confidence.model_magnetic_thin_energies[m])});
+      }
+    }
     PrintSurfaceResponseMagnetic();
   }
   PrintSurfaceResponseModelEnergies(output_index, excitation);
@@ -2619,8 +2655,13 @@ void PostOperator<solver_t>::PrintSurfaceResponseMagnetic() const
   const auto path = post_dir / "surface-response-magnetic.csv";
   std::ofstream output(path, std::ios::trunc);
   MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
+  // Phase 3 (a) COL-1 (R-MAG-14): two trailing columns + one "energy" row per model
+  // carrying the term, per source and frequency / mode (the model's applied magnetic domain
+  // correction and its within-R magnetic thin energy, J); the model and gate rows leave
+  // them empty.
   output << "kind,model,name,status,rule,psd ratio,negative eigenvalues,same-mesh "
-            "deviation,patches,patch,source,f (GHz),max ratio,excluded,reason\n";
+            "deviation,patches,patch,source,f (GHz),max ratio,excluded,reason,magnetic "
+            "domain correction (J),magnetic thin energy (J)\n";
   auto Quote = [](const std::string &text)
   {
     std::string quoted = "\"";
@@ -2632,16 +2673,22 @@ void PostOperator<solver_t>::PrintSurfaceResponseMagnetic() const
   };
   for (const auto &record : surface_response_op->GetMagneticModelRecords())
   {
-    output << fmt::format("model,{},{},{},{},{:.6e},{},{:.6e},{},,,,,,{}\n", record.model,
+    output << fmt::format("model,{},{},{},{},{:.6e},{},{:.6e},{},,,,,,{},,\n", record.model,
                           Quote(record.name), record.status, record.rule, record.psd_ratio,
                           record.negative_eigenvalue_count, record.same_mesh_deviation,
                           record.patches, Quote(record.reason));
   }
   for (const auto &record : surface_response_op->GetMagneticGateRecords())
   {
-    output << fmt::format("gate,{},,,,,,,,{},{},{:.8e},{:.6e},{},\n", record.model,
+    output << fmt::format("gate,{},,,,,,,,{},{},{:.8e},{:.6e},{},,,\n", record.model,
                           record.patch, record.source, record.frequency, record.max_ratio,
                           record.excluded ? 1 : 0);
+  }
+  for (const auto &row : surface_response_magnetic_energy_rows)
+  {
+    output << fmt::format("energy,{},,,,,,,,,{},{:.8e},,,,{:.15e},{:.15e}\n", row.model,
+                          row.source, row.frequency_GHz, row.domain_correction,
+                          row.thin_energy);
   }
 }
 
@@ -3111,6 +3158,22 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       table.insert(fmt::format("interface_{}", interface),
                    fmt::format("fabricated surface energy[{}] (J)", interface));
     }
+    if (surface_response_op->HasMagneticLeaves())
+    {
+      // COL-2 (Phase 3 (a), R-MAG-14): the patch's applied magnetic domain correction and
+      // its within-R magnetic thin energy (NaN on a patch without a magnetic leaf).
+      table.insert("magnetic_domain_correction", "magnetic domain correction (J)");
+      table.insert("magnetic_thin_energy", "magnetic thin energy (J)");
+    }
+    if (surface_response_within_r_volume_energy_enabled)
+    {
+      // COL-3 (Phase 3 (b), R-MAG-15): the raw field's energies in the patch's own box by
+      // the volume integral at quadrature resolution, and the box volume it resolved (the
+      // parent of any per-volume ratio); NaN on a patch without a box.
+      table.insert("within_r_magnetic_energy", "within-R magnetic energy (J)");
+      table.insert("within_r_electric_energy", "within-R electric energy (J)");
+      table.insert("within_r_volume", "within-R volume (m^3)");
+    }
     table.insert("idx", index_label);
     table.insert("excitation", "exc");
     table.insert("max_loop_residual", "max loop residual");
@@ -3159,6 +3222,38 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
         const auto energy = energies.find(interface);
         table[fmt::format("interface_{}", interface)] << units.Dimensionalize<VT::ENERGY>(
             energy != energies.end() ? energy->second : 0.0);
+      }
+      if (surface_response_op->HasMagneticLeaves())
+      {
+        const auto magnetic = std::lower_bound(response.patch_magnetic_energies.begin(),
+                                               response.patch_magnetic_energies.end(),
+                                               data.patch, [](const auto &entry, int patch)
+                                               { return entry.patch < patch; });
+        const bool found = magnetic != response.patch_magnetic_energies.end() &&
+                           magnetic->patch == data.patch;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        table["magnetic_domain_correction"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(magnetic->domain_correction)
+                      : nan);
+        table["magnetic_thin_energy"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(magnetic->thin_energy) : nan);
+      }
+      if (surface_response_within_r_volume_energy_enabled)
+      {
+        const auto &volumes = result.within_r_volume_energies;
+        const auto entry = std::lower_bound(volumes.begin(), volumes.end(), data.patch,
+                                            [](const auto &record, int patch)
+                                            { return record.patch < patch; });
+        const bool found =
+            entry != volumes.end() && entry->patch == data.patch && entry->defined;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double length_scale = units.Dimensionalize<VT::LENGTH>(1.0);
+        table["within_r_magnetic_energy"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(entry->magnetic) : nan);
+        table["within_r_electric_energy"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(entry->electric) : nan);
+        table["within_r_volume"]
+            << (found ? entry->volume * length_scale * length_scale * length_scale : nan);
       }
       table["idx"] << output_index;
       table["excitation"] << excitation;

@@ -2260,8 +2260,10 @@ the library by `examples/cpw2d/attach_magnetic_leaves.py` as the OPTIONAL Versio
 provenance: its process parameters, the regenerated electric matrices' maximum relative
 deviation from the model of record, the basis / piece counts, the mesh digests) with the
 top-level `MagneticRules` (`SameMeshTolerance`, the optional
-`SameMeshToleranceWithMeshIdentity`, `PsdFindingRatio`, `PsdRefusalRatio`; library
-parameters, never compiled constants). A library WITHOUT the leaves loads and
+`SameMeshToleranceWithMeshIdentity`, `PsdFindingRatio`, `PsdRefusalRatio`, the optional
+`ConductorConsistencyTolerance` and the probe-form leaves `ProbeLiftOverR` /
+`ProbeSetbackOverR` / `ProbeSetbackWidthFraction` / `ProbeSheetNudgeOverR` /
+`ProbeBandHeights`; library parameters, never compiled constants). A library WITHOUT the leaves loads and
 behaves bitwise as before.
 
 The device side reads the FLUX trace ``a_m = \int \bm{B} \cdot \hat{n}\, ds``
@@ -2312,8 +2314,39 @@ its probe line integrals read the discretisation error of the singular edge fiel
 57 % of a line whose unwithheld term sits inside the Phase-0 band), so a library sets the
 tolerance it has calibrated with a discrimination control; the per-patch ratios stay
 printed in `surface-response-magnetic.csv` and the magnetic LOOP gate stays the term's gate
-of record. The probe form (legs off the singular edge / a wider integral) is
-OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3). At ``p = 2`` the magnetic loop gate
+of record. THE PROBE FORM (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION resolved;
+decisions 1256 / 1284 Q-1 / 1292): the magnetic probes read their flux along LIFTED legs
+instead of the electric gate's flat chain. On a PEC piece ``A_z`` is constant, so the flux
+``\int (\hat{w} \times \bm{B}) \cdot d\bm{l}`` from a point of the anchor's piece to a point
+of the probe's piece has the same continuum value along ANY path in the current-free region
+above the sheet; the flat chain ends ON the singular edges (``|\bm{B}| \sim r^{-1/2}``), where
+the FE curl's error is O(1) per element at any order. The lifted path is anchor* -> A -> B
+-> probe*: BOTH ends set back INTO their piece away from the singular edge by the GENERIC
+rule (a point closer than ``s`` to a bounding edge of its piece moves to ``s`` inside along
+``-\mathrm{GapDirection} \times \hat{u}``; a piece bounded on both sides caps ``s`` at a
+fraction of its width; the unbounded ground side binds no cap; a point already ``\geq s``
+inside is unchanged — the six anchor forms of the placement are covered by the one rule),
+nudged ``\varepsilon`` off the sheet to the vacuum side (``\hat{n}`` = AxisV), joined by the
+horizontal leg at the height ``h_m``. The library leaves (`MagneticRules`, never compiled
+constants): `ProbeLiftOverR` (``h_m / R``, default 0.5), `ProbeSetbackOverR` (``s / R``, 0.5,
+applied to both ends), `ProbeSetbackWidthFraction` (0.45), `ProbeSheetNudgeOverR` (1e-6),
+`ProbeBandHeights` (1 = LIFTED at ``h_m``; ``\geq 2`` = BAND, the reading averaged over
+that many Gauss heights in ``[h_m / 2, 3 h_m / 2]``, the pre-registered fallback); a value
+outside its bounds is refused by name. FLAT = `ProbeLiftOverR` 0 AND `ProbeSetbackOverR` 0 =
+the electric legs verbatim (the comparison form of record). The electric gate and its legs
+are untouched; the term ``dK`` is untouched; with no magnetic leaf nothing is built. The
+form and its leaves are printed at configuration and recorded (`palace.json`
+`Correction.MagneticProbeForm` / `MagneticProbeLines`; the manifest's
+`Library.Magnetic.Rules`). The DIAGNOSTIC CONTROL `SurfaceResponseCorrection.
+ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (decision 1292; NOT a
+modelling option) relabels the local piece of one model edge's probes at the probe
+construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
+device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
+printed and recorded as a CONTROL; a run of record never carries it. The per-model
+`magnetic domain correction (J)` / `magnetic thin energy (J)` (COL-1: the "energy" rows and
+trailing columns of `surface-response-magnetic.csv`) and the per-patch ones (COL-2: two
+columns of `surface-response-patch-energy.csv` with `Diagnostics.PatchEnergy`, NaN on a
+patch without a leaf) are written only with magnetic leaves. At ``p = 2`` the magnetic loop gate
 fails on the (ii) stub (the shift is NaN there): a device-order floor ``p \geq 3``, named. On the Maxwell path `TranslationalDomainCorrection` is not read:
 the electric domain term and the magnetic term are both fixed-trace by construction (the
 key governs the electrostatic driver only). The self-consistent eigenvalue is the check:

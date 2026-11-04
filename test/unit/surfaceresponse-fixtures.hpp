@@ -389,6 +389,19 @@ struct SurfaceResponseFiles
 // its columns by header, and the plain text table of the per-type energy CSVs
 // (surface-response-uncovered-energy.csv, surface-response-domain-boundary-energy.csv).
 void RunElectrostatic(json config);
+// The SHORTED CPW STUB of the ITEM-0 test (idfix DESIGN B.2) in the unit box: a 2 x 1 x 2
+// box (h = 0.125) whose plane y = 0.5 is PEC metal (attribute 9) EXCEPT two slots of bare
+// dielectric, x in [0.5, 2] x z in [0.75, 0.875] and x in [0.5, 2] x z in [1.125, 1.25],
+// running into the wall x = 2 (the open end); the strip z in [0.875, 1.125] between them is
+// the ground plane itself continuing at x = 0.5 (the SHORT): ONE metal component, so every
+// edge of the 4-edge cross-section (offsets 0 / 0.125 / 0.375 / 0.5, gaps 0.125, strip
+// 0.25, all below 2R = 0.4) carries conductor 1 - the one-label ParallelEdgeCluster of the
+// CHR-012 key a670c49a86d8 (gaps and strip 3 um = 1.58 R). AddShortedCpwMetalPlane adds the
+// metal plane (attribute 9 on the interior faces of y = 0.5 outside the two slots) to a
+// finalized-topology box mesh and finalizes it; MakeSerialShortedCpwMesh = the Cartesian
+// box + the plane. Shared by the R0-a tests and the magnetic probe-form tests.
+void AddShortedCpwMetalPlane(mfem::Mesh &serial);
+mfem::Mesh MakeSerialShortedCpwMesh(mfem::Element::Type type = mfem::Element::HEXAHEDRON);
 std::string ReadFile(const std::filesystem::path &path);
 Table LoadCsv(const std::filesystem::path &path);
 const Column &ColumnByHeader(const Table &table, const std::string &header);

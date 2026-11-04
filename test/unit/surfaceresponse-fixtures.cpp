@@ -1911,6 +1911,54 @@ void GeometryCacheEnvGuard::DisableWrite()
 
 namespace fs = std::filesystem;
 
+void AddShortedCpwMetalPlane(mfem::Mesh &serial)
+{
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = 2.0, xmax = 0.0, zmin = 2.0, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    if (!on_plane)
+    {
+      continue;
+    }
+    const bool in_slot_x = xmin >= 0.5 - 1.0e-12;
+    const bool in_slot_a = zmin >= 0.75 - 1.0e-12 && zmax <= 0.875 + 1.0e-12;
+    const bool in_slot_b = zmin >= 1.125 - 1.0e-12 && zmax <= 1.25 + 1.0e-12;
+    if (in_slot_x && (in_slot_a || in_slot_b))
+    {
+      continue;  // bare dielectric
+    }
+    serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+    serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+}
+
+mfem::Mesh MakeSerialShortedCpwMesh(mfem::Element::Type type)
+{
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, type, 2.0, 1.0, 2.0);
+  AddShortedCpwMetalPlane(serial);
+  return serial;
+}
+
 std::string ReadFile(const fs::path &path)
 {
   std::ifstream input(path, std::ios::binary);

@@ -305,6 +305,7 @@ protected:
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       surface_response_exclusion_energy;
   bool surface_response_exclusion_energy_enabled = false;
+  bool surface_response_within_r_volume_energy_enabled = false;  // COL-3 (R-MAG-15)
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B): the per-patch export
@@ -360,6 +361,9 @@ protected:
     // Section 8: per target interface, the raw field's within-R energy per exclusion class
     // (surface-response-exclusion-energy.csv); empty without Diagnostics.ExclusionEnergy.
     std::map<int, std::map<std::string, double>> exclusion_energy_partition;
+    // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
+    // placed patch the raw field's within-box volume energies (empty when off).
+    std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;
     // OI-MX-LOOPGATE (decision 955): per target interface, the circulating remainders' raw
     // within-R energy per model row ("m<idx>": rho_p x the raw energy on the patch's
     // claims; the Total is their sum), of the raw field (both closures) and of the
@@ -423,6 +427,19 @@ protected:
   // rewritten at every print (root only) with the per-model leaf status rows and the dual
   // R0-a gate's per-patch rows so far.
   mutable std::unique_ptr<TableWithCSVFile> surface_response_magnetic;
+  // COL-1 (mx-sc-magnetic Phase 3 (a), R-MAG-14): the per-model "energy" rows of
+  // surface-response-magnetic.csv accumulated over the prints (one per model carrying the
+  // term, per source and frequency / mode): the model's applied magnetic domain correction
+  // and its within-R magnetic thin energy.
+  struct MagneticEnergyRow
+  {
+    int model = 0;
+    int source = 0;
+    double frequency_GHz = 0.0;
+    double domain_correction = 0.0;
+    double thin_energy = 0.0;
+  };
+  mutable std::vector<MagneticEnergyRow> surface_response_magnetic_energy_rows;
   void PrintSurfaceResponseMagnetic() const;
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
   mutable bool surface_response_warning_printed = false;

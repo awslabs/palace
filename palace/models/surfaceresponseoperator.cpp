@@ -2286,6 +2286,43 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                     magnetic_rules.conductor_consistency_tolerance >= 0.0,
                 "Fabrication-process response-library MagneticRules."
                 "ConductorConsistencyTolerance must be nonnegative!");
+    // The probe form of the dual gate (Phase 3 (a); decisions 1284 Q-1 / 1292): the OverR
+    // leaves in [0, 1], the width fraction in (0, 0.5), the Gauss-height count >= 1; a
+    // value outside is MALFORMED (refused by name).
+    magnetic_rules.probe_lift_over_r =
+        rules->value("ProbeLiftOverR", magnetic_rules.probe_lift_over_r);
+    magnetic_rules.probe_setback_over_r =
+        rules->value("ProbeSetbackOverR", magnetic_rules.probe_setback_over_r);
+    magnetic_rules.probe_setback_width_fraction = rules->value(
+        "ProbeSetbackWidthFraction", magnetic_rules.probe_setback_width_fraction);
+    magnetic_rules.probe_sheet_nudge_over_r =
+        rules->value("ProbeSheetNudgeOverR", magnetic_rules.probe_sheet_nudge_over_r);
+    magnetic_rules.probe_band_heights =
+        rules->value("ProbeBandHeights", magnetic_rules.probe_band_heights);
+    MFEM_VERIFY(magnetic_rules.probe_lift_over_r >= 0.0 &&
+                    magnetic_rules.probe_lift_over_r <= 1.0,
+                "Fabrication-process response-library MagneticRules.ProbeLiftOverR must be "
+                "in [0, 1] (malformed: "
+                    << magnetic_rules.probe_lift_over_r << ")!");
+    MFEM_VERIFY(magnetic_rules.probe_setback_over_r >= 0.0 &&
+                    magnetic_rules.probe_setback_over_r <= 1.0,
+                "Fabrication-process response-library MagneticRules.ProbeSetbackOverR must "
+                "be in [0, 1] (malformed: "
+                    << magnetic_rules.probe_setback_over_r << ")!");
+    MFEM_VERIFY(magnetic_rules.probe_setback_width_fraction > 0.0 &&
+                    magnetic_rules.probe_setback_width_fraction < 0.5,
+                "Fabrication-process response-library "
+                "MagneticRules.ProbeSetbackWidthFraction must be in (0, 0.5) (malformed: "
+                    << magnetic_rules.probe_setback_width_fraction << ")!");
+    MFEM_VERIFY(magnetic_rules.probe_sheet_nudge_over_r >= 0.0 &&
+                    magnetic_rules.probe_sheet_nudge_over_r <= 1.0,
+                "Fabrication-process response-library MagneticRules.ProbeSheetNudgeOverR "
+                "must be in [0, 1] (malformed: "
+                    << magnetic_rules.probe_sheet_nudge_over_r << ")!");
+    MFEM_VERIFY(magnetic_rules.probe_band_heights >= 1,
+                "Fabrication-process response-library MagneticRules.ProbeBandHeights must "
+                "be a Gauss-height count >= 1 (malformed: "
+                    << magnetic_rules.probe_band_heights << ")!");
     MFEM_VERIFY(magnetic_rules.same_mesh_tolerance >= 0.0 &&
                     magnetic_rules.psd_finding_ratio >= 0.0 &&
                     magnetic_rules.psd_refusal_ratio >= magnetic_rules.psd_finding_ratio,
@@ -2302,7 +2339,9 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       MFEM_VERIFY(key == "SameMeshTolerance" || key == "PsdFindingRatio" ||
                       key == "PsdRefusalRatio" ||
                       key == "SameMeshToleranceWithMeshIdentity" ||
-                      key == "ConductorConsistencyTolerance",
+                      key == "ConductorConsistencyTolerance" || key == "ProbeLiftOverR" ||
+                      key == "ProbeSetbackOverR" || key == "ProbeSetbackWidthFraction" ||
+                      key == "ProbeSheetNudgeOverR" || key == "ProbeBandHeights",
                   "Fabrication-process response-library MagneticRules has an unknown key \""
                       << key << "\"!");
     }
@@ -19365,6 +19404,7 @@ struct MagneticLeafEvaluation
 {
   SurfaceResponseOperator::MagneticLeafStatus status;
   mfem::DenseMatrix defect;  // empty unless applied
+  mfem::DenseMatrix thin;    // S_m,thin at the defect's scale; empty unless applied
 };
 
 MagneticLeafEvaluation EvaluateMagneticLeaf(
@@ -19512,6 +19552,8 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
         "discretization scale (AMENDMENT 1202 (c)); the leaf is applied";
   }
   result.defect = std::move(defect);
+  thin *= scale;
+  result.thin = std::move(thin);
   return result;
 }
 
@@ -21274,22 +21316,48 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
   MFEM_VERIFY(output.good(), "Failed writing the surface-response patch dry run!");
 }
 
+namespace
+{
+
+const char *MagneticProbeFormName(
+    const config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData &rules)
+{
+  // FLAT = both OverR leaves 0 (the electric legs verbatim, R-MAG-11); BAND = a
+  // Gauss-height count >= 2; else LIFTED (Phase 3 (a), decisions 1284 Q-1 / 1292).
+  if (rules.probe_lift_over_r == 0.0 && rules.probe_setback_over_r == 0.0)
+  {
+    return "FLAT";
+  }
+  return rules.probe_band_heights >= 2 ? "BAND" : "LIFTED";
+}
+
+nlohmann::json MagneticRulesRecord(
+    const config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData &rules)
+{
+  return {
+      {"SameMeshTolerance", rules.same_mesh_tolerance},
+      {"SameMeshToleranceWithMeshIdentity", rules.same_mesh_tolerance_with_mesh_identity},
+      {"PsdFindingRatio", rules.psd_finding_ratio},
+      {"PsdRefusalRatio", rules.psd_refusal_ratio},
+      {"ConductorConsistencyTolerance", rules.conductor_consistency_tolerance},
+      {"ProbeForm", MagneticProbeFormName(rules)},
+      {"ProbeLiftOverR", rules.probe_lift_over_r},
+      {"ProbeSetbackOverR", rules.probe_setback_over_r},
+      {"ProbeSetbackWidthFraction", rules.probe_setback_width_fraction},
+      {"ProbeSheetNudgeOverR", rules.probe_sheet_nudge_over_r},
+      {"ProbeBandHeights", rules.probe_band_heights}};
+}
+
+}  // namespace
+
 nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Units &units,
                                       bool nondimensionalize)
 {
   const auto library =
       ReadProcessLibrary(library_path, units, nondimensionalize, true, true);
-  nlohmann::json result = {
-      {"Library", library.name},
-      {"Rules",
-       {{"SameMeshTolerance", library.magnetic_rules.same_mesh_tolerance},
-        {"SameMeshToleranceWithMeshIdentity",
-         library.magnetic_rules.same_mesh_tolerance_with_mesh_identity},
-        {"PsdFindingRatio", library.magnetic_rules.psd_finding_ratio},
-        {"PsdRefusalRatio", library.magnetic_rules.psd_refusal_ratio},
-        {"ConductorConsistencyTolerance",
-         library.magnetic_rules.conductor_consistency_tolerance}}},
-      {"Models", nlohmann::json::array()}};
+  nlohmann::json result = {{"Library", library.name},
+                           {"Rules", MagneticRulesRecord(library.magnetic_rules)},
+                           {"Models", nlohmann::json::array()}};
   for (const auto &model : library.models)
   {
     if (!model.response.magnetic)
@@ -21424,14 +21492,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       }
     }
     manifest["Library"]["Magnetic"] = {
-        {"Rules",
-         {{"SameMeshTolerance", patches.magnetic_rules.same_mesh_tolerance},
-          {"SameMeshToleranceWithMeshIdentity",
-           patches.magnetic_rules.same_mesh_tolerance_with_mesh_identity},
-          {"PsdFindingRatio", patches.magnetic_rules.psd_finding_ratio},
-          {"PsdRefusalRatio", patches.magnetic_rules.psd_refusal_ratio},
-          {"ConductorConsistencyTolerance",
-           patches.magnetic_rules.conductor_consistency_tolerance}}},
+        {"Rules", MagneticRulesRecord(patches.magnetic_rules)},
         {"AllowElectricOnlyFallback", patches.allow_electric_only_fallback},
         {"Models", models}};
     manifest["Summary"]["MagneticElectricOnly"] = {{"Count", electric_only_count},
@@ -27302,10 +27363,16 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
     double max_ratio = 0.0;
     for (const auto &probe : probes)
     {
+      // Phase 3 (a): a translational probe reads its MAGNETIC legs (the lifted path with
+      // its weights; FLAT = the electric legs); a spatial probe's single plane leg has no
+      // translational frame to lift in (the 3D form is Phase 3 (c)) and reads as before.
+      MFEM_ASSERT(probe.kind != 1 || !probe.magnetic_legs.empty() || probe.legs.empty(),
+                  "A magnetic model's translational probe carries no magnetic legs!");
+      const auto &legs = probe.kind == 1 ? probe.magnetic_legs : probe.legs;
       std::complex<double> reading = 0.0;
-      for (const auto &[line, sign] : probe.legs)
+      for (const auto &[line, weight] : legs)
       {
-        reading -= sign * std::complex<double>(line_real[line], line_imag[line]);
+        reading -= weight * std::complex<double>(line_real[line], line_imag[line]);
       }
       std::complex<double> assumed = 0.0;
       const int reference =
@@ -27353,12 +27420,228 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
   }
   if (excluded_count > 0)
   {
-    Mpi::Print(" Magnetic conductor-consistency gate (the dual R0-a gate, tolerance "
-               "{:.3e}): {:d} patch(es) lose their MAGNETIC term at source {:d} (f = "
-               "{:.6e}); the electric term is kept\n",
-               magnetic_conductor_consistency_tolerance, excluded_count, source, frequency);
+    Mpi::Print(" Magnetic conductor-consistency gate (the dual R0-a gate, probe form {}, "
+               "tolerance {:.3e}): {:d} patch(es) lose their MAGNETIC term at source {:d} "
+               "(f = {:.6e}); the electric term is kept{}\n",
+               MagneticProbeForm(), magnetic_conductor_consistency_tolerance,
+               excluded_count, source, frequency,
+               conductor_consistency_record_only ? " (RecordOnly: nothing excluded)" : "");
   }
   magnetic_gate_records.insert(magnetic_gate_records.end(), records.begin(), records.end());
+}
+
+std::string SurfaceResponseOperator::MagneticProbeForm() const
+{
+  return MagneticProbeFormName(magnetic_probe_rules);
+}
+
+std::vector<SurfaceResponseOperator::PatchVolumeEnergy>
+SurfaceResponseOperator::GetWithinRVolumeEnergies(const GridFunction &E,
+                                                  const GridFunction &B,
+                                                  const MaterialOperator &mat_op) const
+{
+  MFEM_VERIFY(maxwell && patch_boxes.size() == patches.size(),
+              "Within-R volume energies require a configured Maxwell surface response!");
+  const auto comm = fespace.GetComm();
+  MFEM_VERIFY(fespace.Dimension() == 3,
+              "Within-R volume energies require a three-dimensional mesh!");
+  // Every patch's box on every rank: [global index, defined, origin(3), u(3), v(3), w(3),
+  // u0 u1 v0 v1 w0 w1] = 20 doubles.
+  constexpr std::size_t record_size = 20;
+  std::vector<double> local_boxes;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    const auto &box = patch_boxes[patch_index];
+    local_boxes.insert(
+        local_boxes.end(),
+        {static_cast<double>(patches[patch_index].global_index), box.defined ? 1.0 : 0.0});
+    for (const auto *axis : {&box.origin, &box.axis_u, &box.axis_v, &box.axis_w})
+    {
+      local_boxes.insert(local_boxes.end(), axis->begin(), axis->end());
+    }
+    local_boxes.insert(local_boxes.end(),
+                       {box.u[0], box.u[1], box.v[0], box.v[1], box.w[0], box.w[1]});
+  }
+  const std::vector<double> boxes = AllgatherRecords(local_boxes);
+  MFEM_VERIFY(boxes.size() % record_size == 0, "Truncated patch-box record!");
+  const std::size_t box_count = boxes.size() / record_size;
+  std::vector<PatchVolumeEnergy> result(box_count);
+  // The grid hash of the boxes' axis-aligned bounds (cell = the largest box extent).
+  std::vector<std::array<double, 3>> lower(box_count), upper(box_count);
+  double cell = 0.0;
+  for (std::size_t b = 0; b < box_count; b++)
+  {
+    const double *record = boxes.data() + b * record_size;
+    result[b].patch = static_cast<int>(std::llround(record[0]));
+    result[b].defined = record[1] > 0.5;
+    lower[b] = {mfem::infinity(), mfem::infinity(), mfem::infinity()};
+    upper[b] = {-mfem::infinity(), -mfem::infinity(), -mfem::infinity()};
+    if (!result[b].defined)
+    {
+      continue;
+    }
+    for (int cu = 0; cu < 2; cu++)
+    {
+      for (int cv = 0; cv < 2; cv++)
+      {
+        for (int cw = 0; cw < 2; cw++)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            const double x = record[2 + d] + record[14 + cu] * record[5 + d] +
+                             record[16 + cv] * record[8 + d] +
+                             record[18 + cw] * record[11 + d];
+            lower[b][d] = std::min(lower[b][d], x);
+            upper[b][d] = std::max(upper[b][d], x);
+          }
+        }
+      }
+    }
+    for (int d = 0; d < 3; d++)
+    {
+      cell = std::max(cell, upper[b][d] - lower[b][d]);
+    }
+  }
+  auto SortByPatch = [&]()
+  {
+    std::sort(result.begin(), result.end(),
+              [](const auto &a, const auto &b) { return a.patch < b.patch; });
+  };
+  if (cell <= 0.0)
+  {
+    SortByPatch();
+    return result;  // no defined box anywhere
+  }
+  using Cell = std::tuple<long long, long long, long long>;
+  auto Key = [cell](const double *x)
+  {
+    return Cell{static_cast<long long>(std::floor(x[0] / cell)),
+                static_cast<long long>(std::floor(x[1] / cell)),
+                static_cast<long long>(std::floor(x[2] / cell))};
+  };
+  std::map<Cell, std::vector<std::size_t>> hash;
+  for (std::size_t b = 0; b < box_count; b++)
+  {
+    if (!result[b].defined)
+    {
+      continue;
+    }
+    const auto lo = Key(lower[b].data());
+    const auto hi = Key(upper[b].data());
+    for (auto i = std::get<0>(lo); i <= std::get<0>(hi); i++)
+    {
+      for (auto j = std::get<1>(lo); j <= std::get<1>(hi); j++)
+      {
+        for (auto k = std::get<2>(lo); k <= std::get<2>(hi); k++)
+        {
+          hash[Cell{i, j, k}].push_back(b);
+        }
+      }
+    }
+  }
+  // One pass over the local elements: at every quadrature point inside a box, the energy
+  // densities 1/2 E^H eps E and 1/2 B^H mu^-1 B (real and imaginary parts summed, the
+  // domain postoperator's convention) and the volume weight.
+  auto &mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
+  const int order = std::max(1, fespace.Get().GetMaxElementOrder());
+  std::vector<double> reduction(3 * box_count, 0.0);
+  mfem::Vector physical(3), er(3), ei(3), br(3), bi(3), tmp(3);
+  const bool complex = E.HasImag();
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &transformation = *mesh.GetElementTransformation(element);
+    const auto &rule = mfem::IntRules.Get(mesh.GetElementGeometry(element), 2 * order + 2);
+    const int attribute = mesh.GetAttribute(element);
+    const mfem::DenseMatrix epsilon = mat_op.GetPermittivityReal(attribute);
+    const mfem::DenseMatrix muinv = mat_op.GetInvPermeability(attribute);
+    for (int q = 0; q < rule.GetNPoints(); q++)
+    {
+      const auto &ip = rule.IntPoint(q);
+      transformation.SetIntPoint(&ip);
+      transformation.Transform(ip, physical);
+      const auto bucket = hash.find(Key(physical.GetData()));
+      if (bucket == hash.end())
+      {
+        continue;
+      }
+      bool evaluated = false;
+      double electric = 0.0, magnetic = 0.0;
+      const double weight = ip.weight * transformation.Weight();
+      for (const std::size_t b : bucket->second)
+      {
+        const double *record = boxes.data() + b * record_size;
+        bool inside = true;
+        for (int axis = 0; axis < 3 && inside; axis++)
+        {
+          double local = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            local += (physical[d] - record[2 + d]) * record[5 + 3 * axis + d];
+          }
+          inside = local >= record[14 + 2 * axis] && local <= record[15 + 2 * axis];
+        }
+        if (!inside)
+        {
+          continue;
+        }
+        if (!evaluated)
+        {
+          E.Real().GetVectorValue(element, ip, er);
+          B.Real().GetVectorValue(element, ip, br);
+          epsilon.Mult(er, tmp);
+          electric = 0.5 * (er * tmp);
+          muinv.Mult(br, tmp);
+          magnetic = 0.5 * (br * tmp);
+          if (complex)
+          {
+            E.Imag().GetVectorValue(element, ip, ei);
+            B.Imag().GetVectorValue(element, ip, bi);
+            epsilon.Mult(ei, tmp);
+            electric += 0.5 * (ei * tmp);
+            muinv.Mult(bi, tmp);
+            magnetic += 0.5 * (bi * tmp);
+          }
+          evaluated = true;
+        }
+        reduction[3 * b] += weight * electric;
+        reduction[3 * b + 1] += weight * magnetic;
+        reduction[3 * b + 2] += weight;
+      }
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), comm);
+  for (std::size_t b = 0; b < box_count; b++)
+  {
+    result[b].electric = reduction[3 * b];
+    result[b].magnetic = reduction[3 * b + 1];
+    result[b].volume = reduction[3 * b + 2];
+  }
+  SortByPatch();
+  return result;
+}
+
+std::vector<std::vector<std::complex<double>>>
+SurfaceResponseOperator::EvaluateProbeReadings(const ComplexVector &E, bool magnetic) const
+{
+  MFEM_VERIFY(maxwell && maxwell_probes.size() == patches.size(),
+              "Probe readings require a configured Maxwell surface response!");
+  Vector line_real, line_imag;
+  EvaluateMaxwellLines(E.Real(), E.Imag(), line_real, line_imag, magnetic);
+  std::vector<std::vector<std::complex<double>>> readings(patches.size());
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    for (const auto &probe : maxwell_probes[patch_index])
+    {
+      const auto &legs = magnetic && probe.kind == 1 ? probe.magnetic_legs : probe.legs;
+      std::complex<double> reading = 0.0;
+      for (const auto &[line, weight] : legs)
+      {
+        reading -= weight * std::complex<double>(line_real[line], line_imag[line]);
+      }
+      readings[patch_index].push_back(reading);
+    }
+  }
+  return readings;
 }
 
 std::vector<SurfaceResponseOperator::MagneticModelRecord>
@@ -30010,6 +30293,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  within_r_volume_energy = request->within_r_volume_energy;
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -30271,6 +30555,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         config.magnetic_rules.conductor_consistency_tolerance >= 0.0
             ? config.magnetic_rules.conductor_consistency_tolerance
             : kConductorConsistencyTolerance;
+    magnetic_probe_rules = config.magnetic_rules;
     {
       auto magnetic =
           EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,
@@ -30282,6 +30567,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         model.magnetic = true;
         model.magnetic_domain_defect = std::move(magnetic.defect);
+        model.magnetic_thin_domain = std::move(magnetic.thin);
         has_magnetic_models = true;
         Mpi::Print(" Magnetic (inductive) leaf of model \"{}\" ({}): -lambda_min / "
                    "||dS_m|| = {:.3e}, {:d} negative eigenvalue(s) of {:d}{}\n",
@@ -30497,6 +30783,36 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     placed.conductor_probes = patch_config.conductor_probes;
     placed.cell_length =
         patch_config.longitudinal_cell[1] - patch_config.longitudinal_cell[0];
+    {
+      // COL-3 (R-MAG-15): the patch's own box in its frame (mesh coordinates).
+      auto &box = patch_boxes.emplace_back();
+      box.origin = patch_config.origin;
+      box.axis_u = patch_config.axis_u;
+      box.axis_v = patch_config.axis_v;
+      box.axis_w = patch_config.axis_w;
+      const double R = matching_radius;
+      if (!patch_config.conductor_probe_edges.empty())
+      {
+        double lower = mfem::infinity(), upper = -mfem::infinity();
+        for (const auto &edge : patch_config.conductor_probe_edges)
+        {
+          lower = std::min(lower, edge.offset);
+          upper = std::max(upper, edge.offset);
+        }
+        box.u = {lower - R, upper + R};
+        box.v = {-R, R};
+        box.w = patch_config.longitudinal_cell;
+        box.defined = true;
+      }
+      else if (patch_config.provenance.has_support_box)
+      {
+        const auto &support = patch_config.provenance.support_box;
+        box.u = {support[0] * R, support[2] * R};
+        box.v = {support[1] * R, support[3] * R};
+        box.w = {-R, R};
+        box.defined = true;
+      }
+    }
     for (const auto &claim : patch_config.provenance.claims)
     {
       double length_squared = 0.0;
@@ -30823,7 +31139,150 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                       << "): its Maxwell conductor anchor (lateral offset " << anchor_offset
                       << ") lies in a gap of its cross-section (the placement's "
                          "ReferenceInGap rule admits none)!");
-      MFEM_CONTRACT_VAR(pieces);
+      // Phase 3 (a) (DESIGN-v2 a.2 + AMENDMENT 1275 MAJOR-A; decisions 1284 Q-1 / 1292):
+      // the MAGNETIC gate's legs. A_z is constant on a PEC piece, so the flux path from the
+      // anchor's piece to the probe's piece reads the same continuum value along ANY path
+      // in the current-free region: both ends are SET BACK into their piece (away from the
+      // singular edge, by the GENERIC rule: a point closer than s to a bounding edge of its
+      // piece moves s away from it along -GapDirection x axis_u, capped by the width
+      // fraction on a piece bounded on both sides; a point already >= s inside is
+      // unchanged; the unbounded ground side binds no cap), nudged eps off the sheet to the
+      // vacuum side (n = AxisV) and joined through the horizontal leg(s) at the Gauss
+      // height(s) h: anchor* -> A -> B -> probe*. FLAT (both OverR leaves 0) = the electric
+      // legs.
+      const double R = matching_radius;
+      const auto &rules = magnetic_probe_rules;
+      const bool flat_form =
+          rules.probe_lift_over_r == 0.0 && rules.probe_setback_over_r == 0.0;
+      const double setback = rules.probe_setback_over_r * R;
+      const double nudge = rules.probe_sheet_nudge_over_r * R;
+      mfem::Vector sheet_normal(3), lateral(3);
+      sheet_normal = 0.0;
+      lateral = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        sheet_normal[d] = patch_config.axis_v[d];
+        lateral[d] = patch_config.axis_u[d];
+      }
+      // The lateral move of a point at offset u0 in piece p (0 when unchanged).
+      auto SetbackMove = [&](double u0, int piece)
+      {
+        double lower = -mfem::infinity(), upper = mfem::infinity();
+        for (std::size_t k = 0; k < edges.size(); k++)
+        {
+          if (pieces[k] != piece)
+          {
+            continue;
+          }
+          // GapDirection -1: the gap on the -u side, the piece STARTS here; +1: the piece
+          // ENDS here.
+          (gap_directions[k] < 0 ? lower : upper) = offsets[k];
+        }
+        double s = setback;
+        if (std::isfinite(lower) && std::isfinite(upper))
+        {
+          s = std::min(s, rules.probe_setback_width_fraction * (upper - lower));
+        }
+        if (std::isfinite(lower) && u0 - lower < s)
+        {
+          return s - (u0 - lower);
+        }
+        if (std::isfinite(upper) && upper - u0 < s)
+        {
+          return -(s - (upper - u0));
+        }
+        return 0.0;
+      };
+      // The Gauss heights (ascending) and their weights (summing to 1): one height h_m for
+      // LIFTED, `ProbeBandHeights` Gauss-Legendre points on [h_m / 2, 3 h_m / 2] for BAND.
+      std::vector<std::pair<double, double>> heights;
+      {
+        const double h_m = rules.probe_lift_over_r * R;
+        if (rules.probe_band_heights <= 1)
+        {
+          heights.emplace_back(h_m, 1.0);
+        }
+        else
+        {
+          const auto &rule =
+              mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * rules.probe_band_heights - 1);
+          MFEM_VERIFY(rule.GetNPoints() == rules.probe_band_heights,
+                      "The BAND probe form's Gauss rule has an unexpected point count!");
+          for (int q = 0; q < rule.GetNPoints(); q++)
+          {
+            heights.emplace_back(0.5 * h_m + h_m * rule.IntPoint(q).x,
+                                 rule.IntPoint(q).weight);
+          }
+          std::sort(heights.begin(), heights.end());
+        }
+      }
+      auto AppendMagneticLeg = [&](MaxwellProbe &probe, const mfem::Vector &p0,
+                                   const mfem::Vector &p1, double weight)
+      {
+        const int line = AppendLineIfDistinct(p0, p1);
+        if (line >= 0)
+        {
+          probe.magnetic_legs.emplace_back(line, weight);
+          probe_line_count++;
+          magnetic_probe_line_count++;
+        }
+      };
+      auto BuildMagneticLegs =
+          [&](MaxwellProbe &probe, const mfem::Vector &face_anchor, int anchor_piece)
+      {
+        if (flat_form)
+        {
+          probe.magnetic_legs = probe.legs;
+          return;
+        }
+        const auto &edge = edges[probe.edge];
+        mfem::Vector anchor_star(face_anchor), probe_star(3);
+        for (int d = 0; d < dimension; d++)
+        {
+          probe_star[d] = probe.point[d];
+        }
+        anchor_star.Add(SetbackMove(anchor_offset, anchor_piece), lateral);
+        anchor_star.Add(nudge, sheet_normal);
+        probe_star.Add(SetbackMove(edge.offset, edge.piece), lateral);
+        probe_star.Add(nudge, sheet_normal);
+        auto Lift = [&](const mfem::Vector &base, double h)
+        {
+          mfem::Vector lifted(base);
+          lifted.Add(h, sheet_normal);
+          return lifted;
+        };
+        // The vertical segments carry the summed weight of the heights they serve.
+        probe.magnetic_path.push_back({anchor_star[0], anchor_star[1], anchor_star[2]});
+        mfem::Vector previous(anchor_star);
+        double remaining = 1.0;
+        for (const auto &[h, weight] : heights)
+        {
+          const mfem::Vector next = Lift(anchor_star, h);
+          AppendMagneticLeg(probe, previous, next, remaining);
+          probe.magnetic_path.push_back({next[0], next[1], next[2]});
+          previous = next;
+          remaining -= weight;
+        }
+        for (std::size_t i = heights.size(); i-- > 0;)
+        {
+          const auto &[h, weight] = heights[i];
+          AppendMagneticLeg(probe, Lift(anchor_star, h), Lift(probe_star, h), weight);
+        }
+        previous = Lift(probe_star, heights.back().first);
+        probe.magnetic_path.push_back({previous[0], previous[1], previous[2]});
+        remaining = 0.0;
+        for (std::size_t i = heights.size(); i-- > 0;)
+        {
+          remaining += heights[i].second;
+          const mfem::Vector next =
+              i > 0 ? Lift(probe_star, heights[i - 1].first) : probe_star;
+          AppendMagneticLeg(probe, previous, next, remaining);
+          probe.magnetic_path.push_back({next[0], next[1], next[2]});
+          previous = next;
+        }
+      };
+      const int anchor_piece =
+          LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset);
       for (const auto &probe_data : patch.conductor_probes)
       {
         const auto &edge = edges[probe_data.edge];
@@ -30834,6 +31293,25 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         probe.end_face = probe_data.end_face;
         probe.conductor = edge.conductor;
         probe.piece = edge.piece;
+        // Decision 1292 (B): the ControlFlipProbePiece CONTROL (RecordOnly only) relabels
+        // this probe's piece at the level the gates read; recorded per probe.
+        for (const auto &flip : request->control_flip_probe_pieces)
+        {
+          if (flip.model == model.name && flip.edge == probe.edge)
+          {
+            MFEM_VERIFY(model.local_piece_references &&
+                            flip.piece <= model.conductor_state_count + 1,
+                        "ConductorConsistency.ControlFlipProbePiece {Model \""
+                            << flip.model << "\", Edge " << flip.edge << ", Piece "
+                            << flip.piece
+                            << "}: the model must carry local-piece references and the "
+                               "piece must be one of its "
+                            << model.conductor_state_count + 1 << " piece(s)!");
+            control_flipped_probe_records.push_back(fmt::format(
+                "{}:{:d}:{:d}->{:d}", model.name, probe.edge, probe.piece, flip.piece));
+            probe.piece = flip.piece;
+          }
+        }
         // The anchor translated to the probe's end face.
         mfem::Vector face_anchor(anchor);
         for (int d = 0; d < dimension; d++)
@@ -30891,6 +31369,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           const mfem::Vector next = ProbePoint(edge_index);
           AppendLeg(probe.legs, previous, next);
           previous = next;
+        }
+        if (model.magnetic)
+        {
+          BuildMagneticLegs(probe, face_anchor, anchor_piece);
         }
         probes.push_back(std::move(probe));
       }
@@ -31021,6 +31503,43 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   int global_probe_line_count = static_cast<int>(probe_line_count);
   Mpi::GlobalSum(1, &global_probe_line_count, fespace.GetComm());
 
+  int global_magnetic_probe_line_count = static_cast<int>(magnetic_probe_line_count);
+  Mpi::GlobalSum(1, &global_magnetic_probe_line_count, fespace.GetComm());
+  int total_control_flips = 0;
+  if (has_magnetic_models)
+  {
+    // Decision 1292 (B): every ControlFlipProbePiece entry must have flipped a probe
+    // somewhere (a Model / Edge that exists in the loaded library and is placed); a
+    // dangling entry is REFUSED, never a silent no-op.
+    std::vector<int> flip_counts(request->control_flip_probe_pieces.size(), 0);
+    for (std::size_t i = 0; i < flip_counts.size(); i++)
+    {
+      const auto &entry = request->control_flip_probe_pieces[i];
+      const std::string prefix = fmt::format("{}:{:d}:", entry.model, entry.edge);
+      for (const auto &record : control_flipped_probe_records)
+      {
+        flip_counts[i] += record.compare(0, prefix.size(), prefix) == 0 ? 1 : 0;
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(flip_counts.size()), flip_counts.data(),
+                   fespace.GetComm());
+    for (std::size_t i = 0; i < flip_counts.size(); i++)
+    {
+      const auto &entry = request->control_flip_probe_pieces[i];
+      MFEM_VERIFY(flip_counts[i] > 0,
+                  "ConductorConsistency.ControlFlipProbePiece {Model \""
+                      << entry.model << "\", Edge " << entry.edge << ", Piece "
+                      << entry.piece
+                      << "} flipped no probe: the model is not loaded with local-piece "
+                         "references, has no such edge, or placed no patch (decision 1292: "
+                         "a control that applies nowhere is refused)!");
+    }
+    for (const int count : flip_counts)
+    {
+      total_control_flips += count;
+    }
+  }
+
   Mpi::Print("\nConfigured Maxwell surface response correction:\n"
              " Coupon models: {:d}\n"
              " Response patches: {:d}\n"
@@ -31056,6 +31575,26 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {"UnconstrainedKnots", maxwell_loop_fit_unconstrained_count},
       {"Cycles", maxwell_loop_fit_cycle_count},
       {"RemainderMeasured", maxwell_loop_remainder_measured}};
+  if (has_magnetic_models)
+  {
+    Mpi::Print(" Magnetic conductor-consistency probe form: {} (ProbeLiftOverR {:.3e}, "
+               "ProbeSetbackOverR {:.3e}, ProbeSetbackWidthFraction {:.3e}, "
+               "ProbeSheetNudgeOverR {:.3e}, ProbeBandHeights {:d}); {:d} magnetic probe "
+               "legs\n",
+               MagneticProbeForm(), magnetic_probe_rules.probe_lift_over_r,
+               magnetic_probe_rules.probe_setback_over_r,
+               magnetic_probe_rules.probe_setback_width_fraction,
+               magnetic_probe_rules.probe_sheet_nudge_over_r,
+               magnetic_probe_rules.probe_band_heights, global_magnetic_probe_line_count);
+    if (total_control_flips > 0)
+    {
+      Mpi::Print(" DIAGNOSTIC CONTROL ControlFlipProbePiece (decision 1292): {:d} probe "
+                 "label(s) flipped on {:d} entr{}; the gates record only\n",
+                 total_control_flips,
+                 static_cast<int>(request->control_flip_probe_pieces.size()),
+                 request->control_flip_probe_pieces.size() == 1 ? "y" : "ies");
+    }
+  }
   geometry_ledger.Enforce("Maxwell surface-response configuration");
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
@@ -34547,8 +35086,10 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     // [3] the failed loop weight, [4] the patches carrying the term, [5] the dual gate's
     // exclusions, [6] the fallback patches, [7] their withheld correction, then per model
     // its correction.
+    // Then per model its correction, then (COL-1) per model its within-R thin energy.
     constexpr std::size_t magnetic_totals = 8;
-    std::vector<double> magnetic_reduction(magnetic_totals + models.size(), 0.0);
+    std::vector<double> magnetic_reduction(magnetic_totals + 2 * models.size(), 0.0);
+    std::vector<double> local_magnetic_patch_records;  // COL-2: [patch, correction, thin]
     for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
     {
       const auto &patch = patches[patch_index];
@@ -34557,12 +35098,6 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       {
         continue;
       }
-      if (patch.magnetic_excluded)
-      {
-        magnetic_reduction[5] += 1.0;
-        continue;
-      }
-      magnetic_reduction[4] += 1.0;
       AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real);
       AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag);
       Vector patch_real(magnetic_trace_real.GetData() + patch.trace_offset,
@@ -34570,6 +35105,24 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       Vector patch_imag(magnetic_trace_imag.GetData() + patch.trace_offset,
                         model.basis_size);
       const double magnetic_weight = 0.5 * patch.weight * patch.domain_weight / omega_abs2;
+      // COL-2 (R-MAG-14): the patch's within-R magnetic thin energy, read on every leaf
+      // patch (the dual gate's exclusion withholds the CORRECTION, not the field's energy).
+      const double magnetic_thin_energy =
+          magnetic_weight *
+          (QuadraticForm(model.magnetic_thin_domain, patch_real, workspace) +
+           QuadraticForm(model.magnetic_thin_domain, patch_imag, workspace));
+      if (patch.magnetic_excluded)
+      {
+        magnetic_reduction[5] += 1.0;
+        if (include_patches)
+        {
+          local_magnetic_patch_records.insert(
+              local_magnetic_patch_records.end(),
+              {static_cast<double>(patch.global_index), 0.0, magnetic_thin_energy});
+        }
+        continue;
+      }
+      magnetic_reduction[4] += 1.0;
       const double magnetic_form =
           QuadraticForm(model.magnetic_domain_defect, patch_real, workspace) +
           QuadraticForm(model.magnetic_domain_defect, patch_imag, workspace);
@@ -34583,6 +35136,16 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         magnetic_reduction[0] += magnetic_weight * magnetic_form;
         magnetic_reduction[magnetic_totals + patch.model] +=
             magnetic_weight * magnetic_form;
+        magnetic_reduction[magnetic_totals + models.size() + patch.model] +=
+            magnetic_thin_energy;
+      }
+      if (include_patches)
+      {
+        local_magnetic_patch_records.insert(
+            local_magnetic_patch_records.end(),
+            {static_cast<double>(patch.global_index),
+             patch_loop_fallback[patch_index] ? 0.0 : magnetic_weight * magnetic_form,
+             magnetic_thin_energy});
       }
       // The dual loop residuals on the magnetic CHAIN trace (the detector's trace), the
       // detector weight = |the patch's magnetic response| (the loop-RMS weight), a property
@@ -34679,7 +35242,25 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
           magnetic_reduction[3] / magnetic_reduction[2];
     }
     result.model_magnetic_domain_corrections.assign(
-        magnetic_reduction.begin() + magnetic_totals, magnetic_reduction.end());
+        magnetic_reduction.begin() + magnetic_totals,
+        magnetic_reduction.begin() + magnetic_totals + models.size());
+    result.model_magnetic_thin_energies.assign(magnetic_reduction.begin() +
+                                                   magnetic_totals + models.size(),
+                                               magnetic_reduction.end());
+    if (include_patches)
+    {
+      const std::vector<double> gathered = AllgatherRecords(local_magnetic_patch_records);
+      MFEM_VERIFY(gathered.size() % 3 == 0, "Truncated per-patch magnetic energy record!");
+      for (std::size_t offset = 0; offset < gathered.size(); offset += 3)
+      {
+        result.patch_magnetic_energies.push_back(
+            {static_cast<int>(std::llround(gathered[offset])), gathered[offset + 1],
+             gathered[offset + 2]});
+      }
+      std::sort(
+          result.patch_magnetic_energies.begin(), result.patch_magnetic_energies.end(),
+          [](const auto &first, const auto &second) { return first.patch < second.patch; });
+    }
     result.magnetic_confident =
         result.magnetic_weighted_loop_residual <= maximum_weighted_loop_residual &&
         result.magnetic_loop_response_failure_fraction <=
@@ -34876,6 +35457,17 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
     // R0-a: the conductor-consistency probes' legs (idfix DESIGN B.3 (d) / C.3), beside the
     // contour lines they are not part of.
     result["Correction"]["ProbeLines"] = Distribution(probe_line_count);
+    if (has_magnetic_models)
+    {
+      // Phase 3 (a): the magnetic gate's lifted legs (in ProbeLines too), the probe form
+      // and the applied ControlFlipProbePiece CONTROL (decision 1292).
+      result["Correction"]["MagneticProbeLines"] = Distribution(magnetic_probe_line_count);
+      result["Correction"]["MagneticProbeForm"] = MagneticProbeForm();
+      if (!control_flipped_probe_records.empty())
+      {
+        result["Correction"]["ControlFlipProbePiece"] = control_flipped_probe_records;
+      }
+    }
     // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (decision 1072 Q2): the FROZEN crack tolerance
     // rule of the contour-line coverage, by name.
     result["Correction"]["ContourCrackToleranceRule"] = fmt::format(

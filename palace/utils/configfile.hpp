@@ -1502,6 +1502,21 @@ public:
     // leg and the hardening fixtures (B.4 (F)): a run of record with it set is refused by
     // the comparator, never by this reader.
     bool conductor_consistency_record_only = false;
+    // ControlFlipProbePiece (mx-sc-magnetic Phase 3 (a), DESIGN-v2 a.3; supervisor decision
+    // 1292 (B)): a DIAGNOSTIC CONTROL, not a modelling option. Every entry flips the LOCAL
+    // PIECE label of one model edge's conductor-consistency probes at the probe
+    // construction (the level both gates read), so that the dual gate's discrimination of a
+    // one-label mis-mapping is measured on a device (decision 1256). Admitted ONLY with
+    // RecordOnly true (refused by name otherwise); a Model / Edge that does not exist is
+    // refused (no silent no-op); printed on the gate line and recorded as a CONTROL. Absent
+    // = bitwise.
+    struct ControlFlipProbePieceData
+    {
+      std::string model;
+      int edge = -1;
+      int piece = -1;
+    };
+    std::vector<ControlFlipProbePieceData> control_flip_probe_pieces;
 
     // The magnetic (inductive) defect (mx-sc-magnetic DESIGN-v2 section 3; USER 1221 D3):
     // AllowElectricOnlyFallback (default false): a model whose magnetic leaf is REFUSED by
@@ -1539,6 +1554,25 @@ public:
       // p = 2 / 3 / 4 on the (ii) stub), so a library sets the tolerance it has calibrated;
       // the probe form itself is OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
       double conductor_consistency_tolerance = -1.0;
+      // The PROBE FORM of the dual gate (mx-sc-magnetic Phase 3 (a); decisions 1256 / 1284
+      // Q-1 / 1292; OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION): the magnetic probe legs
+      // are LIFTED off the sheet and SET BACK from the singular edges (A_z is constant on a
+      // PEC piece, so the flux path from the anchor's piece to the probe's piece reads the
+      // same continuum value along any current-free path). Library leaves, never compiled
+      // constants (ERRATUM 1227): ProbeLiftOverR = h_m / R (the horizontal leg's height),
+      // ProbeSetbackOverR = s / R (both the probe end and the anchor end are set back INTO
+      // their piece), ProbeSetbackWidthFraction = the per-piece cap s <= fraction x the
+      // piece's local metal width, ProbeSheetNudgeOverR = eps / R (the sheet points nudged
+      // to the vacuum side so the locator resolves the vacuum-side element),
+      // ProbeBandHeights = the Gauss-height count (1 = LIFTED at h_m; >= 2 = BAND: the
+      // reading averaged over that many Gauss heights in [h_m / 2, 3 h_m / 2]). FLAT =
+      // ProbeLiftOverR 0 AND ProbeSetbackOverR 0 = the electric legs verbatim (the Phase-2
+      // form, kept as the comparison form of record, R-MAG-11).
+      double probe_lift_over_r = 0.5;
+      double probe_setback_over_r = 0.5;
+      double probe_setback_width_fraction = 0.45;
+      double probe_sheet_nudge_over_r = 1.0e-6;
+      int probe_band_heights = 1;
     };
     MagneticRulesData magnetic_rules;
 
@@ -1556,6 +1590,18 @@ public:
     // categories, above decision 1076's 10 % bar, so the stage E / F configurations turn
     // it on.
     bool exclusion_energy = false;
+
+    // Diagnostics.WithinRVolumeEnergy (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15; the
+    // census of the spatial families' magnetic energy for the (A)-3D decision): per placed
+    // patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box (a
+    // translational patch: the model's edge span +- R laterally, +- R normally, its cell
+    // longitudinally; a spatial patch: its support box x [-R, R]) at quadrature-point
+    // resolution (a quadrature point is in or out: the box faces are resolved to ~h, an
+    // ESTIMATE for a share census, not a trace form), written per patch into
+    // surface-response-patch-energy.csv (`within-R magnetic energy (J)`, `within-R electric
+    // energy (J)`, `within-R volume (m^3)`). Requires PatchEnergy. OFF by default: bitwise
+    // off (one pass over the mesh per measurement when on).
+    bool within_r_volume_energy = false;
 
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
