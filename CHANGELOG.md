@@ -43,6 +43,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the default `Lc`. The CSV postprocessing was not affected.
     [PR 1098](https://github.com/awslabs/palace/pull/1098).
 
+#### Build system
+
+  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
+    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
+    the only sparse direct solver failed.
+    [PR 1133](https://github.com/awslabs/palace/pull/1133).
+
 ## [0.19.0] - 2026-11-02
 
 #### New Features
