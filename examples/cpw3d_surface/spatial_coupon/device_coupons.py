@@ -343,12 +343,13 @@ MIRROR_FORMED_ENTRY_RULE = ("decision 557 / round-3 DESIGN 4.4 (MF): the library
 
 
 def signature_key_hash(signature):
-    """The LEGACY float re-dump of the identification's Key of a signature (json.dumps(signature,
-    separators=(',', ':'), sort_keys=True) hashed): equal to the requirement Hash only when every
-    double's nlohmann (Grisu2) lexeme is Python's shortest repr — NOT always (the R2-failure
-    diagnosis F-4: 7fd482e5adfc differs on three lexemes). The check of a key against its
-    Signature is verify_requirement_key, which uses the record's KeyText when it carries one."""
-    return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+    """The identification's Key of a signature re-computed on the Python side: sha256 of the C++ writer's print
+    (signature_library.signature_hash = the nlohmann 3.12.0 Grisu2 port; fix round, decisions 1228 M2 / 1233 (4)).
+    Before the fix round this was the LEGACY float re-dump (json.dumps sort_keys), equal to the requirement Hash
+    only when every double's Grisu2 lexeme was Python's shortest repr -- NOT always (the R2-failure diagnosis F-4:
+    7fd482e5adfc differed on three lexemes). The check of a key against its Signature is verify_requirement_key,
+    which uses the record's KeyText when it carries one."""
+    return signature_library.signature_hash(signature)
 
 
 def verify_requirement_key(requirement, signature=None, *, name=None):
@@ -676,10 +677,11 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                      "is the gallery producer's (an explicit option; device coupons only, never a "
                                      "gallery reference)"},
               "NearKeyReuse": {"Mode": nearkey_reuse_mode, "RuleVersion": rule["RuleVersion"] if rule else None,
-                               "RuleFileSHA256": rule["_sha256"] if rule else None, "Reused": [], "Refused": [],
+                               "RuleFileSHA256": rule["_sha256"] if rule else None, "Reused": [], "Refused": [], "Skipped": [],
                                "Rule": "USER decision 428 (Option A) / decision 431 / DESIGN v2: nearkey_reuse.reuse_requirement on the "
                                        "generated "
-                                       "basis before registration; a reused coupon is not registered / built; a refusal is recorded"},
+                                       "basis before registration; a reused coupon is not registered / built; a refusal is recorded; "
+                                       "fix round R-2 (decision 1230): default reuse SKIPS a piece-form basis (recorded under Skipped)"},
               "MirrorFormed": {"Mode": mirror_formed, "ContractVersion": MIRROR_FORMED_CONTRACT_VERSION, "FlagOnly": [],
                                "Rule": "decision 557 / round-3 DESIGN 4.4 (MF) / decision 562: a requirement CARRYING the "
                                        "identification's MirrorFormedContract is built from its FULL symmetric signature and its "
@@ -788,7 +790,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                 mode=nearkey_reuse_mode, output=output / "reused",
                                                 stop_record_path=None if stop_option is None else stop_option[1],
                                                 approval=nearkey_fallback_approval, record_roots=record_roots, log=log)
-            (record["NearKeyReuse"]["Reused"] if near_key["Reused"] else record["NearKeyReuse"]["Refused"]).append(
+            bucket = "Reused" if near_key["Reused"] else ("Skipped" if near_key.get("Skipped") else "Refused")
+            record["NearKeyReuse"][bucket].append(
                 {key: near_key[key] for key in ("Case", "Requirement", "Reason", "Donor", "ReuseMode", "ModelDirectory")})
         provenance = {
             "Version": 1, "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
@@ -902,7 +905,7 @@ def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, ru
     """The near-key reuse decision of one planned spatial coupon on its generated basis (`work`): the
     coupon record's NearKeyReuse block {Reused, Case, Requirement, Reason, Donor, ReuseMode, ModelDirectory,
     Record}. In fallback mode a requirement without a STOP record is not offered (recorded)."""
-    base = {"Reused": False, "Case": case_id, "Requirement": coupon["Id"], "Reason": None, "Donor": None, "ReuseMode": None,
+    base = {"Reused": False, "Skipped": False, "Case": case_id, "Requirement": coupon["Id"], "Reason": None, "Donor": None, "ReuseMode": None,
             "ModelDirectory": None, "Record": None}
     signature = coupon["Geometry"].get("Signature")
     if coupon["Topology"] != "SpatialEdgeCluster" or signature is None:
@@ -922,6 +925,8 @@ def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, ru
         raise DeviceAdapterError(f"coupon {coupon['Id']}: near-key reuse stopped: {error}") from error
     record_path = Path(output) / f"{entry['Name']}-nearkey-reuse.json"
     record_path.write_text(json.dumps(result, indent=1) + "\n")
+    if result.get("Skipped"):
+        return {**base, "Reason": result["Skipped"]["Reason"], "Skipped": True, "Record": str(record_path)}
     if not result["Reused"]:
         return {**base, "Reason": result["Refused"]["Reason"], "Record": str(record_path)}
     return {**base, "Reused": True, "Reason": None, "Donor": result["Model"]["ReusedFrom"]["Donor"],

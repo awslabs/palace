@@ -296,10 +296,17 @@ class SignatureKeyTextTest(unittest.TestCase):
         self.signature = json.loads(KEYTEXT_FIXTURE)
         self.assertEqual(hashlib.sha256(KEYTEXT_FIXTURE.encode()).hexdigest(), KEYTEXT_FIXTURE_HASH)
 
-    def test_keytext_path_reproduces_the_cpp_digest_and_the_float_hash_does_not(self):
-        # T13: the verbatim text hashes to the C++ key; Python's shortest-repr re-dump does not.
-        self.assertEqual(L.signature_hash(self.signature), KEYTEXT_FIXTURE_FLOAT_HASH)
-        self.assertNotEqual(L.signature_hash(self.signature), KEYTEXT_FIXTURE_HASH)
+    def test_keytext_path_reproduces_the_cpp_digest_and_so_does_the_cpp_printer_hash(self):
+        # T13: the verbatim text hashes to the C++ key; Python's shortest-repr re-dump does not (the legacy float hash of
+        # record, KEYTEXT_FIXTURE_FLOAT_HASH); since the fix round (decisions 1228 M2 / 1233 (4)) signature_hash prints through
+        # the nlohmann Grisu2 port and reproduces the C++ key itself.
+        import hashlib
+        import json
+        legacy = hashlib.sha256(json.dumps(self.signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+        self.assertEqual(legacy, KEYTEXT_FIXTURE_FLOAT_HASH)
+        self.assertNotEqual(legacy, KEYTEXT_FIXTURE_HASH)
+        self.assertEqual(L.cpp_json_dump(self.signature), KEYTEXT_FIXTURE)
+        self.assertEqual(L.signature_hash(self.signature), KEYTEXT_FIXTURE_HASH)
         record = L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, KEYTEXT_FIXTURE)
         self.assertEqual(record, {"Path": L.KEY_PATH_KEYTEXT, "KeyText": KEYTEXT_FIXTURE, "SignatureHash": KEYTEXT_FIXTURE_HASH,
                                   "RequirementKey": KEYTEXT_FIXTURE_HASH, "Equal": True})
@@ -307,9 +314,12 @@ class SignatureKeyTextTest(unittest.TestCase):
         self.assertEqual(L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH[:12], KEYTEXT_FIXTURE)["SignatureHash"],
                          KEYTEXT_FIXTURE_HASH)
         self.assertEqual(L.verify_signature_key(self.signature, None, KEYTEXT_FIXTURE)["SignatureHash"], KEYTEXT_FIXTURE_HASH)
-        # the same key WITHOUT KeyText takes the legacy path and fails by name: the record-era defect, unchanged
+        # the same key WITHOUT KeyText takes the legacy path, which now prints as the C++ writer: it verifies (before the fix
+        # round it failed by name: the record-era defect); an artificial lexeme nlohmann never writes still fails by name
+        self.assertEqual(L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, None)["Path"], L.KEY_PATH_LEGACY)
+        artificial = KEYTEXT_FIXTURE.replace("0.5]", "0.50000000000000000]")
         with self.assertRaises(L.SignatureKeyError) as context:
-            L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, None)
+            L.verify_signature_key(json.loads(artificial), hashlib.sha256(artificial.encode()).hexdigest(), None)
         self.assertIn("legacy float-hash path", str(context.exception))
         self.assertIn("!= the requirement key", str(context.exception))
 
@@ -397,6 +407,69 @@ class SignatureKeyTextTest(unittest.TestCase):
         representative = L.group_features(group)[0][0]
         self.assertEqual(model["Name"], f"SpatialEdgeCluster-{L.signature_hash(representative)[:12]}")
         self.assertEqual(model["NearKeys"], sorted({key} | {L.signature_hash(o) for o in others}))
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+STAGE_E_MANIFESTS = "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/stageE/thin/manifests/es-loadcheck-v3-k-2d-E"
+
+
+class CppWriterPrinterTest(unittest.TestCase):
+    """The nlohmann 3.12.0 to_chars (Grisu2) port (fix round OI-SIGNATURE-FLOAT-PRINT; decisions 1228 M2 / 1233 (4)): the three
+    named lexemes of the record, the format_buffer boundaries (kMinExp -4 / kMaxExp 15, the two-digit exponent, "N.0" for an
+    integral double, the sign of -0.0), the dump form (sorted keys, no spaces, the string escapes), and -- when the records are
+    present -- every KeyText of the 10 stage-E load-check manifests re-printed == its text."""
+
+    def test_named_lexemes_of_the_record(self):
+        # Grisu2 is not the shortest round-trip print: Python's repr gives 2.919211 / 1.578947 / 1.315789
+        self.assertEqual(L.cpp_to_chars(2.9192109999999998), "2.9192109999999998")
+        self.assertEqual(L.cpp_to_chars(1.5789469999999999), "1.5789469999999999")
+        self.assertEqual(L.cpp_to_chars(1.3157889999999999), "1.3157889999999999")
+        self.assertEqual(L.cpp_to_chars(7.3781349999999994), "7.3781349999999994")
+        self.assertEqual(L.cpp_to_chars(-2.9537079999999998), "-2.9537079999999998")
+        for text in ("2.9192109999999998", "1.5789469999999999", "1.3157889999999999"):
+            self.assertEqual(float(L.cpp_to_chars(float(text))), float(text))   # round-trips
+
+    def test_format_buffer_boundaries(self):
+        cases = ((0.0, "0.0"), (-0.0, "-0.0"), (1.0, "1.0"), (3.0, "3.0"), (100.0, "100.0"), (0.5, "0.5"), (0.1, "0.1"), (0.0001, "0.0001"),
+                 (1e-5, "1e-05"), (1e-7, "1e-07"), (1e15, "1e+15"), (123456789012345.0, "123456789012345.0"), (1e16, "1e+16"), (1e22, "1e+22"),
+                 (5e-324, "5e-324"), (1.7976931348623157e308, "1.7976931348623157e+308"), (2.2250738585072014e-308, "2.2250738585072014e-308"),
+                 (1.0 / 3.0, "0.3333333333333333"), (-1328.6355899999999, "-1328.6355899999999"), (5.56528, "5.56528"))
+        for value, text in cases:
+            self.assertEqual(L.cpp_to_chars(value), text, repr(value))
+        self.assertEqual(L.cpp_to_chars(float("nan")), "null")
+        self.assertEqual(L.cpp_to_chars(float("inf")), "null")
+
+    def test_dump_form(self):
+        value = {"b": [1, 2.0, True, None, "x\"y\\z\n"], "a": {"Law": "{\"Type\":\"PEC\"}", "P": [-0.263158, 3.5]}, "Type": "T"}
+        self.assertEqual(L.cpp_json_dump(value),
+                         '{"Type":"T","a":{"Law":"{\\"Type\\":\\"PEC\\"}","P":[-0.263158,3.5]},"b":[1,2.0,true,null,"x\\"y\\\\z\\n"]}')
+        self.assertEqual(L.signature_key_text({"EdgeCount": 2}, "SpatialEdgeCluster"), '{"EdgeCount":2,"Type":"SpatialEdgeCluster"}')
+        import json
+        self.assertEqual(L.cpp_json_dump(json.loads(KEYTEXT_FIXTURE)), KEYTEXT_FIXTURE)
+
+    @unittest.skipUnless(os.path.isdir(STAGE_E_MANIFESTS), "the stage-E load-check manifests are not present")
+    def test_every_keytext_of_the_stage_e_manifests_reprints_to_itself(self):
+        import glob
+        import hashlib
+        import json
+        n = differ = 0
+        for path in sorted(glob.glob(os.path.join(STAGE_E_MANIFESTS, "*", "postpro", "surface-response-requirements.json"))):
+            with open(path) as handle:
+                manifest = json.load(handle)
+            for requirement in manifest.get("Requirements", []):
+                key_text = requirement.get("KeyText")
+                if key_text is None:
+                    continue
+                n += 1
+                signature = json.loads(key_text)
+                self.assertEqual(L.cpp_json_dump(signature), key_text, path)
+                self.assertEqual(L.signature_hash(signature), requirement["Hash"], path)
+                differ += json.dumps(signature, separators=(",", ":"), sort_keys=True) != key_text
+        self.assertGreater(n, 100)
+        self.assertGreater(differ, 0)   # the record carries lexemes Python's repr prints differently: the fix round's reason
+
 
 if __name__ == "__main__":
     unittest.main()

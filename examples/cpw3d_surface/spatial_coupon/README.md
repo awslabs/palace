@@ -34,6 +34,20 @@ under `ROOT/device/reused/`, never registered or built, and added to a library b
 reused share per Type and the reuse error budget (MA on MA_sharp) beside the D4 figures. Every other
 structure key is refused `StructureKeyNotCalibrated` (`test_nearkey_reuse.py`).
 
+### The (F) device gate solves (fix round R-4, OI-QUALIFY-DEVICE-GATE-ES-ONLY; decisions 1174 / 1239)
+
+`coupon_library.py spatial-qualify evaluate --gate palace.json ...` reads the resolution-aware conductor-consistency gate
+(Count 0, MaxRatio <= 1e-4; `qualify/spatial_qualification.py`) from the device's cheap thin solves at Orders 3 / 4 / 5 on
+the registration mesh (the c0 solves) with the interim library. `qualify/device_gate_configs.py` writes their configs (the
+geometry-only `preflight.json` + `c0-p<N>.json`) from the window's device run config: `--form es` (the default) is the
+electrostatic form of record, byte-identical to the (F) chains' `write_c0_configs` v2 recipe (`test_device_gate_configs.py`);
+`--form driven --frequency F` is the Maxwell form for a window without an electrostatic terminal (FE6, decision 1174): the
+F-39 LumpedPort device config at ONE frequency, `Solver.SurfaceResponseCorrection` with `Collocated` trace coupling (the
+Maxwell path refuses `SurfaceMortar`), `Refinement.MaxIts` 0. The gate record is the same on both paths
+(`SurfaceResponse.Diagnostics.ConductorConsistency`, `Maxwell` / `Frequency` per record), so the gate reader is unchanged
+and reads it against the same bars. **The driven form is UNVERIFIED**: no Maxwell-form c0 has been solved; its acceptance
+test is the c0 on the FE6 9f8d interim library (~0.3 node-h, fix-round P3) before any F use.
+
 ## Exact blockwise response matrices
 
 Large high-order coupons can exceed node memory because the ordinary response-matrix

@@ -1810,6 +1810,13 @@ public:
     // stretch: the corner), `segment` = the perimeter segment. Carried by the geometry
     // cache (version 22, a required leaf).
     std::vector<UncoveredPortionData> exclusion_portions;
+    // 2B (fix round P2; OI-COVERAGE-UNPATCHEDPAIRS-NO-ENERGY-ROW): the perimeter cells of
+    // the UnpatchedPair features the placement left unpatched (a refused pair's cells with
+    // no library model at their local separation, R-9; a refused curved pair whole),
+    // `topology` = "unpatched", `feature` = the feature's id: the PatchEnergy raw partition
+    // carries their within-R raw energy under that label (carved out of `unclaimed`).
+    // Carried by the geometry cache (version 23, a required leaf).
+    std::vector<UncoveredPortionData> unpatched_pair_portions;
 
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.

@@ -1068,6 +1068,10 @@ void BuildRuns(const IdentificationInput &input, std::vector<Run> &runs,
       {
         ends.push_back(v);
       }
+      // The operator's BranchingPerimeter pre-pass (H13-I2 on the real input; R-1 on the
+      // mirror-extended input, fix round P2) excludes the incident segments of every vertex
+      // of degree > 2 before a ledgered identification, so this verify fires only for a
+      // caller without a geometry-fallback ledger (a library build: fail closed).
       MFEM_VERIFY(list.size() <= 2,
                   "A perimeter chain has a vertex with more than two chain segments!");
     }

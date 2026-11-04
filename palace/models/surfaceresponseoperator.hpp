@@ -1635,6 +1635,17 @@ public:
   void Enforce(const std::string &where) const;
 };
 
+// H13-I2 / R-1 (fix round P2, OI-IDENT-CHAIN-VERTEX-DEGREE): the BranchingPerimeter
+// pre-pass of the geometry identification on one identification input (the real input, or
+// the mirror-extended one, whose image segments can meet a real chain at a joint vertex of
+// degree > 2): the incident segments of every chain vertex where more than two non-excluded
+// chain segments meet are excluded BranchingPerimeter (the identification cuts the chain
+// there and identifies the pieces) and, with a ledger, one entry per vertex is recorded
+// (RecordRaw continues; FailClosed aborts at Enforce). Returns the number of branching
+// vertices found. The identification's own vertex-degree verify then holds by construction.
+std::size_t ExcludeBranchingVertices(IdentificationInput &input, const char *site,
+                                     GeometryFallbackLedger *geometry_ledger);
+
 // The Diagnostics entry "GeometryFallbacks" (the manifest's Identification.Diagnostics and
 // palace.json's SurfaceResponse.Diagnostics; every length = mesh length units x
 // `coordinate_scale`, the mesh length relative scale on both records): Version, Policy,

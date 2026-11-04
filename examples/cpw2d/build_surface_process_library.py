@@ -188,7 +188,22 @@ def edge_distance_options(args):
     return ["--edge-distances", *[str(d) for d in distances]] if distances else []
 
 
-def pair_response_command(args, width, topology_flag, directory):
+def requirement_hashes(args):
+    """{(topology, width): hash} of the --requirement-hash TOPOLOGY:WIDTH=HASH options (fix round R-10)."""
+    out = {}
+    for text in getattr(args, "requirement_hash", None) or []:
+        head, separator, digest = str(text).partition("=")
+        topology, colon, width = head.partition(":")
+        if not separator or not colon or topology not in {t[0] for t in TOPOLOGIES}:
+            raise ValueError(f"--requirement-hash expects TOPOLOGY:WIDTH=HASH with TOPOLOGY one of {[t[0] for t in TOPOLOGIES]}, not {text!r}")
+        key = (topology, float(width))
+        if key in out and out[key] != digest:
+            raise ValueError(f"--requirement-hash: {topology} {width} given twice with different hashes")
+        out[key] = digest
+    return out
+
+
+def pair_response_command(args, width, topology_flag, directory, requirement_hash=None):
     command = [
         sys.executable,
         PAIR_RESPONSE_GENERATOR,
@@ -219,6 +234,8 @@ def pair_response_command(args, width, topology_flag, directory):
         command.append(topology_flag)
     elif getattr(args, "local_pieces", False):
         command.append("--local-pieces")   # the same-conductor gap under R0-b (its own flag, exclusive with the others)
+    if requirement_hash is not None:
+        command.extend(["--requirement-hash", requirement_hash])   # fix round R-10: the Name carries the hash
     return command
 
 
@@ -380,6 +397,9 @@ def build_coupon(args, topology, mode, topology_flag, width, work):
     fabricated_mesh = directory / "edge_pair_fabricated.msh"
     spec_path = directory / "coupon-spec.json"
     spec = coupon_spec(args, topology, width)
+    requirement_hash = requirement_hashes(args).get((topology, float(width)))
+    if requirement_hash is not None:
+        spec["RequirementHash"] = requirement_hash
     reusable = load_json(spec_path) == spec
 
     if not reusable or not thin_mesh.is_file():
@@ -387,7 +407,7 @@ def build_coupon(args, topology, mode, topology_flag, width, work):
     if not reusable or not fabricated_mesh.is_file():
         run(pair_mesh_command(args, "fabricated", width, mode, fabricated_mesh))
 
-    run(pair_response_command(args, width, topology_flag, directory))
+    run(pair_response_command(args, width, topology_flag, directory, requirement_hash))
     write_json(spec_path, spec)
     configs = [
         directory / "edge_pair_thin.json",
@@ -497,6 +517,9 @@ def parse_args():
         help="Default separation sweep for all three paired topologies",
     )
     parser.add_argument("--same-conductor-gaps", type=float, nargs="*")
+    parser.add_argument("--requirement-hash", action="append", default=[], metavar="TOPOLOGY:WIDTH=HASH",
+                        help="fix round R-10 (decisions 1168 / 1230): the requirement hash a pair coupon's model Name carries "
+                             "(<topology>-<sep>um-<hash12>); TOPOLOGY = same-conductor-gap | different-conductor-gap | same-conductor-strip")
     parser.add_argument("--local-pieces", action="store_true",
                         help="R0-b (DESIGN A.3 (b); decision 1064 (4) (a)): a same-conductor gap's two sides as two LOCAL pieces "
                              "(the 'different' mesh mode + the generator's --local-pieces: LocalPieces = 2, two references). Default OFF")

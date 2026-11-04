@@ -399,7 +399,7 @@ PostOperator<solver_t>::PostOperator(
         // PatchEnergy (decision 922 B): the applied patch table at construction, the
         // electrostatic driver's column form (no solve-time gate rewrites it here).
         TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
-        patches.table.insert(Column("model", "model", 0, 0, 2, ""));
+        patches.table.insert(Column::Integer("model", "model"));
         for (const char *coordinate : {"x", "y", "z"})
         {
           patches.table.insert(fmt::format("origin_{}", coordinate),
@@ -2666,6 +2666,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseExclusionEnergies(double output
   if (!surface_response_exclusion_energy_started)
   {
     surface_response_exclusion_energy_started = true;
+    // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): a previous adaptive iteration's
+    // SaveIteration left a symlink here into its archive folder; truncating through it
+    // would overwrite the archived table and leave no real top-level file (the loop-fit
+    // writer's form: remove first, then write a real file).
+    fs::remove(path);
     std::ofstream output(path);
     MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
     output
@@ -2759,6 +2764,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
   if (!surface_response_model_raw_started)
   {
     surface_response_model_raw_started = true;
+    // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): never write through the symlink
+    // SaveIteration left (see PrintSurfaceResponseExclusionEnergies).
+    fs::remove(energy_path);
+    fs::remove(groups_path);
     std::ofstream energy(energy_path);
     MFEM_VERIFY(energy, "Unable to open " << energy_path.string() << " for writing!");
     energy << "source,evaluation,label";
@@ -2974,10 +2983,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelEnergies(double output_ind
     surface_response_model_energy =
         std::make_unique<TableWithCSVFile>(post_dir / "surface-response-model-energy.csv");
     auto &table = surface_response_model_energy->table;
-    table.insert(Column("source", "source", 0, 0, 2, ""));
-    table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
-    table.insert(Column("model", "model", 0, 0, 2, ""));
-    table.insert(Column("patch_count", "patch count", 0, 0, 2, ""));
+    table.insert(Column::Integer("source", "source"));
+    table.insert(Column::Integer("evaluation", "evaluation"));
+    table.insert(Column::Integer("model", "model"));
+    table.insert(Column::Integer("patch_count", "patch count"));
     table.insert("patch_weight", "patch weight");
     table.insert("domain_correction", "domain correction (J)");
     for (const auto &[interface, data] : result.interfaces)
@@ -3082,11 +3091,11 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
     surface_response_patch_energy =
         std::make_unique<TableWithCSVFile>(post_dir / "surface-response-patch-energy.csv");
     auto &table = surface_response_patch_energy->table;
-    table.insert(Column("source", "source", 0, 0, 2, ""));
-    table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
-    table.insert(Column("patch", "patch", 0, 0, 2, ""));
-    table.insert(Column("model", "model", 0, 0, 2, ""));
-    table.insert(Column("feature", "feature", 0, 0, 2, ""));
+    table.insert(Column::Integer("source", "source"));
+    table.insert(Column::Integer("evaluation", "evaluation"));
+    table.insert(Column::Integer("patch", "patch"));
+    table.insert(Column::Integer("model", "model"));
+    table.insert(Column::Integer("feature", "feature"));
     table.insert("weight", "weight");
     table.insert("cell_begin", "cell begin (m)");
     table.insert("cell_end", "cell end (m)");
@@ -3191,11 +3200,11 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       surface_response_traces =
           std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
       auto &table = surface_response_traces->table;
-      table.insert(Column("source", "i", 0, 0, 2, ""));
-      table.insert(Column("patch", "patch", 0, 0, 2, ""));
-      table.insert(Column("model", "model", 0, 0, 2, ""));
-      table.insert(Column("coefficient", "coefficient", 0, 0, 2, ""));
-      table.insert(Column("conductor_state", "conductor state", 0, 0, 2, ""));
+      table.insert(Column::Integer("source", "i"));
+      table.insert(Column::Integer("patch", "patch"));
+      table.insert(Column::Integer("model", "model"));
+      table.insert(Column::Integer("coefficient", "coefficient"));
+      table.insert(Column::Integer("conductor_state", "conductor state"));
       table.insert("value", "value (V)");
       table.insert("value_imag", "value imag (V)");
       table.insert("idx", index_label);
@@ -3233,11 +3242,11 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       surface_response_patch_loops =
           std::make_unique<TableWithCSVFile>(post_dir / "surface-response-patch-loops.csv");
       auto &table = surface_response_patch_loops->table;
-      table.insert(Column("source", "source", 0, 0, 2, ""));
-      table.insert(Column("patch", "patch", 0, 0, 2, ""));
-      table.insert(Column("model", "model", 0, 0, 2, ""));
-      table.insert(Column("path", "path", 0, 0, 2, ""));
-      table.insert(Column("kind", "kind", 0, 0, 2, ""));
+      table.insert(Column::Integer("source", "source"));
+      table.insert(Column::Integer("patch", "patch"));
+      table.insert(Column::Integer("model", "model"));
+      table.insert(Column::Integer("path", "path"));
+      table.insert(Column::Integer("kind", "kind"));
       table.insert("residual", "loop residual");
       table.insert("scale", "loop scale (V)");
       table.insert("idx", index_label);

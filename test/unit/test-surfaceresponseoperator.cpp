@@ -1873,7 +1873,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 22);
+      CHECK(cache["Version"] == 23);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3163,7 +3163,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 22);
+      CHECK(cache["Version"] == 23);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7794,6 +7794,345 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator unpatched 
 #endif
 }
 
+// R-9 (fix round P2; USER decision 1230 Q3 / supervisor 1260; DESIGN-v3 s2 2C (a)) + 2B:
+// the refused straight pair of the UnpatchedPair reproducer above is placed CELL BY CELL at
+// its local separation. With the taper-mean model alone (SeparationTolerance 1e-8; the GDS
+// scatter band 0.005 R) no cell of the 2-edge part (1.25 -> ~1.44 R) finds a model at its
+// local separation: every cell stays unpatched, the UnpatchedPairs record is the whole pair
+// flagged as the remainder of the local placement, the Status stays Unpatched. With strip
+// nodes at 1.2 / 1.4 / 1.6 R beside it every cell is placed by the bracket interpolation
+// (two weighted patches of one interpolation group), the pair leaves UnpatchedPairs, its
+// Status is the key's (Matched) and the record names the nodes with the side length each
+// covers. 2B: the operator exports the unplaced cells as `unpatched` raw-partition portions
+// (by feature Id) whose length is the UnpatchedPairs remainder; the geometry cache (version
+// 23) carries them as a required leaf.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator R-9 refused pair placed at the local separation "
+                 "and the 2B unpatched portions",
+                 "[surfaceresponseoperator][3d][features][unpatchedpair][r9][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  constexpr double taper = 0.08;
+  auto Config = [&](const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["PatchEnergy"] = true;
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    return config;
+  };
+  auto Preflight = [&](const std::string &tag, const fs::path &library_path)
+  {
+    IoData iodata(Config(library_path), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakeTaperStripMesh(taper));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-r9-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    json manifest = json::parse(input);
+    std::map<std::string, int> rows_by_model = {{"same-conductor-strip-taper-mean", 0},
+                                                {"same-conductor-strip-node-1.2", 0},
+                                                {"same-conductor-strip-node-1.4", 0},
+                                                {"same-conductor-strip-node-1.6", 0}};
+    {
+      std::ifstream patches(patches_path);
+      REQUIRE(patches);
+      std::string line;
+      std::getline(patches, line);
+      while (std::getline(patches, line))
+      {
+        for (auto &[name, rows] : rows_by_model)
+        {
+          rows += line.find(name + ",") != std::string::npos;
+        }
+      }
+    }
+    return std::make_pair(manifest, rows_by_model);
+  };
+  // Pass 1: the taper strip's key (as in the UnpatchedPair reproducer) and an isolated
+  // edge's key (a model for it is kept in every library below so that the run places
+  // something beside the refused pair and is no raw fallback).
+  const auto [first, first_rows] = Preflight("missing", strip_library_3d_path);
+  json taper_signature, edge_signature;
+  int taper_strips = 0;
+  for (const auto &feature : first["Identification"]["Features"])
+  {
+    if (feature["Type"] == "SameConductorStrip" &&
+        feature["Signature"]["SeparationOverR"].get<double>() > 1.3)
+    {
+      taper_strips++;
+      taper_signature = feature["Signature"];
+    }
+    else if (feature["Type"] == "IsolatedEdge" && edge_signature.is_null())
+    {
+      edge_signature = feature["Signature"];
+    }
+  }
+  REQUIRE(taper_strips >= 1);
+  REQUIRE_FALSE(edge_signature.is_null());
+  // A Signature-keyed library of strip models (WriteSignatureStripLibrary's form) plus the
+  // isolated-edge model.
+  auto WriteLibrary = [&](const fs::path &path, const std::string &name,
+                          const std::vector<std::pair<std::string, json>> &strips)
+  {
+    if (Mpi::Root(Mpi::World()))
+    {
+      json library = {{"Version", 2},
+                      {"Name", name},
+                      {"MatchingRadius", R},
+                      {"CouponDepth", R},
+                      {"Models", json::array()}};
+      for (const auto &[model_name, signature] : strips)
+      {
+        library["Models"].push_back(
+            {{"Name", model_name},
+             {"Topology", "SameConductorStrip"},
+             {"Signature", signature},
+             {"Separation", signature.at("SeparationOverR").get<double>() * R},
+             {"SeparationTolerance", 1.0e-8},
+             {"Reference", {0.0, 0.0, 0.0}},
+             {"FabricatedMatrix", fabricated_path.string()},
+             {"ThinMatrix", thin_path.string()},
+             {"BasisPoints", points_path.string()}});
+      }
+      library["Models"].push_back({{"Name", "isolated-edge-keyed"},
+                                   {"Topology", "IsolatedEdge"},
+                                   {"Signature", edge_signature},
+                                   {"Reference", {0.0, 0.0, 0.0}},
+                                   {"FabricatedMatrix", fabricated_path.string()},
+                                   {"ThinMatrix", thin_path.string()},
+                                   {"BasisPoints", points_path.string()}});
+      std::ofstream output(path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+  };
+  auto IsTaperStrip = [](const json &feature)
+  {
+    return feature["Type"] == "SameConductorStrip" &&
+           feature["Signature"]["SeparationOverR"].get<double>() > 1.3;
+  };
+  auto Node = [&](double separation_over_R)
+  {
+    json signature = taper_signature;
+    signature["SeparationOverR"] = separation_over_R;
+    return signature;
+  };
+
+  // Pass A: the taper-mean model (and the isolated-edge model): no cell of the taper finds
+  // a model at its local separation (the 2-edge part's cells lie below the mean key).
+  const fs::path mean_library = temp.temp_dir / "fabrication-process-strip-r9-mean.json";
+  WriteLibrary(mean_library, "unit-test-process-strip-r9-mean",
+               {{"same-conductor-strip-taper-mean", taper_signature}});
+  const auto [alone, alone_rows] = Preflight("alone", mean_library);
+  REQUIRE(alone["Identification"]["Diagnostics"].contains("PlacedByLocalSeparation"));
+  const auto &alone_record =
+      alone["Identification"]["Diagnostics"]["PlacedByLocalSeparation"];
+  CHECK(alone_record["Count"].get<int>() == taper_strips);
+  CHECK(alone_record["PlacedLength"].get<double>() == 0.0);
+  CHECK(alone_record["UnplacedLength"].get<double>() > 0.0);
+  CHECK(alone_record["ToleranceRelative"].get<double>() == 0.10);
+  for (const auto &entry : alone_record["Features"])
+  {
+    CHECK(entry["Type"] == "SameConductorStrip");
+    CHECK(entry["KeyedModel"] == "same-conductor-strip-taper-mean");
+    CHECK(entry["Cells"].get<int>() > 0);
+    CHECK(entry["PlacedCells"].get<int>() == 0);
+    CHECK(entry["InterpolatedCells"].get<int>() == 0);
+    CHECK(entry["Models"].empty());
+    // The 2-edge part's local separations (1.25 -> ~1.44 R), below the key.
+    CHECK(entry["MinSeparationOverR"].get<double>() > 1.2);
+    CHECK(entry["MaxSeparationOverR"].get<double>() < 1.5);
+    CHECK(entry["UnsplitTurn"].get<double>() >= 0.0);
+  }
+  REQUIRE(alone["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  const auto &alone_unpatched = alone["Identification"]["Diagnostics"]["UnpatchedPairs"];
+  CHECK(alone_unpatched["Count"].get<int>() == taper_strips);
+  CHECK_THAT(alone_unpatched["Length"].get<double>(),
+             WithinRel(alone_record["UnplacedLength"].get<double>(), 1.0e-9));
+  for (const auto &entry : alone_unpatched["Features"])
+  {
+    CHECK(entry.value("PlacedByLocalSeparation", false));
+  }
+  CHECK(alone["Summary"]["PlacedByLocalSeparation"]["Count"].get<int>() == taper_strips);
+  CHECK(alone["Summary"]["UnpatchedPairs"]["Count"].get<int>() == taper_strips);
+  for (const auto &feature : alone["Identification"]["Features"])
+  {
+    if (!IsTaperStrip(feature))
+    {
+      continue;
+    }
+    CHECK(feature["Match"]["Status"] == "Unpatched");
+    CHECK_THAT(feature["Match"]["Reason"].get<std::string>(),
+               ContainsSubstring("PlacedByLocalSeparation"));
+    REQUIRE(feature["Match"].contains("PlacedByLocalSeparation"));
+    CHECK(feature["Match"]["PlacedByLocalSeparation"]["PlacedCells"].get<int>() == 0);
+  }
+  CHECK(alone_rows.at("same-conductor-strip-taper-mean") == 0);
+
+  // Pass B: strip nodes at 1.2 / 1.4 / 1.6 R beside the keyed model: every cell is placed
+  // by the bracket interpolation.
+  const fs::path nodes_library = temp.temp_dir / "fabrication-process-strip-r9-nodes.json";
+  WriteLibrary(nodes_library, "unit-test-process-strip-r9-nodes",
+               {{"same-conductor-strip-taper-mean", taper_signature},
+                {"same-conductor-strip-node-1.2", Node(1.2)},
+                {"same-conductor-strip-node-1.4", Node(1.4)},
+                {"same-conductor-strip-node-1.6", Node(1.6)}});
+  const auto [nodes, nodes_rows] = Preflight("nodes", nodes_library);
+  REQUIRE(nodes["Identification"]["Diagnostics"].contains("PlacedByLocalSeparation"));
+  const auto &nodes_record =
+      nodes["Identification"]["Diagnostics"]["PlacedByLocalSeparation"];
+  CHECK(nodes_record["Count"].get<int>() == taper_strips);
+  CHECK(nodes_record["UnplacedLength"].get<double>() == 0.0);
+  CHECK(nodes_record["PlacedLength"].get<double>() > 0.0);
+  CHECK_THAT(nodes_record["PlacedLength"].get<double>(),
+             WithinRel(alone_record["UnplacedLength"].get<double>(), 1.0e-9));
+  for (const auto &entry : nodes_record["Features"])
+  {
+    CHECK(entry["PlacedCells"] == entry["Cells"]);
+    CHECK(entry["InterpolatedCells"] == entry["Cells"]);
+    CHECK(entry["NearMatchedCells"].get<int>() == 0);
+    CHECK(entry["UnusableModels"].get<int>() == 0);
+    double covered = 0.0;
+    std::set<std::string> names;
+    for (const auto &model : entry["Models"])
+    {
+      names.insert(model["Name"].get<std::string>());
+      covered += model["Length"].get<double>();
+    }
+    // The interpolation weights sum to one per cell: the models' lengths sum to the placed
+    // side length; the brackets are the nearest nodes by span (1.2 / 1.4 for the cells
+    // below 1.4 R, 1.4 / the ~1.45 mean key above), never the 1.6 node (beyond every cell
+    // of the 2-edge part).
+    CHECK_THAT(covered, WithinRel(entry["PlacedLength"].get<double>(), 1.0e-9));
+    CHECK(names.count("same-conductor-strip-node-1.2") == 1);
+    CHECK(names.count("same-conductor-strip-node-1.4") == 1);
+    CHECK(names.count("same-conductor-strip-node-1.6") == 0);
+  }
+  CHECK_FALSE(nodes["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  CHECK_FALSE(nodes["Summary"].contains("UnpatchedPairs"));
+  for (const auto &feature : nodes["Identification"]["Features"])
+  {
+    if (!IsTaperStrip(feature))
+    {
+      continue;
+    }
+    CHECK(feature["Match"]["Status"] == "Matched");
+    CHECK(feature["Match"]["Model"] == "same-conductor-strip-taper-mean");
+    CHECK_FALSE(feature["Match"].contains("Reason"));
+    REQUIRE(feature["Match"].contains("PlacedByLocalSeparation"));
+    CHECK(feature["Match"]["PlacedByLocalSeparation"]["PlacedCells"].get<int>() > 0);
+  }
+  CHECK(nodes_rows.at("same-conductor-strip-node-1.2") > 0);
+  CHECK(nodes_rows.at("same-conductor-strip-node-1.4") > 0);
+  CHECK(nodes_rows.at("same-conductor-strip-node-1.6") == 0);
+  // Two co-located patches per interpolated cell: the strip rows come in pairs.
+  CHECK((nodes_rows.at("same-conductor-strip-node-1.2") +
+         nodes_rows.at("same-conductor-strip-node-1.4") +
+         nodes_rows.at("same-conductor-strip-taper-mean")) %
+            2 ==
+        0);
+
+  // 2B on the operator: the unplaced cells are `unpatched` raw-partition portions (pass A:
+  // the run is a recorded NoMatchedFeature raw fallback, which writes no cache), none when
+  // every cell is placed (pass B, whose cache carries the required empty leaf; version 23).
+  auto Operator = [&](const fs::path &library_path, const fs::path &cache_path)
+  {
+    IoData iodata(Config(library_path), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeTaperStripMesh(taper)));
+    LaplaceOperator laplace(iodata, meshes);
+    std::optional<test::GeometryCacheEnvGuard> cache_env;
+    if (!cache_path.empty())
+    {
+      cache_env.emplace(cache_path.string(), true);
+    }
+    SurfaceResponseOperator response(iodata, laplace);
+    double unpatched_length = 0.0;
+    int unpatched_portions = 0;
+    std::set<int> unpatched_features;
+    for (const auto &portion : response.GetModelRawClaimPortions().portions)
+    {
+      if (portion.topology == "unpatched")
+      {
+        unpatched_portions++;
+        unpatched_features.insert(portion.feature);
+        double d2 = 0.0;
+        for (int k = 0; k < 3; k++)
+        {
+          d2 += (portion.p1[k] - portion.p0[k]) * (portion.p1[k] - portion.p0[k]);
+        }
+        unpatched_length += std::sqrt(d2);
+      }
+    }
+    return std::make_tuple(unpatched_portions, unpatched_length, unpatched_features);
+  };
+  {
+    const auto [portions, length, features] = Operator(mean_library, fs::path());
+    CHECK(portions > 0);
+    CHECK(static_cast<int>(features.size()) == taper_strips);
+    CHECK_THAT(length, WithinRel(alone_unpatched["Length"].get<double>(), 1.0e-6));
+  }
+  {
+    const fs::path cache_path = temp.temp_dir / "r9-nodes-geometry-cache.json";
+    const auto [portions, length, features] = Operator(nodes_library, cache_path);
+    CHECK(portions == 0);
+    CHECK(length == 0.0);
+    CHECK(features.empty());
+    Mpi::Barrier(Mpi::World());
+    REQUIRE(fs::exists(cache_path));
+    IoData request_iodata(Config(nodes_library), false);
+    const auto &request = *request_iodata.solver.electrostatic.response_correction;
+    const auto reread = ReadResponseGeometryCache(cache_path, request);
+    CHECK(reread.unpatched_pair_portions.empty());
+    // The leaf round-trips with content, and a cache without it is refused by name.
+    auto with_portions = reread;
+    with_portions.unpatched_pair_portions.push_back(
+        {7, "unpatched", 3, {0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}});
+    const fs::path copy_path = temp.temp_dir / "r9-nodes-geometry-cache-copy.json";
+    const fs::path stale_path = temp.temp_dir / "r9-nodes-geometry-cache-stale.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      WriteResponseGeometryCache(copy_path, with_portions);
+      std::ifstream input(copy_path);
+      json cache = json::parse(input);
+      REQUIRE(cache.at("Version").get<int>() == 23);
+      REQUIRE(cache.at("UnpatchedPairPortions").size() == 1);
+      cache.erase("UnpatchedPairPortions");
+      std::ofstream output(stale_path);
+      output << cache.dump() << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    const auto copied = ReadResponseGeometryCache(copy_path, request);
+    REQUIRE(copied.unpatched_pair_portions.size() == 1);
+    CHECK(copied.unpatched_pair_portions[0].feature == 7);
+    CHECK(copied.unpatched_pair_portions[0].topology == "unpatched");
+    CHECK(copied.unpatched_pair_portions[0].segment == 3);
+    CHECK(copied.unpatched_pair_portions[0].p1[2] == 0.6);
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, request),
+                      ContainsSubstring("without UnpatchedPairPortions"));
+  }
+#endif
+}
+
 namespace
 {
 
@@ -10014,7 +10353,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 22);
+    CHECK(stale["Version"] == 23);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {

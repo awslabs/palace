@@ -74,6 +74,9 @@ function generate_cpw2d_mesh(;
 
     # --- Output ---
     filename::String = "cpw2d.msh",
+    # OI-CPW2D-MESHER-WRITES-REPO-TREE (fix round P2, decision 1247): the directory the mesh
+    # is written to; the default (this file's directory, the repository tree) is unchanged.
+    output_dir::String = @__DIR__,
     verbose::Int     = 0
 )
     # For single-chip, t_metal_L2 / overetch_L2 are ignored.
@@ -1388,7 +1391,7 @@ function generate_cpw2d_mesh(;
 
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
-    gmsh.write(joinpath(@__DIR__, filename))
+    gmsh.write(joinpath(output_dir, filename))
 
     # Summary
     println("=== CPW 2D Cross-Section Mesh ===")

@@ -65,6 +65,18 @@ public:
   // a templated & type erased solution).
   bool print_as_int = false;
 
+  // An INTEGER index / count column (OI-PATCH-ENERGY-CSV-INDEX-PRECISION, fix round P2,
+  // decision 1265): printed as an integer, exactly, whatever its size. The former idiom
+  // Column(name, header, 0, 0, 2, "") printed an index through the 3-significant-digit
+  // float form ("1.24e+02" for 124), so indices beyond 999 collapsed on a join.
+  static Column Integer(std::string name, std::string header_text = "",
+                        long column_group_idx = 0)
+  {
+    Column column(std::move(name), std::move(header_text), column_group_idx, 0);
+    column.print_as_int = true;
+    return column;
+  }
+
   [[nodiscard]] inline std::size_t n_rows() const { return data.size(); }
 
   // Convenience operator at higher level.

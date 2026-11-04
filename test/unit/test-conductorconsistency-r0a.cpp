@@ -2239,7 +2239,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     std::ifstream input(cache_path);
     json cache = json::parse(input);
-    REQUIRE(cache.at("Version").get<int>() == 22);
+    REQUIRE(cache.at("Version").get<int>() == 23);
     REQUIRE(cache.at("ExclusionPortions").size() == identification_portions.size());
     cache.erase("ExclusionPortions");
     std::ofstream output(stale_path);
@@ -2256,6 +2256,70 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, request),
                     ContainsSubstring("without ExclusionPortions"));
+#endif
+}
+
+// OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2; DESIGN-v3 s8; the P0 FE6 and the
+// stage-E W31 readings: the top-level surface-response-exclusion-energy.csv of an adaptive
+// run was a SYMLINK into iteration01/ because every later cycle opened the path
+// SaveIteration had replaced by a symlink and wrote THROUGH it): on an adaptive run the
+// final cycle's table is a REAL top-level file and the archived first cycle's copy keeps
+// its own content.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Electrostatic Diagnostics.ExclusionEnergy on an adaptive run writes a real "
+    "top-level table (OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE)",
+    "[electrostaticsolver][surfaceresponseoperator][exclusionenergy][amr][3d]"
+    "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "shorted-cpw-stub-amr.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "es8amr");
+  json config = ConvexIslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Model"]["Refinement"] = {{"MaxIts", 1},
+                                   {"Tol", 1.0e-9},
+                                   {"UpdateFraction", 0.5},
+                                   {"Nonconformal", true},
+                                   {"SaveAdaptIterations", true}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["Diagnostics"] = {{"ExclusionEnergy", true}};
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path dir = temp.temp_dir / "exclusion-energy-amr";
+  config["Problem"]["Output"] = dir.string();
+  test::RunElectrostatic(config);
+  Mpi::Barrier(Mpi::World());
+  const fs::path table = dir / "surface-response-exclusion-energy.csv";
+  // SaveIteration's archive folder is iteration<N> with N as wide as MaxIts (1 digit here).
+  REQUIRE(fs::exists(dir / "iteration1"));
+  REQUIRE(fs::exists(table));
+  CHECK_FALSE(fs::is_symlink(fs::symlink_status(table)));
+  CHECK(fs::is_regular_file(fs::symlink_status(table)));
+  const fs::path archived = dir / "iteration1" / "surface-response-exclusion-energy.csv";
+  REQUIRE(fs::is_regular_file(archived));
+  // Both cycles wrote the same classes (the geometry is the same); the archived copy is the
+  // first cycle's own write, not a later cycle's written through the link.
+  std::ifstream a(table), b(archived);
+  std::string head_a, head_b;
+  std::getline(a, head_a);
+  std::getline(b, head_b);
+  CHECK(head_a == head_b);
+  CHECK(head_a.rfind("source,class,type,", 0) == 0);
 #endif
 }
 
