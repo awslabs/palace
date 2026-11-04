@@ -877,7 +877,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (root && !response_correction->GetPatchAssignments().empty())
     {
       TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
-      patches.table.insert(Column("model", "model", 0, 0, 2, ""));
+      patches.table.insert(Column::Integer("model", "model"));
       for (const char *coordinate : {"x", "y", "z"})
       {
         patches.table.insert(fmt::format("origin_{}", coordinate),
@@ -1937,11 +1937,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     using VT = Units::ValueType;
     TableWithCSVFile traces(post_dir / "surface-response-traces.csv");
-    traces.table.insert(Column("source", "i", 0, 0, 2, ""));
-    traces.table.insert(Column("patch", "patch", 0, 0, 2, ""));
-    traces.table.insert(Column("model", "model", 0, 0, 2, ""));
-    traces.table.insert(Column("coefficient", "coefficient", 0, 0, 2, ""));
-    traces.table.insert(Column("conductor_state", "conductor state", 0, 0, 2, ""));
+    traces.table.insert(Column::Integer("source", "i"));
+    traces.table.insert(Column::Integer("patch", "patch"));
+    traces.table.insert(Column::Integer("model", "model"));
+    traces.table.insert(Column::Integer("coefficient", "coefficient"));
+    traces.table.insert(Column::Integer("conductor_state", "conductor state"));
     traces.table.insert("value", "value (V)");
     for (const auto &[source, entries] : spatial_patch_traces)
     {
@@ -1967,7 +1967,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     using VT = Units::ValueType;
     TableWithCSVFile output(post_dir / "surface-Q-corrected.csv");
-    output.table.insert(Column("source", "i", 0, 0, 2, ""));
+    output.table.insert(Column::Integer("source", "i"));
     output.table.insert("domain_raw", "E_elec raw (J)");
     output.table.insert("domain_postprocessed_fixed_trace",
                         "E_elec postprocessed fixed-trace (J)");
@@ -2095,10 +2095,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     output.WriteFullTableTrunc();
 
     TableWithCSVFile model_output(post_dir / "surface-response-model-energy.csv");
-    model_output.table.insert(Column("source", "source", 0, 0, 2, ""));
-    model_output.table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
-    model_output.table.insert(Column("model", "model", 0, 0, 2, ""));
-    model_output.table.insert(Column("patch_count", "patch count", 0, 0, 2, ""));
+    model_output.table.insert(Column::Integer("source", "source"));
+    model_output.table.insert(Column::Integer("evaluation", "evaluation"));
+    model_output.table.insert(Column::Integer("model", "model"));
+    model_output.table.insert(Column::Integer("patch_count", "patch count"));
     model_output.table.insert("patch_weight", "patch weight");
     model_output.table.insert("domain_correction", "domain correction (J)");
     for (const auto &[interface, data] : interfaces)
@@ -2162,11 +2162,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         assignments.emplace(assignment.global_index, &assignment);
       }
       TableWithCSVFile patch_output(post_dir / "surface-response-patch-energy.csv");
-      patch_output.table.insert(Column("source", "source", 0, 0, 2, ""));
-      patch_output.table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
-      patch_output.table.insert(Column("patch", "patch", 0, 0, 2, ""));
-      patch_output.table.insert(Column("model", "model", 0, 0, 2, ""));
-      patch_output.table.insert(Column("feature", "feature", 0, 0, 2, ""));
+      patch_output.table.insert(Column::Integer("source", "source"));
+      patch_output.table.insert(Column::Integer("evaluation", "evaluation"));
+      patch_output.table.insert(Column::Integer("patch", "patch"));
+      patch_output.table.insert(Column::Integer("model", "model"));
+      patch_output.table.insert(Column::Integer("feature", "feature"));
       patch_output.table.insert("weight", "weight");
       patch_output.table.insert("cell_begin", "cell begin (m)");
       patch_output.table.insert("cell_end", "cell end (m)");
@@ -2641,11 +2641,11 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
   if (root)
   {
     surface_output = TableWithCSVFile(post_dir / "surface-response-matrix.csv");
-    surface_output.table.insert(Column("interface", "interface", 0, 0, 2, ""));
-    surface_output.table.insert(Column("edge", "edge", 0, 0, 2, ""));
+    surface_output.table.insert(Column::Integer("interface", "interface"));
+    surface_output.table.insert(Column::Integer("edge", "edge"));
     surface_output.table.insert("distance", "R (m)");
-    surface_output.table.insert(Column("basis_i", "basis_i", 0, 0, 2, ""));
-    surface_output.table.insert(Column("basis_j", "basis_j", 0, 0, 2, ""));
+    surface_output.table.insert(Column::Integer("basis_i", "basis_i"));
+    surface_output.table.insert(Column::Integer("basis_j", "basis_j"));
     surface_output.table.insert("Q", "Q_ij (J)");
     surface_output.table.insert("Q_normal", "Q_ij normal (J)");
     surface_output.table.insert("Q_tangential", "Q_ij tangential (J)");
@@ -2654,8 +2654,8 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
     surface_output.table.insert("Q_total_tangential", "Q_total_ij tangential (J)");
 
     domain_output = TableWithCSVFile(post_dir / "domain-response-matrix.csv");
-    domain_output.table.insert(Column("basis_i", "basis_i", 0, 0, 2, ""));
-    domain_output.table.insert(Column("basis_j", "basis_j", 0, 0, 2, ""));
+    domain_output.table.insert(Column::Integer("basis_i", "basis_i"));
+    domain_output.table.insert(Column::Integer("basis_j", "basis_j"));
     domain_output.table.insert("Q", "Q_ij (J)");
     domain_output.table.reserve(basis_size * (basis_size + 1) / 2, 3);
   }
@@ -2933,11 +2933,11 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
   if (root)
   {
     output = TableWithCSVFile(post_dir / "surface-response-matrix.csv");
-    output.table.insert(Column("interface", "interface", 0, 0, 2, ""));
-    output.table.insert(Column("edge", "edge", 0, 0, 2, ""));
+    output.table.insert(Column::Integer("interface", "interface"));
+    output.table.insert(Column::Integer("edge", "edge"));
     output.table.insert("distance", "R (m)");
-    output.table.insert(Column("basis_i", "basis_i", 0, 0, 2, ""));
-    output.table.insert(Column("basis_j", "basis_j", 0, 0, 2, ""));
+    output.table.insert(Column::Integer("basis_i", "basis_i"));
+    output.table.insert(Column::Integer("basis_j", "basis_j"));
     output.table.insert("Q", "Q_ij (J)");
     output.table.insert("Q_normal", "Q_ij normal (J)");
     output.table.insert("Q_tangential", "Q_ij tangential (J)");
@@ -3092,8 +3092,8 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
   if (root)
   {
     domain_output = TableWithCSVFile(post_dir / "domain-response-matrix.csv");
-    domain_output.table.insert(Column("basis_i", "basis_i", 0, 0, 2, ""));
-    domain_output.table.insert(Column("basis_j", "basis_j", 0, 0, 2, ""));
+    domain_output.table.insert(Column::Integer("basis_i", "basis_i"));
+    domain_output.table.insert(Column::Integer("basis_j", "basis_j"));
     domain_output.table.insert("Q", "Q_ij (J)");
     domain_output.table.reserve(V.size() * (V.size() + 1) / 2, 3);
   }

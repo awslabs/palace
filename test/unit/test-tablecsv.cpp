@@ -162,6 +162,39 @@ TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
   CHECK(formatted.find("nan") == std::string::npos);
 }
 
+// OI-PATCH-ENERGY-CSV-INDEX-PRECISION (fix round P2, decision 1265): the former index idiom
+// Column(name, header, 0, 0, 2, "") printed an integer through the 3-significant-digit
+// float form, so an index beyond 999 collapsed ("1.24e+02" for 124 kept 3 digits; 1234 and
+// 1235 both read 1.23e+03 on a join). Column::Integer prints the integer exactly and the
+// parsed table reads it back exactly.
+TEST_CASE("TableCSV integer index column round-trips exactly", "[tablecsv][Serial]")
+{
+  Table legacy;
+  legacy.insert(Column("patch", "patch", 0, 0, 2, ""));
+  legacy["patch"] << 1234 << 1235;
+  CHECK(legacy.format_table() == "    patch\n 1.23e+03\n 1.24e+03\n");  // the collapse
+
+  Table table;
+  table.insert(Column::Integer("patch", "patch"));
+  table.insert(Column("energy", "energy (J)"));
+  for (const int index : {1, 999, 1000, 1234, 1235, 123456})
+  {
+    table["patch"] << index;
+    table["energy"] << 1.5e-18 * index;
+  }
+  const std::string text = table.format_table();
+  CHECK(text.rfind("patch,", 0) == 0);
+  CHECK(text.find("1234,") != std::string::npos);
+  CHECK(text.find("1235,") != std::string::npos);
+  CHECK(text.find("123456,") != std::string::npos);
+  CHECK(text.find("e+03") == std::string::npos);
+  Table parsed(text);
+  REQUIRE(parsed[0].n_rows() == 6);
+  CHECK(parsed[0].data[3] == 1234.0);
+  CHECK(parsed[0].data[4] == 1235.0);
+  CHECK(parsed[0].data[5] == 123456.0);
+}
+
 TEST_CASE("TableCSVParsing1_Basic", "[tablecsv][Serial]")
 {
   Table table_expected{};
