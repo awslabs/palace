@@ -42,6 +42,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `(L0 / Lc)^2`. This put them off by orders of magnitude for meshes in micrometers with
     the default `Lc`. The CSV postprocessing was not affected.
     [PR 1098](https://github.com/awslabs/palace/pull/1098).
+  - Added an MFEM patch for [mfem/mfem#5721](https://github.com/mfem/mfem/pull/5721),
+    which makes the refinement and rebalancing of nonconforming meshes in parallel
+    independent of the arrival order of MPI messages. The numbering of adapted meshes, the
+    meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
+    them no longer depend on the timing of MPI messages.
+    [PR 1129](https://github.com/awslabs/palace/pull/1129).
 
 #### Build system
 

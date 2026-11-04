@@ -502,6 +502,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff"
   f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3
 )
+# https://github.com/mfem/mfem/pull/5721
+# Nonconforming refinement, derefinement and rebalancing in parallel process their messages in
+# the order of the source ranks, so the mesh numbering does not depend on message timing.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5721.diff
+  "https://github.com/mfem/mfem/commit/c79f309399361b2d6aadc207087ca6dc475513b4.diff"
+  75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
