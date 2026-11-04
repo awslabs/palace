@@ -24,6 +24,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     when the face neighbors of some processes have only quadrilateral faces.
     [PR 1124](https://github.com/awslabs/palace/pull/1124).
 
+#### Build system
+
+  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
+    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
+    the only sparse direct solver failed.
+
 ## [0.19.0] - 2026-11-02
 
 #### New Features
