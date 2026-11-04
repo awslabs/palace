@@ -4,6 +4,7 @@
 #include "gmg.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
@@ -233,6 +234,13 @@ void GeometricMultigridSolver<OperType>::SetUpPMLSubdomain(
                             row_starts, col_starts);
     pml_S.reset(St.Transpose());
 
+    // Print the size of the PML subdomain before its factorization, which dominates the
+    // memory of the preconditioner when the PML regions are a significant fraction of the
+    // domain (and the output is flushed, in case the factorization runs out of memory).
+    Mpi::Print(" PML subdomain correction: {:d} unknowns ({:.1f}% of the finest level)\n",
+               n_glob, 100.0 * static_cast<double>(n_glob) / static_cast<double>(n_fine));
+    std::fflush(stdout);
+
     // PML subdomain operator A_PML = Sᵀ A S.
     std::unique_ptr<Operator> Ar_pml, Ai_pml;
     if (hAr)
@@ -251,9 +259,6 @@ void GeometricMultigridSolver<OperType>::SetUpPMLSubdomain(
     pml_x.SetSize(pml_S->Width());
     pml_r.UseDevice(true);
     pml_x.UseDevice(true);
-
-    Mpi::Print(" PML subdomain correction: {:d} unknowns ({:.1f}% of the finest level)\n",
-               n_glob, 100.0 * static_cast<double>(n_glob) / static_cast<double>(n_fine));
   }
 }
 

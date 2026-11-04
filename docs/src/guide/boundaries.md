@@ -295,7 +295,10 @@ typically reduces the number of iterations further, at the cost of a coarse-leve
 factorization of a complex-valued matrix, and is needed for convergence with Floquet periodic
 boundaries at oblique incidence. Simulations with PML regions therefore require a sparse
 direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not supported with PML
-regions.
+regions. When the PML regions hold a significant fraction of the unknowns (for example a
+layer on all of the faces of a small domain), the factorization of the PML subdomain can
+dominate the memory cost of the simulation. STRUMPACK and MUMPS tend to use less memory than
+SuperLU_DIST, and are thus recommended for such cases.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
