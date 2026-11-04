@@ -588,10 +588,17 @@ TEST_CASE("FixedTraceFrequencyShift on the Phase-0 numbers", "[magnetic][Serial]
     electric.magnetic_domain_correction = 0.0;
     CHECK_THAT(FixedTraceFrequencyShift(electric, raw_energy),
                WithinAbs(cell.electric_only, 1.0e-5));
-    // The gates: closure_independent_confident, magnetic_confident, has_magnetic.
+    // The gates: magnetic_confident and has_magnetic withhold the shift; decision 1250:
+    // closure_independent_confident does NOT (a device with ends: the (ii) stub's short
+    // and open end are 0.95 % unmatched, so the closure-independent gate's coverage
+    // criterion >= 1 - 1e-10 fails while the shift is read unchanged, the flag beside it).
     SurfaceResponseOperator::MaxwellResponse gated = response;
     gated.closure_independent_confident = false;
-    CHECK(std::isnan(FixedTraceFrequencyShift(gated, raw_energy)));
+    gated.matched_length_fraction = 0.990517;
+    CHECK_THAT(FixedTraceFrequencyShift(gated, raw_energy), WithinAbs(shift, 0.0));
+    gated.confident = false;
+    gated.maximum_trace_closure_spread = 0.0834;
+    CHECK_THAT(FixedTraceFrequencyShift(gated, raw_energy), WithinAbs(shift, 0.0));
     gated = response;
     gated.magnetic_confident = false;
     CHECK(std::isnan(FixedTraceFrequencyShift(gated, raw_energy)));
@@ -599,6 +606,20 @@ TEST_CASE("FixedTraceFrequencyShift on the Phase-0 numbers", "[magnetic][Serial]
     gated.has_magnetic = false;
     CHECK(std::isnan(FixedTraceFrequencyShift(gated, raw_energy)));
   }
+}
+
+// Decision 1250: the matched energy share the fixed-trace shift rests on = 1 - (the raw
+// within-R energy kept raw by the electric correction) / (the raw within-R energy of the
+// target interfaces): 1 at full coverage (bitwise), the (ii) stub's 0.95 % unmatched ends
+// read as their energy share, NaN without within-R energy.
+TEST_CASE("FixedTraceShiftCoverage", "[magnetic][Serial]")
+{
+  const double within = 2.0811e-13;
+  CHECK(FixedTraceShiftCoverage(within, 0.0) == 1.0);
+  CHECK_THAT(FixedTraceShiftCoverage(within, 0.0095 * within), WithinAbs(0.9905, 1.0e-12));
+  CHECK_THAT(FixedTraceShiftCoverage(1.0, 0.25), WithinAbs(0.75, 0.0));
+  CHECK(std::isnan(FixedTraceShiftCoverage(0.0, 0.0)));
+  CHECK(std::isnan(FixedTraceShiftCoverage(-1.0, 0.0)));
 }
 
 // The Phase-1 gate G-d loader read (prereg-gates.md): the leaves of the library named by

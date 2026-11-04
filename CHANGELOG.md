@@ -48,6 +48,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `MagneticRules.SameMeshToleranceWithMeshIdentity` applies to a twin whose
     `MagneticSource.MeshOfRecordSha256Match` records both coupon meshes identical to the
     model's meshes of record (absent = `SameMeshTolerance` everywhere).
+    Decision 1250 (Phase 2, the (ii) resonator): the fixed-trace shift follows the SAME
+    coverage rule as the electric fixed-trace correction (printed on partial coverage, the
+    uncovered requirements kept raw): it is no longer withheld by the closure-independent
+    confidence gate (whose coverage criterion >= 1 - 1e-10 made it NaN on every device
+    with ends); the magnetic loop gate stays; `fixed-trace shift coverage` prints the
+    matched energy share the shift rests on.
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the

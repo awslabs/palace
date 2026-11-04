@@ -112,8 +112,9 @@ void NondimensionalizeSurfaceResponseGridFunctions(Units &units, GridFunction *E
 double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
                                 double raw_normalization_energy)
 {
-  if (!response.has_magnetic || !response.closure_independent_confident ||
-      !response.magnetic_confident)
+  // Decision 1250: not gated by closure_independent_confident (the electric correction's
+  // coverage rule applies: printed on partial coverage, the uncovered part kept raw).
+  if (!response.has_magnetic || !response.magnetic_confident)
   {
     return std::numeric_limits<double>::quiet_NaN();
   }
@@ -122,6 +123,15 @@ double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &
               "energy!");
   return (response.magnetic_domain_correction - response.domain_correction) /
          (2.0 * raw_normalization_energy);
+}
+
+double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_energy)
+{
+  if (!(within_radius_raw_energy > 0.0))
+  {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return 1.0 - kept_raw_energy / within_radius_raw_energy;
 }
 
 template <ProblemType solver_t>
@@ -1992,6 +2002,9 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     }
     if (surface_response_postprocess_enabled)
     {
+      // Decision 1250: the matched energy share of the fixed-trace shift, accumulated over
+      // the target interfaces from the same partition the electric correction uses.
+      double shift_coverage_within_radius = 0.0, shift_coverage_kept_raw = 0.0;
       for (const int target : target_interfaces)
       {
         auto interface = result.interfaces.find(target);
@@ -2037,6 +2050,9 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
             outside->energy_outside + fabricated->second + kept_raw;
         interface->second.corrected_energy_fixed_flux =
             outside->energy_outside + fabricated_fixed_flux->second + kept_raw;
+        shift_coverage_within_radius +=
+            interface->second.raw_energy - outside->energy_outside;
+        shift_coverage_kept_raw += kept_raw;
         const double closure_scale =
             std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
         if (closure_scale > 0.0)
@@ -2045,6 +2061,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
               std::abs(fabricated->second - fabricated_fixed_flux->second) / closure_scale;
         }
       }
+      result.fixed_trace_shift_coverage =
+          FixedTraceShiftCoverage(shift_coverage_within_radius, shift_coverage_kept_raw);
     }
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
@@ -2341,9 +2359,12 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       // frequency shift` is the corrected frequency of record (USER 1221 D6); `magnetic
       // term applied` says whether a non-zero dK was in the corrected operator the
       // self-consistent columns report; the fallback columns are the magnetic image of
-      // the loop-fit CSV's withheld correction (decision 955 D6).
+      // the loop-fit CSV's withheld correction (decision 955 D6); `fixed-trace shift
+      // coverage` is the matched energy share the shift rests on (decision 1250: the shift
+      // follows the electric correction's coverage rule, the confidence flags apart).
       table.insert("fixed_trace_frequency_shift", "fixed-trace frequency shift");
       table.insert("fixed_trace_corrected_frequency", "f fixed-trace corrected (GHz)");
+      table.insert("fixed_trace_shift_coverage", "fixed-trace shift coverage");
       table.insert("magnetic_domain_correction", "magnetic domain correction (J)");
       table.insert("magnetic_loop_residual", "magnetic loop residual");
       table.insert("magnetic_weighted_loop_residual",
@@ -2528,6 +2549,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table["fixed_trace_frequency_shift"] << (magnetic ? shift : nan);
     table["fixed_trace_corrected_frequency"]
         << (magnetic && std::isfinite(shift) ? frequency_GHz * (1.0 + shift) : nan);
+    // Decision 1250: the matched energy share the shift rests on (1 at full coverage).
+    table["fixed_trace_shift_coverage"]
+        << (magnetic ? result.fixed_trace_shift_coverage : nan);
     table["magnetic_domain_correction"]
         << (magnetic
                 ? units.Dimensionalize<VT::ENERGY>(confidence.magnetic_domain_correction)

@@ -2281,12 +2281,20 @@ first-order fixed-trace frequency shift of the RAW mode,
 ``U_{m,defect} = \tfrac{1}{2} \sum_p w_p a_m^H dS_m a_m`` and ``U_{e,defect}`` the
 electric domain correction, is THE CORRECTED FREQUENCY OF RECORD (USER decision 1221 D6):
 `fixed-trace frequency shift` and `f fixed-trace corrected (GHz)` in
-`surface-response-confidence.csv`, gated by the closure-independent confidence gates and
-the magnetic term's own loop gate (`magnetic confidence pass`: the response-weighted dual
-loop residual, the in-plane circulation of ``\bm{B} \cdot \hat{n}`` around every closed
-contour, at most 0.05, and the response-weight fraction of paths above 0.05 at most 0.01,
-the electric gate's two components), NOT by the trace-closure spread, which is printed
-beside it. Both halves are read on the SAME patch set: a patch the electric loop fit
+`surface-response-confidence.csv`, gated by the magnetic term's own loop gate (`magnetic
+confidence pass`: the response-weighted dual loop residual, the in-plane circulation of
+``\bm{B} \cdot \hat{n}`` around every closed contour, at most 0.05, and the
+response-weight fraction of paths above 0.05 at most 0.01, the electric gate's two
+components) and NOT by the closure-independent confidence gates nor the trace-closure
+spread, which are printed beside it (decision 1250: the shift follows the SAME coverage
+rule as the electric fixed-trace correction it extends, which is printed on partial
+coverage with the uncovered requirements kept raw, decision 394 F2; the closure-independent
+gate's coverage criterion ``\geq 1 - 10^{-10}`` had withheld the shift on every device with
+ends). `fixed-trace shift coverage` is the matched energy share the shift rests on: one
+minus the raw within-R energy of the target interfaces that the electric correction keeps
+RAW (the uncovered requirements, the DomainBoundary claims, the spatial-cluster-priority
+and conductor-consistency exclusions, the loop remainder) over their raw within-R energy
+(1 at full coverage). Both halves are read on the SAME patch set: a patch the electric loop fit
 serves raw (`loop fallback`, share above 0.25) adds neither its electric nor its magnetic
 domain correction to the shift; the magnetic part it would have added is printed as
 `withheld magnetic domain correction (J)` with `magnetic fallback patches` (the magnetic

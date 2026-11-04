@@ -56,11 +56,24 @@ struct SolverData;
 // correction, lowering the frequency when positive), U_m,defect =
 // response.magnetic_domain_correction (the magnetic one, raising it) and U_raw the raw
 // normalization energy (1/2 E^H M E plus the lumped-port capacitor energy); NaN unless the
-// response carries the magnetic term and passes closure_independent_confident AND
-// magnetic_confident (never gated by the trace-closure spread). One function, so that the
-// column of record and its unit test read the same formula (review d1227 MAJOR-2).
+// response carries the magnetic term and passes magnetic_confident (the magnetic term's
+// own loop gate). Decision 1250 (mx-sc-magnetic Phase 2): the shift follows the SAME
+// coverage rule as the electric fixed-trace correction it extends, which the binary prints
+// on partial coverage with the uncovered requirements kept raw (decision 394 F2); it is NOT
+// gated by closure_independent_confident (whose coverage criterion >= 1 - 1e-10 withheld
+// it on every device with ends) nor by the trace-closure spread: those flags are printed
+// beside it, and `fixed-trace shift coverage` (FixedTraceShiftCoverage) names the matched
+// energy share the shift rests on. One function, so that the column of record and its
+// unit test read the same formula (review d1227 MAJOR-2).
 double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
                                 double raw_normalization_energy);
+
+// Decision 1250: the matched energy share used by the fixed-trace shift = 1 - (the raw
+// within-R interface energy the electric correction keeps RAW: the uncovered requirements,
+// the DomainBoundary claims, the spatial-cluster priority and conductor-consistency
+// exclusions and the loop remainder) / (the raw within-R energy of the target interfaces);
+// 1 at full coverage, NaN when there is no within-R energy to cover.
+double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_energy);
 
 // Statically specify if solver uses real or complex fields.
 
@@ -367,11 +380,14 @@ protected:
     // 1229): the first-order fixed-trace frequency shift of the raw mode / frequency,
     // d omega / omega = (U_m,defect - U_e,defect) / (2 U_raw) with U_e,defect the electric
     // domain correction, U_m,defect the magnetic one and U_raw the raw normalization
-    // energy; gated by closure_independent_confident AND the magnetic term's own loop gate
-    // (NOT by the trace-closure spread, which is printed beside it): NaN when withheld
+    // energy; gated by the magnetic term's own loop gate only (decision 1250: NOT by
+    // closure_independent_confident nor the trace-closure spread, which are printed beside
+    // it; the shift follows the electric correction's coverage rule): NaN when withheld
     // (FixedTraceFrequencyShift). Written only when a magnetic leaf was read (the columns
-    // exist then; NaN when no model carries the term).
+    // exist then; NaN when no model carries the term). fixed_trace_shift_coverage = the
+    // matched energy share the shift rests on (FixedTraceShiftCoverage; decision 1250).
     double fixed_trace_frequency_shift = std::numeric_limits<double>::quiet_NaN();
+    double fixed_trace_shift_coverage = std::numeric_limits<double>::quiet_NaN();
     double magnetic_domain_correction = 0.0;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;
