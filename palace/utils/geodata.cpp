@@ -4498,6 +4498,40 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   // of elements in the mesh has not changed, just their connectivity has).
   constexpr bool generate_bdr = false;
   new_mesh->FinalizeTopology(generate_bdr);
+  if (!crack_boundary_attributes.empty() && !crack_bdr_elem.empty())
+  {
+    // OI-CRACK-SAME-CONDUCTOR-PORT-SEGFAULT (fix round P2; decision 1260 Q-D (i)): a
+    // boundary element whose vertex set is no longer a face of any element after the tear
+    // (a crack seam running through a boundary element kept out of the crack set, e.g. a
+    // lumped port between two pieces of one cracked sheet) is tolerated by the conforming
+    // Mesh (be_to_face -1) but dereferenced by the nonconforming conversion
+    // (NCMesh::OnMeshUpdated) as undefined behaviour: verified here, by name, on every
+    // platform instead.
+    std::map<int, std::vector<int>> dangling;
+    for (int be = 0; be < new_mesh->GetNBE(); be++)
+    {
+      if (new_mesh->GetBdrElementFaceIndex(be) < 0)
+      {
+        dangling[new_mesh->GetBdrAttribute(be)].push_back(be);
+      }
+    }
+    if (!dangling.empty())
+    {
+      std::string text;
+      for (const auto &[attribute, elements] : dangling)
+      {
+        text += fmt::format("{}attribute {:d}: {:d} element(s) (first {:d})",
+                            text.empty() ? "" : "; ", attribute,
+                            static_cast<int>(elements.size()), elements.front());
+      }
+      MFEM_ABORT("Cracking the interior boundaries left "
+                 << text
+                 << " boundary element(s) whose vertices form no face of any element (a "
+                    "crack seam through a boundary element excluded from the crack set, "
+                    "e.g. a lumped port between two pieces of one cracked sheet; "
+                    "OI-CRACK-SAME-CONDUCTOR-PORT-SEGFAULT)!");
+    }
+  }
   if (orig_mesh->GetNodes())
   {
     TransferHighOrderNodes(*orig_mesh, *new_mesh);
