@@ -89,7 +89,7 @@ index 67ef4400a..420d94d4e 100644
   * (Optional) Sets AMG parameters for \f$B_\Pi\f$.
   * The defaults are 10, 1, 3, 0.25, 0, 0. See the user's manual for more details.
 diff --git a/src/parcsr_ls/_hypre_parcsr_ls.h b/src/parcsr_ls/_hypre_parcsr_ls.h
-index 594c210e0..19e610e2f 100644
+index 594c210e0..ec89a4e88 100644
 --- a/src/parcsr_ls/_hypre_parcsr_ls.h
 +++ b/src/parcsr_ls/_hypre_parcsr_ls.h
 @@ -318,6 +318,12 @@ typedef struct
@@ -116,7 +116,16 @@ index 594c210e0..19e610e2f 100644
  #define hypre_ParAMGDataKeepTranspose(amg_data) ((amg_data)->keepTranspose)
  #define hypre_ParAMGDataModularizedMatMat(amg_data) ((amg_data)->modularized_matmat)
  
-@@ -2443,6 +2453,20 @@ HYPRE_Int hypre_BoomerAMGCoarsenCR ( hypre_ParCSRMatrix *A, hypre_IntArray **CF_
+@@ -1036,6 +1046,8 @@ typedef struct
+    HYPRE_Int B_Pi_coarsen_type;
+    HYPRE_Int B_Pi_agg_levels;
+    HYPRE_Int B_Pi_relax_type;
++   /* solve-phase agglomeration target (rows per process) of the AMG solvers, 0: off */
++   HYPRE_Int B_amg_redist_target;
+    HYPRE_Int B_Pi_coarse_relax_type;
+    HYPRE_Real B_Pi_theta;
+    HYPRE_Int B_Pi_interp_type;
+@@ -2443,6 +2455,20 @@ HYPRE_Int hypre_BoomerAMGCoarsenCR ( hypre_ParCSRMatrix *A, hypre_IntArray **CF_
  HYPRE_Int hypre_BoomerAMGCycle ( void *amg_vdata, hypre_ParVector **F_array,
                                   hypre_ParVector **U_array );
  
