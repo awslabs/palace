@@ -115,6 +115,9 @@ For frequency domain driven simulations,
 model is excited by a time harmonic incident field (port boundary) or surface current.
 The user can specify a port excitation using
 [lumped ports or numeric wave ports](boundaries.md#Lumped-and-wave-port-excitation).
+For scattering problems, the model can instead be excited by an
+[incident plane wave](../features/planewave.md), with the far field and the radar cross
+section of the scattered field computed on a far-field surface.
 
 The default frequency sweep behavior for frequency domain driven simulations is to perform a
 uniform sampling from the minimum to the maximum specified frequency of interest, using the

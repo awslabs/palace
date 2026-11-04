@@ -23,6 +23,7 @@ installed test data is self-contained and does not depend on source-tree example
   - [Inductance Matrix for a Pair of Concentric Rings](rings.md)
   - [Dipole Antenna and Radiation Fields](antenna.md)
   - [Microstrip Patch Antenna](patch_antenna.md)
+  - [Radar Cross Section of a Coated Sphere](rcs_coated_sphere.md)
   - [Eigenmodes of a Cylinder](cylinder.md)
   - [Signal Propagation in a Coaxial Cable](coaxial.md)
   - [Crosstalk Between Coplanar Waveguides](cpw.md)

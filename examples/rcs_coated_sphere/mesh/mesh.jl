@@ -126,7 +126,10 @@ function generate_rcs_coated_sphere_mesh(;
 
     # Classify the volumes by the half-extent of their bounding box. The fragment also
     # leaves a volume filling the core, which is removed so that the PEC core is a hole.
-    halfsize(dim, tag) = maximum(diff(reshape(collect(gmsh.model.getBoundingBox(dim, tag)), 3, 2), dims=2)) / 2
+    function halfsize(dim, tag)
+        bbox = reshape(collect(gmsh.model.getBoundingBox(dim, tag)), 3, 2)
+        return maximum(bbox[:, 2] - bbox[:, 1]) / 2
+    end
     core_vols, coat_vols, tf_vols, sf_vols = Int[], Int[], Int[], Int[]
     for (_, v) in gmsh.model.getEntities(3)
         a = halfsize(3, v)

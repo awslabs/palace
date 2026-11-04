@@ -115,6 +115,7 @@ makedocs(
         "Configuration File" => Any["config/config.md", "config/reference.md"],
         "Features" => Any[
             "features/farfield.md",
+            "features/planewave.md",
             "features/adaptive_driven_solver.md",
             "features/circuit_extraction.md"
         ],
@@ -124,6 +125,7 @@ makedocs(
             "examples/rings.md",
             "examples/antenna.md",
             "examples/patch_antenna.md",
+            "examples/rcs_coated_sphere.md",
             "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
