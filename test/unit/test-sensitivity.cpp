@@ -454,9 +454,12 @@ TEST_CASE("Eigenmode system material and lumped port derivatives",
       {MaterialProperty::CONDUCTIVITY, {1}},
       {MaterialProperty::PERMEABILITY, {0, 1}},
       {MaterialProperty::LONDON_DEPTH, {1}}};
-  for (const auto &[property, materials] : properties)
+  for (const auto &entry : properties)
   {
-    for (const int k : materials)
+    // The lambda below captures the property, which may not be a structured binding with
+    // OpenMP.
+    const MaterialProperty property = entry.first;
+    for (const int k : entry.second)
     {
       INFO("Property " << static_cast<int>(property) << " of material " << k);
       const auto dT = space_op.GetSystemMaterialDerivative(
