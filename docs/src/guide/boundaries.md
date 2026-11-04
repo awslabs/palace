@@ -382,7 +382,8 @@ memory of the same mesh with a first-order absorbing boundary (11 s and 12 GB), 
 than a sparse direct solve of the whole system: for a box of 546,000 unknowns, 81% of which
 are in the PML, 38 s and 35 GB, against 77 s and 57 GB. PML regions are therefore best
 limited to the faces through which waves leave the domain, with few elements across the
-layer.
+layer. When they hold a large fraction of the unknowns, STRUMPACK and MUMPS tend to use less
+memory than SuperLU_DIST for this factorization, and are thus recommended.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
