@@ -2706,12 +2706,15 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   mfem::L2_FECollection fec(0, mesh.Dimension());
   mfem::ParFiniteElementSpace fes(&mesh, &fec);
   mfem::ParGridFunction gid(&fes);
-  for (int e = 0; e < ne; e++)
   {
-    gid(e) = static_cast<double>(vtxdist[rank] + e);
+    double *h_gid = gid.HostWrite();
+    for (int e = 0; e < ne; e++)
+    {
+      h_gid[e] = static_cast<double>(vtxdist[rank] + e);
+    }
   }
   gid.ExchangeFaceNbrData();
-  const mfem::Vector &nbr_gid = gid.FaceNbrData();
+  const double *nbr_gid = gid.FaceNbrData().HostRead();
   std::vector<std::vector<idx_t>> adj(ne);
   for (int f = 0; f < mesh.GetNumFacesWithGhost(); f++)
   {
@@ -2724,7 +2727,7 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     }
     else if (info.IsShared())
     {
-      adj[e1].push_back(static_cast<idx_t>(nbr_gid(e2)));
+      adj[e1].push_back(static_cast<idx_t>(nbr_gid[e2]));
     }
   }
   std::vector<idx_t> xadj(ne + 1, 0), adjncy;
@@ -2742,8 +2745,10 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   }
 
   idx_t wgtflag = 0, numflag = 0, ncon = 1, nparts = size, edgecut = 0;
-  std::vector<real_t> tpwgts(size, static_cast<real_t>(1.0 / size));
-  real_t ubvec = 1.02;
+  // ParMETIS bounds the largest part but not the smallest, so the max/min element ratio
+  // can exceed MaximumImbalance and trigger a rebalance at the next AMR iteration.
+  std::vector<::real_t> tpwgts(size, static_cast<::real_t>(1.0 / size));
+  ::real_t ubvec = 1.02;
   idx_t options[3] = {1, 0, 1};  // User options, no output, fixed seed
   std::vector<idx_t> part(ne);
   int ok =
@@ -2756,14 +2761,16 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     return false;
   }
 
-  // Number the parts by the mean current index of their elements.
+  // Number the parts by the mean current index of their elements, instead of ParMETIS's
+  // remapping which minimizes the migration but loses the node locality. This assumes that
+  // consecutive ranks share a node, as does MFEM's default partition.
   std::vector<double> sum(2 * size, 0.0);  // Sum of the indices and number of elements
   for (int e = 0; e < ne; e++)
   {
     sum[2 * part[e]] += static_cast<double>(vtxdist[rank] + e);
     sum[2 * part[e] + 1] += 1.0;
   }
-  MPI_Allreduce(MPI_IN_PLACE, sum.data(), 2 * size, MPI_DOUBLE, MPI_SUM, comm);
+  Mpi::GlobalSum(2 * size, sum.data(), comm);
   std::vector<int> order(size), new_part(size);
   for (int p = 0; p < size; p++)
   {
@@ -2905,6 +2912,8 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       }
       else
       {
+        Mpi::Warning(comm, "Could not partition the nonconforming mesh with ParMETIS, "
+                           "rebalancing it with MFEM's default partition!\n");
         mesh->Rebalance();
       }
     }

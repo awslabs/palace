@@ -62,6 +62,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     adjacency graph, instead of MFEM's split of the refinement tree leaves into equal
     chunks, which fragmented the subdomains over the AMR iterations. Processes have fewer
     neighbors and exchange less data after a rebalance.
+    [PR 1130](https://github.com/awslabs/palace/pull/1130).
 
 ## [0.19.0] - 2026-11-02
 
