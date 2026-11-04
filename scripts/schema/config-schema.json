@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-0-0",
+  "$id": "urn:palace:schema:6-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -170,7 +170,7 @@
         },
         "PlaneWave": {
           "type": "array",
-          "description": "Array of incident plane wave excitations (prototype). The plane wave is injected on the boundary of a total-field region (total-field/scattered-field formulation): the solution is the total field inside the region and the scattered field outside.",
+          "description": "Array of incident plane wave excitations, with the total-field/scattered-field formulation: the plane wave is injected on the boundary S of a total-field region given by volume attributes, and the solution is the total field inside S and the scattered field outside. The elements outside of the region which touch S must be vacuum. Supported for driven simulations with a uniform frequency sweep.",
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/PlaneWave"
