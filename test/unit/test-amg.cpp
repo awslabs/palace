@@ -87,11 +87,11 @@ TEST_CASE("BoomerAMG zero initial guess", "[amg][Serial][Parallel]")
   b0.Randomize(1 + Mpi::Rank(comm));
 
   // One or several V-cycles and sweeps (the zero flag must not survive the first
-  // relaxation), with and without aggressive coarsening.
-  for (auto [cycle_it, smooth_it, agg_coarsen] :
-       {std::tuple{1, 1, true}, std::tuple{2, 2, true}, std::tuple{3, 1, false}})
+  // relaxation), with zero, one, or two levels of aggressive coarsening.
+  for (auto [cycle_it, smooth_it, agg_levels] :
+       {std::tuple{1, 1, 1}, std::tuple{2, 2, 1}, std::tuple{3, 1, 0}, std::tuple{1, 1, 2}})
   {
-    BoomerAmgSolver amg(cycle_it, smooth_it, agg_coarsen, 0);
+    BoomerAmgSolver amg(cycle_it, smooth_it, agg_levels, 0);
     amg.SetOperator(A);
     for (int rep = 0; rep < 2; rep++)
     {
@@ -135,10 +135,11 @@ TEST_CASE("BoomerAMG multiple right-hand sides", "[amg][Serial][Parallel]")
     }
     mfem::Vector z(n);
 
-    for (auto [cycle_it, smooth_it, agg_coarsen] :
-         {std::tuple{1, 1, true}, std::tuple{2, 2, true}, std::tuple{3, 1, false}})
+    for (auto [cycle_it, smooth_it, agg_levels] :
+         {std::tuple{1, 1, 1}, std::tuple{2, 2, 1}, std::tuple{3, 1, 0},
+          std::tuple{1, 1, 2}})
     {
-      BoomerAmgSolver amg(cycle_it, smooth_it, agg_coarsen, 0);
+      BoomerAmgSolver amg(cycle_it, smooth_it, agg_levels, 0);
       std::unique_ptr<LaplaceProblem> other;
       if (size > 0)
       {
@@ -188,7 +189,7 @@ TEST_CASE("BoomerAMG multiple right-hand sides", "[amg][Serial][Parallel]")
         CHECK(CommPkgComponents(A) == 1);
         amg.Mult(b[nv - 1], z);
         CHECK(RelMaxDiff(comm, z, x[nv - 1]) == 0.0);
-        BoomerAmgSolver amg2(cycle_it, smooth_it, agg_coarsen, 0);
+        BoomerAmgSolver amg2(cycle_it, smooth_it, agg_levels, 0);
         amg2.SetOperator(A);
         amg2.Mult(b[nv - 1], z);
         CHECK(RelMaxDiff(comm, z, x[nv - 1]) == 0.0);
