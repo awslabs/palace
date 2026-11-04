@@ -1,0 +1,97 @@
+{
+    // Plane wave scattering by a coated sphere: PEC core of radius 5 cm with a lossy
+    // magnetic coating to 7.5 cm, x-polarized plane wave along +z at 600 MHz, with the
+    // total-field/scattered-field formulation. Bistatic radar cross section in the E- and
+    // H-planes and monostatic radar cross section.
+    "Problem":
+    {
+        "Type": "Driven",
+        "Verbose": 2,
+        "Output": "postpro/rcs_coated_sphere"
+    },
+    "Model":
+    {
+        "Mesh": "mesh/rcs_coated_sphere.msh",
+        "L0": 1.0 // 1 meter
+    },
+    "Domains":
+    {
+        "Materials":
+        [
+            {
+                "Attributes": [2, 3] // Vacuum
+            },
+            {
+                "Attributes": [1], // Coating
+                "Permittivity": 4.0,
+                "Permeability": 2.0,
+                "Conductivity": 0.5
+            }
+        ],
+        "PlaneWave":
+        [
+            {
+                "Index": 1,
+                "Attributes": [1, 2], // Total-field region, inside the Huygens surface S
+                "Direction": "+Z",
+                "Polarization": "+X",
+                "Amplitude": 1.0 // V/m
+            }
+        ]
+    },
+    "Boundaries":
+    {
+        "PEC":
+        {
+            "Attributes": [10] // Core
+        },
+        "Absorbing":
+        {
+            "Attributes": [12],
+            "Order": 2
+        },
+        "Postprocessing":
+        {
+            "FarField":
+            {
+                "Attributes": [11], // Interior surface, outside of S
+                "Center": [0.0, 0.0, 0.0],
+                "ThetaPhis":
+                [
+                    [0, 0], [5, 0], [10, 0], [15, 0], [20, 0], [25, 0], [30, 0], [35, 0], [40, 0],
+                    [45, 0], [50, 0], [55, 0], [60, 0], [65, 0], [70, 0], [75, 0], [80, 0], [85, 0],
+                    [90, 0], [95, 0], [100, 0], [105, 0], [110, 0], [115, 0], [120, 0], [125, 0],
+                    [130, 0], [135, 0], [140, 0], [145, 0], [150, 0], [155, 0], [160, 0], [165, 0],
+                    [170, 0], [175, 0], [180, 0], [5, 90], [10, 90], [15, 90], [20, 90], [25, 90],
+                    [30, 90], [35, 90], [40, 90], [45, 90], [50, 90], [55, 90], [60, 90], [65, 90],
+                    [70, 90], [75, 90], [80, 90], [85, 90], [90, 90], [95, 90], [100, 90], [105, 90],
+                    [110, 90], [115, 90], [120, 90], [125, 90], [130, 90], [135, 90], [140, 90],
+                    [145, 90], [150, 90], [155, 90], [160, 90], [165, 90], [170, 90], [175, 90]
+                ]
+            }
+        }
+    },
+    "Solver":
+    {
+        "Order": 3,
+        "Device": "CPU",
+        "Driven":
+        {
+            "Samples":
+            [
+                {
+                    "Type": "Point",
+                    "Freq": [0.6], // GHz
+                    "SaveStep": 0
+                }
+            ]
+        },
+        "Linear":
+        {
+            "Type": "Default",
+            "KSPType": "GMRES",
+            "Tol": 1.0e-8,
+            "MaxIts": 500
+        }
+    }
+}
