@@ -1289,6 +1289,13 @@ struct LibraryModel
   // one interpolation segment. Absent on a legacy coupon (perimeter order at its own
   // angle): exact matches only.
   std::optional<double> corner_connectivity_angle_degrees;
+
+  // R-5 (fix round P2; OI-LIBRARY-INHERITED-PENDING-MODEL, USER decision 1230 Q8 /
+  // supervisor 1260): the model's explicit QualificationStatus when it is not "Qualified"
+  // (a status-less model is the record form of the 2D planner: allowed, nothing recorded)
+  // and the library's AllowPendingModels decision text that admitted it at load.
+  std::optional<std::string> qualification_status;
+  std::string allow_decision;
 };
 
 struct ProcessLibrary
@@ -1307,6 +1314,9 @@ struct ProcessLibrary
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
+  // R-5: the library's AllowPendingModels leaf as read ([{Name, Decision}]; empty when the
+  // library carries none), recorded on the manifest.
+  nlohmann::json allow_pending_models = nlohmann::json::array();
 };
 
 struct EdgeGroup2D
@@ -2243,6 +2253,37 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
               "Fabrication-process response-library Models must be an array!");
   MFEM_VERIFY(allow_empty_models || !models.empty(),
               "Fabrication-process response library must contain at least one model!");
+  // R-5 (fix round P2; OI-LIBRARY-INHERITED-PENDING-MODEL; USER 1230 Q8 REJECT, supervisor
+  // 1260): a model whose explicit "QualificationStatus" is not "Qualified" is REFUSED at
+  // load unless the library's top-level "AllowPendingModels" lists it by Name with the
+  // curator's decision text; a listed model is applied as today (bitwise continuity) and
+  // the admission is recorded on the manifest. A model without the key is the record form
+  // of the 2D planner (allowed, nothing recorded).
+  std::map<std::string, std::string> allow_pending;
+  if (auto allow = data.find("AllowPendingModels"); allow != data.end())
+  {
+    MFEM_VERIFY(allow->is_array(),
+                "Fabrication-process response-library AllowPendingModels must be an array "
+                "of {Name, Decision} objects!");
+    for (const auto &entry : *allow)
+    {
+      MFEM_VERIFY(entry.is_object() && entry.contains("Name") &&
+                      entry.at("Name").is_string() && entry.contains("Decision") &&
+                      entry.at("Decision").is_string() &&
+                      !entry.at("Name").get<std::string>().empty() &&
+                      !entry.at("Decision").get<std::string>().empty(),
+                  "Fabrication-process response-library AllowPendingModels entries must "
+                  "carry a nonempty Name and a nonempty Decision!");
+      MFEM_VERIFY(
+          allow_pending
+              .emplace(entry.at("Name").get<std::string>(),
+                       entry.at("Decision").get<std::string>())
+              .second,
+          "Fabrication-process response-library AllowPendingModels names must be unique!");
+    }
+    library.allow_pending_models = *allow;
+  }
+  std::set<std::string> allowed_pending_used;
   std::set<std::string> names;
   std::set<std::string> legacy_alias_keys;
   std::set<InterfaceDielectric> mapped_interface_types;
@@ -2252,6 +2293,22 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     model.name = entry.at("Name").get<std::string>();
     MFEM_VERIFY(!model.name.empty() && names.insert(model.name).second,
                 "Fabrication-process response model names must be nonempty and unique!");
+    if (auto status = entry.find("QualificationStatus");
+        status != entry.end() && status->is_string() &&
+        status->get<std::string>() != "Qualified")
+    {
+      const auto allowed = allow_pending.find(model.name);
+      MFEM_VERIFY(allowed != allow_pending.end(),
+                  "Fabrication-process response model \""
+                      << model.name << "\" has QualificationStatus \""
+                      << status->get<std::string>()
+                      << "\" (not \"Qualified\") and the library's AllowPendingModels does "
+                         "not list it by Name with a Decision: refused at load (R-5, USER "
+                         "decision 1230 Q8; OI-LIBRARY-INHERITED-PENDING-MODEL)!");
+      model.qualification_status = status->get<std::string>();
+      model.allow_decision = allowed->second;
+      allowed_pending_used.insert(model.name);
+    }
     model.topology = ParseLibraryTopology(entry.at("Topology").get<std::string>());
     model.separation = entry.value("Separation", 0.0) / coordinate_scale;
     model.separation_tolerance = entry.value("SeparationTolerance", 0.0) / coordinate_scale;
@@ -3281,6 +3338,19 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                 "Surface response matrices require interface mappings in the "
                 "fabrication-process response model!");
     library.models.push_back(std::move(model));
+  }
+  for (const auto &[name, decision] : allow_pending)
+  {
+    (void)decision;
+    if (!allowed_pending_used.count(name))
+    {
+      // A stale admission (the named model is absent, Qualified or status-less): nothing is
+      // admitted by it; named, never silent.
+      Mpi::Warning("Fabrication-process response library \"{}\" AllowPendingModels names "
+                   "\"{}\", which is not a non-Qualified model of the library (a stale "
+                   "entry)!\n",
+                   library.name, name);
+    }
   }
   if (version >= 3)
   {
@@ -6067,6 +6137,11 @@ private:
   bool identification_active = false;
   std::string library_path;
   std::string library_name;
+  // R-5: the library's AllowPendingModels leaf (empty when none) and, per admitted model,
+  // its QualificationStatus and the decision text, for the manifest's Library block, the
+  // SelectedModels entries and the Features[].Match records.
+  nlohmann::json library_allow_pending_models = nlohmann::json::array();
+  std::map<std::string, std::pair<std::string, std::string>> pending_models;
   double matching_radius = 0.0;
   double coordinate_scale = 1.0;
   nlohmann::json statistics;
@@ -6159,8 +6234,30 @@ public:
   {
     library_path = std::filesystem::absolute(path).lexically_normal().string();
     library_name = library.name;
+    library_allow_pending_models = library.allow_pending_models;
+    pending_models.clear();
+    for (const auto &model : library.models)
+    {
+      if (model.qualification_status)
+      {
+        pending_models.emplace(
+            model.name, std::make_pair(*model.qualification_status, model.allow_decision));
+      }
+    }
     matching_radius = library.matching_radius * scale;
     coordinate_scale = scale;
+  }
+
+  // R-5: the admitted non-Qualified model's status + decision on a manifest record (a
+  // SelectedModels entry or a Features[].Match), when the model is one.
+  void AnnotatePendingModel(nlohmann::json &record, const std::string &model) const
+  {
+    const auto it = pending_models.find(model);
+    if (it != pending_models.end())
+    {
+      record["QualificationStatus"] = it->second.first;
+      record["AllowDecision"] = it->second.second;
+    }
   }
 
   double ScaleLength(double value) const
@@ -6261,6 +6358,7 @@ public:
         models.push_back({{"Name", model.name},
                           {"Topology", TopologyIdentifier(model.topology)},
                           {"Weight", SnapDirection(weighted_model.weight)}});
+        AnnotatePendingModel(models.back(), model.name);
       }
       requirement["SelectedModels"] = std::move(models);
       requirement["NormalizedLibraryDistance"] =
@@ -6359,9 +6457,27 @@ public:
         {"LengthUnit", "mesh"},
         {"Summary", {{"Counts", counts}, {"TotalEdgeLengths", lengths}}},
         {"Requirements", std::move(entries)}};
+    if (!library_allow_pending_models.empty())
+    {
+      // R-5: the admissions the library carries (a library without the leaf writes none:
+      // its manifest is unchanged).
+      result["Library"]["AllowPendingModels"] = library_allow_pending_models;
+    }
     if (identification_active)
     {
       result["Identification"] = identification;
+      if (!pending_models.empty())
+      {
+        for (auto &feature : result["Identification"]["Features"])
+        {
+          if (feature.contains("Match") && feature["Match"].contains("Model") &&
+              feature["Match"]["Model"].is_string())
+          {
+            AnnotatePendingModel(feature["Match"],
+                                 feature["Match"]["Model"].get<std::string>());
+          }
+        }
+      }
       result["LegacyRequirements"] = Entries(legacy_requirements, nullptr, nullptr);
       // The GDS scatter near-match of DESIGN section 4 (decision 1075 Q1): the Summary leaf
       // is always written (Count 0 and no Counts key on a manifest without one).
@@ -10094,6 +10210,7 @@ IdentificationResult RunGeometryIdentification(
         for (const auto &model : models)
         {
           selected.push_back({{"Name", model}, {"Topology", base.type}, {"Weight", 1.0}});
+          requirements->AnnotatePendingModel(selected.back(), model);
         }
         record["SelectedModels"] = selected;
       }
