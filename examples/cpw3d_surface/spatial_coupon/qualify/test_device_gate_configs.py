@@ -152,6 +152,26 @@ class DrivenForm(unittest.TestCase):
         # The base is not mutated.
         self.assertEqual(base, driven_base())
 
+    def test_driven_drops_the_range_and_sweep_leaves_by_name(self):
+        """Confirmation d1243 MINOR-2: a base carrying the legacy range or the sweep-level Save / AdaptiveTol / Restart leaves
+        yields the one-sample Driven block (Palace would add a second range, verify Save against the one sample, or run an
+        adaptive / restarted sweep over it)."""
+        base = driven_base()
+        base["Solver"]["Driven"].update({"MinFreq": 5.0, "MaxFreq": 6.5, "FreqStep": 0.5, "SaveStep": 1,
+                                         "Save": [5.7], "AdaptiveTol": 1e-3, "Restart": 2})
+        got = dgc.device_gate_configs(base, form="driven", library=LIB, out="/cluster/gate/key", frequency=5.2)
+        self.assertEqual(dgc.DRIVEN_LEAVES_DROPPED,
+                         ("MinFreq", "MaxFreq", "FreqStep", "SaveStep", "Save", "AdaptiveTol", "Restart"))
+        for name, config in got.items():
+            with self.subTest(file=name):
+                self.assertEqual(config["Solver"]["Driven"],
+                                 {"Samples": [{"Type": "Point", "Freq": [5.2], "SaveStep": 0}]})
+        # A base without them is unchanged by the drop (the test_driven_leaves base).
+        plain = dgc.device_gate_configs(driven_base(), form="driven", library=LIB, out="/cluster/gate/key", frequency=5.2)
+        self.assertEqual(plain["c0-p3.json"]["Solver"]["Driven"], got["c0-p3.json"]["Solver"]["Driven"])
+        self.assertEqual(sorted(base["Solver"]["Driven"]),
+                         ["AdaptiveTol", "FreqStep", "MaxFreq", "MinFreq", "Restart", "Samples", "Save", "SaveStep"])
+
     def test_driven_record_is_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:
             base_path = Path(tmp) / "driven.json"

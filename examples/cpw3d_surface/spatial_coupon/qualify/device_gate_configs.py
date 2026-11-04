@@ -23,7 +23,10 @@ decisions 1174 / 1238 / 1239):
     Solver.SurfaceResponseCorrection.Library = the interim library; TraceCoupling "Collocated" (the Maxwell path refuses
     SurfaceMortar: surfaceresponseoperator.cpp "Maxwell SurfaceMortar response trace coupling is not implemented yet"; the
     Maxwell gate probes the explicit TraceMesh on the collocated path, idfix R0-a); Solver.Driven.Samples = one Point sample
-    [F] with SaveStep 0; Model.Refinement.MaxIts set to 0 (a device Driven config of record carries the AMR ladder; the c0
+    [F] with SaveStep 0 (the base's legacy range MinFreq / MaxFreq / FreqStep / SaveStep and its sweep-level Save /
+    AdaptiveTol / Restart leaves are DROPPED by name: Palace would otherwise add a second range, verify an explicit Save
+    against the one sample, or run an adaptive / restarted sweep over it; configfile.cpp Driven reader); Model.Refinement.MaxIts
+    set to 0 (a device Driven config of record carries the AMR ladder; the c0
     is the registration mesh). The gate record is the SAME form on both paths (FinishConductorConsistencyGate writes
     SurfaceResponse.Diagnostics.ConductorConsistency with Maxwell / Frequency per record), so spatial_qualification's gate
     reader reads it unchanged against the same bars. UNVERIFIED: no Maxwell-form c0 has been solved yet; the measured
@@ -57,6 +60,10 @@ PROBLEM_TYPE = {"es": "Electrostatic", "driven": "Driven"}
 CORRECTION_PATH = {"es": ("Solver", "Electrostatic", "ResponseCorrection"), "driven": ("Solver", "SurfaceResponseCorrection")}
 TRACE_COUPLING = {"es": "SurfaceMortar", "driven": "Collocated"}
 PREFLIGHT_GEOMETRY_POLICY = "RecordRaw"
+# Solver.Driven leaves the one-sample c0 drops by name (confirmation d1243 MINOR-2): the legacy top-level range (configfile.cpp
+# would ADD a second range beside Samples) and the sweep-level Save (an explicit save list verified against the sampled
+# frequencies), AdaptiveTol (an adaptive sweep over one sample) and Restart (a resumed sweep).
+DRIVEN_LEAVES_DROPPED = ("MinFreq", "MaxFreq", "FreqStep", "SaveStep", "Save", "AdaptiveTol", "Restart")
 
 
 class DeviceGateConfigError(ValueError):
@@ -105,8 +112,8 @@ def common_config(base, form, library, frequency):
     _leaf(config, CORRECTION_PATH[form])["Library"] = library
     if form == "driven":
         config["Solver"]["Driven"]["Samples"] = [{"Type": "Point", "Freq": [float(frequency)], "SaveStep": 0}]
-        for legacy in ("MinFreq", "MaxFreq", "FreqStep", "SaveStep"):
-            config["Solver"]["Driven"].pop(legacy, None)
+        for dropped in DRIVEN_LEAVES_DROPPED:
+            config["Solver"]["Driven"].pop(dropped, None)
         config.setdefault("Model", {}).setdefault("Refinement", {})["MaxIts"] = 0
     return config
 
