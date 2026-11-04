@@ -24,9 +24,21 @@ namespace palace::testing
 inline constexpr int kMmsDimension = 3;
 using MmsCoordinates = std::array<double, kMmsDimension>;
 using MmsHessian = std::array<MmsCoordinates, kMmsDimension>;
+using MmsJacobian = std::array<MmsCoordinates, kMmsDimension>;
 
 namespace internal
 {
+
+inline MmsCoordinates ToCoordinates(const mfem::Vector &x)
+{
+  MFEM_VERIFY(x.Size() == kMmsDimension, "Expected three-dimensional MMS coordinates");
+  MmsCoordinates coordinates{};
+  for (int i = 0; i < kMmsDimension; i++)
+  {
+    coordinates[i] = x[i];
+  }
+  return coordinates;
+}
 
 template <auto Potential>
 void EvaluatePotential(const MmsCoordinates &x, double &value)
@@ -44,6 +56,12 @@ void EvaluateGradient(const MmsCoordinates &x, MmsCoordinates &gradient)
                           enzyme_dupnoneed, &value, &seed);
 }
 
+template <auto Potential>
+void EvaluateVectorPotential(const MmsCoordinates &x, MmsCoordinates &value)
+{
+  value = Potential(x);
+}
+
 }  // namespace internal
 
 // Test-only manufactured scalar field generated from a user-supplied potential. Enzyme
@@ -59,18 +77,21 @@ public:
 
   const MmsCoordinates &Permittivity() const { return epsilon; }
 
-  double Value(const mfem::Vector &x) const { return Potential(ToCoordinates(x)); }
+  double Value(const mfem::Vector &x) const
+  {
+    return Potential(internal::ToCoordinates(x));
+  }
 
   MmsCoordinates Gradient(const mfem::Vector &x) const
   {
     MmsCoordinates gradient{};
-    internal::EvaluateGradient<Potential>(ToCoordinates(x), gradient);
+    internal::EvaluateGradient<Potential>(internal::ToCoordinates(x), gradient);
     return gradient;
   }
 
   MmsHessian Hessian(const mfem::Vector &x) const
   {
-    const auto coordinates = ToCoordinates(x);
+    const auto coordinates = internal::ToCoordinates(x);
     MmsHessian hessian{};
     for (int j = 0; j < kMmsDimension; j++)
     {
@@ -121,18 +142,66 @@ public:
   }
 
 private:
-  static MmsCoordinates ToCoordinates(const mfem::Vector &x)
+  MmsCoordinates epsilon;
+};
+
+// Test-only manufactured vector field generated from a user-supplied vector potential A.
+// Only first derivatives are needed: the Jacobian J_ij = ∂A_i/∂x_j comes from one
+// forward-mode pass per coordinate direction (J e_j is column j), and B = ∇×A is read off
+// its antisymmetric part.
+template <auto Potential>
+class EnzymeMmsVector
+{
+  static_assert(
+      std::is_invocable_r_v<MmsCoordinates, decltype(Potential), const MmsCoordinates &>,
+      "The manufactured vector potential must be MmsCoordinates(const MmsCoordinates &)");
+
+public:
+  explicit EnzymeMmsVector(const MmsCoordinates &mu) : mu(mu) {}
+
+  const MmsCoordinates &Permeability() const { return mu; }
+
+  void Value(const mfem::Vector &x, mfem::Vector &potential) const
   {
-    MFEM_VERIFY(x.Size() == kMmsDimension, "Expected three-dimensional MMS coordinates");
-    MmsCoordinates coordinates{};
+    const auto value = Potential(internal::ToCoordinates(x));
     for (int i = 0; i < kMmsDimension; i++)
     {
-      coordinates[i] = x[i];
+      potential[i] = value[i];
     }
-    return coordinates;
   }
 
-  MmsCoordinates epsilon;
+  MmsJacobian Jacobian(const mfem::Vector &x) const
+  {
+    const auto coordinates = internal::ToCoordinates(x);
+    MmsJacobian jacobian{};
+    for (int j = 0; j < kMmsDimension; j++)
+    {
+      MmsCoordinates direction{};
+      direction[j] = 1.0;
+      MmsCoordinates value{};
+      MmsCoordinates jacobian_column{};
+      __enzyme_fwddiff<void>(internal::EvaluateVectorPotential<Potential>, enzyme_dup,
+                             &coordinates, &direction, enzyme_dupnoneed, &value,
+                             &jacobian_column);
+      for (int i = 0; i < kMmsDimension; i++)
+      {
+        jacobian[i][j] = jacobian_column[i];
+      }
+    }
+    return jacobian;
+  }
+
+  // B = ∇×A = (∂A_z/∂y - ∂A_y/∂z, ∂A_x/∂z - ∂A_z/∂x, ∂A_y/∂x - ∂A_x/∂y).
+  void MagneticFluxDensity(const mfem::Vector &x, mfem::Vector &flux_density) const
+  {
+    const auto J = Jacobian(x);
+    flux_density[0] = J[2][1] - J[1][2];
+    flux_density[1] = J[0][2] - J[2][0];
+    flux_density[2] = J[1][0] - J[0][1];
+  }
+
+private:
+  MmsCoordinates mu;
 };
 
 }  // namespace palace::testing

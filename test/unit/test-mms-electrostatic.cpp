@@ -6,9 +6,9 @@
 // callbacks through MmsCase; this file owns the common Palace solve and error checks.
 
 #include "test-mms-electrostatic.hpp"
+#include "test-mms-common.hpp"
 
 #include <cmath>
-#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -182,11 +182,6 @@ std::unique_ptr<mfem::Mesh> LoadCurvedCylinderMesh(int refinement)
   return serial_mesh;
 }
 
-double ConvergenceRate(double h0, double e0, double h1, double e1)
-{
-  return std::log(e0 / e1) / std::log(h0 / h1);
-}
-
 const std::vector<int> kOrders = {1, 2, 3};
 const std::vector<int> kResolutions = {4, 8, 16};
 const std::vector<int> kCurvedRefinements = {0, 1, 2};
@@ -196,12 +191,8 @@ void ReportMmsData(const std::string &dataset, const std::string &solution,
                    const std::string &resolution_kind, int resolution, double h,
                    const MmsError &error)
 {
-  if (std::getenv("PALACE_MMS_REPORT"))
-  {
-    Mpi::Print("MMS_DATA,{},{},{},{},{},{},{:.17g},{},{:.17g},{:.17g}\n", dataset, solution,
-               element, order, resolution_kind, resolution, h, error.primary_dofs,
-               error.potential, error.electric);
-  }
+  mms::ReportMmsData(dataset, solution, element, order, resolution_kind, resolution, h,
+                     error.primary_dofs, error.potential, error.electric);
 }
 
 constexpr double kRateTol = 0.3;
