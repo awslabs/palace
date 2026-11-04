@@ -10,8 +10,86 @@ index 48fc885de..272f5fa8d 100644
    par_add_cycle.c
    par_difconv.c
    par_fsai.c
+diff --git a/src/parcsr_ls/HYPRE_ams.c b/src/parcsr_ls/HYPRE_ams.c
+index b616e02cd..38ccc5ec0 100644
+--- a/src/parcsr_ls/HYPRE_ams.c
++++ b/src/parcsr_ls/HYPRE_ams.c
+@@ -225,6 +225,16 @@ HYPRE_Int HYPRE_AMSSetSmoothingOptions(HYPRE_Solver solver,
+                                        omega);
+ }
+ 
++/*--------------------------------------------------------------------------
++ * HYPRE_AMSSetAMGRedistTarget
++ *--------------------------------------------------------------------------*/
++
++HYPRE_Int HYPRE_AMSSetAMGRedistTarget(HYPRE_Solver solver,
++                                      HYPRE_Int    target)
++{
++   return hypre_AMSSetAMGRedistTarget((void *) solver, target);
++}
++
+ /*--------------------------------------------------------------------------
+  * HYPRE_AMSSetChebyOptions
+  *--------------------------------------------------------------------------*/
+diff --git a/src/parcsr_ls/HYPRE_parcsr_amg.c b/src/parcsr_ls/HYPRE_parcsr_amg.c
+index c8ed2f8b9..8e7d1064c 100644
+--- a/src/parcsr_ls/HYPRE_parcsr_amg.c
++++ b/src/parcsr_ls/HYPRE_parcsr_amg.c
+@@ -645,6 +645,13 @@ HYPRE_BoomerAMGSetNumGridSweeps( HYPRE_Solver  solver,
+  * There is no corresponding Get function.  Use GetCycleNumSweeps.
+  *--------------------------------------------------------------------------*/
+ 
++HYPRE_Int
++HYPRE_BoomerAMGSetRedistTarget( HYPRE_Solver solver,
++                                HYPRE_Int    target )
++{
++   return ( hypre_BoomerAMGSetRedistTarget( (void *) solver, target ) );
++}
++
+ HYPRE_Int
+ HYPRE_BoomerAMGSetNumSweeps( HYPRE_Solver  solver,
+                              HYPRE_Int          num_sweeps  )
+diff --git a/src/parcsr_ls/HYPRE_parcsr_ls.h b/src/parcsr_ls/HYPRE_parcsr_ls.h
+index 67ef4400a..420d94d4e 100644
+--- a/src/parcsr_ls/HYPRE_parcsr_ls.h
++++ b/src/parcsr_ls/HYPRE_parcsr_ls.h
+@@ -803,6 +803,15 @@ HYPRE_Int HYPRE_BoomerAMGSetNumGridSweeps(HYPRE_Solver  solver,
+  * the down cycle the number of sweeps are set to \e num_sweeps and on the
+  * coarsest level to 1. The default is 1.
+  **/
++/**
++ * (Optional) Gather the coarse levels with fewer than \e target rows per process onto
++ * fewer processes during the solve phase (same hierarchy and V-cycle). Only used with
++ * V-cycles, one sweep of l1-Jacobi relaxation (type 18) and Gaussian elimination
++ * (type 9) or l1-Jacobi on the coarsest level, and R = P^T. The default is 0 (disabled).
++ **/
++HYPRE_Int HYPRE_BoomerAMGSetRedistTarget(HYPRE_Solver solver,
++                                         HYPRE_Int    target);
++
+ HYPRE_Int HYPRE_BoomerAMGSetNumSweeps(HYPRE_Solver  solver,
+                                       HYPRE_Int     num_sweeps);
+ 
+@@ -2813,6 +2822,18 @@ HYPRE_Int HYPRE_AMSSetSmoothingOptions(HYPRE_Solver solver,
+                                        HYPRE_Real   relax_weight,
+                                        HYPRE_Real   omega);
+ 
++/**
++ * (Optional) Gather the coarse levels of the auxiliary space AMG hierarchies with fewer
++ * than \e target rows per process onto fewer processes during the solve phase. The
++ * hierarchies and V-cycles are unchanged (results agree up to the summation order); it
++ * applies to AMG solvers with l1-Jacobi relaxation and Gaussian elimination on the
++ * coarsest level, and lets the three scalar \f$\Pi\f$-space corrections of additive
++ * cycles run concurrently. The default is 0 (disabled).
++ **/
++HYPRE_Int HYPRE_AMSSetAMGRedistTarget(HYPRE_Solver solver,
++                                      HYPRE_Int    target);
++#define HYPRE_AMS_AMG_REDIST 1
++
+ /**
+  * (Optional) Sets AMG parameters for \f$B_\Pi\f$.
+  * The defaults are 10, 1, 3, 0.25, 0, 0. See the user's manual for more details.
 diff --git a/src/parcsr_ls/_hypre_parcsr_ls.h b/src/parcsr_ls/_hypre_parcsr_ls.h
-index 594c210e0..03d8cfe4a 100644
+index 594c210e0..19e610e2f 100644
 --- a/src/parcsr_ls/_hypre_parcsr_ls.h
 +++ b/src/parcsr_ls/_hypre_parcsr_ls.h
 @@ -318,6 +318,12 @@ typedef struct
@@ -38,14 +116,15 @@ index 594c210e0..03d8cfe4a 100644
  #define hypre_ParAMGDataKeepTranspose(amg_data) ((amg_data)->keepTranspose)
  #define hypre_ParAMGDataModularizedMatMat(amg_data) ((amg_data)->modularized_matmat)
  
-@@ -2443,6 +2453,19 @@ HYPRE_Int hypre_BoomerAMGCoarsenCR ( hypre_ParCSRMatrix *A, hypre_IntArray **CF_
+@@ -2443,6 +2453,20 @@ HYPRE_Int hypre_BoomerAMGCoarsenCR ( hypre_ParCSRMatrix *A, hypre_IntArray **CF_
  HYPRE_Int hypre_BoomerAMGCycle ( void *amg_vdata, hypre_ParVector **F_array,
                                   hypre_ParVector **U_array );
  
 +/* par_amg_redist.c */
-+#define HYPRE_AMS_AMG_REDIST_TARGET 2048
 +/* hypre_AMSSolve uses (and maintains) the zero flag of the initial guess */
 +#define HYPRE_AMS_ZERO_GUESS_FLAG 1
++HYPRE_Int hypre_BoomerAMGSetRedistTarget(void *amg_vdata, HYPRE_Int target);
++HYPRE_Int hypre_AMSSetAMGRedistTarget(void *solver, HYPRE_Int target);
 +HYPRE_Int hypre_BoomerAMGRedistSetup(void *amg_vdata);
 +HYPRE_Int hypre_BoomerAMGRedistDestroy(void *amg_vdata);
 +HYPRE_Int hypre_BoomerAMGRedistNumLevels(void *amg_vdata, hypre_ParVector *f);
@@ -59,7 +138,7 @@ index 594c210e0..03d8cfe4a 100644
  HYPRE_Int hypre_ParCSRMatrixFillSmooth ( HYPRE_Int nsamples, HYPRE_Real *samples,
                                           hypre_ParCSRMatrix *S, hypre_ParCSRMatrix *A, HYPRE_Int num_functions, HYPRE_Int *dof_func );
 diff --git a/src/parcsr_ls/ams.c b/src/parcsr_ls/ams.c
-index 3e428f912..8c35828c5 100644
+index 3e428f912..5fd0a7846 100644
 --- a/src/parcsr_ls/ams.c
 +++ b/src/parcsr_ls/ams.c
 @@ -7,6 +7,7 @@
@@ -78,45 +157,76 @@ index 3e428f912..8c35828c5 100644
     }
  
     return hypre_error_flag;
-@@ -3293,6 +3295,7 @@ hypre_AMSSetup(void *solver,
+@@ -911,6 +913,7 @@ void * hypre_AMSCreate(void)
+    ams_data -> B_Pi_coarsen_type = 10; /* HMIS coarsening */
+    ams_data -> B_Pi_agg_levels = 1;    /* Levels of aggressive coarsening */
+    ams_data -> B_Pi_relax_type = 3;    /* hybrid G-S/Jacobi */
++   ams_data -> B_amg_redist_target = 0; /* no coarse-level agglomeration */
+    ams_data -> B_Pi_theta = 0.25;      /* strength threshold */
+    ams_data -> B_Pi_interp_type = 0;   /* interpolation type */
+    ams_data -> B_Pi_Pmax = 0;          /* max nonzero elements in interp. rows */
+@@ -1424,6 +1427,22 @@ HYPRE_Int hypre_AMSSetSmoothingOptions(void *solver,
+    ams_data -> A_omega = A_omega;
+    return hypre_error_flag;
+ }
++/*--------------------------------------------------------------------------
++ * hypre_AMSSetAMGRedistTarget
++ *
++ * Gather the coarse levels of the auxiliary space AMG hierarchies with fewer than
++ * target rows per process onto fewer processes during the solve phase (same hierarchy
++ * and V-cycle, see par_amg_redist.c). 0 (default) disables it.
++ *--------------------------------------------------------------------------*/
++
++HYPRE_Int hypre_AMSSetAMGRedistTarget(void *solver,
++                                      HYPRE_Int target)
++{
++   hypre_AMSData *ams_data = (hypre_AMSData *) solver;
++   ams_data -> B_amg_redist_target = target;
++   return hypre_error_flag;
++}
++
+ /*--------------------------------------------------------------------------
+  * hypre_AMSSetChebySmoothingOptions
+  *  AB: note: this could be added to the above,
+@@ -3293,6 +3312,7 @@ hypre_AMSSetup(void *solver,
     if (!ams_data -> beta_is_zero && ams_data -> cycle_type != 20)
     {
        HYPRE_BoomerAMGCreate(&ams_data -> B_G);
-+      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_G) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_G) = ams_data -> B_amg_redist_target;
        HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_G, ams_data -> B_G_coarsen_type);
        HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_G, ams_data -> B_G_agg_levels);
        HYPRE_BoomerAMGSetRelaxType(ams_data -> B_G, ams_data -> B_G_relax_type);
-@@ -3357,6 +3360,9 @@ hypre_AMSSetup(void *solver,
+@@ -3357,6 +3377,9 @@ hypre_AMSSetup(void *solver,
        /* Create the AMG solvers on the range of Pi{x,y,z}^T */
     {
        HYPRE_BoomerAMGCreate(&ams_data -> B_Pix);
-+      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Pix) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Pix) = ams_data -> B_amg_redist_target;
 +      hypre_ParAMGDataLRedistOff((hypre_ParAMGData *) ams_data -> B_Pix) = 0;
 +      hypre_ParAMGDataLRedistNOff((hypre_ParAMGData *) ams_data -> B_Pix) = 3;
        HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_Pix, ams_data -> B_Pi_coarsen_type);
        HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_Pix, ams_data -> B_Pi_agg_levels);
        HYPRE_BoomerAMGSetRelaxType(ams_data -> B_Pix, ams_data -> B_Pi_relax_type);
-@@ -3370,6 +3376,9 @@ hypre_AMSSetup(void *solver,
+@@ -3370,6 +3393,9 @@ hypre_AMSSetup(void *solver,
        HYPRE_BoomerAMGSetMinCoarseSize(ams_data -> B_Pix, 2);
  
        HYPRE_BoomerAMGCreate(&ams_data -> B_Piy);
-+      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Piy) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Piy) = ams_data -> B_amg_redist_target;
 +      hypre_ParAMGDataLRedistOff((hypre_ParAMGData *) ams_data -> B_Piy) = 1;
 +      hypre_ParAMGDataLRedistNOff((hypre_ParAMGData *) ams_data -> B_Piy) = 3;
        HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_Piy, ams_data -> B_Pi_coarsen_type);
        HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_Piy, ams_data -> B_Pi_agg_levels);
        HYPRE_BoomerAMGSetRelaxType(ams_data -> B_Piy, ams_data -> B_Pi_relax_type);
-@@ -3383,6 +3392,9 @@ hypre_AMSSetup(void *solver,
+@@ -3383,6 +3409,9 @@ hypre_AMSSetup(void *solver,
        HYPRE_BoomerAMGSetMinCoarseSize(ams_data -> B_Piy, 2);
  
        HYPRE_BoomerAMGCreate(&ams_data -> B_Piz);
-+      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Piz) = HYPRE_AMS_AMG_REDIST_TARGET;
++      hypre_ParAMGDataLRedistTarget((hypre_ParAMGData *) ams_data -> B_Piz) = ams_data -> B_amg_redist_target;
 +      hypre_ParAMGDataLRedistOff((hypre_ParAMGData *) ams_data -> B_Piz) = 2;
 +      hypre_ParAMGDataLRedistNOff((hypre_ParAMGData *) ams_data -> B_Piz) = 3;
        HYPRE_BoomerAMGSetCoarsenType(ams_data -> B_Piz, ams_data -> B_Pi_coarsen_type);
        HYPRE_BoomerAMGSetAggNumLevels(ams_data -> B_Piz, ams_data -> B_Pi_agg_levels);
        HYPRE_BoomerAMGSetRelaxType(ams_data -> B_Piz, ams_data -> B_Pi_relax_type);
-@@ -3945,11 +3957,22 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+@@ -3945,11 +3974,22 @@ HYPRE_Int hypre_AMSSolve(void *solver,
        /* Compute initial residual norms */
        if (ams_data -> maxit > 1 && i == 0)
        {
@@ -144,18 +254,20 @@ index 3e428f912..8c35828c5 100644
           if (b_norm != 0.0)
           {
              relative_resid = r_norm / b_norm;
-@@ -3986,8 +4009,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+@@ -3986,8 +4026,10 @@ HYPRE_Int hypre_AMSSolve(void *solver,
                                 cycle,
                                 z);
  
 -      /* Compute new residual norms */
 -      if (ams_data -> maxit > 1)
-+      /* Compute new residual norms (after the last cycle only needed for printing) */
-+      if (ams_data -> maxit > 1 && (i < ams_data -> maxit - 1 || ams_data -> print_level > 0))
++      /* Compute new residual norms (after the last cycle only needed for printing and for
++         the reported final residual with a tolerance) */
++      if (ams_data -> maxit > 1 &&
++          (i < ams_data -> maxit - 1 || ams_data -> print_level > 0 || ams_data -> tol > 0.0))
        {
           old_resid = r_norm;
           hypre_ParVectorCopy(b, ams_data -> r0);
-@@ -4013,6 +4036,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+@@ -4013,6 +4055,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
        }
     }
  
@@ -164,7 +276,7 @@ index 3e428f912..8c35828c5 100644
     if (my_id == 0 && ams_data -> print_level > 0 && ams_data -> maxit > 1)
     {
        hypre_printf("\n\n Average Convergence Factor = %f\n\n",
-@@ -4094,6 +4119,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+@@ -4094,6 +4138,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
        {
           hypre_ParVectorCopy(x, r0);
           hypre_ParCSRMatrixMatvec(-1.0, A0, y, 1.0, r0);
@@ -177,7 +289,7 @@ index 3e428f912..8c35828c5 100644
        }
  
        /* switch to additive correction */
-@@ -4117,8 +4148,8 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+@@ -4117,8 +4167,8 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
                             A0_cheby_order,
                             A0_cheby_fraction,
                             y, g0, z);
@@ -187,7 +299,7 @@ index 3e428f912..8c35828c5 100644
        /* subspace correction: y += P B^{-1} P^t r */
        else
        {
-@@ -4144,11 +4175,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+@@ -4144,11 +4194,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
              hypre_ParCSRMatrixMatvecT(1.0, P[i], g0, 0.0, r[i]);
           }
  
@@ -201,6 +313,19 @@ index 3e428f912..8c35828c5 100644
        }
     }
  
+diff --git a/src/parcsr_ls/ams.h b/src/parcsr_ls/ams.h
+index f03c4bbf9..9f40f77d9 100644
+--- a/src/parcsr_ls/ams.h
++++ b/src/parcsr_ls/ams.h
+@@ -96,6 +96,8 @@ typedef struct
+    HYPRE_Int B_Pi_coarsen_type;
+    HYPRE_Int B_Pi_agg_levels;
+    HYPRE_Int B_Pi_relax_type;
++   /* solve-phase agglomeration target (rows per process) of the AMG solvers, 0: off */
++   HYPRE_Int B_amg_redist_target;
+    HYPRE_Int B_Pi_coarse_relax_type;
+    HYPRE_Real B_Pi_theta;
+    HYPRE_Int B_Pi_interp_type;
 diff --git a/src/parcsr_ls/par_amg.c b/src/parcsr_ls/par_amg.c
 index dd49e2777..ed245b215 100644
 --- a/src/parcsr_ls/par_amg.c
@@ -243,10 +368,10 @@ index 865fe7344..331342c8c 100644
  
 diff --git a/src/parcsr_ls/par_amg_redist.c b/src/parcsr_ls/par_amg_redist.c
 new file mode 100644
-index 000000000..170c606c9
+index 000000000..905c74283
 --- /dev/null
 +++ b/src/parcsr_ls/par_amg_redist.c
-@@ -0,0 +1,786 @@
+@@ -0,0 +1,803 @@
 +/******************************************************************************
 + * Copyright (c) 1998 Lawrence Livermore National Security, LLC and other
 + * HYPRE Project Developers. See the top-level COPYRIGHT file for details.
@@ -777,6 +902,19 @@ index 000000000..170c606c9
 + *--------------------------------------------------------------------------*/
 +
 +HYPRE_Int
++hypre_BoomerAMGSetRedistTarget(void *amg_vdata, HYPRE_Int target)
++{
++   hypre_ParAMGData *amg_data = (hypre_ParAMGData *) amg_vdata;
++   if (!amg_data)
++   {
++      hypre_error_in_arg(1);
++      return hypre_error_flag;
++   }
++   hypre_ParAMGDataLRedistTarget(amg_data) = hypre_max(target, 0);
++   return hypre_error_flag;
++}
++
++HYPRE_Int
 +hypre_BoomerAMGRedistSetup(void *amg_vdata)
 +{
 +   hypre_ParAMGData    *amg_data = (hypre_ParAMGData *) amg_vdata;
@@ -789,13 +927,10 @@ index 000000000..170c606c9
 +   HYPRE_Real          *relax_weight = hypre_ParAMGDataRelaxWeight(amg_data);
 +   HYPRE_Int            target, minred = 4, l, size, rank, cur, eligible;
 +   HYPRE_Int            tlev[64], tgs[64], nt = 0;
-+   const char          *env;
 +   MPI_Comm             comm;
 +
 +   hypre_BoomerAMGRedistDestroy(amg_vdata);
-+   /* HYPRE_AMG_REDIST overrides the target number of rows per process (0 disables) */
-+   env = getenv("HYPRE_AMG_REDIST");
-+   target = env ? atoi(env) : hypre_ParAMGDataLRedistTarget(amg_data);
++   target = hypre_ParAMGDataLRedistTarget(amg_data);
 +   if (target <= 0 || nl < 3 || !A_array || !A_array[0]) { return hypre_error_flag; }
 +   comm = hypre_ParCSRMatrixComm(A_array[0]);
 +   hypre_MPI_Comm_size(comm, &size);
@@ -974,6 +1109,12 @@ index 000000000..170c606c9
 +                                        hypre_ParVector *r0, hypre_ParVector *y,
 +                                        hypre_ParVector *g0)
 +{
++#if defined(HYPRE_SEQUENTIAL)
++   /* no hierarchy is agglomerated without MPI */
++   HYPRE_UNUSED_VAR(n); HYPRE_UNUSED_VAR(B); HYPRE_UNUSED_VAR(P);
++   HYPRE_UNUSED_VAR(r0); HYPRE_UNUSED_VAR(y); HYPRE_UNUSED_VAR(g0);
++   return 1;
++#else
 +   hypre_AMGRedist     *rd[8];
 +   hypre_MPI_Request    req[16];
 +   hypre_MPI_Status     st[16];
@@ -1032,6 +1173,7 @@ index 000000000..170c606c9
 +   }
 +   hypre_ParVectorAllZeros(y) = 0;
 +   return 0;
++#endif
 +}
 diff --git a/src/parcsr_ls/par_amg_setup.c b/src/parcsr_ls/par_amg_setup.c
 index dc3142769..b860ced10 100644

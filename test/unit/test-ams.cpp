@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <memory>
 #include <utility>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
+
+// Requires the hypre patch for the coarse-level agglomeration (extern/patch/hypre).
+#if defined(HYPRE_AMS_AMG_REDIST)
 
 namespace palace
 {
@@ -36,7 +38,7 @@ struct AmsSolver
   HYPRE_Solver ams = nullptr;
   AmsSolver(const mfem::HypreParMatrix &A, const mfem::HypreParMatrix &G,
             mfem::HypreParVector &x, mfem::HypreParVector &y, mfem::HypreParVector &z,
-            bool singular, int maxit, int sweeps)
+            bool singular, int maxit, int sweeps, int redist_target)
   {
     HYPRE_AMSCreate(&ams);
     HYPRE_AMSSetDimension(ams, 3);
@@ -51,6 +53,7 @@ struct AmsSolver
       HYPRE_AMSSetBetaPoissonMatrix(ams, nullptr);
     }
     HYPRE_AMSSetSmoothingOptions(ams, 2, sweeps, 1.0, 1.0);
+    HYPRE_AMSSetAMGRedistTarget(ams, redist_target);
     HYPRE_AMSSetAlphaAMGOptions(ams, 10, singular ? 1 : 0, 18, 0.5, 6, 4);
     HYPRE_AMSSetBetaAMGOptions(ams, 10, singular ? 1 : 0, 18, 0.5, 6, 4);
     HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, 9);
@@ -127,9 +130,8 @@ TEST_CASE("AMS with agglomerated auxiliary space coarse levels", "[ams][Serial][
     b.Randomize(1 + Mpi::Rank(comm));
 
     // Reference: hierarchies kept distributed during the solve.
-    setenv("HYPRE_AMG_REDIST", "0", 1);
     {
-      AmsSolver ams(*A, *G, *X, *Y, *Z, singular, 2, sweeps);
+      AmsSolver ams(*A, *G, *X, *Y, *Z, singular, 2, sweeps, 0);
       ams.Mult(*A, b, u_ref, false);
       // A zero initial guess flagged to hypre gives the same result.
       ams.Mult(*A, b, u0, true);
@@ -137,18 +139,18 @@ TEST_CASE("AMS with agglomerated auxiliary space coarse levels", "[ams][Serial][
     }
 
     // Coarse levels agglomerated (and concurrent Pi-space corrections), several targets.
-    for (const char *target : {"2048", "16", "4"})
+    for (int target : {2048, 16, 4})
     {
-      setenv("HYPRE_AMG_REDIST", target, 1);
-      AmsSolver ams(*A, *G, *X, *Y, *Z, singular, 2, sweeps);
+      AmsSolver ams(*A, *G, *X, *Y, *Z, singular, 2, sweeps, target);
       for (int it = 0; it < 2; it++)
       {
         ams.Mult(*A, b, u, it == 0);
         CHECK(RelMaxDiff(comm, u, u_ref) <= 1.0e-10);
       }
     }
-    unsetenv("HYPRE_AMG_REDIST");
   }
 }
 
 }  // namespace palace
+
+#endif

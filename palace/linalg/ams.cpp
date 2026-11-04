@@ -199,6 +199,12 @@ void HypreAmsSolver::InitializeSolver()
   }
 
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
+#if defined(HYPRE_AMS_AMG_REDIST)
+  // Gather the coarse levels of the auxiliary space AMG hierarchies with few rows per
+  // process onto fewer processes during the solve (same hierarchies and V-cycles, results
+  // agree up to the summation order): they are otherwise dominated by message latency.
+  HYPRE_AMSSetAMGRedistTarget(ams, 2048);
+#endif
   HYPRE_AMSSetAlphaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                               interp_type, Pmax);
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,

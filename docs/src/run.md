@@ -44,11 +44,6 @@ where `<MPI_RUN>` is the MPI launcher command, `[OPTIONS]` is a list of command 
 passed to the MPI launcher, and `<ARCH>` is the machine architecture (`x86_64` or
 `arm64`).
 
-The AMS preconditioner gathers the coarse levels of its auxiliary space multigrid
-hierarchies onto fewer processes during the solve, and computes its auxiliary space
-corrections concurrently. Set the environment variable `HYPRE_AMG_REDIST=0` for all MPI
-processes to disable this.
-
 ## Singularity/Apptainer
 
 Assuming *Palace* was built using Singularity/Apptainer to `palace.sif`, running:
