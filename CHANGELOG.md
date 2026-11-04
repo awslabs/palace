@@ -49,6 +49,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
 
+#### Build system
+
+  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
+    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
+    the only sparse direct solver failed.
+    [PR 1133](https://github.com/awslabs/palace/pull/1133).
+
 ## [0.19.0] - 2026-11-02
 
 #### New Features
