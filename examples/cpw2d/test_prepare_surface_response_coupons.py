@@ -3,6 +3,7 @@
 import copy
 import csv
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -495,6 +496,47 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["combine_process_libraries.py", "--output", str(output), *map(str, argv)]):
             COMBINER.main()
         return PREPARE.load_json(output / "process-library.json")
+
+    def test_pending_allow_records_the_admission_of_a_non_qualified_model(self):
+        """R-5 (fix round P2; USER decision 1230 Q8 / supervisor 1260): --pending-allow NAME=DECISION records the
+        top-level AllowPendingModels leaf the loader reads; without the flag the output is byte-identical to before;
+        an admission must name a non-Qualified model of the output, once; the unadmitted ones are warned about."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            base = self.write_library(root / "base" / "process-library.json", "base", ["alpha", "pending-one", "omega"])
+            library = json.loads(base.read_text())
+            for model in library["Models"]:
+                if model["Name"] == "pending-one":
+                    model["QualificationStatus"] = "PendingQualification"
+                if model["Name"] == "omega":
+                    model["QualificationStatus"] = "Qualified"
+            base.write_text(json.dumps(library, indent=2) + "\n")
+            decision = "decision 315 / 1260: the 6a28 class admitted by the curator"
+            plain = self.combine(root / "plain", base)
+            self.assertNotIn("AllowPendingModels", plain)
+            admitted = self.combine(root / "admitted", "--pending-allow", f"pending-one={decision}", base)
+            self.assertEqual(admitted["AllowPendingModels"], [{"Name": "pending-one", "Decision": decision}])
+            # The flag adds the leaf and nothing else.
+            stripped = dict(admitted)
+            del stripped["AllowPendingModels"]
+            self.assertEqual(stripped, plain)
+            self.assertEqual((root / "plain" / "process-library.json").read_text().count("AllowPendingModels"), 0)
+            # Refusals: a malformed spec, a Qualified / status-less / absent model, a duplicate.
+            with self.assertRaisesRegex(ValueError, "NAME=DECISION"):
+                self.combine(root / "malformed", "--pending-allow", "pending-one", base)
+            with self.assertRaisesRegex(ValueError, "NAME=DECISION"):
+                self.combine(root / "blank", "--pending-allow", "pending-one=  ", base)
+            for name in ("omega", "alpha", "absent"):
+                with self.assertRaisesRegex(ValueError, "not a model of the output with an explicit non-Qualified"):
+                    self.combine(root / f"refused-{name}", "--pending-allow", f"{name}={decision}", base)
+            with self.assertRaisesRegex(ValueError, "names a model twice"):
+                self.combine(root / "twice", "--pending-allow", f"pending-one={decision}", "--pending-allow",
+                             f"pending-one={decision} (again)", base)
+            # The unadmitted pending model is named on stdout; the output is written unchanged.
+            with mock.patch.object(sys, "stdout", io.StringIO()) as stdout:
+                warned = self.combine(root / "warned", base)
+            self.assertIn("pending-one (PendingQualification)", stdout.getvalue())
+            self.assertNotIn("AllowPendingModels", warned)
 
     def test_supersede_replaces_the_named_base_model_in_place_and_records_it(self):
         """Decision 505 Q1: --supersede NAME=<record> replaces the base library's model NAME by the later input's
