@@ -1,8 +1,8 @@
 diff --git a/src/misc/MPIWrapper.hpp b/src/misc/MPIWrapper.hpp
-index 067a5197..6784827a 100644
+index 067a5197..935420cc 100644
 --- a/src/misc/MPIWrapper.hpp
 +++ b/src/misc/MPIWrapper.hpp
-@@ -594,18 +594,33 @@ namespace strumpack {
+@@ -594,18 +594,37 @@ namespace strumpack {
        for (int p=0; p<size(); p++)
          rsize += rcnts[p];
        std::vector<T,A> rbuf(rsize);
@@ -22,27 +22,31 @@ index 067a5197..6784827a 100644
 +      // Equivalent to MPI_Alltoallv, but only exchanges the non-empty
 +      // messages (the counts are known on both sides). The
 +      // communication pattern is typically sparse, while
-+      // MPI_Alltoallv implementations take O(P) steps.
++      // MPI_Alltoallv implementations take O(P) steps. Unlike the
++      // collective, the point-to-point messages share the matching
++      // space of the communicator: use a tag of their own, and all
++      // messages are completed before returning.
++      constexpr int tag = 30217;
 +      auto P = size();
 +      int r = rank(), nreqs = 0;
 +      std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
 +      for (int p=0; p<P; p++) {
 +        auto src = (r + p) % P;
 +        if (rcnts[src])
-+          MPI_Irecv(rbuf + rdispls[src], rcnts[src], mpi_type<T>(), src, 0,
++          MPI_Irecv(rbuf + rdispls[src], rcnts[src], mpi_type<T>(), src, tag,
 +                    comm_, reqs.get()+nreqs++);
 +      }
 +      for (int p=0; p<P; p++) {
 +        auto dst = (r + p) % P;
 +        if (scnts[dst])
-+          MPI_Isend(sbuf + sdispls[dst], scnts[dst], mpi_type<T>(), dst, 0,
++          MPI_Isend(sbuf + sdispls[dst], scnts[dst], mpi_type<T>(), dst, tag,
 +                    comm_, reqs.get()+nreqs++);
 +      }
 +      MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
      }
  
      /**
-@@ -631,6 +646,19 @@ namespace strumpack {
+@@ -631,6 +650,22 @@ namespace strumpack {
        all_to_all_v(sbuf, rbuf, pbuf, mpi_type<T>());
      }
  
@@ -50,8 +54,11 @@ index 067a5197..6784827a 100644
 +     * Same as above, but the receive sizes are taken from rsizes if
 +     * rsizes.size() == size(). Otherwise they are computed (with an
 +     * MPI_Alltoall) and stored in rsizes, so they can be reused when
-+     * the same communication pattern is repeated (all ranks should
-+     * have the same cache state).
++     * the same communication pattern is repeated. The caller must
++     * guarantee that the send sizes are unchanged whenever the cache
++     * is used, and all ranks must have the same cache state (else the
++     * MPI_Alltoall hangs): the caches are owned by the fronts and
++     * trees whose structure determines the sizes.
 +     */
 +    template<typename T, typename A=std::allocator<T>> void
 +    all_to_all_v(std::vector<std::vector<T>>& sbuf, std::vector<T,A>& rbuf,
@@ -62,7 +69,7 @@ index 067a5197..6784827a 100644
      /**
       * Perform an MPI_Alltoallv. Each rank sends sbuf[i] to process
       * i. The results are received in a single contiguous vector which
-@@ -671,7 +699,8 @@ namespace strumpack {
+@@ -671,7 +706,8 @@ namespace strumpack {
       */
      template<typename T, typename A=std::allocator<T>> void
      all_to_all_v(std::vector<std::vector<T>>& sbuf, std::vector<T,A>& rbuf,
@@ -72,7 +79,7 @@ index 067a5197..6784827a 100644
        assert(sbuf.size() == std::size_t(size()));
        auto P = size();
        std::unique_ptr<int[]> iwork(new int[4*P]);
-@@ -688,8 +717,13 @@ namespace strumpack {
+@@ -688,8 +724,13 @@ namespace strumpack {
          }
          ssizes[p] = sbuf[p].size();
        }
@@ -88,7 +95,7 @@ index 067a5197..6784827a 100644
        std::size_t totssize = std::accumulate(ssizes, ssizes+P, std::size_t(0)),
          totrsize = std::accumulate(rsizes, rsizes+P, std::size_t(0));
  #if 1
-@@ -715,19 +749,26 @@ namespace strumpack {
+@@ -715,19 +756,26 @@ namespace strumpack {
          std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
          std::size_t displ = 0;
          pbuf.resize(P);
@@ -121,7 +128,7 @@ index 067a5197..6784827a 100644
        } else {
          std::unique_ptr<T[]> sendbuf_(new T[totssize]);
 diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
-index 48f5aedd..4d9b77ce 100644
+index 48f5aedd..60c8ab13 100644
 --- a/src/sparse/EliminationTreeMPIDist.cpp
 +++ b/src/sparse/EliminationTreeMPIDist.cpp
 @@ -247,6 +247,20 @@ namespace strumpack {
@@ -205,12 +212,14 @@ index 48f5aedd..4d9b77ce 100644
  
      auto rbuf = comm_.all_to_allv
        (sbuf.data(), scnts, sdispls, rcnts, rdispls);
-@@ -313,16 +344,24 @@ namespace strumpack {
+@@ -313,16 +344,26 @@ namespace strumpack {
        xdist[f] = DistM_t
          (local_pfronts_[f].grid, local_pfronts_[f].dim_sep(), n);
      auto rsize = rbuf.size();
-+    sp.in_dst_f.resize(rsize);
-+    sp.in_dst_off.resize(rsize);
++    // -2: no destination (dropped, as in the uncached path), -1: local
++    // subtree, f >= 0: local parallel front f
++    sp.in_dst_f.assign(rsize, -2);
++    sp.in_dst_off.assign(rsize, 0);
  #pragma omp parallel for
      for (std::size_t i=0; i<rsize; i++) {
        integer_t r = rbuf[i].r, c = rbuf[i].c;
@@ -234,7 +243,7 @@ index 48f5aedd..4d9b77ce 100644
              break;
            }
        }
-@@ -336,12 +375,19 @@ namespace strumpack {
+@@ -336,12 +377,19 @@ namespace strumpack {
      sdispls = ibuf + 3*P_;
      for (int p=0; p<P_; p++)
        pp[p] = sdispls[p];
@@ -256,7 +265,7 @@ index 48f5aedd..4d9b77ce 100644
      }
      for (std::size_t i=0; i<local_pfronts_.size(); i++) {
        if (xdist[i].lcols() == 0) continue;
-@@ -350,20 +396,69 @@ namespace strumpack {
+@@ -350,20 +398,70 @@ namespace strumpack {
          auto permgr = nd_.iperm()[xdist[i].rowl2g(r) + slo];
          auto dest = std::upper_bound
            (dist.begin(), dist.end(), permgr)-dist.begin()-1;
@@ -309,6 +318,7 @@ index 48f5aedd..4d9b77ce 100644
 +        (local_pfronts_[f].grid, local_pfronts_[f].dim_sep(), n);
 +    for (std::size_t i=0; i<rval.size(); i++) {
 +      auto f = sp.in_dst_f[i];
++      if (f < -1) continue;
 +      (f < 0 ? xloc.data() : xdist[f].data())[sp.in_dst_off[i]] = rval[i];
 +    }
 +
@@ -425,7 +435,7 @@ index 16c08b61..ec06e407 100644
        return dense_node_factor_nonzeros();
      }
 diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
-index 3c009f6f..59a0e68b 100644
+index 3c009f6f..aba2ccec 100644
 --- a/src/sparse/fronts/FrontDenseMPI.cpp
 +++ b/src/sparse/fronts/FrontDenseMPI.cpp
 @@ -28,6 +28,7 @@
@@ -444,7 +454,7 @@ index 3c009f6f..59a0e68b 100644
      if (!this->dim_sep() || !grid()->active())
        return err_code;
      TaskTimer pf("FrontDenseMPI_factor");
-@@ -305,6 +307,103 @@ namespace strumpack {
+@@ -305,6 +307,107 @@ namespace strumpack {
    }
  #endif
  
@@ -454,6 +464,10 @@ index 3c009f6f..59a0e68b 100644
 +    // composed into a permutation once, then applied with a single
 +    // exchange between the process rows of each process column.
 +    auto& lp = laswp_plan_;
++    // The pivots are distributed like the rows of F11, the plan indexes
++    // b: same process grid and row blocking as F11 (as for b.laswp)
++    assert(b.grid() == F11_.grid() && b.MB() == F11_.MB() &&
++           b.rows() == F11_.rows());
 +    const int nprows = grid()->nprows(), prow = grid()->prow(),
 +      pcol = grid()->pcol();
 +    const auto& comm = grid()->Comm_active();
@@ -483,22 +497,22 @@ index 3c009f6f..59a0e68b 100644
 +      for (int k=0; k<ds; k++) std::swap(src[k], src[gpiv[k]]);
 +      std::vector<int> spos(nprows, -1), rpos(nprows, -1);
 +      for (int k=0; k<ds; k++) {
-+        int pd = F11_.rowg2p(k), ps = F11_.rowg2p(src[k]);
++        int pd = b.rowg2p(k), ps = b.rowg2p(src[k]);
 +        if (pd == prow && ps == prow) {
 +          if (src[k] != k)
-+            lp.loc.emplace_back(F11_.rowg2l(k), F11_.rowg2l(src[k]));
++            lp.loc.emplace_back(b.rowg2l(k), b.rowg2l(src[k]));
 +        } else if (pd == prow) {
 +          if (rpos[ps] < 0) {
 +            rpos[ps] = lp.rprow.size(); lp.rprow.push_back(ps);
 +            lp.ridx.emplace_back();
 +          }
-+          lp.ridx[rpos[ps]].push_back(F11_.rowg2l(k));
++          lp.ridx[rpos[ps]].push_back(b.rowg2l(k));
 +        } else if (ps == prow) {
 +          if (spos[pd] < 0) {
 +            spos[pd] = lp.sprow.size(); lp.sprow.push_back(pd);
 +            lp.sidx.emplace_back();
 +          }
-+          lp.sidx[spos[pd]].push_back(F11_.rowg2l(src[k]));
++          lp.sidx[spos[pd]].push_back(b.rowg2l(src[k]));
 +        }
 +      }
 +      lp.ready = true;
@@ -548,7 +562,7 @@ index 3c009f6f..59a0e68b 100644
    template<typename scalar_t,typename integer_t> void
    FrontDenseMPI<scalar_t,integer_t>::fwd_solve_phase2
    (const DistM_t& F11, const DistM_t& F12, const DistM_t& F21,
-@@ -335,7 +434,7 @@ namespace strumpack {
+@@ -335,7 +438,7 @@ namespace strumpack {
      }
  #else
      if (this->dim_sep()) {
@@ -557,6 +571,14 @@ index 3c009f6f..59a0e68b 100644
        if (b.cols() == 1) {
          trsv(UpLo::L, Trans::N, Diag::U, F11, b);
          if (this->dim_upd())
+@@ -510,6 +613,7 @@ namespace strumpack {
+   FrontDenseMPI<scalar_t,integer_t>::delete_factors() {
+     if (visit(lchild_)) lchild_->delete_factors();
+     if (visit(rchild_)) rchild_->delete_factors();
++    laswp_plan_ = LaswpPlan();
+     F11_ = DistM_t();
+     F12_ = DistM_t();
+     F21_ = DistM_t();
 diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
 index fcea4670..22d896f8 100644
 --- a/src/sparse/fronts/FrontDenseMPI.hpp
