@@ -23,6 +23,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which fixes hangs and memory corruption on nonconforming meshes with triangular faces
     when the face neighbors of some processes have only quadrilateral faces.
     [PR 1124](https://github.com/awslabs/palace/pull/1124).
+  - Added an MFEM patch for [mfem/mfem#5721](https://github.com/mfem/mfem/pull/5721),
+    which makes the refinement and rebalancing of nonconforming meshes in parallel
+    independent of the arrival order of MPI messages. The numbering of adapted meshes, the
+    meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
+    them no longer vary from run to run.
+    [PR 1129](https://github.com/awslabs/palace/pull/1129).
 
 ## [0.19.0] - 2026-11-02
 
