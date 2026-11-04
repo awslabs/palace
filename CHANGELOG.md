@@ -112,11 +112,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Radar cross section of incident plane waves (`Domains.PlaneWave`): with a far-field
-    surface (`Boundaries.Postprocessing.FarField`) in the scattered-field region, driven
-    simulations write the bistatic radar cross section in the far-field directions
-    (`farfield-rcs.csv`) and the monostatic one in the backscattering direction of each
-    plane wave (`rcs-monostatic.csv`).
+  - Incident plane wave excitations (`Domains.PlaneWave`) for driven simulations, with the
+    total-field/scattered-field formulation: the plane wave is injected on the boundary of a
+    total-field region given by volume attributes, the solution is the total field inside
+    and the scattered field outside, and the truncation of the domain only sees the
+    scattered field. With a far-field surface (`Boundaries.Postprocessing.FarField`) in the
+    scattered-field region, the bistatic radar cross section is written in the far-field
+    directions (`farfield-rcs.csv`), and the monostatic one in the backscattering direction
+    of each plane wave (`rcs-monostatic.csv`). See the new example
+    `examples/rcs_coated_sphere`. SchemaVer 4-5-0.
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
   - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
     that far fields can be computed when the outer boundary is not a valid integration
     surface, or away from the truncation. The fields of each face are taken from the side

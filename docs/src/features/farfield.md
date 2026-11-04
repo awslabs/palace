@@ -152,7 +152,8 @@ its radar cross section
 where ``E_0`` is the amplitude of the incident electric field. The far-field
 surface must lie in the scattered-field region, outside of the elements of the
 total-field attributes of every plane wave: *Palace* stops with an error
-otherwise.
+otherwise. See [Plane Wave Excitation and Radar Cross Section](planewave.md) for
+the setup and the [coated sphere example](../examples/rcs_coated_sphere.md).
 
 `farfield-rcs.csv` has the same rows as `farfield-rE.csv` (when
 `"ThetaPhis"` or `"NSample"` give any direction), with the columns:
