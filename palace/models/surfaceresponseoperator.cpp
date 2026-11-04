@@ -6138,6 +6138,8 @@ private:
   // Identification.Diagnostics.PlacedByLocalSeparation
   // + Summary.PlacedByLocalSeparation and Features[].Match.PlacedByLocalSeparation.
   nlohmann::json placed_by_local_separation = nlohmann::json::array();
+  // R-9b (fix round P3): the KeyedAtTheMean features of a type not placed cell-wise.
+  nlohmann::json mean_keyed_not_eligible = nlohmann::json::array();
   nlohmann::json geometric_near_pairs = nlohmann::json::array();
   bool identification_active = false;
   std::string library_path;
@@ -6312,9 +6314,11 @@ public:
   {
     placed_local_deviation = std::move(value);
   }
-  void SetPlacedByLocalSeparation(nlohmann::json value)
+  void SetPlacedByLocalSeparation(nlohmann::json value,
+                                  nlohmann::json not_eligible = nlohmann::json::array())
   {
     placed_by_local_separation = std::move(value);
+    mean_keyed_not_eligible = std::move(not_eligible);
   }
   // The library's model pairs within the geometric near-match bands (DESIGN 5 (b) / A.4
   // (c); decision 1079 Q1 (ii)), written by Build as Library.GeometricNearPairs.
@@ -6671,11 +6675,57 @@ public:
              "a cell with no selection stays unpatched (Diagnostics.UnpatchedPairs lists "
              "the remainder; the raw partition's `unpatched` label carries its energy); "
              "the first-order curvature split is not applied on these cells "
-             "(UnsplitTurn); a placement rule change COUNTED by the re-freeze"}};
+             "(UnsplitTurn); a placement rule change COUNTED by the re-freeze. R-9b (fix "
+             "round P3; decisions 1265 / 1269 / 1284 (2) / 1286 / 1291; COUNTED 50 -> 51): "
+             "every KeyedAtTheMean feature (TaperMeanKey; a straight pair or a "
+             "ParallelEdgeCluster, refused or not) is placed CELL BY CELL at its local "
+             "cross-section by the same path, generalised to the FAMILY of its topology "
+             "key: Exact -> Interpolated (the two family members bracketing the cell's "
+             "scale, accepted within the near band on every offset, else NonUniform) -> "
+             "NearMatched -> MeanKeyFallback (today's placement by the mean-keyed model); "
+             "the Family sub-record names the parameter, the keys and the cells per rung; "
+             "R-9's refused pairs keep R-9's record"}};
+        // R-9b: the Family totals per topology (the cells per rung), the unpatched cluster
+        // cells and the KeyedAtTheMean features of a type not placed cell-wise.
+        nlohmann::json families = nlohmann::json::object();
+        int unpatched_cells = 0;
+        double unpatched_cells_length = 0.0;
+        for (const auto &record : placed_by_local_separation)
+        {
+          if (!record.contains("Family"))
+          {
+            continue;
+          }
+          unpatched_cells_length += record.value("UnplacedLength", 0.0);
+          auto &family = families[record.value("Type", std::string("?"))];
+          if (family.is_null())
+          {
+            family = {{"Count", 0}, {"Cells", nlohmann::json::object()}};
+          }
+          family["Count"] = family["Count"].get<int>() + 1;
+          for (const auto &[rung, cells] : record["Family"]["Cells"].items())
+          {
+            family["Cells"][rung] = family["Cells"].value(rung, 0) + cells.get<int>();
+          }
+          unpatched_cells += record["Family"]["Cells"].value("Unpatched", 0);
+        }
+        if (!families.empty() || !mean_keyed_not_eligible.empty())
+        {
+          auto &diagnostics =
+              result["Identification"]["Diagnostics"]["PlacedByLocalSeparation"];
+          diagnostics["Families"] = families;
+          diagnostics["UnpatchedCells"] = {{"Count", unpatched_cells},
+                                           {"Length", unpatched_cells_length}};
+          diagnostics["NotEligible"] = mean_keyed_not_eligible;
+        }
         result["Summary"]["PlacedByLocalSeparation"] = {
             {"Count", static_cast<int>(placed_by_local_separation.size())},
             {"PlacedLength", placed},
             {"UnplacedLength", unplaced}};
+        if (!families.empty())
+        {
+          result["Summary"]["PlacedByLocalSeparation"]["Families"] = families;
+        }
       }
     }
     if (fallback_placed_count > 0)
@@ -8335,6 +8385,39 @@ public:
   }
 
   std::size_t Size() const { return entries.size(); }
+
+  // R-9b (fix round P3; decisions 1265 / 1286 / 1291): the library models of the feature's
+  // topology key (the signature with every continuous parameter removed: EdgeCount /
+  // GapSide / Conductor / Interfaces / Law) with their signatures, by name - the FAMILY a
+  // KeyedAtTheMean feature's cells are placed from; empty when the key is unknown.
+  struct TopologyKeyModel
+  {
+    std::string name;
+    const nlohmann::json *signature = nullptr;
+  };
+  std::vector<TopologyKeyModel>
+  TopologyKeyModels(const nlohmann::json &feature_signature) const
+  {
+    std::vector<TopologyKeyModel> models;
+    const auto it =
+        by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
+    if (it == by_topology.end())
+    {
+      return models;
+    }
+    std::set<std::size_t> seen;
+    for (const std::size_t index : it->second)
+    {
+      if (seen.insert(index).second)
+      {
+        models.push_back({entries[index].name, &entries[index].signature});
+      }
+    }
+    std::sort(models.begin(), models.end(),
+              [](const TopologyKeyModel &a, const TopologyKeyModel &b)
+              { return a.name < b.name; });
+    return models;
+  }
 
   // Legacy-contract aliases (USER decision 283), keyed by the aliased v3 hash: the legacy
   // model's name and Signature with the alias. Looked up by the exact hash only.
@@ -10403,8 +10486,23 @@ struct FeaturePatchSummary
     std::map<std::string, double> model_lengths;
     double unsplit_turn = 0.0;
     int unusable_models = 0;  // local models refused (a reference in a gap / no slot map)
+    // R-9b (fix round P3; decisions 1265 / 1286 / 1291): the FAMILY sub-record of a
+    // KeyedAtTheMean feature placed cell-wise at its local cross-section (empty parameter =
+    // R-9's refused pair, no Family): the family parameter ("scale" for a cluster, the
+    // span first -> last edge over the keyed span; "separation" for a pair), the family's
+    // model names (the mean key among them) and the cells per rung of the ladder.
+    std::string family_parameter;
+    std::vector<std::string> family_keys;
+    int exact_cells = 0;
+    int nonuniform_cells = 0;  // a bracket exists but its interpolant misses the local
+                               // section by more than the near band (fell through)
+    int mean_key_fallback_cells = 0;  // 1291: today's placement by the mean-keyed model
+    int unpatched_cells = 0;
   };
   std::map<int, PlacedByLocalSeparation> placed_by_local_separation;
+  // R-9b: KeyedAtTheMean features of a type the rule does not place cell-wise (curved
+  // pairs, family blends): placed as today, recorded {Id, Type}.
+  std::vector<std::pair<int, std::string>> mean_keyed_not_eligible;
   // The placed pair / strip / stack side length whose LOCAL side separation (the
   // placement's foot test at the sample) deviates from the keyed offset by more than
   // kPairPatchSeparationTolerance (OI-TAPER-MEAN-KEY, decision 1078; record-only): per
@@ -12206,8 +12304,21 @@ FeaturePatchSummary BuildFeaturePatches(
     int sampled = 0;
     double max_deviation = 0.0;
     bool straight_like_bend = false;
+    // R-9b (fix round P3; decisions 1286 / 1291): a NON-refused pair keyed at the mean of a
+    // taper link, placed cell-wise with the mean-keyed model as the last rung (a cell with
+    // no local selection keeps today's placement, counted MeanKeyFallback; never
+    // unpatched).
+    bool mean_keyed_r9b = false;
+    std::vector<std::string> family_keys;
   };
-  std::vector<DeferredPair> deferred_pairs;
+  // R-9 / R-9b: the deferred placements (decision 1286 Q-3), run after the feature loop so
+  // that the runtime models and patches their cells add append after every placement of
+  // record (a deferred feature's keyed runtime is registered in place: ModelIndex of the
+  // later features unchanged): FIRST R-9's refused pairs in feature order (their rows, the
+  // local models' runtime indices included, stay exactly as registered: 1269 MAJOR-1), THEN
+  // R-9b's KeyedAtTheMean features in feature order.
+  std::vector<std::function<void()>> deferred_r9_pairs;
+  std::vector<std::function<void()>> deferred_placements;
   auto PlaceRefusedPairAtLocalSeparation = [&](const DeferredPair &pair)
   {
     foot_indices.clear();  // the deferred pair's side chains are its own locals
@@ -12227,6 +12338,11 @@ FeaturePatchSummary BuildFeaturePatches(
     auto &record = summary.placed_by_local_separation[feature.id];
     record.type = feature.type;
     record.keyed_model = model.name;
+    if (pair.mean_keyed_r9b)
+    {
+      record.family_parameter = "separation";
+      record.family_keys = pair.family_keys;
+    }
     const bool strip = model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP;
     const bool different_conductor =
         model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
@@ -12297,7 +12413,19 @@ FeaturePatchSummary BuildFeaturePatches(
           }
           if (!ok)
           {
+            if (pair.mean_keyed_r9b)
+            {
+              // R-9b, the last rung (1291): the cell keeps today's placement by the
+              // mean-keyed model (RAW would be worse than the mean-key mis-application).
+              local.terms.emplace_back(model_index, runtime, 1.0);
+              record.model_lengths[model.name] += cell_length;
+              record.mean_key_fallback_cells++;
+              record.placed_cells++;
+              record.placed_length += cell_length;
+              return local;
+            }
             record.unplaced_length += cell_length;
+            record.unpatched_cells++;
             return local;
           }
           for (const auto &weighted : selection->models)
@@ -12313,7 +12441,14 @@ FeaturePatchSummary BuildFeaturePatches(
             local.interpolation_group = next_interpolation_group++;
             record.interpolated_cells++;
           }
-          record.near_matched_cells += selection->near_matched ? 1 : 0;
+          else if (selection->near_matched)
+          {
+            record.near_matched_cells++;
+          }
+          else
+          {
+            record.exact_cells++;
+          }
           record.placed_cells++;
           record.placed_length += cell_length;
           return local;
@@ -12364,15 +12499,263 @@ FeaturePatchSummary BuildFeaturePatches(
         summary.inconsistent_length += feature_length;
       }
     }
-    Mpi::Print(" R-9 feature {:d} ({}): refused at the keyed separation {:.6e} (max "
+    Mpi::Print(" {} feature {:d} ({}): {} the keyed separation {:.6e} (max "
                "deviation {:.3g}); {:d} of {:d} cells placed at their local separation "
-               "[{:.4g}, {:.4g}] R ({:d} interpolated, {:d} near-matched; {:.6e} of "
-               "{:.6e} side length unplaced)\n",
-               feature.id, feature.type, separation,
+               "[{:.4g}, {:.4g}] R ({:d} exact, {:d} interpolated, {:d} near-matched, {:d} "
+               "mean-key fallback; {:.6e} of {:.6e} side length unplaced)\n",
+               pair.mean_keyed_r9b ? "R-9b" : "R-9", feature.id, feature.type,
+               pair.mean_keyed_r9b ? "keyed at the taper's mean" : "refused at", separation,
                separation > 0.0 ? max_deviation / separation : 0.0, record.placed_cells,
                record.cells, record.min_separation_over_R, record.max_separation_over_R,
-               record.interpolated_cells, record.near_matched_cells, record.unplaced_length,
+               record.exact_cells, record.interpolated_cells, record.near_matched_cells,
+               record.mean_key_fallback_cells, record.unplaced_length,
                record.placed_length + record.unplaced_length);
+  };
+
+  // R-9b (fix round P3; decisions 1265 / 1267 / 1269 / 1284 (2) / 1286 / 1291;
+  // OI-TAPER-MEAN-KEY; COUNTED 50 -> 51): a ParallelEdgeCluster KEYED AT THE MEAN of its
+  // taper links (IdentifiedFeature::taper_mean_key) is placed CELL BY CELL at the cell's
+  // LOCAL cross-section: the local offsets (the feet of the sample's first-side origin on
+  // every side) form the local signature, and the ladder per cell is Exact (the library's
+  // Match on the local signature) -> Interpolated (the two FAMILY members - the models of
+  // the feature's topology key, by their scale s_m = their span over the keyed span -
+  // bracketing the cell's scale s = local span / keyed span, weights linear in s, as two
+  // weighted patches of one interpolation group, ACCEPTED only when the interpolated
+  // cross-section lies within the near band kGeometricNearMatchClaimsOverRadius of the
+  // local offsets on EVERY offset, else the cell is NonUniform and falls through) ->
+  // NearMatched (the library's NearMatch on the local signature) -> MeanKeyFallback (1291:
+  // today's placement by the mean-keyed model; never unpatched). Deferred as the R-9 pairs
+  // are (one list in feature order; the keyed runtime registered in place). No tolerance
+  // beyond the matching constants of record; no per-design branch.
+  std::optional<LibrarySignatureIndex>
+      library_keys;  // built on the first mean-keyed feature
+  auto LibraryKeys = [&]() -> const LibrarySignatureIndex &
+  {
+    if (!library_keys)
+    {
+      library_keys.emplace(LibrarySignatureKeys(library, describer));
+    }
+    return *library_keys;
+  };
+  struct DeferredCluster
+  {
+    const IdentifiedFeature *feature = nullptr;
+    std::size_t model_index = 0;
+    int runtime = 0;
+    double feature_length = 0.0;
+    std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
+    std::vector<std::vector<FramedPortion>>
+        sides;  // the canonical order (chirality applied)
+    Point3D axis_v{};
+    std::vector<std::size_t> reference_sides;
+    std::vector<int> probe_gaps, probe_conductors;
+    std::vector<double> keyed_offsets;  // the signature's Edges x R, canonical order
+    bool all_pec = true;
+    double side_factor = 1.0;
+    std::vector<LibrarySignatureIndex::TopologyKeyModel> family;
+  };
+  auto PlaceMeanKeyedClusterAtLocalSection = [&](const DeferredCluster &cluster)
+  {
+    foot_indices.clear();  // the deferred cluster's side chains are its own locals
+    const IdentifiedFeature &feature = *cluster.feature;
+    const auto &model = library.models[cluster.model_index];
+    const std::size_t n = cluster.sides.size();
+    const std::size_t last = n - 1;
+    const double keyed_span = cluster.keyed_offsets[last];
+    auto &record = summary.placed_by_local_separation[feature.id];
+    record.type = feature.type;
+    record.keyed_model = model.name;
+    record.family_parameter = "scale";
+    struct Member
+    {
+      double s = 0.0;
+      std::size_t index = 0;
+      std::vector<double> offsets_over_R;
+    };
+    std::vector<Member> members;
+    for (const auto &entry : cluster.family)
+    {
+      const auto it = model_by_name.find(entry.name);
+      if (it == model_by_name.end())
+      {
+        continue;
+      }
+      std::vector<double> offsets;
+      for (const auto &edge : entry.signature->value("Edges", nlohmann::json::array()))
+      {
+        offsets.push_back(edge.value("OffsetOverR", 0.0));
+      }
+      if (offsets.size() != n || offsets.back() <= 0.0)
+      {
+        continue;
+      }
+      members.push_back({offsets.back() * R / keyed_span, it->second, offsets});
+      record.family_keys.push_back(entry.name);
+    }
+    std::sort(members.begin(), members.end(),
+              [](const Member &a, const Member &b) { return a.s < b.s; });
+    std::vector<const std::vector<FramedPortion> *> probe_sides;
+    for (const auto &side : cluster.sides)
+    {
+      probe_sides.push_back(&side);
+    }
+    auto Probe = [&](ResponsePatchData &patch)
+    { ConductorProbes(patch, probe_sides, cluster.probe_gaps, cluster.probe_conductors); };
+    const std::vector<FramedPortion> &first_side = cluster.sides.front();
+    const std::vector<FramedPortion> &last_side = cluster.sides.back();
+    // A family member is usable when it carries a coupon depth, the keyed model's edge and
+    // conductor-reference counts, and maps the feature's interface targets.
+    std::map<std::size_t, bool> usable;
+    auto Usable = [&](std::size_t index)
+    {
+      auto it = usable.find(index);
+      if (it != usable.end())
+      {
+        return it->second;
+      }
+      const auto &candidate = library.models[index];
+      const bool ok =
+          candidate.coupon_depth > 0.0 && candidate.cluster_edges.size() == n &&
+          candidate.conductor_references.size() == model.conductor_references.size() &&
+          CanMapLibraryInterfaces(candidate, cluster.targets_by_slot);
+      record.unusable_models += ok ? 0 : 1;
+      return usable.emplace(index, ok).first->second;
+    };
+    auto Quantize = [](double value)
+    {
+      const double r = std::round(value / kSignatureLengthQuantumOverRadius) *
+                       kSignatureLengthQuantumOverRadius;
+      return r == 0.0 ? 0.0 : r;
+    };
+    for (std::size_t k = 0; k < n; k++)
+    {
+      for (const auto &fp : cluster.sides[k])
+      {
+        // (every portion as today's cluster placer: a cluster carries no image portions)
+        auto LocalSelection = [&](const Point3D &point, double cell_length)
+        {
+          LocalTerms local;
+          const Point3D origin = k == 0 ? point : ClosestFoot(point, first_side).point;
+          std::vector<double> local_over_R(n, 0.0);
+          for (std::size_t j = 1; j < n; j++)
+          {
+            const Point3D foot =
+                j == k ? point : ClosestFoot(origin, cluster.sides[j]).point;
+            local_over_R[j] = Distance(origin, foot) / R;
+          }
+          const double s_cell = local_over_R[last] * R / keyed_span;
+          record.cells++;
+          record.min_separation_over_R =
+              std::min(record.min_separation_over_R, local_over_R[last]);
+          record.max_separation_over_R =
+              std::max(record.max_separation_over_R, local_over_R[last]);
+          nlohmann::json local_signature = feature.signature;
+          for (std::size_t j = 0; j < n; j++)
+          {
+            local_signature["Edges"][j]["OffsetOverR"] = Quantize(local_over_R[j]);
+          }
+          auto Select = [&](std::size_t index, int term_runtime, double weight)
+          {
+            local.terms.emplace_back(index, term_runtime, weight);
+            record.model_lengths[library.models[index].name] += weight * cell_length;
+          };
+          auto Placed = [&]()
+          {
+            record.placed_cells++;
+            record.placed_length += cell_length;
+            return local;
+          };
+          if (const auto match = LibraryKeys().Match(local_signature))
+          {
+            const auto it = model_by_name.find(match->name);
+            if (it != model_by_name.end() && Usable(it->second))
+            {
+              Select(it->second, RuntimeModel(it->second, cluster.targets_by_slot), 1.0);
+              record.exact_cells++;
+              return Placed();
+            }
+          }
+          const Member *lo = nullptr, *hi = nullptr;
+          for (const auto &member : members)
+          {
+            if (member.s < s_cell && (!lo || member.s > lo->s))
+            {
+              lo = &member;
+            }
+            if (member.s > s_cell && (!hi || member.s < hi->s))
+            {
+              hi = &member;
+            }
+          }
+          if (lo && hi && Usable(lo->index) && Usable(hi->index))
+          {
+            const double w = (s_cell - lo->s) / (hi->s - lo->s);
+            bool uniform = true;
+            for (std::size_t j = 1; j < n && uniform; j++)
+            {
+              uniform =
+                  std::abs((1.0 - w) * lo->offsets_over_R[j] + w * hi->offsets_over_R[j] -
+                           local_over_R[j]) <= kGeometricNearMatchClaimsOverRadius;
+            }
+            if (uniform)
+            {
+              Select(lo->index, RuntimeModel(lo->index, cluster.targets_by_slot), 1.0 - w);
+              Select(hi->index, RuntimeModel(hi->index, cluster.targets_by_slot), w);
+              local.interpolation_group = next_interpolation_group++;
+              record.interpolated_cells++;
+              return Placed();
+            }
+            record.nonuniform_cells++;
+          }
+          if (const auto near = LibraryKeys().NearMatch(local_signature))
+          {
+            const auto it = model_by_name.find(near->name);
+            if (it != model_by_name.end() && Usable(it->second))
+            {
+              Select(it->second, RuntimeModel(it->second, cluster.targets_by_slot), 1.0);
+              record.near_matched_cells++;
+              return Placed();
+            }
+          }
+          Select(cluster.model_index, cluster.runtime, 1.0);
+          record.mean_key_fallback_cells++;
+          return Placed();
+        };
+        auto Place = [&](const Point3D &point, ResponsePatchData &patch)
+        {
+          patch.origin = k == 0 ? point : ClosestFoot(point, first_side).point;
+          const Point3D far = ClosestFoot(patch.origin, last_side).point;
+          {
+            const std::size_t j = k == 0 ? last : k;
+            const double local_offset = Distance(patch.origin, k == 0 ? far : point);
+            sample_local_deviation =
+                std::abs(local_offset - cluster.keyed_offsets[j]) >
+                kPairPatchSeparationTolerance * cluster.keyed_offsets[j];
+          }
+          patch.axis_u = Normalize(Subtract(far, patch.origin));
+          patch.axis_v = cluster.axis_v;
+          patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+          patch.maxwell_reference_is_pec = cluster.all_pec;
+          for (const std::size_t reference : cluster.reference_sides)
+          {
+            patch.maxwell_conductor_anchors.push_back(
+                reference == 0 ? patch.origin
+                               : ClosestFoot(patch.origin, cluster.sides[reference]).point);
+          }
+        };
+        Quadrature(fp, cluster.side_factor, cluster.model_index, cluster.runtime, feature,
+                   Place, std::nullopt, Probe, LocalSelection);
+      }
+    }
+    Mpi::Print(" R-9b feature {:d} ({}): keyed at the taper's mean (span {:.6e}); {:d} "
+               "cells placed at their local cross-section, span [{:.4g}, {:.4g}] R ({:d} "
+               "exact, {:d} interpolated, {:d} near-matched, {:d} mean-key fallback, {:d} "
+               "non-uniform; {:d} family keys)\n",
+               feature.id, feature.type, keyed_span, record.placed_cells,
+               record.min_separation_over_R, record.max_separation_over_R,
+               record.exact_cells, record.interpolated_cells, record.near_matched_cells,
+               record.mean_key_fallback_cells, record.nonuniform_cells,
+               static_cast<int>(record.family_keys.size()));
   };
 
   for (const auto &feature : identification.features)
@@ -12789,11 +13172,84 @@ FeaturePatchSummary BuildFeaturePatches(
         // (PlaceRefusedPairAtLocalSeparation below), so that the runtime models and patches
         // its cells add never shift the indices of the placements of record (G4: every
         // existing applied row bitwise; the new rows appended).
-        deferred_pairs.push_back({&feature, model_index, runtime, feature_length,
-                                  targets_by_slot, *ordered[0].second, *ordered[1].second,
-                                  separation, sampled_sum, sampled, max_deviation,
-                                  straight_like_bend});
+        deferred_r9_pairs.push_back(
+            [&PlaceRefusedPairAtLocalSeparation,
+             pair = DeferredPair{&feature, model_index, runtime, feature_length,
+                                 targets_by_slot, *ordered[0].second, *ordered[1].second,
+                                 separation, sampled_sum, sampled, max_deviation,
+                                 straight_like_bend}]()
+            { PlaceRefusedPairAtLocalSeparation(pair); });
         continue;
+      }
+      if (!feature.taper_mean_key.is_null())
+      {
+        if (!straight_pair_topology)
+        {
+          // R-9b: a curved mean-keyed pair / a family blend is not placed cell-wise
+          // (NotEligible, recorded); placed as today.
+          summary.mean_keyed_not_eligible.emplace_back(feature.id, feature.type);
+        }
+        else
+        {
+          // R-9b (fix round P3; decisions 1265 / 1269 / 1284 (2) / 1286 / 1291;
+          // OI-TAPER-MEAN-KEY): a NON-refused straight pair KEYED AT THE MEAN of a taper
+          // link is placed CELL BY CELL at its local separation by R-9's placer, the
+          // mean-keyed model as the last rung (1291) - deferred IFF the library holds
+          // another model of the topology (the 1D family: a local Exact / bracket /
+          // near-match is possible only then); otherwise placed as today and recorded.
+          std::vector<std::string> family_keys;
+          for (const auto &candidate : library.models)
+          {
+            if (candidate.topology == model.topology &&
+                CompatibleBoundaryLaw(
+                    candidate.boundary_condition,
+                    ordered[0].second->front().segment->boundary_condition))
+            {
+              family_keys.push_back(candidate.name);
+            }
+          }
+          std::sort(family_keys.begin(), family_keys.end());
+          if (family_keys.size() > 1)
+          {
+            DeferredPair pair{&feature,
+                              model_index,
+                              runtime,
+                              feature_length,
+                              targets_by_slot,
+                              *ordered[0].second,
+                              *ordered[1].second,
+                              separation,
+                              sampled_sum,
+                              sampled,
+                              max_deviation,
+                              straight_like_bend};
+            pair.mean_keyed_r9b = true;
+            pair.family_keys = std::move(family_keys);
+            deferred_placements.push_back([&PlaceRefusedPairAtLocalSeparation, pair]()
+                                          { PlaceRefusedPairAtLocalSeparation(pair); });
+            continue;
+          }
+          auto &record = summary.placed_by_local_separation[feature.id];
+          record.type = feature.type;
+          record.keyed_model = model.name;
+          record.family_parameter = "separation";
+          record.family_keys = std::move(family_keys);
+          for (int k = 0; k < 2; k++)
+          {
+            for (const auto &fp : *ordered[k].second)
+            {
+              if (!fp.image)
+              {
+                record.cells += quadrature.GetNPoints();
+                record.placed_cells += quadrature.GetNPoints();
+                record.mean_key_fallback_cells += quadrature.GetNPoints();
+                record.placed_length += fp.b - fp.a;
+              }
+            }
+          }
+          record.model_lengths[model.name] += record.placed_length;
+          record.min_separation_over_R = record.max_separation_over_R = separation / R;
+        }
       }
       // ReferenceInGap: the pair's cross-section = its two edges at -+ separation / 2 (a
       // gap's metal outside them, a strip's between them).
@@ -12978,6 +13434,65 @@ FeaturePatchSummary BuildFeaturePatches(
       for (const auto &edge : feature.signature.value("Edges", nlohmann::json::array()))
       {
         keyed_offsets.push_back(edge.value("OffsetOverR", 0.0) * R);
+      }
+      // R-9b (fix round P3; decisions 1286 / 1291): a cluster KEYED AT THE MEAN of its
+      // taper links is placed cell-wise at its local cross-section
+      // (PlaceMeanKeyedClusterAtLocalSection, deferred) IFF the library holds another model
+      // of its topology key (a local Exact / bracket / near-match is possible only then);
+      // otherwise it is placed as today and recorded (every cell MeanKeyFallback).
+      const bool mean_keyed = !feature.taper_mean_key.is_null() &&
+                              keyed_offsets.size() == ordered.size() &&
+                              keyed_offsets.back() > 0.0;
+      std::vector<LibrarySignatureIndex::TopologyKeyModel> family;
+      if (mean_keyed)
+      {
+        family = LibraryKeys().TopologyKeyModels(feature.signature);
+      }
+      if (mean_keyed && family.size() > 1)
+      {
+        DeferredCluster cluster;
+        cluster.feature = &feature;
+        cluster.model_index = model_index;
+        cluster.runtime = runtime;
+        cluster.feature_length = feature_length;
+        cluster.targets_by_slot = targets_by_slot;
+        for (const auto &side : ordered)
+        {
+          cluster.sides.push_back(*side.second);
+        }
+        cluster.axis_v = axis_v;
+        cluster.reference_sides = reference_sides;
+        cluster.probe_gaps = probe_gaps;
+        cluster.probe_conductors = probe_conductors;
+        cluster.keyed_offsets = keyed_offsets;
+        cluster.all_pec = all_pec;
+        cluster.side_factor = side_factor;
+        cluster.family = std::move(family);
+        deferred_placements.push_back(
+            [&PlaceMeanKeyedClusterAtLocalSection, cluster = std::move(cluster)]()
+            { PlaceMeanKeyedClusterAtLocalSection(cluster); });
+        continue;
+      }
+      if (mean_keyed)
+      {
+        auto &record = summary.placed_by_local_separation[feature.id];
+        record.type = feature.type;
+        record.keyed_model = model.name;
+        record.family_parameter = "scale";
+        record.family_keys = {model.name};
+        for (const auto &side : ordered)
+        {
+          for (const auto &fp : *side.second)
+          {
+            record.cells += quadrature.GetNPoints();
+            record.placed_cells += quadrature.GetNPoints();
+            record.mean_key_fallback_cells += quadrature.GetNPoints();
+            record.placed_length += fp.b - fp.a;
+          }
+        }
+        record.model_lengths[model.name] += record.placed_length;
+        record.min_separation_over_R = record.max_separation_over_R =
+            keyed_offsets.back() / R;
       }
       for (std::size_t k = 0; k < ordered.size(); k++)
       {
@@ -13428,9 +13943,13 @@ FeaturePatchSummary BuildFeaturePatches(
       summary.first_order_missing_features++;
     }
   }
-  for (const auto &pair : deferred_pairs)
+  for (const auto &place : deferred_r9_pairs)
   {
-    PlaceRefusedPairAtLocalSeparation(pair);
+    place();
+  }
+  for (const auto &place : deferred_placements)
+  {
+    place();
   }
 
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
@@ -14746,8 +15265,26 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
              {"Models", models},
              {"UnsplitTurn", record.unsplit_turn},
              {"UnusableModels", record.unusable_models}});
+        if (!record.family_parameter.empty())
+        {
+          // R-9b: the Family sub-record (decisions 1286 Q-4 / 1291) on R-9b features ONLY.
+          records.back()["Family"] = {{"Parameter", record.family_parameter},
+                                      {"Keys", record.family_keys},
+                                      {"Cells",
+                                       {{"Exact", record.exact_cells},
+                                        {"Interpolated", record.interpolated_cells},
+                                        {"NearMatched", record.near_matched_cells},
+                                        {"NonUniform", record.nonuniform_cells},
+                                        {"MeanKeyFallback", record.mean_key_fallback_cells},
+                                        {"Unpatched", record.unpatched_cells}}}};
+        }
       }
-      requirements->SetPlacedByLocalSeparation(std::move(records));
+      nlohmann::json not_eligible = nlohmann::json::array();
+      for (const auto &[id, type] : summary.mean_keyed_not_eligible)
+      {
+        not_eligible.push_back({{"Id", id}, {"Type", type}});
+      }
+      requirements->SetPlacedByLocalSeparation(std::move(records), std::move(not_eligible));
     }
     if (requirements)
     {
@@ -19945,7 +20482,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 23},
+  nlohmann::json cache = {{"Version", 24},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -20123,10 +20660,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 23,
+      data.value("Version", 0) == 24,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 23 = version 22 + the fix round P2's placement rule R-9 (the "
+          << " (version 24 = version 23 + the fix round P3's placement rule R-9b (every "
+             "KeyedAtTheMean feature placed cell-wise at its local cross-section from its "
+             "family; decisions 1286 / 1291); version 23 = version 22 + the fix round P2's "
+             "placement rule R-9 (the "
              "refused pairs' cells placed at their local separation) and the "
              "UnpatchedPairPortions leaf (2B); version 22 carries the feature, mesh "
              "segment, chain stretch, own-edge "

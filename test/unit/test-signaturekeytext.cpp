@@ -4,9 +4,11 @@
 #include "fixtures.hpp"
 #include "surfaceresponse-fixtures.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -71,6 +73,50 @@ TEST_CASE("SignatureKeyAndHash key text carries the hashed lexemes",
   CHECK(Sha256Hex(shortest) != hash);
   CHECK(Sha256Hex(shortest) ==
         "5e30744232102a28c1997259012c6465418308055fcdb63cb055f9f1fd99da83");
+}
+
+// R-9b (fix round P3; decision 1286 Q-5's CONDITION): the family keys the planner writes
+// (prepare_surface_response_coupons.py --taper-families;
+// test_prepare_surface_response_coupons TaperFamilyPlanner.FE6_FAMILY_KEYS) are what the
+// C++ keys at those cross-sections: the FE6 f32f mean section (0 / 0.826394 / 2.203837
+// / 3.030321 R) scaled by s and quantised to the 1e-6 R key grid (RoundTo's arithmetic)
+// hashes to the same digests through SignatureKeyAndHash (the Grisu2
+// lexemes 2.4301019999999998 / 0.7437549999999999 / 2.4242209999999997 / 3.6260459999999997
+// included) - the cross-language contract of the family rows.
+TEST_CASE("SignatureKeyAndHash R-9b family keys",
+          "[surfaceresponseidentification][keytext][r9b][Serial]")
+{
+  const json mean = json::parse(R"({"Edges":[
+      {"Conductor":1,"GapSide":1,"Interfaces":["MA","MS","SA"],"Law":"{\"Type\":\"PEC\"}","OffsetOverR":0.0},
+      {"Conductor":1,"GapSide":-1,"Interfaces":["MA","MS","SA"],"Law":"{\"Type\":\"PEC\"}","OffsetOverR":0.826394},
+      {"Conductor":1,"GapSide":1,"Interfaces":["MA","MS","SA"],"Law":"{\"Type\":\"PEC\"}","OffsetOverR":2.203837},
+      {"Conductor":1,"GapSide":-1,"Interfaces":["MA","MS","SA"],"Law":"{\"Type\":\"PEC\"}","OffsetOverR":3.030321}]})");
+  auto Quantize = [](double value)
+  {
+    const double r = std::round(value / 1.0e-6) * 1.0e-6;
+    return r == 0.0 ? 0.0 : r;
+  };
+  const std::vector<std::pair<double, std::string>> family = {
+      {0.801929, "6eb211ccce87ea1a"},
+      {0.9, "a5ef2edf3ce909a6"},
+      {1.1, "9915bcf3b40d8133"},
+      {1.196588, "e339af1d9c33c94d"}};
+  for (const auto &[scale, hash16] : family)
+  {
+    json scaled = mean;
+    for (auto &edge : scaled["Edges"])
+    {
+      edge["OffsetOverR"] = Quantize(edge["OffsetOverR"].get<double>() * scale);
+    }
+    const auto [key, hash] = SignatureKeyAndHash(scaled, "ParallelEdgeCluster");
+    INFO("scale " << scale << " key " << key);
+    CHECK(hash.substr(0, 16) == hash16);
+    CHECK(Sha256Hex(key) == hash);
+    CHECK(json::parse(key)["Type"] == "ParallelEdgeCluster");
+  }
+  const auto [key, hash] = SignatureKeyAndHash(mean, "ParallelEdgeCluster");
+  CHECK_THAT(key, ContainsSubstring("\"OffsetOverR\":0.826394}"));
+  CHECK(hash == "f32f48576bfa3bf68f5b1066ebda2405f3b00b6a17bbffa7dec012d36a8aaf2d");
 }
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
