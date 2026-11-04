@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -2674,18 +2676,67 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
+// Hilbert curve index of a point with dim coordinates of b bits each (Skilling,
+// "Programming the Hilbert curve", AIP Conf. Proc. 707, 2004).
+std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b)
+{
+  const std::uint32_t M = 1u << (b - 1);
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    const std::uint32_t P = Q - 1;
+    for (int i = 0; i < dim; i++)
+    {
+      if (X[i] & Q)
+      {
+        X[0] ^= P;
+      }
+      else
+      {
+        const std::uint32_t t = (X[0] ^ X[i]) & P;
+        X[0] ^= t;
+        X[i] ^= t;
+      }
+    }
+  }
+  for (int i = 1; i < dim; i++)
+  {
+    X[i] ^= X[i - 1];
+  }
+  std::uint32_t t = 0;
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    if (X[dim - 1] & Q)
+    {
+      t ^= Q - 1;
+    }
+  }
+  for (int i = 0; i < dim; i++)
+  {
+    X[i] ^= t;
+  }
+  std::uint64_t key = 0;
+  for (int j = b - 1; j >= 0; j--)
+  {
+    for (int i = 0; i < dim; i++)
+    {
+      key = (key << 1) | ((X[i] >> j) & 1u);
+    }
+  }
+  return key;
+}
+
 // Partition the elements of a nonconforming mesh with ParMETIS, on the element adjacency
 // graph through all conforming and nonconforming faces. MFEM's default partition splits the
 // sequence of refinement tree leaves into equal chunks, which fragments the subdomains over
-// the AMR iterations. The parts are numbered in the order of the mean current index of
-// their elements, so that the new numbering follows the current one and the ranks of a node
-// keep neighboring subdomains. Returns false if ParMETIS fails or would leave a process
-// without elements.
+// the AMR iterations. The parts are numbered along a Hilbert curve through their centroids,
+// so that consecutive ranks, and in particular the ranks of a node, hold neighboring
+// subdomains. Returns false if ParMETIS fails or would leave a process without elements.
 bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
                                            mfem::Array<int> &partitioning)
 {
   MPI_Comm comm = mesh.GetComm();
-  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm), ne = mesh.GetNE();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const int ne = mesh.GetNE(), dim = mesh.SpaceDimension();
   std::vector<idx_t> vtxdist(size + 1, 0);
   {
     long long ne_ll = ne;
@@ -2761,27 +2812,60 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     return false;
   }
 
-  // Number the parts by the mean current index of their elements, instead of ParMETIS's
+  // Number the parts along a Hilbert curve through their centroids, instead of ParMETIS's
   // remapping which minimizes the migration but loses the node locality. This assumes that
   // consecutive ranks share a node, as does MFEM's default partition.
-  std::vector<double> sum(2 * size, 0.0);  // Sum of the indices and number of elements
+  std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0);
+  mfem::Array<int> verts;
   for (int e = 0; e < ne; e++)
   {
-    sum[2 * part[e]] += static_cast<double>(vtxdist[rank] + e);
-    sum[2 * part[e] + 1] += 1.0;
+    mesh.GetElementVertices(e, verts);
+    for (int i = 0; i < verts.Size(); i++)
+    {
+      const double *v = mesh.GetVertex(verts[i]);
+      for (int d = 0; d < dim; d++)
+      {
+        xc[part[e] * dim + d] += v[d] / verts.Size();
+      }
+    }
+    cnt[part[e]] += 1.0;
   }
-  Mpi::GlobalSum(2 * size, sum.data(), comm);
-  std::vector<int> order(size), new_part(size);
+  Mpi::GlobalSum(static_cast<int>(xc.size()), xc.data(), comm);
+  Mpi::GlobalSum(size, cnt.data(), comm);
+  if (std::find(cnt.begin(), cnt.end(), 0.0) != cnt.end())
+  {
+    return false;  // Do not leave a process without elements
+  }
+  std::array<double, 3> lo, hi;
+  lo.fill(mfem::infinity());
+  hi.fill(-mfem::infinity());
   for (int p = 0; p < size; p++)
   {
-    if (sum[2 * p + 1] == 0.0)
+    for (int d = 0; d < dim; d++)
     {
-      return false;
+      xc[p * dim + d] /= cnt[p];
+      lo[d] = std::min(lo[d], xc[p * dim + d]);
+      hi[d] = std::max(hi[d], xc[p * dim + d]);
     }
-    order[p] = p;
   }
-  std::ranges::stable_sort(order, {},
-                           [&sum](int p) { return sum[2 * p] / sum[2 * p + 1]; });
+  const int b = (dim == 3) ? 21 : 31;
+  const double nb = std::ldexp(1.0, b);
+  std::vector<std::uint64_t> key(size, 0);
+  for (int p = 0; p < size; p++)
+  {
+    std::array<std::uint32_t, 3> X = {0, 0, 0};
+    for (int d = 0; d < dim; d++)
+    {
+      const double len = hi[d] - lo[d];
+      const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
+      X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+    }
+    key[p] = HilbertIndex(X, dim, b);
+  }
+  std::vector<int> order(size), new_part(size);
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(order.begin(), order.end(),
+                   [&key](int i, int j) { return key[i] < key[j]; });
   for (int i = 0; i < size; i++)
   {
     new_part[order[i]] = i;
