@@ -805,7 +805,7 @@ index 00000000..02b7e438
 +
 +#endif // STRUMPACK_DIST_TRSM_NARROW_HPP
 diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
-index 59a0e68b..3cfc2b4c 100644
+index aba2ccec..78303b6f 100644
 --- a/src/sparse/fronts/FrontDenseMPI.cpp
 +++ b/src/sparse/fronts/FrontDenseMPI.cpp
 @@ -29,9 +29,12 @@
@@ -830,7 +830,7 @@ index 59a0e68b..3cfc2b4c 100644
      if (!this->dim_sep() || !grid()->active())
        return err_code;
      TaskTimer pf("FrontDenseMPI_factor");
-@@ -404,6 +409,34 @@ namespace strumpack {
+@@ -408,6 +413,34 @@ namespace strumpack {
      }
    }
  
@@ -865,7 +865,7 @@ index 59a0e68b..3cfc2b4c 100644
    template<typename scalar_t,typename integer_t> void
    FrontDenseMPI<scalar_t,integer_t>::fwd_solve_phase2
    (const DistM_t& F11, const DistM_t& F12, const DistM_t& F21,
-@@ -440,7 +473,9 @@ namespace strumpack {
+@@ -444,7 +477,9 @@ namespace strumpack {
          if (this->dim_upd())
            gemv(Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
        } else {
@@ -876,7 +876,7 @@ index 59a0e68b..3cfc2b4c 100644
          if (this->dim_upd())
            gemm(Trans::N, Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
        }
-@@ -509,7 +544,9 @@ namespace strumpack {
+@@ -513,7 +548,9 @@ namespace strumpack {
        } else {
          if (this->dim_upd())
            gemm(Trans::N, Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
@@ -887,6 +887,15 @@ index 59a0e68b..3cfc2b4c 100644
        }
      }
  #endif
+@@ -614,6 +651,8 @@ namespace strumpack {
+     if (visit(lchild_)) lchild_->delete_factors();
+     if (visit(rchild_)) rchild_->delete_factors();
+     laswp_plan_ = LaswpPlan();
++    trsm_cache_[0].reset();
++    trsm_cache_[1].reset();
+     F11_ = DistM_t();
+     F12_ = DistM_t();
+     F21_ = DistM_t();
 diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
 index 22d896f8..03e81a0e 100644
 --- a/src/sparse/fronts/FrontDenseMPI.hpp

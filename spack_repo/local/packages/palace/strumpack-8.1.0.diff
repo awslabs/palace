@@ -1241,7 +1241,7 @@ index 16c08b61..ec06e407 100644
        return dense_node_factor_nonzeros();
      }
 diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
-index 3c009f6f..ce00ae7a 100644
+index 3c009f6f..78303b6f 100644
 --- a/src/sparse/fronts/FrontDenseMPI.cpp
 +++ b/src/sparse/fronts/FrontDenseMPI.cpp
 @@ -28,9 +28,13 @@
@@ -1433,11 +1433,13 @@ index 3c009f6f..ce00ae7a 100644
        }
      }
  #endif
-@@ -510,6 +650,7 @@ namespace strumpack {
+@@ -510,6 +650,9 @@ namespace strumpack {
    FrontDenseMPI<scalar_t,integer_t>::delete_factors() {
      if (visit(lchild_)) lchild_->delete_factors();
      if (visit(rchild_)) rchild_->delete_factors();
 +    laswp_plan_ = LaswpPlan();
++    trsm_cache_[0].reset();
++    trsm_cache_[1].reset();
      F11_ = DistM_t();
      F12_ = DistM_t();
      F21_ = DistM_t();
