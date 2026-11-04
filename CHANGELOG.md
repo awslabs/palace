@@ -23,6 +23,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which fixes hangs and memory corruption on nonconforming meshes with triangular faces
     when the face neighbors of some processes have only quadrilateral faces.
     [PR 1124](https://github.com/awslabs/palace/pull/1124).
+  - Fixed the Floquet port MaxOrder cap reading past the boundary element Jacobian, which
+    gave a garbage element size and could randomly drop Floquet orders from the solve and
+    the `port-floquet-S.csv` output.
+    [PR 1091](https://github.com/awslabs/palace/pull/1091).
 
 ## [0.19.0] - 2026-11-02
 
