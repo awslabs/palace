@@ -82,7 +82,9 @@ jobs:
         include:
           - {runner: arm64}
           - {runner: x64}
-          - {runner: gpu, target: x86_64_v3}
+          # TEMPORARY (dev branch only, revert before merging): GPU leg skipped so that
+          # the CPU containers publish without waiting for a GPU runner.
+          # - {runner: gpu, target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       # Two events bypass the paths-filter:
