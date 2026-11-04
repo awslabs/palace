@@ -22,10 +22,16 @@ median g per Type, every cell with its predictors and in/out-of-band verdict, an
 (decision 1049: the calibration set is the DEVELOPMENT set; the LOO coverage is an in-sample-family estimate).
 
 Records file schema:
-{"families": {"ES": {"calibrate": [CELL, ...], "test": [CELL, ...]}, "Maxwell": {...}}}
+{"families": {"ES": {"calibrate": [CELL, ...], "test": [CELL, ...], "form": str (optional), "note": str (optional)}, "Maxwell": {...}},
+ "excluded": [{"window": str, "reason": str}] (optional; recorded in the provenance)}
 CELL = {"window": str, "postpro": dir, "manifest": file, "cells": {"SA": pct, "MS": pct, "MA_sharp": pct, "C": pct},
+        "sources": {"SA": int, ...} (optional; a multi-source ES run: per card Type the source of the fail-closed cell value,
+        whose own energy / ladder predictors pair with it -- decision 1233 (6) (a); the aggregated predictors recorded beside),
         "ladder_run": dir (optional), "reference_order": int (optional), "ma_reading": "sharp" (optional),
-        "port_form": "r2a-pembed" (optional; Maxwell FORM), "flags": [str] (information), "note": str}
+        "port_form": "r2a-pembed" (optional; Maxwell FORM), "palace_json": file (optional; a substitute for postpro/palace.json),
+        "flags": [str] (information), "note": str}
+Bands v6 (fix round P1; DESIGN-v3 s7; decision 1233 (6)): the candidate M3 = beta0 + beta1 x corner share beside M2; a Type whose
+best unwidened LOO coverage is below UNCALIBRATED_BELOW (0.85) stays UNCALIBRATED (no band; the reader labels LOW).
 """
 
 import argparse
@@ -43,7 +49,12 @@ RESIDUAL_QUANTILE = 0.90
 Z90 = 1.6448536269514722  # the two-sided 90 % normal quantile (the Wilson interval)
 CARD_TYPES = ("SA", "MS", "MA_sharp", "C")
 BAND_TYPE = {"SA": "SA", "MS": "MS", "MA_sharp": "MA", "C": "C"}
-MODELS = ("M0", "M1", "M2")
+# Bands v6 (fix round, DESIGN-v3 s7; decision 1233 (6) (b)): M3 = beta0 + beta1 x corner share (the corner-share trend alone) is a
+# pre-registered candidate beside M2, selected by the same LOO criterion.
+MODELS = ("M0", "M1", "M2", "M3")
+# Bands v6 rule (5): a Type whose best candidate's UNWIDENED LOO coverage stays below this bound is UNCALIBRATED (no band is
+# adopted; the reader labels LOW); the widening only applies above it.
+UNCALIBRATED_BELOW = 0.85
 
 
 def empirical_quantile(values, q):
@@ -107,6 +118,8 @@ def design_row(model, pred):
     if model == "M1":
         step = pred.get("last_step_pt")
         return [1.0, step if step is not None else 0.0]
+    if model == "M3":
+        return [1.0, pred.get("corner_share", 0.0)]
     return [1.0, pred.get("sec_share", 0.0), pred.get("corner_share", 0.0)]
 
 
@@ -173,6 +186,14 @@ def select_model(cells, type_key, models=MODELS):
         chosen = "M0"
         widened = candidates["M0"]["loo"]["widen_k"]
     c = candidates[chosen]
+    best_unwidened = max((cc["loo"]["coverage"] or 0.0) for cc in candidates.values())
+    if best_unwidened < UNCALIBRATED_BELOW:
+        # bands v6 rule (5): no band is adopted for this Type; the candidates stay as information
+        return {"uncalibrated": True, "uncalibrated_below": UNCALIBRATED_BELOW, "n": len(cells),
+                "reason": f"the best candidate's unwidened LOO coverage {best_unwidened:.3f} < {UNCALIBRATED_BELOW} (n {len(cells)})",
+                "candidates": {m: {"H_pt": cc["fit"]["H_pt"], "coefficients": cc["fit"]["coefficients"],
+                                   "loo_coverage": cc["loo"]["coverage"], "loo_half_width_pt": cc["loo"]["loo_half_width_pt"],
+                                   "ci90": cc["loo"]["ci90"]} for m, cc in candidates.items()}}
     loo = c["loo"]
     if widened > 1.0:
         covered = sum(1 for r in loo["cells"] if abs(r["loo_residual_pt"]) <= widened * r["H_loo_pt"])
@@ -191,16 +212,44 @@ def select_model(cells, type_key, models=MODELS):
     return entry
 
 
+def _source_blocks(report, source):
+    """The ENERGY / ladder blocks of ONE source of a multi-source report (report["sources"][s]; reader v2), else the report's own."""
+    if source is None or str(source) == str(report.get("source")) or "sources" not in report:
+        return report["block_A"]["energy"], report["block_D"]["ladder"]["types"]
+    block = report["sources"][str(source)]
+    return block["energy"], block["ladder_types"]
+
+
+def _mean_predictors(report, t):
+    """The per-source-AGGREGATED predictors of Type t (the mean over the sources of the last ft step and the energy shares; the
+    LENGTH shares are source-independent): the SENSITIVITY row of decision 1233 (6) (a)."""
+    sources = report.get("sources") or {}
+    if not sources:
+        return None
+    steps = [v["ladder_types"].get(t, {}).get("last_step_pt") for v in sources.values()]
+    steps = [x for x in steps if x is not None]
+    raws = [v["energy"].get(t, {}).get("raw_share_total") for v in sources.values()]
+    raws = [x for x in raws if x is not None]
+    return {"last_step_pt": (sum(steps) / len(steps)) if steps else None, "raw_share_energy": (sum(raws) / len(raws)) if raws else None,
+            "n_sources": len(sources)}
+
+
 def cell_predictors(cell, bands=None):
-    """Run coverage_report.build_report on the cell's run; -> the report and the per-Type predictors."""
+    """Run coverage_report.build_report on the cell's run; -> the report and the per-Type predictors. A multi-source ES cell
+    (decisions 1210 / 1233 (6) (a)) names per card Type the SOURCE its fail-closed cell value came from (cell["sources"] =
+    {"SA": 46, ...}): that source's energy / ladder predictors pair with the value; the per-source-aggregated predictors are
+    recorded beside as the SENSITIVITY row (pred[T]["aggregated"])."""
     report = cr.build_report(cell["postpro"], cell["manifest"], bands, cell.get("discovery"), cell.get("ladder_run"),
-                             cell.get("reference_order"), cell.get("ma_reading", "sharp"), cell.get("window"), cell.get("port_form"))
+                             cell.get("reference_order"), cell.get("ma_reading", "sharp"), cell.get("window"), cell.get("port_form"),
+                             palace_json=cell.get("palace_json"))
+    sources = cell.get("sources") or {}
     pred = {}
     for card_type in CARD_TYPES:
         t = BAND_TYPE[card_type]
-        e = report["block_A"]["energy"].get(t, {})
+        energy_blocks, ladder_blocks = _source_blocks(report, sources.get(card_type))
+        e = energy_blocks.get(t, {})
         L = report["block_A"]["length"].get(t, {})
-        lad = report["block_D"]["ladder"]["types"].get(t, {})
+        lad = ladder_blocks.get(t, {})
         p = cr.class_predictors(L)
         p.update({"last_step_pt": lad.get("last_step_pt"), "raw_share_energy": e.get("raw_share_total"),
                   "raw_share_length": L.get("raw_share_total"), "g": e.get("g"), "exact_share_energy": e.get("exact_share"),
@@ -208,8 +257,11 @@ def cell_predictors(cell, bands=None):
                   "classes_share_energy": e.get("classes_share", {}), "energy_mode": report["energy_mode"]})
         if card_type == "C":
             # C has no interface Type: the SA predictors stand in for the depth lever only
-            sa = report["block_D"]["ladder"]["types"].get("SA", {})
+            sa = ladder_blocks.get("SA", {})
             p = {"last_step_pt": sa.get("last_step_pt"), "sec_share": 0.0, "corner_share": 0.0}
+        if sources.get(card_type) is not None:
+            p["source"] = sources[card_type]
+            p["aggregated"] = _mean_predictors(report, t if card_type != "C" else "SA")
         pred[card_type] = p
     return report, pred
 
@@ -226,6 +278,27 @@ def class_census(cells):
         for cls in seen:
             census[cls] = census.get(cls, 0) + 1
     return census
+
+
+def aggregated_sensitivity(cells, card_type, entry):
+    """Decision 1233 (6) (a): the selected model re-fitted with every multi-source cell's per-source-AGGREGATED predictors (the
+    mean last step) in place of the fail-closed source's -> the coefficient / H deltas; None when no cell is multi-source or the
+    Type is uncalibrated."""
+    if entry.get("uncalibrated") or not any(c["pred"][card_type].get("aggregated") for c in cells):
+        return None
+    swapped = []
+    for c in cells:
+        agg = c["pred"][card_type].get("aggregated")
+        p = dict(c["pred"][card_type])
+        if agg and agg.get("last_step_pt") is not None:
+            p["last_step_pt"] = agg["last_step_pt"]
+        swapped.append({"window": c["window"], "pred": {card_type: p}, "d": c["d"]})
+    fit = fit_model(entry["model"], swapped, card_type)
+    return {"model": entry["model"], "coefficients": fit["coefficients"], "H_pt": fit["H_pt"],
+            "delta_H_pt": fit["H_pt"] - entry["H_pt"],
+            "multi_source_windows": [c["window"] for c in cells if c["pred"][card_type].get("aggregated")],
+            "rule": "the fit with the per-source-aggregated predictors (mean last ft step over the sources) in place of the fail-closed "
+                    "source's: information (decision 1233 (6) (a)); the adopted band uses the fail-closed source's predictors"}
 
 
 DEV_SET_CAVEAT = ("the calibration set is the DEVELOPMENT set (gap G8): the LOO coverage is an in-sample-family "
@@ -248,14 +321,18 @@ def calibrate_family(family, spec, log):
             continue
         # DESIGN 5.5: C gets the M0 band (its cells have no class mix; the depth lever is not pre-registered for C)
         entry = select_model(usable, card_type, models=("M0",) if card_type == "C" else MODELS)
+        entry["sensitivity_aggregated_sources"] = aggregated_sensitivity(usable, card_type, entry)
         gs = [c["pred"][card_type].get("g") for c in usable if c["pred"][card_type].get("g") is not None
               and c["pred"][card_type].get("energy_mode") == "ENERGY"]
         entry["median_g"] = median(gs) if gs else 0.0
         entry["n_energy_mode"] = len(gs)
         types[BAND_TYPE[card_type]] = entry
+        if entry.get("uncalibrated"):
+            log(f"  {family} {card_type}: UNCALIBRATED ({entry['reason']})")
+            continue
         log(f"  {family} {card_type}: {entry['model']} H {entry['H_pt']:.3f} pt widened {entry['widened']:.3f} "
             f"LOO {entry['loo_coverage']['coverage']:.3f} CI {entry['loo_coverage']['ci90']} n {entry['n']}")
-    return {"types": types, "class_census": class_census(cells), "n": len(cells)}, cells
+    return {"types": types, "class_census": class_census(cells), "n": len(cells), "form": spec.get("form"), "note": spec.get("note")}, cells
 
 
 def evaluate_with_bands(family, cells, test_specs, bands, log):
@@ -328,7 +405,8 @@ def main(argv=None):
                        "decision": src.get("decision")})
     bands = {"version": args.tag, "tool": "coverage_calibration.py", "fit_date": args.fit_date or datetime.date.today().isoformat(),
              "target_coverage": TARGET_COVERAGE, "residual_quantile": RESIDUAL_QUANTILE, "dev_set_caveat": DEV_SET_CAVEAT,
-             "families": {}, "provenance": {"inputs": inputs, "n_per_family": {}}}
+             "models": list(MODELS), "uncalibrated_below": UNCALIBRATED_BELOW,
+             "families": {}, "provenance": {"inputs": inputs, "n_per_family": {}, "excluded": records.get("excluded", [])}}
     if args.note:
         bands["note"] = args.note
     loaded = {}

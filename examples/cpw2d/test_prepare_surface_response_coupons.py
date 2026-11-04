@@ -2863,6 +2863,47 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 qualification["Calibration"], "GeometryCoverageOnly"
             )
 
+    def test_execute_refuses_a_piece_form_spatial_coupon(self):
+        """Fix round R-3 (OI-PLANNER-EXECUTE-SPATIAL-ONE-REFERENCE; decisions 1157 Q1 / 1230): a SpatialCoupon planned in the
+        piece form is REFUSED by --execute before any build (build_spatial has no --local-pieces); --skip-methods SpatialCoupon
+        leaves it to device_coupons; a one-reference plan builds as before."""
+        pieces = endpoint_coupon()
+        pieces["Id"] = "pieces"
+        pieces["Preparation"] = {"Method": "SpatialCoupon", "LocalPieces": True, "LocalPiecesReason": "test"}
+        plain = endpoint_coupon()
+        plain["Id"] = "plain"
+        plain["Preparation"] = {"Method": "SpatialCoupon", "LocalPieces": False}
+        plan = {"SourceManifest": "requirements.json", "Coupons": [pieces, plain]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(cache=root / "cache", output=root / "output", name="test-library")
+            calls = []
+
+            def build(coupon, args, parameters, cache):
+                calls.append(coupon["Id"])
+                return root / "built.json", root / "qualification.json"
+
+            with (
+                mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                mock.patch.object(PREPARE, "build_spatial", side_effect=build),
+                mock.patch.object(PREPARE, "run", return_value=0),
+            ):
+                with self.assertRaisesRegex(ValueError, "refuses the SpatialCoupon.*piece form.*\\['pieces'\\].*device_coupons.py") as context:
+                    PREPARE.execute(plan, source, args)
+                self.assertIn("fix round R-3", str(context.exception))
+                self.assertEqual(calls, [])
+                # --skip-methods SpatialCoupon: the family is left to the device builder, nothing refused
+                skipping = SimpleNamespace(cache=root / "cache", output=root / "output", name="test-library", skip_methods=["SpatialCoupon"])
+                PREPARE.execute(plan, source, skipping)
+                self.assertEqual(calls, [])
+                self.assertEqual(sorted(s["Ids"][0] for s in plan["Execution"]["Skipped"]), ["pieces", "plain"])
+                # the one-reference plan alone builds
+                plan["Coupons"] = [plain]
+                PREPARE.execute(plan, source, args)
+                self.assertEqual(calls, ["plain"])
+
     def test_execute_preserves_successes_after_independent_coupon_failure(self):
         failed = endpoint_coupon()
         failed["Id"] = "failed"
