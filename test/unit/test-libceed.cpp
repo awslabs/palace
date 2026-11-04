@@ -1483,6 +1483,39 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on vector (L2)ᵈ spaces with INTEGRAL map type (u = 1 / det(J) ̂u), at the default
+  // integration order. Boundary integrators do not apply.
+  SECTION("Vector L2 Integrators")
+  {
+    mfem::L2_FECollection l2_fec(order, dim, mfem::BasisType::GaussLegendre,
+                                 mfem::FiniteElement::INTEGRAL);
+    FiniteElementSpace l2d_fespace(mesh, &l2_fec, dim);
+    SECTION("Vector L2 Mass Integrator")
+    {
+      BilinearForm a_test(l2d_fespace);
+      mfem::BilinearForm a_ref(&l2d_fespace.Get());
+      if (!bdr_integ)
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
+                                                                       a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
+        }
+      }
+      TestCeedOperator(a_test, a_ref);
+    }
+  }
+
   // Tests on mixed H1-(H1)ᵈ spaces.
   SECTION("Mixed H1-Vector H1 Integrators")
   {

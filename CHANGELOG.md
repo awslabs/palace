@@ -34,6 +34,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `(L0 / Lc)^2`. This put them off by orders of magnitude for meshes in micrometers with
     the default `Lc`. The CSV postprocessing was not affected.
     [PR 1098](https://github.com/awslabs/palace/pull/1098).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 ## [0.19.0] - 2026-11-02
 
