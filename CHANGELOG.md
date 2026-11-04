@@ -27,6 +27,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
+    when a process holds very few rows of the matrix, for example a coarse multigrid level
+    at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
+    longer declared symmetric, since hypre's parallel matrix products can store explicit
+    zeros without their transposes. [PR 1137](https://github.com/awslabs/palace/pull/1137).
   - Added an MFEM patch for [mfem/mfem#5717](https://github.com/mfem/mfem/pull/5717),
     which fixes hangs and memory corruption on nonconforming meshes with triangular faces
     when the face neighbors of some processes have only quadrilateral faces.
