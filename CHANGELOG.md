@@ -17,6 +17,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Interface Changes
+
+  - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
+    and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
+    STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
+    several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-1-1
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+
 #### Bug Fixes
 
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
