@@ -36,7 +36,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     that the inductive-limit response of the junction is available without a pseudo-inverse
     of `L⁻¹`. The screening frequency `ν/2π` is set by
     `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"]` (default: one tenth
-    of the lowest sweep frequency). SchemaVer 4-2-0
+    of the lowest sweep frequency). With
+    `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorExtrapolate"]`, each anchor is
+    solved at `ν` and `ν/2` and Richardson-extrapolated, so that the column satisfies the
+    unscreened identity `L⁻¹v = s·e_p` up to `O(ν⁴)`. SchemaVer 4-2-0
 
 #### Performance Improvements
 

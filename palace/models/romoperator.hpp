@@ -568,8 +568,11 @@ public:
   // the leading port-mode block and the RHS1r projection bookkeeping stay consistent.
   //
   // The exported column satisfies the screened identity L⁻¹ v + ν² C v = s e_p; the
-  // deviation from the unscreened L-column identity L⁻¹ v = s e_p is O((ν/ω)²).
-  void AddLumpedPortAnchorModesForSynthesis(double nu);
+  // deviation from the unscreened L-column identity L⁻¹ v = s e_p is O((ν/ω)²). With
+  // `extrapolate` set, solve at both ν and ν/2 and Richardson-extrapolate,
+  // x₀ ≈ [4 x(ν/2) − x(ν)]/3, cancelling that term so the column satisfies the
+  // unscreened identity to O(ν⁴) at the cost of one extra solve per anchored port.
+  void AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapolate = false);
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM

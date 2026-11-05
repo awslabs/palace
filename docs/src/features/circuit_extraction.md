@@ -328,8 +328,13 @@ divided by their diagonal entries) satisfy
 for a scalar $s$. The anchor is therefore the field of a unit current through the port in the
 inductive limit, up to the $O(\nu^2/\omega^2)$ screening term, which junction-anchored
 (bare-basis) netlist extraction can use directly instead of a pseudo-inverse of
-$\widehat{\bm{L}}^{-1}$. For a SQUID modeled as two arm ports, anchor a single arm: the responses
-of the two arms are collinear, so a second anchor adds no new direction.
+$\widehat{\bm{L}}^{-1}$. Setting
+[`"AdaptiveCircuitSynthesisAnchorExtrapolate"`](../config/reference.md#config-solver-driven)
+removes the screening term: each anchor is then solved at both $\nu$ and $\nu/2$ and combined by
+Richardson extrapolation, $\bm{x}_0 \approx [4\bm{x}(\nu/2) - \bm{x}(\nu)]/3$, which leaves an
+$O(\nu^4)$ error, so that $\widehat{\bm{L}}^{-1}\bm{v} = s\,\bm{e}_p$ holds to the solver
+tolerance, at the cost of a second solve per anchor. For a SQUID modeled as two arm ports, anchor a
+single arm: the responses of the two arms are collinear, so a second anchor adds no new direction.
 
 ### Orthogonalization
 
