@@ -152,16 +152,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("fortran", type="build")
         depends_on("mumps+metis")
         depends_on("mumps+parmetis", when="@:0.19")
-        depends_on("mumps~parmetis", when="@0.20:")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        # Spack's SuperLU_DIST has its METIS ordering only with ParMETIS, which Spack's MFEM
-        # also requires with SuperLU_DIST
-        depends_on("superlu-dist+parmetis")
+        depends_on("superlu-dist+parmetis", when="@:0.19")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -173,7 +170,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("fortran", type="build")
         depends_on("strumpack+butterflypack+zfp")
         depends_on("strumpack+parmetis", when="@:0.19")
-        depends_on("strumpack~parmetis", when="@0.20:")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
