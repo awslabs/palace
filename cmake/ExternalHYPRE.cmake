@@ -105,10 +105,12 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
   8b11d35c29215d462b8e727775e8771d808806ced107e1675082ed80b9ba84fb
 )
 
-# Skip the exchange of a zero initial guess in hybrid Gauss-Seidel relaxation (its
-# off-processor values are known to be zero)
-list(APPEND HYPRE_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_zero_guess.diff"
+# Skip the halo exchange of a zero initial guess in hybrid Gauss-Seidel relaxation
+# (https://github.com/hypre-space/hypre/pull/1651)
+download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
+  hypre_pr1651.patch
+  "https://github.com/hypre-space/hypre/commit/2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1"
+  bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f
 )
 
 include(ExternalProject)

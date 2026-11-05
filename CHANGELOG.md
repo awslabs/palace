@@ -19,6 +19,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch for
+    [hypre-space/hypre#1651](https://github.com/hypre-space/hypre/pull/1651), which skips
+    the halo exchange of a zero initial guess in the hybrid Gauss-Seidel relaxation of
+    BoomerAMG and AMS, and marked the zero initial guess of the BoomerAMG preconditioner as
+    zero. This saves one halo exchange per level and V-cycle, which is latency bound on the
+    coarse levels at high process counts. Results are unchanged.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#163](https://github.com/pghysels/STRUMPACK/pull/163), which lowers
     the communication cost of its distributed solve phase: point-to-point exchanges of only
