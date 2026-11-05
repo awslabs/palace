@@ -1,0 +1,92 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 1,
+    "Output": "postpro/direct"
+  },
+  "Model": {
+    "Mesh": "mesh/slab.msh",
+    "L0": 0.01
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permittivity": {
+          "HighFrequency": 2.0,
+          "Terms": [
+            {
+              "Type": "Lorentz",
+              "DeltaPermittivity": 1.0,
+              "ResonanceFrequency": 2.0,
+              "DampingFrequency": 0.2
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Boundaries": {
+    "Periodic": {
+      "BoundaryPairs": [
+        {
+          "DonorAttributes": [
+            1
+          ],
+          "ReceiverAttributes": [
+            2
+          ]
+        },
+        {
+          "DonorAttributes": [
+            3
+          ],
+          "ReceiverAttributes": [
+            4
+          ]
+        }
+      ]
+    },
+    "FloquetPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          5
+        ],
+        "Excitation": true,
+        "IncidentPolarization": "TE",
+        "MaxOrder": 0
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          6
+        ],
+        "MaxOrder": 0
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 3,
+    "Driven": {
+      "MinFreq": 1.0,
+      "MaxFreq": 3.0,
+      "FreqStep": 0.25
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1e-10,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

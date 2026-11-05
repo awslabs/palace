@@ -138,6 +138,59 @@ palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 mpirun -np 2 palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 ```
 
+## Driven Lorentz slab scattering
+
+The `floquet_lorentz_slab_direct` and `floquet_lorentz_slab_adaptive` regressions check a
+5 mm dielectric slab between vacuum Floquet ports at normal incidence.
+There is 37.5 mm of vacuum between each slab face and its adjacent port.
+The relative permittivity follows a damped Lorentz oscillator:
+
+```math
+\varepsilon_r(f) = 2 + \frac{f_0^2}{f_0^2-f^2+i\gamma f},
+\qquad f_0=2\,\mathrm{GHz},\quad\gamma=0.2\,\mathrm{GHz}.
+```
+
+All frequencies in this expression use the same units.
+With the positive-time phasor convention, the imaginary part is negative for passive loss.
+The sweep crosses the resonance and includes frequencies with negative real permittivity.
+The ports remain in vacuum, isolating the volume constitutive law and interface matching
+from dispersive port-boundary approximations.
+
+The custom checks compute complex reflection and transmission from the normal-incidence
+Fresnel slab formula, including the vacuum phase between the slab and port reference planes.
+They check co-polarized TE reflection/transmission, vanishing cross-polarized TM output,
+passive outgoing power, and absorption against the analytic solution.
+The reference CSV establishes the output layout; its numerical amplitudes are not the oracle.
+The adaptive run is checked against the same independent solution as the direct run.
+Each regression samples nine frequencies from 1 to 3 GHz at 0.25 GHz spacing.
+
+A 41-frequency study from 1 to 3 GHz at order 3 gave a maximum complex-amplitude error of
+``3.36\times10^{-8}`` and an absorption error below ``4.3\times10^{-10}``.
+Direct and adaptive amplitudes agreed within ``9.4\times10^{-11}``, and serial/two-rank
+amplitudes agreed within ``5.9\times10^{-14}``.
+That denser study used the same inputs with `FreqStep` set to `0.05` GHz and compared every
+output frequency against the Fresnel formula; the regression callback intentionally requires
+the nine-point grid above.
+The regression uses amplitude and absorption tolerances of ``10^{-7}`` and ``10^{-8}``,
+respectively, with linear-solver tolerance ``10^{-10}`` and adaptive tolerance ``10^{-8}``.
+These tests do not validate dispersive stored energy, nonlinear eigenmodes, or material
+models other than the specified Lorentz response.
+
+The mesh reuses the dielectric-grating topology and periodic node mappings, with the entire
+middle layer assigned to the slab material.
+To regenerate it from the repository root, using Python with meshio 5.3.5 and NumPy:
+
+```bash
+python test/data/regression/input/dielectric_slab/mesh/generate.py
+```
+
+Run the regressions with:
+
+```bash
+palace-unit-tests "floquet_lorentz_slab_*" --skip-benchmarks
+mpirun -np 2 palace-unit-tests "floquet_lorentz_slab_*" --skip-benchmarks
+```
+
 ## References
 
  1. D. Garcia-Donoro, L. E. Garcia-Castillo, and S. W. Ting, "Verification Process of
