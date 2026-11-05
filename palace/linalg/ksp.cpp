@@ -16,6 +16,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -283,8 +284,12 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
-                                       std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+                                       std::unique_ptr<Solver<OperType>> &&pc,
+                                       std::string_view role)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
+    role(role.empty() ? perf::CurrentRole() : role),
+    perf_solves(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Solves"))),
+    perf_its(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Its")))
 {
   if (this->pc)
   {
@@ -326,6 +331,8 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   }
   ksp_mult++;
   ksp_mult_it += ksp->GetNumIterations();
+  perf::Add(perf_solves, 1);
+  perf::Add(perf_its, ksp->GetNumIterations());
 }
 
 template class BaseKspSolver<Operator>;

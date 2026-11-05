@@ -142,7 +142,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc), "DivFree");
   ksp->SetOperators(*M, *M);
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());

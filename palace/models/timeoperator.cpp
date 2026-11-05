@@ -84,7 +84,7 @@ public:
       pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
       pcg->SetMaxIter(linear.max_it);
       auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
-      kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
+      kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac), "Mass");
       kspM->SetOperators(*M, *M);
     }
     {

@@ -555,7 +555,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         return {};
       }(),
       false, false, false, reorder_reuse);
-  ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
+  ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc), "ModeEigen");
 }
 
 void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
@@ -709,7 +709,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   krylov->SetMaxIter(linear.max_it);
   krylov->EnableTimer();
 
-  ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc));
+  ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc),
+                                           "ModeEigen");
 }
 
 std::unique_ptr<ComplexMultigridOperator>

@@ -102,7 +102,8 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
-  return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+  return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc),
+                                                   "Estimator");
 }
 
 // Construct a single-level view of the finest space of the hierarchy, which is broken

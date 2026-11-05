@@ -5,6 +5,8 @@
 #define PALACE_LINALG_KSP_HPP
 
 #include <memory>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
@@ -51,17 +53,24 @@ protected:
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
 
+  // Solver role for the performance report, and its counter ids.
+  std::string role;
+  int perf_solves, perf_its;
+
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
                 int verbose, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+  // An empty role means the role active at construction (perf::CurrentRole()).
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
-                std::unique_ptr<Solver<OperType>> &&pc);
+                std::unique_ptr<Solver<OperType>> &&pc, std::string_view role = {});
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
+
+  const std::string &GetRole() const { return role; }
 
   // Whether the most recent Mult converged to the requested tolerance.
   bool GetConverged() const { return ksp->GetConverged(); }

@@ -113,7 +113,7 @@ WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
   pcg->SetRelTol(tol);
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc), "HCurl");
   ksp->SetOperators(*A, *A);
 }
 
