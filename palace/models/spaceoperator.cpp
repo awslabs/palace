@@ -785,6 +785,43 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   return A;
 }
 
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit qs,
+                                    Operator::DiagonalPolicy diag_policy)
+{
+  // ω → 0 limit of A2(ω) for the screened quasistatic anchor solves, assembled as for the
+  // complex-ω overload; see the quasistatic AddExtraSystemBdrCoefficients overload.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+      dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      fbi(mat_op.MaxCeedBdrAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+      frbi(mat_op.MaxCeedBdrAttribute()), fpbr(mat_op.MaxCeedBdrAttribute()),
+      fpbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemBdrCoefficients(qs, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
+  int empty[2] = {AreExactlyZero(dfbr, fbr, frbr, fpbr),
+                  AreExactlyZero(dfbi, fbi, frbi, fpbi)};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  std::unique_ptr<Operator> ar, ai;
+  if (!empty[0])
+  {
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
+                          &fpbr, skip_zeros);
+  }
+  if (!empty[1])
+  {
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
+                          &fpbi, skip_zeros);
+  }
+  auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
+  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return A;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
@@ -1608,6 +1645,35 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
+void SpaceOperator::AddExtraSystemBdrCoefficients(
+    QuasistaticLimit, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+    MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
+    MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi)
+{
+  // The ω → 0 limit of the frequency-dependent boundary terms, defining the static system
+  // stiffness K + A2(0) of the quasistatic (inductive-limit) anchor solves. As for the
+  // damping matrix (whose iω·C term also vanishes), a boundary term contributes only if it
+  // stays finite and nonzero at DC:
+  //  - Rational surface impedance: the Robin coefficient g(s) = s·D(s)/N(s) tends to
+  //    D(0)/N'(0) when Zs has a transmission zero at s = 0 (Zs ~ s·L, an inductive sheet,
+  //    which carries DC current) and to zero otherwise. The real-ω overload implements
+  //    exactly this limit at ω = 0.
+  //  - Surface conductivity: iω/Zs(ω) → 0 (as √ω for the skin-effect impedance, as ω for a
+  //    finite thickness). No contribution.
+  //  - Wave ports: the stamped i·Re(k_n(ω))·M_p vanishes (k_n ∝ ω for a TEM or quasi-TEM
+  //    mode, Re(k_n) = 0 below cutoff), as does the modal correction W ∝ ω. No
+  //    contribution, and no port mode is solved at ω = 0.
+  //  - Second-order farfield: (i/(2ω))·M_ff is a radiation correction with a pole at ω = 0
+  //    and no static limit (circuit synthesis realizes this pole by auxiliary states, not
+  //    in L⁻¹). Omitted, so the farfield boundary takes the same natural condition at DC as
+  //    the first-order absorbing boundary.
+  //  - Floquet ports and Floquet wave vectors are not supported with circuit synthesis, and
+  //    the Floquet terms of second-order farfield boundaries (frb, fpb) are omitted with
+  //    the farfield term.
+  surf_rz_op.AddExtraSystemBdrCoefficients(0.0, fbr, fbi);
+}
+
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,
                                                 MaterialPropertyCoefficient &f)
 {
@@ -2037,5 +2103,10 @@ template std::unique_ptr<ComplexOperator>
                                                                  std::complex<double>,
                                                                  std::complex<double>,
                                                                  std::complex<double>);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>,
+                                           SpaceOperator::QuasistaticLimit>(
+        std::complex<double>, std::complex<double>, std::complex<double>,
+        SpaceOperator::QuasistaticLimit);
 
 }  // namespace palace
