@@ -236,6 +236,11 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
   else
   {
+    // Single-level preconditioner: report its setup (on first application) separately.
+    if (auto *wrapper = dynamic_cast<MfemWrapperSolver<OperType> *>(pc.get()))
+    {
+      wrapper->EnableTimer(true);
+    }
     return pc;
   }
 }

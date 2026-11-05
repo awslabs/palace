@@ -20,7 +20,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false)
+    R(P.size() + 1), use_timer(false), coarse_timer(false)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -59,6 +59,17 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
             comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
       }
     }
+  }
+}
+
+template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::EnableTimer()
+{
+  use_timer = true;
+  if (auto *wrapper = dynamic_cast<MfemWrapperSolver<OperType> *>(B[0].get()))
+  {
+    wrapper->EnableTimer(true, Timer::KSP_COARSE_SOLVE);
+    coarse_timer = true;
   }
 }
 
@@ -176,7 +187,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   B[l]->SetInitialGuess(initial_guess);
   if (l == 0)
   {
-    BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
+    BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer && !coarse_timer);
     B[l]->Mult(X[l], Y[l]);
     return;
   }

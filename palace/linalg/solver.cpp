@@ -5,6 +5,7 @@
 
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -15,15 +16,15 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
   // Operator is always assembled as a HypreParMatrix.
   if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
   {
-    pc->SetOperator(*hA);
+    SetInnerOperator(*hA);
   }
   else
   {
     const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
     MFEM_VERIFY(PtAP,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    pc->SetOperator(!save_assembled ? *PtAP->StealParallelAssemble()
-                                    : PtAP->ParallelAssemble());
+    SetInnerOperator(!save_assembled ? *PtAP->StealParallelAssemble()
+                                     : PtAP->ParallelAssemble());
   }
   this->height = op.Height();
   this->width = op.Width();
@@ -87,7 +88,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       DropSmallEntries();
     }
-    pc->SetOperator(*A);
+    SetInnerOperator(*A);
     if (!save_assembled)
     {
       A.reset();
@@ -99,11 +100,11 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
-      pc->SetOperator(*A);
+      SetInnerOperator(*A);
     }
     else
     {
-      pc->SetOperator(*hAr);
+      SetInnerOperator(*hAr);
     }
     if (PtAPr && !save_assembled)
     {
@@ -116,11 +117,11 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
-      pc->SetOperator(*A);
+      SetInnerOperator(*A);
     }
     else
     {
-      pc->SetOperator(*hAi);
+      SetInnerOperator(*hAi);
     }
     if (PtAPi && !save_assembled)
     {
@@ -138,6 +139,13 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 template <>
 void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
 {
+  const auto idx = (setup_pending && time_setup) ? Timer::KSP_COARSE_SETUP : apply_timer;
+  BlockTimer bt(idx, idx != Timer::NUM_TIMINGS);
+  setup_pending = false;
+  if (perf_setups >= 0)
+  {
+    perf::Add(perf_applies, 1);
+  }
   pc->Mult(x, y);
 }
 
@@ -145,6 +153,13 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
+  const auto idx = (setup_pending && time_setup) ? Timer::KSP_COARSE_SETUP : apply_timer;
+  BlockTimer bt(idx, idx != Timer::NUM_TIMINGS);
+  setup_pending = false;
+  if (perf_setups >= 0)
+  {
+    perf::Add(perf_applies, 1);
+  }
   if (pc->Height() == x.Size())
   {
     mfem::Array<const Vector *> X(2);
@@ -177,6 +192,50 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
 }
 
 template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::InitEagerSetup()
+{
+#if defined(MFEM_USE_MUMPS)
+  eager_setup = (dynamic_cast<MumpsSolver *>(pc.get()) != nullptr);
+#endif
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::EnableTimer(bool setup, Timer::Index apply)
+{
+  time_setup = setup;
+  apply_timer = apply;
+  const auto role = perf::CurrentRole();
+  perf_setups = perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/Setups"));
+  perf_refact =
+      perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/Refactorizations"));
+  perf_applies = perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/Applies"));
+  perf_rows = perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/Rows"),
+                                    perf::Reduce::SUM, perf::Accumulate::NONE);
+  perf_rows_rank = perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/RowsPerRank"),
+                                         perf::Reduce::STATS, perf::Accumulate::NONE);
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::SetInnerOperator(const mfem::HypreParMatrix &op)
+{
+  {
+    BlockTimer bt(Timer::KSP_COARSE_SETUP, time_setup && eager_setup);
+    pc->SetOperator(op);
+  }
+  setup_pending = true;
+  if (perf_setups >= 0)
+  {
+    // Sparse direct solvers reuse the previous symbolic factorization when requested.
+    const bool direct = !dynamic_cast<const mfem::HypreSolver *>(pc.get());
+    perf::Add(perf_setups, 1);
+    perf::Add(perf_refact, (direct && reorder_reuse && num_setups > 0) ? 1 : 0);
+    perf::Set(perf_rows, op.Height());
+    perf::Set(perf_rows_rank, op.Height());
+  }
+  num_setups++;
+}
+
+template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();
@@ -205,5 +264,8 @@ void MfemWrapperSolver<OperType>::DropSmallEntries()
              num_dropped_entries, nnz_before,
              static_cast<double>(num_dropped_entries) / nnz_before * 100.0);
 }
+
+template class MfemWrapperSolver<Operator>;
+template class MfemWrapperSolver<ComplexOperator>;
 
 }  // namespace palace

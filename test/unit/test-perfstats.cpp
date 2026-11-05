@@ -3,9 +3,12 @@
 
 #include <chrono>
 #include <thread>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "linalg/solver.hpp"
+#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
@@ -225,4 +228,50 @@ TEST_CASE("PerfStats Roles", "[perfstats][Serial]")
   CHECK(perf::LinearSolverPath("Main", "Its") == "LinearSolver/TotalIts");
   CHECK(perf::LinearSolverPath("Main", "MaxIts") == "LinearSolver/Main/MaxIts");
   CHECK(perf::LinearSolverPath("DivFree", "Solves") == "LinearSolver/DivFree/Solves");
+}
+
+TEST_CASE("PerfStats Coarse Setup And Apply", "[perfstats][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  BlockTimer::Reset();
+  constexpr int n = 20;
+  mfem::SparseMatrix diag(n);
+  for (int i = 0; i < n; i++)
+  {
+    diag.Set(i, i, 2.0);
+  }
+  diag.Finalize();
+  HYPRE_BigInt row_starts[2] = {static_cast<HYPRE_BigInt>(rank) * n,
+                                static_cast<HYPRE_BigInt>(rank + 1) * n};
+  mfem::HypreParMatrix A(comm, static_cast<HYPRE_BigInt>(np) * n, row_starts, &diag);
+  auto amg = std::make_unique<mfem::HypreBoomerAMG>();
+  amg->SetPrintLevel(0);
+  MfemWrapperSolver<Operator> pc(std::move(amg));
+  pc.EnableTimer(true, Timer::KSP_COARSE_SOLVE);
+  Vector x(n), y(n);
+  x = 1.0;
+  {
+    BlockTimer bt(Timer::KSP_SETUP);
+    pc.SetOperator(A);
+  }
+  for (int k = 0; k < 3; k++)
+  {
+    BlockTimer bt(Timer::KSP_PRECONDITIONER);
+    pc.Mult(x, y);
+  }
+  pc.SetOperator(A);
+  pc.Mult(x, y);
+  BlockTimer::Finalize(comm);
+  const auto &r = perf::GetResults();
+  // The first application after each SetOperator is the (lazy) setup.
+  CHECK(r.iter.count[Timer::KSP_COARSE_SETUP].max == 2);
+  CHECK(r.iter.count[Timer::KSP_COARSE_SOLVE].max == 2);
+  CHECK(r.iter.count[Timer::KSP_PRECONDITIONER].max == 3);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Setups")].max == 2);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Applies")].max == 4);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Refactorizations")].max == 0);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Rows")].sum == np * n);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/RowsPerRank")].min == n);
+  BlockTimer::Reset();
 }

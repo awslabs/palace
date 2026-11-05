@@ -8,6 +8,7 @@
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -95,6 +96,18 @@ private:
   // Drop small entries.
   void DropSmallEntries();
 
+  // Performance reporting: the first application after SetOperator (where lazy solvers
+  // factorize or set up) is timed as Timer::KSP_COARSE_SETUP, later ones as apply_timer.
+  // Solvers which factorize in SetOperator (MUMPS) time that as Timer::KSP_COARSE_SETUP.
+  bool time_setup = false, eager_setup = false;
+  Timer::Index apply_timer = Timer::NUM_TIMINGS;
+  mutable bool setup_pending = false;
+  int num_setups = 0;
+  int perf_setups = -1, perf_refact, perf_applies, perf_rows, perf_rows_rank;
+
+  // Call the wrapped solver's SetOperator.
+  void SetInnerOperator(const mfem::HypreParMatrix &op);
+
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
                     bool complex_matrix = true, bool drop_small_entries = true,
@@ -103,7 +116,13 @@ public:
       save_assembled(save_assembled), complex_matrix(complex_matrix),
       drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse)
   {
+    InitEagerSetup();
   }
+
+  // Enable timing (and coarse solver counters, keyed by the current solver role), see
+  // above. Applications after the first are timed as apply_timer (NUM_TIMINGS: not timed).
+  void EnableTimer(bool setup, Timer::Index apply = Timer::NUM_TIMINGS);
+  void InitEagerSetup();
 
   // Access the underlying solver.
   const mfem::Solver &GetSolver() { return *pc; }

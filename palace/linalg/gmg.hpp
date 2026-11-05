@@ -50,8 +50,9 @@ private:
   // MFEM Operator interface for multiple RHS.
   mutable std::vector<VecType> X, Y, R;
 
-  // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
-  bool use_timer;
+  // Enable timer contribution for Timer::KSP_COARSE_SOLVE, unless the coarse solver times
+  // itself (setup vs. apply).
+  bool use_timer, coarse_timer;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
@@ -78,7 +79,7 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override;
 
-  void EnableTimer() { use_timer = true; }
+  void EnableTimer();
 };
 
 }  // namespace palace
