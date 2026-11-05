@@ -42,7 +42,7 @@ private:
 
   // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
   // the next operator starts.
-  ComplexVector lambda_vec;
+  VecType lambda_vec;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
@@ -110,7 +110,7 @@ private:
 
   // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
   // the next operator starts.
-  ComplexVector lambda_vec;
+  VecType lambda_vec;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;

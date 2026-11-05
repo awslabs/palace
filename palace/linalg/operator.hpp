@@ -519,13 +519,15 @@ std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const Operator &
 std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOperator &A,
                          const ComplexVector &y);
 
-// Estimate operator 2-norm (spectral norm) with SLEPc if available, otherwise with power
-// iteration. Assumes the operator is not symmetric or Hermitian unless specified. If x0 is
-// given, the estimate starts from it when it has the size of the operator, and x0 is set to
-// the dominant (right singular) vector of the estimate on return, so that the estimate for
-// a nearby operator can start from it.
+// Estimate the operator 2-norm (spectral norm) with the Lanczos method, applied to A if it
+// is symmetric or Hermitian (as specified, otherwise it is not assumed) and to Aᴴ A
+// otherwise. The iteration stops when the estimate changes by less than tol relative to
+// itself. If x0 is given, the iteration starts from it when it has the size of the
+// operator, and x0 is set to the Ritz vector of the estimate (the dominant eigenvector or
+// right singular vector) on return, so that the estimate for a nearby operator can start
+// from it.
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false,
-                    ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
+                    Vector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
                     ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 
