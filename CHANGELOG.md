@@ -23,7 +23,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
     several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-1-1
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1148](https://github.com/awslabs/palace/pull/1148).
 
 #### Performance Improvements
 
