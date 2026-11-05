@@ -350,7 +350,12 @@ divided by their diagonal entries) satisfy
 for a scalar $s$. The anchor is therefore the field of a unit current through the port in the
 inductive limit, up to the $O(\nu^2/\omega^2)$ screening term, which junction-anchored
 (bare-basis) netlist extraction can use directly instead of a pseudo-inverse of
-$\widehat{\bm{L}}^{-1}$.
+$\widehat{\bm{L}}^{-1}$. Setting
+[`"AdaptiveCircuitSynthesisAnchorExtrapolate"`](../config/reference.md#config-solver-driven)
+removes the screening term: each anchor is then solved at both $\nu$ and $\nu/2$ and combined by
+Richardson extrapolation, $\bm{x}_0 \approx [4\bm{x}(\nu/2) - \bm{x}(\nu)]/3$, which leaves an
+$O(\nu^4)$ error, so that $\widehat{\bm{L}}^{-1}\bm{v} = s\,\bm{e}_p$ holds to the solver
+tolerance, at the cost of a second solve per anchor.
 
 An anchor is needed only when the quasistatic response of the port is not already in the basis.
 The sample at the lowest frequency of each excitation index contains, to a very good approximation,
