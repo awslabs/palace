@@ -32,6 +32,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ Re{C} y` is the surface
     participation ratio of a field with synthesized coordinates `y`.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
+  - Added quasistatic anchor solves to adaptive driven circuit synthesis: a lumped port with
+    `"SynthesisAnchor": true`, such as a Josephson junction, adds its screened quasistatic
+    response to the reduced basis as the column `anchor_<index>_re`, with the screening
+    frequency set by `Solver.Driven.AdaptiveCircuitSynthesisAnchorFreq`. SchemaVer 6-2-0
 
 #### Interface Changes
 

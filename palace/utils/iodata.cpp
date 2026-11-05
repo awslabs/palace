@@ -517,6 +517,19 @@ void IoData::CheckConfiguration()
     WarnPermittivityModelDefects();
   }
 
+  // The quasistatic anchor solves of circuit synthesis need the static limit of the model,
+  // which the stretch of a PML region does not have.
+  if (!domains.pml.empty())
+  {
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      MFEM_VERIFY(!data.synthesis_anchor,
+                  fmt::format("\"SynthesisAnchor\" of lumped port {:d} is not supported "
+                              "with PML regions!",
+                              idx));
+    }
+  }
+
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)

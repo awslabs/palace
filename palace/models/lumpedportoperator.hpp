@@ -51,6 +51,10 @@ public:
   int excitation;
   bool active;
   bool include_in_synthesis;
+  // Whether this port receives a screened quasistatic anchor solve during circuit
+  // synthesis (see RomOperator::AddLumpedPortAnchorModesForSynthesis). Opt-in via the
+  // per-port "SynthesisAnchor" config flag (default false).
+  bool synthesis_anchor;
 
 private:
   // Complex weight a = A exp(i φ) on the unit-power incident wave of this port, from the
