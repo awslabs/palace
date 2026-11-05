@@ -296,6 +296,12 @@ def main(argv=None):
                         help="MagneticRules.StateAnchorSetbackOverR (s_a / R: the magnetic chain's state-anchor lines "
                              "start from the conductor anchors set back into their piece; in [0, 1]; absent = 0 = the "
                              "legacy edge anchors; the form of record is 0.5)")
+    # Decision 1323: the state anchor's EDGE TOLERANCE (a conductor anchor within tau x R of an edge offset is ON that
+    # edge; beyond it the anchor must lie in metal); tau must stay below half the narrowest model gap / width (asserted
+    # by palace at load). Default None = absent = 0.1 (applies only with a nonzero StateAnchorSetbackOverR).
+    parser.add_argument("--state-anchor-edge-tolerance", type=float, default=None,
+                        help="MagneticRules.StateAnchorEdgeToleranceOverR (an anchor within this x R of an edge is on "
+                             "the edge; in [0, 1]; absent = 0.1; below half the narrowest model gap / width)")
     parser.add_argument("--records", help="write the per-model records JSON here (default: beside --output)")
     args = parser.parse_args(argv)
     if os.path.exists(args.output):
@@ -311,10 +317,12 @@ def main(argv=None):
                                                                                    args.conductor_consistency_tolerance),
              "ProbeLiftOverR": args.probe_lift, "ProbeSetbackOverR": args.probe_setback,
              "ProbeSetbackWidthFraction": args.probe_width_fraction, "ProbeSheetNudgeOverR": args.probe_nudge,
-             "ProbeBandHeights": args.probe_band_heights, "StateAnchorSetbackOverR": args.state_anchor_setback}
+             "ProbeBandHeights": args.probe_band_heights, "StateAnchorSetbackOverR": args.state_anchor_setback,
+             "StateAnchorEdgeToleranceOverR": args.state_anchor_edge_tolerance}
     if not rules["PsdRefusalRatio"] >= rules["PsdFindingRatio"] >= 0.0 or rules["SameMeshTolerance"] < 0.0:
         parser.error("the rules must be nonnegative with PsdRefusalRatio >= PsdFindingRatio")
-    for key in ("ProbeLiftOverR", "ProbeSetbackOverR", "ProbeSheetNudgeOverR", "StateAnchorSetbackOverR"):
+    for key in ("ProbeLiftOverR", "ProbeSetbackOverR", "ProbeSheetNudgeOverR", "StateAnchorSetbackOverR",
+                "StateAnchorEdgeToleranceOverR"):
         if rules[key] is not None and not 0.0 <= rules[key] <= 1.0:
             parser.error("%s must be in [0, 1]" % key)
     if rules["ProbeSetbackWidthFraction"] is not None and not 0.0 < rules["ProbeSetbackWidthFraction"] < 0.5:

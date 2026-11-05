@@ -197,6 +197,27 @@ int LocalPieceOfOffset(const std::vector<double> &offsets,
                        const std::vector<int> &gap_directions,
                        const std::vector<int> &pieces, double u);
 
+// The generic lateral setback of a point at offset u0 in piece `piece` (Phase 3 (a),
+// AMENDMENT 1275 MAJOR-A): the signed move along u (0 when already >= setback inside).
+double LateralSetbackMove(const std::vector<double> &offsets,
+                          const std::vector<int> &gap_directions,
+                          const std::vector<int> &pieces, double u0, int piece,
+                          double setback, double width_fraction);
+
+// Decision 1323: the piece of a conductor state anchor at lateral offset u0 with the
+// edge-snap tolerance (see SnapStateAnchorToEdge).
+struct StateAnchorEdgeSnap
+{
+  int piece = 0;
+  double u_edge = 0.0;
+  double distance = 0.0;
+  bool snapped = false;
+};
+StateAnchorEdgeSnap SnapStateAnchorToEdge(const std::vector<double> &offsets,
+                                          const std::vector<int> &gap_directions,
+                                          const std::vector<int> &pieces, double u0,
+                                          double tolerance);
+
 //
 // Low-rank Schur-complement correction which replaces the local response of an ideal
 // thin-metal edge by a fabrication-resolved coupon response. The correction has the form
@@ -728,6 +749,14 @@ private:
   // magnetic state lines it re-anchored.
   double magnetic_state_anchor_setback_over_r = 0.0;
   int state_anchor_setback_patch_count = 0;
+  // Decision 1323 CONDITION 2: the state anchors snapped onto their edge (local, and the
+  // global count / farthest snap in mesh units gathered at the configuration print).
+  int state_anchor_on_edge_count = 0;
+  int state_anchor_snapped_count = 0;
+  double state_anchor_max_snap_distance = 0.0;
+  int state_anchor_on_edge_count_global = 0;
+  int state_anchor_snapped_count_global = 0;
+  double state_anchor_max_snap_distance_global = 0.0;
   // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
   // when a magnetic leaf is loaded), so that the root-only record printers need no
   // collective.

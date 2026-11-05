@@ -227,6 +227,25 @@ class AttachMagneticLeavesTest(unittest.TestCase):
                 AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
                           "--output", str(self.root / ("out-bad" + flag) / "library-mag.json"), flag, value])
 
+    def test_state_anchor_edge_tolerance_leaf_is_written_only_when_given_and_bounded(self):
+        # Decision 1323: the state anchor's edge tolerance; absent = no leaf (the loader's 0.1); outside [0, 1] refused.
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-edgetol" / "library-mag.json"), "--state-anchor-setback", "0.5",
+                       "--state-anchor-edge-tolerance", "0.05"])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-edgetol" / "library-mag.json") as handle:
+            rules = json.load(handle)["MagneticRules"]
+        self.assertEqual(rules["StateAnchorEdgeToleranceOverR"], 0.05)
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-edgetol-absent" / "library-mag.json")])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-edgetol-absent" / "library-mag.json") as handle:
+            self.assertNotIn("StateAnchorEdgeToleranceOverR", json.load(handle)["MagneticRules"])
+        with self.assertRaises(SystemExit):
+            AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                      "--output", str(self.root / "out-bad-edgetol" / "library-mag.json"),
+                      "--state-anchor-edge-tolerance", "1.5"])
+
     def test_state_anchor_setback_leaf_is_written_only_when_given_and_bounded(self):
         # R-MAG-17 (USER 1308 U-2, decision 1309): the magnetic term's state-anchor setback; absent = no leaf (the
         # loader's 0 = the legacy edge anchors); 0.5 = the form of record; outside [0, 1] refused.

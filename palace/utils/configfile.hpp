@@ -1601,6 +1601,21 @@ public:
       // decision 1305). 0 = the LEGACY edge anchors (every library of record without the
       // leaf: bitwise); the form of record going forward is 0.5, written explicitly.
       double state_anchor_setback_over_r = 0.0;
+      // Decision 1323 (the (b) W06 line): a conductor anchor of a translational patch is
+      // the DEVICE's edge point (a DCG pair's {e1, e2}, a cluster's edge-0 point) while the
+      // patch's conductor_probe_edges carry the feet of the device sides at the origin
+      // cross-section; the two differ by roundoff or by the local geometry (a tapered or
+      // curved pair), and an anchor a hair inside the gap has no metal piece. An anchor
+      // within StateAnchorEdgeToleranceOverR x R of an edge offset is ON that edge (the
+      // nearest one): its piece = the edge's piece and the setback is measured from the
+      // EDGE offset; beyond the tolerance the anchor must lie in a metal piece (refused
+      // by name otherwise). Applies only when StateAnchorSetbackOverR > 0 (a legacy
+      // library is bitwise). CONDITION 1 of 1323: tolerance x R < half the narrowest
+      // model gap / width (asserted at load) so that no anchor snaps across a gap.
+      double state_anchor_edge_tolerance_over_r = 0.1;
+      // COMPUTED at load (not a leaf): the narrowest Separation / cluster gap over the
+      // library's magnetic models in units of R (-1 when the library has none); recorded.
+      double state_anchor_min_gap_over_r = -1.0;
     };
     MagneticRulesData magnetic_rules;
 

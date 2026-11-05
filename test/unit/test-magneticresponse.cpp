@@ -1441,6 +1441,132 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Decision 1323 (the (b) W06 line): the state anchor's EDGE SNAP. A conductor anchor is the
+// device's edge point while the patch's conductor_probe_edges carry the device sides' feet;
+// an anchor within StateAnchorEdgeToleranceOverR x R of an edge is ON that edge (its piece,
+// the setback measured from the edge offset), beyond it the anchor must lie in metal
+// (refused by name); the tolerance must stay below half the narrowest model gap / width
+// (CONDITION 1, asserted at load); the on-edge / snapped counts and the farthest snap are
+// recorded (CONDITION 2). On the stub every anchor sits exactly on its edge: all on-edge,
+// none snapped from a nonzero distance, max 0 = bitwise to the R-MAG-17 form.
+TEST_CASE("SnapStateAnchorToEdge: the nearest edge within the tolerance, metal beyond it",
+          "[surfaceresponseoperator][magnetic][probeform][stateanchor][Serial]")
+{
+  // The stub's cross-section: edges 0 / 0.125 / 0.375 / 0.5 (ground | slot A | strip |
+  // slot B | ground), pieces 1 / 2 / 2 / 3.
+  const std::vector<double> offsets = {0.0, 0.125, 0.375, 0.5};
+  const std::vector<int> gap_directions = {1, -1, 1, -1};
+  const std::vector<int> pieces = {1, 2, 2, 3};
+  // An anchor a hair into slot A from the ground edge (the near-matched DCG case): snapped
+  // onto edge 0 (piece 1) at its distance.
+  auto snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, 0.004, 0.02);
+  CHECK(snap.snapped);
+  CHECK(snap.piece == 1);
+  CHECK(snap.u_edge == 0.0);
+  CHECK_THAT(snap.distance, WithinAbs(0.004, 1.0e-15));
+  // Into slot A from the strip edge: snapped onto edge 1 (piece 2).
+  snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, 0.12, 0.02);
+  CHECK((snap.snapped && snap.piece == 2 && snap.u_edge == 0.125));
+  // Exactly on an edge: on the edge at distance 0.
+  snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, 0.375, 0.02);
+  CHECK((snap.snapped && snap.piece == 2 && snap.distance == 0.0));
+  // Beyond the tolerance inside the slot: no piece (the caller refuses).
+  snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, 0.06, 0.02);
+  CHECK_FALSE(snap.snapped);
+  CHECK(snap.piece == 0);
+  CHECK_THAT(snap.distance, WithinAbs(0.06, 1.0e-15));
+  // Beyond the tolerance inside metal: the metal piece, unsnapped, u_edge = u0.
+  snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, 0.25, 0.02);
+  CHECK((!snap.snapped && snap.piece == 2 && snap.u_edge == 0.25));
+  snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, -0.3, 0.02);
+  CHECK((!snap.snapped && snap.piece == 1));
+  // The setback measured from the edge: edge 0's piece (the unbounded ground) moves the
+  // anchor to -s from the EDGE, not from u0.
+  snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, 0.004, 0.02);
+  const double move =
+      (snap.u_edge - 0.004) + LateralSetbackMove(offsets, gap_directions, pieces,
+                                                 snap.u_edge, snap.piece, 0.1, 0.45);
+  CHECK_THAT(0.004 + move, WithinAbs(-0.1, 1.0e-15));
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator magnetic term: the state-anchor edge tolerance "
+                 "(MagneticRules.StateAnchorEdgeToleranceOverR, decision 1323)",
+                 "[surfaceresponseoperator][maxwell][magnetic][probeform][stateanchor]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  // The stub's narrowest gap 0.125 at R 0.2 = 0.625 R: the default tolerance 0.1 R is
+  // admitted; on the stub every conductor anchor is exactly on its edge.
+  {
+    const auto library = WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path,
+                                                  "pieces-edgetol-default", true,
+                                                  {{"StateAnchorSetbackOverR", 0.5}});
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(StubMaxwellConfig(*this, library), meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    REQUIRE(response.GetPatchCount() > 0);
+    const auto &rules = response.GetMagneticProbeRules();
+    CHECK(rules.state_anchor_edge_tolerance_over_r == 0.1);
+    CHECK_THAT(rules.state_anchor_min_gap_over_r, WithinRel(0.625, 1.0e-12));
+    const auto statistics = response.GetStatistics();
+    const auto &snapped = statistics["Correction"]["MagneticStateAnchorSnapped"];
+    // 3 conductor-state anchors per patch (the ground, the strip, the right ground), each
+    // on its edge; none moved by the snap.
+    CHECK(snapped["OnEdge"].get<int>() ==
+          3 * statistics["Correction"]["MagneticStateAnchorPatches"]["Total"].get<int>());
+    CHECK(snapped["Count"].get<int>() == 0);
+    CHECK(snapped["MaxOverR"].get<double>() == 0.0);
+    CHECK(snapped["ToleranceOverR"].get<double>() == 0.1);
+  }
+  // CONDITION 1: a tolerance at or above half the narrowest gap (0.3125 R) is refused at
+  // load by name; a legacy library (no setback) is not checked.
+  {
+    const auto bad = WriteStubMagneticLibrary(
+        temp.temp_dir, convex_library_3d_path, "pieces-edgetol-wide", true,
+        {{"StateAnchorSetbackOverR", 0.5}, {"StateAnchorEdgeToleranceOverR", 0.4}});
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(StubMaxwellConfig(*this, bad), meshes);
+    SpaceOperator space(iodata, meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
+                      Catch::Matchers::ContainsSubstring("StateAnchorEdgeToleranceOverR"));
+    const auto legacy = WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path,
+                                                 "pieces-edgetol-legacy", true,
+                                                 {{"StateAnchorEdgeToleranceOverR", 0.4}});
+    std::vector<std::unique_ptr<Mesh>> legacy_meshes;
+    IoData legacy_iodata = Build(StubMaxwellConfig(*this, legacy), legacy_meshes);
+    SpaceOperator legacy_space(legacy_iodata, legacy_meshes);
+    SurfaceResponseOperator legacy_response(legacy_iodata, legacy_space);
+    CHECK(legacy_response.GetPatchCount() > 0);
+    CHECK(legacy_response.GetStatistics()["Correction"]["MagneticStateAnchorSetbackOverR"]
+              .get<double>() == 0.0);
+  }
+  // The leaf's bounds: outside [0, 1] = malformed, refused by name.
+  {
+    const auto bad = WriteStubMagneticLibrary(
+        temp.temp_dir, convex_library_3d_path, "pieces-edgetol-bad", true,
+        {{"StateAnchorSetbackOverR", 0.5}, {"StateAnchorEdgeToleranceOverR", 1.5}});
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(StubMaxwellConfig(*this, bad), meshes);
+    SpaceOperator space(iodata, meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
+                      Catch::Matchers::ContainsSubstring("StateAnchorEdgeToleranceOverR"));
+  }
+#endif
+}
+
 // Phase 3 (a) t6: the probe-form leaves (R-MAG-10 / 12): absent = the defaults (LIFTED
 // 0.5 / 0.5 / 0.45 / 1e-6 / 1), 0 / 0 = FLAT, a Gauss-height count >= 2 = BAND, and a value
 // outside its bounds is MALFORMED (refused at load by name).

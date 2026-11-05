@@ -2346,6 +2346,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         "Fabrication-process response-library MagneticRules.StateAnchorSetbackOverR "
         "must be in [0, 1] (malformed: "
             << magnetic_rules.state_anchor_setback_over_r << ")!");
+    // Decision 1323: the state anchor's edge tolerance in [0, 1] (the gap bound is
+    // asserted once the models are read, below).
+    magnetic_rules.state_anchor_edge_tolerance_over_r = rules->value(
+        "StateAnchorEdgeToleranceOverR", magnetic_rules.state_anchor_edge_tolerance_over_r);
+    MFEM_VERIFY(magnetic_rules.state_anchor_edge_tolerance_over_r >= 0.0 &&
+                    magnetic_rules.state_anchor_edge_tolerance_over_r <= 1.0,
+                "Fabrication-process response-library "
+                "MagneticRules.StateAnchorEdgeToleranceOverR must be in [0, 1] (malformed: "
+                    << magnetic_rules.state_anchor_edge_tolerance_over_r << ")!");
     MFEM_VERIFY(magnetic_rules.probe_lift_over_r >= 0.0 &&
                     magnetic_rules.probe_lift_over_r <= 1.0,
                 "Fabrication-process response-library MagneticRules.ProbeLiftOverR must be "
@@ -2383,15 +2392,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     for (const auto &[key, value] : rules->items())
     {
       (void)value;
-      MFEM_VERIFY(key == "SameMeshTolerance" || key == "PsdFindingRatio" ||
-                      key == "PsdRefusalRatio" ||
-                      key == "SameMeshToleranceWithMeshIdentity" ||
-                      key == "ConductorConsistencyTolerance" || key == "ProbeLiftOverR" ||
-                      key == "ProbeSetbackOverR" || key == "ProbeSetbackWidthFraction" ||
-                      key == "ProbeSheetNudgeOverR" || key == "ProbeBandHeights" ||
-                      key == "StateAnchorSetbackOverR",
-                  "Fabrication-process response-library MagneticRules has an unknown key \""
-                      << key << "\"!");
+      MFEM_VERIFY(
+          key == "SameMeshTolerance" || key == "PsdFindingRatio" ||
+              key == "PsdRefusalRatio" || key == "SameMeshToleranceWithMeshIdentity" ||
+              key == "ConductorConsistencyTolerance" || key == "ProbeLiftOverR" ||
+              key == "ProbeSetbackOverR" || key == "ProbeSetbackWidthFraction" ||
+              key == "ProbeSheetNudgeOverR" || key == "ProbeBandHeights" ||
+              key == "StateAnchorSetbackOverR" || key == "StateAnchorEdgeToleranceOverR",
+          "Fabrication-process response-library MagneticRules has an unknown key \""
+              << key << "\"!");
     }
   }
   auto FabricationValue = [&](const char *key) -> std::optional<double>
@@ -3758,6 +3767,49 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       .second,
                   "CornerRadiusInterpolation contains a duplicate model span!");
     }
+  }
+  // Decision 1323 CONDITION 1: the state anchor's edge tolerance must stay below half the
+  // narrowest gap / width of the magnetic models it serves (a pair model's Separation; a
+  // ParallelEdgeCluster's gaps between an edge whose gap lies on +u and the next edge whose
+  // gap lies on -u), so that no anchor snaps across a gap to the wrong piece. The minimum
+  // is recorded in units of R (-1 when no magnetic model carries a width).
+  {
+    auto &rules = library.magnetic_rules;
+    double min_gap = mfem::infinity();
+    for (const auto &model : library.models)
+    {
+      if (!model.response.magnetic)
+      {
+        continue;
+      }
+      if (model.separation > 0.0)
+      {
+        min_gap = std::min(min_gap, model.separation);
+      }
+      for (std::size_t k = 0; k + 1 < model.cluster_edges.size(); k++)
+      {
+        if (model.cluster_edges[k].gap_direction == 1 &&
+            model.cluster_edges[k + 1].gap_direction == -1)
+        {
+          min_gap = std::min(min_gap, model.cluster_edges[k + 1].offset -
+                                          model.cluster_edges[k].offset);
+        }
+      }
+    }
+    rules.state_anchor_min_gap_over_r =
+        std::isfinite(min_gap) && library.matching_radius > 0.0
+            ? min_gap / library.matching_radius
+            : -1.0;
+    MFEM_VERIFY(
+        rules.state_anchor_setback_over_r <= 0.0 ||
+            rules.state_anchor_min_gap_over_r < 0.0 ||
+            rules.state_anchor_edge_tolerance_over_r <
+                0.5 * rules.state_anchor_min_gap_over_r,
+        "Fabrication-process response-library MagneticRules.StateAnchorEdgeToleranceOverR "
+            << rules.state_anchor_edge_tolerance_over_r
+            << " must be below half the narrowest magnetic model gap / width "
+            << rules.state_anchor_min_gap_over_r
+            << " R (decision 1323 CONDITION 1: an anchor must not snap across a gap)!");
   }
   return library;
 }
@@ -21260,6 +21312,38 @@ double LateralSetbackMove(const std::vector<double> &offsets,
   return 0.0;
 }
 
+// Decision 1323: the piece of a conductor STATE ANCHOR at lateral offset u0. An anchor
+// within `tolerance` of an edge offset is ON that edge (the nearest one): its piece = the
+// edge's piece and the setback is measured from the edge offset (`u_edge`); otherwise
+// LocalPieceOfOffset decides (0 = in a gap: the caller refuses) and u_edge = u0.
+StateAnchorEdgeSnap SnapStateAnchorToEdge(const std::vector<double> &offsets,
+                                          const std::vector<int> &gap_directions,
+                                          const std::vector<int> &pieces, double u0,
+                                          double tolerance)
+{
+  StateAnchorEdgeSnap snap;
+  snap.u_edge = u0;
+  std::size_t nearest = offsets.size();
+  for (std::size_t k = 0; k < offsets.size(); k++)
+  {
+    const double distance = std::abs(u0 - offsets[k]);
+    if (nearest == offsets.size() || distance < snap.distance)
+    {
+      nearest = k;
+      snap.distance = distance;
+    }
+  }
+  if (nearest < offsets.size() && snap.distance <= tolerance)
+  {
+    snap.piece = pieces[nearest];
+    snap.u_edge = offsets[nearest];
+    snap.snapped = true;
+    return snap;
+  }
+  snap.piece = LocalPieceOfOffset(offsets, gap_directions, pieces, u0);
+  return snap;
+}
+
 int LocalPieceOfOffset(const std::vector<double> &offsets,
                        const std::vector<int> &gap_directions,
                        const std::vector<int> &pieces, double u)
@@ -21449,7 +21533,9 @@ nlohmann::json MagneticRulesRecord(
       {"ProbeSetbackWidthFraction", rules.probe_setback_width_fraction},
       {"ProbeSheetNudgeOverR", rules.probe_sheet_nudge_over_r},
       {"ProbeBandHeights", rules.probe_band_heights},
-      {"StateAnchorSetbackOverR", rules.state_anchor_setback_over_r}};
+      {"StateAnchorSetbackOverR", rules.state_anchor_setback_over_r},
+      {"StateAnchorEdgeToleranceOverR", rules.state_anchor_edge_tolerance_over_r},
+      {"StateAnchorMinGapOverR", rules.state_anchor_min_gap_over_r}};
 }
 
 }  // namespace
@@ -31035,6 +31121,23 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         pieces.push_back(edge.piece);
       }
       const double R = matching_radius;
+      const double edge_tolerance =
+          magnetic_probe_rules.state_anchor_edge_tolerance_over_r * R;
+      // Decision 1323 CONDITION 1 on the DEVICE gaps of this patch (the edges' feet): the
+      // tolerance below half of every gap between an edge whose gap lies on +u and the
+      // next edge whose gap lies on -u.
+      for (std::size_t k = 0; k + 1 < offsets.size(); k++)
+      {
+        MFEM_VERIFY(gap_directions[k] != 1 || gap_directions[k + 1] != -1 ||
+                        edge_tolerance < 0.5 * (offsets[k + 1] - offsets[k]),
+                    "StateAnchorEdgeToleranceOverR "
+                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r
+                        << " R reaches half the device gap "
+                        << (offsets[k + 1] - offsets[k]) / R << " R of patch "
+                        << patch.global_index
+                        << " (decision 1323 CONDITION 1: an anchor must not snap across "
+                           "a gap)!");
+      }
       for (auto &state_anchor : state_anchors)
       {
         double u0 = 0.0;
@@ -31042,11 +31145,27 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         {
           u0 += (state_anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
         }
-        const int piece = LocalPieceOfOffset(offsets, gap_directions, pieces, u0);
-        MFEM_VERIFY(piece > 0, "StateAnchorSetbackOverR: a conductor anchor of patch "
-                                   << patch.global_index << " lies in a gap!");
+        // Decision 1323: an anchor within the tolerance of an edge is ON that edge (the
+        // setback measured from the edge offset); beyond it the anchor must lie in metal.
+        const StateAnchorEdgeSnap snap =
+            SnapStateAnchorToEdge(offsets, gap_directions, pieces, u0, edge_tolerance);
+        MFEM_VERIFY(snap.piece > 0,
+                    "StateAnchorSetbackOverR: a conductor anchor of patch "
+                        << patch.global_index << " lies in a gap, " << snap.distance / R
+                        << " R from the nearest edge (beyond "
+                           "MagneticRules.StateAnchorEdgeToleranceOverR "
+                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r
+                        << "; decision 1323)!");
+        if (snap.snapped)
+        {
+          state_anchor_on_edge_count++;
+          state_anchor_snapped_count += snap.distance > 0.0 ? 1 : 0;
+          state_anchor_max_snap_distance =
+              std::max(state_anchor_max_snap_distance, snap.distance);
+        }
         const double move =
-            LateralSetbackMove(offsets, gap_directions, pieces, u0, piece,
+            (snap.u_edge - u0) +
+            LateralSetbackMove(offsets, gap_directions, pieces, snap.u_edge, snap.piece,
                                magnetic_state_anchor_setback_over_r * R,
                                magnetic_probe_rules.probe_setback_width_fraction);
         for (int d = 0; d < dimension; d++)
@@ -31791,6 +31910,21 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                    "read the set-back lines\n",
                    magnetic_state_anchor_setback_over_r, patches_reanchored);
       }
+      // Decision 1323 CONDITION 2: the anchors snapped onto their edge and the farthest.
+      int anchors_on_edge = state_anchor_on_edge_count;
+      int anchors_snapped = state_anchor_snapped_count;
+      double max_snap = state_anchor_max_snap_distance;
+      Mpi::GlobalSum(1, &anchors_on_edge, fespace.GetComm());
+      Mpi::GlobalSum(1, &anchors_snapped, fespace.GetComm());
+      Mpi::GlobalMax(1, &max_snap, fespace.GetComm());
+      state_anchor_on_edge_count_global = anchors_on_edge;
+      state_anchor_snapped_count_global = anchors_snapped;
+      state_anchor_max_snap_distance_global = max_snap;
+      Mpi::Print(" Magnetic state anchors on an edge: {:d} anchor(s), {:d} snapped onto it "
+                 "from a nonzero distance, the farthest {:.3e} R (MagneticRules."
+                 "StateAnchorEdgeToleranceOverR {:.3e}; decision 1323)\n",
+                 anchors_on_edge, anchors_snapped, max_snap / matching_radius,
+                 magnetic_probe_rules.state_anchor_edge_tolerance_over_r);
     }
     if (total_control_flips > 0)
     {
@@ -35781,6 +35915,15 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
           magnetic_state_anchor_setback_over_r;
       result["Correction"]["MagneticStateAnchorPatches"] =
           Distribution(state_anchor_setback_patch_count);
+      // Decision 1323 CONDITION 2: the GLOBAL snapped-anchor count and the farthest snap
+      // in units of R (gathered at the Maxwell configuration).
+      result["Correction"]["MagneticStateAnchorSnapped"] = {
+          {"OnEdge", state_anchor_on_edge_count_global},
+          {"Count", state_anchor_snapped_count_global},
+          {"MaxOverR", matching_radius > 0.0
+                           ? state_anchor_max_snap_distance_global / matching_radius
+                           : 0.0},
+          {"ToleranceOverR", magnetic_probe_rules.state_anchor_edge_tolerance_over_r}};
     }
     // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (decision 1072 Q2): the FROZEN crack tolerance
     // rule of the contour-line coverage, by name.

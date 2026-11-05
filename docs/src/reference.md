@@ -2367,7 +2367,18 @@ on the twins) all read them; the electric chain and the electric gate are untouc
 = 0 = the LEGACY edge anchors (every library without the leaf: bitwise); the form of record
 is 0.5, written explicitly in every magnetic library built from now on. The setback in
 effect and the patches re-anchored are printed and recorded (`palace.json`
-`Correction.MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`). The
+`Correction.MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`). A conductor
+anchor is the DEVICE's edge point while the patch's probe edges carry the device sides' feet
+at the origin cross-section, which differ by roundoff or by the local geometry (a tapered or
+curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR` (decision 1323;
+in ``[0, 1]``, absent = 0.1, in effect only with a nonzero setback) makes an anchor within
+that fraction of ``R`` of an edge offset lie ON that edge (its piece; the setback measured
+from the edge offset); an anchor farther from every edge must lie in a metal piece (refused
+by name otherwise). The tolerance must stay below half the narrowest magnetic model gap /
+width (a pair model's `Separation`, a cluster's gaps), asserted at load (the minimum is
+recorded as `StateAnchorMinGapOverR`); the anchors on an edge, those snapped from a nonzero
+distance and the farthest snap (``/ R``) are printed and recorded
+(`Correction.MagneticStateAnchorSnapped`). The
 DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR` (decision 1302;
 `RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
 to a library in the legacy form and is refused by name on a library whose leaf already sets
