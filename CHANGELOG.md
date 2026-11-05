@@ -19,6 +19,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#163](https://github.com/pghysels/STRUMPACK/pull/163), which lowers
+    the communication cost of its distributed solve phase: point-to-point exchanges of only
+    the nonempty messages instead of all-to-all collectives, cached right-hand side
+    redistribution patterns and extend-add index maps, and the row interchanges of the
+    forward solve applied in one exchange. This speeds up the repeated solves of STRUMPACK
+    as the coarse solver at high process counts, with unchanged results.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every

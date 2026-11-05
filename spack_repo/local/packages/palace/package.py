@@ -173,9 +173,21 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
-    # The STRUMPACK version of the superbuild. Kept off the `with` blocks so the Palace
-    # variants are not folded into the conditions of the patches added later.
-    depends_on("strumpack@8.1.0", when="@develop+strumpack")
+    # The STRUMPACK version of the superbuild, with
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
+    # off the `with` blocks so the Palace variants are not folded into the patch condition.
+    depends_on(
+        "strumpack@8.1.0",
+        when="@develop+strumpack",
+        patches=[
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
+                sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
+                when="@8.1.0",
+            )
+        ],
+    )
 
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
