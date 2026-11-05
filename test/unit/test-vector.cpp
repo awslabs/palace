@@ -110,8 +110,8 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
-// On the host, the complex inner product is computed in a single pass; it must agree with
-// the real inner products of the parts.
+// On the host, the complex inner product is computed in a single pass (by blocks with
+// several OpenMP threads); it must agree with the real inner products of the parts.
 TEST_CASE("ComplexVector Dot", "[vector][Serial][Parallel]")
 {
   constexpr int n = 1003;
@@ -131,11 +131,14 @@ TEST_CASE("ComplexVector Dot", "[vector][Serial][Parallel]")
       linalg::Dot(comm, x.Imag(), y.Real()) - linalg::Dot(comm, x.Real(), y.Imag());
   CHECK_THAT(dot.real(), WithinAbs(re, 1.0e-12 * n));
   CHECK_THAT(dot.imag(), WithinAbs(im, 1.0e-12 * n));
-  const auto nrm2 = linalg::Dot(comm, x, x);
-  CHECK(nrm2.imag() == 0.0);
+  // The inner product of x with itself skips the imaginary part, which a copy computes.
+  ComplexVector z(x);
+  const auto nrm2 = linalg::Dot(comm, x, x), nrm2_copy = linalg::Dot(comm, x, z);
   CHECK_THAT(nrm2.real(), WithinRel(linalg::Dot(comm, x.Real(), x.Real()) +
                                         linalg::Dot(comm, x.Imag(), x.Imag()),
-                                    1.0e-14));
+                                    1.0e-13));
+  CHECK_THAT(nrm2_copy.real(), WithinRel(nrm2.real(), 1.0e-13));
+  CHECK_THAT(nrm2_copy.imag(), WithinAbs(0.0, 1.0e-12 * n));
 }
 
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
