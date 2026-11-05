@@ -311,6 +311,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "mfem_pr5353.diff",
                 sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
             ),
+            # https://github.com/mfem/mfem/pull/5711 (rebased onto the PR 5353
+            # snapshot above, applied after it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/"
+                "mfem_pr5711.diff",
+                sha256="4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470",
+                when="@4.10:",
+            ),
             # https://github.com/mfem/mfem/pull/5494 (from the PR range)
             patch(
                 "https://github.com/mfem/mfem/compare/"
