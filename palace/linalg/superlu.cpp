@@ -61,9 +61,6 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
     case SymbolicFactorization::METIS:
       solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
       break;
-    case SymbolicFactorization::PARMETIS:
-      solver.SetColumnPermutation(mfem::superlu::PARMETIS);
-      break;
     case SymbolicFactorization::AMD:
     case SymbolicFactorization::RCM:
       solver.SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);

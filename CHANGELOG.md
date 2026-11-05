@@ -17,6 +17,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Interface Changes
+
+  - The `"ParMETIS"` option of `config["Solver"]["Linear"]["ColumnOrdering"]` is now a
+    deprecated alias for `"METIS"`, since *Palace* no longer depends on ParMETIS.
+    SchemaVer 4-1-1 [PR 1130](https://github.com/awslabs/palace/pull/1130).
+
 #### Performance Improvements
 
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-1-0",
+  "$id": "urn:palace:schema:4-1-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2346,7 +2346,8 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Deprecated: same as `\"METIS\"`, since *Palace* no longer depends on ParMETIS.",
+          "x-palace-deprecated": true
         },
         {
           "const": "Scotch",
