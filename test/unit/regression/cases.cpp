@@ -13,6 +13,7 @@
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -40,6 +41,79 @@
 
 namespace
 {
+
+// Layout of a planar stack along the normal of the Floquet ports, lengths in m: vacuum from
+// port 1 to a slab, the slab, then the exit medium to port 2. The exit medium is vacuum for
+// a free-standing slab. For a half-space it is the slab material itself, and port 2 lies
+// inside it, at a depth of thickness + back.
+struct SlabLayout
+{
+  double front;             // Vacuum from port 1 to the slab
+  double thickness;         // Slab
+  double back = 0.0;        // Exit medium from the slab to port 2
+  bool half_space = false;  // Exit medium is the slab material, not vacuum
+};
+
+// Normal-incidence Floquet port S-parameters of a slab of relative permittivity
+// epsilon_r(f) (f in GHz) in the given layout. The oracle is the Fresnel solution of the
+// three layers, with the phase of the vacuum and exit medium between the slab and the
+// ports. Port 2 normalizes the transmitted wave to the power it carries, which in a lossy
+// exit medium of index n is proportional to Re n. The frequencies come from the CSV, and
+// must be those of the reference: they must print exactly in its nine significant digits,
+// or the oracle sees the rounding where the S-parameters are steep.
+palace::test::CustomCheck
+TestDielectricSlab(std::function<std::complex<double>(double)> epsilon_r, SlabLayout layout)
+{
+  return [epsilon_r, layout](palace::Table &actual, palace::Table &reference,
+                             const std::filesystem::path &)
+  {
+    REQUIRE(reference.n_rows() > 0);
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    REQUIRE(actual.n_complete_rows() == actual.n_rows());
+    REQUIRE(actual.n_cols() == 9);
+    constexpr std::complex<double> imaginary{0.0, 1.0};
+    for (std::size_t row = 0; row < actual.n_rows(); ++row)
+    {
+      const double frequency = actual[0].data[row];  // GHz
+      INFO("Frequency: " << frequency << " GHz");
+      CHECK_THAT(frequency, Catch::Matchers::WithinAbs(reference[0].data[row], 1.0e-8));
+      // Positive-time convention: passive permittivity has negative imaginary part.
+      const auto index = std::sqrt(epsilon_r(frequency));
+      const auto exit_index = layout.half_space ? index : std::complex<double>{1.0};
+      const double k0 = 2.0 * std::numbers::pi * frequency * 1.0e9 / 299792458.0;
+      const auto q = std::exp(-imaginary * k0 * index * layout.thickness);
+      const auto rho_front = (1.0 - index) / (1.0 + index);
+      const auto rho_back = (index - exit_index) / (index + exit_index);
+      const auto denominator = 1.0 + rho_front * rho_back * q * q;
+      const auto reflection = (rho_front + rho_back * q * q) / denominator *
+                              std::exp(-2.0 * imaginary * k0 * layout.front);
+      const auto transmission = 2.0 / (1.0 + index) * 2.0 * index / (index + exit_index) *
+                                q / denominator * std::sqrt(exit_index.real()) *
+                                std::exp(-imaginary * k0 * layout.front) *
+                                std::exp(-imaginary * k0 * exit_index * layout.back);
+      double outgoing_power = 0.0;
+      for (std::size_t column = 1; column + 1 < actual.n_cols(); column += 2)
+      {
+        const auto &header = actual[column].header_text;
+        INFO("Floquet channel: " << header);
+        const double magnitude = std::pow(10.0, actual[column].data[row] / 20.0);
+        const double phase = actual[column + 1].data[row] * std::numbers::pi / 180.0;
+        const auto amplitude = std::polar(magnitude, phase);
+        const auto expected = header == "|S[P1(0;0)TE][1]| (dB)"   ? reflection
+                              : header == "|S[P2(0;0)TE][1]| (dB)" ? transmission
+                                                                   : std::complex<double>{};
+        CHECK(std::abs(amplitude - expected) < 1.0e-7);
+        outgoing_power += std::norm(amplitude);
+      }
+      const double absorption = 1.0 - outgoing_power;
+      const double expected_absorption =
+          1.0 - std::norm(reflection) - std::norm(transmission);
+      CHECK(absorption >= -1.0e-8);
+      CHECK(absorption <= 1.0 + 1.0e-8);
+      CHECK_THAT(absorption, Catch::Matchers::WithinAbs(expected_absorption, 1.0e-8));
+    }
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Shared custom-check factories. Each returns a callable matching
@@ -2489,6 +2563,23 @@ TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
                                   "floquet_wave_dispersive", opts);
+}
+
+// Adaptive sweep of a 5 mm slab with the Lorentz permittivity 2 + f0^2 / (f0^2 - f^2 +
+// i gamma f), f0 = 2 GHz and gamma = 0.2 GHz, between vacuum Floquet ports at normal
+// incidence. Nine frequencies from 1 to 3 GHz cross the resonance and the band of negative
+// real permittivity above it. At every frequency, sampled or not, the TE reflection and
+// transmission, with the vacuum phase to the ports, must match the Fresnel solution to
+// 1e-7, the cross-polarized TM outputs must vanish, and the absorption must match to 1e-8.
+TEST_CASE("floquet_lorentz_slab_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(
+      [](double f) { return 2.0 + 4.0 / std::complex<double>(4.0 - f * f, 0.2 * f); },
+      {.front = 0.0375, .thickness = 0.005, .back = 0.0375});
+  palace::test::RunRegressionCase("dielectric_slab", "adaptive.json", "adaptive", opts);
 }
 
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
