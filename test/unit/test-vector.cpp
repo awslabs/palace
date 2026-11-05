@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
 #include <complex>
 
 #include "linalg/vector.hpp"
@@ -107,6 +108,34 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
 
   CHECK_THAT(sum.real(), WithinRel(expected_real));
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
+}
+
+// On the host, the complex inner product is computed in a single pass; it must agree with
+// the real inner products of the parts.
+TEST_CASE("ComplexVector Dot", "[vector][Serial][Parallel]")
+{
+  constexpr int n = 1003;
+  ComplexVector x(n), y(n);
+  for (int i = 0; i < n; i++)
+  {
+    x.Real()[i] = std::sin(0.3 * i);
+    x.Imag()[i] = std::cos(0.7 * i);
+    y.Real()[i] = std::cos(1.1 * i + 0.2);
+    y.Imag()[i] = std::sin(0.5 * i - 0.4);
+  }
+  MPI_Comm comm = Mpi::World();
+  const auto dot = linalg::Dot(comm, x, y);
+  const double re =
+      linalg::Dot(comm, x.Real(), y.Real()) + linalg::Dot(comm, x.Imag(), y.Imag());
+  const double im =
+      linalg::Dot(comm, x.Imag(), y.Real()) - linalg::Dot(comm, x.Real(), y.Imag());
+  CHECK_THAT(dot.real(), WithinAbs(re, 1.0e-12 * n));
+  CHECK_THAT(dot.imag(), WithinAbs(im, 1.0e-12 * n));
+  const auto nrm2 = linalg::Dot(comm, x, x);
+  CHECK(nrm2.imag() == 0.0);
+  CHECK_THAT(nrm2.real(), WithinRel(linalg::Dot(comm, x.Real(), x.Real()) +
+                                        linalg::Dot(comm, x.Imag(), x.Imag()),
+                                    1.0e-14));
 }
 
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")

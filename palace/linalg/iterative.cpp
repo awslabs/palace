@@ -8,6 +8,9 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <type_traits>
+#include <mfem/general/device.hpp>
+#include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
 #include "utils/timer.hpp"
@@ -17,6 +20,72 @@ namespace palace
 
 namespace
 {
+
+// Real-valued inverse diagonal of a Jacobi preconditioner, if the CG updates and the
+// preconditioner can be fused into a single pass on the host (nullptr otherwise).
+// The choice may differ between processes; both paths perform the same reductions.
+template <typename OperType>
+const Vector *GetHostJacobiDiagonal(const Solver<OperType> *B)
+{
+  const auto *jacobi = dynamic_cast<const JacobiSmoother<OperType> *>(B);
+  if (!jacobi || mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK))
+  {
+    return nullptr;
+  }
+  const auto &dinv = jacobi->GetInverseDiagonal();
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    const auto *DI = dinv.Imag().HostRead();
+    return std::all_of(DI, DI + dinv.Size(), [](double d) { return d == 0.0; })
+               ? &dinv.Real()
+               : nullptr;
+  }
+  else
+  {
+    return &dinv;
+  }
+}
+
+// r -= a z, z = D r, and return the local inner product (z, r), in one pass.
+double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
+{
+  const int N = r.Size();
+  MFEM_ASSERT(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  const auto *D = dinv.HostRead();
+  auto *R = r.HostReadWrite(), *Z = z.HostReadWrite();
+  double dot = 0.0;
+  for (int i = 0; i < N; i++)
+  {
+    R[i] -= a * Z[i];
+    Z[i] = D[i] * R[i];
+    dot += R[i] * Z[i];
+  }
+  return dot;
+}
+
+std::complex<double> CgUpdateJacobi(std::complex<double> a, ComplexVector &r,
+                                    ComplexVector &z, const Vector &dinv)
+{
+  const int N = r.Size();
+  MFEM_ASSERT(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  const double ar = a.real(), ai = a.imag();
+  const auto *D = dinv.HostRead();
+  auto *RR = r.Real().HostReadWrite(), *RI = r.Imag().HostReadWrite();
+  auto *ZR = z.Real().HostReadWrite(), *ZI = z.Imag().HostReadWrite();
+  double rr = 0.0, ii = 0.0, ri = 0.0, ir = 0.0;  // ri = Σ Re(r) Im(z), ir = Σ Im(r) Re(z)
+  for (int i = 0; i < N; i++)
+  {
+    RR[i] -= ar * ZR[i] - ai * ZI[i];
+    RI[i] -= ai * ZR[i] + ar * ZI[i];
+    ZR[i] = D[i] * RR[i];
+    ZI[i] = D[i] * RI[i];
+    rr += RR[i] * ZR[i];
+    ii += RI[i] * ZI[i];
+    ri += RR[i] * ZI[i];
+    ir += RI[i] * ZR[i];
+  }
+  return {rr + ii, ri - ir};
+}
 
 template <typename T>
 inline void CheckDot(T dot, const char *msg)
@@ -353,6 +422,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   z.UseDevice(true);
   p.UseDevice(true);
 
+  const Vector *dinv = GetHostJacobiDiagonal(B);
+
   // Initialize.
   if (this->initial_guess)
   {
@@ -428,18 +499,25 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     alpha = beta / denom;
 
     x.Add(alpha, p);
-    r.Add(-alpha, z);
-
     beta_prev = beta;
-    if (B)
+    if (dinv)
     {
-      ApplyB(B, r, z, this->use_timer);
+      beta = CgUpdateJacobi(alpha, r, z, *dinv);
+      Mpi::GlobalSum(1, &beta, comm);
     }
     else
     {
-      z = r;
+      r.Add(-alpha, z);
+      if (B)
+      {
+        ApplyB(B, r, z, this->use_timer);
+      }
+      else
+      {
+        z = r;
+      }
+      beta = linalg::Dot(comm, z, r);
     }
-    beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);

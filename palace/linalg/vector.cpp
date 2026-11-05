@@ -673,6 +673,33 @@ double LocalDot(const Vector &x, const Vector &y)
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK))
+  {
+    // On the host, a single pass over the data instead of one per real inner product.
+    MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
+    const int N = x.Size();
+    const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
+    if (&x == &y)
+    {
+      double rr = 0.0, ii = 0.0;
+      for (int i = 0; i < N; i++)
+      {
+        rr += XR[i] * XR[i];
+        ii += XI[i] * XI[i];
+      }
+      return {rr + ii, 0.0};
+    }
+    const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
+    double rr = 0.0, ii = 0.0, ir = 0.0, ri = 0.0;
+    for (int i = 0; i < N; i++)
+    {
+      rr += YR[i] * XR[i];
+      ii += YI[i] * XI[i];
+      ir += YR[i] * XI[i];
+      ri += YI[i] * XR[i];
+    }
+    return {rr + ii, ir - ri};
+  }
   if (&x == &y)
   {
     return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};

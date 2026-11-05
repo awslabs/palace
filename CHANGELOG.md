@@ -24,6 +24,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     This speeds up the construction of the error estimator, which is repeated at every
     adaptive mesh refinement iteration.
     [PR 1134](https://github.com/awslabs/palace/pull/1134).
+  - Fused the residual update, Jacobi preconditioner and inner product of each conjugate
+    gradient iteration into a single pass over memory, and computed complex inner products
+    in a single pass, on CPUs without OpenMP. This speeds up the error estimator's flux
+    recovery and the GMRES orthogonalization of driven and eigenmode simulations.
+    [PR 1146](https://github.com/awslabs/palace/pull/1146).
 
 #### Bug Fixes
 
