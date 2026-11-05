@@ -3,8 +3,11 @@
 
 #include "jacobi.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <mfem/general/forall.hpp>
+#include "utils/device.hpp"
 
 namespace palace
 {
@@ -143,8 +146,36 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
     dinv *= omega;
   }
 
+  // Decide once, consistently across processes, whether callers may fuse the application
+  // of the smoother into their own host loops. Device data is not read on the host.
+  host_real = false;
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    int fuse = utils::IsSerialHost();
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      const auto *DI = dinv.Imag().HostRead();
+      fuse = fuse && std::all_of(DI, DI + dinv.Size(), [](double d) { return d == 0.0; });
+    }
+    Mpi::GlobalMin(1, &fuse, comm);
+    host_real = fuse;
+  }
+
   this->height = op.Height();
   this->width = op.Width();
+}
+
+template <OperatorType OperType>
+const Vector *JacobiSmoother<OperType>::GetHostRealScaling() const
+{
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    return host_real ? &dinv.Real() : nullptr;
+  }
+  else
+  {
+    return host_real ? &dinv : nullptr;
+  }
 }
 
 template <OperatorType OperType>

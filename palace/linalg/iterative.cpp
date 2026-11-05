@@ -8,8 +8,7 @@
 #include <cstddef>
 #include <limits>
 #include <string>
-#include <type_traits>
-#include <mfem/general/device.hpp>
+#include <typeinfo>
 #include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
@@ -21,36 +20,11 @@ namespace palace
 namespace
 {
 
-// Real-valued inverse diagonal of a Jacobi preconditioner, if the CG updates and the
-// preconditioner can be fused into a single pass on the host (nullptr otherwise).
-// The choice may differ between processes; both paths perform the same reductions.
-template <typename OperType>
-const Vector *GetHostJacobiDiagonal(const Solver<OperType> *B)
-{
-  const auto *jacobi = dynamic_cast<const JacobiSmoother<OperType> *>(B);
-  if (!jacobi || mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK))
-  {
-    return nullptr;
-  }
-  const auto &dinv = jacobi->GetInverseDiagonal();
-  if constexpr (std::is_same_v<OperType, ComplexOperator>)
-  {
-    const auto *DI = dinv.Imag().HostRead();
-    return std::all_of(DI, DI + dinv.Size(), [](double d) { return d == 0.0; })
-               ? &dinv.Real()
-               : nullptr;
-  }
-  else
-  {
-    return &dinv;
-  }
-}
-
 // r -= a z, z = D r, and return the local inner product (z, r), in one pass.
 double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
 {
   const int N = r.Size();
-  MFEM_ASSERT(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
   const auto *D = dinv.HostRead();
   auto *R = r.HostReadWrite(), *Z = z.HostReadWrite();
   double dot = 0.0;
@@ -63,16 +37,18 @@ double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
   return dot;
 }
 
+// The same for complex vectors and a real D, for which (z, r) = rᴴ D r is real. The step
+// size a is complex unless the operator is Hermitian (and then only up to rounding).
 std::complex<double> CgUpdateJacobi(std::complex<double> a, ComplexVector &r,
                                     ComplexVector &z, const Vector &dinv)
 {
   const int N = r.Size();
-  MFEM_ASSERT(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
   const double ar = a.real(), ai = a.imag();
   const auto *D = dinv.HostRead();
   auto *RR = r.Real().HostReadWrite(), *RI = r.Imag().HostReadWrite();
   auto *ZR = z.Real().HostReadWrite(), *ZI = z.Imag().HostReadWrite();
-  double rr = 0.0, ii = 0.0, ri = 0.0, ir = 0.0;  // ri = Σ Re(r) Im(z), ir = Σ Im(r) Re(z)
+  double rr = 0.0, ii = 0.0;
   for (int i = 0; i < N; i++)
   {
     RR[i] -= ar * ZR[i] - ai * ZI[i];
@@ -81,10 +57,8 @@ std::complex<double> CgUpdateJacobi(std::complex<double> a, ComplexVector &r,
     ZI[i] = D[i] * RI[i];
     rr += RR[i] * ZR[i];
     ii += RI[i] * ZI[i];
-    ri += RR[i] * ZI[i];
-    ir += RI[i] * ZR[i];
   }
-  return {rr + ii, ri - ir};
+  return rr + ii;
 }
 
 template <typename T>
@@ -422,7 +396,13 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   z.UseDevice(true);
   p.UseDevice(true);
 
-  const Vector *dinv = GetHostJacobiDiagonal(B);
+  // A Jacobi preconditioner may be applied in the same pass as the residual update and the
+  // inner product (not a subclass, which may change the application).
+  const Vector *dinv = nullptr;
+  if (B && typeid(*B) == typeid(JacobiSmoother<OperType>))
+  {
+    dinv = static_cast<const JacobiSmoother<OperType> *>(B)->GetHostRealScaling();
+  }
 
   // Initialize.
   if (this->initial_guess)
@@ -502,6 +482,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (dinv)
     {
+      // The fused loop costs no more than the residual update and inner product alone, so
+      // it is not timed as a preconditioner application.
       beta = CgUpdateJacobi(alpha, r, z, *dinv);
       Mpi::GlobalSum(1, &beta, comm);
     }

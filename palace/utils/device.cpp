@@ -3,6 +3,7 @@
 
 #include "device.hpp"
 #include "communication.hpp"
+#include "omp.hpp"
 
 #include <mfem.hpp>
 
@@ -31,6 +32,11 @@ int GetDeviceId(MPI_Comm comm, int ngpu)
 #else
   return 0;
 #endif
+}
+
+bool IsSerialHost()
+{
+  return !mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && GetMaxThreads() == 1;
 }
 
 }  // namespace palace::utils

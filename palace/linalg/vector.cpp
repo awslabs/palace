@@ -673,42 +673,65 @@ double LocalDot(const Vector &x, const Vector &y)
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK))
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
-    // On the host, a single pass over the data instead of one per real inner product.
-    MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-    const int N = x.Size();
-    const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
     if (&x == &y)
     {
-      double rr = 0.0, ii = 0.0;
-      for (int i = 0; i < N; i++)
-      {
-        rr += XR[i] * XR[i];
-        ii += XI[i] * XI[i];
-      }
-      return {rr + ii, 0.0};
+      return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
     }
-    const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
+    else
+    {
+      return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
+              LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
+    }
+  }
+
+  // On the host, a single pass over the data instead of one per real inner product. With
+  // several threads, each sums a contiguous block and the blocks are added in order, so the
+  // result only depends on the number of threads.
+  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
+  const int N = x.Size();
+  const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
+  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
+  auto Sum = [=](int begin, int end, double *s)
+  {
     double rr = 0.0, ii = 0.0, ir = 0.0, ri = 0.0;
-    for (int i = 0; i < N; i++)
+    for (int i = begin; i < end; i++)
     {
       rr += YR[i] * XR[i];
       ii += YI[i] * XI[i];
       ir += YR[i] * XI[i];
       ri += YI[i] * XR[i];
     }
-    return {rr + ii, ir - ri};
-  }
-  if (&x == &y)
+    s[0] = rr;
+    s[1] = ii;
+    s[2] = ir;
+    s[3] = ri;
+  };
+  double s[4] = {0.0, 0.0, 0.0, 0.0};
+  const int nt = utils::GetMaxThreads();
+  if (nt == 1)
   {
-    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
+    Sum(0, N, s);
   }
   else
   {
-    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
-            LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
+    std::vector<double> blocks(4 * nt, 0.0);
+    PalacePragmaOmp(parallel)
+    {
+      const std::int64_t t = utils::GetThreadNum(), T = utils::GetNumActiveThreads();
+      Sum(static_cast<int>(N * t / T), static_cast<int>(N * (t + 1) / T),
+          blocks.data() + 4 * t);
+    }
+    for (int t = 0; t < nt; t++)
+    {
+      for (int k = 0; k < 4; k++)
+      {
+        s[k] += blocks[4 * t + k];
+      }
+    }
   }
+  return {s[0] + s[1], (&x == &y) ? 0.0 : s[2] - s[3]};
 }
 
 // We implement LocalSum using Hypre instead of using MFEM's Sum because it is
