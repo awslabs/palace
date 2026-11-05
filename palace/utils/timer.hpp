@@ -4,9 +4,11 @@
 #ifndef PALACE_UTILS_TIMER_HPP
 #define PALACE_UTILS_TIMER_HPP
 
+#include <array>
 #include <chrono>
 #include <stack>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 #include "utils/communication.hpp"
@@ -59,7 +61,7 @@ public:
   };
 
   // clang-format off
-  inline static const std::vector<std::string> descriptions{
+  static constexpr auto descriptions = std::to_array<std::string_view>({
       "Initialization",
       "  Mesh Preprocessing",
       "Operator Construction",
@@ -86,8 +88,9 @@ public:
       "  Paraview",
       "  Grid function",
       "Disk IO",
-      "Total"};
+      "Total"});
   // clang-format on
+  static_assert(descriptions.size() == NUM_TIMINGS);
 
 private:
   TimePoint start_time;

@@ -89,6 +89,12 @@ auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     auto smesh = mesh::Load(iodata, world_comm);
+    int ne = smesh ? smesh->GetNE() : 0;
+    Mpi::GlobalMax(1, &ne, world_comm);
+    if (Mpi::Size(world_comm) > ne)
+    {
+      SKIP("Mesh has fewer elements than processes");
+    }
     if (iodata.model.Lc <= 0.0)
     {
       iodata.model.Lc = mesh::ComputeReferenceLength(smesh, world_comm);

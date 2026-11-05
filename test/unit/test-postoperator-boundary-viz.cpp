@@ -216,22 +216,16 @@ void GetTrueDofs(const GridFunction &gf, ComplexVector &x)
 void DimensionalizeForPostOperatorOutput(const Units &units, GridFunction &E,
                                          GridFunction &B)
 {
-  // Reproduce the temporary mesh and Piola scaling performed by WriteParaviewFields so
+  // Reproduce the temporary mesh and field scaling performed by WriteParaviewFields so
   // legacy coefficient references and emitted Points are compared in input coordinates.
+  // That the mesh scaling preserves the physical field values is checked separately by
+  // "Dimensional field output".
   auto &mesh = *E.ParFESpace()->GetParMesh();
   const double L = units.GetMeshLengthRelativeScale();
   mesh::DimensionalizeMesh(mesh, L);
-
-  const double e_scale = L * units.GetScaleFactor<Units::ValueType::FIELD_E>();
-  E *= e_scale;
-  E.Real().FaceNbrData() *= e_scale;
-  E.Imag().FaceNbrData() *= e_scale;
-
-  const double b_scale =
-      std::pow(L, mesh.Dimension() - 1) * units.GetScaleFactor<Units::ValueType::FIELD_B>();
-  B *= b_scale;
-  B.Real().FaceNbrData() *= b_scale;
-  B.Imag().FaceNbrData() *= b_scale;
+  ScaleGridFunctions(L, {&E, &B});
+  units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(E);
+  units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(B);
 }
 
 struct ErrorStats
@@ -816,7 +810,10 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "[postoperator][boundary-viz][Parallel]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
-  REQUIRE(Mpi::Size(comm) == 2);
+  if (Mpi::Size(comm) != 2)
+  {
+    SKIP("Needs exactly two processes");
+  }
 
   // Two disconnected tetrahedra are assigned one per rank, while the only boundary
   // element belongs to rank zero. This models a selected boundary surface which has no

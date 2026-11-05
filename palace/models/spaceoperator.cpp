@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <set>
 #include <type_traits>
@@ -33,6 +34,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
+    pc_mat_amg(solver.linear.type == LinearSolver::AMS ||
+               solver.linear.type == LinearSolver::BOOMER_AMG),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -55,10 +58,10 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     current_dipole_op(domains.current_dipole, units, *mesh.back()),
     farfield_op(boundaries.farfield, problem_type, mat_op, *mesh.back()),
     surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
-    surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
+    surf_z_op(boundaries.impedance, boundaries.split_impedance_attributes, units, mat_op,
               *mesh.back()),
-    surf_rz_op(boundaries.rational_impedance, boundaries.cracked_attributes, problem_type,
-               units, mat_op, *mesh.back()),
+    surf_rz_op(boundaries.rational_impedance, boundaries.split_impedance_attributes,
+               problem_type, units, mat_op, *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
     wave_port_op(boundaries, domains, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
@@ -68,6 +71,9 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
+  // Configure the two shared libCEED element sets before any geometry data is built.
+  SetUpCeedElementSets(mesh);
+
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
   // target space.
@@ -100,6 +106,58 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 {
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
+}
+
+void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh)
+{
+  // The lossy volume set is the union of the exact nonzero supports of the loss-type
+  // MaterialOperator coefficients, each extracted on its own (summing the tensors first
+  // could cancel entries of opposite sign and drop an attribute). This MaterialOperator has
+  // no imaginary permeability property; add it here if one is introduced.
+  MaterialPropertyCoefficient loss_epsilon(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityImag());
+  MaterialPropertyCoefficient loss_conductivity(mat_op.GetAttributeToMaterial(),
+                                                mat_op.GetConductivity());
+  std::vector<int> lossy_attr;
+  loss_epsilon.AddNonzeroAttributes(lossy_attr);
+  loss_conductivity.AddNonzeroAttributes(lossy_attr);
+  std::sort(lossy_attr.begin(), lossy_attr.end());
+  lossy_attr.erase(std::unique(lossy_attr.begin(), lossy_attr.end()), lossy_attr.end());
+
+  // All boundary bilinear-form coefficients are supported on this global attribute union.
+  std::vector<int> active_bdr_global;
+  auto AddAttributes = [&active_bdr_global](const mfem::Array<int> &attr)
+  { active_bdr_global.insert(active_bdr_global.end(), attr.begin(), attr.end()); };
+  AddAttributes(farfield_op.GetAttrList());
+  AddAttributes(surf_sigma_op.GetAttrList());
+  AddAttributes(surf_z_op.GetAttrList());
+  AddAttributes(surf_rz_op.GetAttrList());
+  AddAttributes(lumped_port_op.GetAttrList());
+  AddAttributes(wave_port_op.GetAttrList());
+  AddAttributes(floquet_port_op.GetAttrList());
+  std::sort(active_bdr_global.begin(), active_bdr_global.end());
+  active_bdr_global.erase(std::unique(active_bdr_global.begin(), active_bdr_global.end()),
+                          active_bdr_global.end());
+
+  // Convert the fine-mesh process-local lossy set back to global attributes. Then map both
+  // global unions directly into the local numbering of every h-level mesh. The p-levels
+  // share the finest mesh and ordering.
+  std::vector<int> lossy_global;
+  for (const auto &[attr, local_attr] : mat_op.GetMesh().GetCeedAttributes())
+  {
+    if (std::binary_search(lossy_attr.begin(), lossy_attr.end(), local_attr))
+    {
+      lossy_global.push_back(attr);
+    }
+  }
+  for (const auto &mesh_l : mesh)
+  {
+    auto lossy_attr_l = mesh_l->GetCeedAttributes(lossy_global);
+    auto active_bdr_attr_l = mesh_l->GetCeedBdrAttributes(active_bdr_global);
+    mesh_l->SetCeedActiveAttributes(
+        std::vector<int>(lossy_attr_l.begin(), lossy_attr_l.end()),
+        std::vector<int>(active_bdr_attr_l.begin(), active_bdr_attr_l.end()));
+  }
 }
 
 void SpaceOperator::CheckExcitations(ProblemType problem_type) const
@@ -266,12 +324,6 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   print_hdr = false;
 }
 
-const MaterialPropertyCoefficient *
-ActiveCoefficient(const MaterialPropertyCoefficient *coeff)
-{
-  return (coeff && !coeff->IsExactlyZero()) ? coeff : nullptr;
-}
-
 template <typename... CoeffType>
 bool AreExactlyZero(const CoeffType &...coeff)
 {
@@ -279,8 +331,9 @@ bool AreExactlyZero(const CoeffType &...coeff)
 }
 
 // Add every configured (non-empty) term, including terms whose current value is exactly
-// zero. This storage-based selection is used only for coarse preconditioner assembly below;
-// normal operator assembly uses AddIntegrators and filters exact zeros.
+// zero. This storage-based selection is used only for coarse preconditioner assembly, which
+// retains the configured sparse structure for symbolic reuse; normal operator assembly uses
+// AddIntegrators, which drops exactly-zero coefficients first.
 void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                               const MaterialPropertyCoefficient *f,
                               const MaterialPropertyCoefficient *dfb,
@@ -334,6 +387,16 @@ void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient
   }
 }
 
+// Coefficients which are exactly zero on every attribute are dropped before the integrator
+// type is chosen, so that a combined integrator degrades to its nonzero block (a mass
+// integrator instead of a curl-curl + mass integrator with a zero curl-curl coefficient).
+// Element subsets then handle coefficients which vanish on only part of the mesh.
+const MaterialPropertyCoefficient *
+ActiveCoefficient(const MaterialPropertyCoefficient *coeff)
+{
+  return (coeff && !coeff->IsExactlyZero()) ? coeff : nullptr;
+}
+
 void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
@@ -379,6 +442,10 @@ auto AssembleOperator(const FiniteElementSpace &fespace,
                       bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
+  // System matrices are only ever applied matrix-free (their sums are assembled into
+  // SumOperator, which has no sparse representation), so elements where a coefficient is
+  // exactly zero can be left out of the partially assembled operator.
+  a.SkipZeroCoefficientElements();
   AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
   return a.Assemble(skip_zeros);
 }
@@ -406,6 +473,10 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
   if (fespaces.GetNumLevels() > 1)
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
+    // Levels above the coarsest are only applied matrix-free (their smoothers use the
+    // operator action and its diagonal), so elements where a coefficient is exactly zero
+    // can be left out.
+    fine.SkipZeroCoefficientElements();
     AddIntegrators(fine, df, f, dfb, fb, fp, assemble_q_data);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -430,6 +501,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   if (fespaces.GetNumLevels() > 1)
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
+    fine.SkipZeroCoefficientElements();
     AddAuxIntegrators(fine, f, fb, assemble_q_data);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -696,13 +768,15 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
                                                  bool imag_slot)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
-  // coefficient. By default stored on the REAL slot of the resulting ComplexParOperator so
-  // that downstream BuildParSumOperator can scale it by an arbitrary complex coefficient
-  // (the real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true
-  // it is placed on the IMAGINARY slot, matching the wave-port boundary-mass convention
-  // (the i in i·f(ω)·M baked in) so circuit synthesis can fold it in uniformly. Returns
-  // null if the farfield ABC order < 2 or it contributes no DoFs on any rank (the check is
-  // collective, so the null contract is rank-uniform).
+  // scale; the negative sign of β is included in M_ff by
+  // AddExtraSystemBoundaryCurlCurlBdrCoefficients, so the scalings below are positive. By
+  // default stored on the REAL slot of the resulting ComplexParOperator so that downstream
+  // BuildParSumOperator can scale it by an arbitrary complex coefficient (the real-ω path
+  // uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true it is placed on
+  // the IMAGINARY slot, matching the wave-port boundary-mass convention (the i in i·f(ω)·M
+  // baked in) so circuit synthesis can fold it in uniformly. Returns null if the farfield
+  // ABC order < 2 or it contributes no DoFs on any rank (the check is collective, so the
+  // null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
@@ -1112,6 +1186,16 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  if (pc_mat_amg)
+  {
+    // dfbr/dfbi hold only the second-order absorbing BC term -i(0.5/ω)(μ⁻¹c ∇ₛ×E, ∇ₛ×F),
+    // whose imaginary part is negative semidefinite. AMS/BoomerAMG are applied to the
+    // real-valued Br + Bi (see MfemWrapperSolver), which this term can make indefinite, so
+    // flip its sign in the preconditioner (like PCMatShifted does for the mass term). The
+    // system matrix keeps the correct sign.
+    dfbr *= -1.0;
+    dfbi *= -1.0;
+  }
   if (mat_op.HasFloquetFrequencyScaling())
   {
     // k₀-based tensors: cross terms scale with a1, mass term with a2.
@@ -1164,6 +1248,9 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  // Real-valued preconditioner (every level, including the smoothers): flip the sign of the
+  // second-order absorbing BC term so it stays positive semidefinite (see above).
+  dfbr *= -1.0;
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);

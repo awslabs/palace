@@ -12,6 +12,7 @@
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/lineintegrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -112,7 +113,9 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  double mu_eps_max;
+
+  // Squared effective index of the eigenvalue shift, σ = -(n ω)².
+  double n_target_sq;
 
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.
@@ -143,6 +146,10 @@ private:
   // Solve the cross-section modal EVP at complex ω once and cache (kₙ, eigenvector).
   const ModeSolveCache &EvalModeSolve(std::complex<double> omega);
 
+  // Warn once if the selected mode is evanescent (Re kₙ² < 0).
+  bool warned_evanescent = false;
+  void WarnEvanescent(std::complex<double> kn, std::complex<double> omega);
+
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;
   int port_root = 0;
@@ -158,34 +165,22 @@ private:
   // LinearForm assembly in the legacy path when supported.
   mutable std::unique_ptr<SurfaceFunctional> power_func;
 
-  // Voltage path for line integral (optional, for impedance postprocessing).
-  std::vector<mfem::Vector> voltage_path;
-  int voltage_n_samples;
+  // Whether a voltage path is given (optional, for impedance postprocessing).
   bool has_voltage_coords = false;
 
-  // Cached quadrature locations on the embedded port submesh. Each point is owned by one
-  // rank and evaluated directly in port_E0t, avoiding any port-to-parent field transfer or
-  // duplicate flattened finite element space.
-  struct VoltageSample
-  {
-    int element;
-    mfem::IntegrationPoint point;
-    std::array<double, 3> weighted_tangent;
-  };
-  std::vector<VoltageSample> voltage_samples;
+  // Element-aware quadrature for the voltage path on the embedded port submesh (the path
+  // projected onto the port plane). Both the modal and the driven-field voltages are
+  // integrated with it, the latter after restricting the field to the port, avoiding any
+  // point search on the full parent mesh.
+  std::unique_ptr<fem::LineIntegrator> voltage_integrator;
 
-  // Cached GSLIB point locator on the fixed parent mesh for driven-field voltage.
-#if defined(MFEM_USE_GSLIB)
-  std::unique_ptr<mfem::FindPointsGSLIB> voltage_gslib_op;
-#endif
-
-  void SetUpExcitationVoltagePath();
+  void SetUpExcitationVoltagePath(const std::vector<mfem::Vector> &voltage_path);
 
   // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal
   // first, ground second). When non-zero (i.e. set by the user) the mode is flipped
   // so that E points from high to low, matching the lumped-port `+R Direction`
-  // convention. Computed without GSLIB by evaluating the mode at port-submesh
-  // boundary element centroids adjacent to each attribute.
+  // convention. Computed by evaluating the mode at port-submesh boundary element
+  // centroids adjacent to each attribute.
   std::array<int, 2> polarity_attributes = {0, 0};
 
 public:
@@ -243,7 +238,7 @@ public:
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
   // first, ground terminal second). Returns +1, -1, or 0 if attributes were not
   // resolvable on this mesh partition. Used by Initialize() to flip the mode polarity
-  // without requiring GSLIB.
+  // without a VoltagePath.
   [[nodiscard]] int GetModePolaritySign(int high_attr, int low_attr) const;
 
   // Solve the cross-section modal EVP at a COMPLEX frequency and return the complex

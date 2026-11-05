@@ -464,10 +464,15 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace &nd_fespace,
                                      const MaterialOperator &mat_op,
-                                     InterfaceDielectric type, double t_i, double epsilon_i)
+                                     InterfaceDielectric type, double t_i, double epsilon_i,
+                                     const mfem::Array<int> *sum_sides_marker)
   : kind(KernelKind::INTERFACE_EPR), epr_type(type), epr_t(t_i), epr_epsilon(epsilon_i),
     nd_fespace(&nd_fespace), rt_fespace(nullptr), mat_op(&mat_op), comm(mesh.GetComm())
 {
+  if (sum_sides_marker)
+  {
+    epr_sum_sides_marker = *sum_sides_marker;
+  }
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -1139,6 +1144,18 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                  false, mfem::Geometry::INVALID, {}, {}, side_scale, -1.0);
       }
     }
+    else if (kind == KernelKind::INTERFACE_EPR && two_sided &&
+             epr_type != InterfaceDielectric::SA && attr <= epr_sum_sides_marker.Size() &&
+             epr_sum_sides_marker[attr - 1])
+    {
+      // An interior boundary separating the fields on its two sides (such as a thin metal
+      // sheet): the energies of both sides add, as for a mesh cut along the boundary, which
+      // makes the operation separable.
+      AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
+               false, mfem::Geometry::INVALID, {}, {}, 1.0, 1.0);
+      AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
+               false, mfem::Geometry::INVALID, {}, {}, 1.0, 1.0);
+    }
     else
     {
       // Keep non-separable two-sided interface EPR paired. All other unsplit groups
@@ -1681,17 +1698,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
                                  ceed, indices.size(), 1, 1, indices.size(),
                                  CEED_STRIDES_BACKEND, &attr_restr));
-        {
-          // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-          Bt = 1.0;
-          Gt = 0.0;
-          qX = 0.0;
-          qW = 0.0;
-          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                                 qW.GetData(), &attr_basis));
-        }
+        ceed::InitConstantLineBasis(ceed, 1, num_pts, &attr_basis);
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         inputs.push_back(
             {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
@@ -1747,16 +1754,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         PalaceCeedCall(ceed,
                        CeedElemRestrictionCreateStrided(ceed, num_attr, 1, 1, num_attr,
                                                         CEED_STRIDES_BACKEND, &attr_restr));
-        {
-          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-          Bt = 1.0;
-          Gt = 0.0;
-          qX = 0.0;
-          qW = 0.0;
-          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                                 qW.GetData(), &attr_basis));
-        }
+        ceed::InitConstantLineBasis(ceed, 1, num_pts, &attr_basis);
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         inputs.push_back(
             {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});

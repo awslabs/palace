@@ -6,13 +6,15 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
+#include <memory>
 #include <unordered_set>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/jacobi.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
@@ -29,14 +31,17 @@ namespace
 // circulation Φ; its gradient part is absorbable by A → A + ∇χ, so the extracted inductance
 // depends only on the cohomology class (Φ) and is gauge-invariant.
 //
-// The angle θ is measured in the plane ⊥ n via a right-handed in-plane basis (e1, e2, n),
-// so the construction handles any planar hole orientation and reduces to the xy form when
-// n = ±ẑ. a_h is the cut cochain a_h = Grad ψ − a_angle: a lowest-order (Whitney) edge DOF
-// of ±Φ across the cut half-plane bounded by L, projected into the order-p ND space
-// (ND_1 ⊂ ND_p). It is formed as the discrete gradient of a conformed nodal branch
-// potential ψ minus the smooth angle interpolant a_angle so it is non-conformal-safe (see
-// below). The cut shape and overall sign are irrelevant to L: the downstream normalization
-// rescales a_h so cᵀa_h = Φ.
+// The cut is the half-plane bounded by L in the plane ⊥ n, located via a right-handed
+// in-plane basis (e1, e2, n), so the construction handles any planar hole orientation. The
+// start is the lowest-order (Whitney) cut cochain c0: ±Φ on each edge crossing the cut, 0
+// elsewhere, written on the true (unconstrained) edge DOFs. On a conforming mesh c0 is
+// already curl-free on Σ. With hanging edges the slave edges are interpolated from the
+// masters and the film picks up a residual curl (0.07–0.10 Φ, biasing L), so the curl is
+// removed in the constrained space: with C the discrete curl from the ND_1 true DOFs to the
+// film's RT_0 face true DOFs, a_h = c0 − Cᵀψ with (C Cᵀ) ψ = C c0 has C a_h = 0 exactly on
+// any mesh (conforming, hanging edges, after rebalance), and the same cohomology class as
+// c0. a_h is then projected into the order-p ND space (ND_1 ⊂ ND_p). The cut shape and
+// overall sign are irrelevant to L: the downstream normalization rescales a_h so cᵀa_h = Φ.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
                                    const Mesh &mesh)
@@ -163,77 +168,125 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     }
   }
 
-  // Lowest-order (Whitney) cochain on an ND_1 space over the full 3D mesh. Each rank sets
-  // its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared edge)
-  // in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF value
-  // is correct and GetTrueDofs needs no cross-rank sign reconciliation.
+  // Film marker Σ.
+  const int bmax = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> film_marker(bmax);
+  film_marker = 0;
+  for (int a : flux_data.film_attributes)
+  {
+    if (a >= 1 && a <= bmax)
+    {
+      film_marker[a - 1] = 1;
+    }
+  }
+
+  // Lowest-order (Whitney) cut cochain on an ND_1 space over the full 3D mesh. Each rank
+  // sets its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared
+  // edge) in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF
+  // value is correct and GetTrueDofs needs no cross-rank sign reconciliation. An edge
+  // crosses the plane s = 0 when its vertices lie on different sides (s = 0 counts as the
+  // positive side), at t = t0 + (t1 − t0)·s0/(s0 − s1); the cut is the half t > 0. Around
+  // any face not pierced by L the signed crossings cancel, so c0 is curl-free on Σ wherever
+  // the mesh is conforming.
   mfem::ND_FECollection nd1_fec(1, sdim);
   mfem::ParFiniteElementSpace nd1_fespace(&pmesh, &nd1_fec);
   mfem::ParGridFunction ah1(&nd1_fespace);
   ah1.UseDevice(false);
   ah1 = 0.0;
-
-  // Nodal branch-cut potential ψ = (Φ/2π)·atan2(d, -s), whose branch discontinuity is
-  // exactly the cut half-plane, so cut = Grad ψ - a_angle. Carrying the O(1) step as a
-  // discrete gradient is what makes this non-conformal-safe: Grad of a *conformed* H1
-  // function is exactly conforming and exactly curl-free, whereas a step written on edges
-  // is neither, and cᵀGrad = 0 identically, so ψ cannot perturb the circulation.
-  mfem::H1_FECollection h1_fec(1, sdim);
-  mfem::ParFiniteElementSpace h1_fespace(&pmesh, &h1_fec);
-  mfem::ParGridFunction psi(&h1_fespace);
-  psi.UseDevice(false);
-  psi = 0.0;
   {
-    mfem::Array<int> vdofs;
-    for (int v = 0; v < pmesh.GetNV(); v++)
+    mfem::Array<int> ev, edofs;
+    for (int e = 0; e < pmesh.GetNEdges(); e++)
     {
-      const double *x = pmesh.GetVertex(v);
-      h1_fespace.GetVertexDofs(v, vdofs);
-      double s, t;
-      inplane(x, s, t);
-      psi(vdofs[0]) = phi * std::atan2(s, -t) / (2.0 * std::numbers::pi);
+      pmesh.GetEdgeVertices(e, ev);
+      double s0, t0, s1, t1;
+      inplane(pmesh.GetVertex(ev[0]), s0, t0);
+      inplane(pmesh.GetVertex(ev[1]), s1, t1);
+      const bool side0 = (s0 >= 0.0), side1 = (s1 >= 0.0);
+      if (side0 == side1 || t0 + (t1 - t0) * s0 / (s0 - s1) <= 0.0)
+      {
+        continue;
+      }
+      nd1_fespace.GetEdgeDofs(e, edofs);
+      ah1(edofs[0]) = side1 ? phi : -phi;
     }
-    mfem::Vector t(h1_fespace.GetTrueVSize());
-    t.UseDevice(false);
-    psi.GetTrueDofs(t);
-    psi.SetFromTrueDofs(t);
   }
+  Vector c0(nd1_fespace.GetTrueVSize());
+  c0.UseDevice(false);
+  ah1.GetTrueDofs(c0);
 
-  mfem::Array<int> ev, edofs, vd0, vd1;
-  for (int e = 0; e < pmesh.GetNEdges(); e++)
+  // Remove the curl of c0 on Σ in the constrained space. C is the lowest-order discrete
+  // curl (ND_1 → RT_0) on true DOFs, so hanging edges and faces are constrained, with rows
+  // restricted to the film faces (for a hanging film face its master, whose RT DOF carries
+  // the curl of all its slaves). K = C Cᵀ has one unknown per film face and is symmetric
+  // positive semidefinite: definite on an open film, and on a closed one C c0 ∈ range(K)
+  // still, so Jacobi-PCG converges and a_h = c0 − Cᵀψ is unique either way. K is tiny next
+  // to the 3D system, so it does not warrant an AMG setup.
+  mfem::RT_FECollection rt0_fec(0, sdim);
+  mfem::ParFiniteElementSpace rt0_fespace(&pmesh, &rt0_fec);
+  std::unique_ptr<mfem::HypreParMatrix> C, Ct, K;
   {
-    pmesh.GetEdgeVertices(e, ev);
-    const double *x0 = pmesh.GetVertex(ev[0]);
-    const double *x1 = pmesh.GetVertex(ev[1]);
-    // DOF ∫_e ∇θ·t = angle subtended at L by ev0→ev1. atan2 returns the rotation of
-    // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only the in-plane
-    // components enter; edges parallel to n subtend zero angle.
-    double s0, t0, s1, t1;
-    inplane(x0, s0, t0);
-    inplane(x1, s1, t1);
-    const double a_angle =
-        phi * std::atan2(s0 * t1 - t0 * s1, s0 * s1 + t0 * t1) / (2.0 * std::numbers::pi);
-    nd1_fespace.GetEdgeDofs(e, edofs);
-    // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
-    // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
-    h1_fespace.GetVertexDofs(ev[0], vd0);
-    h1_fespace.GetVertexDofs(ev[1], vd1);
-    ah1(edofs[0]) = psi(vd1[0]) - psi(vd0[0]) - a_angle;
+    mfem::ParDiscreteLinearOperator curl(&nd1_fespace, &rt0_fespace);
+    curl.AddDomainInterpolator(new mfem::CurlInterpolator);
+    curl.Assemble();
+    curl.Finalize();
+    // The lowest-order curl is the face-edge incidence (entries 0, ±1), but MFEM evaluates
+    // it through a numerically inverted reference basis; round it back so that C c0
+    // vanishes exactly on conforming faces.
+    auto *data = curl.SpMat().HostReadWriteData();
+    for (int i = 0; i < curl.SpMat().NumNonZeroElems(); i++)
+    {
+      data[i] = std::round(data[i]);
+    }
+    C.reset(curl.ParallelAssemble());
   }
-
-  // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
-  // function, so it survives the round trip exactly (circulation and curl-free-on-Σ
-  // intact); only the smooth a_angle term is re-interpolated onto slaves. On a
-  // non-conformal mesh that leaves a small residual curl on Σ near graded refinement, an
-  // O(h) discretization error that vanishes under refinement while the downstream cᵀa_h = Φ
-  // normalization keeps the fluxoid exact; on a conformal mesh a_h is the exact integer
-  // step, curl-free.
+  mfem::Array<int> film_faces;
+  rt0_fespace.GetEssentialTrueDofs(film_marker, film_faces);
   {
-    mfem::Vector t(nd1_fespace.GetTrueVSize());
-    t.UseDevice(false);
-    ah1.GetTrueDofs(t);
-    ah1.SetFromTrueDofs(t);
+    HYPRE_BigInt n_film = film_faces.Size();
+    Mpi::GlobalSum(1, &n_film, comm);
+    MFEM_VERIFY(n_film > 0, "No film faces found for London cut generator!");
+    Ct.reset(C->Transpose());
+    std::unique_ptr<mfem::HypreParMatrix> CCt(mfem::ParMult(C.get(), Ct.get(), true));
+    K.reset(CCt->ExtractSubmatrix(film_faces));
+    // GetDiag (the Jacobi diagonal) reads the first entry of each row.
+    hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag(static_cast<hypre_ParCSRMatrix *>(*K)));
   }
+  Vector curl_c0(rt0_fespace.GetTrueVSize()), psi(rt0_fespace.GetTrueVSize());
+  Vector r(film_faces.Size()), psi_film(film_faces.Size());
+  curl_c0.UseDevice(false);
+  psi.UseDevice(false);
+  r.UseDevice(false);
+  psi_film.UseDevice(false);
+  C->Mult(c0, curl_c0);
+  curl_c0.GetSubVector(film_faces, r);
+  const double curl_before = linalg::Norml2(comm, r);
+  int its = 0;
+  if (curl_before > 0.0)
+  {
+    JacobiSmoother<Operator> jacobi(comm);
+    jacobi.SetOperator(*K);
+    CgSolver<Operator> pcg(comm, 0);
+    pcg.SetOperator(*K);
+    pcg.SetPreconditioner(jacobi);
+    pcg.SetInitialGuess(false);
+    pcg.SetRelTol(1.0e-12);
+    pcg.SetAbsTol(0.0);
+    pcg.SetMaxIter(10000);
+    pcg.Mult(r, psi_film);
+    MFEM_VERIFY(
+        pcg.GetConverged(),
+        "London cut generator curl projection did not converge, norm(Ax-b)/norm(b) = "
+            << pcg.GetFinalRes() / pcg.GetInitialRes() << "!");
+    its = pcg.GetNumIterations();
+    psi = 0.0;
+    psi.SetSubVector(film_faces, psi_film);
+    Ct->AddMult(psi, c0, -1.0);
+    C->Mult(c0, curl_c0);
+    curl_c0.GetSubVector(film_faces, r);
+  }
+  Mpi::Print(" London a_h: film curl ‖C a_h‖ = {:.3e} → {:.3e} ({:d} PCG iterations)\n",
+             curl_before, linalg::Norml2(comm, r), its);
+  ah1.SetFromTrueDofs(c0);
 
   // Project the ND_1 cut field exactly into the order-p ND space. The per-element field is
   // a degree-1 polynomial, integrated exactly by the ND_p DOF functionals, so ND_1 ⊂ ND_p
@@ -253,19 +306,9 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   // on the film), so this is a no-op for a single film but stops the cut line from driving
   // a spurious vortex in another Superconductor sheet the line threads.
   {
-    const int bmax = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> marker(bmax);
-    marker = 0;
-    for (int a : flux_data.film_attributes)
-    {
-      if (a >= 1 && a <= bmax)
-      {
-        marker[a - 1] = 1;
-      }
-    }
     mfem::Array<int> film_tdofs;
     const_cast<mfem::ParFiniteElementSpace &>(ndp_fespace)
-        .GetEssentialTrueDofs(marker, film_tdofs);
+        .GetEssentialTrueDofs(film_marker, film_tdofs);
     Vector keep(result.Size());
     keep.UseDevice(true);
     keep = 0.0;

@@ -6,7 +6,7 @@
 #include <cmath>
 #include <complex>
 #include <numbers>
-#include <set>
+#include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -82,65 +82,32 @@ void PolyDivMod(std::vector<double> a, std::vector<double> b, std::vector<double
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const std::vector<config::RationalImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+    const std::unordered_set<int> &split_attributes, ProblemType problem_type,
     const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), freq_scale(units.GetScaleFactor<Units::ValueType::FREQUENCY>())
 {
-  SetUpBoundaryProperties(impedance, cracked_attributes, problem_type, mesh);
+  SetUpBoundaryProperties(impedance, split_attributes, problem_type, mesh);
   PrintBoundaryInfo(units, mesh);
 }
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const IoData &iodata, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : SurfaceRationalImpedanceOperator(iodata.boundaries.rational_impedance,
-                                     iodata.boundaries.cracked_attributes,
+                                     iodata.boundaries.split_impedance_attributes,
                                      iodata.problem.type, iodata.units, mat_op, mesh)
 {
 }
 
 void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     const std::vector<config::RationalImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+    const std::unordered_set<int> &split_attributes, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
   // Check that rational impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  MeshBoundaryAttributes mesh_attrs(mesh);
   if (!impedance.empty())
   {
-    mfem::Array<int> impedance_marker(bdr_attr_max);
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    impedance_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    std::set<int> bdr_warn_list;
-    for (const auto &data : impedance)
-    {
-      for (auto attr : data.attributes)
-      {
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-          continue;
-        }
-        MFEM_VERIFY(!impedance_marker[attr - 1],
-                    "Multiple definitions of rational impedance boundary properties for "
-                    "boundary attribute "
-                        << attr << "!");
-        impedance_marker[attr - 1] = 1;
-      }
-    }
-    if (!bdr_warn_list.empty())
-    {
-      Mpi::Print("\n");
-      Mpi::Warning("Unknown rational impedance boundary attributes!\nSolver will just "
-                   "ignore them!");
-      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-      Mpi::Print("\n");
-    }
+    CheckBoundaryAttributes(mesh_attrs, impedance, "rational impedance");
   }
 
   // A rational surface impedance contributes only to the frequency-dependent system matrix
@@ -183,13 +150,14 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
     for (auto attr : data.attributes)
     {
-      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+      if (!mesh_attrs.Contains(attr))
       {
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
-      // Per-attribute scaling to account for increased area when using mesh cracking.
-      bdr.attr_scaling[attr] = cracked_attributes.contains(attr) ? 2.0 : 1.0;
+      // Twice the impedance on each face where it is split between the two faces of a
+      // crack (legacy mesh cracking).
+      bdr.attr_scaling[attr] = split_attributes.contains(attr) ? 2.0 : 1.0;
     }
   }
 }

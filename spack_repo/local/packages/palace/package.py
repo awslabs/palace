@@ -20,6 +20,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
+    version("0.19.0", tag="v0.19.0", commit="ca9a6a2d1e64a410229c3d7538507e5eae975cc6")
     version("0.18.1", tag="v0.18.1", commit="0dc74cdf8c36c58b69b21c4a06e816048ec0b83f")
     version("0.18.0", tag="v0.18.0", commit="b92aef83ecfe6d360c4b3d83e2122986297f6778")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
@@ -82,6 +83,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Measure code coverage when running (leads to severe loss of performance)",
         when="@0.16:",
     )
+    variant(
+        "enzyme",
+        default=False,
+        description="Build Enzyme-backed automatic-differentiation unit tests",
+        when="@0.19:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch(
@@ -112,6 +119,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib~shared", when="~shared@0.14:")
     depends_on("eigen", type="build")
     depends_on("lcov@1.15:", when="+coverage@0.16:", type="run")
+    depends_on("enzyme@0.0.206:", when="+enzyme@0.19:")
 
     conflicts(
         "~superlu-dist~strumpack~mumps",
@@ -127,6 +135,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "+asan",
         when="platform=darwin %gcc",
         msg="GCC does not support AddressSanitizer on macOS (Apple Silicon). Use Clang instead.",
+    )
+    requires(
+        "%c=llvm@15:21",
+        when="+enzyme",
+        msg="Enzyme requires upstream Clang 15-21 built against the same LLVM as the plugin.",
+    )
+    requires(
+        "%cxx=llvm@15:21",
+        when="+enzyme",
+        msg="Enzyme requires upstream Clang 15-21 built against the same LLVM as the plugin.",
     )
 
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
@@ -293,29 +311,83 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "mfem_pr5353.diff",
                 sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
             ),
-            # https://github.com/mfem/mfem/pull/5494 (from the PR range; narrow
-            # to @4.10.0 once merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5711 (rebased onto the PR 5353
+            # snapshot above, applied after it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/"
+                "mfem_pr5711.diff",
+                sha256="4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5494 (from the PR range)
             patch(
                 "https://github.com/mfem/mfem/compare/"
                 "10b0b596dbc26dca384b9f25f23026b1a6403592..."
                 "399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff",
                 sha256="771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c",
-                when="@4.10:",
+                when="@4.10.0",
             ),
-            # https://github.com/mfem/mfem/pull/5502 (narrow to @4.10.0 once
-            # merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5502
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "3091ba40b238c4008b67216314bb26da6738b833.diff",
                 sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
-                when="@4.10:",
+                when="@4.10.0",
             ),
-            # https://github.com/mfem/mfem/pull/5531 (narrow to @4.10.0 once
-            # merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5531
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "641e56439e63a1774f43bc2ba904797694a047ad.diff",
                 sha256="2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5639 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "864d476acf25135d2059d3379d208e635823f26c.diff",
+                sha256="9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5698 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff",
+                sha256="eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5610 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff",
+                sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5714 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff",
+                sha256="3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5717 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff",
+                sha256="f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5721 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "c79f309399361b2d6aadc207087ca6dc475513b4.diff",
+                sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
                 when="@4.10:",
             ),
         ],
@@ -475,6 +547,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
+            self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
@@ -505,6 +578,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
+            if self.spec.satisfies("+enzyme"):
+                args.append(
+                    self.define(
+                        "ENZYME_DIR",
+                        self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme"),
+                    )
+                )
             if self.spec.satisfies("+mumps"):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+cudss"):

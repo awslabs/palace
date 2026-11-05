@@ -95,12 +95,7 @@ void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &group
     {
       continue;
     }
-    CeedMemType mem;
-    PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &mem));
-    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-    {
-      mem = CEED_MEM_HOST;
-    }
+    const CeedMemType mem = ceed::GetUsableMemType(group.ceed);
     for (auto &[field_vec, source] : group.field_vec_sources)
     {
       (void)source;
@@ -123,13 +118,7 @@ void ApplyAddGroupOperatorsImpl(const std::vector<CeedGroupOperator> &groups,
     return;
   }
 
-  CeedMemType out_mem;
-  PalaceCeedCall(groups.front().ceed,
-                 CeedGetPreferredMemType(groups.front().ceed, &out_mem));
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
-  {
-    out_mem = CEED_MEM_HOST;
-  }
+  const CeedMemType out_mem = ceed::GetUsableMemType(groups.front().ceed);
   auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
   const CeedSize out_size = out.Size();
 

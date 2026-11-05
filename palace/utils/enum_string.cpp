@@ -19,7 +19,7 @@ namespace palace
 #define PALACE_ENUM_STRING_DEFINE(ENUM_TYPE, ...)                               \
   std::string ToString(ENUM_TYPE e)                                             \
   {                                                                             \
-    static const std::pair<ENUM_TYPE, const char *> m[] = __VA_ARGS__;          \
+    static constexpr std::pair<ENUM_TYPE, const char *> m[] = __VA_ARGS__;      \
     auto it = std::find_if(std::begin(m), std::end(m),                          \
                            [e](const std::pair<ENUM_TYPE, const char *> &p)     \
                            { return p.first == e; });                           \
@@ -29,7 +29,7 @@ namespace palace
   }                                                                             \
   void FromString(std::string_view s, ENUM_TYPE &e)                             \
   {                                                                             \
-    static const std::pair<ENUM_TYPE, const char *> m[] = __VA_ARGS__;          \
+    static constexpr std::pair<ENUM_TYPE, const char *> m[] = __VA_ARGS__;      \
     auto it = std::find_if(std::begin(m), std::end(m),                          \
                            [s](const std::pair<ENUM_TYPE, const char *> &p)     \
                            { return s == p.second; });                          \

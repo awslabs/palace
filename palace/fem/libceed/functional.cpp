@@ -129,15 +129,7 @@ void AssembleCeedSurfaceFunctional(const CeedQFunctionInfo &info, void *ctx,
     }
     MFEM_VERIFY(num_qpts > 0,
                 "No fixed quadrature-point input for surface functional assembly!");
-    mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
-    Bt = 1.0;
-    Gt = 0.0;
-    qX = 0.0;
-    qW = 0.0;
-    // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, num_out_comp, 1,
-                                           num_qpts, Bt.GetData(), Gt.GetData(),
-                                           qX.GetData(), qW.GetData(), &sum_basis));
+    InitConstantLineBasis(ceed, num_out_comp, num_qpts, &sum_basis);
   }
 
   // Create the QFunction that defines the action of the operator.

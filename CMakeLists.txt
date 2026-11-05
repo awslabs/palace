@@ -16,7 +16,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 endif()
 
 # Initialize the project
-project(palace-superbuild LANGUAGES CXX C VERSION 0.18.1)
+project(palace-superbuild LANGUAGES CXX C VERSION 0.19.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
@@ -47,11 +47,16 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
+set(PALACE_WITH_ENZYME OFF CACHE BOOL "Build Enzyme support for Palace unit tests")
 set(PALACE_TESTS_NUMPROC 2 CACHE STRING "MPI ranks per [Parallel] unit-test case")
 set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING "MPI ranks per [Regression]/[Long] case")
 set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING "OpenMP threads per test process")
 set(PALACE_GIT_COMMIT_ID "" CACHE STRING "Version string to embed instead of git describe")
 set(PALACE_BUILD_ID "" CACHE STRING "Build identifier to embed (e.g. Spack DAG hash)")
+set(LLVM_DIR "" CACHE PATH "Path to the LLVM CMake package used to build Enzyme")
+set(ENZYME_DIR "" CACHE PATH
+  "Path to an existing Enzyme installation (build Enzyme when empty)"
+)
 
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)

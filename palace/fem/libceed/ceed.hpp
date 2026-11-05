@@ -59,6 +59,14 @@ std::string Print();
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init = true,
                     bool take_array = true);
 
+// Preferred memory type of the Ceed backend, falling back to host memory when MFEM is not
+// using a device.
+CeedMemType GetUsableMemType(Ceed ceed);
+
+// Create a line basis with one node and num_qpts points that evaluates to one everywhere,
+// used to carry per-element data such as attributes at quadrature points.
+void InitConstantLineBasis(Ceed ceed, CeedInt num_comp, CeedInt num_qpts, CeedBasis *basis);
+
 // Convert an MFEM geometry type to a libCEED one.
 CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
 

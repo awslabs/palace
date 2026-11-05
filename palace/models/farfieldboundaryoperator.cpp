@@ -3,8 +3,9 @@
 
 #include "farfieldboundaryoperator.hpp"
 
-#include <set>
+#include <array>
 #include "linalg/densematrix.hpp"
+#include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -40,32 +41,10 @@ mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
     const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  MeshBoundaryAttributes mesh_attrs(mesh);
   if (!farfield.empty())
   {
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    std::set<int> bdr_warn_list;
-    for (auto attr : farfield.attributes)
-    {
-      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-      {
-        bdr_warn_list.insert(attr);
-      }
-      if (!bdr_warn_list.empty())
-      {
-        Mpi::Print("\n");
-        Mpi::Warning(
-            "Unknown absorbing boundary attributes!\nSolver will just ignore them!");
-        utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-        Mpi::Print("\n");
-      }
-    }
+    CheckBoundaryAttributes(mesh_attrs, std::array{farfield}, "absorbing", false);
   }
 
   // Set the order of the farfield boundary condition.
@@ -76,7 +55,7 @@ mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
   farfield_bcs.Reserve(static_cast<int>(farfield.attributes.size()));
   for (auto attr : farfield.attributes)
   {
-    if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+    if (!mesh_attrs.Contains(attr))
     {
       continue;  // Can just ignore if wrong
     }
@@ -111,11 +90,15 @@ void FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients(
   // Contribution for second-order absorbing BC. See Jin Section 9.3 for reference. The β
   // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature
   // as infinity (plane wave scattering), the r-dependence vanishes and the contribution
-  // is purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω
-  // as 1 / (μ √(με)). Also, this implementation ignores the divergence term ∇⋅Eₜ, as
-  // COMSOL does as well. The ω-dependence enters only through the scalar `coeff` (= 0.5/ω
-  // for the imaginary slot in the real-ω stamping), so the material coefficient is pulled
-  // out here and reused by both the real-ω and complex-ω overloads.
+  // is purely imaginary: β = 1/(2ik) = -i/(2k). Multiplying through by μ⁻¹ we get the
+  // material coefficient to ω as 1 / (μ √(με)), with a negative sign from β (the weak
+  // form term is +β (∇ₛ×E, ∇ₛ×F), see docs/src/reference.md). Also, this implementation
+  // ignores the divergence term ∇⋅Eₜ, as COMSOL does as well. The ω-dependence enters
+  // only through the scalar `coeff` (= 0.5/ω for the imaginary slot in the real-ω
+  // stamping), so the material coefficient is pulled out here and reused by both the
+  // real-ω and complex-ω overloads. This is the only place the sign of β is applied:
+  // callers pass a positive scale (0.5/ω, or 1 for the matrix M_ff), so every consumer
+  // of the term, including M_ff, carries the sign.
   if (farfield_attr.Size() && order > 1)
   {
     mfem::DenseTensor muinvc0 =
@@ -132,15 +115,16 @@ void FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients(
     muinvc0_func.NormalProjectedCoefficient(normal);
 
     df.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
-                      muinvc0_func.GetMaterialProperties(), coeff);
+                      muinvc0_func.GetMaterialProperties(), -coeff);
   }
 }
 
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi)
 {
-  // Real-ω second-order ABC: the term is i·(0.5/ω)·(curl-curl). At real ω the scalar
-  // 0.5/ω is real, so the whole contribution is imaginary and lands on dfbi.
+  // Real-ω second-order ABC: the term is -i·(0.5/ω)·(curl-curl), with the sign applied in
+  // AddExtraSystemBoundaryCurlCurlBdrCoefficients. At real ω the scalar 0.5/ω is real, so
+  // the whole contribution is imaginary and lands on dfbi.
   AddExtraSystemBoundaryCurlCurlBdrCoefficients(0.5 / omega, dfbi);
 }
 
@@ -149,10 +133,10 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     MaterialPropertyCoefficient &dfbi)
 {
   // Complex-ω second-order ABC for the eigenmode nonlinear solve. The contribution is
-  // i·(0.5/ω)·(curl-curl); with ω complex, s = 0.5/ω is complex and i·s splits as
-  // i·(s.real() + i·s.imag()) = -s.imag() + i·s.real(), so the real part -s.imag() goes
-  // on dfbr and the imaginary part s.real() on dfbi. For real ω (s.imag() == 0) this
-  // reduces to the double overload (whole term on dfbi).
+  // -i·(0.5/ω)·(curl-curl), as in the real-ω overload; with ω complex, s = 0.5/ω is complex
+  // and i·s splits as i·(s.real() + i·s.imag()) = -s.imag() + i·s.real(), so the real part
+  // -s.imag() goes on dfbr and the imaginary part s.real() on dfbi. For real ω (s.imag() ==
+  // 0) this reduces to the double overload (whole term on dfbi).
   const std::complex<double> s = 0.5 / omega;
   AddExtraSystemBoundaryCurlCurlBdrCoefficients(s.real(), dfbi);
   if (s.imag() != 0.0)

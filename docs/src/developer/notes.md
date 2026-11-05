@@ -92,10 +92,13 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
 !!! warning "Finite element considerations"
 
     Changing mesh units requires additional rescaling for fields defined on
-    H(curl) and H(div) spaces to convert them to proper physical units. This is a
-    function of the length scales inherent to the reference element transformations
-    for Nédélec and Raviart Thomas spaces, used for H(curl) and H(div) respectively.
-    See the `ScaleGridFunctions` function in `PostOperator` for details.
+    H(curl), H(div), and L2 spaces with `INTEGRAL` map type (such as the out-of-plane
+    magnetic flux density in 2D) to convert them to proper physical units. Scaling the
+    mesh by ``L`` scales the values of these fields mapped from the reference element by
+    ``L^{-p}``, with ``p = 1`` for H(curl) (Nédélec), ``p = d - 1`` for H(div)
+    (Raviart-Thomas), and ``p = d`` for L2 with `INTEGRAL` map type, for a mesh of
+    dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
+    details.
 
 ## Style guide
 
@@ -233,11 +236,12 @@ documentation build generates this table from that file.
 <!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
 ```
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
-| `1-6-0`        | `0.18.0`               |                                    |
-| `1-7-0`        | `0.18.1`               |                                    |
+| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                      |
+|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                         |
+| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more. |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->

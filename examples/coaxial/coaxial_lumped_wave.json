@@ -54,8 +54,7 @@
         // =2.7305 mm, ground), at the port face z=L=40 mm. This matches the lumped port
         // "+R" Direction (E radially outward, signal → ground), so cross-type S-parameters
         // between the two ports have consistent signs.
-        "VoltagePath": [[0.8192, 0.0, 40.0], [2.7305, 0.0, 40.0]],
-        "NSamples": 100
+        "VoltagePath": [[0.8192, 0.0, 40.0], [2.7305, 0.0, 40.0]]
       }
     ]
   },

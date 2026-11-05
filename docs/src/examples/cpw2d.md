@@ -70,16 +70,14 @@ across the CPW gap:
     [
         {
             "Index": 1,
-            "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
-            "NSamples": 200
+            "VoltagePath": [[518.5, 0.0], [522.0, 0.0]]
         }
     ],
     "Voltage":
     [
         {
             "Index": 1,
-            "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
-            "NSamples": 200
+            "VoltagePath": [[518.5, 0.0], [522.0, 0.0]]
         }
     ]
 }

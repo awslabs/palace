@@ -8,6 +8,7 @@
 target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_derived_field_bundle.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_physical_trace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
@@ -20,6 +21,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/gridfunction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/interpolator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/lineintegrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedelement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/output_functionals.cpp

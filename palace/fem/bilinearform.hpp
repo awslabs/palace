@@ -31,9 +31,13 @@ protected:
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
 
-  std::unique_ptr<ceed::Operator>
-  PartialAssemble(const FiniteElementSpace &trial_fespace,
-                  const FiniteElementSpace &test_fespace) const;
+  // Assemble eligible integrators over shared support unions which omit elements where
+  // their coefficients are identically zero (see SkipZeroCoefficientElements).
+  bool skip_zero_coeff_elems = false;
+
+  std::unique_ptr<ceed::Operator> PartialAssemble(const FiniteElementSpace &trial_fespace,
+                                                  const FiniteElementSpace &test_fespace,
+                                                  bool skip_zero_coeff_elems) const;
 
 public:
   // Order above which to use partial assembly vs. full.
@@ -64,14 +68,27 @@ public:
 
   void AssembleQuadratureData();
 
+  // Assemble an integrator over the shared lossy-domain or active-boundary support union
+  // when that union contains its coefficient support. Elements outside the union contribute
+  // exactly 0.0, so partially assembled application is unchanged. A fully assembled matrix
+  // would lose corresponding explicit zeros from its sparsity pattern, so only enable this
+  // for operators which are never fully assembled (BilinearForm::FullAssemble or
+  // ParOperator::ParallelAssemble).
+  void SkipZeroCoefficientElements(bool skip = true) { skip_zero_coeff_elems = skip; }
+
   std::unique_ptr<ceed::Operator> PartialAssemble() const
   {
-    return PartialAssemble(GetTrialSpace(), GetTestSpace());
+    return PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems);
   }
 
   std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(bool skip_zeros) const
   {
-    return FullAssemble(*PartialAssemble(), skip_zeros, false);
+    // Full assembly keeps the explicit zeros of the zero-coefficient elements, so that the
+    // sparsity pattern does not depend on the coefficient values.
+    constexpr bool skip_zero_coeff_elems = false;
+    return FullAssemble(
+        *PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems),
+        skip_zeros, false);
   }
 
   static std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(const ceed::Operator &op,

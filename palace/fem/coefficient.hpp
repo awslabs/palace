@@ -240,9 +240,9 @@ public:
       GetLocalFlux(*FET.Elem2, VL);
       if (two_sided)
       {
-        // Add result with opposite normal. This only happens when crack_bdr_elements =
-        // false (two_sided = true doesn't make sense for an internal boundary without an
-        // associated BC).
+        // Add result with opposite normal. This happens on interior boundaries which are
+        // not cracked, such as metal sheets (two_sided = true doesn't make sense for an
+        // interior boundary without an associated BC).
         VU -= VL;
       }
       else
@@ -366,6 +366,33 @@ private:
   const MaterialOperator &mat_op;
   const double t_i, epsilon_i;
 
+  // Boundary attributes of interior boundaries separating the fields on their two sides,
+  // for which the energies of both (qualifying) sides are summed instead of evaluating the
+  // energy of the average field (optional).
+  const mfem::Array<int> *sum_sides_marker = nullptr;
+
+  bool SumSides(const mfem::ElementTransformation &T) const
+  {
+    return FET.Elem2 && sum_sides_marker && T.Attribute <= sum_sides_marker->Size() &&
+           (*sum_sides_marker)[T.Attribute - 1];
+  }
+
+  // Whether a side (1 or 2) qualifies as vacuum or substrate side, and the field and
+  // element attribute on the given side.
+  bool Qualifies(int side, bool vacuum_side) const
+  {
+    constexpr double threshold = 1.0 - 1.0e-6;
+    const auto *elem = (side == 1) ? FET.Elem1 : FET.Elem2;
+    return elem && (vacuum_side ? mat_op.GetLightSpeedMax(elem->Attribute) >= threshold
+                                : mat_op.GetLightSpeedMax(elem->Attribute) < threshold);
+  }
+  int GetSideVectorValue(const mfem::ParGridFunction &U, mfem::Vector &V, int side) const
+  {
+    auto &elem = (side == 1) ? *FET.Elem1 : *FET.Elem2;
+    U.GetVectorValue(elem, elem.GetIntPoint(), V);
+    return elem.Attribute;
+  }
+
   void Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                   mfem::Vector *normal)
   {
@@ -416,9 +443,10 @@ private:
 
 public:
   InterfaceDielectricCoefficient(const GridFunction &E, const MaterialOperator &mat_op,
-                                 double t_i, double epsilon_i)
+                                 double t_i, double epsilon_i,
+                                 const mfem::Array<int> *sum_sides_marker = nullptr)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E),
-      mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i)
+      mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i), sum_sides_marker(sum_sides_marker)
   {
   }
 
@@ -445,8 +473,24 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval
   double V_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim());
   Initialize(T, ip, nullptr);
+  double V2 = 0.0;
+  if (SumSides(T))
+  {
+    // Sum of the energies on both sides.
+    for (int side : {1, 2})
+    {
+      GetSideVectorValue(E.Real(), V, side);
+      V2 += V * V;
+      if (E.HasImag())
+      {
+        GetSideVectorValue(E.Imag(), V, side);
+        V2 += V * V;
+      }
+    }
+    return 0.5 * t_i * epsilon_i * V2;
+  }
   GetLocalVectorValueDefault(E.Real(), V);
-  double V2 = V * V;
+  V2 = V * V;
   if (E.HasImag())
   {
     GetLocalVectorValueDefault(E.Imag(), V);
@@ -465,6 +509,22 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
   double V_data[3], normal_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
+  if (SumSides(T) && Qualifies(1, true) && Qualifies(2, true))
+  {
+    // Sum of the energies on both sides.
+    double Vn2 = 0.0;
+    for (int side : {1, 2})
+    {
+      GetSideVectorValue(E.Real(), V, side);
+      Vn2 += (V * normal) * (V * normal);
+      if (E.HasImag())
+      {
+        GetSideVectorValue(E.Imag(), V, side);
+        Vn2 += (V * normal) * (V * normal);
+      }
+    }
+    return 0.5 * (t_i / epsilon_i) * Vn2;
+  }
   int attr = GetLocalVectorValue(E.Real(), V, true);
   if (attr <= 0)
   {
@@ -492,6 +552,24 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
   mfem::Vector V(V_data, T.GetSpaceDim()), W(W_data, T.GetSpaceDim()),
       normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
+  if (SumSides(T) && Qualifies(1, false) && Qualifies(2, false))
+  {
+    // Sum of the energies on both sides.
+    double Vn2 = 0.0;
+    for (int side : {1, 2})
+    {
+      int side_attr = GetSideVectorValue(E.Real(), V, side);
+      mat_op.GetPermittivityReal(side_attr).Mult(V, W);
+      Vn2 += (W * normal) * (W * normal);
+      if (E.HasImag())
+      {
+        GetSideVectorValue(E.Imag(), V, side);
+        mat_op.GetPermittivityReal(side_attr).Mult(V, W);
+        Vn2 += (W * normal) * (W * normal);
+      }
+    }
+    return 0.5 * (t_i / epsilon_i) * Vn2;
+  }
   int attr = GetLocalVectorValue(E.Real(), V, false);
   if (attr <= 0)
   {
@@ -1075,40 +1153,6 @@ public:
       V(0) = (kn_r * eti(1) + kn_i * etr(1) - grad_ezr(1)) * inv_omega;
       V(1) = (-kn_r * eti(0) - kn_i * etr(0) + grad_ezr(0)) * inv_omega;
     }
-  }
-};
-
-// Compute z-directed Poynting power density for a waveguide mode on a 2D cross-section:
-//   Sn = Re{Ex Hy* - Ey Hx*} where Ht = μ⁻¹ Bt.
-// No 1/2 factor, consistent with the 3D PoyntingVectorCoefficient convention.
-class ModeSnCoefficient : public mfem::Coefficient
-{
-  const mfem::ParGridFunction &et_r, &et_i;
-  const mfem::ParGridFunction &bt_r, &bt_i;
-  const MaterialOperator &mat_op;
-
-public:
-  ModeSnCoefficient(const mfem::ParGridFunction &et_r, const mfem::ParGridFunction &et_i,
-                    const mfem::ParGridFunction &bt_r, const mfem::ParGridFunction &bt_i,
-                    const MaterialOperator &mat_op)
-    : et_r(et_r), et_i(et_i), bt_r(bt_r), bt_i(bt_i), mat_op(mat_op)
-  {
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    mfem::Vector etr(2), eti(2), btr(2), bti(2);
-    et_r.GetVectorValue(T, ip, etr);
-    et_i.GetVectorValue(T, ip, eti);
-    bt_r.GetVectorValue(T, ip, btr);
-    bt_i.GetVectorValue(T, ip, bti);
-
-    double muinv = mat_op.GetInvPermeabilityZZ(T.Attribute);
-    double hx_r = muinv * btr(0), hx_i = muinv * bti(0);
-    double hy_r = muinv * btr(1), hy_i = muinv * bti(1);
-
-    // Re{Ex(-Hy*) + Ey(Hx*)} = -Ex_r Hy_r - Ex_i Hy_i + Ey_r Hx_r + Ey_i Hx_i
-    return -etr(0) * hy_r - eti(0) * hy_i + etr(1) * hx_r + eti(1) * hx_i;
   }
 };
 

@@ -182,7 +182,9 @@ this reduces to the usual full, symmetric inductance matrix (no screening bounda
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a
 magnetostatic field is computed by applying flux through the loop of interest, leaving all
-other flux loops with zero flux.
+other flux loops with zero flux. Loops can instead be driven together as one excitation, in
+which case the stored energy of that state is reported in place of the inductance matrix; see
+the [flux boundary](boundaries.md#Flux-boundary).
 
 Surface-current and flux-loop excitations can be combined in the same magnetostatic
 simulation, in which case the two excitation types are driven with complementary
