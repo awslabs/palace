@@ -80,8 +80,8 @@ set(SUPERLU_DIST_DIR "" CACHE STRING
 set(METIS_DIR "" CACHE STRING
   "Path to METIS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
-set(PARMETIS_DIR "" CACHE STRING
-  "Path to ParMETIS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+set(SCOTCH_DIR "" CACHE STRING
+  "Path to Scotch build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
 set(SUNDIALS_DIR "" CACHE STRING
   "Path to SUNDIALS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
@@ -521,8 +521,8 @@ endif()
 if(NOT "${METIS_DIR}" STREQUAL "")
   set(METIS_ROOT ${METIS_DIR})
 endif()
-if(NOT "${PARMETIS_DIR}" STREQUAL "")
-  set(ParMETIS_ROOT ${PARMETIS_DIR})
+if(NOT "${SCOTCH_DIR}" STREQUAL "")
+  set(SCOTCH_ROOT ${SCOTCH_DIR})
 endif()
 if(NOT "${SUPERLU_DIST_DIR}" STREQUAL "")
   set(superlu_dist_ROOT ${SUPERLU_DIST_DIR})
@@ -540,7 +540,7 @@ if(NOT "${SCALAPACK_DIR}" STREQUAL "")
   set(SCALAPACK_ROOT ${SCALAPACK_DIR})
 endif()
 
-# Find METIS and ParMETIS early (needed for MUMPS/STRUMPACK/SuperLU CMake configs)
+# Find METIS and PT-Scotch early (METIS is needed for MUMPS/STRUMPACK/SuperLU CMake configs)
 # but link them later for correct static library ordering
 find_package(METIS QUIET)
 if(NOT TARGET METIS::METIS)
@@ -555,18 +555,27 @@ else()
   message(STATUS "Found METIS: ${METIS_VERSION}")
 endif()
 
-find_package(ParMETIS QUIET)
-if(NOT TARGET ParMETIS::ParMETIS)
-  find_library(PARMETIS_LIBRARY NAMES parmetis HINTS ${ParMETIS_ROOT}/lib REQUIRED)
-  find_path(PARMETIS_INCLUDE_DIR NAMES parmetis.h HINTS ${ParMETIS_ROOT}/include REQUIRED)
-  add_library(ParMETIS::ParMETIS UNKNOWN IMPORTED)
-  set_target_properties(ParMETIS::ParMETIS PROPERTIES
-    IMPORTED_LOCATION "${PARMETIS_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${PARMETIS_INCLUDE_DIR}"
-    INTERFACE_LINK_LIBRARIES "METIS::METIS")
-  message(STATUS "Found ParMETIS: ${PARMETIS_LIBRARY}")
+find_package(SCOTCH QUIET)
+if(NOT TARGET SCOTCH::ptscotch)
+  find_library(PTSCOTCH_LIBRARY NAMES ptscotch HINTS ${SCOTCH_ROOT}/lib REQUIRED)
+  find_library(PTSCOTCHERR_LIBRARY NAMES ptscotcherr HINTS ${SCOTCH_ROOT}/lib REQUIRED)
+  find_library(SCOTCH_LIBRARY NAMES scotch HINTS ${SCOTCH_ROOT}/lib REQUIRED)
+  find_path(PTSCOTCH_INCLUDE_DIR NAMES ptscotch.h HINTS ${SCOTCH_ROOT}/include
+    PATH_SUFFIXES scotch REQUIRED)
+  add_library(SCOTCH::scotch UNKNOWN IMPORTED)
+  set_target_properties(SCOTCH::scotch PROPERTIES
+    IMPORTED_LOCATION "${SCOTCH_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${PTSCOTCH_INCLUDE_DIR}")
+  add_library(SCOTCH::ptscotcherr UNKNOWN IMPORTED)
+  set_target_properties(SCOTCH::ptscotcherr PROPERTIES
+    IMPORTED_LOCATION "${PTSCOTCHERR_LIBRARY}")
+  add_library(SCOTCH::ptscotch UNKNOWN IMPORTED)
+  set_target_properties(SCOTCH::ptscotch PROPERTIES
+    IMPORTED_LOCATION "${PTSCOTCH_LIBRARY}"
+    INTERFACE_LINK_LIBRARIES "SCOTCH::scotch;MPI::MPI_C")
+  message(STATUS "Found PT-Scotch: ${PTSCOTCH_LIBRARY}")
 else()
-  message(STATUS "Found ParMETIS: ${ParMETIS_VERSION}")
+  message(STATUS "Found PT-Scotch: ${SCOTCH_VERSION}")
 endif()
 
 # Find ScaLAPACK early (needed for MUMPS/STRUMPACK CMake configs)
@@ -695,16 +704,18 @@ if(PALACE_WITH_CUDSS)
   target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CUDSS_INCLUDE_DIR})
 endif()
 
-# Link METIS and ParMETIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
-target_link_libraries(${LIB_TARGET_NAME} PUBLIC ParMETIS::ParMETIS METIS::METIS)
+# PT-Scotch and SUNDIALS need MPI_C, but MPI is not a valid target because we only
+# specify CXX as language for palace.
+if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
+  add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
+endif()
+
+# Link PT-Scotch and METIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
+target_link_libraries(${LIB_TARGET_NAME} PUBLIC
+  SCOTCH::ptscotch SCOTCH::scotch SCOTCH::ptscotcherr METIS::METIS)
 
 # Link SUNDIALS
 if(PALACE_WITH_SUNDIALS)
-  # SUNDIALS needs MPI_C, but MPI is not a valid target because we only
-  # specify CXX as language for palace.
-  if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
-    add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
-  endif()
   find_package(SUNDIALS REQUIRED)
   message(STATUS "Found SUNDIALS: ${SUNDIALS_VERSION}")
   # Check if we are building static or shared libraries

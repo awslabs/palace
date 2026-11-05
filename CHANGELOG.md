@@ -30,7 +30,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     This speeds up the construction of the error estimator, which is repeated at every
     adaptive mesh refinement iteration.
     [PR 1134](https://github.com/awslabs/palace/pull/1134).
-  - Nonconforming meshes are now rebalanced with a ParMETIS partition of the element
+  - Nonconforming meshes are now rebalanced with a PT-Scotch partition of the element
     adjacency graph, instead of MFEM's split of the refinement tree leaves into equal
     chunks, which fragmented the subdomains over the AMR iterations. Processes have fewer
     neighbors, more of them on the same node, and exchange less data after a rebalance.
@@ -62,9 +62,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
-  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
-    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
-    the only sparse direct solver failed.
+  - *Palace* no longer depends on ParMETIS, and depends on PT-Scotch instead. The
+    superbuild builds PT-Scotch 7.0.18, without threads and with fully deterministic
+    partitions by default (see `PALACE_SCOTCH_THREADS` and `PALACE_SCOTCH_DETERMINISTIC`),
+    and builds SuperLU_DIST, STRUMPACK, and MUMPS with METIS alone. SuperLU_DIST is patched
+    to keep its METIS column ordering, also its default ordering, without ParMETIS.
+    [PR 1130](https://github.com/awslabs/palace/pull/1130).
+  - The superbuild now always builds the dependencies which *Palace* links directly.
+    Previously, configuring with cuDSS as the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
 
 ## [0.19.0] - 2026-11-02

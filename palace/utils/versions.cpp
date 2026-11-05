@@ -4,6 +4,7 @@
 #include "versions.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 #include <Eigen/Core>
@@ -11,7 +12,7 @@
 #include <ceed.h>
 #include <metis.h>
 #include <mpi.h>
-#include <parmetis.h>
+#include <ptscotch.h>
 #include <fmt/format.h>
 #include <scn/fwd.h>
 #include <nlohmann/json.hpp>
@@ -231,9 +232,8 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
 #endif
   versions.emplace_back("METIS", fmt::format("{}.{}.{}", METIS_VER_MAJOR, METIS_VER_MINOR,
                                              METIS_VER_SUBMINOR));
-  versions.emplace_back("ParMETIS",
-                        fmt::format("{}.{}.{}", PARMETIS_MAJOR_VERSION,
-                                    PARMETIS_MINOR_VERSION, PARMETIS_SUBMINOR_VERSION));
+  versions.emplace_back("PT-Scotch", fmt::format("{}.{}.{}", SCOTCH_VERSION, SCOTCH_RELEASE,
+                                                 SCOTCH_PATCHLEVEL));
 
 #if defined(MFEM_USE_CUDA)
   int cuda_version = 0;
