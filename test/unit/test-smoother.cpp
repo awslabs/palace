@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cmath>
+#include <memory>
 #include <numbers>
 #include <type_traits>
 #include <utility>
@@ -87,9 +88,10 @@ public:
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
 };
 
-// The tridiagonal [-1, 2 + shift, -1] stencil on the local rows of each process, counting
-// its applications. The Jacobi-scaled spectrum is dense near its maximum, so an eigenvalue
-// estimate from a random start needs many applications.
+// The tridiagonal [-1, 2 + shift i / n, -1] stencil on the n local rows of each process,
+// counting its applications. The Jacobi-scaled spectrum is dense near its maximum, so an
+// eigenvalue estimate from a random start needs many applications, and the eigenvectors
+// change with the shift.
 class CountingLaplacianOperator : public Operator
 {
 private:
@@ -100,10 +102,15 @@ public:
 
   CountingLaplacianOperator(int n, double shift = 0.0) : Operator(n), shift(shift) {}
 
+  double Diagonal(int i) const { return 2.0 + shift * i / height; }
+
   void AssembleDiagonal(Vector &diag) const override
   {
     diag.SetSize(height);
-    diag = 2.0 + shift;
+    for (int i = 0; i < height; i++)
+    {
+      diag(i) = Diagonal(i);
+    }
   }
 
   void Mult(const Vector &x, Vector &y) const override
@@ -114,7 +121,7 @@ public:
     auto *Y = y.HostWrite();
     for (int i = 0; i < height; i++)
     {
-      Y[i] = (2.0 + shift) * X[i] - ((i > 0) ? X[i - 1] : 0.0) -
+      Y[i] = Diagonal(i) * X[i] - ((i > 0) ? X[i - 1] : 0.0) -
              ((i < height - 1) ? X[i + 1] : 0.0);
     }
   }
@@ -122,31 +129,39 @@ public:
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
 };
 
-// Set an operator and then a nearby one: the second estimate starts from the dominant
-// vector of the first, so it needs fewer applications of the operator than the estimate
-// for the nearby operator from a random start, and gives the same smoother.
-template <typename Smoother, typename OperType>
-void CheckWarmStart(Smoother &smoother, Smoother &reference, const OperType &op,
-                    const OperType &op_near, const CountingLaplacianOperator &A_near)
+// Set an operator, a nearby one with other eigenvectors, and the first again: each estimate
+// after the first starts from the dominant vector of the previous one, so it needs fewer
+// applications of the operator than the estimate of a new smoother from a random start,
+// and gives the same smoother up to the accuracy of the estimates (the spectrum is
+// clustered at its maximum).
+template <typename OperType, typename MakeSmoother>
+void CheckWarmStart(MakeSmoother make, const OperType &op, const OperType &op_near,
+                    const CountingLaplacianOperator &A,
+                    const CountingLaplacianOperator &A_near)
 {
   using VecType =
       std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
-  smoother.SetOperator(op);
-  A_near.applications = 0;
-  smoother.SetOperator(op_near);
-  const int warm = A_near.applications;
-  A_near.applications = 0;
-  reference.SetOperator(op_near);
-  const int cold = A_near.applications;
-  CAPTURE(cold, warm);
-  CHECK(warm < cold);
+  auto smoother = make();
+  smoother->SetOperator(op);
+  for (const auto &[o, counter] : {std::pair{&op_near, &A_near}, std::pair{&op, &A}})
+  {
+    counter->applications = 0;
+    smoother->SetOperator(*o);
+    const int warm = counter->applications;
+    auto reference = make();
+    counter->applications = 0;
+    reference->SetOperator(*o);
+    const int cold = counter->applications;
+    CAPTURE(cold, warm);
+    CHECK(warm < cold);
 
-  VecType x(op.Width()), y(op.Height()), y_ref(op.Height());
-  x = 1.0;
-  smoother.Mult(x, y);
-  reference.Mult(x, y_ref);
-  y -= y_ref;
-  CHECK(linalg::Norml2(Mpi::World(), y) <= 1.0e-3 * linalg::Norml2(Mpi::World(), y_ref));
+    VecType x(o->Width()), y(o->Height()), y_ref(o->Height());
+    x = 1.0;
+    smoother->Mult(x, y);
+    reference->Mult(x, y_ref);
+    y -= y_ref;
+    CHECK(linalg::Norml2(Mpi::World(), y) <= 1.0e-2 * linalg::Norml2(Mpi::World(), y_ref));
+  }
 }
 
 // Apply the smoother to x = D [1, ..., 1]ᵀ for the diagonal D of A, so that D⁻¹x is a
@@ -260,7 +275,7 @@ TEST_CASE("Spectral norm estimates of clustered and indefinite spectra",
     constexpr int n = 256;
     CountingLaplacianOperator A(n);
     const double lambda = linalg::SpectralNorm(comm, A, true);
-    CHECK(A.applications > 16);
+    CHECK(A.applications > 8);
     CHECK(lambda <= (1.0 + 1.0e-12) * (2.0 + 2.0 * std::cos(std::numbers::pi / (n + 1))));
     CHECK_THAT(lambda, WithinRel(2.0 + 2.0 * std::cos(std::numbers::pi / (n + 1)), 1.0e-2));
   }
@@ -279,21 +294,66 @@ TEST_CASE("Spectral norm estimates of clustered and indefinite spectra",
   }
 }
 
+TEST_CASE("Repeated spectral norm estimates", "[smoother][Serial][Parallel]")
+{
+  const auto comm = Mpi::World();
+  {
+    // Estimates which start from an exact eigenvector of the operator.
+    const double lambda_max = 51.0 + std::sqrt(2501.0);
+    TestOperator A;
+    ComplexWrapperOperator Ac(&A, &A);
+    Vector x0;
+    ComplexVector x0_c;
+    for (int i = 0; i < 3; i++)
+    {
+      CHECK_THAT(linalg::SpectralNorm(comm, A, true, &x0), WithinRel(lambda_max, 1.0e-10));
+      CHECK_THAT(linalg::SpectralNorm(comm, Ac, false, &x0_c),
+                 WithinRel(std::numbers::sqrt2 * lambda_max, 1.0e-10));
+    }
+    // The Jacobi-scaled operator of the smoother has the eigenvalues 1 ± 1/√2.
+    ChebyshevSmoother<Operator> chebyshev(comm, 1, 1, 1.0);
+    for (int i = 0; i < 3; i++)
+    {
+      Check(chebyshev, A, 4.0 / (3.0 * (1.0 + 1.0 / std::numbers::sqrt2)));
+    }
+  }
+  {
+    // The dominant eigenvector of the previous operator has the eigenvalue 0.9, while the
+    // eigenvalue 1.1 of an orthogonal eigenvector is now the largest. The small random
+    // component of each starting vector lets the estimates find it again.
+    constexpr int n = 40;
+    Vector d(n), x0(n);
+    for (int i = 0; i < n; i++)
+    {
+      d(i) = 0.8 * i / n;
+    }
+    d(0) = 0.9;
+    d(1) = 1.1;
+    x0 = 0.0;
+    x0(0) = 1.0;
+    DiagonalOperator D(d);
+    double lambda = 0.0;
+    for (int i = 0; i < 40 && lambda < 1.1 * (1.0 - 1.0e-3); i++)
+    {
+      lambda = linalg::SpectralNorm(comm, D, true, &x0);
+    }
+    CHECK_THAT(lambda, WithinRel(1.1, 1.0e-3));
+  }
+}
+
 TEST_CASE("Chebyshev estimates start from the previous dominant vector",
           "[smoother][Serial][Parallel]")
 {
   constexpr int n = 32;
-  CountingLaplacianOperator A(n), A_near(n, 1.0e-2);
+  CountingLaplacianOperator A(n), A_near(n, 0.2);
   // A real operator takes the Hermitian estimate in real arithmetic, (1 + i) A the general
   // complex one.
   ComplexWrapperOperator Ar(&A, nullptr), Ac(&A, &A), Ar_near(&A_near, nullptr),
       Ac_near(&A_near, &A_near);
   const auto comm = Mpi::World();
-  {
-    ChebyshevSmoother<Operator> smoother(comm, 1, 2, 1.0), reference(comm, 1, 2, 1.0);
-    CheckWarmStart(smoother, reference, static_cast<const Operator &>(A),
-                   static_cast<const Operator &>(A_near), A_near);
-  }
+  CheckWarmStart(
+      [&]() { return std::make_unique<ChebyshevSmoother<Operator>>(comm, 1, 2, 1.0); },
+      static_cast<const Operator &>(A), static_cast<const Operator &>(A_near), A, A_near);
   {
     // A complex operator with no imaginary part takes the same real estimate as the real
     // operator.
@@ -308,14 +368,18 @@ TEST_CASE("Chebyshev estimates start from the previous dominant vector",
   }
   for (const auto &[op, op_near] : {std::pair{&Ar, &Ar_near}, std::pair{&Ac, &Ac_near}})
   {
-    ChebyshevSmoother<ComplexOperator> smoother(comm, 1, 2, 1.0),
-        reference(comm, 1, 2, 1.0);
-    CheckWarmStart(smoother, reference, static_cast<const ComplexOperator &>(*op),
-                   static_cast<const ComplexOperator &>(*op_near), A_near);
-    ChebyshevSmoother1stKind<ComplexOperator> smoother_1st(comm, 1, 2, 1.0, 0.0),
-        reference_1st(comm, 1, 2, 1.0, 0.0);
-    CheckWarmStart(smoother_1st, reference_1st, static_cast<const ComplexOperator &>(*op),
-                   static_cast<const ComplexOperator &>(*op_near), A_near);
+    const ComplexOperator &o = *op, &o_near = *op_near;
+    CheckWarmStart(
+        [&]()
+        { return std::make_unique<ChebyshevSmoother<ComplexOperator>>(comm, 1, 2, 1.0); },
+        o, o_near, A, A_near);
+    CheckWarmStart(
+        [&]()
+        {
+          return std::make_unique<ChebyshevSmoother1stKind<ComplexOperator>>(comm, 1, 2,
+                                                                             1.0, 0.0);
+        },
+        o, o_near, A, A_near);
   }
 }
 

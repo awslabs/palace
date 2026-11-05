@@ -26,10 +26,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1134](https://github.com/awslabs/palace/pull/1134).
   - Operator norm estimates, such as the maximum eigenvalue estimate of each Chebyshev
     smoother, now use the Lanczos method with the same tolerance in all builds, instead of
-    SLEPc or the power iteration, and real arithmetic for real operators. Each Chebyshev
-    smoother also starts its estimate from the dominant vector of its previous operator.
-    This makes the multigrid preconditioner setup up to 4× faster at each frequency of a
-    driven sweep.
+    SLEPc or the power iteration. Each Chebyshev smoother also starts its estimate from the
+    dominant vector of its previous operator, and estimates real operators in real
+    arithmetic. This makes the multigrid preconditioner setup up to 4× faster at each
+    frequency of a driven sweep.
     [PR 1140](https://github.com/awslabs/palace/pull/1140).
 
 #### Bug Fixes

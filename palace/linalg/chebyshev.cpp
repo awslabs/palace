@@ -72,11 +72,12 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
     Vector x0r;
     if (x0.Size() == n)
     {
-      x0r.MakeRef(x0.Real(), 0, n);
+      x0r.SetSize(n);
       x0r.UseDevice(true);
+      x0r = x0.Real();
     }
     const double lambda_max = LambdaMax(comm, *A.Real(), dinv.Real(), x0r);
-    if (x0.Size() != n)
+    if (x0r.Size() == n)
     {
       x0.SetSize(n);
       x0.UseDevice(true);
