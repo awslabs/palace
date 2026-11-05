@@ -195,13 +195,22 @@ mfem::VectorFunctionCoefficient ConstantCurlField(const std::array<double, 3> &B
 // + three ConductorReferences (-0.05 / 0.25 / 0.55: ground-left / strip / ground-right) +
 // OpenContourPaths (knot 1: 1 -> 2; knot 2: 2 -> 3; knots 4, 3: 1 -> 3), so the gate
 // compares a probe with its PIECE's flux state (the a.3 control's substrate); `rules` are
-// written as the library's MagneticRules. Written by the root; returns the library path.
+// written as the library's MagneticRules. `free_arcs` (the review d1330 MINOR-1; the
+// Reference form only: ZeroTraceIndices requires closed contours) = the ring with the
+// consistent-mortar band knots (x_face, 0) / (x_face, t) on both box faces as PEC knots
+// (ZeroTraceIndices 3 / 4 / 7 / 8 of the 8-knot ring 1 (0.0625, 0.1), 2 (0.4375, 0.1), 3
+// (0.4375, t), 4 (0.4375, 0), 5 (0.4375, -0.1), 6 (0.0625, -0.1), 7 (0.0625, 0), 8
+// (0.0625, t)), so the Maxwell contour is TWO FREE ARCS (the top 8 -> 1 -> 2 -> 3 and the
+// bottom 4 -> 5 -> 6 -> 7), each with a return line from its end PEC knot to the anchor.
+// Written by the root; returns the library path.
 fs::path WriteStubMagneticLibrary(const fs::path &directory,
                                   const fs::path &template_library,
                                   const std::string &suffix, bool piece_form,
-                                  const json &rules = json::object())
+                                  const json &rules = json::object(),
+                                  bool free_arcs = false)
 {
-  const int basis_size = piece_form ? 6 : 4;
+  REQUIRE((!free_arcs || !piece_form));
+  const int basis_size = (free_arcs ? 8 : 4) + (piece_form ? 2 : 0);
   const auto library_path =
       directory / fmt::format("fabrication-process-magnetic-stub-{}.json", suffix);
   const auto points_path = directory / fmt::format("magstub-basis-points-{}.csv", suffix);
@@ -213,7 +222,16 @@ fs::path WriteStubMagneticLibrary(const fs::path &directory,
   {
     {
       std::ofstream output(points_path);
-      output << "x,y,z\n0.0625,0.1,0.0\n0.4375,0.1,0.0\n0.4375,-0.1,0.0\n0.0625,-0.1,0.0\n";
+      output << "x,y,z\n0.0625,0.1,0.0\n0.4375,0.1,0.0\n";
+      if (free_arcs)
+      {
+        output << "0.4375,0.01,0.0\n0.4375,0.0,0.0\n";
+      }
+      output << "0.4375,-0.1,0.0\n0.0625,-0.1,0.0\n";
+      if (free_arcs)
+      {
+        output << "0.0625,0.0,0.0\n0.0625,0.01,0.0\n";
+      }
     }
     auto write_diagonal = [&](const fs::path &path, double diagonal)
     {
@@ -294,8 +312,13 @@ fs::path WriteStubMagneticLibrary(const fs::path &directory,
     {
       model["Reference"] = {0.25, 0.0, 0.0};
     }
+    if (free_arcs)
+    {
+      model["ZeroTraceIndices"] = {3, 4, 7, 8};
+    }
     json source = DefaultMagneticSource();
     source["ConductorStateCount"] = piece_form ? 2 : 0;
+    source["BasisPointCount"] = free_arcs ? 8 : 4;
     model["MagneticFabricatedMatrix"] = fab_path.string();
     model["MagneticThinMatrix"] = thin_path.string();
     model["MagneticSource"] = source;
@@ -1444,6 +1467,163 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     SpaceOperator space(iodata, meshes);
     CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
                       Catch::Matchers::ContainsSubstring("StateAnchorSetbackOverR"));
+  }
+#endif
+}
+
+// The review d1330 MINOR-1: the R-MAG-17 twin RETURN line of a FREE ARC (a hat ring ending
+// on a PEC knot; the Maxwell loop fit's ClosingStep.extra_line, appended after the
+// electric return line). On the free-arc stub (two arcs per patch, 4 PEC knots) under the
+// leaf: the PEC knots' traces are exactly 0 (in no path), every free knot's state shifts by
+// the one constant c0 = -0.1 (w x B) . u of the ground anchor's move (the anchor AND the
+// return line move together), every twin loop closes on the exact field (the residual at
+// roundoff: the return line enters the loop with the electric form's sign), the
+// postprocessed correction = 1/2 <x, dK x> and dK is symmetric (the transpose scatters on
+// the extra line). A sign flip of the extra-line term fails the residual check (shown once,
+// decision 1334 Q5).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator magnetic term: the free-arc twin return line "
+                 "(R-MAG-17 ClosingStep.extra_line, review d1330 MINOR-1)",
+                 "[surfaceresponseoperator][maxwell][magnetic][probeform][stateanchor]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  const json leaf_rules = {{"StateAnchorSetbackOverR", 0.5}, {"ProbeSheetNudgeOverR", 0.0}};
+  const json legacy_rules = {{"ProbeSheetNudgeOverR", 0.0}};
+  const auto leaf_library = WriteStubMagneticLibrary(
+      temp.temp_dir, convex_library_3d_path, "freearc-leaf", false, leaf_rules, true);
+  const auto legacy_library = WriteStubMagneticLibrary(
+      temp.temp_dir, convex_library_3d_path, "freearc-legacy", false, legacy_rules, true);
+  const std::array<double, 3> B = {0.3, -0.5, 0.8};
+  struct Operator
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    std::unique_ptr<IoData> iodata;
+    std::unique_ptr<SpaceOperator> space;
+    std::unique_ptr<SurfaceResponseOperator> response;
+  };
+  auto Make = [&](const fs::path &library)
+  {
+    Operator op;
+    op.iodata =
+        std::make_unique<IoData>(Build(StubMaxwellConfig(*this, library), op.meshes));
+    op.space = std::make_unique<SpaceOperator>(*op.iodata, op.meshes);
+    op.response = std::make_unique<SurfaceResponseOperator>(*op.iodata, *op.space);
+    return op;
+  };
+  auto legacy = Make(legacy_library);
+  auto leaf = Make(leaf_library);
+  REQUIRE(leaf.response->GetPatchCount() == legacy.response->GetPatchCount());
+  REQUIRE(leaf.response->GetPatchCount() > 0);
+  {
+    const auto statistics = leaf.response->GetStatistics();
+    const auto legacy_statistics = legacy.response->GetStatistics();
+    CHECK(statistics["Correction"]["MagneticStateAnchorSetbackOverR"].get<double>() == 0.5);
+    CHECK(
+        statistics["Correction"]["MagneticStateAnchorPatches"]["Total"].get<long long>() ==
+        leaf.response->GetPatchCount());
+    // The twin anchor / return lines of both arcs are contour lines beside the electric
+    // ones.
+    CHECK(statistics["Correction"]["ContourLines"]["Total"].get<long long>() >
+          legacy_statistics["Correction"]["ContourLines"]["Total"].get<long long>());
+  }
+  auto coefficient = ConstantCurlField(B);
+  GridFunction field(leaf.space->GetNDSpace(), true);
+  field.Real().ProjectCoefficient(coefficient);
+  field.Imag() = 0.0;
+  Vector x_exact, x;
+  field.Real().GetTrueDofs(x_exact);
+  x = x_exact;
+  x.SetSubVector(leaf.space->GetNDDbcTDofLists().back(), 0.0);
+  field.Real().SetFromTrueDofs(x);
+  const auto leaf_traces = leaf.response->GetMagneticPatchTraces(x_exact);
+  const auto legacy_traces = legacy.response->GetMagneticPatchTraces(x_exact);
+  const auto &assignments = leaf.response->GetPatchAssignments();
+  if (Mpi::Root(Mpi::World()))
+  {
+    REQUIRE(leaf_traces.size() == legacy_traces.size());
+    REQUIRE(leaf_traces.size() == assignments.size());
+    for (std::size_t t = 0; t < leaf_traces.size(); t++)
+    {
+      const auto &shifted = leaf_traces[t];
+      const auto &reference = legacy_traces[t];
+      REQUIRE(shifted.patch == reference.patch);
+      REQUIRE(shifted.coefficients.size() == 8);
+      REQUIRE(reference.coefficients.size() == 8);
+      const auto assignment =
+          std::find_if(assignments.begin(), assignments.end(),
+                       [&](const auto &a) { return a.global_index == shifted.patch; });
+      REQUIRE(assignment != assignments.end());
+      const auto &u = assignment->axis_u;
+      const auto &v = assignment->axis_v;
+      const std::array<double, 3> w = {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
+                                       u[0] * v[1] - u[1] * v[0]};
+      const std::array<double, 3> g = {w[1] * B[2] - w[2] * B[1], w[2] * B[0] - w[0] * B[2],
+                                       w[0] * B[1] - w[1] * B[0]};
+      const double c0 = -0.1 * (g[0] * u[0] + g[1] * u[1] + g[2] * u[2]);
+      INFO("patch " << shifted.patch << " c0 " << c0);
+      REQUIRE(std::abs(c0) > 1.0e-3);
+      // The PEC knots 3 / 4 / 7 / 8 (0-based 2 / 3 / 6 / 7) are in no path: trace 0 exactly
+      // in both forms; the free knots carry the flux trace and shift by c0 under the leaf.
+      for (const int i : {2, 3, 6, 7})
+      {
+        CHECK(shifted.coefficients[i] == 0.0);
+        CHECK(reference.coefficients[i] == 0.0);
+      }
+      for (const int i : {0, 1, 4, 5})
+      {
+        CHECK(std::abs(reference.coefficients[i]) > 1.0e-6);
+        CHECK_THAT(shifted.coefficients[i] - reference.coefficients[i],
+                   WithinAbs(c0, 1.0e-10));
+      }
+    }
+  }
+  {
+    SurfaceResponseStiffnessOperator dK(*leaf.response);
+    Vector y(x.Size()), z(x.Size()), dKz(x.Size());
+    dK.Mult(x, y);
+    const double form = linalg::Dot(leaf.space->GetComm(), x, y);
+    CHECK(form > 0.0);
+    z.Randomize(11);
+    z.SetSubVector(leaf.space->GetNDDbcTDofLists().back(), 0.0);
+    dK.Mult(z, dKz);
+    CHECK_THAT(linalg::Dot(leaf.space->GetComm(), z, y),
+               WithinRel(linalg::Dot(leaf.space->GetComm(), x, dKz), 1.0e-9));
+    CHECK(linalg::Dot(leaf.space->GetComm(), z, dKz) >= -1.0e-12 * std::abs(form));
+    const auto result = leaf.response->GetMaxwellResponse(field, 1.0);
+    REQUIRE(result.has_magnetic);
+    CHECK(result.magnetic_fallback_patch_count == 0);
+    CHECK(result.magnetic_excluded_patch_count == 0);
+    CHECK_THAT(result.magnetic_domain_correction, WithinRel(0.5 * form, 1.0e-9));
+    // Every twin loop of both free arcs closes on the exact field: the anchor line, the
+    // steps, the step onto the PEC knot and the TWIN RETURN LINE (the extra line) sum to
+    // zero (the residual at roundoff) under the leaf as in the legacy form.
+    GridFunction exact_field(leaf.space->GetNDSpace(), true);
+    exact_field.Real().SetFromTrueDofs(x_exact);
+    exact_field.Imag() = 0.0;
+    const double leaf_residual =
+        leaf.response->GetMaxwellResponse(exact_field, 1.0).magnetic_loop_residual;
+    const double legacy_residual =
+        legacy.response->GetMaxwellResponse(exact_field, 1.0).magnetic_loop_residual;
+    INFO("magnetic loop residual leaf " << leaf_residual << " legacy " << legacy_residual);
+    CHECK(leaf_residual < 1.0e-10);
+    CHECK(legacy_residual < 1.0e-10);
+    SurfaceResponseStiffnessOperator dK_legacy(*legacy.response);
+    Vector y_legacy(x.Size());
+    dK_legacy.Mult(x, y_legacy);
+    CHECK(std::abs(linalg::Dot(legacy.space->GetComm(), x, y_legacy) - form) >
+          1.0e-6 * std::abs(form));
   }
 #endif
 }
