@@ -12,6 +12,7 @@
 #include "linalg/divfree.hpp"
 #include "linalg/nleps.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/solverstats.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -691,6 +692,13 @@ int SlepcEPSSolverBase::Solve()
   Customize();
   PalacePetscCall(EPSSolve(eps));
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
+  {
+    PetscInt num_it, num_req;
+    PalacePetscCall(EPSGetIterationNumber(eps, &num_it));
+    PalacePetscCall(EPSGetDimensions(eps, &num_req, nullptr, nullptr));
+    perf::RecordEigenSolve(opInv->GetRole(), static_cast<int>(num_it),
+                           static_cast<int>(num_conv), static_cast<int>(num_req));
+  }
   if (print > 0)
   {
     Mpi::Print(GetComm(), "\n");
@@ -1172,6 +1180,13 @@ int SlepcPEPSolverBase::Solve()
   Customize();
   PalacePetscCall(PEPSolve(pep));
   PalacePetscCall(PEPGetConverged(pep, &num_conv));
+  {
+    PetscInt num_it, num_req;
+    PalacePetscCall(PEPGetIterationNumber(pep, &num_it));
+    PalacePetscCall(PEPGetDimensions(pep, &num_req, nullptr, nullptr));
+    perf::RecordEigenSolve(opInv->GetRole(), static_cast<int>(num_it),
+                           static_cast<int>(num_conv), static_cast<int>(num_req));
+  }
   if (print > 0)
   {
     Mpi::Print(GetComm(), "\n");
@@ -1517,6 +1532,13 @@ int SlepcNEPSolverBase::Solve()
   Customize();
   PalacePetscCall(NEPSolve(nep));
   PalacePetscCall(NEPGetConverged(nep, &num_conv));
+  {
+    PetscInt num_it, num_req;
+    PalacePetscCall(NEPGetIterationNumber(nep, &num_it));
+    PalacePetscCall(NEPGetDimensions(nep, &num_req, nullptr, nullptr));
+    perf::RecordEigenSolve(opInv->GetRole(), static_cast<int>(num_it),
+                           static_cast<int>(num_conv), static_cast<int>(num_req));
+  }
   if (print > 0)
   {
     Mpi::Print(GetComm(), "\n");
