@@ -20,7 +20,8 @@
 #include <unordered_set>
 #include <utility>
 #include <Eigen/Dense>
-#include <parmetis.h>
+#include <mpi.h>
+#include <ptscotch.h>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
@@ -2676,11 +2677,11 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
-// Partition the elements of a nonconforming mesh with ParMETIS, on the element adjacency
+// Partition the elements of a nonconforming mesh with PT-Scotch, on the element adjacency
 // graph through all conforming and nonconforming faces. MFEM's default partition splits the
 // sequence of refinement tree leaves into equal chunks, which fragments the subdomains over
 // the AMR iterations. The parts are numbered so that the ranks of a node hold neighboring
-// subdomains (see NumberPartsOnNodes). Returns false if ParMETIS fails or would leave a
+// subdomains (see NumberPartsOnNodes). Returns false if PT-Scotch fails or would leave a
 // process without elements.
 bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
                                            mfem::Array<int> &partitioning)
@@ -2688,18 +2689,18 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   MPI_Comm comm = mesh.GetComm();
   const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
   const int ne = mesh.GetNE(), dim = mesh.SpaceDimension();
-  std::vector<idx_t> vtxdist(size + 1, 0);
+  std::vector<SCOTCH_Num> vtxdist(size + 1, 0);
   {
     long long ne_ll = ne;
     std::vector<long long> counts(size);
     MPI_Allgather(&ne_ll, 1, MPI_LONG_LONG, counts.data(), 1, MPI_LONG_LONG, comm);
     for (int i = 0; i < size; i++)
     {
-      vtxdist[i + 1] = vtxdist[i] + static_cast<idx_t>(counts[i]);
+      vtxdist[i + 1] = vtxdist[i] + static_cast<SCOTCH_Num>(counts[i]);
     }
     if (std::ranges::min(counts) == 0)
     {
-      return false;  // ParMETIS requires a nonempty graph on every process
+      return false;  // Leave the empty processes to MFEM's partition
     }
   }
 
@@ -2734,60 +2735,52 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
       }
     }
   };
-  std::vector<std::vector<idx_t>> adj(ne);
+  std::vector<std::vector<SCOTCH_Num>> adj(ne);
   ForEachFace([&](int e) { return vtxdist[rank] + e; },
               [&](int e1, int e2, double g2)
               {
-                adj[e1].push_back(static_cast<idx_t>(g2));
+                adj[e1].push_back(static_cast<SCOTCH_Num>(g2));
                 if (e2 >= 0)
                 {
                   adj[e2].push_back(vtxdist[rank] + e1);
                 }
               });
-  std::vector<idx_t> xadj(ne + 1, 0), adjncy;
+  std::vector<SCOTCH_Num> xadj(ne + 1, 0), adjncy;
   for (int e = 0; e < ne; e++)
   {
     std::ranges::sort(adj[e]);
     const auto dup = std::ranges::unique(adj[e]);
     adj[e].erase(dup.begin(), dup.end());
-    xadj[e + 1] = xadj[e] + static_cast<idx_t>(adj[e].size());
+    xadj[e + 1] = xadj[e] + static_cast<SCOTCH_Num>(adj[e].size());
     adjncy.insert(adjncy.end(), adj[e].begin(), adj[e].end());
   }
-  if (adjncy.empty())
-  {
-    adjncy.push_back(0);  // ParMETIS dereferences the array
-  }
+  const auto nedge = static_cast<SCOTCH_Num>(adjncy.size());
+  adjncy.resize(adjncy.size() + 1);  // Not empty for a process without edges
 
-  idx_t wgtflag = 0, numflag = 0, ncon = 1, nparts = size, edgecut = 0;
-  // ParMETIS requires the target part weights to sum to 1 within 1e-3 in ::real_t, which
-  // equal single precision weights miss from about 67000 processes. Differences of the
-  // rounded cumulative weights sum to exactly 1.
-  std::vector<::real_t> tpwgts(size);
-  for (int i = 0; i < size; i++)
-  {
-    tpwgts[i] = static_cast<::real_t>(static_cast<double>(i + 1) / size) -
-                static_cast<::real_t>(static_cast<double>(i) / size);
-  }
-  // ParMETIS bounds the largest part but not the smallest, so the max/min element ratio
-  // can exceed MaximumImbalance and trigger a rebalance at the next AMR iteration.
-  ::real_t ubvec = 1.02;
-  idx_t options[3] = {1, 0, 1};  // User options, no output, fixed seed
-  std::vector<idx_t> part(ne);
-  int ok =
-      (ParMETIS_V3_PartKway(vtxdist.data(), xadj.data(), adjncy.data(), nullptr, nullptr,
-                            &wgtflag, &numflag, &ncon, &nparts, tpwgts.data(), &ubvec,
-                            options, &edgecut, part.data(), &comm) == METIS_OK);
+  // Parts with a load imbalance ratio of at most 2%, from a fixed random seed.
+  SCOTCH_Dgraph graph;
+  SCOTCH_Strat strat;
+  std::vector<SCOTCH_Num> part(ne);
+  SCOTCH_randomSeed(1);
+  SCOTCH_randomReset();
+  int ok = (SCOTCH_dgraphInit(&graph, comm) == 0);
+  ok = ok && (SCOTCH_dgraphBuild(&graph, 0, ne, ne, xadj.data(), nullptr, nullptr, nullptr,
+                                 nedge, nedge, adjncy.data(), nullptr, nullptr) == 0);
+  SCOTCH_stratInit(&strat);
+  ok = ok &&
+       (SCOTCH_stratDgraphMapBuild(&strat, SCOTCH_STRATDEFAULT, size, size, 0.02) == 0);
+  ok = ok && (SCOTCH_dgraphPart(&graph, size, &strat, part.data()) == 0);
+  SCOTCH_stratExit(&strat);
+  SCOTCH_dgraphExit(&graph);
   Mpi::GlobalMin(1, &ok, comm);
   if (!ok)
   {
     return false;
   }
 
-  // Number the parts so that the ranks of a node hold neighboring subdomains, instead of
-  // ParMETIS's remapping which minimizes the migration but loses the node locality. Start
-  // from three orders of the parts: along a Hilbert curve through their centroids, with
-  // per-axis and with isotropic scaling, and by the mean current global index of their
-  // elements.
+  // Number the parts so that the ranks of a node hold neighboring subdomains. Start from
+  // three orders of the parts: along a Hilbert curve through their centroids, with per-axis
+  // and with isotropic scaling, and by the mean current global index of their elements.
   std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0),
       gidx(size, 0.0);
   mfem::Vector center;
@@ -3027,7 +3020,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       }
       else
       {
-        Mpi::Warning(comm, "Could not partition the nonconforming mesh with ParMETIS, "
+        Mpi::Warning(comm, "Could not partition the nonconforming mesh with PT-Scotch, "
                            "rebalancing it with MFEM's default partition!\n");
         mesh->Rebalance();
       }
