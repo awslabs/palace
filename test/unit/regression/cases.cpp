@@ -1478,6 +1478,47 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// The grating mesh with both domains set to vacuum has an exact propagation phase.
+// The reference CSV establishes the output layout; all amplitudes are checked analytically.
+TEST_CASE("floquet_vacuum_phase", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] =
+      [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  {
+    CHECK(actual.n_rows() == 1);
+    CHECK(actual.n_complete_rows() == 1);
+    if (actual.n_rows() != 1 || actual.n_complete_rows() != 1)
+    {
+      return;
+    }
+    CHECK_THAT(actual[0].data[0], Catch::Matchers::WithinAbs(2.0, 1.0e-12));
+    // Positive-time phasors propagate as exp(-ikL); the port separation is 8 cm.
+    const auto transmission =
+        std::polar(1.0, -2.0 * std::numbers::pi * 2.0e9 * 0.08 / 299792458.0);
+    int channels = 0;
+    double power = 0.0;
+    for (std::size_t c = 1; c + 1 < actual.n_cols(); c += 2)
+    {
+      const auto &header = actual[c].header_text;
+      INFO("Floquet channel: " << header);
+      const double magnitude = std::pow(10.0, actual[c].data[0] / 20.0);
+      const double phase = actual[c + 1].data[0] * std::numbers::pi / 180.0;
+      const auto amplitude = std::polar(magnitude, phase);
+      const auto expected =
+          header == "|S[P2(0;0)TE][1]| (dB)" ? transmission : std::complex<double>{};
+      CHECK(std::abs(amplitude - expected) < 2.0e-8);
+      power += std::norm(amplitude);
+      ++channels;
+    }
+    CHECK(channels == 4);
+    CHECK_THAT(power, Catch::Matchers::WithinAbs(1.0, 1.0e-8));
+  };
+  palace::test::RunRegressionCase("dielectric_grating", "vacuum.json", "vacuum", opts);
+}
+
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
 // normalization bridge for cross-type observations. Use custom checks to verify power
 // balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible

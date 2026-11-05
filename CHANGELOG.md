@@ -17,6 +17,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Tests
+
+  - Added an analytic Floquet-port regression for vacuum propagation, checking complex
+    transmission phase, reflection, polarization leakage, and power conservation.
+
 #### Performance Improvements
 
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
