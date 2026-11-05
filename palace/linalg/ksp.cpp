@@ -294,7 +294,11 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
     role(role.empty() ? perf::CurrentRole() : role),
     perf_solves(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Solves"))),
-    perf_its(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Its")))
+    perf_its(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Its"))),
+    perf_solve_tally(
+        perf::RegisterTally(fmt::format("{}/LinearSolve", this->role), Timer::KSP)),
+    perf_setup_tally(perf::RegisterTally(fmt::format("{}/LinearSolverSetup", this->role),
+                                         Timer::KSP_SETUP))
 {
   if (this->pc)
   {
@@ -306,6 +310,7 @@ template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   BlockTimer bt(Timer::KSP_SETUP, use_timer);
+  perf::ScopedTally st(perf_setup_tally);
   ksp->SetOperator(op);
   if (pc)
   {
@@ -326,7 +331,10 @@ template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);
-  ksp->Mult(x, y);
+  {
+    perf::ScopedTally st(perf_solve_tally);
+    ksp->Mult(x, y);
+  }
   if (!ksp->GetConverged())
   {
     Mpi::Warning(

@@ -768,6 +768,13 @@ void BlockTimer::Print(MPI_Comm comm)
   };
 
   // Timing table: totals over all iterations (unchanged layout).
+  if (r.iteration > 1)
+  {
+    Mpi::Print(comm,
+               "\nPerformance report after iteration {:d}: elapsed times are totals over "
+               "iterations 1-{:d}, peak memory is for iteration {:d} only\n",
+               r.iteration, r.iteration, r.iteration);
+  }
   Table("Elapsed Time Report (s)", "Min.", "Max.", "Avg.", TimeRow(r.cum));
 
   // Memory table: per-node max, total across nodes, and cumulative total HWM, for this

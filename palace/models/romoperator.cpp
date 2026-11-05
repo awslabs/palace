@@ -1477,7 +1477,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // the per-port cross-section EVP at this ω and refreshes the modal post-processing
     // state used by MeasureWavePorts for S-parameters and power.
     {
-      BlockTimer bt(Timer::WAVE_PORT);
+      BlockTimer bt(Timer::WAVE_PORT, !Mwp_p_r.empty());
       for (const auto &[port_idx, Mp_r] : Mwp_p_r)
       {
         const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
@@ -1545,7 +1545,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
     // for active ports only, so an excitation that also drives an inactive port uses the
     // assembled excitation vector instead.
-    BlockTimer bt_wp(Timer::WAVE_PORT);
+    BlockTimer bt_wp(Timer::WAVE_PORT, space_op.GetWavePortOp().Size() > 0);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation != excitation_idx)

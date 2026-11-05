@@ -28,6 +28,7 @@
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
@@ -122,7 +123,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
-  // Main excitation and frequency loop.
+  // Main excitation and frequency loop. Per-frequency assembly is reported as a tally of
+  // the Operator Construction row.
+  const int assembly_tally =
+      perf::RegisterTally("Driven/FrequencyAssembly", Timer::CONSTRUCT);
   auto t0 = Timer::Now();
   std::size_t excitation_counter = 0;
   const std::size_t excitation_restart_counter =
@@ -149,11 +153,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
       // solver.
-      auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
-      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-          1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+      std::unique_ptr<ComplexOperator> A2, A, P;
+      {
+        perf::ScopedTally st(assembly_tally);
+        A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+        A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                     C.get(), M.get(), A2.get());
+        P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                              -omega * omega + 0.0i, omega);
+      }
       ksp.SetOperators(*A, *P);
 
       Mpi::Print(

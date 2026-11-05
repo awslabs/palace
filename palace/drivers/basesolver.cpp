@@ -296,6 +296,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
           " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
           glob_marked_elements, glob_elements, 100 * marked_error,
           refinement.update_fraction);
+      perf::Set("Problem/AMR/MarkedElements", glob_marked_elements);
       return marked_elements;
     }(indicators);
 
@@ -314,6 +315,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Optionally rebalance and write the adapted mesh to file.
     {
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
+      perf::Set("Problem/AMR/ImbalanceRatio", ratio_pre);
       if (ratio_pre > refinement.maximum_imbalance)
       {
         int min_elem, max_elem;
@@ -321,6 +323,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         Mpi::GlobalMin(1, &min_elem, comm);
         Mpi::GlobalMax(1, &max_elem, comm);
         const auto ratio_post = double(max_elem) / min_elem;
+        perf::Set("Problem/AMR/RebalancedImbalanceRatio", ratio_post);
         Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
                    "(new ratio = {:.3f})\n",
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
