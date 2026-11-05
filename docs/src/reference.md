@@ -2314,7 +2314,18 @@ its probe line integrals read the discretisation error of the singular edge fiel
 57 % of a line whose unwithheld term sits inside the Phase-0 band), so a library sets the
 tolerance it has calibrated with a discrimination control; the per-patch ratios stay
 printed in `surface-response-magnetic.csv` and the magnetic LOOP gate stays the term's gate
-of record. THE PROBE FORM (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION resolved;
+of record. THE PER-ORDER FORM (OI-MAGNETIC-DUAL-GATE-3D-ENCLOSED-FLUX, named: with the
+probe legs lifted AND the state anchors set back, two flux paths between two pieces of the
+3D driven field still differ by the enclosed ``-\int \partial_w B_w \, dA`` — path
+independence holds only in the quasi-TEM limit — by ~3 % at ``p = 3`` and ~1.5 % at ``p =
+4`` on the (ii) stub, nearly ``h``-independent, so no probe or state form reaches the
+electric scale; an enclosed-flux-free comparison is a future design item): the leaf may be
+an object keyed by the solve's Order, `{"3": t_3, "4": t_4, ...}` (each value 1.25 x the
+LIFTED mode-1 maximum measured at that order, the discrimination control holding ``\geq
+4\times`` at each value); the run's order selects its entry, an order ABSENT from the object
+is refused at configuration by name (the gate is not calibrated there), a scalar keeps its
+one-value meaning; the value in effect is printed on the gate line and recorded
+(`palace.json` `Correction.MagneticGateTolerance`). THE PROBE FORM (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION resolved;
 decisions 1256 / 1284 Q-1 / 1292): the magnetic probes read their flux along LIFTED legs
 instead of the electric gate's flat chain. On a PEC piece ``A_z`` is constant, so the flux
 ``\int (\hat{w} \times \bm{B}) \cdot d\bm{l}`` from a point of the anchor's piece to a point
@@ -2342,7 +2353,25 @@ ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (decision 12
 modelling option) relabels the local piece of one model edge's probes at the probe
 construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
 device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
-printed and recorded as a CONTROL; a run of record never carries it. The per-model
+printed and recorded as a CONTROL; a run of record never carries it. THE STATE-ANCHOR
+SETBACK OF THE TERM (R-MAG-17; the mx-sc-magnetic Phase 3 measurement: with the chain's
+conductor-path anchor lines starting at the EDGE anchors, the magnetic states carry a
+state-side edge error of ``+0.06..+0.08`` pt of the fixed-trace shift on the (ii) stub): the
+library leaf `MagneticRules.StateAnchorSetbackOverR` (``s_a / R``, in ``[0, 1]``) starts the
+magnetic chain's anchor / end / return lines of every translational magnetic patch from the
+conductor anchors set back ``s_a`` into their piece by the same generic rule (the width
+fraction and the sheet nudge apply), as MAGNETIC TWIN lines beside the electric ones; the
+magnetic chain, its own loop fit (the same cycle-space equations on the twin lines), the
+dual gate's flux states, the fixed-trace shift and the self-consistent ``dK`` (its transpose
+on the twins) all read them; the electric chain and the electric gate are untouched. Absent
+= 0 = the LEGACY edge anchors (every library without the leaf: bitwise); the form of record
+is 0.5, written explicitly in every magnetic library built from now on. The setback in
+effect and the patches re-anchored are printed and recorded (`palace.json`
+`Correction.MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`). The
+DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR` (decision 1302;
+`RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
+to a library in the legacy form and is refused by name on a library whose leaf already sets
+the anchors back. The per-model
 `magnetic domain correction (J)` / `magnetic thin energy (J)` (COL-1: the "energy" rows and
 trailing columns of `surface-response-magnetic.csv`) and the per-patch ones (COL-2: two
 columns of `surface-response-patch-energy.csv` with `Diagnostics.PatchEnergy`, NaN on a

@@ -382,9 +382,10 @@ private:
     int end_line = -1;
     int return_line = -1;
     int hat_check_line = -1;
-    // Decision 1302 (the ControlStateAnchorSetbackOverR CONTROL): the MAGNETIC twins of the
-    // anchor / end / return lines, from the set-back conductor anchors; -1 = the electric
-    // line is used (the default: bitwise).
+    // The MAGNETIC twins of the anchor / end / return lines, from the conductor anchors SET
+    // BACK into their piece (MagneticRules.StateAnchorSetbackOverR, R-MAG-17, USER 1308
+    // U-2; or the ControlStateAnchorSetbackOverR CONTROL of decision 1302); -1 = the
+    // electric line is used (the legacy form 0: bitwise).
     int magnetic_anchor_line = -1;
     int magnetic_end_line = -1;
     int magnetic_return_line = -1;
@@ -434,13 +435,17 @@ private:
     };
     // A closing equation phi(to) - phi(from) = -L (from / to as the legs run; -1 = ground)
     // with its fundamental cycle: the tree steps on the tree path from `from` to `to` with
-    // the sign +1 where the path runs parent -> child.
+    // the sign +1 where the path runs parent -> child. `extra_line` (-1 = none): one more
+    // leg of the equation that is not contiguous with [line_begin, line_begin +
+    // line_count) — the MAGNETIC twin return line of a free arc, appended after the
+    // electric one (the magnetic loop fit, R-MAG-17).
     struct ClosingStep
     {
       int from = -1;
       int to = -1;
       int line_begin = 0;
       int line_count = 0;
+      int extra_line = -1;
       double length = 0.0;
       std::vector<std::pair<int, double>> cycle;
     };
@@ -715,10 +720,14 @@ private:
   // flipped probe: "<model>:<edge>:<piece from>-><piece to>"), gathered on every rank at
   // the Maxwell configuration; empty when the control is absent.
   std::vector<std::string> control_flipped_probe_records;
-  // Decision 1302: the ControlStateAnchorSetbackOverR CONTROL (negative = absent) and the
-  // local patches whose magnetic state lines it re-anchored.
+  // Decision 1302: the ControlStateAnchorSetbackOverR CONTROL (negative = absent).
   double control_state_anchor_setback_over_r = -1.0;
-  int control_state_anchor_patch_count = 0;
+  // The state-anchor setback IN EFFECT (s_a / R; 0 = the legacy edge anchors): the
+  // library's MagneticRules.StateAnchorSetbackOverR (R-MAG-17, USER 1308 U-2: the form of
+  // record 0.5) or, on a library without it, the 1302 CONTROL; and the local patches whose
+  // magnetic state lines it re-anchored.
+  double magnetic_state_anchor_setback_over_r = 0.0;
+  int state_anchor_setback_patch_count = 0;
   // Per model the GLOBAL applied patch count (gathered once at the Maxwell configuration
   // when a magnetic leaf is loaded), so that the root-only record printers need no
   // collective.
@@ -794,6 +803,10 @@ private:
   // units) and, keyed by the placed patch index on every rank, every applied patch's raw
   // claim (the DomainBoundary rule, AppendExcludedPatchClaim) for the remainder energy.
   std::vector<MaxwellLoopFit> maxwell_loop_fits;
+  // The MAGNETIC loop fits (R-MAG-17): the same equations on the paths' magnetic twin
+  // lines where the state anchors are set back; EMPTY when no state anchor is set back
+  // (the magnetic trace then uses maxwell_loop_fits: bitwise with the legacy form).
+  std::vector<MaxwellLoopFit> maxwell_magnetic_loop_fits;
   std::vector<double> maxwell_line_lengths;
   std::map<int, ExcludedPatchPortions> maxwell_patch_raw_claims;
   // The raw claims exist on three-dimensional meshes only (the claim collection runs on
@@ -966,24 +979,36 @@ private:
   void ApplyMagneticTraceTranspose(const Vector &values, Vector &y) const;
   std::vector<MagneticGateRecord> magnetic_gate_records;
   // The chain lift (one route per knot; the loop-residual detector's trace, decision 955
-  // D3) and its transpose.
-  // `magnetic` (decision 1302): the paths' magnetic twin lines where present (the
-  // ControlStateAnchorSetbackOverR control; otherwise identical to the electric chain).
+  // D3) and its transpose. `magnetic`: the paths' magnetic twin lines where the state
+  // anchors are set back (R-MAG-17 / the 1302 control; otherwise identical to the electric
+  // chain).
   void BuildMaxwellChainTrace(const Vector &line_values, Vector &values,
                               bool magnetic = false) const;
-  void BuildMaxwellChainTraceTranspose(const Vector &values, Vector &line_values) const;
+  void BuildMaxwellChainTraceTranspose(const Vector &values, Vector &line_values,
+                                       bool magnetic = false) const;
   // The least-squares lift (the chain plus the cycle-space correction of every patch) and
-  // its transpose: the trace of the energies and of the self-consistent Mult.
-  void BuildMaxwellTrace(const Vector &line_values, Vector &values) const;
-  void BuildMaxwellTraceTranspose(const Vector &values, Vector &line_values) const;
+  // its transpose: the trace of the energies and of the self-consistent Mult. `magnetic`:
+  // the magnetic chain and the magnetic loop fits (the magnetic term's trace a_m).
+  void BuildMaxwellTrace(const Vector &line_values, Vector &values,
+                         bool magnetic = false) const;
+  void BuildMaxwellTraceTranspose(const Vector &values, Vector &line_values,
+                                  bool magnetic = false) const;
   // One patch's cycle-space correction added to its chain values in `values` (a real
   // line-value vector); returns the circulating W-norm r^T G^-1 r of that vector.
   double AddMaxwellLoopFitCorrection(std::size_t patch_index, const Vector &line_values,
-                                     Vector &values) const;
+                                     Vector &values, bool magnetic = false) const;
   // One patch's route norm sum_j L_j^2 / l_j over its equations with a positive length.
   double MaxwellLoopFitRouteNorm(std::size_t patch_index, const Vector &line_values) const;
-  // Builds maxwell_loop_fits from the paths (ConfigureMaxwellResponse, after the paths).
+  // Builds maxwell_loop_fits (and maxwell_magnetic_loop_fits when a state anchor is set
+  // back) from the paths (ConfigureMaxwellResponse, after the paths).
   void ConfigureMaxwellLoopFit();
+  void BuildMaxwellLoopFits(std::vector<MaxwellLoopFit> &fits, bool magnetic);
+  // The loop fits the trace with the given stencil reads.
+  const std::vector<MaxwellLoopFit> &MaxwellLoopFits(bool magnetic) const
+  {
+    return magnetic && !maxwell_magnetic_loop_fits.empty() ? maxwell_magnetic_loop_fits
+                                                           : maxwell_loop_fits;
+  }
   void ApplyTrace(const Vector &x, Vector &values) const;
   // One patch's trace from the evaluated point values (ApplyTrace's per-patch step: the
   // surface-mortar projection or the collocated values, the conductor references

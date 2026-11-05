@@ -11,7 +11,8 @@ assembles those vacuum domain-response matrices onto a COPY of a library as the 
 `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (a library without them loads and behaves bitwise as
 today) and writes the top-level `MagneticRules` (the r3 same-mesh tolerance and the two-level r4 PSD ratios; optionally the
 dual gate's `ConductorConsistencyTolerance`, decision 1251, and its PROBE FORM leaves `ProbeLiftOverR` /
-`ProbeSetbackOverR` / `ProbeSetbackWidthFraction` / `ProbeSheetNudgeOverR` / `ProbeBandHeights`, Phase 3 (a)). It
+`ProbeSetbackOverR` / `ProbeSetbackWidthFraction` / `ProbeSheetNudgeOverR` / `ProbeBandHeights`, Phase 3 (a); and the
+magnetic TERM's state-anchor setback `StateAnchorSetbackOverR`, R-MAG-17, USER 1308 U-2: the form of record 0.5). It
 REFUSES a twin whose basis file is not byte-identical to the model's (r1), records the regenerated electric matrices'
 maximum relative deviation from the model of record (the r3 statistic the loader gates; TWO-TIER per decision 1242: the
 optional MagneticRules.SameMeshToleranceWithMeshIdentity applies to a twin whose MeshOfRecordSha256Match proves BOTH
@@ -114,6 +115,35 @@ def normalised_fabrication(fabrication):
 
 def resolve(path, base_dir):
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(base_dir, path))
+
+
+def parse_conductor_consistency_tolerance(parser, text):
+    """The ConductorConsistencyTolerance flag: None (absent), a nonnegative number, or a JSON object keyed by the
+    solve's Order (positive-integer keys, nonnegative values; the per-order form of decision 1309 Q3)."""
+    if text is None:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        value = None
+    if value is not None:
+        if value < 0.0:
+            parser.error("ConductorConsistencyTolerance must be nonnegative")
+        return value
+    try:
+        table = json.loads(text)
+    except ValueError:
+        parser.error("ConductorConsistencyTolerance must be a nonnegative number or a JSON object keyed by order")
+    if not isinstance(table, dict) or not table:
+        parser.error("ConductorConsistencyTolerance per-order object must be a non-empty JSON object")
+    out = {}
+    for key, entry in table.items():
+        if not (isinstance(key, str) and key.isdigit() and int(key) >= 1):
+            parser.error("ConductorConsistencyTolerance per-order key %r is not a positive integer order" % key)
+        if isinstance(entry, bool) or not isinstance(entry, (int, float)) or entry < 0.0:
+            parser.error("ConductorConsistencyTolerance[%r] must be a nonnegative number" % key)
+        out[str(int(key))] = float(entry)
+    return out
 
 
 def attach(library, library_dir, attachments, output_dir, rules, now=None):
@@ -237,10 +267,12 @@ def main(argv=None):
                         help="MagneticRules.SameMeshToleranceWithMeshIdentity (decision 1242, the r3 second tier: the "
                              "tolerance for a twin whose MeshOfRecordSha256Match proves both meshes identical to the "
                              "model's meshes of record; default absent = SameMeshTolerance everywhere)")
-    parser.add_argument("--conductor-consistency-tolerance", type=float, default=None,
-                        help="MagneticRules.ConductorConsistencyTolerance (decision 1251, INTERIM): the tolerance of "
-                             "the loader's MAGNETIC conductor-consistency gate; default None = absent (the electric "
-                             "gate's 0.02 applies)")
+    parser.add_argument("--conductor-consistency-tolerance", type=str, default=None,
+                        help="MagneticRules.ConductorConsistencyTolerance: the tolerance of the loader's MAGNETIC "
+                             "conductor-consistency gate, a nonnegative number (one value at every order) or a JSON "
+                             "object keyed by the solve's Order, e.g. '{\"3\": 0.13, \"4\": 0.08}' (the PER-ORDER "
+                             "calibrated form, USER 1308 U-1 / decision 1309: an order absent from the object is "
+                             "refused at load); default None = absent (the electric gate's 0.02 applies)")
     # The PROBE FORM of the dual gate (mx-sc-magnetic Phase 3 (a), DESIGN-v2 a.2; decisions 1284 Q-1 / 1292): library
     # leaves, never compiled constants. Default None = absent (the loader's defaults: LIFTED 0.5 / 0.5 / 0.45 / 1e-6 / 1).
     parser.add_argument("--probe-lift", type=float, default=None,
@@ -257,6 +289,13 @@ def main(argv=None):
     parser.add_argument("--probe-band-heights", type=int, default=None,
                         help="MagneticRules.ProbeBandHeights (the Gauss-height count: 1 = LIFTED at h_m, >= 2 = BAND "
                              "averaged over that many Gauss heights in [h_m / 2, 3 h_m / 2])")
+    # The STATE-ANCHOR SETBACK of the magnetic term (R-MAG-17; USER 1308 U-2, decision 1309): the chain's conductor-path
+    # anchor lines start from the anchors set back s_a = value x R into their piece. Default None = absent = 0 = the
+    # LEGACY edge anchors (bitwise); the form of record going forward is 0.5, written explicitly.
+    parser.add_argument("--state-anchor-setback", type=float, default=None,
+                        help="MagneticRules.StateAnchorSetbackOverR (s_a / R: the magnetic chain's state-anchor lines "
+                             "start from the conductor anchors set back into their piece; in [0, 1]; absent = 0 = the "
+                             "legacy edge anchors; the form of record is 0.5)")
     parser.add_argument("--records", help="write the per-model records JSON here (default: beside --output)")
     args = parser.parse_args(argv)
     if os.path.exists(args.output):
@@ -268,21 +307,20 @@ def main(argv=None):
     rules = {"SameMeshTolerance": args.same_mesh_tolerance, "PsdFindingRatio": args.psd_finding_ratio,
              "PsdRefusalRatio": args.psd_refusal_ratio,
              "SameMeshToleranceWithMeshIdentity": args.same_mesh_tolerance_with_mesh_identity,
-             "ConductorConsistencyTolerance": args.conductor_consistency_tolerance,
+             "ConductorConsistencyTolerance": parse_conductor_consistency_tolerance(parser,
+                                                                                   args.conductor_consistency_tolerance),
              "ProbeLiftOverR": args.probe_lift, "ProbeSetbackOverR": args.probe_setback,
              "ProbeSetbackWidthFraction": args.probe_width_fraction, "ProbeSheetNudgeOverR": args.probe_nudge,
-             "ProbeBandHeights": args.probe_band_heights}
+             "ProbeBandHeights": args.probe_band_heights, "StateAnchorSetbackOverR": args.state_anchor_setback}
     if not rules["PsdRefusalRatio"] >= rules["PsdFindingRatio"] >= 0.0 or rules["SameMeshTolerance"] < 0.0:
         parser.error("the rules must be nonnegative with PsdRefusalRatio >= PsdFindingRatio")
-    for key in ("ProbeLiftOverR", "ProbeSetbackOverR", "ProbeSheetNudgeOverR"):
+    for key in ("ProbeLiftOverR", "ProbeSetbackOverR", "ProbeSheetNudgeOverR", "StateAnchorSetbackOverR"):
         if rules[key] is not None and not 0.0 <= rules[key] <= 1.0:
             parser.error("%s must be in [0, 1]" % key)
     if rules["ProbeSetbackWidthFraction"] is not None and not 0.0 < rules["ProbeSetbackWidthFraction"] < 0.5:
         parser.error("ProbeSetbackWidthFraction must be in (0, 0.5)")
     if rules["ProbeBandHeights"] is not None and rules["ProbeBandHeights"] < 1:
         parser.error("ProbeBandHeights must be a Gauss-height count >= 1")
-    if rules["ConductorConsistencyTolerance"] is not None and rules["ConductorConsistencyTolerance"] < 0.0:
-        parser.error("ConductorConsistencyTolerance must be nonnegative")
     if (rules["SameMeshToleranceWithMeshIdentity"] is not None
             and rules["SameMeshToleranceWithMeshIdentity"] < rules["SameMeshTolerance"]):
         parser.error("SameMeshToleranceWithMeshIdentity must be >= SameMeshTolerance")

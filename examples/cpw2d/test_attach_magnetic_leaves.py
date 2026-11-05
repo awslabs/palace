@@ -227,6 +227,47 @@ class AttachMagneticLeavesTest(unittest.TestCase):
                 AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
                           "--output", str(self.root / ("out-bad" + flag) / "library-mag.json"), flag, value])
 
+    def test_state_anchor_setback_leaf_is_written_only_when_given_and_bounded(self):
+        # R-MAG-17 (USER 1308 U-2, decision 1309): the magnetic term's state-anchor setback; absent = no leaf (the
+        # loader's 0 = the legacy edge anchors); 0.5 = the form of record; outside [0, 1] refused.
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-state" / "library-mag.json"), "--state-anchor-setback", "0.5"])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-state" / "library-mag.json") as handle:
+            self.assertEqual(json.load(handle)["MagneticRules"]["StateAnchorSetbackOverR"], 0.5)
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-state-absent" / "library-mag.json")])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-state-absent" / "library-mag.json") as handle:
+            self.assertNotIn("StateAnchorSetbackOverR", json.load(handle)["MagneticRules"])
+        for value in ("1.5", "-0.1"):
+            with self.assertRaises(SystemExit):
+                AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                          "--output", str(self.root / ("out-bad-state" + value) / "library-mag.json"),
+                          "--state-anchor-setback", value])
+
+    def test_conductor_consistency_tolerance_scalar_or_per_order(self):
+        # Decision 1309 Q3 (USER 1308 U-1): the leaf is a nonnegative number (as before) or a per-order JSON object;
+        # malformed forms are refused.
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-tol-scalar" / "library-mag.json"),
+                       "--conductor-consistency-tolerance", "0.25"])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-tol-scalar" / "library-mag.json") as handle:
+            self.assertEqual(json.load(handle)["MagneticRules"]["ConductorConsistencyTolerance"], 0.25)
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-tol-order" / "library-mag.json"),
+                       "--conductor-consistency-tolerance", '{"3": 0.13, "4": 0.08}'])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-tol-order" / "library-mag.json") as handle:
+            self.assertEqual(json.load(handle)["MagneticRules"]["ConductorConsistencyTolerance"],
+                             {"3": 0.13, "4": 0.08})
+        for value in ("-0.1", '{"p3": 0.1}', '{"3": -0.1}', "{}", "[0.1]", "abc"):
+            with self.assertRaises(SystemExit):
+                AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                          "--output", str(self.root / ("out-bad-tol" + value) / "library-mag.json"),
+                          "--conductor-consistency-tolerance", value])
+
     def test_refuses_an_existing_output_and_a_blend_entry(self):
         with self.assertRaises(SystemExit):
             AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),

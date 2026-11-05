@@ -2280,12 +2280,49 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     magnetic_rules.same_mesh_tolerance_with_mesh_identity =
         rules->value("SameMeshToleranceWithMeshIdentity",
                      magnetic_rules.same_mesh_tolerance_with_mesh_identity);
-    magnetic_rules.conductor_consistency_tolerance = rules->value(
-        "ConductorConsistencyTolerance", magnetic_rules.conductor_consistency_tolerance);
-    MFEM_VERIFY(!rules->contains("ConductorConsistencyTolerance") ||
-                    magnetic_rules.conductor_consistency_tolerance >= 0.0,
-                "Fabrication-process response-library MagneticRules."
-                "ConductorConsistencyTolerance must be nonnegative!");
+    if (auto tolerance = rules->find("ConductorConsistencyTolerance");
+        tolerance != rules->end())
+    {
+      if (tolerance->is_object())
+      {
+        // The PER-ORDER form (decision 1309 Q3): {"<order>": tolerance, ...}; a key that is
+        // not a positive integer or a value that is not a nonnegative number is malformed.
+        MFEM_VERIFY(!tolerance->empty(),
+                    "Fabrication-process response-library MagneticRules."
+                    "ConductorConsistencyTolerance per-order object must not be empty!");
+        for (const auto &[key, value] : tolerance->items())
+        {
+          std::size_t consumed = 0;
+          int order = 0;
+          try
+          {
+            order = std::stoi(key, &consumed);
+          }
+          catch (const std::exception &)
+          {
+            consumed = 0;
+          }
+          MFEM_VERIFY(consumed == key.size() && order >= 1,
+                      "Fabrication-process response-library MagneticRules."
+                      "ConductorConsistencyTolerance per-order key \""
+                          << key << "\" is not a positive integer order!");
+          MFEM_VERIFY(value.is_number() && value.get<double>() >= 0.0,
+                      "Fabrication-process response-library MagneticRules."
+                      "ConductorConsistencyTolerance[\""
+                          << key << "\"] must be a nonnegative number!");
+          magnetic_rules.conductor_consistency_tolerance_by_order[order] =
+              value.get<double>();
+        }
+      }
+      else
+      {
+        MFEM_VERIFY(tolerance->is_number() && tolerance->get<double>() >= 0.0,
+                    "Fabrication-process response-library MagneticRules."
+                    "ConductorConsistencyTolerance must be a nonnegative number or a "
+                    "per-order object {\"<order>\": tolerance}!");
+        magnetic_rules.conductor_consistency_tolerance = tolerance->get<double>();
+      }
+    }
     // The probe form of the dual gate (Phase 3 (a); decisions 1284 Q-1 / 1292): the OverR
     // leaves in [0, 1], the width fraction in (0, 0.5), the Gauss-height count >= 1; a
     // value outside is MALFORMED (refused by name).
@@ -2299,6 +2336,16 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         rules->value("ProbeSheetNudgeOverR", magnetic_rules.probe_sheet_nudge_over_r);
     magnetic_rules.probe_band_heights =
         rules->value("ProbeBandHeights", magnetic_rules.probe_band_heights);
+    // The state-anchor setback of the magnetic term (R-MAG-17, decision 1309): in [0, 1];
+    // 0 = the legacy edge anchors.
+    magnetic_rules.state_anchor_setback_over_r =
+        rules->value("StateAnchorSetbackOverR", magnetic_rules.state_anchor_setback_over_r);
+    MFEM_VERIFY(
+        magnetic_rules.state_anchor_setback_over_r >= 0.0 &&
+            magnetic_rules.state_anchor_setback_over_r <= 1.0,
+        "Fabrication-process response-library MagneticRules.StateAnchorSetbackOverR "
+        "must be in [0, 1] (malformed: "
+            << magnetic_rules.state_anchor_setback_over_r << ")!");
     MFEM_VERIFY(magnetic_rules.probe_lift_over_r >= 0.0 &&
                     magnetic_rules.probe_lift_over_r <= 1.0,
                 "Fabrication-process response-library MagneticRules.ProbeLiftOverR must be "
@@ -2341,7 +2388,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       key == "SameMeshToleranceWithMeshIdentity" ||
                       key == "ConductorConsistencyTolerance" || key == "ProbeLiftOverR" ||
                       key == "ProbeSetbackOverR" || key == "ProbeSetbackWidthFraction" ||
-                      key == "ProbeSheetNudgeOverR" || key == "ProbeBandHeights",
+                      key == "ProbeSheetNudgeOverR" || key == "ProbeBandHeights" ||
+                      key == "StateAnchorSetbackOverR",
                   "Fabrication-process response-library MagneticRules has an unknown key \""
                       << key << "\"!");
     }
@@ -21369,6 +21417,23 @@ const char *MagneticProbeFormName(
   return rules.probe_band_heights >= 2 ? "BAND" : "LIFTED";
 }
 
+// The ConductorConsistencyTolerance leaf as the library wrote it: the scalar (-1 = absent),
+// or the per-order object (decision 1309 Q3).
+nlohmann::json MagneticToleranceRecord(
+    const config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData &rules)
+{
+  if (rules.conductor_consistency_tolerance_by_order.empty())
+  {
+    return rules.conductor_consistency_tolerance;
+  }
+  nlohmann::json record = nlohmann::json::object();
+  for (const auto &[order, tolerance] : rules.conductor_consistency_tolerance_by_order)
+  {
+    record[std::to_string(order)] = tolerance;
+  }
+  return record;
+}
+
 nlohmann::json MagneticRulesRecord(
     const config::ElectrostaticSolverData::ResponseCorrectionData::MagneticRulesData &rules)
 {
@@ -21377,13 +21442,14 @@ nlohmann::json MagneticRulesRecord(
       {"SameMeshToleranceWithMeshIdentity", rules.same_mesh_tolerance_with_mesh_identity},
       {"PsdFindingRatio", rules.psd_finding_ratio},
       {"PsdRefusalRatio", rules.psd_refusal_ratio},
-      {"ConductorConsistencyTolerance", rules.conductor_consistency_tolerance},
+      {"ConductorConsistencyTolerance", MagneticToleranceRecord(rules)},
       {"ProbeForm", MagneticProbeFormName(rules)},
       {"ProbeLiftOverR", rules.probe_lift_over_r},
       {"ProbeSetbackOverR", rules.probe_setback_over_r},
       {"ProbeSetbackWidthFraction", rules.probe_setback_width_fraction},
       {"ProbeSheetNudgeOverR", rules.probe_sheet_nudge_over_r},
-      {"ProbeBandHeights", rules.probe_band_heights}};
+      {"ProbeBandHeights", rules.probe_band_heights},
+      {"StateAnchorSetbackOverR", rules.state_anchor_setback_over_r}};
 }
 
 }  // namespace
@@ -27370,16 +27436,10 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
     {
       continue;
     }
-    if (control_state_anchor_setback_over_r <= 0.0)
-    {
-      // Decision 1302: under the state-anchor CONTROL the chain's anchor lines are the
-      // magnetic twins, which the loop fit's tree (built on the electric lines) does not
-      // know: the fit is NOT applied to the re-anchored chain (its correction is bounded by
-      // the loop residual, ~1e-3 of the states on the (ii) stub; the control is a
-      // diagnostic).
-      AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real);
-      AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag);
-    }
+    // The magnetic loop fit (R-MAG-17): on the twin lines where the state anchors are set
+    // back, else the electric fit (bitwise).
+    AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real, true);
+    AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag, true);
     for (int i = 0; i < model.basis_size; i++)
     {
       amplitudes[patch_index] =
@@ -30597,12 +30657,49 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // (ERRATUM 1227). A model without the leaf is untouched (status Absent). The dual
     // gate's tolerance is the library's MagneticRules.ConductorConsistencyTolerance when
     // set (decision 1251), else the electric gate's constant.
-    magnetic_conductor_consistency_tolerance =
-        config.magnetic_rules.conductor_consistency_tolerance >= 0.0
-            ? config.magnetic_rules.conductor_consistency_tolerance
-            : kConductorConsistencyTolerance;
+    if (!config.magnetic_rules.conductor_consistency_tolerance_by_order.empty())
+    {
+      // The PER-ORDER leaf (decision 1309 Q3): the value of the solve's Order; an order the
+      // library did not calibrate is refused by name.
+      const auto &by_order = config.magnetic_rules.conductor_consistency_tolerance_by_order;
+      const auto entry = by_order.find(iodata.solver.order);
+      std::string orders;
+      for (const auto &[order, tolerance] : by_order)
+      {
+        (void)tolerance;
+        orders += (orders.empty() ? "" : ", ") + std::to_string(order);
+      }
+      MFEM_VERIFY(entry != by_order.end(),
+                  "Fabrication-process response-library MagneticRules."
+                  "ConductorConsistencyTolerance has no entry for the solve's Order "
+                      << iodata.solver.order << " (calibrated orders: " << orders
+                      << "): the magnetic conductor-consistency gate is not calibrated "
+                         "at this order!");
+      magnetic_conductor_consistency_tolerance = entry->second;
+    }
+    else
+    {
+      magnetic_conductor_consistency_tolerance =
+          config.magnetic_rules.conductor_consistency_tolerance >= 0.0
+              ? config.magnetic_rules.conductor_consistency_tolerance
+              : kConductorConsistencyTolerance;
+    }
     magnetic_probe_rules = config.magnetic_rules;
     control_state_anchor_setback_over_r = request->control_state_anchor_setback_over_r;
+    // The state-anchor setback in effect (R-MAG-17, decision 1309): the library leaf, or
+    // the 1302 CONTROL on a library without it; the control on a library that already
+    // re-anchors is REFUSED by name (no silent double application).
+    MFEM_VERIFY(control_state_anchor_setback_over_r <= 0.0 ||
+                    config.magnetic_rules.state_anchor_setback_over_r <= 0.0,
+                "ConductorConsistency.ControlStateAnchorSetbackOverR is refused: the "
+                "library's MagneticRules.StateAnchorSetbackOverR ("
+                    << config.magnetic_rules.state_anchor_setback_over_r
+                    << ") already sets the state anchors back (the control is a diagnostic "
+                       "for the legacy form 0)!");
+    magnetic_state_anchor_setback_over_r =
+        config.magnetic_rules.state_anchor_setback_over_r > 0.0
+            ? config.magnetic_rules.state_anchor_setback_over_r
+            : std::max(control_state_anchor_setback_over_r, 0.0);
     {
       auto magnetic =
           EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,
@@ -30917,13 +31014,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "Inconsistent Maxwell response contour size!");
     MFEM_ASSERT(static_cast<int>(anchors.size()) == model.conductor_state_count + 1,
                 "Inconsistent Maxwell conductor-anchor count!");
-    // Decision 1302 (the ControlStateAnchorSetbackOverR CONTROL, RecordOnly only): the
-    // MAGNETIC chain's anchor / end / return lines of a translational magnetic patch start
-    // from its conductor anchors SET BACK into their piece (the probe form's generic rule
-    // and sheet nudge); `state_anchors` = the anchors (electric form) or their set-back
-    // twins; `twin_lines` = whether the magnetic twin lines are appended for this patch.
+    // The state-anchor setback (MagneticRules.StateAnchorSetbackOverR, R-MAG-17, USER 1308
+    // U-2; or the 1302 CONTROL on a legacy library): the MAGNETIC chain's anchor / end /
+    // return lines of a translational magnetic patch start from its conductor anchors SET
+    // BACK into their piece (the probe form's generic rule and sheet nudge);
+    // `state_anchors` = the anchors (the electric form) or their set-back twins;
+    // `twin_lines` = whether the magnetic twin lines are appended for this patch.
     std::vector<mfem::Vector> state_anchors(anchors.begin(), anchors.end());
-    const bool twin_lines = control_state_anchor_setback_over_r > 0.0 && model.magnetic &&
+    const bool twin_lines = magnetic_state_anchor_setback_over_r > 0.0 && model.magnetic &&
                             !patch.conductor_probe_edges.empty();
     if (twin_lines)
     {
@@ -30945,12 +31043,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           u0 += (state_anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
         }
         const int piece = LocalPieceOfOffset(offsets, gap_directions, pieces, u0);
-        MFEM_VERIFY(piece > 0,
-                    "ControlStateAnchorSetbackOverR: a conductor anchor of patch "
-                        << patch.global_index << " lies in a gap!");
+        MFEM_VERIFY(piece > 0, "StateAnchorSetbackOverR: a conductor anchor of patch "
+                                   << patch.global_index << " lies in a gap!");
         const double move =
             LateralSetbackMove(offsets, gap_directions, pieces, u0, piece,
-                               control_state_anchor_setback_over_r * R,
+                               magnetic_state_anchor_setback_over_r * R,
                                magnetic_probe_rules.probe_setback_width_fraction);
         for (int d = 0; d < dimension; d++)
         {
@@ -30959,7 +31056,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
               magnetic_probe_rules.probe_sheet_nudge_over_r * R * patch_config.axis_v[d];
         }
       }
-      control_state_anchor_patch_count++;
+      state_anchor_setback_patch_count++;
     }
     const auto &state_anchor = state_anchors.front();
     // The lines of one step along the ring edge from knot `from` to knot `to` (decision
@@ -31670,19 +31767,30 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                magnetic_probe_rules.probe_setback_width_fraction,
                magnetic_probe_rules.probe_sheet_nudge_over_r,
                magnetic_probe_rules.probe_band_heights, global_magnetic_probe_line_count);
-    if (control_state_anchor_setback_over_r > 0.0)
+    if (magnetic_state_anchor_setback_over_r > 0.0)
     {
-      int patches_reanchored = control_state_anchor_patch_count;
+      int patches_reanchored = state_anchor_setback_patch_count;
       Mpi::GlobalSum(1, &patches_reanchored, fespace.GetComm());
-      MFEM_VERIFY(patches_reanchored > 0,
-                  "ConductorConsistency.ControlStateAnchorSetbackOverR re-anchored no "
-                  "patch (no translational magnetic patch placed; decision 1302: a control "
-                  "that applies nowhere is refused)!");
-      Mpi::Print(
-          " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e} (decision 1302): "
-          "the magnetic chain's anchor lines of {:d} patch(es) start from set-back "
-          "anchors; the magnetic term is NOT of record\n",
-          control_state_anchor_setback_over_r, patches_reanchored);
+      if (control_state_anchor_setback_over_r > 0.0)
+      {
+        MFEM_VERIFY(patches_reanchored > 0,
+                    "ConductorConsistency.ControlStateAnchorSetbackOverR re-anchored no "
+                    "patch (no translational magnetic patch placed; decision 1302: a "
+                    "control that applies nowhere is refused)!");
+        Mpi::Print(
+            " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e} (decision 1302): "
+            "the magnetic chain's anchor lines of {:d} patch(es) start from set-back "
+            "anchors; the magnetic term is NOT of record\n",
+            control_state_anchor_setback_over_r, patches_reanchored);
+      }
+      else
+      {
+        Mpi::Print(" Magnetic state anchors set back {:.3e} R into their piece on {:d} "
+                   "translational patch(es) (MagneticRules.StateAnchorSetbackOverR, "
+                   "R-MAG-17): the magnetic chain, its loop fit, the dual gate and dK "
+                   "read the set-back lines\n",
+                   magnetic_state_anchor_setback_over_r, patches_reanchored);
+      }
     }
     if (total_control_flips > 0)
     {
@@ -33103,11 +33211,23 @@ void SurfaceResponseOperator::BuildMaxwellChainTrace(const Vector &line_values,
 }
 
 void SurfaceResponseOperator::BuildMaxwellChainTraceTranspose(const Vector &values,
-                                                              Vector &line_values) const
+                                                              Vector &line_values,
+                                                              bool magnetic) const
 {
   MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
   line_values.SetSize(static_cast<int>(maxwell_lines.size()));
   line_values = 0.0;
+  // The magnetic chain's twin anchor / end lines where the state anchors are set back
+  // (R-MAG-17); -1 = the electric line.
+  auto AnchorLine = [&](const MaxwellContourPath &path)
+  {
+    return magnetic && path.magnetic_anchor_line >= 0 ? path.magnetic_anchor_line
+                                                      : path.anchor_line;
+  };
+  auto EndLine = [&](const MaxwellContourPath &path)
+  {
+    return magnetic && path.magnetic_end_line >= 0 ? path.magnetic_end_line : path.end_line;
+  };
   // The adjoint of every trace coefficient: its own value plus the start-trace adjoints of
   // the paths that hang from it (a hat from its rim knot, an open path from its conductor
   // state). The paths are visited in reverse construction order so that a path's adjoint
@@ -33139,9 +33259,9 @@ void SurfaceResponseOperator::BuildMaxwellChainTraceTranspose(const Vector &valu
       }
       maxwell_path_adjoint[i] += maxwell_path_adjoint[i + 1];
     }
-    if (path->anchor_line >= 0)
+    if (AnchorLine(*path) >= 0)
     {
-      line_values[path->anchor_line] -= maxwell_path_adjoint[0];
+      line_values[AnchorLine(*path)] -= maxwell_path_adjoint[0];
     }
     if (!path->closed && path->start_trace >= 0)
     {
@@ -33150,17 +33270,17 @@ void SurfaceResponseOperator::BuildMaxwellChainTraceTranspose(const Vector &valu
   }
   auto AddPathIntegralTranspose = [&](const MaxwellContourPath &path, double value)
   {
-    if (path.anchor_line >= 0)
+    if (AnchorLine(path) >= 0)
     {
-      line_values[path.anchor_line] += value;
+      line_values[AnchorLine(path)] += value;
     }
     for (int i = 0; i < path.contour_line_count; i++)
     {
       line_values[path.contour_line_offset + i] += value;
     }
-    if (path.end_line >= 0)
+    if (EndLine(path) >= 0)
     {
-      line_values[path.end_line] += value;
+      line_values[EndLine(path)] += value;
     }
   };
   for (auto path = maxwell_conductor_paths.rbegin(); path != maxwell_conductor_paths.rend();
@@ -33182,11 +33302,42 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
   // paths evaluate, split into the TREE steps the chain uses (BuildMaxwellChainTrace sets
   // every knot and conductor state once, by exactly these lines, so the chain is the tree
   // solve) and the CLOSING steps it ignores, each with its fundamental cycle, and the
-  // inverse of the cycle matrix G = D_C + K D_T K^T.
-  maxwell_loop_fits.clear();
-  maxwell_loop_fits.resize(patches.size());
+  // inverse of the cycle matrix G = D_C + K D_T K^T. The cycle / unconstrained statistics
+  // are the electric fit's (the magnetic fit has the same graph on the twin lines).
   maxwell_loop_fit_cycle_count = 0;
   maxwell_loop_fit_unconstrained_count = 0;
+  BuildMaxwellLoopFits(maxwell_loop_fits, false);
+  maxwell_magnetic_loop_fits.clear();
+  if (magnetic_state_anchor_setback_over_r > 0.0)
+  {
+    // R-MAG-17: the magnetic fit on the paths' twin lines (the set-back state anchors);
+    // its statistics are not re-counted.
+    const auto cycle_count = maxwell_loop_fit_cycle_count;
+    const auto unconstrained_count = maxwell_loop_fit_unconstrained_count;
+    BuildMaxwellLoopFits(maxwell_magnetic_loop_fits, true);
+    maxwell_loop_fit_cycle_count = cycle_count;
+    maxwell_loop_fit_unconstrained_count = unconstrained_count;
+  }
+  Mpi::GlobalSum(1, &maxwell_loop_fit_cycle_count, fespace.GetComm());
+  Mpi::GlobalSum(1, &maxwell_loop_fit_unconstrained_count, fespace.GetComm());
+}
+
+void SurfaceResponseOperator::BuildMaxwellLoopFits(std::vector<MaxwellLoopFit> &fits,
+                                                   bool magnetic)
+{
+  fits.clear();
+  fits.resize(patches.size());
+  // The lines of a path this fit reads: the magnetic twins where the state anchors are
+  // set back (R-MAG-17), else the electric lines.
+  auto AnchorLine = [&](const MaxwellContourPath &path)
+  {
+    return magnetic && path.magnetic_anchor_line >= 0 ? path.magnetic_anchor_line
+                                                      : path.anchor_line;
+  };
+  auto EndLine = [&](const MaxwellContourPath &path)
+  {
+    return magnetic && path.magnetic_end_line >= 0 ? path.magnetic_end_line : path.end_line;
+  };
   auto StepLineRange = [&](const MaxwellContourPath &path, std::size_t step)
   {
     int begin = path.contour_line_offset;
@@ -33208,7 +33359,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
   std::size_t conductor_cursor = 0;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
-    auto &fit = maxwell_loop_fits[patch_index];
+    auto &fit = fits[patch_index];
     const auto &patch = patches[patch_index];
     const auto &model = models[patch.model];
     const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
@@ -33233,13 +33384,16 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
       fit.tree.push_back({Node(parent), child, line_begin, line_count,
                           line_count > 0 ? RangeLength(line_begin, line_count) : 0.0});
     };
-    auto AddClosing = [&](int from, int to, int line_begin, int line_count)
+    auto AddClosing =
+        [&](int from, int to, int line_begin, int line_count, int extra_line = -1)
     {
       fit.closing.push_back({Node(from),
                              Node(to),
                              line_begin,
                              line_count,
-                             line_count > 0 ? RangeLength(line_begin, line_count) : 0.0,
+                             extra_line,
+                             (line_count > 0 ? RangeLength(line_begin, line_count) : 0.0) +
+                                 (extra_line >= 0 ? maxwell_line_lengths[extra_line] : 0.0),
                              {}});
     };
     // (1) The conductor spanning tree (the chain's first loop): the whole open path's
@@ -33259,28 +33413,28 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
       if (conductor_path.integral_sign < 0)
       {
         // parent = the start conductor: start -> knots -> end.
-        AddTree(start_node, path.trace_indices.front(), path.anchor_line,
-                path.anchor_line >= 0 ? 1 : 0);
+        AddTree(start_node, path.trace_indices.front(), AnchorLine(path),
+                AnchorLine(path) >= 0 ? 1 : 0);
         for (std::size_t i = 1; i < size; i++)
         {
           const auto [begin, count] = StepLineRange(path, i - 1);
           AddTree(path.trace_indices[i - 1], path.trace_indices[i], begin, count);
         }
-        AddTree(path.trace_indices.back(), end_node, path.end_line,
-                path.end_line >= 0 ? 1 : 0);
+        AddTree(path.trace_indices.back(), end_node, EndLine(path),
+                EndLine(path) >= 0 ? 1 : 0);
       }
       else
       {
         // parent = the end conductor: end -> knots (reversed) -> start.
-        AddTree(end_node, path.trace_indices.back(), path.end_line,
-                path.end_line >= 0 ? 1 : 0);
+        AddTree(end_node, path.trace_indices.back(), EndLine(path),
+                EndLine(path) >= 0 ? 1 : 0);
         for (std::size_t i = size - 1; i >= 1; i--)
         {
           const auto [begin, count] = StepLineRange(path, i - 1);
           AddTree(path.trace_indices[i], path.trace_indices[i - 1], begin, count);
         }
-        AddTree(path.trace_indices.front(), start_node, path.anchor_line,
-                path.anchor_line >= 0 ? 1 : 0);
+        AddTree(path.trace_indices.front(), start_node, AnchorLine(path),
+                AnchorLine(path) >= 0 ? 1 : 0);
       }
     }
     // (2) Every path in construction order (the chain's second loop).
@@ -33294,8 +33448,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
       const auto size = path.trace_indices.size();
       const int start_node =
           (!path.closed && path.start_trace >= 0) ? path.start_trace : -1;
-      AddTree(start_node, path.trace_indices.front(), path.anchor_line,
-              path.anchor_line >= 0 ? 1 : 0);
+      AddTree(start_node, path.trace_indices.front(), AnchorLine(path),
+              AnchorLine(path) >= 0 ? 1 : 0);
       if (path.hat_check_line >= 0)
       {
         continue;  // a hat: one tree step; the check line is information only (818 R2)
@@ -33314,6 +33468,14 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
         // The ring's last step back to its start knot.
         AddClosing(path.trace_indices.back(), path.trace_indices.front(), closing_begin,
                    closing_count);
+      }
+      else if (magnetic && path.magnetic_return_line >= 0)
+      {
+        // A free arc of a re-anchored patch (R-MAG-17): the step onto the PEC knot and the
+        // MAGNETIC twin return line (appended after the electric one: not contiguous, so
+        // the closing step's extra leg).
+        AddClosing(path.trace_indices.back(), -1, closing_begin, closing_count,
+                   path.magnetic_return_line);
       }
       else if (path.return_line >= 0 || closing_count > 0)
       {
@@ -33339,7 +33501,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
         // end line is a zero-length identification, a hard constraint in the cycle space).
         AddClosing(path.trace_indices.back(),
                    path.end_conductor_trace >= 0 ? path.end_conductor_trace : -1,
-                   path.end_line, path.end_line >= 0 ? 1 : 0);
+                   EndLine(path), EndLine(path) >= 0 ? 1 : 0);
       }
     }
     for (int i = 0; i < model.basis_size; i++)
@@ -33424,15 +33586,14 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
   }
   MFEM_VERIFY(conductor_cursor == maxwell_conductor_paths.size(),
               "Maxwell loop fit: conductor paths not attributed to a patch!");
-  Mpi::GlobalSum(1, &maxwell_loop_fit_cycle_count, fespace.GetComm());
-  Mpi::GlobalSum(1, &maxwell_loop_fit_unconstrained_count, fespace.GetComm());
 }
 
 double SurfaceResponseOperator::AddMaxwellLoopFitCorrection(std::size_t patch_index,
                                                             const Vector &line_values,
-                                                            Vector &values) const
+                                                            Vector &values,
+                                                            bool magnetic) const
 {
-  const auto &fit = maxwell_loop_fits[patch_index];
+  const auto &fit = MaxwellLoopFits(magnetic)[patch_index];
   const int cycle_count = static_cast<int>(fit.closing.size());
   if (cycle_count == 0)
   {
@@ -33468,8 +33629,13 @@ double SurfaceResponseOperator::AddMaxwellLoopFitCorrection(std::size_t patch_in
     {
       scale += std::abs(line_values[line]);
     }
-    residual[c] = LineSum(closing.line_begin, closing.line_count) + Value(closing.to) -
-                  Value(closing.from);
+    if (closing.extra_line >= 0)
+    {
+      scale += std::abs(line_values[closing.extra_line]);
+    }
+    residual[c] = LineSum(closing.line_begin, closing.line_count) +
+                  (closing.extra_line >= 0 ? line_values[closing.extra_line] : 0.0) +
+                  Value(closing.to) - Value(closing.from);
     if (std::abs(residual[c]) <= kLoopFitResidualRoundoff * scale)
     {
       residual[c] = 0.0;
@@ -33534,18 +33700,19 @@ double SurfaceResponseOperator::MaxwellLoopFitRouteNorm(std::size_t patch_index,
   return norm;
 }
 
-void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
-                                                Vector &values) const
+void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values, Vector &values,
+                                                bool magnetic) const
 {
-  BuildMaxwellChainTrace(line_values, values);
+  BuildMaxwellChainTrace(line_values, values, magnetic);
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
-    AddMaxwellLoopFitCorrection(patch_index, line_values, values);
+    AddMaxwellLoopFitCorrection(patch_index, line_values, values, magnetic);
   }
 }
 
 void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
-                                                         Vector &line_values) const
+                                                         Vector &line_values,
+                                                         bool magnetic) const
 {
   // phi = C L + A u with u = -D_T K^T G^-1 (S_C L + E_C C L): C the chain, S_C the closing
   // legs' sums, E_C the closing difference (to minus from), A the tree accumulation. The
@@ -33557,9 +33724,10 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   maxwell_fit_adjoint = values;
   maxwell_fit_line_adjoint.SetSize(static_cast<int>(maxwell_lines.size()));
   maxwell_fit_line_adjoint = 0.0;
+  const auto &fits = MaxwellLoopFits(magnetic);
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
-    const auto &fit = maxwell_loop_fits[patch_index];
+    const auto &fit = fits[patch_index];
     const int cycle_count = static_cast<int>(fit.closing.size());
     if (cycle_count == 0)
     {
@@ -33610,6 +33778,10 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
       {
         maxwell_fit_line_adjoint[line] += current[c];
       }
+      if (closing.extra_line >= 0)
+      {
+        maxwell_fit_line_adjoint[closing.extra_line] += current[c];
+      }
       if (closing.to >= 0)
       {
         maxwell_fit_adjoint[closing.to] += current[c];
@@ -33620,7 +33792,7 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
       }
     }
   }
-  BuildMaxwellChainTraceTranspose(maxwell_fit_adjoint, line_values);
+  BuildMaxwellChainTraceTranspose(maxwell_fit_adjoint, line_values, magnetic);
   line_values += maxwell_fit_line_adjoint;
 }
 
@@ -34058,7 +34230,7 @@ void SurfaceResponseOperator::ApplyMagneticTrace(const Vector &x, Vector &values
               "with magnetic leaves!");
   trace_forward_count++;
   EvaluateMaxwellLines(x, correction, true);
-  BuildMaxwellTrace(correction, values);
+  BuildMaxwellTrace(correction, values, true);
 }
 
 void SurfaceResponseOperator::ApplyMagneticTraceTranspose(const Vector &values,
@@ -34068,7 +34240,7 @@ void SurfaceResponseOperator::ApplyMagneticTraceTranspose(const Vector &values,
               "The magnetic surface-response trace requires a Maxwell surface response "
               "with magnetic leaves!");
   trace_transpose_count++;
-  BuildMaxwellTraceTranspose(values, correction);
+  BuildMaxwellTraceTranspose(values, correction, true);
   AddMaxwellLinesTranspose(correction, y, true);
 }
 
@@ -35207,12 +35379,12 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       {
         continue;
       }
-      if (control_state_anchor_setback_over_r <= 0.0)
-      {
-        // Decision 1302: no loop-fit correction on the re-anchored chain (see the gate).
-        AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real);
-        AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag);
-      }
+      // The magnetic loop fit (R-MAG-17; the twin lines where the state anchors are set
+      // back, else the electric fit).
+      AddMaxwellLoopFitCorrection(patch_index, magnetic_line_real, magnetic_trace_real,
+                                  true);
+      AddMaxwellLoopFitCorrection(patch_index, magnetic_line_imag, magnetic_trace_imag,
+                                  true);
       Vector patch_real(magnetic_trace_real.GetData() + patch.trace_offset,
                         model.basis_size);
       Vector patch_imag(magnetic_trace_imag.GetData() + patch.trace_offset,
@@ -35578,6 +35750,10 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
       // and the applied ControlFlipProbePiece CONTROL (decision 1292).
       result["Correction"]["MagneticProbeLines"] = Distribution(magnetic_probe_line_count);
       result["Correction"]["MagneticProbeForm"] = MagneticProbeForm();
+      // The dual gate's tolerance IN EFFECT at this solve's order (the scalar leaf, the
+      // per-order leaf's entry, or the electric constant; decision 1309 Q3).
+      result["Correction"]["MagneticGateTolerance"] =
+          magnetic_conductor_consistency_tolerance;
       {
         // The flips of EVERY rank (the first A run recorded the root rank's list only, a
         // record defect named in the lane's REPORT step a16): the global count and the
@@ -35597,8 +35773,14 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
       {
         result["Correction"]["ControlStateAnchorSetbackOverR"] = {
             {"OverR", control_state_anchor_setback_over_r},
-            {"Patches", Distribution(control_state_anchor_patch_count)}};
+            {"Patches", Distribution(state_anchor_setback_patch_count)}};
       }
+      // R-MAG-17: the state-anchor setback IN EFFECT on the magnetic term (0 = the legacy
+      // edge anchors) and the patches re-anchored.
+      result["Correction"]["MagneticStateAnchorSetbackOverR"] =
+          magnetic_state_anchor_setback_over_r;
+      result["Correction"]["MagneticStateAnchorPatches"] =
+          Distribution(state_anchor_setback_patch_count);
     }
     // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (decision 1072 Q2): the FROZEN crack tolerance
     // rule of the contour-line coverage, by name.

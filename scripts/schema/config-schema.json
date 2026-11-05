@@ -3499,7 +3499,7 @@
                   "type": "number",
                   "exclusiveMinimum": 0,
                   "maximum": 1,
-                  "description": "DIAGNOSTIC CONTROL, not a modelling option (mx-sc-magnetic Phase 3 (a), decision 1302): the MAGNETIC chain trace's conductor-path anchor lines (the flux STATE operand of the dual conductor-consistency gate) start from the patch's conductor anchors SET BACK into their metal piece by this fraction of the matching radius (the probe form's generic setback and sheet nudge) instead of the edge anchors; the electric lines, the electric gate and the operator are untouched. Admitted ONLY with `RecordOnly: true` and `CorrectionMode: PostprocessOnly` (the magnetic term read under it is NOT of record); printed and recorded as a CONTROL. A run of record never carries it."
+                  "description": "DIAGNOSTIC CONTROL, not a modelling option (mx-sc-magnetic Phase 3 (a), decision 1302): the MAGNETIC chain trace's conductor-path anchor lines (the flux STATE operand of the dual conductor-consistency gate) start from the patch's conductor anchors SET BACK into their metal piece by this fraction of the matching radius (the probe form's generic setback and sheet nudge) instead of the edge anchors; the electric lines, the electric gate and the operator are untouched. Admitted ONLY with `RecordOnly: true` and `CorrectionMode: PostprocessOnly` (the magnetic term read under it is NOT of record); printed and recorded as a CONTROL; REFUSED by name on a library whose `MagneticRules.StateAnchorSetbackOverR` (R-MAG-17, the term's form of record) already sets the state anchors back. A run of record never carries it."
                 },
                 "ControlFlipProbePiece": {
                   "type": "array",

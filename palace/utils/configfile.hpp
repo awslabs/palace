@@ -1563,6 +1563,14 @@ public:
       // p = 2 / 3 / 4 on the (ii) stub), so a library sets the tolerance it has calibrated;
       // the probe form itself is OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
       double conductor_consistency_tolerance = -1.0;
+      // The PER-ORDER form of the same leaf (USER 1308 U-1, decision 1309 Q3;
+      // OI-MAGNETIC-DUAL-GATE-3D-ENCLOSED-FLUX): ConductorConsistencyTolerance may be an
+      // object {"3": t3, "4": t4, ...} keyed by the solve's Order; the value of the run's
+      // order applies, an order ABSENT from the object is REFUSED by name (the dual gate's
+      // deviation is the 3D driven field's enclosed flux between two flux paths, ~3 % at
+      // p3 / 1.5 % at p4 on the (ii) stub, so the tolerance is calibrated per order: 1.25 x
+      // the measured LIFTED mode-1 maximum). Empty = the scalar form above.
+      std::map<int, double> conductor_consistency_tolerance_by_order;
       // The PROBE FORM of the dual gate (mx-sc-magnetic Phase 3 (a); decisions 1256 / 1284
       // Q-1 / 1292; OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION): the magnetic probe legs
       // are LIFTED off the sheet and SET BACK from the singular edges (A_z is constant on a
@@ -1582,6 +1590,17 @@ public:
       double probe_setback_width_fraction = 0.45;
       double probe_sheet_nudge_over_r = 1.0e-6;
       int probe_band_heights = 1;
+      // The STATE-ANCHOR SETBACK of the magnetic TERM (R-MAG-17; USER 1308 U-2, decision
+      // 1309): the magnetic chain's conductor-path anchor / end / return lines start from
+      // the patch's conductor anchors SET BACK s_a = StateAnchorSetbackOverR x R into their
+      // piece (the probe form's generic rule, ProbeSetbackWidthFraction and
+      // ProbeSheetNudgeOverR apply) on every translational magnetic patch: the chain's
+      // flux states, the dual gate, the D6 shift and the self-consistent dK all read the
+      // set-back lines. Measured on the (ii) stub: the edge-anchored states carry a
+      // state-side edge error of +0.06..+0.08 pt of the D6 shift (prereg/iii-addendum-1,
+      // decision 1305). 0 = the LEGACY edge anchors (every library of record without the
+      // leaf: bitwise); the form of record going forward is 0.5, written explicitly.
+      double state_anchor_setback_over_r = 0.0;
     };
     MagneticRulesData magnetic_rules;
 
