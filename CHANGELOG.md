@@ -57,6 +57,36 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     rule `MagneticRules.ConductorConsistencyTolerance` sets the MAGNETIC conductor-consistency
     gate's tolerance (absent = the electric gate's 0.02, bitwise as before); the probe form is
     OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
+    Phase 3 (a) + (b) (decisions 1284 / 1292 / 1302 / 1309 / 1323 / 1334): the magnetic
+    conductor-consistency gate reads the LIFTED probe form (its legs lifted off the sheet
+    and set back from the singular edges into their piece; the library leaves
+    `MagneticRules.ProbeLiftOverR` / `ProbeSetbackOverR` / `ProbeSetbackWidthFraction` /
+    `ProbeSheetNudgeOverR` / `ProbeBandHeights`; FLAT = 0 / 0 = the electric legs, the
+    comparison form of record); `MagneticRules.ConductorConsistencyTolerance` may be
+    per-order (`{"3": t3, "4": t4, ...}`, the solve's order applies, an absent order is
+    refused); the magnetic TERM's chain, loop fit, dual gate, fixed-trace shift and ``dK``
+    read the conductor anchors set back `MagneticRules.StateAnchorSetbackOverR` x R into
+    their piece as twin lines (R-MAG-17; absent = 0 = the legacy anchors, bitwise), an
+    anchor within `MagneticRules.StateAnchorEdgeToleranceOverR` x R (default 0.1) of an edge
+    snapped onto it (one rule for the term's state anchors and the probe form's anchor end;
+    the tolerance below half the narrowest model gap when either setback is in effect; the
+    snapped counts recorded as `Correction.MagneticStateAnchorSnapped`); the DIAGNOSTIC
+    CONTROLS `ConductorConsistency.ControlFlipProbePiece` and `ControlStateAnchorSetbackOverR`
+    (`RecordOnly` only; never of record); the per-model / per-patch magnetic energies
+    (`magnetic domain correction (J)` / `magnetic thin energy (J)` in
+    `surface-response-magnetic.csv` and, with `Diagnostics.PatchEnergy`,
+    `surface-response-patch-energy.csv`) and `Diagnostics.WithinRVolumeEnergy` (the raw
+    field's within-R magnetic / electric energies and volume per patch; a per-model sum
+    over-counts a multi-edge model by its edge count, OI-WITHIN-R-MULTI-EDGE-OVERCOUNT); the
+    records `Correction.MagneticProbeForm` / `MagneticProbeLines` / `MagneticGateTolerance` /
+    `MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`; the attach tool's
+    matching flags (`--probe-lift`, `--probe-setback`, `--probe-width-fraction`,
+    `--probe-nudge`, `--probe-band-heights`, `--state-anchor-setback` (default 0.5, the
+    form of record; 0 = the legacy form), `--state-anchor-edge-tolerance`). Named open items:
+    OI-MAGNETIC-DUAL-GATE-3D-ENCLOSED-FLUX (the dual gate's deviation on a device is the 3D
+    field's enclosed flux at junctions / ends, excluded by the calibrated per-order
+    tolerance) and OI-MAGNETIC-SC-GMRES-STAGNATION (the self-consistent GMRES with ``dK``
+    stagnates on a device; the fixed-trace shift of record is unaffected).
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the

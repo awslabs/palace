@@ -2371,13 +2371,17 @@ effect and the patches re-anchored are printed and recorded (`palace.json`
 anchor is the DEVICE's edge point while the patch's probe edges carry the device sides' feet
 at the origin cross-section, which differ by roundoff or by the local geometry (a tapered or
 curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR` (decision 1323;
-in ``[0, 1]``, absent = 0.1, in effect only with a nonzero setback) makes an anchor within
-that fraction of ``R`` of an edge offset lie ON that edge (its piece; the setback measured
-from the edge offset); an anchor farther from every edge must lie in a metal piece (refused
-by name otherwise). The tolerance must stay below half the narrowest magnetic model gap /
-width (a pair model's `Separation`, a cluster's gaps), asserted at load (the minimum is
-recorded as `StateAnchorMinGapOverR`); the anchors on an edge, those snapped from a nonzero
-distance and the farthest snap (``/ R``) are printed and recorded
+in ``[0, 1]``, absent = 0.1) makes an anchor within that fraction of ``R`` of an edge offset
+lie ON that edge (its piece; the setback measured from the edge offset); an anchor farther
+from every edge must lie in a metal piece (refused by name otherwise). ONE set-back rule
+(decision 1334) serves the term's state anchors (with `StateAnchorSetbackOverR` > 0) and the
+LIFTED probe form's anchor end (with `ProbeSetbackOverR` > 0: the device anchor a hair into
+the gap by roundoff would otherwise be read at the edge point with no record); a library with
+both setbacks 0 is bitwise. The tolerance must stay below half the narrowest magnetic model
+gap / width (a pair model's `Separation`, a cluster's gaps), asserted at load when either
+setback is in effect (the minimum is recorded as `StateAnchorMinGapOverR`), and below half of
+every device gap of a patch; the anchors on an edge, those snapped from a nonzero distance
+and the farthest snap (``/ R``) are printed and recorded
 (`Correction.MagneticStateAnchorSnapped`). The
 DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR` (decision 1302;
 `RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
@@ -2386,7 +2390,23 @@ the anchors back. The per-model
 `magnetic domain correction (J)` / `magnetic thin energy (J)` (COL-1: the "energy" rows and
 trailing columns of `surface-response-magnetic.csv`) and the per-patch ones (COL-2: two
 columns of `surface-response-patch-energy.csv` with `Diagnostics.PatchEnergy`, NaN on a
-patch without a leaf) are written only with magnetic leaves. At ``p = 2`` the magnetic loop gate
+patch without a leaf) are written only with magnetic leaves. `Diagnostics.WithinRVolumeEnergy`
+(COL-3, the share census of the mx-sc-magnetic Phase 3 (b)) adds to
+`surface-response-patch-energy.csv` the raw field's magnetic and electric energies integrated
+over the patch's within-``R`` box (`within-R magnetic energy (J)`, `within-R electric energy
+(J)`, `within-R volume (m^3)`: the model's full lateral span ``\pm R`` by the cell length, on
+every patch of a translational model, with or without a leaf). A multi-edge model's patches
+tile its cross-section ONCE PER EDGE FEATURE (a gap's two sides, a cluster's ``n`` edges), each
+carrying the trace weight ``1 / n_\mathrm{edges}`` while each patch's box is the model's full
+span: a per-model SUM of the within-``R`` columns over-counts the box energy by
+``n_\mathrm{edges}`` (measured on the (b) devices: the sum exceeded the device's total
+magnetic energy, 1.24x on a DCG line, 2.9x on a 4-edge cluster) and a reader divides by the
+model's edge count (OI-WITHIN-R-MULTI-EDGE-OVERCOUNT; the per-patch values and the trace
+sums are right as written). The self-consistent solve with ``dK`` on a device stagnates in
+GMRES (~0.997 per iteration against the raw solve's 51 iterations; `MaxIts` exhausted, the
+self-consistent confidence record fails; the non-converged iterate carries the raw field):
+OI-MAGNETIC-SC-GMRES-STAGNATION, an S1-class open item of the self-consistent operator; the
+first-order fixed-trace shift of record needs no self-consistent solve. At ``p = 2`` the magnetic loop gate
 fails on the (ii) stub (the shift is NaN there): a device-order floor ``p \geq 3``, named. On the Maxwell path `TranslationalDomainCorrection` is not read:
 the electric domain term and the magnetic term are both fixed-trace by construction (the
 key governs the electrostatic driver only). The self-consistent eigenvalue is the check:
