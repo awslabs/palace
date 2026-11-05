@@ -2757,21 +2757,35 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   const auto nedge = static_cast<SCOTCH_Num>(adjncy.size());
   adjncy.resize(adjncy.size() + 1);  // Not empty for a process without edges
 
-  // Parts with a load imbalance ratio of at most 2%, from a fixed random seed.
-  SCOTCH_Dgraph graph;
+  // Parts with a load imbalance ratio of at most 2%. Whatever the build options of
+  // PT-Scotch, the context runs it on one thread per process, with deterministic
+  // communication and its own random generator from a fixed seed. With the default build
+  // options, each process would otherwise start a thread per core of its affinity mask, and
+  // the parts would depend on the arrival order of the messages.
+  SCOTCH_Context context;
+  SCOTCH_Dgraph graph, context_graph;
   SCOTCH_Strat strat;
   std::vector<SCOTCH_Num> part(ne);
-  SCOTCH_randomSeed(1);
-  SCOTCH_randomReset();
-  int ok = (SCOTCH_dgraphInit(&graph, comm) == 0);
+  SCOTCH_contextInit(&context);
+  SCOTCH_dgraphInit(&graph, comm);
+  SCOTCH_stratInit(&strat);
+  int ok = (SCOTCH_contextOptionSetNum(&context, SCOTCH_OPTIONNUMDETERMINISTIC, 1) == 0 &&
+            SCOTCH_contextRandomClone(&context) == 0 &&
+            SCOTCH_contextThreadSpawn(&context, 1, nullptr) == 0);
+  if (ok)
+  {
+    SCOTCH_contextRandomSeed(&context, 1);
+  }
+  Mpi::GlobalMin(1, &ok, comm);
   ok = ok && (SCOTCH_dgraphBuild(&graph, 0, ne, ne, xadj.data(), nullptr, nullptr, nullptr,
                                  nedge, nedge, adjncy.data(), nullptr, nullptr) == 0);
-  SCOTCH_stratInit(&strat);
+  ok = ok && (SCOTCH_contextBindDgraph(&context, &graph, &context_graph) == 0);
   ok = ok &&
        (SCOTCH_stratDgraphMapBuild(&strat, SCOTCH_STRATDEFAULT, size, size, 0.02) == 0);
-  ok = ok && (SCOTCH_dgraphPart(&graph, size, &strat, part.data()) == 0);
+  ok = ok && (SCOTCH_dgraphPart(&context_graph, size, &strat, part.data()) == 0);
   SCOTCH_stratExit(&strat);
   SCOTCH_dgraphExit(&graph);
+  SCOTCH_contextExit(&context);
   Mpi::GlobalMin(1, &ok, comm);
   if (!ok)
   {
