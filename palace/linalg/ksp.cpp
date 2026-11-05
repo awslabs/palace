@@ -240,6 +240,24 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
 }
 
+// Exclusive timer row containing the untimed solves of a given role.
+Timer::Index RoleParent(std::string_view role)
+{
+  if (role == "DivFree")
+  {
+    return Timer::DIV_FREE;
+  }
+  if (role == "Estimator")
+  {
+    return Timer::SOLVE_ESTIMATOR;
+  }
+  if (role == "Mass")
+  {
+    return Timer::TS;
+  }
+  return Timer::TOTAL;
+}
+
 }  // namespace
 
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
@@ -294,6 +312,13 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
   if (this->pc)
   {
     this->ksp->SetPreconditioner(*this->pc);
+  }
+  const bool main = (this->role == "Main");
+  const auto parent = main ? Timer::KSP : RoleParent(this->role);
+  this->ksp->SetPerfTallies(this->role + "/Krylov", parent);
+  if (this->pc)
+  {
+    this->pc->SetPerfTallies(this->role, main ? Timer::KSP_PRECONDITIONER : parent);
   }
 }
 

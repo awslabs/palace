@@ -7,6 +7,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -43,10 +44,18 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Performance tally id for the operator applications.
+  int perf_op = -1;
+
 public:
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
+
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override
+  {
+    perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
+  }
 
   void Mult(const VecType &x, VecType &y) const override
   {
@@ -107,11 +116,19 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Performance tally id for the operator applications.
+  int perf_op = -1;
+
 public:
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
                            double sf_min);
 
   void SetOperator(const OperType &op) override;
+
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override
+  {
+    perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
+  }
 
   void Mult(const VecType &x, VecType &y) const override
   {

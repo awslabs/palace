@@ -53,6 +53,14 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // Performance tally ids per level: pre-/post-smoothing, residual, restriction,
+  // prolongation (index 0 holds the coarse solve).
+  struct LevelTallies
+  {
+    int pre = -1, post = -1, res = -1, restr = -1, prol = -1;
+  };
+  std::vector<LevelTallies> perf;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -77,6 +85,8 @@ public:
   void SetOperator(const OperType &op) override;
 
   void Mult(const VecType &x, VecType &y) const override;
+
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
 
   void EnableTimer() { use_timer = true; }
 };

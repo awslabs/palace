@@ -4,10 +4,12 @@
 #ifndef PALACE_LINALG_SOLVER_HPP
 #define PALACE_LINALG_SOLVER_HPP
 
+#include <string>
 #include <type_traits>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -37,6 +39,10 @@ public:
 
   // Set the operator associated with the solver, or update it if called repeatedly.
   virtual void SetOperator(const OperType &op) = 0;
+
+  // Register inclusive performance tallies named under prefix, measured within the given
+  // exclusive timer row. No-op by default.
+  virtual void SetPerfTallies(const std::string &prefix, Timer::Index parent) {}
 
   // Apply the solver for the transpose problem.
   void MultTranspose(const VecType &x, VecType &y) const override
