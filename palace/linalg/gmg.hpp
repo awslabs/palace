@@ -5,6 +5,7 @@
 #define PALACE_LINALG_GEOMETRIC_MULTIGRID_HPP
 
 #include <memory>
+#include <string>
 #include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
@@ -52,6 +53,9 @@ private:
 
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
+
+  // Solver role for the performance report.
+  std::string role;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;

@@ -454,6 +454,7 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(
 
 void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 {
+  perf::ScopedRole role("ModeEigen");
   // GMRES iterative solver preconditioned with a sparse direct solver.
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, verbose);
   gmres->SetInitialGuess(false);
@@ -560,6 +561,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 
 void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 {
+  perf::ScopedRole role("ModeEigen");
   MFEM_VERIFY(bmo, "Multigrid linear solver requires BMO ctor (2D domain path)!");
   const int print = verbose - 1;
 

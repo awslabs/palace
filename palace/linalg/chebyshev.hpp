@@ -48,6 +48,9 @@ public:
 
   void SetOperator(const OperType &op) override;
 
+  int GetOrder() const { return order; }
+  double GetMaxEigenvalue() const { return lambda_max; }
+
   void Mult(const VecType &x, VecType &y) const override
   {
     if (r.Size() != y.Size())
@@ -112,6 +115,9 @@ public:
                            double sf_min);
 
   void SetOperator(const OperType &op) override;
+
+  int GetOrder() const { return order; }
+  double GetMaxEigenvalue() const { return theta + delta; }
 
   void Mult(const VecType &x, VecType &y) const override
   {

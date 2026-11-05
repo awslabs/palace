@@ -62,6 +62,9 @@ public:
 
   void SetOperators(const OperType &op, const OperType &op_G);
 
+  const Solver<OperType> *GetSmoother() const { return B.get(); }
+  const Solver<OperType> *GetAuxiliarySmoother() const { return B_G.get(); }
+
   void Mult(const VecType &x, VecType &y) const override
   {
     if (r.Size() != y.Size())

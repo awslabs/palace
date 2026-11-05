@@ -13,6 +13,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -49,6 +50,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
     int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
+  perf::ScopedRole role("DivFree");
 
   // If no boundaries on the mesh have been marked, add a single degree of freedom
   // constraint so the system for the projection is not singular. This amounts to enforcing
