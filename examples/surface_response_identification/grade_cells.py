@@ -109,6 +109,15 @@ def fixed_shell_tails(reference_step=FIXED_SHELL_REFERENCE_STEP):
 
 
 FIXED_SHELL_TAILS = fixed_shell_tails()
+# D7 INFORMATION (USER 1331 D7 "measure them"; PREREG-D7.md, frozen sha 485d8de6…; fixround/P3-FC5-D7/d7/results/d7-tails.json;
+# supervisor decisions 1333 / 1335 / 1336 / 1341): the curved and strip tails MEASURED by the pre-registered ratio transfer through
+# the isolated window (CRV / H333 / ISO46 r5 p5 + r2.5 p5 re-solved with the R10 shells; t_c = t_iso(lib) x R_c with
+# R_c = t_W(k) / t_iso(k), the ISO46 denominator corrected for its 0.924 / 0.044 / 0.019 / 0.013 mix) read
+#   curved +9.66 % [9.41, 9.90] (R_curved 0.9702 / 0.9720), strip +12.47 % [12.15, 12.79] (R_strip 1.2527 / 1.2550).
+# The pre-registered CD3 validation (4 sources x 2 rungs, 5 % bar, fail-closed) read 7 PASS / 1 FAIL (source 4, corner share
+# 0.4945, -6.09 % at r2.5 p5) -> option (C) of PREREG-D7 s4: the values above are INFORMATION ONLY and NOT adopted; the table
+# keeps curved / strip = isolated (the borrow NAMED); the stack (ParallelEdgeCluster) stays under the strip key, unmeasured.
+# No constant of this block changed (decision 1341).
 # The MA shells catalog's attribute numbering (collect17.B): plane j's top face B + 100 + 20 j + 1, its foot rings
 # B + 200 + 20 j + k, its top-side rings B + 300 + 20 j + k.
 SHELLS_BASE = 500
