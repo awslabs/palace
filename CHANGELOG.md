@@ -26,7 +26,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     redistribution patterns and extend-add index maps, and the row interchanges of the
     forward solve applied in one exchange. This speeds up the repeated solves of STRUMPACK
     as the coarse solver at high process counts, with unchanged results.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1143](https://github.com/awslabs/palace/pull/1143).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
