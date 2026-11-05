@@ -64,6 +64,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch, a prototype for
+    [hypre-space/hypre#1654](https://github.com/hypre-space/hypre/issues/1654), with which
+    AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
+    processes during the solve and runs the additive Pi-space corrections concurrently.
+    These levels have few rows per process and are latency bound at high process counts.
+    The AMS preconditioner also flags a zero initial guess as zero. Results agree up to the
+    summation order. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
