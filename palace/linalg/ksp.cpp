@@ -25,6 +25,24 @@ namespace palace
 namespace
 {
 
+// Forwards to a preconditioner, recording an inclusive tally.
+template <OperatorType OperType>
+class TalliedSolver : public Solver<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+  const Solver<OperType> &pc;
+  const int id;
+
+public:
+  TalliedSolver(const Solver<OperType> &pc, int id) : pc(pc), id(id) {}
+  void SetOperator(const OperType &) override {}
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    perf::ScopedTally t(id);
+    pc.Mult(x, y);
+  }
+};
+
 template <OperatorType OperType>
 std::unique_ptr<IterativeSolver<OperType>>
 ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_Comm comm)
@@ -288,12 +306,27 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
                                        std::string_view role)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
     role(role.empty() ? perf::CurrentRole() : role),
-    perf_solves(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Solves"))),
-    perf_its(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Its")))
+    perf_stats(this->role)
 {
   if (this->pc)
   {
-    this->ksp->SetPreconditioner(*this->pc);
+    // Nested solvers run without exclusive timers: tally their preconditioner and coarse
+    // solve instead (not on GPUs, where these points do not synchronize).
+    if (this->role != "Main" && !mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+    {
+      const auto parent = perf::RoleParent(this->role);
+      if (auto *gmg = dynamic_cast<GeometricMultigridSolver<OperType> *>(this->pc.get()))
+      {
+        gmg->SetCoarseTally(perf::RegisterTally(this->role + "/MG/Coarse", parent));
+      }
+      pc_tally = std::make_unique<TalliedSolver<OperType>>(
+          *this->pc, perf::RegisterTally(this->role + "/Preconditioner", parent));
+      this->ksp->SetPreconditioner(*pc_tally);
+    }
+    else
+    {
+      this->ksp->SetPreconditioner(*this->pc);
+    }
   }
 }
 
@@ -331,8 +364,8 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   }
   ksp_mult++;
   ksp_mult_it += ksp->GetNumIterations();
-  perf::Add(perf_solves, 1);
-  perf::Add(perf_its, ksp->GetNumIterations());
+  perf_stats.Record(ksp->GetNumIterations(), ksp->GetConverged(), ksp->GetNumRestarts(),
+                    ksp->GetInitialRes(), ksp->GetFinalRes());
 }
 
 template class BaseKspSolver<Operator>;

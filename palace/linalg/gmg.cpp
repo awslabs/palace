@@ -7,6 +7,7 @@
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -20,7 +21,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false)
+    R(P.size() + 1), use_timer(false), coarse_tally(-1)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -177,6 +178,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   if (l == 0)
   {
     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
+    perf::ScopedTally t(coarse_tally);
     B[l]->Mult(X[l], Y[l]);
     return;
   }

@@ -53,6 +53,9 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // Inclusive tally of the coarse solve for nested solvers (-1 for none).
+  int coarse_tally;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -79,6 +82,8 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void EnableTimer() { use_timer = true; }
+
+  void SetCoarseTally(int id) { coarse_tally = id; }
 };
 
 }  // namespace palace

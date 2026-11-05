@@ -308,7 +308,7 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
 
 template <OperatorType OperType>
 IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
-  : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr)
+  : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr), final_restarts(0)
 {
   print_opts.Warnings();
   if (print > 0)
@@ -684,6 +684,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   final_res = beta;
   final_it = it;
+  final_restarts = converged ? restart : std::max(restart - 1, 0);
 }
 
 template <OperatorType OperType>
@@ -850,6 +851,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   final_res = beta;
   final_it = it;
+  final_restarts = converged ? restart : std::max(restart - 1, 0);
 }
 
 template class IterativeSolver<Operator>;

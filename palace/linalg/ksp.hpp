@@ -9,6 +9,7 @@
 #include <string_view>
 #include <type_traits>
 #include "linalg/iterative.hpp"
+#include "linalg/solverstats.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "utils/labels.hpp"
@@ -53,9 +54,12 @@ protected:
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
 
-  // Solver role for the performance report, and its counter ids.
+  // Solver role for the performance report, and its statistics.
   std::string role;
-  int perf_solves, perf_its;
+  perf::KspStats perf_stats;
+
+  // Preconditioner wrapper recording an inclusive tally for nested solvers.
+  std::unique_ptr<Solver<OperType>> pc_tally;
 
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
