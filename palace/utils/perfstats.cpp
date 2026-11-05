@@ -488,6 +488,19 @@ void WriteJson(json &meta)
     meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
     meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
   }
+  for (const auto &[key, rm, nm] :
+       {std::tuple{"Baseline", r.mem_baseline, r.node_mem_baseline},
+        std::tuple{"Unattributed", r.mem_unattributed, r.node_mem_unattributed}})
+  {
+    meta["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
+  }
   meta["PeakMemoryMegabytes"] = PeakJson(r.peak_mem, false);
   meta["PeakNodeMemoryMegabytes"] = PeakJson(r.peak_node_mem, true);
 
@@ -542,6 +555,16 @@ void BlockTimer::Finalize(MPI_Comm comm)
   const double iter_peak = IterationPeakMemory();
   const double cur_mem = static_cast<double>(memory_reporting::GetCurrentMemory());
   const double cum_peak = std::max(state.cum_peak, iter_peak);
+  double phase_mem = 0.0;
+  for (int i = 0; i < N; i++)
+  {
+    if (i != Timer::TOTAL)
+    {
+      phase_mem += static_cast<double>(timer.MemoryData(static_cast<Timer::Index>(i)));
+    }
+  }
+  const double total_mem = static_cast<double>(timer.MemoryData(Timer::TOTAL));
+  const double baseline_mem = iter_peak - total_mem, unattr_mem = total_mem - phase_mem;
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
@@ -599,23 +622,27 @@ void BlockTimer::Finalize(MPI_Comm comm)
               c && (c->cum_set || c->set), rank);
   }
   PushEntry(buf, cum_peak, true, rank);
+  PushEntry(buf, baseline_mem, true, rank);
+  PushEntry(buf, unattr_mem, true, rank);
   StatsAllreduce(buf, comm);
 
   // Node memory: sum over the ranks of each node, then statistics over nodes.
   const auto &nc = memory_reporting::GetNodeComms(comm);
-  std::vector<double> node_local(N + 2), node_sum(N + 2, 0.0);
+  std::vector<double> node_local(N + 4), node_sum(N + 4, 0.0);
   for (int i = 0; i < N; i++)
   {
     node_local[i] = static_cast<double>(timer.MemoryData(static_cast<Timer::Index>(i)));
   }
   node_local[N] = iter_peak;
   node_local[N + 1] = cur_mem;
-  MPI_Reduce(node_local.data(), node_sum.data(), N + 2, MPI_DOUBLE, MPI_SUM, 0, nc.node);
+  node_local[N + 2] = baseline_mem;
+  node_local[N + 3] = unattr_mem;
+  MPI_Reduce(node_local.data(), node_sum.data(), N + 4, MPI_DOUBLE, MPI_SUM, 0, nc.node);
   std::vector<double> node_buf;
   if (nc.leaders != MPI_COMM_NULL)
   {
     const int node_idx = Mpi::Rank(nc.leaders);
-    for (int i = 0; i < N + 2; i++)
+    for (int i = 0; i < N + 4; i++)
     {
       PushEntry(node_buf, node_sum[i], true, node_idx);
     }
@@ -627,7 +654,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   }
   else
   {
-    node_buf.resize(STRIDE * (N + 4));
+    node_buf.resize(STRIDE * (N + 6));
   }
   MPI_Bcast(node_buf.data(), static_cast<int>(node_buf.size()), MPI_DOUBLE, 0, nc.node);
 
@@ -665,10 +692,14 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.cum.tally_count, T);
   NextN(r.cum_counter, C);
   r.cum_peak_mem = Next();
+  r.mem_baseline = Next();
+  r.mem_unattributed = Next();
   e = node_buf.data();
   NextN(r.iter.node_mem, N);
   r.peak_node_mem = Next();
   r.cur_node_mem = Next();
+  r.node_mem_baseline = Next();
+  r.node_mem_unattributed = Next();
   r.cum_peak_node_mem = Next();
   state.last_node_peak = e[2];  // This node's own peak (sum of its ranks)
   r.num_nodes = r.peak_node_mem.n;

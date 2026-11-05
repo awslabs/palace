@@ -221,6 +221,9 @@ struct Results
   Stats peak_mem, cur_mem;  // Per-rank peak (this iteration) and current RSS
   Stats peak_node_mem, cur_node_mem;
   Stats cum_peak_mem, cum_peak_node_mem;  // Max over iterations
+  // Peak memory attribution: peak = baseline (peak RSS at the iteration start) + sum of the
+  // per-row growth + unattributed growth (outside any timer row).
+  Stats mem_baseline, mem_unattributed, node_mem_baseline, node_mem_unattributed;
   std::vector<std::string> counter_paths;
   std::vector<Reduce> counter_reduce;
   std::vector<Accumulate> counter_acc;
