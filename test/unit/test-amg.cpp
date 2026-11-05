@@ -5,6 +5,7 @@
 #include <cmath>
 #include <memory>
 #include <tuple>
+#include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "linalg/amg.hpp"
@@ -31,7 +32,8 @@ double RelMaxDiff(MPI_Comm comm, const mfem::Vector &x, const mfem::Vector &y)
 
 }  // namespace
 
-TEST_CASE("BoomerAMG zero initial guess", "[amg][Serial][Parallel]")
+TEST_CASE("BoomerAMG zero initial guess and multiple right-hand sides",
+          "[amg][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
   auto smesh = mfem::Mesh::MakeCartesian3D(10, 8, 6, mfem::Element::TETRAHEDRON);
@@ -52,8 +54,9 @@ TEST_CASE("BoomerAMG zero initial guess", "[amg][Serial][Parallel]")
   std::unique_ptr<mfem::HypreParMatrix> Ae(A->EliminateRowsCols(dbc_tdof_list));
 
   const int n = A->Height();
-  mfem::Vector b0(n), x0(n), z0(n);
+  mfem::Vector b0(n), b1(n), x0(n), x1(n), y0(n), y1(n), z0(n);
   b0.Randomize(1 + Mpi::Rank(comm));
+  b1.Randomize(101 + Mpi::Rank(comm));
 
   // One or several V-cycles and sweeps (the zero flag must not survive the first
   // relaxation), with and without aggressive coarsening.
@@ -74,6 +77,69 @@ TEST_CASE("BoomerAMG zero initial guess", "[amg][Serial][Parallel]")
       amg.Mult(b0, z0);
       amg.iterative_mode = false;
       CHECK(RelMaxDiff(comm, z0, x0) == 0.0);
+    }
+  }
+}
+
+TEST_CASE("BoomerAMG multiple right-hand sides", "[amg][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto smesh = mfem::Mesh::MakeCartesian3D(10, 8, 6, mfem::Element::TETRAHEDRON);
+  mfem::ParMesh pmesh(comm, smesh);
+  mfem::H1_FECollection fec(1, pmesh.Dimension());
+  mfem::ParFiniteElementSpace fespace(&pmesh, &fec);
+  mfem::Array<int> dbc_marker(pmesh.bdr_attributes.Max()), dbc_tdof_list;
+  dbc_marker = 0;
+  dbc_marker[0] = 1;
+  fespace.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
+
+  mfem::ConstantCoefficient one(1.0);
+  mfem::ParBilinearForm a(&fespace);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator(one));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  std::unique_ptr<mfem::HypreParMatrix> Ae(A->EliminateRowsCols(dbc_tdof_list));
+
+  const int n = A->Height(), nv_max = 3;
+  std::vector<mfem::Vector> b(nv_max, mfem::Vector(n)), x(nv_max, mfem::Vector(n)),
+      y(nv_max, mfem::Vector(n));
+  for (int k = 0; k < nv_max; k++)
+  {
+    b[k].Randomize(1 + 100 * k + Mpi::Rank(comm));
+  }
+  mfem::Vector z(n);
+
+  for (auto [cycle_it, smooth_it, agg_coarsen] :
+       {std::tuple{1, 1, true}, std::tuple{2, 2, true}, std::tuple{3, 1, false}})
+  {
+    BoomerAmgSolver amg(cycle_it, smooth_it, agg_coarsen, 0);
+    amg.SetOperator(*A);
+    for (int k = 0; k < nv_max; k++)
+    {
+      amg.Mult(b[k], x[k]);
+    }
+
+    // Several right-hand sides in one V-cycle, alternating with single applications (the
+    // communication pattern switches between one and several components) and with a
+    // different number of components (the multicomponent vectors are reallocated).
+    for (int nv : {2, 3, 2, 1})
+    {
+      mfem::Array<const mfem::Vector *> B(nv);
+      mfem::Array<mfem::Vector *> Y(nv);
+      for (int k = 0; k < nv; k++)
+      {
+        B[k] = &b[k];
+        Y[k] = &y[k];
+        y[k] = 1.0;
+      }
+      amg.ArrayMult(B, Y);
+      for (int k = 0; k < nv; k++)
+      {
+        CHECK(RelMaxDiff(comm, y[k], x[k]) <= 1.0e-12);
+      }
+      amg.Mult(b[nv - 1], z);
+      CHECK(RelMaxDiff(comm, z, x[nv - 1]) == 0.0);
     }
   }
 }
