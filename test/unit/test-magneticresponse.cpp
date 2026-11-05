@@ -1125,10 +1125,15 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
 // The hexahedral stub's blind line quadrature at the slot edge (the H9a limitation the R0-a
 // tests record): a twin anchor line that crosses the edge where f'(z) jumps reads ~2 % of
-// the gap flux (0.0197 on the chain, 0.0202 with the magnetic loop fit); the bound the
-// re-anchored gate readings are held to on this fixture (the (ii) tetrahedral meshes split
-// the coverage exactly; the device readings are the measurement).
-constexpr double kHexSlotEdgeQuadratureBound = 0.025;
+// the gap flux. The re-anchored gate readings on this fixture are PINNED (the review d1330
+// MINOR-5 / decision 1334 Q4) to the arm64 fixture value 0.020191039508738 (the 1302
+// control and the R-MAG-17 leaf both read the re-anchored magnetic chain WITH its loop fit
+// since U-2: one value; the chain-only reading 0.0197 of the pre-U-2 control is gone)
+// within 1e-4: a Linux build that differs by more than 1e-4 is REPORTED, not loosened (the
+// (ii) tetrahedral meshes split the coverage exactly; the device readings are the
+// measurement).
+constexpr double kHexSlotEdgeReanchoredRatio = 0.020191;
+constexpr double kHexSlotEdgeReanchoredRatioTolerance = 1.0e-4;
 
 // Decision 1302: the ControlStateAnchorSetbackOverR DIAGNOSTIC CONTROL re-anchors the
 // MAGNETIC chain's anchor / end / return lines at set-back conductor anchors (RecordOnly +
@@ -1198,7 +1203,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     for (const auto &record : records)
     {
       INFO("patch " << record.patch << " ratio " << record.max_ratio);
-      CHECK(record.max_ratio < kHexSlotEdgeQuadratureBound);
+      CHECK_THAT(record.max_ratio, WithinAbs(kHexSlotEdgeReanchoredRatio,
+                                             kHexSlotEdgeReanchoredRatioTolerance));
       lowest = std::min(lowest, record.max_ratio);
       highest = std::max(highest, record.max_ratio);
     }
@@ -1411,7 +1417,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     for (const auto &record : records)
     {
       INFO("patch " << record.patch << " ratio " << record.max_ratio);
-      CHECK(record.max_ratio < kHexSlotEdgeQuadratureBound);
+      CHECK_THAT(record.max_ratio, WithinAbs(kHexSlotEdgeReanchoredRatio,
+                                             kHexSlotEdgeReanchoredRatioTolerance));
       lowest = std::min(lowest, record.max_ratio);
       highest = std::max(highest, record.max_ratio);
     }
