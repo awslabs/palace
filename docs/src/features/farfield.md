@@ -48,7 +48,8 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
     physical region terminated by a PML) has no normal direction of its own: its normal
     is oriented from `"Center"`, a point inside the surface (by default the centroid of
     the bounding box of the surface, which must then lie inside it). The fields of the
-    two sides are averaged.
+    two sides are averaged, so *Palace* stops with an error if the two sides do not have
+    the same isotropic material.
 
 ## Setup
 
