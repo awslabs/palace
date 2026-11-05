@@ -20,6 +20,7 @@
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 PalacePragmaDiagnosticPush
@@ -141,6 +142,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
                                       int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
+  perf::ScopedRole role("Estimator");
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
   // Detect scalar FE spaces (H1, L2) vs vector FE spaces (ND, RT) based on map type.
   const int dim = smooth_fespace.Dimension();

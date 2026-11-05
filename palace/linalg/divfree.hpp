@@ -51,6 +51,9 @@ private:
   // Linear solver for the projected linear system (Gᵀ M G) y = x.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
+  // Counter id for the number of projections.
+  int perf_projections;
+
   // Workspace objects for solver application.
   mutable VecType psi, rhs;
 

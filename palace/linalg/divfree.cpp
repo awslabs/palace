@@ -13,6 +13,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -49,6 +50,8 @@ DivFreeSolver<VecType>::DivFreeSolver(
     int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
+  perf::ScopedRole role("DivFree");
+  perf_projections = perf::RegisterCounter(perf::LinearSolverPath("DivFree", "Projections"));
 
   // If no boundaries on the mesh have been marked, add a single degree of freedom
   // constraint so the system for the projection is not singular. This amounts to enforcing
@@ -155,6 +158,7 @@ template <typename VecType>
 void DivFreeSolver<VecType>::Mult(VecType &y) const
 {
   BlockTimer bt(Timer::DIV_FREE);
+  perf::Add(perf_projections, 1);
 
   // Compute the divergence of y.
   if constexpr (std::is_same_v<VecType, ComplexVector>)
