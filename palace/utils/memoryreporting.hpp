@@ -14,6 +14,19 @@ namespace palace::memory_reporting
 long GetCurrentMemory();
 long GetPeakMemory();
 
+// Reset the peak RSS to the current RSS, where supported (Linux /proc/self/clear_refs).
+// Returns whether the reset succeeded.
+bool ResetPeakMemory();
+
+// Shared-memory (node) communicator and node-leader communicator (MPI_COMM_NULL on
+// non-leaders) for comm, created once and cached.
+struct NodeComms
+{
+  MPI_Comm node = MPI_COMM_NULL, leaders = MPI_COMM_NULL;
+  int node_rank = 0;
+};
+const NodeComms &GetNodeComms(MPI_Comm comm);
+
 // Aggregated memory statistics, in bytes.
 struct MemoryStats
 {

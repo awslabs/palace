@@ -22,6 +22,7 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -261,17 +262,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   int it = 0;
   while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
-    // Print timing summary.
+    // Print timing summary and write this iteration's performance record; everything
+    // from here on is charged to the next iteration.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");
-    BlockTimer::Finalize(comm);
-    BlockTimer::Print(comm);
-    auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
-    auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
-    memory_reporting::PrintMemoryUsage(comm, peak_mem);
-    memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
-    SaveMetadata(BlockTimer::GlobalTimer());
-    SaveMetadata(peak_mem);
-    SaveMetadata(peak_node_mem);
+    ReportPerformance(comm);
+    BlockTimer::StartIteration();
 
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
@@ -448,59 +443,26 @@ void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
   }
 }
 
-template <typename SolverType>
-void BaseSolver::SaveMetadata(const SolverType &ksp) const
+void BaseSolver::ReportPerformance(MPI_Comm comm) const
 {
+  BlockTimer::Finalize(comm);
+  const auto &res = perf::GetResults();
+  auto ToMemoryStats = [](const char *label, const perf::Stats &s)
+  {
+    return memory_reporting::MemoryStats{label, static_cast<long>(s.min),
+                                         static_cast<long>(s.max), static_cast<long>(s.sum),
+                                         s.avg};
+  };
+  Mpi::Print(comm, "\n");
+  memory_reporting::PrintMemoryUsage(comm,
+                                     ToMemoryStats("peak per-rank", res.cum_peak_mem));
+  memory_reporting::PrintMemoryUsage(comm,
+                                     ToMemoryStats("peak per-node", res.cum_peak_node_mem));
+  BlockTimer::Print(comm);
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
-    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIterations();
-    WriteMetadata(post_dir, meta);
-  }
-}
-
-void BaseSolver::SaveMetadata(const Timer &timer) const
-{
-  if (root)
-  {
-    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-    auto red = BlockTimer::GetReductions();
-
-    json meta = LoadMetadata(post_dir);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
-    {
-      std::string key(Timer::descriptions[i]);
-      std::erase_if(key, isspace);
-      meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
-      meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));
-      meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
-      meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
-      meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = red.node_mem.min[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
-    }
-    WriteMetadata(post_dir, meta);
-  }
-}
-
-void BaseSolver::SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const
-{
-  if (root)
-  {
-    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-    json meta = LoadMetadata(post_dir);
-
-    // Determine key name based on whether this is per-node or per-rank stats
-    std::string key = (peak_memory.label.find("per-node") != std::string::npos)
-                          ? "PeakNodeMemoryMegabytes"
-                          : "PeakMemoryMegabytes";
-
-    meta[key]["Min"] = peak_memory.min * to_mb;
-    meta[key]["Max"] = peak_memory.max * to_mb;
-    meta[key]["Average"] = peak_memory.avg * to_mb;
-    meta[key]["Total"] = peak_memory.sum * to_mb;
+    perf::WriteJson(meta);
     WriteMetadata(post_dir, meta);
   }
 }
@@ -514,8 +476,5 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
     WriteMetadata(post_dir, meta);
   }
 }
-
-template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
-template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 
 }  // namespace palace

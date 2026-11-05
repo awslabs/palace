@@ -487,10 +487,6 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocessing.
   BlockTimer bt2(Timer::POSTPRO);
-  if (const auto *ksp = eig.GetLinearSolver())
-  {
-    SaveMetadata(*ksp);
-  }
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
 
   const int h1_size = mode_op.GetH1TrueVSize();

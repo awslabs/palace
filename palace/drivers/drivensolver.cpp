@@ -205,10 +205,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print(" Updating solution error estimates\n");
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
-
-    // Final postprocessing & printing.
-    BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(ksp);
   }
   post_op.MeasureFinalize(indicator);
   return indicator;
@@ -485,11 +481,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
   }
 
-  // Final postprocessing & printing: no change to indicator since these are in PROM.
-  {
-    BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(prom_op.GetLinearSolver());
-  }
+  // No change to indicator since these are in PROM.
   space_op.GetWavePortOp().PrintReducedModelStats();
   post_op.MeasureFinalize(indicator);
   return indicator;

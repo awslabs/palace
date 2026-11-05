@@ -74,10 +74,9 @@ public:
   // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
   // initial solve is iteration 1).
   void SaveAdaptationIteration(int iteration) const;
-  template <typename SolverType>
-  void SaveMetadata(const SolverType &ksp) const;
-  void SaveMetadata(const Timer &timer) const;
-  void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
+  // Reduce the performance statistics of the current iteration (collective), print them,
+  // and write them to palace.json.
+  void ReportPerformance(MPI_Comm comm) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
   void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
 };

@@ -2713,6 +2713,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   MPI_Comm comm = mesh->GetComm();
   if (iodata.model.refinement.save_adapt_mesh)
   {
+    BlockTimer bt1(Timer::ADAPT_MESH_OUTPUT);
     // Create a separate serial mesh to write to disk. When MFEM is built with zlib the mesh
     // is gzip-compressed and written with a ".meshgz" extension; MFEM detects gzip from the
     // file's magic bytes on read, so a restart reopens it transparently regardless of the

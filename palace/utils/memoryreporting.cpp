@@ -83,6 +83,38 @@ long GetPeakMemory()
   return 0;
 }
 
+bool ResetPeakMemory()
+{
+#if defined(__linux__)
+  std::ofstream clear_refs("/proc/self/clear_refs");
+  if (!clear_refs.is_open())
+  {
+    return false;
+  }
+  clear_refs << "5";
+  clear_refs.close();
+  return !clear_refs.fail();
+#else
+  return false;
+#endif
+}
+
+const NodeComms &GetNodeComms(MPI_Comm comm)
+{
+  static MPI_Comm cached_comm = MPI_COMM_NULL;
+  static NodeComms comms;
+  if (cached_comm != comm || comms.node == MPI_COMM_NULL)
+  {
+    // Communicators of a previous comm are leaked deliberately: freeing is collective
+    // over the old communicator.
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &comms.node);
+    comms.node_rank = Mpi::Rank(comms.node);
+    MPI_Comm_split(comm, (comms.node_rank == 0) ? 0 : MPI_UNDEFINED, 0, &comms.leaders);
+    cached_comm = comm;
+  }
+  return comms;
+}
+
 std::string FormatBytes(double bytes)
 {
   constexpr double kilobyte = 1024.0;
@@ -120,22 +152,12 @@ MemoryStats ComputeStats(std::string label, long local_value, MPI_Comm comm)
 
 MemoryStats ComputeNodeMemoryStats(std::string label, long local_value, MPI_Comm comm)
 {
-  // Split communicator into shared memory groups (processes on same node).
-  MPI_Comm node_comm;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &node_comm);
+  const auto &[node_comm, leaders_comm, node_rank] = GetNodeComms(comm);
 
-  // Get rank within the node.
-  int node_rank = Mpi::Rank(node_comm);
-
-  // Sum memory usage across all processes on this node.
-  // Assumes shared memory is negligible.
+  // Sum memory usage across all processes on this node. Assumes shared memory is
+  // negligible.
   long node_total_memory = local_value;
   MPI_Reduce(&local_value, &node_total_memory, 1, MPI_LONG, MPI_SUM, 0, node_comm);
-
-  // Create a communicator of node leaders (rank 0 on each node).
-  MPI_Comm leaders_comm;
-  int color = (node_rank == 0) ? 0 : MPI_UNDEFINED;
-  MPI_Comm_split(comm, color, 0, &leaders_comm);
 
   // Compute statistics across node leaders.
   MemoryStats stats;
@@ -156,14 +178,6 @@ MemoryStats ComputeNodeMemoryStats(std::string label, long local_value, MPI_Comm
   Mpi::Broadcast(1, &stats.max, 0, node_comm);
   Mpi::Broadcast(1, &stats.sum, 0, node_comm);
   Mpi::Broadcast(1, &stats.avg, 0, node_comm);
-
-  // Clean up communicators.
-  if (leaders_comm != MPI_COMM_NULL)
-  {
-    MPI_Comm_free(&leaders_comm);
-  }
-  MPI_Comm_free(&node_comm);
-
   return stats;
 }
 
