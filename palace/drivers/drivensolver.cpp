@@ -7,9 +7,11 @@
 #include <cstddef>
 #include <iostream>
 #include <numbers>
+#include <numeric>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -28,6 +30,7 @@
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
@@ -327,10 +330,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Initialize PROM with explicit HDM samples, record the estimate but do not act on it.
     std::vector<double> max_errors;
     std::size_t counter_rom_sample = 0;
+    std::vector<int> hdm_its;
+    auto SolveHDM = [&](double omega)
+    {
+      const int its0 = prom_op.GetLinearSolver().NumTotalMultIterations();
+      prom_op.SolveHDM(excitation_idx, omega, E);
+      hdm_its.push_back(prom_op.GetLinearSolver().NumTotalMultIterations() - its0);
+      perf::SetMax(perf::RegisterCounter("PROM/HDMMaxIts", perf::Reduce::MAX,
+                                         perf::Accumulate::MAX),
+                   hdm_its.back());
+    };
     for (auto i : iodata.solver.driven.prom_indices)
     {
       auto omega = omega_sample[i];
-      prom_op.SolveHDM(excitation_idx, omega, E);
+      SolveHDM(omega);
       prom_op.SolvePROM(excitation_idx, omega, Eh);
       linalg::AXPY(-1.0, E, Eh);
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
@@ -357,7 +370,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       double omega_star = prom_op.FindMaxError(excitation_idx)[0];
 
       // Sample HDM and add solution to basis.
-      prom_op.SolveHDM(excitation_idx, omega_star, E);
+      SolveHDM(omega_star);
       prom_op.SolvePROM(excitation_idx, omega_star, Eh);
       linalg::AXPY(-1.0, E, Eh);
 
@@ -380,7 +393,28 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
                        " Sampled frequencies (GHz):");
     utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
+
+    const bool max_reached = (it == max_size_per_excitation);
+    perf::Add("PROM/Excitations", 1);
+    perf::Add("PROM/Samples", it);
+    perf::Add("PROM/GreedyIts", it - iodata.solver.driven.prom_indices.size());
+    perf::Add(max_reached ? "PROM/MaxSamplesReached" : "PROM/Converged", 1);
+    perf::Add("PROM/HDMSolves", hdm_its.size());
+    perf::Add("PROM/HDMIts", std::accumulate(hdm_its.begin(), hdm_its.end(), 0));
+    if (std::isfinite(max_errors.back()))
+    {
+      perf::SetMax(perf::RegisterCounter("PROM/FinalMaxError", perf::Reduce::MAX,
+                                         perf::Accumulate::MAX),
+                   max_errors.back());
+    }
+    // Error estimates of the samples after the two end points, in sampling order.
+    const auto prefix = fmt::format("PROM/Excitation{:d}/", excitation_idx);
+    perf::SetInfo(prefix + "SampleMaxError",
+                  std::vector<double>(max_errors.begin() + 2, max_errors.end()));
+    perf::SetInfo(prefix + "HDMIts", hdm_its);
   }
+  perf::Set("PROM/ReducedDimension", prom_op.GetReducedDimension(), perf::Reduce::MAX,
+            perf::Accumulate::MAX);
 
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
