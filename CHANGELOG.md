@@ -22,7 +22,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
     multigrid preconditioner of the divergence-free projection, instead of one. Its
     V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
-    faster. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    faster. [PR 1149](https://github.com/awslabs/palace/pull/1149).
   - Added a hypre patch from
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652) for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
