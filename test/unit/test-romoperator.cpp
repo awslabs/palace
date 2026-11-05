@@ -2163,3 +2163,148 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(residual_single > 1.0e-4);
   CHECK(residual_extrapolated < 0.05 * residual_single);
 }
+
+// =============================================================================
+// ANCHOR SOLVES WITH FREQUENCY-DEPENDENT BOUNDARIES
+// =============================================================================
+
+namespace
+{
+
+// Driven circuit-synthesis configuration on the unit cube with an inductive, anchored
+// lumped port on attribute 100 and the given boundary conditions on the other faces.
+json AnchorCubeConfig(const std::string &output, const json &boundaries,
+                      bool extrapolate = false)
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = boundaries;
+  setup_json["Boundaries"]["LumpedPort"] =
+      json::array({json::object({{"Index", 1},
+                                 {"L", 25.0e-9},
+                                 {"SynthesisAnchor", true},
+                                 {"Excitation", uint(1)},
+                                 {"Attributes", json::array({100})},
+                                 {"Direction", "+X"}})});
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"AdaptiveCircuitSynthesisAnchorExtrapolate", extrapolate},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 1.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1e-12}}}};
+  return setup_json;
+}
+
+// The anchor column (basis vector 1, after the single port mode) for the given
+// configuration.
+Vector ComputeAnchorColumn(const json &setup_json)
+{
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+  prom_op.AddLumpedPortModesForSynthesis();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(
+      0.1 * iodata.solver.driven.sample_f.front(),
+      iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
+  REQUIRE(prom_op.GetReducedDimension() == 2);
+  REQUIRE(prom_op.GetNodeLabels().back() == "anchor_1_re");
+  return prom_op.GetVectors().at(1);
+}
+
+double RelativeDifference(const Vector &a, const Vector &b)
+{
+  REQUIRE(a.Size() == b.Size());
+  Vector d(a);
+  d -= b;
+  const double na = std::sqrt(linalg::Dot(Mpi::World(), a, a));
+  REQUIRE(na > 0.0);
+  return std::sqrt(linalg::Dot(Mpi::World(), d, d)) / na;
+}
+
+// Purely inductive sheet, Zs(s) = s·Ls, as an Impedance boundary (stiffness 1/Ls) or a
+// RationalImpedance (Robin coefficient g(s) = 1/Ls, a constant in A2).
+constexpr double sheet_Ls = 2.0e-9;
+
+json InductiveImpedance(int attr)
+{
+  return json::array(
+      {json::object({{"Attributes", json::array({attr})}, {"Ls", sheet_Ls}})});
+}
+
+json InductiveRationalImpedance(int attr)
+{
+  return json::array({json::object({{"Attributes", json::array({attr})},
+                                    {"Numerator", json::array({sheet_Ls, 0.0})},
+                                    {"Denominator", json::array({1.0})}})});
+}
+
+}  // namespace
+
+// The anchor solve evaluates frequency-dependent boundaries at their quasistatic (DC)
+// limit. Second-order farfield and surface conductivity are singular at ω = 0 and a
+// resistive rational impedance has no DC term: none may enter the static operator, and the
+// anchor solve must stay finite (its preconditioner must not evaluate them at ω = 0).
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorWithFrequencyDependentBoundaries",
+                 "[romoperator][Serial]")
+{
+  json boundaries;
+  boundaries["Absorbing"] = {{"Order", 2}, {"Attributes", json::array({101})}};
+  boundaries["Conductivity"] = json::array(
+      {json::object({{"Attributes", json::array({102})}, {"Conductivity", 5.8e7}})});
+  boundaries["RationalImpedance"] =
+      json::array({json::object({{"Attributes", json::array({103})},
+                                 {"Numerator", json::array({50.0})},
+                                 {"Denominator", json::array({1.0})}})});
+  const auto setup_json = AnchorCubeConfig(temp_dir, boundaries);
+
+  {
+    IoData iodata(setup_json, false);
+    auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+    SpaceOperator space_op(iodata, mesh_io);
+    CHECK(space_op.GetExtraSystemMatrix(SpaceOperator::QuasistaticLimit{},
+                                        Operator::DIAG_ZERO) == nullptr);
+  }
+  const auto v = ComputeAnchorColumn(setup_json);
+  const double norm = std::sqrt(linalg::Dot(Mpi::World(), v, v));
+  CHECK(std::isfinite(norm));
+  CHECK(norm > 0.0);
+}
+
+// An inductive rational surface impedance carries DC current, so it must enter the anchor
+// solve through its DC Robin term 1/Ls: a RationalImpedance sheet must give the same anchor
+// as the equivalent Impedance sheet, whose 1/Ls term is part of the stiffness matrix. (A
+// sheet with capacitance would differ at O(ν²) for a single shift: the anchor screening is
+// ν²M, and an Impedance sheet's Cs is part of M while a rational one's is not.)
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorInductiveRationalImpedance",
+                 "[romoperator][Serial]")
+{
+  const bool extrapolate = GENERATE(false, true);
+  json impedance, rational;
+  impedance["Impedance"] = InductiveImpedance(101);
+  rational["RationalImpedance"] = InductiveRationalImpedance(101);
+  const auto v_impedance =
+      ComputeAnchorColumn(AnchorCubeConfig(temp_dir, impedance, extrapolate));
+  const auto v_rational =
+      ComputeAnchorColumn(AnchorCubeConfig(temp_dir, rational, extrapolate));
+  CHECK(RelativeDifference(v_impedance, v_rational) < 1.0e-8);
+
+  // The DC Robin term must actually matter: without the sheet, the anchor differs.
+  const auto v_open = ComputeAnchorColumn(AnchorCubeConfig(temp_dir, json::object()));
+  CHECK(RelativeDifference(v_impedance, v_open) > 1.0e-3);
+}

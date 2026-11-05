@@ -1097,17 +1097,25 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapola
     return;
   }
 
-  // The anchor is the screened quasistatic response (K + ν²M) x(ν) = b_p. The positive
+  // The anchor is the screened quasistatic response (K₀ + ν²M) x(ν) = b_p, where
+  // K₀ = K + A2(0) is the static system stiffness: the ω → 0 limit of the system matrix
+  // A(ω) = K + iωC − ω²M + A2(ω) without its mass term. Damping (iωC) vanishes in this
+  // limit, and so do the frequency-dependent boundary terms A2(ω) of wave ports and surface
+  // conductivity; an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a
+  // finite DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
+  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). The positive
   // mass coefficient makes the (real part of the) system positive definite — unlike the
   // driven system at real frequency ω, which is indefinite (K − ω²M) and can resonate with
   // band or near-degenerate modes. The same positive coefficient also gives a genuinely
   // positive-definite preconditioner without the sign-shift heuristic used for the driven
-  // case.
+  // case, assembled from the same quasistatic boundary terms (no boundary is evaluated at
+  // ω = 0, where the second-order farfield and surface conductivity terms are singular and
+  // a wave port has no mode).
   //
   // The screening biases the anchor away from the unscreened (bare inductive-limit)
-  // response x₀ solving K x₀ = b_p: in ε = ν² the resolvent expansion is
+  // response x₀ solving K₀ x₀ = b_p: in ε = ν² the resolvent expansion is
   //
-  //   x(ε) = x₀ − ε K⁻¹ M x₀ + O(ε²),
+  //   x(ε) = x₀ − ε K₀⁻¹ M x₀ + O(ε²),
   //
   // so the exported column satisfies L⁻¹ v + ν² C v = s e_p rather than L⁻¹ v = s e_p, an
   // O((ν/ω)²) relative deviation from the bare L-column identity. When `extrapolate` is
@@ -1138,6 +1146,10 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapola
   u.SetSize(space_op.GetNDSpace().GetTrueVSize());
   u.UseDevice(true);
 
+  // DC limit of the frequency-dependent boundary terms (null when none contributes).
+  constexpr SpaceOperator::QuasistaticLimit dc{};
+  auto A2_dc = space_op.GetExtraSystemMatrix(dc, Operator::DIAG_ZERO);
+
   // Accumulate the per-port extrapolation across shifts so each (expensive) operator and
   // preconditioner assembly is shared by every anchored port at that shift. Shift 0 is ν
   // (weight −1/3 when extrapolating, 1 otherwise), shift 1 is ν/2 (weight +4/3).
@@ -1148,9 +1160,9 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapola
     const double weight = extrapolate ? ((is == 0) ? (-1.0 / 3.0) : (4.0 / 3.0)) : 1.0;
     auto A = space_op.GetSystemMatrix(
         std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0),
-        std::complex<double>(nu_s * nu_s, 0.0), K.get(), C.get(), M.get());
+        std::complex<double>(nu_s * nu_s, 0.0), K.get(), C.get(), M.get(), A2_dc.get());
     auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
-                                                               nu_s * nu_s + 0.0i, 0.0);
+                                                               nu_s * nu_s + 0.0i, dc);
     // Safe to repurpose the shared solver: every SolveHDM call resets the operators.
     ksp->SetOperators(*A, *P);
     for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())

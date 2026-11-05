@@ -314,8 +314,12 @@ with $\bm{b}_p$ the drive of port $p$ and a screening angular frequency $\nu$ we
 sweep band, where $\nu/2\pi$ is set by
 [`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) (by
 default one tenth of the lowest sweep frequency). The positive screening term makes the system
-positive definite, so the solve cannot resonate with modes of the device. The anchor adds one real
-column, `anchor_<idx>_re`, to the synthesized matrices and to `rom-orthogonalization-matrix-R.csv`.
+positive definite, so the solve cannot resonate with modes of the device. Frequency-dependent
+boundaries enter $\bm{K}$ at their static (DC) limit: an inductive `"RationalImpedance"` keeps its
+DC term, while wave-port and `"Conductivity"` terms vanish at DC, and the second-order
+`"Absorbing"` term, a pole at $\omega = 0$ with no static limit, is left out. The anchor adds one
+real column, `anchor_<idx>_re`, to the synthesized matrices and to
+`rom-orthogonalization-matrix-R.csv`.
 
 Since the drive of port $p$ projects onto its own port row only, the synthesized coordinates
 $\bm{v}$ of the anchor (its column of `rom-orthogonalization-matrix-R.csv`, with the port rows

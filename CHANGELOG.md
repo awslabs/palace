@@ -39,7 +39,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     of the lowest sweep frequency). With
     `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorExtrapolate"]`, each anchor is
     solved at `ν` and `ν/2` and Richardson-extrapolated, so that the column satisfies the
-    unscreened identity `L⁻¹v = s·e_p` up to `O(ν⁴)`. SchemaVer 4-2-0
+    unscreened identity `L⁻¹v = s·e_p` up to `O(ν⁴)`. Frequency-dependent boundaries enter
+    the anchor solves at their static (DC) limit: an inductive `RationalImpedance` keeps its
+    DC term, while `WavePort`, `Conductivity`, and second-order `Absorbing` terms drop out.
+    SchemaVer 4-2-0
 
 #### Performance Improvements
 

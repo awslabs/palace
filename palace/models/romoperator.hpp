@@ -559,13 +559,18 @@ public:
   // orthogonalisation tolerance).
   void AddWavePortModesForSynthesis(double omega_ref);
 
-  // Solve the screened quasistatic system (K + ν²M) x = b_p for each anchor-flagged
-  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). The
-  // positive screening term makes the system symmetric positive definite, so the solve
-  // cannot resonate with band or near-degenerate basis modes; with ν well below the sweep
-  // band the solution is the quasistatic (inductive-limit) response of the port. Must be
-  // called after AddLumpedPortModesForSynthesis and before the offline sampling loop, so
-  // the leading port-mode block and the RHS1r projection bookkeeping stay consistent.
+  // Solve the screened quasistatic system (K₀ + ν²M) x = b_p for each anchor-flagged
+  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
+  // static system stiffness, K plus the DC limit of the frequency-dependent boundary terms
+  // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
+  // inductive rational surface impedance, since wave-port and surface-conductivity terms
+  // vanish at DC like the damping matrix, and the second-order farfield pole at ω = 0 is
+  // omitted. The positive screening term makes the system symmetric positive definite, so
+  // the solve cannot resonate with band or near-degenerate basis modes; with ν well below
+  // the sweep band the solution is the quasistatic (inductive-limit) response of the port.
+  // Must be called after AddLumpedPortModesForSynthesis and before the offline sampling
+  // loop, so the leading port-mode block and the RHS1r projection bookkeeping stay
+  // consistent.
   //
   // The exported column satisfies the screened identity L⁻¹ v + ν² C v = s e_p; the
   // deviation from the unscreened L-column identity L⁻¹ v = s e_p is O((ν/ω)²). With
