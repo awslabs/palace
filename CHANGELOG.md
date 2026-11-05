@@ -26,7 +26,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     once, such as the real and imaginary parts of a complex vector, with one halo exchange
     per level for all of them. This speeds up the divergence-free projection at high
     process counts. Results are unchanged.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1145](https://github.com/awslabs/palace/pull/1145).
   - Added a hypre patch for
     [hypre-space/hypre#1651](https://github.com/hypre-space/hypre/pull/1651), which skips
     the halo exchange of a zero initial guess in the hybrid Gauss-Seidel relaxation of
