@@ -55,7 +55,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
     multigrid preconditioner of the divergence-free projection, instead of one. Its
     V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
-    faster. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    faster. [PR 1149](https://github.com/awslabs/palace/pull/1149).
   - Uniform frequency sweeps of driven simulations release the linear solver and system
     matrices after the last solve, before the final field output and error estimation.
     This lowers the peak memory when the final postprocessing sets it.
