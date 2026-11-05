@@ -2,7 +2,7 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index b67c9d1..7f4c108 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -272,14 +272,10 @@ if(MUMPS_metis OR MUMPS_parmetis)
+@@ -272,14 +272,10 @@
      endif()
    endif()
  

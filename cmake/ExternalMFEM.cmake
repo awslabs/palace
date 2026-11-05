@@ -204,12 +204,6 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
     "-DMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
     "-DHYPRE_DIR=${CMAKE_INSTALL_PREFIX}"
   )
-  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    list(APPEND MFEM_OPTIONS
-      "-DParMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-      "-DParMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
-    )
-  endif()
 
   # HYPRE is built with cusparse, curand (or HIP counterparts), and these are added to
   # HYPRE_LIBRARIES by the MFEM CMake build. However, this ignores the include directories
@@ -278,7 +272,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure SuperLU_DIST
   if(PALACE_WITH_SUPERLU)
-    set(SUPERLU_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI")
+    set(SUPERLU_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI")
     set(SUPERLU_REQUIRED_LIBRARIES)
     if(PALACE_WITH_OPENMP)
       list(APPEND SUPERLU_REQUIRED_PACKAGES "OpenMP")
@@ -306,7 +300,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure STRUMPACK
   if(PALACE_WITH_STRUMPACK)
-    set(STRUMPACK_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran")
+    set(STRUMPACK_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran")
     set(STRUMPACK_REQUIRED_LIBRARIES ${SCALAPACK_LIBRARIES} ${STRUMPACK_MUMPS_GFORTRAN_LIBRARY})
     if(NOT "${STRUMPACK_EXTRA_LIBRARIES}" STREQUAL "")
       list(PREPEND STRUMPACK_REQUIRED_LIBRARIES ${STRUMPACK_EXTRA_LIBRARIES})
@@ -333,7 +327,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure MUMPS
   if(PALACE_WITH_MUMPS)
-    set(MUMPS_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
+    set(MUMPS_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
     if(PALACE_WITH_OPENMP)
       list(APPEND MUMPS_REQUIRED_PACKAGES "OpenMP")
     endif()
@@ -375,7 +369,6 @@ else()
   # to add any additional dependency libraries.
   set(PALACE_MFEM_DEPS
     "METIS"
-    "ParMETIS"
     "HYPRE"
     "SuperLUDist"
     "STRUMPACK"
