@@ -189,9 +189,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ],
     )
 
-    # https://github.com/hypre-space/hypre/pull/1651: hybrid Gauss-Seidel relaxation
-    # without the halo exchange of a zero initial guess, as in the superbuild. Kept off the
-    # `with` blocks so the Palace variants are not folded into the patch condition.
+    # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
+    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
+    # https://github.com/hypre-space/hypre/pull/1652 (multicomponent vectors in hybrid
+    # Gauss-Seidel and Gaussian elimination). Kept off the `with` blocks so the Palace
+    # variants are not folded into the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -201,7 +203,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1",
                 sha256="bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f",
                 when="@3.2.0:3.2.1",
-            )
+            ),
+            patch(
+                "https://github.com/hypre-space/hypre/commit/"
+                "bc947b8bca59e503c8a74cf8f8b764086cd722a0.patch?full_index=1",
+                sha256="901508f7754d1f2248da96899df32570ebe6c60908a232b15f6ebafdb55e7fae",
+                when="@3.2.0:3.2.1",
+            ),
         ],
     )
 
