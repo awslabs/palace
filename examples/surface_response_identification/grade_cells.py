@@ -32,7 +32,8 @@ single-frequency window is the same rule with one member.
     the MA_sharp cell INFORMATION (reference ring set != of record). The spatial clusters keep their library records under both
     forms (not re-measured under R10). Under this form a reference coarser than r5 p5 is not converged in S* (P3-FC5 STEP 10: r10 p4
     -> r5 p5 +2.6..+4.5 % on CD3), so its MA_sharp cell is labelled INFORMATION (not counted) until graded against an r5 p5-or-finer
-    reference (decision 1314; reference_depth_information).
+    reference (decision 1314; reference_depth_information on a run reference; a values reference's MA_sharp_reference_depth, absent =
+    "depth not recorded" = INFORMATION too, decision 1318).
   * MA_sharp of a thick REFERENCE run from its recorded MA shells (the shells catalog beside the reference config):
     `radial_ma_profile` of the library (examples/cpw3d_surface/spatial_coupon/qualify), the HEADLINE estimator -- the
     collect17 form of record, ported. A reference given as a VALUES file (p_SA / p_MS / p_MA_sharp / C per source or
@@ -91,6 +92,8 @@ FIXED_SHELL_S_STAR_J = {"isolated": (6.214692e-19, 6.211713e-19, 6.217804e-19), 
 FIXED_SHELL_RAW_LIBRARY_RUNG_J = {"isolated": ("edge lc 2 nm p4", 5.652615e-19), "corner": ("corner 20 nm p3", 2.322675e-21)}
 # The converged-reference R10 h-step (fraction of MA_sharp): the CD3 thick reference read with the R10 rings at r5 p5 -> r2.5 p5
 # moves -0.16..-0.19 % on its four sources (P3-FC5 STEP 10; the r10 p4 -> r5 p5 step +2.6..+4.5 % is the unconverged rung's).
+# CONVENTION (decision 1314 Q1, the numbers as ruled): the step is ADDED to the tail bar as is (a fraction of MA_sharp added to a
+# fraction of raw, without the S*/raw factor 1.0994 / 1.1396 that would widen it to 0.0021 / 0.0022): lo / hi = S*_min,max / raw - 1 -/+ step.
 FIXED_SHELL_REFERENCE_STEP = 0.0019
 
 
@@ -290,17 +293,33 @@ def check_reference_rings(rings_um, where, tail_form, rings_information):
 FIXED_SHELL_CONVERGED_R_UM = 0.005
 FIXED_SHELL_CONVERGED_ORDER = 5
 INFORMATION_DEPTH = "INFORMATION (reference not converged in S*: coarser than r5 p5)"
+# A VALUES-file reference whose depth is not recorded (no MA_sharp_reference_depth) is not shown converged: fail-closed by label
+# (decision 1318; the rings rule keeps its exit-3 / override form).
+INFORMATION_DEPTH_UNRECORDED = "INFORMATION (reference depth not recorded)"
+
+
+def depth_information(depth, tail_form):
+    """The fixed-shell form's reference-depth rule on a depth {"r_um", "order"} (or None = not recorded): -> the INFORMATION label or
+    None (converged: r_um <= FIXED_SHELL_CONVERGED_R_UM and order >= FIXED_SHELL_CONVERGED_ORDER). Always None under the 422 form."""
+    if tail_form != "fixed-shell":
+        return None
+    if not depth:
+        return INFORMATION_DEPTH_UNRECORDED
+    if float(depth["r_um"]) <= FIXED_SHELL_CONVERGED_R_UM + 1e-12 and int(depth["order"]) >= FIXED_SHELL_CONVERGED_ORDER:
+        return None
+    return INFORMATION_DEPTH
 
 
 def reference_depth_information(shells_catalog, reference_run, tail_form):
-    """The fixed-shell form's reference-depth rule (decision 1314): -> ({"r_um", "order"}, the INFORMATION label or None); the row
-    height from the shells catalog's RowHeightsUm[0], the order from the reference's postpro/config_resolved.json Solver.Order."""
+    """The fixed-shell form's reference-depth rule (decision 1314) on a RUN reference: -> ({"r_um", "order"}, the INFORMATION label or
+    None); the row height from the shells catalog's RowHeightsUm[0], the order from the reference's postpro/config_resolved.json
+    Solver.Order. Under the 422 form nothing is read: -> (None, None)."""
+    if tail_form != "fixed-shell":
+        return None, None
     with open(os.path.join(reference_run, "postpro", "config_resolved.json")) as handle:
         order = int(json.load(handle)["Solver"]["Order"])
     depth = {"r_um": shells_catalog["RowHeightsUm"][0], "order": order}
-    if tail_form != "fixed-shell" or (depth["r_um"] <= FIXED_SHELL_CONVERGED_R_UM + 1e-12 and order >= FIXED_SHELL_CONVERGED_ORDER):
-        return depth, None
-    return depth, INFORMATION_DEPTH
+    return depth, depth_information(depth, tail_form)
 
 
 def ma_sharp_from_shells(shells_catalog, p_all, e_elec, edge_out, ma_interfaces=(3,), tail_form="422", rings_information=False):
@@ -578,9 +597,11 @@ def mx_reference_f(ref, F, iface, shells_dir, tail_form="422", rings_information
 
 def reference_from_values(values, member, tail_form="422", rings_information=False):
     """A reference given as values (--reference-values JSON): {"members": {"<source or f>": {"SA_p", "MS_p", "MA_sharp_p",
-    "C_F" | "C_eff_F", optional "MA_p", "E_elec_J", "C_offdiag_F", "MA_sharp_rings_um"}}} or the same keys at the top level for every
-    member. Under tail_form fixed-shell the member's (or top-level) MA_sharp_rings_um = the ring boundaries its MA_sharp_p was read on
-    must be FIXED_SHELL_RINGS_UM (absent = not of record): check_reference_rings."""
+    "C_F" | "C_eff_F", optional "MA_p", "E_elec_J", "C_offdiag_F", "MA_sharp_rings_um", "MA_sharp_reference_depth"}}} or the same keys
+    at the top level for every member. Under tail_form fixed-shell the member's (or top-level) MA_sharp_rings_um = the ring boundaries
+    its MA_sharp_p was read on must be FIXED_SHELL_RINGS_UM (absent = not of record): check_reference_rings; and its
+    MA_sharp_reference_depth {"r_um", "order"} = the depth of the solve it was read from decides the depth label (absent = not
+    recorded = INFORMATION_DEPTH_UNRECORDED; decision 1318): depth_information."""
     members = values.get("members")
     v = members[str(member)] if members else values
     out = dict(v)
@@ -588,7 +609,9 @@ def reference_from_values(values, member, tail_form="422", rings_information=Fal
     out["C_offdiag_F"] = {int(k): x for k, x in out["C_offdiag_F"].items()}
     out["from_values"] = True
     rings = v.get("MA_sharp_rings_um", values.get("MA_sharp_rings_um", []))
-    out["MA_sharp"] = {"Rings_um": rings, "rings_information": check_reference_rings(rings, f"values reference member {member}", tail_form, rings_information)}
+    depth = v.get("MA_sharp_reference_depth", values.get("MA_sharp_reference_depth"))
+    out["MA_sharp"] = {"Rings_um": rings, "rings_information": check_reference_rings(rings, f"values reference member {member}", tail_form, rings_information),
+                       "reference_depth": depth, "depth_information": depth_information(depth, tail_form)}
     return out
 
 

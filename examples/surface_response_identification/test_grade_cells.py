@@ -8,7 +8,7 @@ cells of decision 1215 (bit-exact per cell and per source / frequency), the Q1 l
 995 Maxwell card's 7 re-scored windows (letters identical, |dx| < 1e-6 pt; the 4 carried pembed-form windows read from the card
 JSON as CARRIED: supervisor decision 1233 (1)). The fixed-shell tail form (USER 1308 F-C5 (b); decisions 1310 / 1312 / 1314): the
 FIXED_SHELL_TAILS table from its provenance constants, tail_of under both forms, the reference-rings rule (exit 3 / the information
-override) on a synthetic window, and -- when the records are present -- W12's MA_sharp cell under the fixed-shell form against its r10 p4
+override) and the reference-depth rule (converged / coarser / not recorded, decisions 1314 / 1318) on a synthetic window, and -- when the records are present -- W12's MA_sharp cell under the fixed-shell form against its r10 p4
 reference (the depth label INFORMATION; the 422 default unchanged)."""
 
 import json
@@ -142,6 +142,19 @@ class LetterRules(unittest.TestCase):
             gc.check_reference_rings([0.005, 0.015, 0.035, 0.05], "x", "fixed-shell", False)
         self.assertEqual(gc.check_reference_rings([0.005, 0.015, 0.035, 0.05], "x", "fixed-shell", True), gc.INFORMATION_RINGS)
 
+    def test_reference_depth_rule(self):
+        """depth_information (decisions 1314 / 1318): converged at r5 p5 or finer; coarser -> INFORMATION_DEPTH; absent -> INFORMATION_DEPTH_UNRECORDED;
+        never under 422, where reference_depth_information reads nothing."""
+        self.assertIsNone(gc.depth_information({"r_um": 0.005, "order": 5}, "fixed-shell"))
+        self.assertIsNone(gc.depth_information({"r_um": 0.0025, "order": 5}, "fixed-shell"))
+        self.assertEqual(gc.depth_information({"r_um": 0.01, "order": 4}, "fixed-shell"), gc.INFORMATION_DEPTH)
+        self.assertEqual(gc.depth_information({"r_um": 0.0025, "order": 3}, "fixed-shell"), gc.INFORMATION_DEPTH)
+        self.assertEqual(gc.depth_information({"r_um": 0.005, "order": 4}, "fixed-shell"), gc.INFORMATION_DEPTH)
+        self.assertEqual(gc.depth_information(None, "fixed-shell"), gc.INFORMATION_DEPTH_UNRECORDED)
+        self.assertIsNone(gc.depth_information(None, "422"))
+        self.assertIsNone(gc.depth_information({"r_um": 0.01, "order": 4}, "422"))
+        self.assertEqual(gc.reference_depth_information({"RowHeightsUm": [0.01]}, os.path.join("/nonexistent", "run"), "422"), (None, None))
+
     def test_ma_sharp_convention_b(self):
         sharp = gc.ma_sharp_convention_b(2.0, {0: 1.0}, {0: "isolated-edge"}, {})
         self.assertAlmostEqual(sharp["device_sharp_E_J"], 1.0 + 1.0678)
@@ -229,7 +242,8 @@ class SyntheticWindows(unittest.TestCase):
 
     def test_es_fixed_shell_form(self):
         """--tail-form fixed-shell on the synthetic window: a values reference without the R10 rings is refused (exit 3), graded as
-        INFORMATION with --reference-rings-information, and graded as a letter when it carries MA_sharp_rings_um = the R10 rings."""
+        INFORMATION with --reference-rings-information; with MA_sharp_rings_um = the R10 rings it is INFORMATION (depth not recorded)
+        without MA_sharp_reference_depth (1318), INFORMATION (depth) at r10 p4, and a counted letter at r5 p5."""
         sources = [1]
         p_ref = {1: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5}}
         p_ft = {1: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5}}
@@ -254,7 +268,28 @@ class SyntheticWindows(unittest.TestCase):
         self.assertFalse(g["cells"]["MA_sharp"]["counted"])
         self.assertAlmostEqual(g["cells"]["MA_sharp"]["x_pct"], 0.0, places=9)
         self.assertTrue(g["cells"]["SA"]["counted"])
+        # the R10 rings without a recorded depth: not shown converged -> INFORMATION (depth not recorded), fail-closed (decision 1318)
         ref["members"]["1"]["MA_sharp_rings_um"] = [0.01, 0.03, 0.05]
+        with open(values, "w") as handle:
+            json.dump(ref, handle)
+        self.assertEqual(gc.main(base + ["--tail-form", "fixed-shell"]), 0)
+        with open(out) as handle:
+            g = json.load(handle)
+        self.assertEqual(g["cells"]["MA_sharp"]["letter"], f"{gc.INFORMATION_DEPTH_UNRECORDED}: PASS")
+        self.assertFalse(g["cells"]["MA_sharp"]["counted"])
+        self.assertEqual(g["cells"]["MA_sharp"]["reference_depth"], ["null"])
+        # the R10 rings at a depth coarser than r5 p5 -> INFORMATION (depth), decision 1314
+        ref["members"]["1"]["MA_sharp_reference_depth"] = {"r_um": 0.01, "order": 4}
+        with open(values, "w") as handle:
+            json.dump(ref, handle)
+        self.assertEqual(gc.main(base + ["--tail-form", "fixed-shell"]), 0)
+        with open(out) as handle:
+            g = json.load(handle)
+        self.assertEqual(g["cells"]["MA_sharp"]["letter"], f"{gc.INFORMATION_DEPTH}: PASS")
+        self.assertFalse(g["cells"]["MA_sharp"]["counted"])
+        self.assertEqual(g["cells"]["MA_sharp"]["reference_depth"], ['{"r_um": 0.01, "order": 4}'])
+        # the R10 rings at a converged depth (r5 p5) -> a counted letter
+        ref["members"]["1"]["MA_sharp_reference_depth"] = {"r_um": 0.005, "order": 5}
         with open(values, "w") as handle:
             json.dump(ref, handle)
         self.assertEqual(gc.main(base + ["--tail-form", "fixed-shell"]), 0)
