@@ -7,6 +7,8 @@
 
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -118,6 +120,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   {
     return *RAP;
   }
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::PARALLEL));
 
   // Build the square or rectangular assembled HypreParMatrix.
   const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(A);
