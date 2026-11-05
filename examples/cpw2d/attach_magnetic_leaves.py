@@ -12,7 +12,8 @@ assembles those vacuum domain-response matrices onto a COPY of a library as the 
 today) and writes the top-level `MagneticRules` (the r3 same-mesh tolerance and the two-level r4 PSD ratios; optionally the
 dual gate's `ConductorConsistencyTolerance`, decision 1251, and its PROBE FORM leaves `ProbeLiftOverR` /
 `ProbeSetbackOverR` / `ProbeSetbackWidthFraction` / `ProbeSheetNudgeOverR` / `ProbeBandHeights`, Phase 3 (a); and the
-magnetic TERM's state-anchor setback `StateAnchorSetbackOverR`, R-MAG-17, USER 1308 U-2: the form of record 0.5). It
+magnetic TERM's state-anchor setback `StateAnchorSetbackOverR`, R-MAG-17, USER 1308 U-2: the form of record 0.5 is
+the default and is always written; `--state-anchor-setback 0` = the legacy edge anchors). It
 REFUSES a twin whose basis file is not byte-identical to the model's (r1), records the regenerated electric matrices'
 maximum relative deviation from the model of record (the r3 statistic the loader gates; TWO-TIER per decision 1242: the
 optional MagneticRules.SameMeshToleranceWithMeshIdentity applies to a twin whose MeshOfRecordSha256Match proves BOTH
@@ -46,7 +47,10 @@ import numpy as np
 MAGNETIC_SOURCE_VERSION = 1
 FABRICATION_KEYS = ("MetalThickness", "OveretchDepth", "SidewallAngle", "TopRoundingRadius", "BottomRoundingRadius",
                     "SubstratePermittivity")
-DEFAULT_RULES = {"SameMeshTolerance": 1.0e-12, "PsdFindingRatio": 1.0e-2, "PsdRefusalRatio": 0.1}
+# The rules every library built by this tool carries explicitly (the form of record): the r3 / r4 defaults and the
+# magnetic term's state-anchor setback 0.5 (R-MAG-17; the review d1330 MINOR-4).
+DEFAULT_RULES = {"SameMeshTolerance": 1.0e-12, "PsdFindingRatio": 1.0e-2, "PsdRefusalRatio": 0.1,
+                 "StateAnchorSetbackOverR": 0.5}
 
 
 def sha256_of(path):
@@ -290,12 +294,13 @@ def main(argv=None):
                         help="MagneticRules.ProbeBandHeights (the Gauss-height count: 1 = LIFTED at h_m, >= 2 = BAND "
                              "averaged over that many Gauss heights in [h_m / 2, 3 h_m / 2])")
     # The STATE-ANCHOR SETBACK of the magnetic term (R-MAG-17; USER 1308 U-2, decision 1309): the chain's conductor-path
-    # anchor lines start from the anchors set back s_a = value x R into their piece. Default None = absent = 0 = the
-    # LEGACY edge anchors (bitwise); the form of record going forward is 0.5, written explicitly.
-    parser.add_argument("--state-anchor-setback", type=float, default=None,
+    # anchor lines start from the anchors set back s_a = value x R into their piece. The DEFAULT is the form of record
+    # 0.5, ALWAYS written explicitly (the review d1330 MINOR-4: a library built with the tool's defaults is the form of
+    # record, never silently legacy); 0 = the LEGACY edge anchors (written as 0; the loader's bitwise form).
+    parser.add_argument("--state-anchor-setback", type=float, default=DEFAULT_RULES["StateAnchorSetbackOverR"],
                         help="MagneticRules.StateAnchorSetbackOverR (s_a / R: the magnetic chain's state-anchor lines "
-                             "start from the conductor anchors set back into their piece; in [0, 1]; absent = 0 = the "
-                             "legacy edge anchors; the form of record is 0.5)")
+                             "start from the conductor anchors set back into their piece; in [0, 1]; default 0.5 = "
+                             "the form of record, written explicitly; 0 = the legacy edge anchors, written as 0)")
     # Decision 1323: the state anchor's EDGE TOLERANCE (a conductor anchor within tau x R of an edge offset is ON that
     # edge; beyond it the anchor must lie in metal); tau must stay below half the narrowest model gap / width (asserted
     # by palace at load). Default None = absent = 0.1 (applies only with a nonzero StateAnchorSetbackOverR).

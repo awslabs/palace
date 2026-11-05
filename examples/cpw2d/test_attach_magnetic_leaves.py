@@ -246,19 +246,26 @@ class AttachMagneticLeavesTest(unittest.TestCase):
                       "--output", str(self.root / "out-bad-edgetol" / "library-mag.json"),
                       "--state-anchor-edge-tolerance", "1.5"])
 
-    def test_state_anchor_setback_leaf_is_written_only_when_given_and_bounded(self):
-        # R-MAG-17 (USER 1308 U-2, decision 1309): the magnetic term's state-anchor setback; absent = no leaf (the
-        # loader's 0 = the legacy edge anchors); 0.5 = the form of record; outside [0, 1] refused.
+    def test_state_anchor_setback_leaf_defaults_to_the_form_of_record_and_is_bounded(self):
+        # R-MAG-17 (USER 1308 U-2, decision 1309): the magnetic term's state-anchor setback; the DEFAULT writes the
+        # form of record 0.5 explicitly (the review d1330 MINOR-4: a library built with the defaults is never silently
+        # the legacy form); 0 = the legacy edge anchors, written as 0; outside [0, 1] refused.
         rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
                        "--output", str(self.root / "out-state" / "library-mag.json"), "--state-anchor-setback", "0.5"])
         self.assertEqual(rc, 0)
         with open(self.root / "out-state" / "library-mag.json") as handle:
             self.assertEqual(json.load(handle)["MagneticRules"]["StateAnchorSetbackOverR"], 0.5)
         rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
-                       "--output", str(self.root / "out-state-absent" / "library-mag.json")])
+                       "--output", str(self.root / "out-state-default" / "library-mag.json")])
         self.assertEqual(rc, 0)
-        with open(self.root / "out-state-absent" / "library-mag.json") as handle:
-            self.assertNotIn("StateAnchorSetbackOverR", json.load(handle)["MagneticRules"])
+        with open(self.root / "out-state-default" / "library-mag.json") as handle:
+            self.assertEqual(json.load(handle)["MagneticRules"]["StateAnchorSetbackOverR"], 0.5)
+        rc = AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
+                       "--output", str(self.root / "out-state-legacy" / "library-mag.json"), "--state-anchor-setback",
+                       "0"])
+        self.assertEqual(rc, 0)
+        with open(self.root / "out-state-legacy" / "library-mag.json") as handle:
+            self.assertEqual(json.load(handle)["MagneticRules"]["StateAnchorSetbackOverR"], 0.0)
         for value in ("1.5", "-0.1"):
             with self.assertRaises(SystemExit):
                 AML.main(["--library", str(self.root / "library.json"), "--attach", self.manifest(),
