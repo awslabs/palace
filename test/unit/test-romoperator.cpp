@@ -1767,3 +1767,57 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
 }
+
+// =============================================================================
+// QUASISTATIC ANCHOR SOLVES
+// =============================================================================
+
+// The drive vector of a single lumped port is the excitation vector of an excitation made
+// of that port only, and is also available for a port which is not excited.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "SpaceOperator-LumpedPortExcitationVector",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}}),
+                                  json::object({{"Index", 2},
+                                                {"L", 25.0e-9},
+                                                {"Attributes", json::array({101})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven", {{"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  ComplexVector b1, b2, rhs1;
+  REQUIRE(space_op.GetLumpedPortExcitationVector(1, b1));
+  REQUIRE(space_op.GetExcitationVector1(1, rhs1));
+  REQUIRE(space_op.GetLumpedPortExcitationVector(2, b2));
+  const double norm1 = linalg::Norml2(world_comm, b1);
+  REQUIRE(norm1 > 0.0);
+  ComplexVector diff(b1);
+  diff.Add(-1.0, rhs1);
+  CHECK(linalg::Norml2(world_comm, diff) <= 1.0e-14 * norm1);
+  CHECK(linalg::Norml2(world_comm, b2) > 0.0);
+  CHECK(linalg::Norml2(world_comm, b1.Imag()) == 0.0);
+
+  // The two ports are on opposite faces of the cube.
+  CHECK(std::abs(linalg::Dot(world_comm, b1, b2)) == 0.0);
+}

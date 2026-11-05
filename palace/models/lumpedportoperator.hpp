@@ -196,6 +196,11 @@ public:
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one).
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
+
+  // Same drive term for a single port selected by port index, independent of any
+  // "Excitation" grouping in the configuration. Used for the quasistatic anchor solves in
+  // circuit synthesis.
+  void AddPortExcitationBdrCoefficient(int port_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

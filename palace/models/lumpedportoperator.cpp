@@ -927,6 +927,29 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
+namespace
+{
+
+void AddPortDriveBdrCoefficient(const LumpedPortData &data, SumVectorCoefficient &fb)
+{
+  // Normalize the incident field to a real reference resistance. For a resistive port
+  // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
+  // excited port (R == 0) there is no real port resistance to reference the incident power
+  // to, so we use the unit reference |Z_R| = 1 in internal units purely to define a finite
+  // drive amplitude; the reactance itself acts through the system-matrix termination, not
+  // through this normalization.
+  const double R_ref = data.GetExcitationRefResistance();
+  for (const auto &elem : data.elems)
+  {
+    const double Rs = R_ref * data.GetToSquare(*elem);
+    const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                        elem->GetGeometryLength() * data.elems.size());
+    fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
+  }
+}
+
+}  // namespace
+
 void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
                                                       SumVectorCoefficient &fb)
 {
@@ -946,21 +969,18 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
-    // Normalize the incident field to a real reference resistance. For a resistive port
-    // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
-    // excited port (R == 0) there is no real port resistance to reference the incident
-    // power to, so we use the unit reference |Z_R| = 1 in internal units purely to define a
-    // finite drive amplitude; the reactance itself acts through the system-matrix
-    // termination, not through this normalization.
-    const double R_ref = data.GetExcitationRefResistance();
-    for (const auto &elem : data.elems)
-    {
-      const double Rs = R_ref * data.GetToSquare(*elem);
-      const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                          elem->GetGeometryLength() * data.elems.size());
-      fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
-    }
+    AddPortDriveBdrCoefficient(data, fb);
   }
+}
+
+void LumpedPortOperator::AddPortExcitationBdrCoefficient(int port_idx,
+                                                         SumVectorCoefficient &fb)
+{
+  // Same drive term as AddExcitationBdrCoefficients but for a single port selected by its
+  // port index, independent of any "Excitation" grouping in the configuration. Used for
+  // the quasistatic anchor solves in circuit synthesis, which drive each anchored port in
+  // isolation.
+  AddPortDriveBdrCoefficient(GetPort(port_idx), fb);
 }
 
 }  // namespace palace
