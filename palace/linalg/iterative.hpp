@@ -106,6 +106,9 @@ public:
   // Returns the number of iterations for the previous solve.
   int GetNumIterations() const { return final_it; }
 
+  // Bytes held by the Krylov basis (zero for short-recurrence methods).
+  virtual std::size_t GetBasisBytes() const { return 0; }
+
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return comm; }
 
@@ -212,6 +215,16 @@ public:
   // Set the side for preconditioning.
   virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }
 
+  std::size_t GetBasisBytes() const override
+  {
+    std::size_t n = 0;
+    for (const auto &v : V)
+    {
+      n += v.Size();
+    }
+    return n * sizeof(ScalarType);
+  }
+
   void Mult(const VecType &b, VecType &x) const override;
 };
 
@@ -268,6 +281,16 @@ public:
   {
     MFEM_VERIFY(side == PreconditionerSide::RIGHT,
                 "FGMRES solver only supports right preconditioning!");
+  }
+
+  std::size_t GetBasisBytes() const override
+  {
+    std::size_t n = 0;
+    for (const auto &z : Z)
+    {
+      n += z.Size();
+    }
+    return GmresSolver<OperType>::GetBasisBytes() + n * sizeof(ScalarType);
   }
 
   void Mult(const VecType &b, VecType &x) const override;

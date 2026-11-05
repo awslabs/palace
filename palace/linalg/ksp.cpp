@@ -289,7 +289,9 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
     role(role.empty() ? perf::CurrentRole() : role),
     perf_solves(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Solves"))),
-    perf_its(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Its")))
+    perf_its(perf::RegisterCounter(perf::LinearSolverPath(this->role, "Its"))),
+    perf_basis(perf::RegisterCounter("Memory/KrylovBasis/" + this->role + "/Megabytes",
+                                     perf::Reduce::STATS, perf::Accumulate::MAX))
 {
   if (this->pc)
   {
@@ -333,6 +335,10 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   ksp_mult_it += ksp->GetNumIterations();
   perf::Add(perf_solves, 1);
   perf::Add(perf_its, ksp->GetNumIterations());
+  if (const auto bytes = ksp->GetBasisBytes())
+  {
+    perf::SetMax(perf_basis, static_cast<double>(bytes) / (1024.0 * 1024.0));
+  }
 }
 
 template class BaseKspSolver<Operator>;
