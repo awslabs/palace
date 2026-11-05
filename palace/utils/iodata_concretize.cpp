@@ -163,7 +163,9 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                            ToString(driven.adaptive_solver_gs_orthog_type)},
                           {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
                           {"AdaptiveCircuitSynthesisDomainOrthogonalization",
-                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
+                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)},
+                          {"AdaptiveCircuitSynthesisAnchorFreq",
+                           driven.adaptive_circuit_synthesis_anchor_freq}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
@@ -335,7 +337,8 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"Cs", lp.Cs},
                             {"Excitation", lp.excitation},
                             {"Active", lp.active},
-                            {"IncludeInSynthesis", lp.include_in_synthesis}});
+                            {"IncludeInSynthesis", lp.include_in_synthesis},
+                            {"SynthesisAnchor", lp.synthesis_anchor}});
 
       // The excitation weight is only valid, and so only emitted, for excited ports; the
       // parser rejects these keys on a port without an excitation.
