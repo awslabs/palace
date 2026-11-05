@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cmath>
+#include <type_traits>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <mfem/general/device.hpp>
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/operator.hpp"
@@ -38,6 +40,74 @@ public:
   }
 
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+};
+
+// The symmetric stencil [s, d_i, s] on the local rows of each process, with d_i = 4 + i % 7
+// (or zero, without a diagonal).
+class TridiagonalTestOperator : public Operator
+{
+  const double s;
+  const bool diag;
+
+public:
+  TridiagonalTestOperator(int n, double s = -1.0, bool diag = true)
+    : Operator(n), s(s), diag(diag)
+  {
+  }
+
+  void AssembleDiagonal(Vector &d) const override
+  {
+    d.SetSize(height);
+    auto *D = d.HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      D[i] = diag ? 4.0 + i % 7 : 0.0;
+    }
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    y.SetSize(height);
+    const auto *X = x.HostRead();
+    auto *Y = y.HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      Y[i] = (diag ? (4.0 + i % 7) * X[i] : 0.0) +
+             s * (((i > 0) ? X[i - 1] : 0.0) + ((i < height - 1) ? X[i + 1] : 0.0));
+    }
+  }
+
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+};
+
+// A Jacobi smoother which counts its applications (CgSolver still recognizes it).
+template <typename OperType>
+class CountingJacobiSmoother : public JacobiSmoother<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+
+public:
+  mutable int applications = 0;
+  using JacobiSmoother<OperType>::JacobiSmoother;
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    applications++;
+    JacobiSmoother<OperType>::Mult(x, y);
+  }
+};
+
+// Applies a Jacobi smoother through the generic Solver interface, so that CgSolver does not
+// recognize it and takes its unfused path.
+template <typename OperType>
+class OpaqueSolver : public Solver<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+  const Solver<OperType> &B;
+
+public:
+  OpaqueSolver(const Solver<OperType> &B) : B(B) {}
+  void SetOperator(const OperType &) override {}
+  void Mult(const VecType &x, VecType &y) const override { B.Mult(x, y); }
 };
 
 }  // namespace
@@ -191,6 +261,69 @@ TEST_CASE("CgSolver zero residual (complex)", "[iterative][Serial][Parallel]")
     CHECK_THAT(ksp.GetFinalRes(), WithinAbs(0.0, 1.0e-14));
     CHECK(std::isfinite(x.Real()[0]));
     CHECK(std::isfinite(x.Real()[1]));
+  }
+}
+
+// On the host, CG fuses its residual update with a Jacobi preconditioner and the following
+// inner product. Compare with the separate operations over a fixed number of iterations.
+TEST_CASE("CgSolver fused Jacobi update", "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 101, max_it = 10;
+  MPI_Comm comm = Mpi::World();
+  auto Solve = [&](const auto &op, const auto &b, auto &x, bool fused)
+  {
+    using OperType = std::conditional_t<
+        std::is_base_of_v<ComplexOperator, std::remove_reference_t<decltype(op)>>,
+        ComplexOperator, Operator>;
+    CountingJacobiSmoother<OperType> jacobi(comm);
+    jacobi.SetOperator(op);
+    OpaqueSolver<OperType> opaque(jacobi);
+    CgSolver<OperType> ksp(comm, 0);
+    ksp.SetOperator(op);
+    ksp.SetPreconditioner(fused ? static_cast<const Solver<OperType> &>(jacobi)
+                                : static_cast<const Solver<OperType> &>(opaque));
+    ksp.SetMaxIter(max_it);
+    x = 0.0;
+    ksp.Mult(b, x);
+    CHECK(ksp.GetNumIterations() == max_it);
+    return jacobi.applications;
+  };
+  TridiagonalTestOperator A(n);
+  // The fused update is used on the host only, without OpenMP.
+  const int fused_applications =
+      mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK)
+          ? max_it + 1
+          : 1;
+
+  SECTION("Real")
+  {
+    Vector b(n), x(n), y(n);
+    for (int i = 0; i < n; i++)
+    {
+      b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    }
+    CHECK(Solve(A, b, x, true) == fused_applications);
+    CHECK(Solve(A, b, y, false) == max_it + 1);
+    y -= x;
+    CHECK(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, x));
+  }
+
+  SECTION("Complex")
+  {
+    // The imaginary part has a zero diagonal, so the Jacobi preconditioner stays real while
+    // the CG step sizes are complex.
+    TridiagonalTestOperator Ai(n, 0.5, false);
+    ComplexWrapperOperator Ac(&A, &Ai);
+    ComplexVector b(n), x(n), y(n);
+    for (int i = 0; i < n; i++)
+    {
+      b.Real()[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+      b.Imag()[i] = std::cos(2.0 * i);
+    }
+    CHECK(Solve(Ac, b, x, true) == fused_applications);
+    CHECK(Solve(Ac, b, y, false) == max_it + 1);
+    y -= x;
+    CHECK(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, x));
   }
 }
 

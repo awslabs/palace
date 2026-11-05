@@ -41,6 +41,8 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
+
+  const VecType &GetInverseDiagonal() const { return dinv; }
 };
 
 }  // namespace palace
