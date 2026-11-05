@@ -218,6 +218,24 @@ StateAnchorEdgeSnap SnapStateAnchorToEdge(const std::vector<double> &offsets,
                                           const std::vector<int> &pieces, double u0,
                                           double tolerance);
 
+// Decision 1334 (the Phase 3 (a) + (b) fix-ups, MAJOR-2): the ONE set-back rule of a
+// conductor anchor at lateral offset u0, shared by the magnetic TERM's state anchors
+// (R-MAG-17) and the LIFTED probe form's anchor end (R-MAG-10): the anchor snapped onto
+// its edge within `edge_tolerance` (SnapStateAnchorToEdge), then set back `setback` into
+// the snapped piece from the EDGE offset (LateralSetbackMove with `width_fraction`).
+// `move` = the signed move along u from u0 (0 when the snap finds no piece: the caller
+// refuses on snap.piece == 0).
+struct StateAnchorSetback
+{
+  StateAnchorEdgeSnap snap;
+  double move = 0.0;
+};
+StateAnchorSetback SetBackStateAnchor(const std::vector<double> &offsets,
+                                      const std::vector<int> &gap_directions,
+                                      const std::vector<int> &pieces, double u0,
+                                      double edge_tolerance, double setback,
+                                      double width_fraction);
+
 //
 // Low-rank Schur-complement correction which replaces the local response of an ideal
 // thin-metal edge by a fabrication-resolved coupon response. The correction has the form

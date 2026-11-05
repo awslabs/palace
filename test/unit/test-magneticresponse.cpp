@@ -1487,6 +1487,46 @@ TEST_CASE("SnapStateAnchorToEdge: the nearest edge within the tolerance, metal b
       (snap.u_edge - 0.004) + LateralSetbackMove(offsets, gap_directions, pieces,
                                                  snap.u_edge, snap.piece, 0.1, 0.45);
   CHECK_THAT(0.004 + move, WithinAbs(-0.1, 1.0e-15));
+  // Decision 1334 (MAJOR-2): SetBackStateAnchor = the ONE rule shared by the magnetic
+  // term's state anchors and the LIFTED probe form's anchor end, the expression above
+  // verbatim: an anchor a hair into slot A from the ground edge (the near-matched DCG
+  // case) is set back s = 0.5 R = 0.1 from the EDGE into the unbounded ground.
+  const StateAnchorSetback ground =
+      SetBackStateAnchor(offsets, gap_directions, pieces, 0.004, 0.02, 0.1, 0.45);
+  CHECK((ground.snap.snapped && ground.snap.piece == 1 && ground.snap.u_edge == 0.0));
+  CHECK(ground.move == move);
+  CHECK_THAT(0.004 + ground.move, WithinAbs(-0.1, 1.0e-15));
+  // A hair into slot A from the strip edge and a hair into the strip metal: both snap onto
+  // the strip edge 0.125 (piece 2) and land at the SAME set-back point 0.225 (the strip's
+  // width 0.25 caps the setback at 0.45 x 0.25 = 0.1125 >= 0.1: s applies).
+  const StateAnchorSetback gap_side =
+      SetBackStateAnchor(offsets, gap_directions, pieces, 0.121, 0.02, 0.1, 0.45);
+  const StateAnchorSetback metal_side =
+      SetBackStateAnchor(offsets, gap_directions, pieces, 0.129, 0.02, 0.1, 0.45);
+  CHECK((gap_side.snap.snapped && gap_side.snap.piece == 2));
+  CHECK((metal_side.snap.snapped && metal_side.snap.piece == 2));
+  CHECK_THAT(0.121 + gap_side.move, WithinAbs(0.225, 1.0e-15));
+  CHECK_THAT(0.129 + metal_side.move, WithinAbs(0.225, 1.0e-15));
+  // Beyond the tolerance inside the slot: no piece and no move (the caller refuses).
+  const StateAnchorSetback in_gap =
+      SetBackStateAnchor(offsets, gap_directions, pieces, 0.06, 0.02, 0.1, 0.45);
+  CHECK((!in_gap.snap.snapped && in_gap.snap.piece == 0 && in_gap.move == 0.0));
+  // BITWISE with the legacy probe-anchor expression where no anchor snaps from a nonzero
+  // distance: exactly on an edge (u_edge == u0) and well inside metal (unsnapped), the
+  // move IS LateralSetbackMove of the anchor's own piece ((u0 - u0) + x == x).
+  for (const double u0 : {0.0, 0.125, 0.375, 0.5, 0.25, -0.3, 0.7})
+  {
+    const StateAnchorSetback exact =
+        SetBackStateAnchor(offsets, gap_directions, pieces, u0, 0.02, 0.1, 0.45);
+    const int piece = LocalPieceOfOffset(offsets, gap_directions, pieces, u0);
+    REQUIRE(piece > 0);
+    CHECK(exact.snap.piece == piece);
+    CHECK(exact.move ==
+          LateralSetbackMove(offsets, gap_directions, pieces, u0, piece, 0.1, 0.45));
+  }
+  // ProbeSetbackOverR 0 (the lift-only form) moves nothing on a metal anchor.
+  CHECK(SetBackStateAnchor(offsets, gap_directions, pieces, 0.375, 0.02, 0.0, 0.45).move ==
+        0.0);
 }
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
@@ -1532,7 +1572,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(snapped["ToleranceOverR"].get<double>() == 0.1);
   }
   // CONDITION 1: a tolerance at or above half the narrowest gap (0.3125 R) is refused at
-  // load by name; a legacy library (no setback) is not checked.
+  // load by name when EITHER setback is in effect (decision 1334: the term's
+  // StateAnchorSetbackOverR or the probe form's ProbeSetbackOverR, whose default 0.5
+  // alone triggers the check); a library with BOTH setbacks 0 is not checked.
   {
     const auto bad = WriteStubMagneticLibrary(
         temp.temp_dir, convex_library_3d_path, "pieces-edgetol-wide", true,
@@ -1542,9 +1584,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     SpaceOperator space(iodata, meshes);
     CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
                       Catch::Matchers::ContainsSubstring("StateAnchorEdgeToleranceOverR"));
-    const auto legacy = WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path,
-                                                 "pieces-edgetol-legacy", true,
-                                                 {{"StateAnchorEdgeToleranceOverR", 0.4}});
+    const auto bad_probe = WriteStubMagneticLibrary(
+        temp.temp_dir, convex_library_3d_path, "pieces-edgetol-wide-probe", true,
+        {{"ProbeSetbackOverR", 0.5}, {"StateAnchorEdgeToleranceOverR", 0.4}});
+    std::vector<std::unique_ptr<Mesh>> probe_meshes;
+    IoData probe_iodata = Build(StubMaxwellConfig(*this, bad_probe), probe_meshes);
+    SpaceOperator probe_space(probe_iodata, probe_meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(probe_iodata, probe_space),
+                      Catch::Matchers::ContainsSubstring("StateAnchorEdgeToleranceOverR"));
+    const auto legacy = WriteStubMagneticLibrary(
+        temp.temp_dir, convex_library_3d_path, "pieces-edgetol-legacy", true,
+        {{"StateAnchorEdgeToleranceOverR", 0.4}, {"ProbeSetbackOverR", 0.0}});
     std::vector<std::unique_ptr<Mesh>> legacy_meshes;
     IoData legacy_iodata = Build(StubMaxwellConfig(*this, legacy), legacy_meshes);
     SpaceOperator legacy_space(legacy_iodata, legacy_meshes);

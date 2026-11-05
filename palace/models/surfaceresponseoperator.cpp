@@ -3800,8 +3800,11 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         std::isfinite(min_gap) && library.matching_radius > 0.0
             ? min_gap / library.matching_radius
             : -1.0;
+    // Decision 1334: the snap acts on the magnetic term's state anchors
+    // (StateAnchorSetbackOverR > 0) and on the LIFTED probe form's anchor end
+    // (ProbeSetbackOverR > 0): CONDITION 1 is asserted when EITHER setback is in effect.
     MFEM_VERIFY(
-        rules.state_anchor_setback_over_r <= 0.0 ||
+        (rules.state_anchor_setback_over_r <= 0.0 && rules.probe_setback_over_r <= 0.0) ||
             rules.state_anchor_min_gap_over_r < 0.0 ||
             rules.state_anchor_edge_tolerance_over_r <
                 0.5 * rules.state_anchor_min_gap_over_r,
@@ -21344,6 +21347,53 @@ StateAnchorEdgeSnap SnapStateAnchorToEdge(const std::vector<double> &offsets,
   return snap;
 }
 
+StateAnchorSetback SetBackStateAnchor(const std::vector<double> &offsets,
+                                      const std::vector<int> &gap_directions,
+                                      const std::vector<int> &pieces, double u0,
+                                      double edge_tolerance, double setback,
+                                      double width_fraction)
+{
+  StateAnchorSetback result;
+  // Decision 1323: an anchor within the tolerance of an edge is ON that edge (the setback
+  // measured from the edge offset); beyond it the anchor must lie in metal.
+  result.snap = SnapStateAnchorToEdge(offsets, gap_directions, pieces, u0, edge_tolerance);
+  if (result.snap.piece > 0)
+  {
+    result.move = (result.snap.u_edge - u0) +
+                  LateralSetbackMove(offsets, gap_directions, pieces, result.snap.u_edge,
+                                     result.snap.piece, setback, width_fraction);
+  }
+  return result;
+}
+
+namespace
+{
+
+// Decision 1323 CONDITION 1 on the DEVICE gaps of a translational patch (the edges' feet):
+// the edge tolerance below half of every gap between an edge whose gap lies on +u and the
+// next edge whose gap lies on -u (an anchor must not snap across a gap). Shared by the
+// magnetic term's state anchors and the LIFTED probe form's anchor end (decision 1334).
+void VerifyStateAnchorEdgeToleranceBelowDeviceGaps(const std::vector<double> &offsets,
+                                                   const std::vector<int> &gap_directions,
+                                                   double edge_tolerance,
+                                                   double edge_tolerance_over_r, double R,
+                                                   int patch_global_index)
+{
+  for (std::size_t k = 0; k + 1 < offsets.size(); k++)
+  {
+    MFEM_VERIFY(gap_directions[k] != 1 || gap_directions[k + 1] != -1 ||
+                    edge_tolerance < 0.5 * (offsets[k + 1] - offsets[k]),
+                "StateAnchorEdgeToleranceOverR "
+                    << edge_tolerance_over_r << " R reaches half the device gap "
+                    << (offsets[k + 1] - offsets[k]) / R << " R of patch "
+                    << patch_global_index
+                    << " (decision 1323 CONDITION 1: an anchor must not snap across "
+                       "a gap)!");
+  }
+}
+
+}  // namespace
+
 int LocalPieceOfOffset(const std::vector<double> &offsets,
                        const std::vector<int> &gap_directions,
                        const std::vector<int> &pieces, double u)
@@ -31123,21 +31173,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       const double R = matching_radius;
       const double edge_tolerance =
           magnetic_probe_rules.state_anchor_edge_tolerance_over_r * R;
-      // Decision 1323 CONDITION 1 on the DEVICE gaps of this patch (the edges' feet): the
-      // tolerance below half of every gap between an edge whose gap lies on +u and the
-      // next edge whose gap lies on -u.
-      for (std::size_t k = 0; k + 1 < offsets.size(); k++)
-      {
-        MFEM_VERIFY(gap_directions[k] != 1 || gap_directions[k + 1] != -1 ||
-                        edge_tolerance < 0.5 * (offsets[k + 1] - offsets[k]),
-                    "StateAnchorEdgeToleranceOverR "
-                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r
-                        << " R reaches half the device gap "
-                        << (offsets[k + 1] - offsets[k]) / R << " R of patch "
-                        << patch.global_index
-                        << " (decision 1323 CONDITION 1: an anchor must not snap across "
-                           "a gap)!");
-      }
+      VerifyStateAnchorEdgeToleranceBelowDeviceGaps(
+          offsets, gap_directions, edge_tolerance,
+          magnetic_probe_rules.state_anchor_edge_tolerance_over_r, R, patch.global_index);
       for (auto &state_anchor : state_anchors)
       {
         double u0 = 0.0;
@@ -31145,10 +31183,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         {
           u0 += (state_anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
         }
-        // Decision 1323: an anchor within the tolerance of an edge is ON that edge (the
-        // setback measured from the edge offset); beyond it the anchor must lie in metal.
-        const StateAnchorEdgeSnap snap =
-            SnapStateAnchorToEdge(offsets, gap_directions, pieces, u0, edge_tolerance);
+        // Decision 1323 / 1334: the shared set-back rule (the snap onto the edge within
+        // the tolerance, the setback from the edge offset); beyond the tolerance the
+        // anchor must lie in metal.
+        const StateAnchorSetback set_back =
+            SetBackStateAnchor(offsets, gap_directions, pieces, u0, edge_tolerance,
+                               magnetic_state_anchor_setback_over_r * R,
+                               magnetic_probe_rules.probe_setback_width_fraction);
+        const StateAnchorEdgeSnap &snap = set_back.snap;
         MFEM_VERIFY(snap.piece > 0,
                     "StateAnchorSetbackOverR: a conductor anchor of patch "
                         << patch.global_index << " lies in a gap, " << snap.distance / R
@@ -31163,11 +31205,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           state_anchor_max_snap_distance =
               std::max(state_anchor_max_snap_distance, snap.distance);
         }
-        const double move =
-            (snap.u_edge - u0) +
-            LateralSetbackMove(offsets, gap_directions, pieces, snap.u_edge, snap.piece,
-                               magnetic_state_anchor_setback_over_r * R,
-                               magnetic_probe_rules.probe_setback_width_fraction);
+        const double move = set_back.move;
         for (int d = 0; d < dimension; d++)
         {
           state_anchor[d] +=
@@ -31455,13 +31493,22 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       // sides, a gap's = e1 - R axis_u, a strip's = the origin, a non-PEC pair's = e1, an
       // isolated edge's = point - R axis_u or point - never the model's conductor
       // references (ReferenceInGap, decision 1082 Q1, guards the ES reading of those): an
-      // invariant here, not a second rule.
-      MFEM_ASSERT(LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset) > 0,
-                  "Response-correction patch "
-                      << patch.global_index << " (model " << model.name
-                      << "): its Maxwell conductor anchor (lateral offset " << anchor_offset
-                      << ") lies in a gap of its cross-section (the placement's "
-                         "ReferenceInGap rule admits none)!");
+      // invariant here, not a second rule. A device foot differs from the model's edge
+      // offset by roundoff (decision 1323: 15004 of W06's 25568 anchors within 1.7e-6 R of
+      // their edge, either side), so the Debug check reads the anchor's piece within
+      // MagneticRules.StateAnchorEdgeToleranceOverR (decision 1334); the electric legs
+      // themselves do not read the piece.
+      MFEM_ASSERT(
+          SnapStateAnchorToEdge(offsets, gap_directions, pieces, anchor_offset,
+                                magnetic_probe_rules.state_anchor_edge_tolerance_over_r *
+                                    matching_radius)
+                  .piece > 0,
+          "Response-correction patch "
+              << patch.global_index << " (model " << model.name
+              << "): its Maxwell conductor anchor (lateral offset " << anchor_offset
+              << ") lies in a gap of its cross-section, beyond "
+                 "MagneticRules.StateAnchorEdgeToleranceOverR of every edge (the "
+                 "placement's ReferenceInGap rule admits none)!");
       // Phase 3 (a) (DESIGN-v2 a.2 + AMENDMENT 1275 MAJOR-A; decisions 1284 Q-1 / 1292):
       // the MAGNETIC gate's legs. A_z is constant on a PEC piece, so the flux path from the
       // anchor's piece to the probe's piece reads the same continuum value along ANY path
@@ -31528,7 +31575,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         }
       };
       auto BuildMagneticLegs =
-          [&](MaxwellProbe &probe, const mfem::Vector &face_anchor, int anchor_piece)
+          [&](MaxwellProbe &probe, const mfem::Vector &face_anchor, double anchor_move)
       {
         if (flat_form)
         {
@@ -31541,7 +31588,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         {
           probe_star[d] = probe.point[d];
         }
-        anchor_star.Add(SetbackMove(anchor_offset, anchor_piece), lateral);
+        anchor_star.Add(anchor_move, lateral);
         anchor_star.Add(nudge, sheet_normal);
         probe_star.Add(SetbackMove(edge.offset, edge.piece), lateral);
         probe_star.Add(nudge, sheet_normal);
@@ -31581,8 +31628,35 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           previous = next;
         }
       };
-      const int anchor_piece =
-          LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset);
+      // The anchor end's set-back move (R-MAG-10, both ends set back): the ONE rule shared
+      // with the magnetic term's state anchors (SetBackStateAnchor, decision 1334 MAJOR-2):
+      // the device anchor a hair into the gap by roundoff snaps onto its edge within
+      // MagneticRules.StateAnchorEdgeToleranceOverR and is set back from the EDGE offset
+      // (CONDITION 1 of 1323 on this patch's device gaps asserted first); an anchor beyond
+      // the tolerance in a gap is REFUSED by name (the LIFTED legs would silently read the
+      // edge point). 0 when ProbeSetbackOverR = 0 (the lift-only form: no anchor moves;
+      // bitwise) or on the FLAT / electric legs.
+      double anchor_move = 0.0;
+      if (model.magnetic && !flat_form && setback > 0.0)
+      {
+        const double edge_tolerance = rules.state_anchor_edge_tolerance_over_r * R;
+        VerifyStateAnchorEdgeToleranceBelowDeviceGaps(
+            offsets, gap_directions, edge_tolerance,
+            rules.state_anchor_edge_tolerance_over_r, R, patch.global_index);
+        const StateAnchorSetback set_back =
+            SetBackStateAnchor(offsets, gap_directions, pieces, anchor_offset,
+                               edge_tolerance, setback, rules.probe_setback_width_fraction);
+        MFEM_VERIFY(set_back.snap.piece > 0,
+                    "ProbeSetbackOverR: the Maxwell conductor anchor of patch "
+                        << patch.global_index << " (model " << model.name
+                        << ") lies in a gap, " << set_back.snap.distance / R
+                        << " R from the nearest edge (beyond "
+                           "MagneticRules.StateAnchorEdgeToleranceOverR "
+                        << rules.state_anchor_edge_tolerance_over_r
+                        << "; decisions 1323 / 1334): the LIFTED probe legs cannot be set "
+                           "back!");
+        anchor_move = set_back.move;
+      }
       for (const auto &probe_data : patch.conductor_probes)
       {
         const auto &edge = edges[probe_data.edge];
@@ -31672,7 +31746,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         }
         if (model.magnetic)
         {
-          BuildMagneticLegs(probe, face_anchor, anchor_piece);
+          BuildMagneticLegs(probe, face_anchor, anchor_move);
         }
         probes.push_back(std::move(probe));
       }

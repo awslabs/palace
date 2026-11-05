@@ -1609,9 +1609,12 @@ public:
       // within StateAnchorEdgeToleranceOverR x R of an edge offset is ON that edge (the
       // nearest one): its piece = the edge's piece and the setback is measured from the
       // EDGE offset; beyond the tolerance the anchor must lie in a metal piece (refused
-      // by name otherwise). Applies only when StateAnchorSetbackOverR > 0 (a legacy
-      // library is bitwise). CONDITION 1 of 1323: tolerance x R < half the narrowest
-      // model gap / width (asserted at load) so that no anchor snaps across a gap.
+      // by name otherwise). Applies to the magnetic term's state anchors when
+      // StateAnchorSetbackOverR > 0 and to the LIFTED probe form's anchor end when
+      // ProbeSetbackOverR > 0 (decision 1334; a library with both setbacks 0 is bitwise).
+      // CONDITION 1 of 1323: tolerance x R < half the narrowest model gap / width
+      // (asserted at load when either setback is in effect) so that no anchor snaps across
+      // a gap.
       double state_anchor_edge_tolerance_over_r = 0.1;
       // COMPUTED at load (not a leaf): the narrowest Separation / cluster gap over the
       // library's magnetic models in units of R (-1 when the library has none); recorded.
