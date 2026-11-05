@@ -49,6 +49,10 @@ public:
   int excitation;
   bool active;
   bool include_in_synthesis;
+  // Whether this port receives a screened quasistatic anchor solve during circuit
+  // synthesis (see RomOperator::AddLumpedPortAnchorModesForSynthesis). Opt-in via the
+  // per-port "SynthesisAnchor" config flag (default false).
+  bool synthesis_anchor;
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.

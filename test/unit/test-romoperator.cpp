@@ -71,6 +71,7 @@ public:
   using RomOperator::WavePortDispersionFit;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
+  auto &GetNodeLabels() const { return v_node_label; }
   auto &GetVectors() const { return V; }
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
@@ -1820,4 +1821,183 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SpaceOperator-LumpedPortExcitatio
 
   // The two ports are on opposite faces of the cube.
   CHECK(std::abs(linalg::Dot(world_comm, b1, b2)) == 0.0);
+}
+
+TEST_CASE("RomOperator-Synthesis-AnchorOnCapOnlyPortRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"C", 1.0e-12},
+                                                {"SynthesisAnchor", true},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("SynthesisAnchor"));
+}
+
+TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"L", 25.0e-9},
+                                                {"SynthesisAnchor", true},
+                                                {"IncludeInSynthesis", false},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("SynthesisAnchor"));
+}
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-AnchorEntersBasis",
+                 "[romoperator][Serial]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"L", 25.0e-9},
+                                                {"SynthesisAnchor", true},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 1.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1e-8}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  prom_op.AddLumpedPortModesForSynthesis();
+  auto dim_after_ports = prom_op.GetReducedDimension();
+  CHECK(dim_after_ports == 1);  // One L-port → one port mode
+
+  // Anchor solve at nu = 1/4 of MinFreq (nondimensionalized already in iodata).
+  double nu = 0.25 * iodata.solver.driven.sample_f.front();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
+
+  CHECK(prom_op.GetReducedDimension() == dim_after_ports + 1);  // Exactly 1 anchor vector
+  // Check label.
+  const auto &labels = prom_op.GetNodeLabels();
+  CHECK(labels.back() == "anchor_1_re");
+  // Check anchor didn't clobber port-block diag.
+  CHECK(prom_op.GetOrthR()(0, 0) > 0.0);  // Port mode orth_R diag untouched
+  CHECK(prom_op.GetOrthR()(1, 1) > 0.0);  // Anchor has non-zero content
+}
+
+// The anchor column solves the screened system (K + ν²M) x = b_p. In the reduced basis,
+// where the port drive projects onto the port row only (the other basis vectors are
+// orthogonal to the port mode on the port boundary), the coordinates c of x = V c then
+// satisfy (Kr + ν²Mr) c = s e_p, whatever the other basis vectors are.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-Synthesis-AnchorSolvesScreenedSystem",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 4.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"L", 10.0e-9},
+            {"C", 1.0e-12},
+            {"SynthesisAnchor", true},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 1.0},
+        {"MaxFreq", 3.0},
+        {"FreqStep", 0.5}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1.0e-12}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  prom_op.AddLumpedPortModesForSynthesis();
+  const double nu = 0.1 * iodata.solver.driven.sample_f.front();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
+  for (int seed : {42, 44})
+  {
+    ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+    sample.UseDevice(true);
+    linalg::SetRandom(world_comm, sample.Real(), seed);
+    linalg::SetRandom(world_comm, sample.Imag(), seed + 1);
+    prom_op.UpdatePROM(sample, fmt::format("sample_{:d}", seed));
+  }
+  const auto &labels = prom_op.GetNodeLabels();
+  REQUIRE(labels.size() == 6);
+  REQUIRE(labels[0] == "port_1_re");
+  REQUIRE(labels[1] == "anchor_1_re");
+
+  const Eigen::VectorXd c = prom_op.GetOrthR().col(1);
+  const Eigen::VectorXd r = (prom_op.GetKr().real() + nu * nu * prom_op.GetMr().real()) * c;
+  CAPTURE(r.transpose());
+  REQUIRE(std::abs(r(0)) > 0.0);
+  CHECK(r.tail(r.size() - 1).norm() <= 1.0e-8 * std::abs(r(0)));
 }
