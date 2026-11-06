@@ -2239,7 +2239,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     std::ifstream input(cache_path);
     json cache = json::parse(input);
-    REQUIRE(cache.at("Version").get<int>() == 23);
+    REQUIRE(cache.at("Version").get<int>() == 24);
     REQUIRE(cache.at("ExclusionPortions").size() == identification_portions.size());
     cache.erase("ExclusionPortions");
     std::ofstream output(stale_path);

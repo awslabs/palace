@@ -1873,7 +1873,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 23);
+      CHECK(cache["Version"] == 24);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3163,7 +3163,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 23);
+      CHECK(cache["Version"] == 24);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7805,7 +7805,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator unpatched 
 // Status is the key's (Matched) and the record names the nodes with the side length each
 // covers. 2B: the operator exports the unplaced cells as `unpatched` raw-partition portions
 // (by feature Id) whose length is the UnpatchedPairs remainder; the geometry cache (version
-// 23) carries them as a required leaf.
+// 24) carries them as a required leaf.
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator R-9 refused pair placed at the local separation "
                  "and the 2B unpatched portions",
@@ -8052,7 +8052,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   // 2B on the operator: the unplaced cells are `unpatched` raw-partition portions (pass A:
   // the run is a recorded NoMatchedFeature raw fallback, which writes no cache), none when
-  // every cell is placed (pass B, whose cache carries the required empty leaf; version 23).
+  // every cell is placed (pass B, whose cache carries the required empty leaf; version 24).
   auto Operator = [&](const fs::path &library_path, const fs::path &cache_path)
   {
     IoData iodata(Config(library_path), false);
@@ -8114,7 +8114,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       WriteResponseGeometryCache(copy_path, with_portions);
       std::ifstream input(copy_path);
       json cache = json::parse(input);
-      REQUIRE(cache.at("Version").get<int>() == 23);
+      REQUIRE(cache.at("Version").get<int>() == 24);
       REQUIRE(cache.at("UnpatchedPairPortions").size() == 1);
       cache.erase("UnpatchedPairPortions");
       std::ofstream output(stale_path);
@@ -8129,6 +8129,413 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(copied.unpatched_pair_portions[0].p1[2] == 0.6);
     CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, request),
                       ContainsSubstring("without UnpatchedPairPortions"));
+  }
+#endif
+}
+
+// R-9b (fix round P3; decisions 1265 / 1269 / 1284 (2) / 1286 / 1291; OI-TAPER-MEAN-KEY): a
+// ParallelEdgeCluster KEYED AT THE MEAN of its taper links is placed CELL BY CELL at its
+// local cross-section from its FAMILY (the models of its topology key by their scale). The
+// fixture MakeTaperClusterMesh: a sheet with a strip [1.25, 1.25 + 0.25 s] and a slot [1.25
+// + 0.25 s, 1.25 + 0.5625 s] whose cross-section scales UNIFORMLY with s(z) from 1.0 to 1.2
+// along the taper (R = 0.2: edges at 0 / 1.25 s / 2.8125 s R; both links below 2R; the
+// links are taper links, keyed at the mean s ~1.1). Pass A: the mean key alone -> the
+// cluster is placed as today (every cell MeanKeyFallback, the record names the one key;
+// 1291). Pass B: family members at s 0.9 / 1.1 of the mean -> every cell Interpolated (two
+// weighted patches of one interpolation group) or Exact, NonUniform 0, MeanKeyFallback 0,
+// the mean key's ModelIndex unchanged (registered in place). Pass C: a NON-uniform member
+// (its middle edge scaled 1.3 where its span is scaled 1.1) -> the bracket's interpolant
+// misses the local section by more than the near band: the cells above the mean are
+// NonUniform and fall through to the mean key; the cells below have no bracket: every cell
+// MeanKeyFallback, the member has 0 rows.
+namespace
+{
+std::unique_ptr<mfem::ParMesh> MakeTaperClusterMesh(double scale_end)
+{
+  constexpr double extent = 3.0;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(48, 4, 48, mfem::Element::HEXAHEDRON,
+                                                  extent, 1.0, extent);
+  // The apertures on the UNSHEARED grid: the left [0.75, 1.25] and the slot [1.5, 1.8125]
+  // over z in [0.25, 2.75]; the sheet y = 0.5 elsewhere is metal (attribute 9).
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0;
+    double zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
+                               zmin >= 0.25 - 1.0e-12 && zmax <= 2.75 + 1.0e-12;
+    const bool slot = xmin >= 1.5 - 1.0e-12 && xmax <= 1.8125 + 1.0e-12 &&
+                      zmin >= 0.25 - 1.0e-12 && zmax <= 2.75 + 1.0e-12;
+    if (on_plane && !left_aperture && !slot)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  // The uniform scaling about x = 1.25: x -> 1.25 + (x - 1.25) s(z) for x in [1.25, 1.8125]
+  // (s from 1 at z <= 0.25 to scale_end at z >= 2.75), the shift tapering to 0 at x = 3.
+  for (int v = 0; v < serial.GetNV(); v++)
+  {
+    double *point = serial.GetVertex(v);
+    const double s =
+        1.0 + (scale_end - 1.0) * std::clamp((point[2] - 0.25) / 2.5, 0.0, 1.0);
+    if (point[0] > 1.25 + 1.0e-12 && point[0] <= 1.8125 + 1.0e-12)
+    {
+      point[0] += (point[0] - 1.25) * (s - 1.0);
+    }
+    else if (point[0] > 1.8125 + 1.0e-12)
+    {
+      point[0] += 0.5625 * (s - 1.0) * (extent - point[0]) / (extent - 1.8125);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+}  // namespace
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator R-9b mean-keyed cluster placed cell-wise from "
+                 "its family",
+                 "[surfaceresponseoperator][3d][features][tapermeankey][r9b][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  constexpr double scale_end = 1.2;
+  auto Config = [&](const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["PatchEnergy"] = true;
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    return config;
+  };
+  struct Rows
+  {
+    std::map<std::string, int> by_model;
+    std::map<std::string, std::set<int>> model_indices;
+    int cluster_rows = 0;
+  };
+  auto Preflight = [&](const std::string &tag, const fs::path &library_path)
+  {
+    IoData iodata(Config(library_path), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakeTaperClusterMesh(scale_end));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-r9b-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    json manifest = json::parse(input);
+    Rows rows;
+    std::ifstream patches(patches_path);
+    REQUIRE(patches);
+    std::string line;
+    std::getline(patches, line);
+    while (std::getline(patches, line))
+    {
+      std::vector<std::string> fields;
+      std::stringstream stream(line);
+      std::string field;
+      while (std::getline(stream, field, ','))
+      {
+        fields.push_back(field);
+      }
+      REQUIRE(fields.size() > 5);
+      if (fields[2] == "parallel-edge cluster")
+      {
+        rows.cluster_rows++;
+        rows.by_model[fields[3]]++;
+        rows.model_indices[fields[3]].insert(std::stoi(fields[4]));
+      }
+    }
+    return std::make_pair(manifest, rows);
+  };
+  // Pass 1: the cluster's own key (a strip library: the cluster is Missing) and the
+  // isolated edge's key (kept in every library below so that the run is no raw fallback).
+  const auto [first, first_rows] = Preflight("missing", strip_library_3d_path);
+  json cluster_signature, edge_signature;
+  int clusters = 0;
+  std::vector<double> keyed_offsets_over_R;
+  for (const auto &feature : first["Identification"]["Features"])
+  {
+    if (feature["Type"] == "ParallelEdgeCluster" &&
+        feature["Signature"]["Edges"].size() == 3)
+    {
+      clusters++;
+      cluster_signature = feature["Signature"];
+      REQUIRE(feature.contains("TaperMeanKey"));
+      keyed_offsets_over_R.clear();
+      for (const auto &edge : feature["Signature"]["Edges"])
+      {
+        keyed_offsets_over_R.push_back(edge["OffsetOverR"].get<double>());
+      }
+    }
+    else if (feature["Type"] == "IsolatedEdge" && edge_signature.is_null())
+    {
+      edge_signature = feature["Signature"];
+    }
+  }
+  REQUIRE(clusters == 1);
+  REQUIRE_FALSE(edge_signature.is_null());
+  REQUIRE(keyed_offsets_over_R.size() == 3);
+  // The mean section: 0 / 1.25 s / 2.8125 s R at s ~1.1 (the taper's length-weighted mean).
+  CHECK_THAT(keyed_offsets_over_R[1], WithinAbs(1.25 * 1.1, 0.05));
+  CHECK_THAT(keyed_offsets_over_R[2], WithinAbs(2.8125 * 1.1, 0.1));
+  // A Signature-keyed ParallelEdgeCluster library: one model per (name, edge scales), its
+  // Edges / Signature offsets = the keyed offsets x the scales (one conductor: the one
+  // Reference on edge 0), plus the isolated-edge model.
+  struct Member
+  {
+    std::string name;
+    std::vector<double> scales;  // per edge (edge 0 at 0)
+  };
+  auto WriteLibrary =
+      [&](const fs::path &path, const std::string &name, const std::vector<Member> &members)
+  {
+    if (Mpi::Root(Mpi::World()))
+    {
+      json library = {{"Version", 2},
+                      {"Name", name},
+                      {"MatchingRadius", R},
+                      {"CouponDepth", R},
+                      {"Models", json::array()}};
+      for (const auto &member : members)
+      {
+        json signature = cluster_signature;
+        json edges = json::array();
+        for (std::size_t k = 0; k < 3; k++)
+        {
+          const double offset_over_R =
+              std::round(keyed_offsets_over_R[k] * member.scales[k] * 1.0e6) / 1.0e6;
+          signature["Edges"][k]["OffsetOverR"] = offset_over_R;
+          edges.push_back(
+              {{"Offset", offset_over_R * R},
+               {"GapDirection", cluster_signature["Edges"][k]["GapSide"].get<int>()},
+               {"Conductor", cluster_signature["Edges"][k]["Conductor"].get<int>()}});
+        }
+        library["Models"].push_back({{"Name", member.name},
+                                     {"Topology", "ParallelEdgeCluster"},
+                                     {"Signature", signature},
+                                     {"Edges", edges},
+                                     {"EdgeOffsetTolerance", 1.0e-8},
+                                     {"Reference", {0.0, 0.0, 0.0}},
+                                     {"FabricatedMatrix", fabricated_path.string()},
+                                     {"ThinMatrix", thin_path.string()},
+                                     {"BasisPoints", points_path.string()}});
+      }
+      library["Models"].push_back({{"Name", "isolated-edge-keyed"},
+                                   {"Topology", "IsolatedEdge"},
+                                   {"Signature", edge_signature},
+                                   {"Reference", {0.0, 0.0, 0.0}},
+                                   {"FabricatedMatrix", fabricated_path.string()},
+                                   {"ThinMatrix", thin_path.string()},
+                                   {"BasisPoints", points_path.string()}});
+      std::ofstream output(path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+  };
+  auto ClusterFeature = [](const json &manifest) -> const json &
+  {
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ParallelEdgeCluster" &&
+          feature["Signature"]["Edges"].size() == 3)
+      {
+        return feature;
+      }
+    }
+    FAIL("no 3-edge cluster feature");
+    return manifest;
+  };
+  auto Record = [&](const json &manifest)
+  {
+    const auto &feature = ClusterFeature(manifest);
+    REQUIRE(feature["Match"].contains("PlacedByLocalSeparation"));
+    const auto &record = feature["Match"]["PlacedByLocalSeparation"];
+    REQUIRE(record.contains("Family"));
+    CHECK(record["Family"]["Parameter"] == "scale");
+    CHECK(record["Cells"].get<int>() > 0);
+    CHECK(record["PlacedCells"] == record["Cells"]);
+    CHECK(record["UnplacedLength"].get<double>() == 0.0);
+    CHECK(record["Family"]["Cells"]["Unpatched"].get<int>() == 0);
+    const auto &cells = record["Family"]["Cells"];
+    CHECK(cells["Exact"].get<int>() + cells["Interpolated"].get<int>() +
+              cells["NearMatched"].get<int>() + cells["MeanKeyFallback"].get<int>() ==
+          record["Cells"].get<int>());
+    double covered = 0.0;
+    for (const auto &model : record["Models"])
+    {
+      covered += model["Length"].get<double>();
+    }
+    CHECK_THAT(covered, WithinRel(record["PlacedLength"].get<double>(), 1.0e-9));
+    return record;
+  };
+
+  // Pass A: the mean key alone -> today's placement, recorded (1291: every cell
+  // MeanKeyFallback; the one key named; no deferral).
+  const fs::path mean_library = temp.temp_dir / "fabrication-process-cluster-r9b-mean.json";
+  WriteLibrary(mean_library, "unit-test-process-cluster-r9b-mean",
+               {{"parallel-edge-cluster-mean", {1.0, 1.0, 1.0}}});
+  const auto [alone, alone_rows] = Preflight("alone", mean_library);
+  {
+    const auto &feature = ClusterFeature(alone);
+    CHECK(feature["Match"]["Status"] == "Matched");
+    CHECK(feature["Match"]["Model"] == "parallel-edge-cluster-mean");
+    const auto record = Record(alone);
+    CHECK(record["KeyedModel"] == "parallel-edge-cluster-mean");
+    CHECK(record["Family"]["Keys"] == json::array({"parallel-edge-cluster-mean"}));
+    CHECK(record["Family"]["Cells"]["MeanKeyFallback"] == record["Cells"]);
+    CHECK(record["Family"]["Cells"]["Interpolated"].get<int>() == 0);
+    CHECK(record["Family"]["Cells"]["NonUniform"].get<int>() == 0);
+    CHECK(alone_rows.by_model.at("parallel-edge-cluster-mean") == alone_rows.cluster_rows);
+    CHECK(alone_rows.cluster_rows == record["Cells"].get<int>());
+    const auto &diagnostics =
+        alone["Identification"]["Diagnostics"]["PlacedByLocalSeparation"];
+    CHECK(diagnostics["Families"]["ParallelEdgeCluster"]["Count"].get<int>() == 1);
+    CHECK(diagnostics["UnpatchedCells"]["Count"].get<int>() == 0);
+    CHECK(diagnostics["NotEligible"].empty());
+    CHECK(alone["Summary"]["PlacedByLocalSeparation"]["Families"]["ParallelEdgeCluster"]
+               ["Cells"]["MeanKeyFallback"] == record["Cells"]);
+    CHECK_FALSE(alone["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  }
+  const int mean_model_index =
+      *alone_rows.model_indices.at("parallel-edge-cluster-mean").begin();
+  REQUIRE(alone_rows.model_indices.at("parallel-edge-cluster-mean").size() == 1);
+
+  // Pass B: uniformly scaled family members at s 0.9 / 1.1 of the mean -> every cell
+  // Interpolated (or Exact at the mean section), two co-located patches per cell.
+  const fs::path family_library =
+      temp.temp_dir / "fabrication-process-cluster-r9b-family.json";
+  WriteLibrary(family_library, "unit-test-process-cluster-r9b-family",
+               {{"parallel-edge-cluster-mean", {1.0, 1.0, 1.0}},
+                {"parallel-edge-cluster-s0.9", {1.0, 0.9, 0.9}},
+                {"parallel-edge-cluster-s1.1", {1.0, 1.1, 1.1}}});
+  const auto [family, family_rows] = Preflight("family", family_library);
+  {
+    const auto &feature = ClusterFeature(family);
+    CHECK(feature["Match"]["Status"] == "Matched");
+    CHECK(feature["Match"]["Model"] == "parallel-edge-cluster-mean");
+    const auto record = Record(family);
+    CHECK(record["Family"]["Keys"].size() == 3);
+    const auto &cells = record["Family"]["Cells"];
+    CHECK(cells["Interpolated"].get<int>() > 0);
+    CHECK(cells["Interpolated"].get<int>() + cells["Exact"].get<int>() ==
+          record["Cells"].get<int>());
+    CHECK(cells["NonUniform"].get<int>() == 0);
+    CHECK(cells["MeanKeyFallback"].get<int>() == 0);
+    CHECK(cells["NearMatched"].get<int>() == 0);
+    CHECK(record["InterpolatedCells"] == cells["Interpolated"]);
+    CHECK(record["UnusableModels"].get<int>() == 0);
+    // The cells of the record are pass A's (the same quadrature cells), each interpolated
+    // cell two rows; both members used, the mean key between them.
+    CHECK(record["Cells"] ==
+          ClusterFeature(alone)["Match"]["PlacedByLocalSeparation"]["Cells"]);
+    CHECK(family_rows.cluster_rows ==
+          2 * cells["Interpolated"].get<int>() + cells["Exact"].get<int>());
+    CHECK(family_rows.by_model.at("parallel-edge-cluster-s0.9") > 0);
+    CHECK(family_rows.by_model.at("parallel-edge-cluster-s1.1") > 0);
+    CHECK(family_rows.by_model.at("parallel-edge-cluster-mean") > 0);
+    // The keyed model's runtime is registered in place (1286 Q-3): its ModelIndex is pass
+    // A's; the members' runtimes append after it.
+    REQUIRE(family_rows.model_indices.at("parallel-edge-cluster-mean").size() == 1);
+    CHECK(*family_rows.model_indices.at("parallel-edge-cluster-mean").begin() ==
+          mean_model_index);
+    CHECK(*family_rows.model_indices.at("parallel-edge-cluster-s0.9").begin() >
+          mean_model_index);
+    CHECK(*family_rows.model_indices.at("parallel-edge-cluster-s1.1").begin() >
+          mean_model_index);
+    CHECK(family["Summary"]["PlacedByLocalSeparation"]["Families"]["ParallelEdgeCluster"]
+                ["Cells"]["Interpolated"] == cells["Interpolated"]);
+  }
+
+  // Pass C (decision 1303): a NON-uniform member (span 1.1, middle edge 1.3) is NOT
+  // eligible for the bracket (its section is not a uniform scaling of the keyed section
+  // within the near band): the family keys name it (IneligibleKeys 1) but no cell
+  // interpolates with it; with the mean key alone eligible there is no bracket -> every
+  // cell keeps the mean key (MeanKeyFallback, or NearMatched / Exact within the mean
+  // section's own band); the skew member places 0 rows; NonUniform 0 (no bracket was ever
+  // tried against it).
+  const fs::path skew_library = temp.temp_dir / "fabrication-process-cluster-r9b-skew.json";
+  WriteLibrary(skew_library, "unit-test-process-cluster-r9b-skew",
+               {{"parallel-edge-cluster-mean", {1.0, 1.0, 1.0}},
+                {"parallel-edge-cluster-skew", {1.0, 1.3, 1.1}}});
+  const auto [skew, skew_rows] = Preflight("skew", skew_library);
+  {
+    const auto record = Record(skew);
+    const auto &cells = record["Family"]["Cells"];
+    CHECK(record["Family"]["IneligibleKeys"].get<int>() == 1);
+    CHECK(record["Family"]["Keys"].size() == 2);
+    CHECK(cells["Interpolated"].get<int>() == 0);
+    CHECK(cells["NonUniform"].get<int>() == 0);
+    CHECK(cells["MeanKeyFallback"].get<int>() + cells["NearMatched"].get<int>() +
+              cells["Exact"].get<int>() ==
+          record["Cells"].get<int>());
+    CHECK(cells["MeanKeyFallback"].get<int>() > record["Cells"].get<int>() / 2);
+    CHECK(skew_rows.by_model.count("parallel-edge-cluster-skew") == 0);
+    CHECK(skew_rows.by_model.at("parallel-edge-cluster-mean") == skew_rows.cluster_rows);
+    CHECK(skew_rows.cluster_rows == alone_rows.cluster_rows);
+    CHECK(*skew_rows.model_indices.at("parallel-edge-cluster-mean").begin() ==
+          mean_model_index);
+  }
+
+  // Pass D (decision 1303): an eligible member FARTHER from the cells (s 1.3) is chosen
+  // over a NEARER skew one (span 1.1, middle edge 1.3): every cell above the mean
+  // interpolates between the mean key and the s 1.3 member (never the skew), the cells
+  // below between the mean key and the s 0.9 member; NonUniform 0; the skew member places 0
+  // rows.
+  const fs::path farther_library =
+      temp.temp_dir / "fabrication-process-cluster-r9b-farther.json";
+  WriteLibrary(farther_library, "unit-test-process-cluster-r9b-farther",
+               {{"parallel-edge-cluster-mean", {1.0, 1.0, 1.0}},
+                {"parallel-edge-cluster-s0.9", {1.0, 0.9, 0.9}},
+                {"parallel-edge-cluster-skew", {1.0, 1.3, 1.1}},
+                {"parallel-edge-cluster-s1.3", {1.0, 1.3, 1.3}}});
+  const auto [farther, farther_rows] = Preflight("farther", farther_library);
+  {
+    const auto record = Record(farther);
+    const auto &cells = record["Family"]["Cells"];
+    CHECK(record["Family"]["IneligibleKeys"].get<int>() == 1);
+    CHECK(cells["Interpolated"].get<int>() + cells["Exact"].get<int>() ==
+          record["Cells"].get<int>());
+    CHECK(cells["NonUniform"].get<int>() == 0);
+    CHECK(cells["MeanKeyFallback"].get<int>() == 0);
+    CHECK(farther_rows.by_model.count("parallel-edge-cluster-skew") == 0);
+    CHECK(farther_rows.by_model.at("parallel-edge-cluster-s1.3") > 0);
+    CHECK(farther_rows.by_model.at("parallel-edge-cluster-s0.9") > 0);
+    CHECK(farther_rows.by_model.at("parallel-edge-cluster-mean") > 0);
   }
 #endif
 }
@@ -10353,7 +10760,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 23);
+    CHECK(stale["Version"] == 24);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
