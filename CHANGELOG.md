@@ -42,6 +42,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     forward solve applied in one exchange. This speeds up the repeated solves of STRUMPACK
     as the coarse solver at high process counts, with unchanged results.
     [PR 1143](https://github.com/awslabs/palace/pull/1143).
+  - Added SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#250](https://github.com/xiaoyeli/superlu_dist/pull/250),
+    [xiaoyeli/superlu_dist#251](https://github.com/xiaoyeli/superlu_dist/pull/251) and
+    [xiaoyeli/superlu_dist#252](https://github.com/xiaoyeli/superlu_dist/pull/252), which
+    lower the communication cost of SuperLU_DIST as the coarse solver at high process
+    counts: point-to-point exchanges of only the nonempty messages instead of dense
+    all-to-all collectives in the symbolic factorization and in the final permutation of
+    the solution, a static schedule reused by refactorizations with the same sparsity
+    pattern, cached row indices for the redistributions of the right-hand side, the matrix
+    values for MC64 gathered on one process only, and fewer barriers in the triangular
+    solves. Results are unchanged.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every

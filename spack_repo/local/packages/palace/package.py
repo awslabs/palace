@@ -189,6 +189,39 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ],
     )
 
+    # The SuperLU_DIST version of the superbuild, with
+    # https://github.com/xiaoyeli/superlu_dist/pull/250,
+    # https://github.com/xiaoyeli/superlu_dist/pull/251 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/252 for lower communication costs in
+    # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
+    # the Palace variants are not folded into the patch condition.
+    depends_on(
+        "superlu-dist@9.3.1",
+        when="@develop+superlu-dist",
+        patches=[
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/commit/"
+                "e349e08c7ebd16e7dd932d9ffb0e13081f225fa9.diff",
+                sha256="46c1cf726cebd589971c2337e54af5aa0fab21667f120a766865aea940448c02",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/compare/"
+                "317342a2ea12dd003817090ac0870037c334b91e..."
+                "a2eb138450ca24ec2b9756f24d136054dc23eadf.diff",
+                sha256="b20fa2513e2ce4048f6741b0289771ffd5ebadee41903dcb95b9ec0d42310614",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/compare/"
+                "a2eb138450ca24ec2b9756f24d136054dc23eadf..."
+                "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0.diff",
+                sha256="5c3b08d6445aedb9aa4cedc3e4603353a4f0657912382ea1170a837a285f2292",
+                when="@9.3.1",
+            ),
+        ],
+    )
+
     # https://github.com/hypre-space/hypre/pull/1651: hybrid Gauss-Seidel relaxation
     # without the halo exchange of a zero initial guess, as in the superbuild. Kept off the
     # `with` blocks so the Palace variants are not folded into the patch condition.
