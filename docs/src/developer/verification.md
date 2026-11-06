@@ -138,6 +138,51 @@ palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 mpirun -np 2 palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 ```
 
+## Floquet-port propagation phase in vacuum
+
+The `floquet_vacuum_phase` regression uses the dielectric-grating mesh with both volume
+attributes assigned to vacuum. The periodic wave vector is zero, and the incident field is
+the normally incident TE mode. The two ports are separated by ``L = 0.08\,\mathrm{m}``.
+At ``f = 2\,\mathrm{GHz}``, only the specular diffraction order propagates. The exact
+reflection and transmission amplitudes, referred to the port planes, are
+
+```math
+r = 0, \qquad t = \exp\left(-i\frac{2\pi f L}{c_0}\right),
+\qquad c_0 = 299792458\,\mathrm{m/s}.
+```
+
+The negative propagation phase follows from *Palace*'s positive-time phasor convention.
+At normal incidence, the two z-normal ports use the same transverse polarization basis.
+The test reconstructs complex amplitudes from the magnitude and phase columns, compares
+the transmitted TE amplitude with the expression above, and checks that reflection and
+cross-polarized transmission vanish. It also checks that the total outgoing power is one.
+The reference CSV supplies the expected output layout; its numerical values are not used
+as the physical reference.
+
+A polynomial-order study on this mesh gave the following absolute transmission errors:
+
+| Order | Absolute complex transmission error |
+|:-----:|:-----------------------------------:|
+| 1     | ``6.59\times10^{-3}``               |
+| 2     | ``5.54\times10^{-6}``               |
+| 3     | ``1.99\times10^{-9}``               |
+
+The order-3 regression uses an absolute amplitude tolerance of ``2\times10^{-8}``, above
+the measured discretization error but below the error at order 2, and a power-balance
+tolerance of ``10^{-8}``. These tolerances accompany a linear-solver tolerance of
+``10^{-10}``. Power conservation alone is insufficient: the order-1 solution has an
+outgoing-power residual of ``1.68\times10^{-13}`` while retaining a much larger phase error.
+
+The focused test can be run in serial or with two MPI ranks:
+
+```bash
+palace-unit-tests "floquet_vacuum_phase" --skip-benchmarks
+mpirun -np 2 palace-unit-tests "floquet_vacuum_phase" --skip-benchmarks
+```
+
+This verifies homogeneous propagation and port phase conventions. It does not verify
+dielectric-interface matching, material absorption or PML truncation.
+
 ## References
 
  1. D. Garcia-Donoro, L. E. Garcia-Castillo, and S. W. Ting, "Verification Process of
