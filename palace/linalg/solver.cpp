@@ -314,7 +314,13 @@ void MfemWrapperSolver<OperType>::FinishSetup(
   probe.Stop();
   probe.Record((role == "Main") ? std::string("CoarseFactorization")
                                 : "CoarseFactorization/" + role);
-  if (A_check && A_check->Height() == bx[0].first->Size())
+  // The check is collective on the matrix communicator: all ranks must agree to run it.
+  int check = (A_check && A_check->Height() == bx[0].first->Size()) ? 1 : 0;
+  if (A_check)
+  {
+    MPI_Allreduce(MPI_IN_PLACE, &check, 1, MPI_INT, MPI_MIN, A_check->GetComm());
+  }
+  if (check)
   {
     double res = 0.0;
     for (const auto &[b, x] : bx)
