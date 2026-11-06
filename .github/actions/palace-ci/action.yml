@@ -137,8 +137,10 @@ runs:
             # -lc seems to be required for intel compilers
             metis:
               require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
+            # Keep ParMETIS out of CI because of its license: the solvers are built without
+            # it, and concretization fails if anything needs it.
             parmetis:
-              require: ldflags=-lc
+              buildable: false
         EOF
 
         # The Intel compiler has problems with C/C++/Fortran interop in MUMPS.
