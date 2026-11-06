@@ -100,11 +100,14 @@ void WavePortReducedModel::ConfigureTraining(std::size_t max_basis_size)
   basis_cap = std::max(max_basis_size, static_cast<std::size_t>(num_modes));
 }
 
-void WavePortReducedModel::Enable(bool enable, double adaptive_tol,
+void WavePortReducedModel::Enable(bool enable, std::size_t basis_size,
+                                  std::size_t basis_limit, double adaptive_tol,
                                   const ComplexOperator *truth_operator,
                                   std::complex<double> truth_omega, double truth_sigma)
 {
-  enabled = enable;
+  stats.basis_limit = basis_limit;
+  stats.over_basis_limit = enable && basis_limit > 0 && basis_size > basis_limit;
+  enabled = enable && !stats.over_basis_limit;
   stats.offline_basis_rank = basis.size();
   const std::size_t half_rank = basis.size() / 2 + basis.size() % 2;
   MFEM_VERIFY(static_cast<std::size_t>(num_modes) <=
@@ -114,39 +117,16 @@ void WavePortReducedModel::Enable(bool enable, double adaptive_tol,
   MFEM_VERIFY(basis.size() <= std::numeric_limits<std::size_t>::max() - headroom,
               "Wave-port PROM online basis capacity overflow!");
   basis_cap = std::max(basis.size() + headroom, static_cast<std::size_t>(num_modes));
+  if (basis_limit > 0)
+  {
+    basis_cap = std::min(basis_cap, std::max(basis_limit, basis.size()));
+  }
   stats.online_basis_cap = basis_cap;
   tolerance = std::max(10.0 * eig_tol, std::min(1.0e-4, 0.01 * adaptive_tol));
   if (enabled && wave_port)
   {
     BuildAffineModel(truth_operator, truth_omega, truth_sigma);
   }
-}
-
-void WavePortReducedModel::RecordExactSolve(double seconds)
-{
-  stats.exact_solves++;
-  if (basis_cap > 0)
-  {
-    exact_solve_times.push_back(seconds);
-  }
-}
-
-double WavePortReducedModel::GetTypicalExactSolveTime() const
-{
-  if (exact_solve_times.empty())
-  {
-    return 0.0;
-  }
-  std::vector<double> times(exact_solve_times);
-  const auto median = times.begin() + static_cast<std::ptrdiff_t>(times.size() / 2);
-  std::ranges::nth_element(times, median);
-  return *median;
-}
-
-void WavePortReducedModel::Retire()
-{
-  enabled = false;
-  stats.retired = true;
 }
 
 void WavePortReducedModel::RecordReducedSolve()
@@ -358,7 +338,7 @@ void WavePortReducedModel::ObserveExactEigenvectors(int num_converged,
                                                     const EigenvalueSolver &eigen,
                                                     const std::vector<int> &mode_perm)
 {
-  if (num_converged <= 0 || basis_cap == 0 || stats.retired)
+  if (num_converged <= 0 || basis_cap == 0 || stats.over_basis_limit)
   {
     return;
   }

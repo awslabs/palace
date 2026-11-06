@@ -94,8 +94,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     changes with frequency, as for lossy lines, where every exact port solve adds a basis
     vector. Its projections and residual Gram matrix are now built with dense matrix
     products instead of one inner product per entry, a reduced solve checks the residuals of
-    only the modes nearest to the target, and the reduced model is retired in favor of exact
-    port solves when those are cheaper.
+    only the modes nearest to the target, and the reduced model is only used with a basis of
+    at most `2√N` vectors for `N` port unknowns, beyond which exact port solves are cheaper.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
 
 #### Bug Fixes

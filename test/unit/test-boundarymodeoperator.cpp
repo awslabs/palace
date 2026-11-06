@@ -73,7 +73,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  std::size_t reduced_training_capacity = 16,
                                  std::vector<double> reduced_training_factors = {0.9, 1.1},
                                  double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8,
-                                 bool reduced_cost_check = false)
+                                 double reduced_basis_limit_factor = 0.0)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -160,7 +160,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     {
       solve_at(factor * omega);
     }
-    mode_solver.EnableReducedModel(adaptive_tol, reduced_cost_check);
+    mode_solver.EnableReducedModel(adaptive_tol, reduced_basis_limit_factor);
   }
 
   auto result = solve_at(omega).first;
@@ -642,40 +642,54 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   }
 }
 
-// With the cost check, the reduced model is retired at the first reduced solve that is not
-// cheaper than a typical exact solve, and the later solves are exact without enriching the
-// basis. The decision depends on timing, but it must be consistent across the ranks and
-// either way give the modes of the exact solve.
-TEST_CASE("ModeEigenSolver reduced model cost check",
+// With a basis size limit, the reduced model is only used while its basis is within the
+// limit, which also caps its online enrichment, and otherwise all solves are exact without
+// enriching the basis. The decision only depends on the sizes of the basis and of the
+// problem, so it is the same on all processes and in all runs.
+TEST_CASE("ModeEigenSolver reduced model basis size limit",
           "[boundarymodeoperator][Serial][Parallel]")
 {
   constexpr int num_modes = 3, num_evaluations = 4;
   auto exact =
       SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {});
   REQUIRE(exact.num_converged >= num_modes);
-  auto checked = SolveRectangularModes(
+
+  // The basis of the two training solves is within the limit for wave ports, of 2√N vectors
+  // (55 vectors for the N = 761 unknowns of this cross-section). The eigenproblems are
+  // solved accurately, as for the guarded reduced solve above.
+  auto within = SolveRectangularModes(
       1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
-      {0.9, 1.1}, 1.0e-3, 1.0e-8, true);
-  REQUIRE(checked.num_converged >= num_modes);
-  const auto &stats = checked.reduced_stats;
-  CHECK(stats.exact_solve_time > 0.0);
-  CHECK(stats.reduced_solve_time > 0.0);
-  CHECK(stats.retired == !(stats.reduced_solve_time < stats.exact_solve_time));
-  if (stats.retired)
+      {0.9, 1.1}, 1.0e-3, 1.0e-12, 2.0);
+  REQUIRE(within.num_converged >= num_modes);
+  const auto &within_stats = within.reduced_stats;
+  CHECK_FALSE(within_stats.over_basis_limit);
+  CHECK(within_stats.basis_limit == 55);
+  CHECK(within_stats.basis_limit >= within_stats.offline_basis_rank);
+  CHECK(within_stats.online_basis_cap <= within_stats.basis_limit);
+  CHECK(within_stats.reduced_solves == num_evaluations);
+  CHECK(within_stats.exact_solves == 2);
+
+  // The same basis is above a limit of a single vector.
+  auto over = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
+      {0.9, 1.1}, 1.0e-3, 1.0e-12, 1.0e-3);
+  REQUIRE(over.num_converged >= num_modes);
+  const auto &over_stats = over.reduced_stats;
+  CHECK(over_stats.over_basis_limit);
+  CHECK(over_stats.basis_limit == 1);
+  CHECK(over_stats.reduced_solves == 0);
+  CHECK(over_stats.exact_solves == 2 + num_evaluations);
+  CHECK(over.reduced_basis_size == over_stats.offline_basis_rank);
+
+  for (const auto *result : {&within, &over})
   {
-    CHECK(stats.reduced_solves == 1);
-    CHECK(stats.exact_solves == 2 + num_evaluations - 1);
-    CHECK(checked.reduced_basis_size == checked.first_target_basis_size);
-  }
-  else
-  {
-    CHECK(stats.reduced_solves == num_evaluations);
-    CHECK(stats.exact_solves == 2);
-  }
-  for (int i = 0; i < num_modes; i++)
-  {
-    CHECK_THAT(checked.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
-    CHECK_THAT(checked.final_kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+    REQUIRE(result->kn.size() >= num_modes);
+    REQUIRE(result->final_kn.size() >= num_modes);
+    for (int i = 0; i < num_modes; i++)
+    {
+      CHECK_THAT(result->kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+      CHECK_THAT(result->final_kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+    }
   }
 }
 

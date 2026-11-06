@@ -42,6 +42,14 @@ using namespace std::complex_literals;
 namespace
 {
 
+// The reduced wave-port model is only used with a basis of at most this factor times √N
+// vectors, for N port unknowns: at the limit, a reduced solve, dominated by the O(n³) dense
+// eigenvalue problem on the basis of n vectors, costs a fraction of an exact solve of the
+// sparse cross-section problem, roughly O(N^{3/2}): from about 1/15 to 1/2 for the wave
+// ports of the regression cases and the lossy microstrip of issue 1109, at their
+// eigenvalue tolerances.
+constexpr double WAVEPORT_REDUCED_BASIS_LIMIT_FACTOR = 2.0;
+
 // Rank-k, complex-symmetric wave-port operator K = Σ_k g_k s_k s_kᵀ. Unlike the Hermitian
 // Floquet DtN (v vᴴ), the outer product is unconjugated (s sᵀ), which preserves the Maxwell
 // system operator's complex-symmetry and hence S-parameter reciprocity. Used to add the
@@ -1160,10 +1168,11 @@ void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
 
 void WavePortData::EnableReducedModel(double adaptive_tol)
 {
-  // Use the reduced model only while its solves are cheaper than exact ones: the exact
-  // solve of a small port cross-section can be cheaper than the dense reduced solve of a
-  // port mode whose shape changes with frequency, with a basis of many vectors.
-  mode_solver->EnableReducedModel(adaptive_tol, /*cost_check=*/true);
+  // Use the reduced model only with a basis small enough for its solves to be cheaper than
+  // exact ones: the exact solve of a small port cross-section can be cheaper than the dense
+  // reduced solve of a port mode whose shape changes with frequency, with a basis of many
+  // vectors.
+  mode_solver->EnableReducedModel(adaptive_tol, WAVEPORT_REDUCED_BASIS_LIMIT_FACTOR);
 }
 
 ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
@@ -1900,11 +1909,13 @@ void WavePortOperator::PrintReducedModelStats() const
                idx, data.GetReducedBasisSize(), stats.online_basis_cap,
                stats.reduced_solves, stats.exact_solves, stats.fallbacks,
                stats.worst_residual);
-    if (stats.exact_solve_time > 0.0)
+    if (stats.over_basis_limit)
     {
-      Mpi::Print("  reduced/exact solve time = {:.2e}/{:.2e} s{}\n",
-                 stats.reduced_solve_time, stats.exact_solve_time,
-                 stats.retired ? ": exact solves are cheaper, reduced model retired" : "");
+      Mpi::Print(
+          "  exact solves only: the basis is larger than {:d} = {:.1f}√N vectors for "
+          "N = {:d} port unknowns\n",
+          stats.basis_limit, WAVEPORT_REDUCED_BASIS_LIMIT_FACTOR,
+          data.GlobalTrueNDSize() + data.GlobalTrueH1Size());
     }
   }
 }

@@ -624,20 +624,20 @@ eigenpair ``(\lambda, \bm{x})`` is accepted only if its full-space backward resi
 is below a tolerance derived from the port eigensolver tolerance and `"AdaptiveTol"`.
 Otherwise, or whenever the reduced problem does not yield the requested number of
 well-separated modes, the exact eigenvalue problem is solved instead and its eigenvector
-enriches the basis, up to a fixed capacity above the offline rank. The reduced model is
-only used while its solves are cheaper than exact ones: a reduced solve that takes at least
-as long as a typical exact solve at the same tolerances (the median of the previous exact
-solves, such as those of the offline phase) retires it, and the port modes are then solved
-exactly for the rest of the sweep. This happens for a small port cross-section with a port
-mode whose shape changes with frequency, as for a lossy line, where every exact solve adds a
-basis vector. The port mode reconstructed from an accepted reduced eigenvector feeds the
-excitation, the modal correction, and the S-parameter postprocessing exactly as an exact
-mode would.
+enriches the basis, up to a fixed capacity above the offline rank. The dense reduced problem
+on a basis of ``n`` vectors costs ``\mathcal{O}(n^3)``, and an exact solve of the sparse
+cross-section problem with ``N`` unknowns roughly ``\mathcal{O}(N^{3/2})``: the reduced model
+is only used with a basis of at most ``2\sqrt{N}`` vectors, a limit which also caps its
+enrichment, and otherwise all port modes are solved exactly. A basis above the limit occurs
+for a small port cross-section with a port mode whose shape changes with frequency, as for a
+lossy line, where every exact solve adds a basis vector. The port mode reconstructed from an
+accepted reduced eigenvector feeds the excitation, the modal correction, and the S-parameter
+postprocessing exactly as an exact mode would.
 Complex-frequency queries (from the eigenmode solver) and the cross-section samples taken
 for circuit synthesis always use the exact solver. At the end of the sweep,
 *Palace* prints per-port statistics: the basis size and capacity, the numbers of reduced
-and exact solves, the number of fallbacks, the worst accepted residual, and the compared
-times of a reduced and an exact solve.
+and exact solves, the number of fallbacks, the worst accepted residual, and whether the basis
+is above the size limit.
 
 The sample-selection interpolation is based on the quadratic linearization and does not
 fully represent arbitrary non-quadratic frequency dependence. If the non-quadratic

@@ -109,11 +109,10 @@ public:
   // Enable guarded Rayleigh-Ritz evaluation for subsequent real-frequency solves. The
   // reduced tolerance is derived conservatively from the adaptive driven tolerance and
   // the configured eigensolver tolerance. Complex-frequency solves always remain exact.
-  // With cost_check, the reduced model is retired at the first reduced solve that takes at
-  // least as long as a typical exact solve at the current tolerances (the median of the
-  // exact real-frequency solves since the tolerances last changed), and the remaining
-  // solves are exact.
-  void EnableReducedModel(double adaptive_tol, bool cost_check = false);
+  // With basis_limit_factor > 0, the reduced model is only used with a basis of at most
+  // basis_limit_factor·√N vectors for N unknowns, which also caps its online enrichment:
+  // otherwise, all solves are exact.
+  void EnableReducedModel(double adaptive_tol, double basis_limit_factor = 0.0);
 
   const ReducedModelStats &GetReducedModelStats() const
   {
@@ -220,9 +219,6 @@ private:
 
   // Wave-port-only projection/training state is isolated from the exact eigensolver.
   std::unique_ptr<WavePortReducedModel> reduced_model;
-
-  // Whether to retire the reduced model when its solves are not cheaper than exact ones.
-  bool reduced_cost_check = false;
 
   // Best portable single-vector initial space for subsequent exact solves.
   ComplexVector warm_start;
