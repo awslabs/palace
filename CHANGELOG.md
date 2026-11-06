@@ -60,6 +60,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Frequency-dependent boundaries enter the anchor solves at their static (DC) limit: an
     inductive `RationalImpedance` keeps its DC term, while `WavePort`, `Conductivity`, and
     second-order `Absorbing` terms drop out. SchemaVer 4-5-0
+    [PR 1157](https://github.com/awslabs/palace/pull/1157).
 
 #### Interface Changes
 
