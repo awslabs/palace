@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_AMG_HPP
 #define PALACE_LINALG_AMG_HPP
 
+#include <memory>
 #include <mfem.hpp>
 #include "utils/iodata.hpp"
 
@@ -16,10 +17,13 @@ namespace palace
 class BoomerAmgSolver : public mfem::HypreBoomerAMG
 {
 private:
-  // Multicomponent right-hand side and solution for ArrayMult, and whether the
-  // multicomponent solve is unavailable for this solver configuration.
-  mutable HYPRE_ParVector B_mv = nullptr, X_mv = nullptr;
-  mutable bool mv_failed = false;
+  struct ParVectorDeleter
+  {
+    void operator()(hypre_ParVector *v) const { hypre_ParVectorDestroy(v); }
+  };
+
+  // Multicomponent right-hand side and solution for ArrayMult.
+  mutable std::unique_ptr<hypre_ParVector, ParVectorDeleter> B_mv, X_mv;
 
 public:
   BoomerAmgSolver(int cycle_it = 1, int smooth_it = 1, bool agg_coarsen = true,
@@ -36,14 +40,19 @@ public:
   void Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const override;
   using mfem::HypreBoomerAMG::Mult;
 
+  void SetOperator(const mfem::Operator &op) override;
+
   // Apply the V-cycle to several right-hand sides at once (for example the real and
-  // imaginary parts of a complex vector), with one message per neighbor for all of them.
-  // Each component sees the same operations as in Mult, up to the order of the floating
-  // point operations in the sparse matrix-vector products.
+  // imaginary parts of a complex vector), with one message per neighbor for all of them,
+  // when MultiComponentSupported(). Each component sees the same operations as in Mult.
+  // Otherwise, apply it to each right-hand side separately.
   void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
                  mfem::Array<mfem::Vector *> &Y) const override;
 
-  ~BoomerAmgSolver() override;
+  // Whether hypre applies BoomerAMG to multicomponent vectors with the relaxation and
+  // coarse solve used here: with the hypre patch for them, on the host and with one
+  // thread.
+  static bool MultiComponentSupported();
 };
 
 }  // namespace palace

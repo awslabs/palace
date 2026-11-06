@@ -5,7 +5,6 @@
 
 #include <algorithm>
 
-#include <_hypre_parcsr_ls.h>
 #include <_hypre_parcsr_mv.h>
 
 namespace palace
@@ -48,92 +47,82 @@ void BoomerAmgSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &
   mfem::HypreBoomerAMG::Mult(b, x);
 }
 
-BoomerAmgSolver::~BoomerAmgSolver()
+void BoomerAmgSolver::SetOperator(const mfem::Operator &op)
 {
-  for (auto *v : {B_mv, X_mv})
-  {
-    if (v)
-    {
-      hypre_ParVectorDestroy((hypre_ParVector *)v);
-    }
-  }
+  mfem::HypreBoomerAMG::SetOperator(op);
+  B_mv.reset();
+  X_mv.reset();
+}
+
+bool BoomerAmgSolver::MultiComponentSupported()
+{
+#if defined(HYPRE_BOOMERAMG_MULTICOMPONENT) && !defined(HYPRE_USING_PERSISTENT_COMM)
+  return hypre_NumThreads() == 1 && !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+#else
+  return false;
+#endif
 }
 
 void BoomerAmgSolver::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
                                 mfem::Array<mfem::Vector *> &Y) const
 {
-  // Multicomponent vectors are only supported by the host relaxation and coarse solve.
+  MFEM_VERIFY(X.Size() == Y.Size(),
+              "Mismatch in the number of vectors in BoomerAmgSolver::ArrayMult!");
   const int nv = X.Size();
-  if (nv < 2 || iterative_mode || mv_failed ||
-      mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  if (nv < 2 || iterative_mode || !MultiComponentSupported())
   {
     mfem::HypreBoomerAMG::ArrayMult(X, Y);
     return;
   }
   MFEM_VERIFY(A, "HypreParMatrix A is missing for BoomerAmgSolver::ArrayMult!");
+  const int n = A->Height();
+  for (int k = 0; k < nv; k++)
+  {
+    MFEM_ASSERT(X[k] && X[k]->Size() == n && Y[k] && Y[k]->Size() == n,
+                "Vector size mismatch in BoomerAmgSolver::ArrayMult!");
+  }
   if (!setup_called)
   {
     Setup(*X[0], *Y[0]);
   }
+
+  // The multicomponent vectors are reset with the operator.
   hypre_ParCSRMatrix *hA = *A;
-  const int n = A->Height();
-  auto *hB = (hypre_ParVector *)B_mv;
-  if (!hB || hypre_ParVectorNumVectors(hB) != nv ||
-      hypre_VectorSize(hypre_ParVectorLocalVector(hB)) != n)
+  if (!B_mv || hypre_ParVectorNumVectors(B_mv.get()) != nv)
   {
     for (auto *v : {&B_mv, &X_mv})
     {
-      if (*v)
-      {
-        hypre_ParVectorDestroy((hypre_ParVector *)*v);
-      }
-      auto *hv = hypre_ParMultiVectorCreate(hypre_ParCSRMatrixComm(hA),
-                                            hypre_ParCSRMatrixGlobalNumRows(hA),
-                                            hypre_ParCSRMatrixRowStarts(hA), nv);
-      hypre_ParVectorInitialize(hv);
-      *v = (HYPRE_ParVector)hv;
+      v->reset(hypre_ParMultiVectorCreate(hypre_ParCSRMatrixComm(hA),
+                                          hypre_ParCSRMatrixGlobalNumRows(hA),
+                                          hypre_ParCSRMatrixRowStarts(hA), nv));
+      hypre_ParVectorInitialize(v->get());
     }
-    hB = (hypre_ParVector *)B_mv;
   }
-  auto *hX = (hypre_ParVector *)X_mv;
-  HYPRE_Real *b = hypre_VectorData(hypre_ParVectorLocalVector(hB));
+  HYPRE_Real *b = hypre_VectorData(hypre_ParVectorLocalVector(B_mv.get()));
   for (int k = 0; k < nv; k++)
   {
     const auto *XK = X[k]->HostRead();
     std::copy(XK, XK + n, b + k * n);
   }
-  hypre_ParVectorSetZeros(hX);
-  // An error of the multicomponent solve itself means that multicomponent vectors are not
-  // supported for this configuration (relaxation type, threads): use separate solves.
-  // Errors raised by earlier hypre calls are kept.
-  const HYPRE_Int prev_error = hypre_error_flag;
-  hypre_error_flag = 0;
-  HYPRE_BoomerAMGSolve(*this, *A, B_mv, X_mv);
-  if (hypre_error_flag & HYPRE_ERROR_GENERIC)
-  {
-    hypre_error_flag = prev_error;
-    mv_failed = true;
+  hypre_ParVectorSetZeros(X_mv.get());
 
-    // The matrix-vector products of the failed solve leave the communication packages of
-    // the hierarchy set up for several components, and a hybrid Gauss-Seidel relaxation
-    // without multicomponent support does not reset them for a single vector: reset them
-    // before the separate solves.
-    auto *amg_data = static_cast<hypre_ParAMGData *>(
-        static_cast<void *>(static_cast<HYPRE_Solver>(*this)));
-    for (int l = 0; l < hypre_ParAMGDataNumLevels(amg_data); l++)
+  // Same error handling as mfem::HypreSolver::Mult.
+  const HYPRE_Int err = HYPRE_BoomerAMGSolve(*this, *A, (HYPRE_ParVector)B_mv.get(),
+                                             (HYPRE_ParVector)X_mv.get());
+  if (error_mode == WARN_HYPRE_ERRORS)
+  {
+    if (err)
     {
-      hypre_ParCSRMatrix *Al = hypre_ParAMGDataAArray(amg_data)[l];
-      if (Al && hypre_ParCSRMatrixCommPkg(Al))
-      {
-        hypre_ParCSRCommPkgUpdateVecStarts(hypre_ParCSRMatrixCommPkg(Al), 1,
-                                           hypre_ParCSRMatrixNumRows(Al), 1);
-      }
+      MFEM_WARNING("Error during solve! Error code: " << err);
     }
-    mfem::HypreBoomerAMG::ArrayMult(X, Y);
-    return;
   }
-  hypre_error_flag |= prev_error;
-  const HYPRE_Real *x = hypre_VectorData(hypre_ParVectorLocalVector(hX));
+  else if (error_mode == ABORT_HYPRE_ERRORS)
+  {
+    MFEM_VERIFY(!err, "Error during solve! Error code: " << err);
+  }
+  hypre_error_flag = 0;
+
+  const HYPRE_Real *x = hypre_VectorData(hypre_ParVectorLocalVector(X_mv.get()));
   for (int k = 0; k < nv; k++)
   {
     auto *YK = Y[k]->HostWrite();
