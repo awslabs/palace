@@ -28,6 +28,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrices are assembled with one evaluation of each basis field at the interface quadrature
     points, and checked on the synthesized eigenvectors against the interface energy
     postprocessing.
+    [PR 1156](https://github.com/awslabs/palace/pull/1156).
 
 #### Performance Improvements
 
