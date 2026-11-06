@@ -19,6 +19,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/perfprobes.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -28,6 +29,7 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 {
   const bool world_root = Mpi::Root(comm);
   const int world_size = Mpi::Size(comm);
+  perf::SetVerification(iodata.problem.verbose);
 
   std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
   {

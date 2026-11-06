@@ -6,9 +6,12 @@
 
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -112,6 +115,17 @@ private:
 
   // Call the wrapped solver's SetOperator.
   void SetInnerOperator(const mfem::HypreParMatrix &op);
+  // Performance probes: memory of the factorization (SetOperator and the first Mult) for
+  // direct solvers, hierarchy summary for hypre solvers, and the optional residual check of
+  // the first solve after each setup (matrix not owned).
+  std::string role;
+  bool direct;
+  mutable bool first_mult = false;
+  mutable perf::MemoryProbe probe;
+  const mfem::HypreParMatrix *A_check = nullptr;
+  void BeginSetup();
+  void EndSetup(const mfem::HypreParMatrix *Ac);
+  void FinishSetup(const std::vector<std::pair<const Vector *, const Vector *>> &bx) const;
 
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
@@ -119,7 +133,9 @@ public:
                     bool reorder_reuse = true)
     : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
       save_assembled(save_assembled), complex_matrix(complex_matrix),
-      drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse)
+      drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse),
+      role(perf::CurrentRole()),
+      direct(!dynamic_cast<const mfem::HypreSolver *>(this->pc.get()))
   {
     InitEagerSetup();
   }

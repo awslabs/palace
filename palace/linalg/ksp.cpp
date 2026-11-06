@@ -316,7 +316,9 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
     perf_solve_tally(
         perf::RegisterTally(fmt::format("{}/LinearSolve", this->role), Timer::KSP)),
     perf_setup_tally(perf::RegisterTally(fmt::format("{}/LinearSolverSetup", this->role),
-                                         Timer::KSP_SETUP))
+                                         Timer::KSP_SETUP)),
+    perf_basis(perf::RegisterCounter("Memory/KrylovBasis/" + this->role + "/Megabytes",
+                                     perf::Reduce::STATS, perf::Accumulate::MAX))
 {
   if (this->pc)
   {
@@ -371,6 +373,10 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   ksp_mult_it += ksp->GetNumIterations();
   perf::Add(perf_solves, 1);
   perf::Add(perf_its, ksp->GetNumIterations());
+  if (const auto bytes = ksp->GetBasisBytes())
+  {
+    perf::SetMax(perf_basis, static_cast<double>(bytes) / (1024.0 * 1024.0));
+  }
 }
 
 template class BaseKspSolver<Operator>;

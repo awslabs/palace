@@ -13,19 +13,36 @@ namespace palace
 template <>
 void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 {
+  BeginSetup();
+  const mfem::HypreParMatrix *Ac = nullptr;
   // Operator is always assembled as a HypreParMatrix.
   if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
   {
     SetInnerOperator(*hA);
+    Ac = hA;
   }
   else
   {
     const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
     MFEM_VERIFY(PtAP,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    SetInnerOperator(!save_assembled ? *PtAP->StealParallelAssemble()
-                                     : PtAP->ParallelAssemble());
+    if (!save_assembled)
+    {
+      auto hA = PtAP->StealParallelAssemble();
+      SetInnerOperator(*hA);
+      if (perf::Verification())
+      {
+        A = std::move(hA);  // Kept for the residual check
+        Ac = A.get();
+      }
+    }
+    else
+    {
+      Ac = &PtAP->ParallelAssemble();
+      SetInnerOperator(*Ac);
+    }
   }
+  EndSetup(Ac);
   this->height = op.Height();
   this->width = op.Width();
 }
@@ -33,6 +50,8 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 template <>
 void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
+  BeginSetup();
+  const mfem::HypreParMatrix *Ac = nullptr;
   // Assemble the real and imaginary parts, then add.
   // XX TODO: Test complex matrix assembly if coarse solve supports it.
   const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
@@ -89,10 +108,11 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       DropSmallEntries();
     }
     SetInnerOperator(*A);
-    if (!save_assembled)
+    if (!save_assembled && !perf::Verification())
     {
       A.reset();
     }
+    Ac = A.get();
   }
   else if (hAr)
   {
@@ -101,10 +121,12 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
       SetInnerOperator(*A);
+      Ac = A.get();
     }
     else
     {
       SetInnerOperator(*hAr);
+      Ac = (PtAPr && !save_assembled) ? nullptr : hAr;
     }
     if (PtAPr && !save_assembled)
     {
@@ -118,10 +140,12 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
       SetInnerOperator(*A);
+      Ac = A.get();
     }
     else
     {
       SetInnerOperator(*hAi);
+      Ac = (PtAPi && !save_assembled) ? nullptr : hAi;
     }
     if (PtAPi && !save_assembled)
     {
@@ -132,6 +156,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   {
     MFEM_ABORT("Empty ComplexOperator for MfemWrapperSolver!");
   }
+  EndSetup(Ac);
   this->height = op.Height();
   this->width = op.Width();
 }
@@ -146,7 +171,16 @@ void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
   {
     perf::Add(perf_applies, 1);
   }
+  const bool first = std::exchange(first_mult, false);
+  if (first && direct)
+  {
+    probe.Start();
+  }
   pc->Mult(x, y);
+  if (first)
+  {
+    FinishSetup({{&x, &y}});
+  }
 }
 
 template <>
@@ -160,6 +194,11 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   {
     perf::Add(perf_applies, 1);
   }
+  const bool first = std::exchange(first_mult, false);
+  if (first && direct)
+  {
+    probe.Start();
+  }
   if (pc->Height() == x.Size())
   {
     mfem::Array<const Vector *> X(2);
@@ -169,6 +208,10 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
     Y[0] = &y.Real();
     Y[1] = &y.Imag();
     pc->ArrayMult(X, Y);
+    if (first)
+    {
+      FinishSetup({{X[0], Y[0]}, {X[1], Y[1]}});
+    }
   }
   else
   {
@@ -181,6 +224,10 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
     linalg::SetSubVector(X, 0, x.Real());
     linalg::SetSubVector(X, Nx, x.Imag());
     pc->Mult(X, Y);
+    if (first)
+    {
+      FinishSetup({{&X, &Y}});
+    }
     Y.ReadWrite();
     yr.MakeRef(Y, 0, Ny);
     yi.MakeRef(Y, Ny, Ny);
@@ -226,13 +273,62 @@ void MfemWrapperSolver<OperType>::SetInnerOperator(const mfem::HypreParMatrix &o
   if (perf_setups >= 0)
   {
     // Sparse direct solvers reuse the previous symbolic factorization when requested.
-    const bool direct = !dynamic_cast<const mfem::HypreSolver *>(pc.get());
     perf::Add(perf_setups, 1);
     perf::Add(perf_refact, (direct && reorder_reuse && num_setups > 0) ? 1 : 0);
     perf::Set(perf_rows, op.Height());
     perf::Set(perf_rows_rank, op.Height());
   }
   num_setups++;
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::BeginSetup()
+{
+  first_mult = true;
+  A_check = nullptr;
+  if (direct)
+  {
+    probe.Start();
+  }
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac)
+{
+  if (direct)
+  {
+    probe.Stop();
+  }
+  A_check = perf::Verification() ? Ac : nullptr;
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::FinishSetup(
+    const std::vector<std::pair<const Vector *, const Vector *>> &bx) const
+{
+  if (!direct)
+  {
+    perf::RecordHypreHierarchy(*pc, role);
+    return;
+  }
+  probe.Stop();
+  probe.Record((role == "Main") ? std::string("CoarseFactorization")
+                                : "CoarseFactorization/" + role);
+  if (A_check && A_check->Height() == bx[0].first->Size())
+  {
+    double res = 0.0;
+    for (const auto &[b, x] : bx)
+    {
+      res = std::max(res, perf::RelativeResidual(*A_check, *b, *x));
+    }
+    const std::string base = "Verification/CoarseSolve/" + role;
+    perf::SetMax(perf::RegisterCounter(base + "/MaxRelativeResidual", perf::Reduce::MAX,
+                                       perf::Accumulate::MAX),
+                 res);
+    perf::Add(
+        perf::RegisterCounter(base + "/Checks", perf::Reduce::MAX, perf::Accumulate::SUM),
+        1.0);
+  }
 }
 
 template <OperatorType OperType>

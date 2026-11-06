@@ -55,7 +55,7 @@ protected:
 
   // Solver role for the performance report, and its counter ids.
   std::string role;
-  int perf_solves, perf_its, perf_solve_tally, perf_setup_tally;
+  int perf_solves, perf_its, perf_solve_tally, perf_setup_tally, perf_basis;
 
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,

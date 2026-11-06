@@ -56,6 +56,8 @@ public:
   {
     perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
   }
+  int GetOrder() const { return order; }
+  double GetMaxEigenvalue() const { return lambda_max; }
 
   void Mult(const VecType &x, VecType &y) const override
   {
@@ -129,6 +131,8 @@ public:
   {
     perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
   }
+  int GetOrder() const { return order; }
+  double GetMaxEigenvalue() const { return theta + delta; }
 
   void Mult(const VecType &x, VecType &y) const override
   {

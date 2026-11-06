@@ -22,6 +22,7 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
@@ -393,6 +394,15 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
   for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
   {
     ndofs[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
+  }
+  if (perf::Verification())
+  {
+    std::vector<long> tdofs(fespaces.GetNumLevels());
+    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
+    {
+      tdofs[l] = fespaces.GetFESpaceAtLevel(l).GetTrueVSize();
+    }
+    perf::RecordPartitionHash(fespace.GetParMesh(), tdofs);
   }
   if (root)
   {

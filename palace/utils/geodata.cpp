@@ -27,6 +27,7 @@
 #include "utils/meshio.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
@@ -139,6 +140,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm))
     {
+      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/Root", Timer::IO));
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       use_mesh_partitioner &= smesh->Conforming();
     }
@@ -157,6 +159,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
+      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/NodeRoot", Timer::IO));
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
@@ -321,6 +324,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
                                          MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
+  perf::ScopedTally t(perf::RegisterTally("Startup/Partition", Timer::MESH_PREPROCESS));
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = UseAmr(refinement);
 

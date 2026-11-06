@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -20,6 +21,8 @@
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 PalacePragmaDiagnosticPush
@@ -70,9 +73,11 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
                            int max_it, int print, bool use_mg)
 {
   // The system matrix for the projection is real, SPD and diagonally dominant.
+  perf::ScopedRole role("Estimator");
   std::unique_ptr<Solver<OperType>> pc;
   if (!use_mg)
   {
+    perf::SetInfo("LinearSolver/Estimator/Preconditioner", "Jacobi");
     // The CG iterates do not depend on a scaling of the preconditioner, so no damping (and
     // no eigenvalue estimate for it) is needed.
     pc = std::make_unique<JacobiSmoother<OperType>>(fespaces.GetFinestFESpace().GetComm(),
@@ -82,6 +87,8 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   {
     auto amg = std::make_unique<BoomerAmgSolver>(1, 1, true, 0);
     amg->SetStrengthThresh(0.8);  // More coarsening to save memory
+    perf::SetInfo("LinearSolver/Estimator/Preconditioner",
+                  (fespaces.GetNumLevels() > 1) ? "GMG-AMG" : "AMG");
     if (fespaces.GetNumLevels() > 1)
     {
       const int mg_smooth_order = 2;  // Smooth order independent of FE space order
@@ -141,6 +148,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
                                       int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
+  perf::ScopedMemoryProbe probe("Estimator/Construction");
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
   // Detect scalar FE spaces (H1, L2) vs vector FE spaces (ND, RT) based on map type.
   const int dim = smooth_fespace.Dimension();
@@ -219,6 +227,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // (recovery) and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
+  perf::ScopedMemoryProbe probe("Estimator/Estimation");
   projector.Mult(F, G);
   if constexpr (std::is_same_v<VecType, ComplexVector>)
   {

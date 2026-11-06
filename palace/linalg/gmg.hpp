@@ -5,6 +5,7 @@
 #define PALACE_LINALG_GEOMETRIC_MULTIGRID_HPP
 
 #include <memory>
+#include <string>
 #include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
@@ -61,6 +62,9 @@ private:
     int pre = -1, post = -1, res = -1, restr = -1, prol = -1;
   };
   std::vector<LevelTallies> perf;
+
+  // Solver role for the performance report.
+  std::string role;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;

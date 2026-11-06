@@ -298,8 +298,12 @@ public:
   // Read-only access the static Timer object.
   static const Timer &GlobalTimer() { return timer; }
 
-  // The exclusive row currently being timed (TOTAL if none).
-  static Index Current() { return stack.empty() ? Timer::TOTAL : stack.top(); }
+  // The exclusive row currently being timed (STARTUP before the first timer, TOTAL between
+  // top-level timers).
+  static Index Current()
+  {
+    return !stack.empty() ? stack.top() : (started ? Timer::TOTAL : Timer::STARTUP);
+  }
 
   // Close open timers and reduce all timers, tallies, counters and memory statistics
   // across ranks (collective). Results are available on all ranks via perf::Results().

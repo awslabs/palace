@@ -4,6 +4,7 @@
 #include "gmg.hpp"
 
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
@@ -21,7 +22,8 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false), coarse_timer(false), perf(P.size() + 1)
+    R(P.size() + 1), use_timer(false), coarse_timer(false), perf(P.size() + 1),
+    role(perf::CurrentRole())
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -127,6 +129,37 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     X[l].UseDevice(true);
     Y[l].UseDevice(true);
     R[l].UseDevice(true);
+  }
+
+  // Resolved Chebyshev smoother parameters per level (level 0 is the coarse solver).
+  auto Cheby = [](const Solver<OperType> *B) -> nlohmann::json
+  {
+    if (const auto *c = dynamic_cast<const ChebyshevSmoother<OperType> *>(B))
+    {
+      return {{"Order", c->GetOrder()}, {"LambdaMax", c->GetMaxEigenvalue()}};
+    }
+    if (const auto *c = dynamic_cast<const ChebyshevSmoother1stKind<OperType> *>(B))
+    {
+      return {{"Order", c->GetOrder()}, {"LambdaMax", c->GetMaxEigenvalue()}};
+    }
+    return nullptr;
+  };
+  auto levels = nlohmann::json::array();
+  for (std::size_t l = 1; l < n_levels; l++)
+  {
+    if (const auto *d = dynamic_cast<const DistRelaxationSmoother<OperType> *>(B[l].get()))
+    {
+      levels.push_back({{"Primary", Cheby(d->GetSmoother())},
+                        {"Auxiliary", Cheby(d->GetAuxiliarySmoother())}});
+    }
+    else
+    {
+      levels.push_back(Cheby(B[l].get()));
+    }
+  }
+  if (!levels.empty())
+  {
+    perf::SetInfo(perf::LinearSolverPath(role, "Chebyshev"), levels);
   }
 
   this->height = op.Height();
