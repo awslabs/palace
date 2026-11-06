@@ -103,8 +103,10 @@ The derivatives are written to the `sensitivity` folder of
 
 The Julia package
 [`scripts/julia/PalaceSensitivity`](https://github.com/awslabs/palace/tree/main/scripts/julia/PalaceSensitivity)
-reads this export, whose format its README specifies, and contracts it with velocities. For
-example, for the [spheres](../examples/spheres.md) with
+reads this export, whose format its README specifies, and contracts it with velocities. Its
+`morph_mesh` moves the nodes of MFEM meshes by velocities, for finite differences of
+simulations on morphed meshes, which check the derivatives. For example, for the
+[spheres](../examples/spheres.md) with
 [`spheres_sensitivity.json`](https://github.com/awslabs/palace/blob/main/examples/spheres/spheres_sensitivity.json),
 the derivatives with respect to the radius of sphere A, of radius 1 cm and centered at
 ``\mathbf{c}``, follow from a radial velocity which vanishes 1 cm away from it:

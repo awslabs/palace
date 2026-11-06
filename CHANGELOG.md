@@ -28,7 +28,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and to the lumped port elements, written to the `sensitivity` folder of the output, with
     no adjoint solve. Contracted with design velocities, for example from DeviceLayout.jl, the
     node gradients give the derivatives with respect to design parameters. The Julia
-    package `scripts/julia/PalaceSensitivity` reads the export. SchemaVer 4-2-0.
+    package `scripts/julia/PalaceSensitivity` reads the export, and morphs MFEM meshes by
+    design velocities. SchemaVer 4-2-0.
     [PR 1127](https://github.com/awslabs/palace/pull/1127).
 
 #### Interface Changes

@@ -5,8 +5,8 @@
     PalaceSensitivity
 
 Read a Palace sensitivity export and contract its gradients with design velocities, giving
-derivatives with respect to design parameters, `dJ/dp = Σₖ gₖ ⋅ V(xₖ)`. The README specifies
-the export format.
+derivatives with respect to design parameters, `dJ/dp = Σₖ gₖ ⋅ V(xₖ)`, and morph MFEM
+meshes by design velocities. The README specifies the export format.
 """
 module PalaceSensitivity
 
@@ -14,6 +14,7 @@ using LinearAlgebra
 import JSON
 
 export read_sensitivity, write_sensitivity, objective, derivative, jacobian, check_velocity
+export morph_mesh, morph_quality, MorphQuality
 
 const FORMAT = "PalaceSensitivity"
 const FORMAT_VERSION = 1
@@ -306,7 +307,8 @@ Check that `velocity` is admissible for the export `s`, from the boundary attrib
 points: it must vanish on the nodes of each attribute in `fixed`, such as boundaries that do
 not move, and move the nodes of each attribute in `rigid` rigidly, such as lumped ports and
 surface current sources, whose impedances and current densities depend on their size.
-Violations larger than `rtol` times the largest velocity throw an error naming the attribute.
+Violations larger than `rtol` times the largest velocity throw an error naming the
+attribute.
 """
 function check_velocity(
     s::SensitivityExport,
@@ -348,5 +350,7 @@ function check_velocity(
     end
     return nothing
 end
+
+include("morph.jl")
 
 end # module
