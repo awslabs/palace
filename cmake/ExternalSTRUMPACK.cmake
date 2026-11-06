@@ -298,8 +298,8 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
 # A/B only: narrow right-hand side triangular solves (simple)
 download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
   strumpack_s2_simple.diff
-  "https://github.com/pghysels/STRUMPACK/compare/f94faa48ce857905ef68f2826d05d92218a66e26...simlapointe:STRUMPACK:34f72d176baef2f1ec103e90009e9e462705f002.diff"
-  daba4e72815d4afefb9df000867bd65a48d3681d97f11f2eb177c4f585aba631
+  "https://github.com/pghysels/STRUMPACK/compare/f94faa48ce857905ef68f2826d05d92218a66e26...simlapointe:STRUMPACK:d2dcf5efd51bde610009ac941c7ad34ba3572fdd.diff"
+  72094e233d2e109dd106f9d720aee2852ca5cffbd3cd98342b87baf3a398205b
 )
 
 include(ExternalProject)
