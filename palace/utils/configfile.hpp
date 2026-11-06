@@ -1217,6 +1217,10 @@ public:
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
 
+  // Number of smoothing sweeps on the Nedelec space in each AMS iteration, when AMS is the
+  // coarse solver of geometric multigrid.
+  int ams_smooth_it = -1;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 
