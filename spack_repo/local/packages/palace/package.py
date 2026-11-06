@@ -193,6 +193,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="4d561698fc2d19c31953ccd91e7df90daf89aedbf6434e016a283b9f7dff7b9a",
                 when="@8.1.0",
             ),
+            patch(
+                "https://github.com/pghysels/STRUMPACK/compare/f94faa48ce857905ef68f2826d05d92218a66e26...simlapointe:STRUMPACK:34f72d176baef2f1ec103e90009e9e462705f002.diff",
+                sha256="daba4e72815d4afefb9df000867bd65a48d3681d97f11f2eb177c4f585aba631",
+                when="@8.1.0",
+            ),
         ],
     )
 
