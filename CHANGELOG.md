@@ -17,6 +17,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Interface Changes
+
+  - The `mode-Z.csv` output of boundary-mode solves now reports the complex characteristic
+    impedances, `Re{Z_PV}` and `Im{Z_PV}` with `Z_PV = |V|² / 2P*` as for wave ports, and
+    `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
+    `|V| / |I|`. The per-unit-length inductance and capacitance are now
+    `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
+    modes.
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
+
 #### Performance Improvements
 
   - Added a hypre patch for
@@ -51,6 +61,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     arithmetic. This makes the multigrid preconditioner setup several times faster at
     each frequency of a driven sweep.
     [PR 1140](https://github.com/awslabs/palace/pull/1140).
+  - Sped up the per-port wave-port PROM of adaptive driven sweeps for port modes whose shape
+    changes with frequency, as for lossy lines, where every exact port solve adds a basis
+    vector. Its projections and residual Gram matrix are now built with dense matrix
+    products instead of one inner product per entry, a reduced solve checks the residuals of
+    only the modes nearest to the target, and the reduced model is only used with a basis of
+    at most `2√N` vectors for `N` port unknowns, beyond which exact port solves are cheaper.
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
 
 #### Bug Fixes
 
@@ -96,6 +113,33 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tables (rounded to their printed precision) were compared exactly with the recomputed
     ones.
     [PR 1088](https://github.com/awslabs/palace/pull/1088).
+  - Fixed the S-parameters of numeric wave ports with lossy port modes, for example with
+    `"Conductivity"` or `"Impedance"` boundaries on the port boundary, or lossy dielectrics.
+    The wave port boundary condition and excitation now use the complex propagation constant
+    of the port mode, including its attenuation, instead of its real part. The S-parameters
+    of lossy port modes are now the amplitudes of their pseudo-waves, from the unconjugated
+    reaction of the field with the port mode, instead of the conjugated (power) projection
+    onto it, which does not separate the incident and reflected waves of a lossy mode: this
+    changes their values, but not those of lossless propagating modes. Below cutoff, the
+    propagation constant is now the root with `Im{kₙ} < 0`, which decays away from the port,
+    also for the modes of `"BoundaryMode"` simulations: for a lossless cross-section, the
+    sign of its imaginary part followed the roundoff of the mode solve. The characteristic
+    impedance `Z_PV` of a lossy port mode is now complex, `|V|² / P*` with the complex power
+    `P` of the mode, consistent with the total-field impedance in `port-Z.csv`. Circuit
+    synthesis now also fits the complex propagation constant of a lossy port mode, so that
+    the synthesized port loads carry the attenuation of the port lines.
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Fixed a crash of circuit synthesis (`"AdaptiveCircuitSynthesis"`) when several wave
+    ports share a boundary, for example inactive wave ports extracting the S-parameters of
+    a second mode at the boundaries of the active ports.
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Fixed the characteristic impedance `Z_PV` of lossy modes in 2D boundary-mode solves, for
+    example with `"Conductivity"` or `"Impedance"` boundaries on the conductors: the term of
+    the mode power with the longitudinal electric field was conjugated wrongly, which added
+    a spurious imaginary part to the power. This made `Z_PV` too low, by a factor of 3.2 for
+    a strongly lossy coplanar-strip line at 1 GHz, and the power normalization of lossy
+    modes wrong. Results are unchanged for lossless modes.
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
 
 #### Build system
 
