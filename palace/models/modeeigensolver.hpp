@@ -126,7 +126,8 @@ public:
   void GetEigenvector(int i, ComplexVector &x) const;
   double GetError(int i, EigenvalueSolver::ErrorType type) const;
 
-  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve.
+  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve,
+  // on the branch of mode_assembly::PropagationConstant (decaying below cutoff).
   std::complex<double> GetPropagationConstant(int i) const;
 
   // Heuristic classifier: |Im kn| < 0.1*|Re kn| and Re kn > 0.
@@ -181,8 +182,11 @@ private:
   // Cached FE space sizes.
   int nd_size, h1_size;
 
-  // Parameters from the latest exact assembly (also used for one-time ROM validation).
+  // Shift and frequency of the most recent Solve.
   double sigma_cached = 0.0;
+  std::complex<double> omega_cached = 0.0;
+
+  // Parameters from the latest exact assembly (also used for one-time ROM validation).
   std::complex<double> last_assembled_omega = 0.0;
   double last_assembled_sigma = 0.0;
 

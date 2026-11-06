@@ -524,7 +524,8 @@ bool WavePortReducedModel::SolveFromGram(
       continue;
     }
     const std::complex<double> lambda = alpha(k) / beta(k);
-    const std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+    const std::complex<double> kn =
+        mode_assembly::PropagationConstant(-sigma - 1.0 / lambda);
     if (!std::isfinite(lambda.real()) || !std::isfinite(lambda.imag()) ||
         !std::isfinite(kn.real()) || !std::isfinite(kn.imag()) ||
         std::abs(kn) <= 1.0e-10 * std::max(kn_target, 1.0))

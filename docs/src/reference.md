@@ -318,7 +318,7 @@ impedance is part of the physical model.
 ### Wave ports
 
 Numeric wave ports assume a field with known normal-direction dependence
-``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant. For each operating
+``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{-ik_n x_n}`` where ``k_n`` is the propagation constant. For each operating
 frequency ``\omega``, a two-dimensional eigenvalue problem is solved on the port yielding the mode
 shapes ``\bm{e}_m`` and associated propagation constants ``k_{n,m}``. These are used in the full 3D
 model where the Robin port boundary condition has coefficient ``\gamma = i k_{n,m}/\mu_r`` and the
@@ -412,8 +412,12 @@ directions of the voltage path and of the current loop. Note that independently 
 voltage and current does not in general define a valid characteristic impedance [[11]](#References).
 For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
 
-The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. The mode eigenvalue gives
-``\text{Re}\{k_n\}\ge 0``, corresponding to forward propagation in the ``+\hat{\bm{n}}`` direction.
+The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. For a passive port
+cross-section, the propagation constant has ``\text{Re}\{k_n\}\ge 0``, corresponding to forward
+propagation in the ``+\hat{\bm{n}}`` direction, and ``\text{Im}\{k_n\}\le 0``, for which the mode
+decays in that direction. In particular, below cutoff, where ``k_n = -i\alpha`` is imaginary for a
+lossless cross-section, the port boundary condition is matched to the evanescent mode which decays
+away from the model.
 De-embedding ``\tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j}`` uses positive ``d`` to shift
 the reference plane toward the device (removing waveguide), consistent with [[12]](#References).
 

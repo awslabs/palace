@@ -551,6 +551,82 @@ TestWavePortAnalyticImpedance(LossyCoaxialLine line, double rtol,
   };
 }
 
+// Analytic TE11 mode of a lossless circular waveguide of radius a (in m), filled with a
+// dielectric of relative permittivity eps_r: kₙ² = (ω / c₀)² εᵣ − (χ'₁₁ / a)², with the
+// first zero χ'₁₁ of J₁', and the root kₙ = −iα with α > 0 below cutoff.
+struct CircularWaveguideTE11
+{
+  double eps_r, a;
+
+  std::complex<double> Kn(double f_GHz) const
+  {
+    constexpr double chi11 = 1.8411837813406593;
+    const double k = 2.0 * std::numbers::pi * f_GHz * 1.0e9 * std::sqrt(eps_r) /
+                     palace::electromagnetics::c0_;
+    const double kn2 = k * k - (chi11 / a) * (chi11 / a);
+    return (kn2 < 0.0) ? std::complex<double>(0.0, -std::sqrt(-kn2))
+                       : std::complex<double>(std::sqrt(kn2), 0.0);
+  }
+};
+
+// Reference-free check of the reflection of a lossless waveguide of length L (in m),
+// shorted at the far end, through its port mode, swept from below cutoff: S_11 =
+// −exp(−2ikₙL), so |S_11| = exp(2 Im{kₙ} L) < 1 for the evanescent mode below cutoff, with
+// kₙ = −iα on the branch which decays away from the port, and |S_11| = 1 above. The port
+// mode on the other branch, growing away from the port, gives |S_11| = exp(2αL) > 1. The
+// attenuation αL is compared to that of the analytic mode within rtol_analytic, for the
+// discretization error of the cutoff near it. The complex S_11 is also compared to the
+// reference data within rtol, rather than its phase, which is ±180° below cutoff.
+palace::test::CustomCheck TestWavePortShortedGuide(CircularWaveguideTE11 guide,
+                                                   double length, double rtol_analytic,
+                                                   double rtol)
+{
+  return [guide, length, rtol_analytic, rtol](
+             palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto S11 = [](palace::Table &table, std::size_t r)
+    {
+      const palace::Column *abs_s = nullptr, *arg_s = nullptr;
+      for (auto &column : table)
+      {
+        if (column.header_text == "|S[1][1]| (dB)")
+        {
+          abs_s = &column;
+        }
+        else if (column.header_text == "arg(S[1][1]) (deg.)")
+        {
+          arg_s = &column;
+        }
+      }
+      REQUIRE(abs_s != nullptr);
+      REQUIRE(arg_s != nullptr);
+      return std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                        arg_s->data[r] * std::numbers::pi / 180.0);
+    };
+    const palace::Column *f = nullptr;
+    for (auto &column : actual)
+    {
+      if (column.header_text == "f (GHz)")
+      {
+        f = &column;
+      }
+    }
+    REQUIRE(f != nullptr);
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      const std::complex<double> S = S11(actual, r), S_ref = S11(reference, r);
+      const double decay = 2.0 * guide.Kn(f->data[r]).imag() * length;
+      INFO("f = " << f->data[r] << " GHz: S11 = " << S << ", reference " << S_ref
+                  << ", analytic |S11| = " << std::exp(decay));
+      CHECK(std::abs(S) <= 1.0 + 1.0e-6);
+      CHECK(std::abs(std::log(std::abs(S)) - decay) <=
+            rtol_analytic * std::abs(decay) + 1.0e-6);
+      CHECK(std::abs(S - S_ref) <= rtol * std::abs(S_ref) + 1.0e-12);
+    }
+  };
+}
+
 // Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
 // port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
 // implied by the reflection coefficient in the sibling port-S.csv,
@@ -1616,6 +1692,22 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
   opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_cutoff.json",
                                   "driven_wave_tm_cutoff", opts);
+}
+
+// TE11 mode of the lossless PEC-shorted circular waveguide swept from below its cutoff
+// (about 2.23 GHz) to above it: below cutoff, the propagation constant of the lossless port
+// mode is imaginary, and the wave port must take the root which decays away from the port,
+// independently of the sign of the roundoff in kₙ², for |S11| = exp(2 Im{kₙ} L) < 1.
+TEST_CASE("cylinder_driven_wave_cutoff", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] =
+      TestWavePortShortedGuide({2.08, 2.74e-2}, 5.48e-2, 5.0e-2, 1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_cutoff.json",
+                                  "driven_wave_cutoff", opts);
 }
 
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept

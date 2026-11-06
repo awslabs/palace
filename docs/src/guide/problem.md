@@ -263,7 +263,9 @@ The computed propagation constants ``k_n`` and effective indices
 ``n_\text{eff} = k_n / k_0`` (where ``k_0 = \omega / c_0`` is the free-space wavenumber)
 are written to an ASCII file named `mode-kn.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem-output). Both
-backward and absolute error estimates are included for each eigenvalue.
+backward and absolute error estimates are included for each eigenvalue. For a mode below
+cutoff, ``k_n`` is the root with ``\text{Im}\{k_n\} < 0``, for which the mode decays in the
+direction of propagation.
 
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),

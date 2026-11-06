@@ -167,6 +167,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
                                                     const ComplexVector *initial_space)
 {
   sigma_cached = sigma;
+  omega_cached = omega;
   reduced_model->ResetSolution();
   const auto t_start = Timer::Now();
 
@@ -352,7 +353,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   for (int i = 0; i < num_conv; i++)
   {
     distance[i] = mode_assembly::TargetDistance(
-        std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(i)), kn_target);
+        mode_assembly::PropagationConstant(-sigma - 1.0 / eigen->GetEigenvalue(i), omega),
+        kn_target);
   }
   mode_perm.resize(num_conv);
   std::iota(mode_perm.begin(), mode_perm.end(), 0);
@@ -431,7 +433,8 @@ void ModeEigenSolver::GetEigenvector(int i, ComplexVector &x) const
 
 std::complex<double> ModeEigenSolver::GetPropagationConstant(int i) const
 {
-  return std::sqrt(-sigma_cached - 1.0 / GetEigenvalue(i));
+  return mode_assembly::PropagationConstant(-sigma_cached - 1.0 / GetEigenvalue(i),
+                                            omega_cached);
 }
 bool ModeEigenSolver::IsPropagating(std::complex<double> kn)
 {
