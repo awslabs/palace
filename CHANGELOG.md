@@ -27,8 +27,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - Added a hypre patch from
-    [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652) for
+  - Added a hypre patch, based on
+    [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
     the BoomerAMG preconditioner now applies one V-cycle to several right-hand sides at
     once, such as the real and imaginary parts of a complex vector, with one halo exchange
