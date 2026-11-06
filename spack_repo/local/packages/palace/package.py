@@ -173,6 +173,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
+    # The STRUMPACK version of the superbuild, with
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
+    # off the `with` blocks so the Palace variants are not folded into the patch condition.
+    depends_on(
+        "strumpack@8.1.0",
+        when="@develop+strumpack",
+        patches=[
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
+                sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
+                when="@8.1.0",
+            )
+        ],
+    )
+
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
     with when("+slepc"):
@@ -310,6 +326,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
                 "mfem_pr5353.diff",
                 sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
+            ),
+            # https://github.com/mfem/mfem/pull/5711 (rebased onto the PR 5353
+            # snapshot above, applied after it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/"
+                "mfem_pr5711.diff",
+                sha256="4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470",
+                when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5494 (from the PR range)
             patch(

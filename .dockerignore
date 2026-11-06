@@ -1,9 +1,6 @@
 # Spack checkout
 spack
 
-# Host link to the builtin MFEM recipe (spack/spack#51505); the image creates its own
-spack_repo/local/packages/mfem
-
 # Build artifacts
 build*
 
@@ -33,6 +30,3 @@ singularity
 # Python caches
 __pycache__
 *.pyc
-
-# Broken mfem symlink (recreated inside container by the template)
-spack_repo/local/packages/mfem
