@@ -53,6 +53,7 @@ struct TallyData
   Timer::Index parent;
   double time = 0.0, cum_time = 0.0;
   long count = 0, cum_count = 0;
+  int phase_base = -1;  // For phase tallies: first of NUM_TIMINGS sub-tally ids (lazy)
 };
 
 struct CounterData
@@ -70,7 +71,10 @@ struct Registry
   std::vector<CounterData> counters;
   std::unordered_map<std::string, int> tally_ids, counter_ids;
   std::vector<std::string> roles;
+  bool suspended = false;  // Set while BlockTimer::Finalize reduces (not tallied)
 };
+
+void AddPhaseTally(int id, double seconds, long count);
 
 inline Registry registry;
 
@@ -85,6 +89,10 @@ inline Registry registry;
 // Register (or look up) a tally. Ids are stable for the lifetime of the process.
 int RegisterTally(std::string_view name, Timer::Index parent);
 
+// A tally measured in any phase (Parent TOTAL), additionally split by the exclusive row
+// active at the time into "<name>/<ROW>" sub-tallies (Parent ROW).
+int RegisterPhaseTally(std::string_view name);
+
 inline void AddTally(int id, double seconds, long count = 1)
 {
   if (id >= 0)
@@ -92,6 +100,10 @@ inline void AddTally(int id, double seconds, long count = 1)
     auto &t = detail::registry.tallies[id];
     t.time += seconds;
     t.count += count;
+    if (t.phase_base != -1)
+    {
+      detail::AddPhaseTally(id, seconds, count);
+    }
   }
 }
 

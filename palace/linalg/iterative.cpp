@@ -10,6 +10,7 @@
 #include <string>
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -338,6 +339,14 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
 }
 
 template <OperatorType OperType>
+void IterativeSolver<OperType>::SetPerfTallies(const std::string &prefix,
+                                               Timer::Index parent)
+{
+  perf_apply = perf::RegisterTally(prefix + "/ApplyBA", parent);
+  perf_orth = perf::RegisterTally(prefix + "/Orthogonalize", parent);
+}
+
+template <OperatorType OperType>
 void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -420,7 +429,10 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
       linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
     }
 
-    A->Mult(p, z);
+    {
+      perf::ScopedTally t(this->perf_apply);
+      A->Mult(p, z);
+    }
     denom = linalg::Dot(comm, z, p);
     CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
     MFEM_VERIFY(denom != 0.0,
@@ -433,6 +445,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (B)
     {
+      perf::ScopedTally t(this->perf_apply);
       ApplyB(B, r, z, this->use_timer);
     }
     else
@@ -606,12 +619,18 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
+      {
+        perf::ScopedTally t(this->perf_apply);
+        ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
+      }
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
-      w *= 1.0 / Hj[j + 1];
+      {
+        perf::ScopedTally t(this->perf_orth);
+        linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
+        Hj[j + 1] = linalg::Norml2(comm, w);
+        w *= 1.0 / Hj[j + 1];
+      }
 
       for (int k = 0; k < j; k++)
       {
@@ -785,12 +804,18 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
+      {
+        perf::ScopedTally t(this->perf_apply);
+        ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
+      }
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
-      w *= 1.0 / Hj[j + 1];
+      {
+        perf::ScopedTally t(this->perf_orth);
+        linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
+        Hj[j + 1] = linalg::Norml2(comm, w);
+        w *= 1.0 / Hj[j + 1];
+      }
 
       for (int k = 0; k < j; k++)
       {

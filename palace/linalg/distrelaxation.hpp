@@ -49,10 +49,15 @@ private:
   // Temporary vectors for smoother application.
   mutable VecType x_G, y_G, r_G, r;
 
+  // Performance tally ids: main and auxiliary smoothers, residual, Gᵀ and G transfers.
+  int perf_main = -1, perf_aux = -1, perf_res = -1, perf_gt = -1, perf_g = -1;
+
 public:
   DistRelaxationSmoother(MPI_Comm comm, const Operator &G, int smooth_it,
                          int cheby_smooth_it, int cheby_order, double cheby_sf_max,
                          double cheby_sf_min, bool cheby_4th_kind);
+
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
 
   void SetOperator(const OperType &op) override
   {

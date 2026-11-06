@@ -7,6 +7,7 @@
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -20,7 +21,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false), coarse_timer(false)
+    R(P.size() + 1), use_timer(false), coarse_timer(false), perf(P.size() + 1)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -133,6 +134,27 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 }
 
 template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::SetPerfTallies(const std::string &prefix,
+                                                        Timer::Index parent)
+{
+  // The coarse solve of the timed multigrid is charged to its own exclusive row.
+  perf[0].pre = perf::RegisterTally(prefix + "/MG/Coarse",
+                                    (use_timer && parent == Timer::KSP_PRECONDITIONER)
+                                        ? Timer::KSP_COARSE_SOLVE
+                                        : parent);
+  for (std::size_t l = 1; l < B.size(); l++)
+  {
+    const auto lp = fmt::format("{}/MG/L{}/", prefix, l);
+    perf[l].pre = perf::RegisterTally(lp + "PreSmooth", parent);
+    perf[l].post = perf::RegisterTally(lp + "PostSmooth", parent);
+    perf[l].res = perf::RegisterTally(lp + "Residual", parent);
+    perf[l].restr = perf::RegisterTally(lp + "Restriction", parent);
+    perf[l].prol = perf::RegisterTally(lp + "Prolongation", parent);
+    B[l]->SetPerfTallies(lp + "Smoother", parent);
+  }
+}
+
+template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   // Initialize.
@@ -185,31 +207,46 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // level 0. Important to note that the smoothers must respect the initial guess flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
   B[l]->SetInitialGuess(initial_guess);
+  const auto &t = perf[l];
   if (l == 0)
   {
     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer && !coarse_timer);
+    perf::ScopedTally st(t.pre);
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  B[l]->Mult2(X[l], Y[l], R[l]);
+  {
+    perf::ScopedTally st(t.pre);
+    B[l]->Mult2(X[l], Y[l], R[l]);
+  }
 
   // Compute residual.
-  A[l]->Mult(Y[l], R[l]);
-  linalg::AXPBY(1.0, X[l], -1.0, R[l]);
+  {
+    perf::ScopedTally st(t.res);
+    A[l]->Mult(Y[l], R[l]);
+    linalg::AXPBY(1.0, X[l], -1.0, R[l]);
+  }
 
   // Coarse grid correction.
-  RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
-  if (dbc_tdof_lists[l - 1])
   {
-    linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
+    perf::ScopedTally st(t.restr);
+    RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
+    if (dbc_tdof_lists[l - 1])
+    {
+      linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
+    }
   }
   VCycle(l - 1, false);
 
   // Prolongate and add.
-  RealMult(*P[l - 1], Y[l - 1], R[l]);
-  Y[l] += R[l];
+  {
+    perf::ScopedTally st(t.prol);
+    RealMult(*P[l - 1], Y[l - 1], R[l]);
+    Y[l] += R[l];
+  }
 
   // Post-smooth, with nonzero initial guess.
+  perf::ScopedTally st(t.post);
   B[l]->SetInitialGuess(true);
   B[l]->MultTranspose2(X[l], Y[l], R[l]);
 }

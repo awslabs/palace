@@ -275,3 +275,29 @@ TEST_CASE("PerfStats Coarse Setup And Apply", "[perfstats][Serial][Parallel]")
   CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/RowsPerRank")].min == n);
   BlockTimer::Reset();
 }
+
+TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  BlockTimer::Reset();
+  const int id = perf::RegisterPhaseTally("Test/Phase");
+  perf::AddTally(id, 1.0);
+  {
+    BlockTimer bt(Timer::IO);
+    perf::AddTally(id, 2.0);
+  }
+  BlockTimer::Finalize(comm);
+  const auto &r = perf::GetResults();
+  const int all = TallyIndex(r.iter, "Test/Phase");
+  const int io = TallyIndex(r.iter, "Test/Phase/IO");
+  const int none = TallyIndex(r.iter, "Test/Phase/TOTAL");
+  REQUIRE(all >= 0);
+  REQUIRE(io >= 0);
+  REQUIRE(none >= 0);
+  CHECK(r.iter.tally_parents[all] == Timer::TOTAL);
+  CHECK(r.iter.tally_parents[io] == Timer::IO);
+  CHECK(r.iter.tally_time[all].max == 3.0);
+  CHECK(r.iter.tally_time[io].max == 2.0);
+  CHECK(r.iter.tally_time[none].max == 1.0);
+  BlockTimer::Reset();
+}

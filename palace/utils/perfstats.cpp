@@ -3,6 +3,7 @@
 
 #include "perfstats.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -398,6 +399,43 @@ int RegisterTally(std::string_view name, Timer::Index parent)
   return id;
 }
 
+int RegisterPhaseTally(std::string_view name)
+{
+  const int id = RegisterTally(name, Timer::TOTAL);
+  auto &t = detail::registry.tallies[id];
+  if (t.phase_base == -1)
+  {
+    t.phase_base = -2;  // Sub-tallies are registered on first use
+  }
+  return id;
+}
+
+namespace detail
+{
+
+void AddPhaseTally(int id, double seconds, long count)
+{
+  // Sub-tally ids per row, registered lazily so that only rows that occur are reported.
+  static std::unordered_map<int, std::array<int, Timer::NUM_TIMINGS>> subs;
+  auto [it, inserted] = subs.try_emplace(id);
+  if (inserted)
+  {
+    it->second.fill(-1);
+  }
+  const auto row = BlockTimer::Current();
+  int &sub = it->second[row];
+  if (sub < 0)
+  {
+    sub = RegisterTally(fmt::format("{}/{}", registry.tallies[id].name, Timer::names[row]),
+                        row);
+  }
+  auto &s = registry.tallies[sub];
+  s.time += seconds;
+  s.count += count;
+}
+
+}  // namespace detail
+
 int RegisterCounter(std::string_view path, Reduce reduce, Accumulate acc)
 {
   auto &reg = detail::registry;
@@ -524,6 +562,8 @@ void BlockTimer::Finalize(MPI_Comm comm)
 {
   using namespace perf;
   auto &reg = detail::registry;
+
+  reg.suspended = true;
 
   // Drain any open timers.
   while (!stack.empty())
@@ -684,6 +724,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   }
   r.cum.tally_names = r.iter.tally_names;
   r.cum.tally_parents = r.iter.tally_parents;
+  reg.suspended = false;
   for (int i = 0; i < C; i++)
   {
     const auto sep = ckeys[i].rfind('\x1f');
