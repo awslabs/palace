@@ -141,7 +141,10 @@ ExternalProject_Add(superlu_dist
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/superlu_dist-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${SUPERLU_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${SUPERLU_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SUPERLU_OPTIONS}"
   TEST_COMMAND      ""
 )
