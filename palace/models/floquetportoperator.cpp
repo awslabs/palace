@@ -941,6 +941,10 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
   {
     port.AddBoundaryTerms(v, g);
   }
+  if (v.empty())
+  {
+    return nullptr;
+  }
   return std::make_unique<LowRankComplexOperator>(comm, n, v, g);
 }
 
