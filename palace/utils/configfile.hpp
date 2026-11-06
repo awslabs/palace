@@ -790,6 +790,13 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
+  // Coordinates of a point inside the integration surface, used to orient the surface
+  // normal on interior surfaces [m].
+  std::array<double, 3> center{{0.0, 0.0, 0.0}};
+
+  // Flag which indicates whether or not the center point was specified.
+  bool no_center = true;
+
   FarFieldPostData() = default;
   FarFieldPostData(const json &farfield);
 
@@ -1312,6 +1319,7 @@ void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);
 void Nondimensionalize(const Units &units, SurfaceFluxData &data);
+void Nondimensionalize(const Units &units, FarFieldPostData &data);
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data);
 void Nondimensionalize(const Units &units, EigenSolverData &data);
 void Nondimensionalize(const Units &units, DrivenSolverData &data);

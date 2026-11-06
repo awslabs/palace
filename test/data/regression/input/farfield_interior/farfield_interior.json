@@ -1,0 +1,78 @@
+{
+    // z-directed current dipole (1 A m) at the center of a vacuum cube of side lambda at
+    // 3 GHz, terminated by a first-order absorbing boundary. The far field is computed on
+    // an interior closed surface (the cube of half-side 2.5 h around the dipole, h =
+    // lambda / 9) and compared with the Hertzian dipole: r E = i eta k I l sin(theta) /
+    // (4 pi) theta_hat.
+    "Problem":
+    {
+        "Type": "Driven",
+        "Verbose": 2,
+        "Output": "postpro/farfield_interior"
+    },
+    "Model":
+    {
+        "Mesh": "mesh/farfield_interior.msh",
+        "L0": 1.0 // 1 meter
+    },
+    "Domains":
+    {
+        "Materials":
+        [
+            {
+                "Attributes": [1, 4]
+            }
+        ],
+        "CurrentDipole": [
+            {
+                "Index": 1,
+                "Moment": 1.0,
+                "Center": [0.0, 0.0, 0.0],
+                "Direction": [0, 0, 1]
+            }
+        ]
+    },
+    "Boundaries":
+    {
+        "Absorbing":
+        {
+            "Attributes": [3],
+            "Order": 1
+        },
+        "Postprocessing": {
+            "FarField": {
+                "Attributes": [5], // Interior surface
+                "Center": [0.0, 0.0, 0.0],
+                "ThetaPhis":
+                [
+                    [0, 0], [30, 0], [60, 0], [90, 0], [120, 0], [150, 0], [180, 0],
+                    [30, 45], [60, 45], [90, 45], [120, 45], [150, 45],
+                    [30, 90], [60, 90], [90, 90], [120, 90], [150, 90]
+                ]
+            }
+        }
+    },
+    "Solver":
+    {
+        "Order": 2,
+        "Device": "CPU",
+        "Driven":
+        {
+            "Samples":
+            [
+                {
+                    "Type": "Point",
+                    "Freq": [3.0], // GHz
+                    "SaveStep": 0
+                }
+            ]
+        },
+        "Linear":
+        {
+            "Type": "Default",
+            "KSPType": "GMRES",
+            "Tol": 1.0e-10,
+            "MaxIts": 100
+        }
+    }
+}
