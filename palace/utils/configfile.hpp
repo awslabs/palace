@@ -1362,8 +1362,56 @@ public:
       std::string thin_matrix;
       std::string fabricated_surface_matrix;
       std::string thin_surface_matrix;
+      // The source's magnetic leaves (empty = none): a blend carries the magnetic term only
+      // when EVERY source carries them (else electric-only, named MagneticBlendIncomplete).
+      std::string magnetic_fabricated_matrix;
+      std::string magnetic_thin_matrix;
     };
     std::vector<BlendSourceData> blend;
+
+    // The magnetic (inductive) defect of finite-thickness metal (mx-sc-magnetic DESIGN-v2
+    // section 3; USER 1221 D3): OPTIONAL per-model leaves on a Version-3 library. The
+    // vacuum twin of the model's electrostatic coupon pair (the same meshes, hats and piece
+    // states at eps = 1) gives, by the 2D magnetostatic / electrostatic duality, the
+    // magnetic energy within R as a quadratic form of the flux trace: S_m = Q_dom,vac in
+    // solver units (no scale leaf). Absent = electric-only = the operator of record,
+    // bitwise. The leaf is REFUSED by name when (r1) its basis / piece counts differ from
+    // the electric model's, (r2) the twin's recorded Fabrication differs from the
+    // library's, (r3) the regenerated electric matrices deviate from the model of record by
+    // more than MagneticRules.SameMeshTolerance, (r4) -lambda_min(sym dS_m) / ||dS_m||_2
+    // exceeds MagneticRules.PsdRefusalRatio (a value in (PsdFindingRatio, PsdRefusalRatio]
+    // is a named FINDING: the leaf is applied; SUPERVISOR ERRATUM 1227).
+    struct MagneticLeafData
+    {
+      std::string fabricated_matrix;
+      std::string thin_matrix;
+      // MagneticSource: the vacuum twin's provenance as the generator recorded it.
+      // The ELECTRIC pair's process parameters the twin was regenerated at (r2).
+      double metal_thickness = 0.0;
+      double overetch_depth = 0.0;
+      double sidewall_angle = 0.0;
+      double top_rounding_radius = 0.0;
+      double bottom_rounding_radius = 0.0;
+      double substrate_permittivity = 0.0;
+      // The twin's own domain permittivity (must be 1).
+      double vacuum_permittivity = 0.0;
+      // The regenerated electric matrices' maximum relative deviation from the model of
+      // record (the same-mesh proof, r3); negative = not recorded (refused).
+      double electric_regeneration_max_relative_deviation = -1.0;
+      // Whether MagneticSource.MeshOfRecordSha256Match records both coupon meshes of the
+      // twin as sha256-IDENTICAL to the electric model's meshes of record (decision 1242:
+      // the second r3 tier applies only with this proof).
+      bool mesh_of_record_identity = false;
+      // The twin's BasisPoints count and conductor-state count (r1), and whether its basis
+      // file was byte-identical to the model's (r1).
+      int basis_point_count = 0;
+      int conductor_state_count = 0;
+      bool basis_points_identical = false;
+      // The catalog reader's refusal (r2 against the library's Fabrication block; a
+      // malformed record): empty = none so far.
+      std::string catalog_refusal;
+    };
+    std::optional<MagneticLeafData> magnetic;
   };
 
   struct ResponseCorrectionData
@@ -1454,6 +1502,125 @@ public:
     // leg and the hardening fixtures (B.4 (F)): a run of record with it set is refused by
     // the comparator, never by this reader.
     bool conductor_consistency_record_only = false;
+    // ControlFlipProbePiece (mx-sc-magnetic Phase 3 (a), DESIGN-v2 a.3; supervisor decision
+    // 1292 (B)): a DIAGNOSTIC CONTROL, not a modelling option. Every entry flips the LOCAL
+    // PIECE label of one model edge's conductor-consistency probes at the probe
+    // construction (the level both gates read), so that the dual gate's discrimination of a
+    // one-label mis-mapping is measured on a device (decision 1256). Admitted ONLY with
+    // RecordOnly true (refused by name otherwise); a Model / Edge that does not exist is
+    // refused (no silent no-op); printed on the gate line and recorded as a CONTROL. Absent
+    // = bitwise.
+    struct ControlFlipProbePieceData
+    {
+      std::string model;
+      int edge = -1;
+      int piece = -1;
+    };
+    std::vector<ControlFlipProbePieceData> control_flip_probe_pieces;
+    // ControlStateAnchorSetbackOverR (mx-sc-magnetic Phase 3 (a); supervisor decision
+    // 1302): a DIAGNOSTIC CONTROL, not a modelling option. The MAGNETIC chain trace's
+    // conductor-path anchor lines (the STATE operand of the dual gate) start from the
+    // patch's conductor anchors SET BACK into their piece by this fraction of R (the probe
+    // form's generic setback + sheet nudge) instead of the edge anchors; the electric lines
+    // are untouched. Admitted ONLY with RecordOnly true and CorrectionMode PostprocessOnly
+    // (the term is NOT of record under it; refused by name otherwise); in (0, 1]; negative
+    // = absent = bitwise.
+    double control_state_anchor_setback_over_r = -1.0;
+
+    // The magnetic (inductive) defect (mx-sc-magnetic DESIGN-v2 section 3; USER 1221 D3):
+    // AllowElectricOnlyFallback (default false): a model whose magnetic leaf is REFUSED by
+    // rule r1 / r2 / r3 continues ELECTRIC-ONLY (named in the records) instead of aborting.
+    // An r4 refusal (SUPERVISOR ERRATUM 1227: -lambda_min / ||dS_m|| above the library's
+    // PsdRefusalRatio) always continues electric-only by name; a library without magnetic
+    // leaves never reads this key.
+    bool allow_electric_only_fallback = false;
+    // Magnetic (default true; decision 1229 Q1 (i)): false = the library's magnetic leaves
+    // are NOT read for this run, so the electric-only self-consistent result of the SAME
+    // library can be reproduced (bitwise with the leaf-less library: no new column / file).
+    bool magnetic_leaves = true;
+    // MagneticRules of the library (Version 3, top level; written by
+    // attach_magnetic_leaves.py from the Phase-0 calibration, SUPERVISOR AMENDMENT 1202 /
+    // ERRATUM 1227): the r3 same-mesh tolerance (the regenerated electric matrices' maximum
+    // relative deviation; R3_TOL = 1e-12 measured), the r4 FINDING ratio (R4_TOL = 1e-2)
+    // and the r4 REFUSAL ratio (R4_REFUSE, provisionally 0.1; fixed by the Phase-2 mismatch
+    // control). Library-level, never compiled constants.
+    struct MagneticRulesData
+    {
+      double same_mesh_tolerance = 1.0e-12;
+      // Decision 1242 (the r3 TWO-TIER): the same-mesh tolerance applied to a twin whose
+      // MagneticSource.MeshOfRecordSha256Match proves both meshes identical to the model's
+      // meshes of record (a cross-binary / cross-rank electric regeneration deviates at the
+      // rounding level, 1e-13..1e-11 measured in Phase 0, never at the different-mesh
+      // level 8e-5). Negative = absent: SameMeshTolerance applies everywhere.
+      double same_mesh_tolerance_with_mesh_identity = -1.0;
+      double psd_finding_ratio = 1.0e-2;
+      double psd_refusal_ratio = 0.1;
+      // Decision 1251 (mx-sc-magnetic Phase 2, INTERIM): the tolerance of the MAGNETIC
+      // conductor-consistency gate (the dual R0-a gate) as a library parameter. Negative =
+      // absent: the electric gate's kConductorConsistencyTolerance (0.02) applies, bitwise
+      // as before. The dual gate's probe line integrals read the discretisation error of
+      // the singular edge field on a device (ratio medians 7.1e-2 / 3.7e-2 / 2.3e-2 at
+      // p = 2 / 3 / 4 on the (ii) stub), so a library sets the tolerance it has calibrated;
+      // the probe form itself is OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
+      double conductor_consistency_tolerance = -1.0;
+      // The PER-ORDER form of the same leaf (USER 1308 U-1, decision 1309 Q3;
+      // OI-MAGNETIC-DUAL-GATE-3D-ENCLOSED-FLUX): ConductorConsistencyTolerance may be an
+      // object {"3": t3, "4": t4, ...} keyed by the solve's Order; the value of the run's
+      // order applies, an order ABSENT from the object is REFUSED by name (the dual gate's
+      // deviation is the 3D driven field's enclosed flux between two flux paths, ~3 % at
+      // p3 / 1.5 % at p4 on the (ii) stub, so the tolerance is calibrated per order: 1.25 x
+      // the measured LIFTED mode-1 maximum). Empty = the scalar form above.
+      std::map<int, double> conductor_consistency_tolerance_by_order;
+      // The PROBE FORM of the dual gate (mx-sc-magnetic Phase 3 (a); decisions 1256 / 1284
+      // Q-1 / 1292; OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION): the magnetic probe legs
+      // are LIFTED off the sheet and SET BACK from the singular edges (A_z is constant on a
+      // PEC piece, so the flux path from the anchor's piece to the probe's piece reads the
+      // same continuum value along any current-free path). Library leaves, never compiled
+      // constants (ERRATUM 1227): ProbeLiftOverR = h_m / R (the horizontal leg's height),
+      // ProbeSetbackOverR = s / R (both the probe end and the anchor end are set back INTO
+      // their piece), ProbeSetbackWidthFraction = the per-piece cap s <= fraction x the
+      // piece's local metal width, ProbeSheetNudgeOverR = eps / R (the sheet points nudged
+      // to the vacuum side so the locator resolves the vacuum-side element),
+      // ProbeBandHeights = the Gauss-height count (1 = LIFTED at h_m; >= 2 = BAND: the
+      // reading averaged over that many Gauss heights in [h_m / 2, 3 h_m / 2]). FLAT =
+      // ProbeLiftOverR 0 AND ProbeSetbackOverR 0 = the electric legs verbatim (the Phase-2
+      // form, kept as the comparison form of record, R-MAG-11).
+      double probe_lift_over_r = 0.5;
+      double probe_setback_over_r = 0.5;
+      double probe_setback_width_fraction = 0.45;
+      double probe_sheet_nudge_over_r = 1.0e-6;
+      int probe_band_heights = 1;
+      // The STATE-ANCHOR SETBACK of the magnetic TERM (R-MAG-17; USER 1308 U-2, decision
+      // 1309): the magnetic chain's conductor-path anchor / end / return lines start from
+      // the patch's conductor anchors SET BACK s_a = StateAnchorSetbackOverR x R into their
+      // piece (the probe form's generic rule, ProbeSetbackWidthFraction and
+      // ProbeSheetNudgeOverR apply) on every translational magnetic patch: the chain's
+      // flux states, the dual gate, the D6 shift and the self-consistent dK all read the
+      // set-back lines. Measured on the (ii) stub: the edge-anchored states carry a
+      // state-side edge error of +0.06..+0.08 pt of the D6 shift (prereg/iii-addendum-1,
+      // decision 1305). 0 = the LEGACY edge anchors (every library of record without the
+      // leaf: bitwise); the form of record going forward is 0.5, written explicitly.
+      double state_anchor_setback_over_r = 0.0;
+      // Decision 1323 (the (b) W06 line): a conductor anchor of a translational patch is
+      // the DEVICE's edge point (a DCG pair's {e1, e2}, a cluster's edge-0 point) while the
+      // patch's conductor_probe_edges carry the feet of the device sides at the origin
+      // cross-section; the two differ by roundoff or by the local geometry (a tapered or
+      // curved pair), and an anchor a hair inside the gap has no metal piece. An anchor
+      // within StateAnchorEdgeToleranceOverR x R of an edge offset is ON that edge (the
+      // nearest one): its piece = the edge's piece and the setback is measured from the
+      // EDGE offset; beyond the tolerance the anchor must lie in a metal piece (refused
+      // by name otherwise). Applies to the magnetic term's state anchors when
+      // StateAnchorSetbackOverR > 0 and to the LIFTED probe form's anchor end when
+      // ProbeSetbackOverR > 0 (decision 1334; a library with both setbacks 0 is bitwise).
+      // CONDITION 1 of 1323: tolerance x R < half the narrowest model gap / width
+      // (asserted at load when either setback is in effect) so that no anchor snaps across
+      // a gap.
+      double state_anchor_edge_tolerance_over_r = 0.1;
+      // COMPUTED at load (not a leaf): the narrowest Separation / cluster gap over the
+      // library's magnetic models in units of R (-1 when the library has none); recorded.
+      double state_anchor_min_gap_over_r = -1.0;
+    };
+    MagneticRulesData magnetic_rules;
 
     // Diagnostics.ExclusionEnergy (OI-COVERAGE-EXCLUSION-ENERGY, idfix DESIGN section 8;
     // decisions 1064 (2) / 1072 Q3 / 1074 / 1076): write
@@ -1469,6 +1636,18 @@ public:
     // categories, above decision 1076's 10 % bar, so the stage E / F configurations turn
     // it on.
     bool exclusion_energy = false;
+
+    // Diagnostics.WithinRVolumeEnergy (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15; the
+    // census of the spatial families' magnetic energy for the (A)-3D decision): per placed
+    // patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box (a
+    // translational patch: the model's edge span +- R laterally, +- R normally, its cell
+    // longitudinally; a spatial patch: its support box x [-R, R]) at quadrature-point
+    // resolution (a quadrature point is in or out: the box faces are resolved to ~h, an
+    // ESTIMATE for a share census, not a trace form), written per patch into
+    // surface-response-patch-energy.csv (`within-R magnetic energy (J)`, `within-R electric
+    // energy (J)`, `within-R volume (m^3)`). Requires PatchEnergy. OFF by default: bitwise
+    // off (one pass over the mesh per measurement when on).
+    bool within_r_volume_energy = false;
 
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the

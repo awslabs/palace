@@ -109,6 +109,31 @@ void NondimensionalizeSurfaceResponseGridFunctions(Units &units, GridFunction *E
 
 }  // namespace
 
+double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
+                                double raw_normalization_energy)
+{
+  // Decision 1250: not gated by closure_independent_confident (the electric correction's
+  // coverage rule applies: printed on partial coverage, the uncovered part kept raw).
+  if (!response.has_magnetic || !response.magnetic_confident)
+  {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  MFEM_VERIFY(raw_normalization_energy > 0.0,
+              "The fixed-trace frequency shift requires a positive raw normalization "
+              "energy!");
+  return (response.magnetic_domain_correction - response.domain_correction) /
+         (2.0 * raw_normalization_energy);
+}
+
+double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_energy)
+{
+  if (!(within_radius_raw_energy > 0.0))
+  {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return 1.0 - kept_raw_energy / within_radius_raw_energy;
+}
+
 template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(
     const config::ProblemData &problem, const config::SolverData &solver,
@@ -360,6 +385,9 @@ PostOperator<solver_t>::PostOperator(
       }
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();
+      surface_response_within_r_volume_energy_enabled =
+          surface_response_patch_energy_enabled &&
+          surface_response_op->WithinRVolumeEnergyRequested();
       if (surface_response_exclusion_energy_enabled)
       {
         for (const auto &portion : surface_response_op->GetExclusionEnergyPortions())
@@ -1844,6 +1872,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                   "Maxwell postprocessed surface-response normalization energy must be "
                   "positive!");
       result.has_postprocessed = true;
+      if (result.confidence.has_magnetic)
+      {
+        // D6 (USER 1221; decision 1229): the corrected frequency of record.
+        result.magnetic_domain_correction = result.confidence.magnetic_domain_correction;
+        result.fixed_trace_frequency_shift =
+            FixedTraceFrequencyShift(result.confidence, result.raw_normalization_energy);
+      }
     }
 
     const auto target_interfaces = surface_response_op->GetTargetInterfaces();
@@ -1920,6 +1955,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           }
         }
       }
+      if (surface_response_within_r_volume_energy_enabled)
+      {
+        // COL-3 (R-MAG-15): the raw field's within-box volume energies per patch (E and
+        // B of this measurement; the material operator's eps / mu^-1).
+        result.within_r_volume_energies =
+            surface_response_op->GetWithinRVolumeEnergies(*E, *B, fem_op->GetMaterialOp());
+      }
       if (!result.confidence.loop_remainders.empty())
       {
         // OI-MX-LOOPGATE (decision 955): the circulating remainders' share of their
@@ -1970,6 +2012,9 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     }
     if (surface_response_postprocess_enabled)
     {
+      // Decision 1250: the matched energy share of the fixed-trace shift, accumulated over
+      // the target interfaces from the same partition the electric correction uses.
+      double shift_coverage_within_radius = 0.0, shift_coverage_kept_raw = 0.0;
       for (const int target : target_interfaces)
       {
         auto interface = result.interfaces.find(target);
@@ -2015,6 +2060,9 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
             outside->energy_outside + fabricated->second + kept_raw;
         interface->second.corrected_energy_fixed_flux =
             outside->energy_outside + fabricated_fixed_flux->second + kept_raw;
+        shift_coverage_within_radius +=
+            interface->second.raw_energy - outside->energy_outside;
+        shift_coverage_kept_raw += kept_raw;
         const double closure_scale =
             std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
         if (closure_scale > 0.0)
@@ -2023,6 +2071,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
               std::abs(fabricated->second - fabricated_fixed_flux->second) / closure_scale;
         }
       }
+      result.fixed_trace_shift_coverage =
+          FixedTraceShiftCoverage(shift_coverage_within_radius, shift_coverage_kept_raw);
     }
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
@@ -2311,6 +2361,41 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     // (decision 814 (1)).
     table.insert("hat_residual", "hat residual");
     table.insert("weighted_hat_residual", "response-weighted hat residual");
+    if (surface_response_op->HasMagneticLeaves())
+    {
+      // The magnetic (inductive) term's columns (DESIGN-v2; decisions 1229 Q1 / Q3, 1235):
+      // only when a magnetic leaf was READ (also when every leaf is refused: NaN numerics
+      // then), so every other run keeps its column set byte for byte. `fixed-trace
+      // frequency shift` is the corrected frequency of record (USER 1221 D6); `magnetic
+      // term applied` says whether a non-zero dK was in the corrected operator the
+      // self-consistent columns report; the fallback columns are the magnetic image of
+      // the loop-fit CSV's withheld correction (decision 955 D6); `fixed-trace shift
+      // coverage` is the matched energy share the shift rests on (decision 1250: the shift
+      // follows the electric correction's coverage rule, the confidence flags apart).
+      table.insert("fixed_trace_frequency_shift", "fixed-trace frequency shift");
+      table.insert("fixed_trace_corrected_frequency", "f fixed-trace corrected (GHz)");
+      table.insert("fixed_trace_shift_coverage", "fixed-trace shift coverage");
+      table.insert("magnetic_domain_correction", "magnetic domain correction (J)");
+      table.insert("magnetic_loop_residual", "magnetic loop residual");
+      table.insert("magnetic_weighted_loop_residual",
+                   "magnetic response-weighted loop residual");
+      table.insert("magnetic_loop_failure_fraction",
+                   "magnetic loop-response fraction above limit");
+      table.insert("magnetic_confident", "magnetic confidence pass");
+      table.insert("magnetic_patches", "magnetic patches");
+      table.insert("magnetic_excluded_patches", "magnetic patches excluded");
+      table.insert("magnetic_fallback_patches", "magnetic fallback patches");
+      table.insert("withheld_magnetic_domain_correction",
+                   "withheld magnetic domain correction (J)");
+      table.insert("magnetic_term_applied", "magnetic term applied");
+      table.insert("self_consistent_frequency_magnetic_re",
+                   "Re{f self-consistent (magnetic)} (GHz)");
+      table["magnetic_confident"].print_as_int = true;
+      table["magnetic_patches"].print_as_int = true;
+      table["magnetic_excluded_patches"].print_as_int = true;
+      table["magnetic_fallback_patches"].print_as_int = true;
+      table["magnetic_term_applied"].print_as_int = true;
+    }
   }
 
   using VT = Units::ValueType;
@@ -2464,7 +2549,87 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   table["hat_residual"] << (result.has_postprocessed ? confidence.hat_residual : nan);
   table["weighted_hat_residual"]
       << (result.has_postprocessed ? confidence.response_weighted_hat_residual : nan);
+  if (surface_response_op->HasMagneticLeaves())
+  {
+    const bool magnetic = result.has_postprocessed && confidence.has_magnetic;
+    const double shift = result.fixed_trace_frequency_shift;
+    // The raw frequency of this row in GHz (the driven sweep's frequency, the mode's).
+    const double frequency_GHz =
+        units.Dimensionalize<VT::FREQUENCY>(measurement_cache.freq.real()) / (2 * M_PI);
+    table["fixed_trace_frequency_shift"] << (magnetic ? shift : nan);
+    table["fixed_trace_corrected_frequency"]
+        << (magnetic && std::isfinite(shift) ? frequency_GHz * (1.0 + shift) : nan);
+    // Decision 1250: the matched energy share the shift rests on (1 at full coverage).
+    table["fixed_trace_shift_coverage"]
+        << (magnetic ? result.fixed_trace_shift_coverage : nan);
+    table["magnetic_domain_correction"]
+        << (magnetic
+                ? units.Dimensionalize<VT::ENERGY>(confidence.magnetic_domain_correction)
+                : nan);
+    table["magnetic_loop_residual"] << (magnetic ? confidence.magnetic_loop_residual : nan);
+    table["magnetic_weighted_loop_residual"]
+        << (magnetic ? confidence.magnetic_weighted_loop_residual : nan);
+    table["magnetic_loop_failure_fraction"]
+        << (magnetic ? confidence.magnetic_loop_response_failure_fraction : nan);
+    table["magnetic_confident"]
+        << (magnetic ? (confidence.magnetic_confident ? 1.0 : 0.0) : nan);
+    table["magnetic_patches"] << (magnetic
+                                      ? static_cast<double>(confidence.magnetic_patch_count)
+                                      : nan);
+    table["magnetic_excluded_patches"]
+        << (magnetic ? static_cast<double>(confidence.magnetic_excluded_patch_count) : nan);
+    table["magnetic_fallback_patches"]
+        << (magnetic ? static_cast<double>(confidence.magnetic_fallback_patch_count) : nan);
+    table["withheld_magnetic_domain_correction"]
+        << (magnetic ? units.Dimensionalize<VT::ENERGY>(
+                           confidence.loop_fallback_magnetic_domain_correction)
+                     : nan);
+    // The self-consistent columns above report the corrected operator AS CONFIGURED
+    // (decision 1229 Q1 (ii)): 1 when it carried a NON-ZERO dK, i.e. a patch carries the
+    // magnetic term after the dual gate's exclusions (decision 1235; `magnetic patches`
+    // counts the carrying patches, the excluded ones are counted apart).
+    table["magnetic_term_applied"]
+        << (result.has_self_consistent
+                ? (magnetic && confidence.magnetic_patch_count > 0 ? 1.0 : 0.0)
+                : nan);
+    table["self_consistent_frequency_magnetic_re"]
+        << (result.has_self_consistent && magnetic && confidence.magnetic_patch_count > 0
+                ? units.Dimensionalize<VT::FREQUENCY>(
+                      result.self_consistent_frequency.real()) /
+                      (2 * M_PI)
+                : nan);
+  }
   surface_response_confidence->WriteFullTableTrunc();
+  if (surface_response_op->HasMagneticLeaves())
+  {
+    // COL-1 (R-MAG-14): the per-model energy rows of this measurement (the raw field's
+    // postprocessing; models in model-index order as the model contributions).
+    if (result.has_postprocessed && confidence.has_magnetic)
+    {
+      const double frequency_GHz =
+          units.Dimensionalize<VT::FREQUENCY>(measurement_cache.freq.real()) / (2 * M_PI);
+      const int source = solver_t == ProblemType::DRIVEN
+                             ? excitation
+                             : static_cast<int>(std::lround(output_index));
+      for (std::size_t m = 0; m < confidence.model_contributions.size() &&
+                              m < confidence.model_magnetic_domain_corrections.size() &&
+                              m < confidence.model_magnetic_thin_energies.size();
+           m++)
+      {
+        if (confidence.model_magnetic_thin_energies[m] == 0.0 &&
+            confidence.model_magnetic_domain_corrections[m] == 0.0)
+        {
+          continue;  // a model without the term (no leaf, or no patch carrying it)
+        }
+        surface_response_magnetic_energy_rows.push_back(
+            {confidence.model_contributions[m].model, source, frequency_GHz,
+             units.Dimensionalize<VT::ENERGY>(
+                 confidence.model_magnetic_domain_corrections[m]),
+             units.Dimensionalize<VT::ENERGY>(confidence.model_magnetic_thin_energies[m])});
+      }
+    }
+    PrintSurfaceResponseMagnetic();
+  }
   PrintSurfaceResponseModelEnergies(output_index, excitation);
   if (surface_response_patch_energy_enabled)
   {
@@ -2474,6 +2639,62 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   PrintSurfaceResponseModelRawEnergies(output_index, excitation);
   PrintSurfaceResponseExclusionEnergies(output_index, excitation);
   PrintSurfaceResponseLoopFit(output_index, excitation);
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseMagnetic() const
+{
+  // surface-response-magnetic.csv (DESIGN-v2 section 3; decision 1229 Q4), root only,
+  // rewritten whole at every print: one "model" row per loaded model (the leaf's verdict)
+  // and one "gate" row per dual R0-a reading so far (global patch order within a source).
+  if (!surface_response_op || !surface_response_op->HasMagneticLeaves() ||
+      !Mpi::Root(fem_op->GetComm()))
+  {
+    return;
+  }
+  const auto path = post_dir / "surface-response-magnetic.csv";
+  // OI-MAGNETIC-CSV-WRITE-THROUGH-LINK (fix round P4 re-freeze; decision 1368; the
+  // OI-ADAPT-SAVEMESH-OVERWRITE form): SaveIteration leaves a symlink at this path into the
+  // archived iteration folder; truncating through it would overwrite the archived table
+  // and leave no real top-level file. Remove the link first, then write a real file.
+  mesh::RemoveSymlinkBeforeWrite(path);
+  std::ofstream output(path, std::ios::trunc);
+  MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
+  // Phase 3 (a) COL-1 (R-MAG-14): two trailing columns + one "energy" row per model
+  // carrying the term, per source and frequency / mode (the model's applied magnetic domain
+  // correction and its within-R magnetic thin energy, J); the model and gate rows leave
+  // them empty.
+  output << "kind,model,name,status,rule,psd ratio,negative eigenvalues,same-mesh "
+            "deviation,patches,patch,source,f (GHz),max ratio,excluded,reason,magnetic "
+            "domain correction (J),magnetic thin energy (J)\n";
+  auto Quote = [](const std::string &text)
+  {
+    std::string quoted = "\"";
+    for (const char c : text)
+    {
+      quoted += c == '"' ? std::string("\"\"") : std::string(1, c);
+    }
+    return quoted + "\"";
+  };
+  for (const auto &record : surface_response_op->GetMagneticModelRecords())
+  {
+    output << fmt::format("model,{},{},{},{},{:.6e},{},{:.6e},{},,,,,,{},,\n", record.model,
+                          Quote(record.name), record.status, record.rule, record.psd_ratio,
+                          record.negative_eigenvalue_count, record.same_mesh_deviation,
+                          record.patches, Quote(record.reason));
+  }
+  for (const auto &record : surface_response_op->GetMagneticGateRecords())
+  {
+    output << fmt::format("gate,{},,,,,,,,{},{},{:.8e},{:.6e},{},,,\n", record.model,
+                          record.patch, record.source, record.frequency, record.max_ratio,
+                          record.excluded ? 1 : 0);
+  }
+  for (const auto &row : surface_response_magnetic_energy_rows)
+  {
+    output << fmt::format("energy,{},,,,,,,,,{},{:.8e},,,,{:.15e},{:.15e}\n", row.model,
+                          row.source, row.frequency_GHz, row.domain_correction,
+                          row.thin_energy);
+  }
 }
 
 template <ProblemType solver_t>
@@ -2942,6 +3163,22 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       table.insert(fmt::format("interface_{}", interface),
                    fmt::format("fabricated surface energy[{}] (J)", interface));
     }
+    if (surface_response_op->HasMagneticLeaves())
+    {
+      // COL-2 (Phase 3 (a), R-MAG-14): the patch's applied magnetic domain correction and
+      // its within-R magnetic thin energy (NaN on a patch without a magnetic leaf).
+      table.insert("magnetic_domain_correction", "magnetic domain correction (J)");
+      table.insert("magnetic_thin_energy", "magnetic thin energy (J)");
+    }
+    if (surface_response_within_r_volume_energy_enabled)
+    {
+      // COL-3 (Phase 3 (b), R-MAG-15): the raw field's energies in the patch's own box by
+      // the volume integral at quadrature resolution, and the box volume it resolved (the
+      // parent of any per-volume ratio); NaN on a patch without a box.
+      table.insert("within_r_magnetic_energy", "within-R magnetic energy (J)");
+      table.insert("within_r_electric_energy", "within-R electric energy (J)");
+      table.insert("within_r_volume", "within-R volume (m^3)");
+    }
     table.insert("idx", index_label);
     table.insert("excitation", "exc");
     table.insert("max_loop_residual", "max loop residual");
@@ -2990,6 +3227,38 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
         const auto energy = energies.find(interface);
         table[fmt::format("interface_{}", interface)] << units.Dimensionalize<VT::ENERGY>(
             energy != energies.end() ? energy->second : 0.0);
+      }
+      if (surface_response_op->HasMagneticLeaves())
+      {
+        const auto magnetic = std::lower_bound(response.patch_magnetic_energies.begin(),
+                                               response.patch_magnetic_energies.end(),
+                                               data.patch, [](const auto &entry, int patch)
+                                               { return entry.patch < patch; });
+        const bool found = magnetic != response.patch_magnetic_energies.end() &&
+                           magnetic->patch == data.patch;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        table["magnetic_domain_correction"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(magnetic->domain_correction)
+                      : nan);
+        table["magnetic_thin_energy"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(magnetic->thin_energy) : nan);
+      }
+      if (surface_response_within_r_volume_energy_enabled)
+      {
+        const auto &volumes = result.within_r_volume_energies;
+        const auto entry = std::lower_bound(volumes.begin(), volumes.end(), data.patch,
+                                            [](const auto &record, int patch)
+                                            { return record.patch < patch; });
+        const bool found =
+            entry != volumes.end() && entry->patch == data.patch && entry->defined;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double length_scale = units.Dimensionalize<VT::LENGTH>(1.0);
+        table["within_r_magnetic_energy"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(entry->magnetic) : nan);
+        table["within_r_electric_energy"]
+            << (found ? units.Dimensionalize<VT::ENERGY>(entry->electric) : nan);
+        table["within_r_volume"]
+            << (found ? entry->volume * length_scale * length_scale * length_scale : nan);
       }
       table["idx"] << output_index;
       table["excitation"] << excitation;

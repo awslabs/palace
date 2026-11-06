@@ -88,6 +88,12 @@ NAMED_RECORD_ROWS = (
     ("PlacedLocalDeviation", "Summary", "placed PEC / pair / strip length whose local side separation deviates > 10 % from the keyed offset (decision 1078)"),
     ("CornerArmOnArc", "Summary", "corners whose arm lies on a fitted arc keep the terminal chord's direction (record only; OI-CORNER-ARM-CHORD, decision 1081)"),
     ("RemainderBelowBar", "Diagnostics", "isolated-edge remainders shorter than RemainderAbsorptionOverR x R left as features (record only; decision 1077 Q1 (B))"),
+    # mx-sc-magnetic DESIGN-v2 option (C) / decision 1229 Q4: applied patches whose model carries NO magnetic (inductive)
+    # leaf (the spatial families, a refused or absent leaf): their correction is ELECTRIC-ONLY (the K-side term dK is
+    # absent). Written by the preflight only when a loaded model carries a leaf; the energy share from the model-energy CSV.
+    ("MagneticElectricOnly", "Summary", "patches whose model carries no magnetic (inductive) leaf: electric-only correction, the "
+                                        "within-R inductive defect of finite-thickness metal is missing there (option (C); the "
+                                        "spatial families, refused leaves; mx-sc-magnetic DESIGN-v2, decision 1229)"),
 )
 # DESIGN section 4: the class of a model = its requirement Topology, SpatialEdgeCluster split by
 # EdgeCount band (the PLAN A.1.3 cost classes S / M / L use the same cuts); the jjsa key named.
@@ -126,7 +132,11 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # (W31 excluded, named) with the v2 reader, the candidate M3 and the 0.85 UNCALIBRATED rule (M0 on every Type; the C band holds the
 # measured +0.15..+0.33); the Maxwell block UNCALIBRATED (the 12 PROXY inputs: best unwidened LOO 10 / 12 = 0.833 < 0.85 -> LOW)
 # until the ENERGY-form re-fit v6.1 (P0's PatchEnergy-ON runs). The records: readiness-20261029/fixround/P1/bands/records-v6.json.
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v6.json")
+# v6.1 (fix round P4 re-freeze; REFREEZE-DESIGN s1 DATA-1b / s3 step 5; decisions 1236 (A) / 1364): the Maxwell block re-fit with the three
+# stage-E ENERGY-form cells (W06-mx / W05-mx / FE6-mx, the P0 mxenergy runs; cells under the 422 tail form = the whole population's form;
+# the static-limit C of record on the ported lines; FE6's C omitted, F-40), n 12 -> 15: SA / MS CALIBRATED (M0 widened), MA_sharp / C stay
+# UNCALIBRATED (LOW); the ES block = v6's, bit-identical. The records: readiness-20261029/fixround/P4/bands/records-v6.1.json. v6 kept.
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v6.1.json")
 # v2 of the reader (fix round P1, decisions 1209 / 1230 / 1233 (2); DESIGN-v3 s2 2A + s6): the ES rows read PER SOURCE
 # (select_source; the multi-source union), the F2 owner credit CAPPED at the dropped coupons' in-box energy, the uncredited
 # remainder printed as Unclaimed (unattributed), the no-energy RAW classes' ESTIMATE rows, the measured `unpatched` label.
@@ -703,6 +713,26 @@ def model_energies(postpro, interfaces, targets, source=None):
     for r in _first_eval_rows(rows, source):
         idx = int(r["model"])
         out[idx] = _sum_by_type(indexed_columns(r, "fabricated surface energy"), interfaces, targets)
+    return out
+
+
+def magnetic_electric_only(manifest, fab, types):
+    """The magnetic (inductive) leaves (DESIGN-v2 section 3; decision 1229 Q4): the preflight manifest's Library.Magnetic
+    (the rules; per model Index / Status / Rule / PsdRatio ...) joined with the model-energy CSV's evaluation-0 fabricated
+    energies -> per Type the ENERGY share of the models that carry no magnetic term (Status not Applied / Finding) over the
+    fabricated total; {"present": False} when the library has no leaves (the row and the share are then absent)."""
+    magnetic = (manifest.get("Library") or {}).get("Magnetic")
+    if not isinstance(magnetic, dict):
+        return {"present": False}
+    models = magnetic.get("Models") or []
+    carries = {int(m["Index"]): m.get("Status") in ("Applied", "Finding") for m in models if "Index" in m}
+    out = {"present": True, "rules": magnetic.get("Rules"), "models": models, "by_type": {}}
+    for t in types:
+        total = sum(v.get(t, 0.0) for v in fab.values())
+        electric_only = sum(v.get(t, 0.0) for idx, v in fab.items() if not carries.get(idx, False))
+        out["by_type"][t] = {"fabricated_total_J": total, "electric_only_J": electric_only,
+                             "electric_only_energy_share": (electric_only / total) if total else 0.0,
+                             "models_without_term": sorted(idx for idx in fab if not carries.get(idx, False))}
     return out
 
 
@@ -1571,6 +1601,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     residuals = named_residuals(kind, energy, lengths, lad["types"], flags, reference_order, ma_reading == "sharp",
                                loaded["models"], conductor, near_pairs)
     localize = any(v["LocalizeEdgeEnergy"] for v in interfaces.values())
+    magnetic = magnetic_electric_only(loaded["manifest"], model_energies(postpro, interfaces, targets, source), types)
     sources = es_sources(postpro) if kind == "ES" else []
     report = {
         "tool": TOOL_VERSION, "label_name": label or os.path.basename(os.path.dirname(postpro.rstrip("/"))) or postpro,
@@ -1593,7 +1624,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
                     "exclusion_energy_export": energy.get("exclusion_export"),
                     "scp_dropped": loaded["scp_dropped"],
                     "scp_owner_credit": {t: acc.get("scp_owner_credit") for t, acc in energy["types"].items()},
-                    "conductor_consistency": conductor, "geometric_near_pairs": near_pairs},
+                    "conductor_consistency": conductor, "geometric_near_pairs": near_pairs, "magnetic": magnetic},
         "block_B": residuals, "block_D": {"ladder": lad, "closure": energies.get("closure"), "flags": flags,
                                           "ff_vs_ft": {t: ((w["ff"] - w["ft"]) / w["ft"] if (w["ft"] and w["ff"] is not None) else None)
                                                        for t, w in W.items()}},
@@ -1806,6 +1837,16 @@ def render_markdown(report):
                      + "; ".join(f"feature {u['Id']} {u['Type']} {u['Length']:.2f} um ({u['Status']})" for u in A["unpatched_pairs"]))
     for name, v in (A.get("named_records") or {}).items():
         lines.append(f"NAMED record {name}: count {v.get('Count')}, length {v['Length']:.2f} um" + (f", treatment {v['Treatment']}" if v.get("Treatment") else "") + f" - {v['What']}")
+    magnetic = A.get("magnetic") or {}
+    if magnetic.get("present"):
+        rules = magnetic.get("rules") or {}
+        lines.append("MagneticElectricOnly (ENERGY share of the fabricated total by Type, models without a magnetic term): "
+                     + "; ".join(f"{t} {fmt_pct(v['electric_only_energy_share'])} (models {v['models_without_term']})"
+                                 for t, v in (magnetic.get("by_type") or {}).items())
+                     + f"; leaves: " + ", ".join(f"{m.get('Name')} {m.get('Status')}{' ' + str(m.get('Rule')) if m.get('Rule') else ''}"
+                                                  for m in magnetic.get("models") or [])
+                     + f"; rules SameMeshTolerance {rules.get('SameMeshTolerance')}, PsdFindingRatio {rules.get('PsdFindingRatio')}, "
+                       f"PsdRefusalRatio {rules.get('PsdRefusalRatio')}")
     cc = A.get("conductor_consistency") or {}
     if cc.get("present"):
         lines.append(f"ConductorConsistency (palace.json): tested {cc.get('tested')}, excluded {cc.get('excluded')}, FloorAppliedPatches {cc.get('floor_applied')}, "

@@ -174,6 +174,9 @@ protected:
   // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   std::unique_ptr<ComplexOperator> response_mass;
+  // The magnetic (inductive) defect dK (mx-sc-magnetic DESIGN-v2 E4; USER 1221 D8): the
+  // K-side, omega-independent twin of the response mass; null without magnetic leaves.
+  std::unique_ptr<ComplexOperator> response_stiffness;
   ComplexVector RHS1, RHS2, r;
 
   // Per-port wave-port boundary mass operators M_{μ⁻¹,p} (ω-independent). The
@@ -252,6 +255,7 @@ protected:
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr, response_mass_r;  // Extended as modes are added
+  Eigen::MatrixXcd response_stiffness_r;
   Eigen::VectorXcd RHS1r;  // Need to recompute drive vector on excitation change.
 
   // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
@@ -479,7 +483,8 @@ public:
               std::size_t max_size_per_excitation);
   RomOperator(const IoData &iodata, SpaceOperator &space_op,
               std::size_t max_size_per_excitation,
-              std::unique_ptr<ComplexOperator> response_mass = nullptr);
+              std::unique_ptr<ComplexOperator> response_mass = nullptr,
+              std::unique_ptr<ComplexOperator> response_stiffness = nullptr);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }

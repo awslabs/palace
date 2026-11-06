@@ -875,6 +875,113 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass",
   CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm < 1.0e-8);
 }
 
+// The magnetic (inductive) defect on the adaptive PROM (mx-sc-magnetic DESIGN-v2 E4; USER
+// 1221 D8): a response-corrected PROM given a K-side `response_stiffness` beside the
+// response mass carries it as an omega-independent projected matrix (coefficient 1). The
+// stand-in dK is the (DIAG_ZERO) mass itself: the corrected HDM A - omega^2 M + M differs
+// from the mass-only corrected HDM on this electrically small cube (a curl-free solution K
+// ignores: the true K would not move it), equals the HDM of a mass-only PROM whose response
+// mass is (1 - 1 / omega^2) M (the coefficient 1 pinned: a wrong but consistent coefficient
+// fails here; review d1227 MINOR-7), and the PROM built on one sample reproduces its own
+// HDM.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
+                 "[romoperator][magnetic][Serial][Parallel]")
+{
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", 1.0e-6},
+                         {"Refinement", json::object()},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0},
+                                               {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"Samples", json::array({json::object({{"Type", "Linear"},
+                                               {"MinFreq", 2.0},
+                                               {"MaxFreq", 4.0},
+                                               {"FreqStep", 2.0}})})},
+        {"AdaptiveTol", 1.0e-3},
+        {"AdaptiveMaxSamples", 4}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"SolveTol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh);
+
+  auto response_mass = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(response_mass);
+  RomOperator mass_only(iodata, space_op, 4, std::move(response_mass));
+  auto response_mass_2 = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto response_stiffness = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(response_stiffness);
+  RomOperator corrected(iodata, space_op, 4, std::move(response_mass_2),
+                        std::move(response_stiffness));
+
+  const int excitation = 1;
+  const double omega = iodata.solver.driven.sample_f.back();
+  ComplexVector mass_only_hdm(space_op.GetNDSpace().GetTrueVSize());
+  ComplexVector corrected_hdm(space_op.GetNDSpace().GetTrueVSize());
+  ComplexVector corrected_prom(space_op.GetNDSpace().GetTrueVSize());
+  mass_only_hdm.UseDevice(true);
+  corrected_hdm.UseDevice(true);
+  corrected_prom.UseDevice(true);
+  mass_only_hdm = 0.0;
+  corrected_hdm = 0.0;
+  corrected_prom = 0.0;
+
+  mass_only.SolveHDM(excitation, omega, mass_only_hdm);
+  corrected.SolveHDM(excitation, omega, corrected_hdm);
+  ComplexVector difference(corrected_hdm);
+  linalg::AXPY(-1.0, mass_only_hdm, difference);
+  const double corrected_norm = linalg::Norml2(space_op.GetComm(), corrected_hdm);
+  REQUIRE(corrected_norm > 0.0);
+  CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm > 1.0e-6);
+
+  // The pin: -omega^2 dM + 1.0 dK with dM = dK = M is -omega^2 (1 - 1 / omega^2) M, the
+  // mass-only corrected HDM with the scaled response mass (the same solver, the same
+  // preconditioner: equal to the solver tolerance).
+  auto scaled_mass = std::make_unique<SumComplexOperator>(
+      space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO),
+      std::complex<double>(1.0 - 1.0 / (omega * omega), 0.0));
+  RomOperator equivalent(iodata, space_op, 4, std::move(scaled_mass));
+  ComplexVector equivalent_hdm(space_op.GetNDSpace().GetTrueVSize());
+  equivalent_hdm.UseDevice(true);
+  equivalent_hdm = 0.0;
+  equivalent.SolveHDM(excitation, omega, equivalent_hdm);
+  difference = corrected_hdm;
+  linalg::AXPY(-1.0, equivalent_hdm, difference);
+  CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm < 1.0e-8);
+
+  corrected.UpdatePROM(corrected_hdm, "corrected_sample");
+  corrected.SolvePROM(excitation, omega, corrected_prom);
+  difference = corrected_prom;
+  linalg::AXPY(-1.0, corrected_hdm, difference);
+  CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm < 1.0e-8);
+
+  // A stiffness without a response mass is refused (dK is the K-side twin of dM).
+  auto lone_stiffness = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  CHECK_THROWS(RomOperator(iodata, space_op, 4, nullptr, std::move(lone_stiffness)));
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,

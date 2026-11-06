@@ -39,6 +39,11 @@ struct EigenvalueTarget
 ResponseCorrectedMass BuildResponseCorrectedMass(const ComplexOperator &mass,
                                                  const Operator &response);
 
+// Construct K + dK (the magnetic inductive defect, mx-sc-magnetic DESIGN-v2 E3): the twin
+// of BuildResponseCorrectedMass on the stiffness side (the essential diagonal of K kept).
+ResponseCorrectedMass BuildResponseCorrectedStiffness(const ComplexOperator &stiffness,
+                                                      const Operator &response_stiffness);
+
 // Return the shift and spectrum selector for an eigenproblem represented in either
 // λ = iω or μ = -λ² = ω².
 EigenvalueTarget GetEigenvalueTarget(double target, bool lambda_eigenproblem,

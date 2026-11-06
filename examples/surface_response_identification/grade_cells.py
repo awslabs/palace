@@ -23,6 +23,17 @@ single-frequency window is the same rule with one member.
     t_m = the class tail of the model's name (TAILS below; a spatial cluster's own library record `MA.Summary.Deficit.
     Consistent.Median` with the bar [0, 2 x record]); the bracket from the tail bars gives INCONCLUSIVE when ft is inside the
     bar and the bracket is outside (the verdict of record).
+  * the TAIL FORM (--tail-form; USER decision 1308 F-C5 (b), supervisor decisions 1310 / 1312 / 1314): `fixed-shell` (the DEFAULT since the P4
+    re-freeze, decision 1360; `422` = the class tails of record above, explicit for the reproduction of the records read under it) = ONE estimator on both sides, both estimating the converged
+    fixed-shell-R10 sharp energy S* (rings {10, 30, 50} nm = {R/190, 3R/190, R/38}, R = 1.9 um; 50 nm = t/2): the device class tails
+    FIXED_SHELL_TAILS = S*_class / raw_class(library rung) - 1 (the factor mapping the library-rung raw the device applies onto S*),
+    and the reference's shells REQUIRED to carry that ring set (FIXED_SHELL_RINGS_UM: every stage-E r10 reference of record does); a
+    reference recorded with another ring set is REFUSED (exit 3) unless --reference-rings-information, which grades it and labels
+    the MA_sharp cell INFORMATION (reference ring set != of record). The spatial clusters keep their library records under both
+    forms (not re-measured under R10). Under this form a reference coarser than r5 p5 is not converged in S* (P3-FC5 STEP 10: r10 p4
+    -> r5 p5 +2.6..+4.5 % on CD3), so its MA_sharp cell is labelled INFORMATION (not counted) until graded against an r5 p5-or-finer
+    reference (decision 1314; reference_depth_information on a run reference; a values reference's MA_sharp_reference_depth, absent =
+    "depth not recorded" = INFORMATION too, decision 1318).
   * MA_sharp of a thick REFERENCE run from its recorded MA shells (the shells catalog beside the reference config):
     `radial_ma_profile` of the library (examples/cpw3d_surface/spatial_coupon/qualify), the HEADLINE estimator -- the
     collect17 form of record, ported. A reference given as a VALUES file (p_SA / p_MS / p_MA_sharp / C per source or
@@ -61,6 +72,55 @@ TAILS = {
     "corner": (0.1891, 0.1369, 0.1891),
 }
 SPATIAL_DEFAULT_TAIL = (0.0302, 0.0200, 0.0340)
+TAIL_FORMS = ("422", "fixed-shell")
+# The DEFAULT tail form since the P4 re-freeze (REFREEZE-DESIGN s3 step 2; USER 1308 (b) "replacing the 422 convention"; decision 1360):
+# fixed-shell. The 422 form stays available and is passed EXPLICITLY (--tail-form 422) to reproduce the records read under it.
+DEFAULT_TAIL_FORM = "fixed-shell"
+# FIXED-SHELL-R10 (decision 1310 Q-A): the ring boundaries (um) both sides' Consistent estimator is read on; the last = t/2.
+FIXED_SHELL_RINGS_UM = (0.01, 0.03, 0.05)
+# The fixed-shell class tails (supervisor decisions 1312 / 1313 / 1314 implementing USER 1308 F-C5 (b); the P3-FC5 lane record):
+# t_class = S*_class / raw_class(library rung) - 1, where S*_class = the CONVERGED fixed-shell-R10 sharp MA energy of the class
+# coupon (P3-FC5 fc5/results/r10-tails.json) and raw_class(library rung) = the raw MA of the coupon rung that produced the library
+# model the device applies (the tail is the factor mapping THAT raw onto S*). The bar [lo, hi] = the S* spread over the ladder's
+# (h, p) points widened on both sides by the converged-reference R10 h-step FIXED_SHELL_REFERENCE_STEP; the bar applies to cells
+# graded against a CONVERGED reference (r5 p5 or finer) -- an r10 p4-referenced cell carries no letter under this form (1314).
+#   isolated: S* = 6.214692e-19 J (the 2D edge coupon, lc 2 / lc 1 nm x p4..p8: 10 points, min 6.211713e-19, max 6.217804e-19,
+#             spread 0.098 %); raw(edge lc 2 nm, p4) = 5.652615e-19 J -> t = +9.94 % [9.70, 10.19].
+#   corner:   S* = 2.646967e-21 J (the 3D 90-deg convex coupon, 10 nm x p3..p7: 5 points, min 2.634013e-21, max 2.653846e-21,
+#             spread 0.749 %; the 20-nm rung's sharp is ring-1 sub-mesh noisy and not used); raw(corner 20 nm, p3) = 2.322675e-21 J
+#             -> t = +13.96 % [13.21, 14.45].
+#   curved / strip: the isolated tail by assumption (as the 422 form); the spatial clusters keep their own library record tails
+#   under both forms (1314 Q2: "not re-measured under R10").
+FIXED_SHELL_S_STAR_J = {"isolated": (6.214692e-19, 6.211713e-19, 6.217804e-19), "corner": (2.646967e-21, 2.634013e-21, 2.653846e-21)}
+FIXED_SHELL_RAW_LIBRARY_RUNG_J = {"isolated": ("edge lc 2 nm p4", 5.652615e-19), "corner": ("corner 20 nm p3", 2.322675e-21)}
+# The converged-reference R10 h-step (fraction of MA_sharp): the CD3 thick reference read with the R10 rings at r5 p5 -> r2.5 p5
+# moves -0.16..-0.19 % on its four sources (P3-FC5 STEP 10; the r10 p4 -> r5 p5 step +2.6..+4.5 % is the unconverged rung's).
+# CONVENTION (decision 1314 Q1, the numbers as ruled): the step is ADDED to the tail bar as is (a fraction of MA_sharp added to a
+# fraction of raw, without the S*/raw factor 1.0994 / 1.1396 that would widen it to 0.0021 / 0.0022): lo / hi = S*_min,max / raw - 1 -/+ step.
+FIXED_SHELL_REFERENCE_STEP = 0.0019
+
+
+def fixed_shell_tails(reference_step=FIXED_SHELL_REFERENCE_STEP):
+    """{class: (tail, lo, hi)} of the fixed-shell form from the constants above: tail = S* / raw - 1, lo = S*_min / raw - 1 - step,
+    hi = S*_max / raw - 1 + step."""
+    out = {}
+    for cls, (s_mean, s_min, s_max) in FIXED_SHELL_S_STAR_J.items():
+        raw = FIXED_SHELL_RAW_LIBRARY_RUNG_J[cls][1]
+        out[cls] = (s_mean / raw - 1.0, s_min / raw - 1.0 - reference_step, s_max / raw - 1.0 + reference_step)
+    out["curved"] = out["strip"] = out["isolated"]
+    return out
+
+
+FIXED_SHELL_TAILS = fixed_shell_tails()
+# D7 INFORMATION (USER 1331 D7 "measure them"; PREREG-D7.md, frozen sha 485d8de6…; fixround/P3-FC5-D7/d7/results/d7-tails.json;
+# supervisor decisions 1333 / 1335 / 1336 / 1341): the curved and strip tails MEASURED by the pre-registered ratio transfer through
+# the isolated window (CRV / H333 / ISO46 r5 p5 + r2.5 p5 re-solved with the R10 shells; t_c = t_iso(lib) x R_c with
+# R_c = t_W(k) / t_iso(k), the ISO46 denominator corrected for its 0.924 / 0.044 / 0.019 / 0.013 mix) read
+#   curved +9.66 % [9.41, 9.90] (R_curved 0.9702 / 0.9720), strip +12.47 % [12.15, 12.79] (R_strip 1.2527 / 1.2550).
+# The pre-registered CD3 validation (4 sources x 2 rungs, 5 % bar, fail-closed) read 7 PASS / 1 FAIL (source 4, corner share
+# 0.4945, -6.09 % at r2.5 p5) -> option (C) of PREREG-D7 s4: the values above are INFORMATION ONLY and NOT adopted; the table
+# keeps curved / strip = isolated (the borrow NAMED); the stack (ParallelEdgeCluster) stays under the strip key, unmeasured.
+# No constant of this block changed (decision 1341).
 # The MA shells catalog's attribute numbering (collect17.B): plane j's top face B + 100 + 20 j + 1, its foot rings
 # B + 200 + 20 j + k, its top-side rings B + 300 + 20 j + k.
 SHELLS_BASE = 500
@@ -76,6 +136,13 @@ BAND_TOL_PT = 1e-12
 
 class MissingInput(Exception):
     """A required input of the grade is absent (exit code 2; the file is named)."""
+
+
+class ReferenceRingsNotOfRecord(Exception):
+    """--tail-form fixed-shell on a reference whose recorded MA shell rings are not FIXED_SHELL_RINGS_UM (exit code 3; decision 1310 Q-D)."""
+
+
+INFORMATION_RINGS = "INFORMATION (reference ring set != of record)"
 
 
 def read_csv(path):
@@ -130,8 +197,10 @@ def model_class(name):
     return "other"
 
 
-def tail_of(name, spatial_tails):
-    """tabulate_rerun2.tail_of -> ((tail, lo, hi), source text)."""
+def tail_of(name, spatial_tails, tail_form=DEFAULT_TAIL_FORM):
+    """tabulate_rerun2.tail_of -> ((tail, lo, hi), source text); the class table by `tail_form` (TAILS = 422; FIXED_SHELL_TAILS =
+    fixed-shell), the class map and the spatial clusters' library records the same under both forms."""
+    table = TAILS if tail_form == "422" else FIXED_SHELL_TAILS
     cls = model_class(name)
     if cls.startswith("spatial cluster"):
         key = name.split("@")[0]
@@ -139,13 +208,14 @@ def tail_of(name, spatial_tails):
             if key.startswith(k) or k.startswith(key):
                 return v, "library record (per coupon)"
         return SPATIAL_DEFAULT_TAIL, "spatial median 3.02 (no per-coupon record found)"
+    src = " (FIXED-SHELL-R10: S* / raw(library rung) - 1, decisions 1312 / 1314)" if tail_form == "fixed-shell" else ""
     if cls == "corner":
-        return TAILS["corner"], "corner set C p3 / bias bar"
+        return table["corner"], ("corner set C p3 / bias bar" if tail_form == "422" else "S*(corner 10 nm ladder) / raw(corner 20 nm p3)") + src
     if cls in ("curved edge", "curved strip"):
-        return TAILS["curved"], "isolated tail"
+        return table["curved"], "isolated tail" + src
     if cls in ("strip pair", "gap pair", "stack (ParallelEdgeCluster)"):
-        return TAILS["strip"], "isolated tail by assumption"
-    return TAILS["isolated"], "2D straight coupon p4"
+        return table["strip"], "isolated tail by assumption" + src
+    return table["isolated"], ("2D straight coupon p4" if tail_form == "422" else "S*(edge lc 2 / lc 1 ladder) / raw(edge lc 2 nm p4)") + src
 
 
 def spatial_tails(library_path):
@@ -190,14 +260,15 @@ def interfaces_by_type(config_path):
     return out, cfg
 
 
-def ma_sharp_convention_b(e_surf_ma, model_energies, catalog, sp_tails):
-    """The device MA_sharp (B): -> {E_out_plus_uncovered_J, models_MA_E_J, n_models, device_sharp_E_J, bracket_E_J, per_class}."""
+def ma_sharp_convention_b(e_surf_ma, model_energies, catalog, sp_tails, tail_form=DEFAULT_TAIL_FORM):
+    """The device MA_sharp (B): -> {E_out_plus_uncovered_J, models_MA_E_J, n_models, device_sharp_E_J, bracket_E_J, per_class}; the class
+    tails t_m by `tail_form` (tail_of)."""
     base = e_surf_ma - sum(model_energies.values())
     cen = lo = hi = base
     per_class = {}
     for m, fm in model_energies.items():
         name = catalog.get(m, f"model{m}")
-        (t, tlo, thi), srcname = tail_of(name, sp_tails)
+        (t, tlo, thi), srcname = tail_of(name, sp_tails, tail_form)
         cls = model_class(name)
         if cls.startswith("spatial cluster"):
             tlo, thi = 0.0, 2.0 * t
@@ -209,17 +280,69 @@ def ma_sharp_convention_b(e_surf_ma, model_energies, catalog, sp_tails):
         pc["tail_E_J"] += fm * t
         pc["models"].append(name)
     return {"E_out_plus_uncovered_J": base, "models_MA_E_J": sum(model_energies.values()), "n_models": len(model_energies),
-            "device_sharp_E_J": cen, "bracket_E_J": sorted([lo, hi]),
+            "device_sharp_E_J": cen, "bracket_E_J": sorted([lo, hi]), "tail_form": tail_form,
             "device_tail_pct_of_raw_MA": (100.0 * (cen - e_surf_ma) / e_surf_ma) if e_surf_ma else None, "per_class": per_class}
 
 
-def ma_sharp_from_shells(shells_catalog, p_all, e_elec, edge_out, ma_interfaces=(3,)):
+def rings_of_record(rings_um):
+    """True when a reference's MA shell ring boundaries (um, outer radii) are FIXED_SHELL_RINGS_UM (to 1e-9 um)."""
+    return len(rings_um) == len(FIXED_SHELL_RINGS_UM) and all(abs(a - b) < 1e-9 for a, b in zip(rings_um, FIXED_SHELL_RINGS_UM))
+
+
+def check_reference_rings(rings_um, where, tail_form, rings_information):
+    """The fixed-shell form's reference-side rule (decision 1310 Q-D): the rings must be of record; otherwise refuse, or -- with
+    --reference-rings-information -- grade and return the INFORMATION label for the MA_sharp cell."""
+    if tail_form != "fixed-shell" or rings_of_record(rings_um):
+        return None
+    if not rings_information:
+        raise ReferenceRingsNotOfRecord(f"{where}: recorded MA shell rings {list(rings_um)} um != FIXED_SHELL_RINGS_UM {list(FIXED_SHELL_RINGS_UM)} "
+                                        "(decision 1310 Q-D: refused; --reference-rings-information grades it as INFORMATION)")
+    return INFORMATION_RINGS
+
+
+# Under the fixed-shell form a reference is converged in S* at r5 p5 or finer (decision 1314: the CD3 ladder read with the R10 rings
+# moves +2.6..+4.5 % from r10 p4 to r5 p5 and <= 0.19 % from r5 p5 to r2.5 p5); its depth = (its first graded row height r, its order).
+FIXED_SHELL_CONVERGED_R_UM = 0.005
+FIXED_SHELL_CONVERGED_ORDER = 5
+INFORMATION_DEPTH = "INFORMATION (reference not converged in S*: coarser than r5 p5)"
+# A VALUES-file reference whose depth is not recorded (no MA_sharp_reference_depth) is not shown converged: fail-closed by label
+# (decision 1318; the rings rule keeps its exit-3 / override form).
+INFORMATION_DEPTH_UNRECORDED = "INFORMATION (reference depth not recorded)"
+
+
+def depth_information(depth, tail_form):
+    """The fixed-shell form's reference-depth rule on a depth {"r_um", "order"} (or None = not recorded): -> the INFORMATION label or
+    None (converged: r_um <= FIXED_SHELL_CONVERGED_R_UM and order >= FIXED_SHELL_CONVERGED_ORDER). Always None under the 422 form."""
+    if tail_form != "fixed-shell":
+        return None
+    if not depth:
+        return INFORMATION_DEPTH_UNRECORDED
+    if float(depth["r_um"]) <= FIXED_SHELL_CONVERGED_R_UM + 1e-12 and int(depth["order"]) >= FIXED_SHELL_CONVERGED_ORDER:
+        return None
+    return INFORMATION_DEPTH
+
+
+def reference_depth_information(shells_catalog, reference_run, tail_form):
+    """The fixed-shell form's reference-depth rule (decision 1314) on a RUN reference: -> ({"r_um", "order"}, the INFORMATION label or
+    None); the row height from the shells catalog's RowHeightsUm[0], the order from the reference's postpro/config_resolved.json
+    Solver.Order. Under the 422 form nothing is read: -> (None, None)."""
+    if tail_form != "fixed-shell":
+        return None, None
+    with open(os.path.join(reference_run, "postpro", "config_resolved.json")) as handle:
+        order = int(json.load(handle)["Solver"]["Order"])
+    depth = {"r_um": shells_catalog["RowHeightsUm"][0], "order": order}
+    return depth, depth_information(depth, tail_form)
+
+
+def ma_sharp_from_shells(shells_catalog, p_all, e_elec, edge_out, ma_interfaces=(3,), tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """The thick reference's MA_sharp from its recorded MA shells (collect17.ma_sharp, A15.2 (4): rings summed over the
     planes per edge kind; the HEADLINE estimator of radial_ma_profile). p_all = {interface index: p_surf} of the reference
     row, e_elec its E_elec, edge_out = {interface: {R_um (rounded 9): E_out (J)}} of the same source / frequency,
-    ma_interfaces the window's MA interface indices (the raw MA total = their sum; the record form's single interface 3)."""
+    ma_interfaces the window's MA interface indices (the raw MA total = their sum; the record form's single interface 3).
+    Under tail_form fixed-shell the recorded rings must be FIXED_SHELL_RINGS_UM (check_reference_rings)."""
     E = {k: v * e_elec for k, v in p_all.items()}
     rings = shells_catalog["Rings"]
+    information = check_reference_rings([r["OuterRadius"] for r in rings], "shells catalog", tail_form, rings_information)
     nk = len(rings)
     top = {k["Ring"]: 0.0 for k in rings}
     bottom = {k["Ring"]: 0.0 for k in rings}
@@ -264,7 +387,7 @@ def ma_sharp_from_shells(shells_catalog, p_all, e_elec, edge_out, ma_interfaces=
     return {"MA_raw_J": ma_total, "MA_tail_J": tail, "MA_sharp_J": (ma_total + tail) if tail is not None else None,
             "TailOverRaw_pct": (100.0 * tail / ma_total) if tail is not None else None,
             "Deficit_pct": {n: (100.0 * r / ma_total if r is not None else None) for n, r in remainders.items()},
-            "FarShare_pct": 100.0 * far / ma_total,
+            "FarShare_pct": 100.0 * far / ma_total, "Rings_um": [r["OuterRadius"] for r in rings], "rings_information": information,
             "Ring1Factor": {kind: (prof[kind]["Estimates"][profile.kind_estimator(profile.HEADLINE_ESTIMATOR, kind)] or {}).get("Ring1ResolvedOverModel")
                             for kind in ("top", "bottom")},
             "Rule": profile.HEADLINE_ESTIMATOR + ": top Theory@2 + bottom Fit2-4 (radial_ma_profile.py of the library, imported)"}
@@ -327,7 +450,7 @@ def offdiag(row, prefix, src):
     return out
 
 
-def es_device_source(final, src, iface, catalog, sp_tails):
+def es_device_source(final, src, iface, catalog, sp_tails, tail_form=DEFAULT_TAIL_FORM):
     """The ES device's per-Type values for source `src` (row i == src of every CSV of the final cycle)."""
     q = read_csv(os.path.join(final, "surface-Q-corrected.csv"))
     row = row_of_source(q, src)
@@ -351,14 +474,14 @@ def es_device_source(final, src, iface, catalog, sp_tails):
         if int(fnum(r["source"])) != src or int(fnum(r["evaluation"])) != 0:
             continue
         F[int(fnum(r["model"]))] = sum(fnum(r[f"fabricated surface energy[{k}] (J)"]) for k in iface["MA"])
-    sharp = ma_sharp_convention_b(out["MA_E_ft_J"], F, catalog, sp_tails)
+    sharp = ma_sharp_convention_b(out["MA_E_ft_J"], F, catalog, sp_tails, tail_form)
     sharp["device_sharp_p"] = sharp["device_sharp_E_J"] / out["E_elec_ft_J"]
     sharp["bracket_p"] = sorted([b / out["E_elec_ft_J"] for b in sharp["bracket_E_J"]])
     out["MA_sharp"] = sharp
     return out
 
 
-def es_reference_source(ref, src, iface, shells_dir):
+def es_reference_source(ref, src, iface, shells_dir, tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """The thick reference's per-Type values for source `src` (the Type sums over `iface`); MA_sharp from the recorded shells."""
     post = os.path.join(ref, "postpro")
     row = row_of_source(read_csv(os.path.join(post, "surface-Q.csv")), src)
@@ -373,7 +496,8 @@ def es_reference_source(ref, src, iface, shells_dir):
     with open(cat_path) as handle:
         cat = json.load(handle)
     eo = edge_out_rows(read_csv(os.path.join(post, "surface-Q-edge.csv")), lambda r: int(fnum(r["i"])) == src)
-    sharp = ma_sharp_from_shells(cat, p, e_elec, eo, tuple(iface["MA"]))
+    sharp = ma_sharp_from_shells(cat, p, e_elec, eo, tuple(iface["MA"]), tail_form, rings_information)
+    sharp["reference_depth"], sharp["depth_information"] = reference_depth_information(cat, ref, tail_form)
     return {"source": src, "E_elec_J": e_elec, "SA_p": sum(p[k] for k in iface["SA"]), "MS_p": sum(p[k] for k in iface["MS"]),
             "MA_p": sum(p[k] for k in iface["MA"]), "C_F": c_diag,
             "C_offdiag_F": offdiag(crow, "C", src), "MA_sharp": sharp, "MA_sharp_p": sharp["MA_sharp_J"] / e_elec,
@@ -391,7 +515,7 @@ def port_v2(rows, F, port=1):
     return fnum(v[0][f"Re{{V[{port}]}} (V)"]) ** 2 + fnum(v[0][f"Im{{V[{port}]}} (V)"]) ** 2
 
 
-def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True, excitation=None):
+def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True, excitation=None, tail_form=DEFAULT_TAIL_FORM):
     """The Maxwell device's per-Type values at frequency F (the top-level postpro = the final solve). The per-interface
     rows of surface-Q-corrected.csv at F (and excitation `excitation` when the CSV carries an `exc` column and several
     excitations); p = E_surf corrected / denominator (E_norm corrected, or E_norm corrected - E_cap: A1.1.1)."""
@@ -450,14 +574,14 @@ def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True
             continue
         m = int(fnum(r["model"]))
         Fm[m] = Fm.get(m, 0.0) + sum(fnum(r[f"fabricated surface energy[{k}] (J)"]) for k in iface["MA"])
-    sharp = ma_sharp_convention_b(out["MA_E_ft_J"], Fm, catalog, sp_tails)
+    sharp = ma_sharp_convention_b(out["MA_E_ft_J"], Fm, catalog, sp_tails, tail_form)
     sharp["device_sharp_p"] = sharp["device_sharp_E_J"] / denom_ft
     sharp["bracket_p"] = sorted([b / denom_ft for b in sharp["bracket_E_J"]])
     out["MA_sharp"] = sharp
     return out
 
 
-def mx_reference_f(ref, F, iface, shells_dir):
+def mx_reference_f(ref, F, iface, shells_dir, tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """The thick driven reference at F: p_surf[k] of surface-Q.csv, E_elec / E_mag of domain-E.csv, C_eff = 2 E_elec / |V|^2,
     MA_sharp from the recorded shells at F."""
     post = os.path.join(ref, "postpro")
@@ -475,22 +599,31 @@ def mx_reference_f(ref, F, iface, shells_dir):
     with open(cat_path) as handle:
         cat = json.load(handle)
     eo = edge_out_rows(read_csv(os.path.join(post, "surface-Q-edge.csv")), lambda r: abs(fnum(r["f (GHz)"]) - F) < FREQ_TOL_GHZ)
-    sharp = ma_sharp_from_shells(cat, p, e_elec, eo, tuple(iface["MA"]))
+    sharp = ma_sharp_from_shells(cat, p, e_elec, eo, tuple(iface["MA"]), tail_form, rings_information)
+    sharp["reference_depth"], sharp["depth_information"] = reference_depth_information(cat, ref, tail_form)
     return {"f_GHz": F, "run": ref, "E_elec_J": e_elec, "E_mag_J": e_mag, "E_mag_over_E_elec": e_mag / e_elec, "V2": V2,
             "C_eff_F": 2.0 * e_elec / V2, "SA_p": sum(p[k] for k in iface["SA"]), "MS_p": sum(p[k] for k in iface["MS"]),
             "MA_p": sum(p[k] for k in iface["MA"]), "MA_sharp": sharp, "MA_sharp_p": sharp["MA_sharp_J"] / e_elec,
             "shells_catalog": cat_path}
 
 
-def reference_from_values(values, member):
+def reference_from_values(values, member, tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """A reference given as values (--reference-values JSON): {"members": {"<source or f>": {"SA_p", "MS_p", "MA_sharp_p",
-    "C_F" | "C_eff_F", optional "MA_p", "E_elec_J", "C_offdiag_F"}}} or the same keys at the top level for every member."""
+    "C_F" | "C_eff_F", optional "MA_p", "E_elec_J", "C_offdiag_F", "MA_sharp_rings_um", "MA_sharp_reference_depth"}}} or the same keys
+    at the top level for every member. Under tail_form fixed-shell the member's (or top-level) MA_sharp_rings_um = the ring boundaries
+    its MA_sharp_p was read on must be FIXED_SHELL_RINGS_UM (absent = not of record): check_reference_rings; and its
+    MA_sharp_reference_depth {"r_um", "order"} = the depth of the solve it was read from decides the depth label (absent = not
+    recorded = INFORMATION_DEPTH_UNRECORDED; decision 1318): depth_information."""
     members = values.get("members")
     v = members[str(member)] if members else values
     out = dict(v)
     out.setdefault("C_offdiag_F", {})
     out["C_offdiag_F"] = {int(k): x for k, x in out["C_offdiag_F"].items()}
     out["from_values"] = True
+    rings = v.get("MA_sharp_rings_um", values.get("MA_sharp_rings_um", []))
+    depth = v.get("MA_sharp_reference_depth", values.get("MA_sharp_reference_depth"))
+    out["MA_sharp"] = {"Rings_um": rings, "rings_information": check_reference_rings(rings, f"values reference member {member}", tail_form, rings_information),
+                       "reference_depth": depth, "depth_information": depth_information(depth, tail_form)}
     return out
 
 
@@ -595,6 +728,20 @@ def static_limit_cell(freqs, per, band):
             "rule": "USER 1230 Q1: the fitted STATIC-LIMIT C over the frequencies is the graded cell on a ported line (C_eff(f) beside)"}
 
 
+def information_cell(cells, per):
+    """The fixed-shell form's INFORMATION labels on the MA_sharp cell (not counted; the member letters stay as read): a member's
+    reference MA shells not of record under --reference-rings-information (decision 1310 Q-D), or a member's reference coarser than
+    r5 p5 (decision 1314); both labels prefixed when both apply."""
+    labels = []
+    for key in ("rings_information", "depth_information"):
+        found = sorted({m["reference"].get("MA_sharp", {}).get(key) or "" for m in per.values()} - {""})
+        labels += found
+    if labels:
+        cells["MA_sharp"] = dict(cells["MA_sharp"], counted=False, letter=f"{'; '.join(labels)}: {cells['MA_sharp']['letter']}",
+                                 reference_rings_um=sorted({tuple(m["reference"]["MA_sharp"].get("Rings_um", [])) for m in per.values()}),
+                                 reference_depth=sorted({json.dumps(m["reference"]["MA_sharp"].get("reference_depth")) for m in per.values()}))
+
+
 def grade_es(a, catalog, cat_src, sp_tails, band, values):
     final, ncyc = final_cycle_dir(a.device)
     iface, _ = interfaces_by_type(os.path.join(a.device, "postpro", "config_resolved.json"))
@@ -609,13 +756,15 @@ def grade_es(a, catalog, cat_src, sp_tails, band, values):
             raise ValueError(f"source sets differ: device {sources} vs reference {ref_sources}")
     per = {}
     for s in sources:
-        d = es_device_source(final, s, iface, catalog, sp_tails)
-        r = reference_from_values(values, s) if values is not None else es_reference_source(a.reference, s, iface, a.shells_dir)
+        d = es_device_source(final, s, iface, catalog, sp_tails, a.tail_form)
+        r = (reference_from_values(values, s, a.tail_form, a.reference_rings_information) if values is not None
+             else es_reference_source(a.reference, s, iface, a.shells_dir, a.tail_form, a.reference_rings_information))
         per[s] = {"device": d, "reference": r, "grade": grade_member(d, r, band, "C_ft_F", "C_F")}
     rule = "every source must PASS (fail-closed; decision 1210 (a)); the worst-|x| source quoted" if len(sources) > 1 else "single source"
     cells = {T: aggregate_cell(sources, {s: per[s]["grade"] for s in sources}, T, rule) for T in TYPES}
     for T in TYPES:
         cells[T]["counted"] = True
+    information_cell(cells, per)
     return {"interfaces": iface, "device_final_dir": final, "device_cycles": ncyc, "members": sources, "member_kind": "source",
             "per_member": {str(s): v for s, v in per.items()}, "cells": cells}
 
@@ -641,19 +790,20 @@ def grade_mx(a, catalog, cat_src, sp_tails, band, values):
         with_port = any("C_eff_F" in m for m in members.values())
     per = {}
     for F in freqs:
-        d = mx_device_f(post, F, iface, catalog, sp_tails, a.p_denominator, with_port=with_port, excitation=a.excitation)
+        d = mx_device_f(post, F, iface, catalog, sp_tails, a.p_denominator, with_port=with_port, excitation=a.excitation, tail_form=a.tail_form)
         if values is not None:
-            r = reference_from_values(values, F)
+            r = reference_from_values(values, F, a.tail_form, a.reference_rings_information)
         else:
             ref_run = refs_at.get(F, a.reference)
             if ref_run is None:
                 raise MissingInput(f"--reference or --reference-at {F}=<run> for {F} GHz")
-            r = mx_reference_f(ref_run, F, iface, a.shells_dir)
+            r = mx_reference_f(ref_run, F, iface, a.shells_dir, a.tail_form, a.reference_rings_information)
         per[F] = {"device": d, "reference": r, "grade": grade_member(d, r, band, "C_eff_ft_F", "C_eff_F")}
     rule = "every frequency must PASS (fail-closed; decision 1213 (a)); the worst-|x| frequency quoted" if len(freqs) > 1 else "single frequency"
     cells = {T: aggregate_cell(freqs, {F: per[F]["grade"] for F in freqs}, T, rule) for T in ("SA", "MS", "MA_sharp")}
     for T in ("SA", "MS", "MA_sharp"):
         cells[T]["counted"] = True
+    information_cell(cells, per)
     direct = aggregate_cell(freqs, {F: per[F]["grade"] for F in freqs}, "C", rule + "; C_eff(f) = 2 E_norm_ft / |V|^2 (decision 1214 DIRECT form)")
     if a.c_form == "direct":
         cells["C"] = dict(direct, counted=True, c_form="direct")
@@ -696,6 +846,12 @@ def main(argv=None):
     parser.add_argument("--p-denominator", choices=P_DENOMINATORS, default="E_norm",
                         help="Maxwell: p = E_surf / E_norm (the binary's p_surf) or / (E_norm - E_cap) (the junction-driven form of the cards, A1.1.1)")
     parser.add_argument("--c-form", choices=C_FORMS, help="Maxwell (required): the C cell's form -- static-limit (USER 1230 Q1), direct (1214), information (F-40)")
+    parser.add_argument("--tail-form", choices=TAIL_FORMS, default=DEFAULT_TAIL_FORM,
+                        help="the MA_sharp tail form: fixed-shell (the DEFAULT since the P4 re-freeze: FIXED_SHELL_TAILS on the device, the reference's rings "
+                             "required = FIXED_SHELL_RINGS_UM; USER 1308 / decision 1310) or 422 (the class tails of record; explicit, for the "
+                             "reproduction of the records read under it)")
+    parser.add_argument("--reference-rings-information", action="store_true",
+                        help="fixed-shell: grade a reference recorded with another ring set and label its MA_sharp cell INFORMATION instead of refusing (1310 Q-D)")
     parser.add_argument("--label", help="the window's name in the output")
     parser.add_argument("--out", required=True, help="the grade JSON")
     a = parser.parse_args(argv)
@@ -723,9 +879,14 @@ def main(argv=None):
     except MissingInput as e:
         print(f"grade_cells.py: missing input {e}", file=sys.stderr)
         return 2
+    except ReferenceRingsNotOfRecord as e:
+        print(f"grade_cells.py: {e}", file=sys.stderr)
+        return 3
     label = a.label or os.path.basename(os.path.normpath(a.device))
-    out.update({"tool": "grade_cells.py", "window": label, "form": a.form, "D4": D4,
-                "scorer": "the 994 / 995 tabulators' letters (verdict; MA_sharp (B) tails; the shells estimator) per source / frequency, fail-closed (1210 / 1213)",
+    out.update({"tool": "grade_cells.py", "window": label, "form": a.form, "D4": D4, "tail_form": a.tail_form,
+                "fixed_shell": ({"rings_um": list(FIXED_SHELL_RINGS_UM), "tails": {k: list(v) for k, v in FIXED_SHELL_TAILS.items()},
+                                 "reference_rings_information": a.reference_rings_information} if a.tail_form == "fixed-shell" else None),
+                "scorer": "the 994 / 995 tabulators' letters (verdict; MA_sharp (B) tails by --tail-form; the shells estimator) per source / frequency, fail-closed (1210 / 1213)",
                 "device_run": a.device, "reference": a.reference or a.reference_at or a.reference_values, "shells_dir": a.shells_dir,
                 "library": a.library, "model_catalog_source": cat_src, "models": {str(k): v for k, v in catalog.items()},
                 "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C") if T in band} if band else None),

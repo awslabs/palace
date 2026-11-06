@@ -19,6 +19,74 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added the magnetic (inductive) defect of finite-thickness metal to the Maxwell
+    self-consistent surface-response correction for the 2D translational model families
+    (mx-sc-magnetic DESIGN-v2 option (C); USER decision 1221 D2-D8; decisions 1227 / 1229):
+    OPTIONAL Version-3 library leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` /
+    `MagneticSource` (the model's electrostatic coupon pair re-run at ``eps = 1``, the exact
+    2D duality ``S_m = Q_dom,vac``; assembled by `examples/cpw2d/attach_magnetic_leaves.py`)
+    with the top-level `MagneticRules`; the K-side defect ``dK = P_m^T W dS_m P_m`` on the
+    flux trace of ``curl E`` in every corrected operator (uniform and adaptive driven, the
+    self-consistent eigenproblem, its shift-invert and nonlinear refine); the refusal rules
+    r1-r4 by name (r4 two-level: FINDING / REFUSAL); the first-order fixed-trace frequency
+    shift as the corrected frequency of record (`fixed-trace frequency shift`,
+    `f fixed-trace corrected (GHz)`, `magnetic term applied`, `Re{f self-consistent
+    (magnetic)} (GHz)` in `surface-response-confidence.csv`), `surface-response-magnetic.csv`,
+    the preflight manifest's `Library.Magnetic` / `Summary.MagneticElectricOnly` and the
+    coverage report's `MagneticElectricOnly` row; the config keys
+    `SurfaceResponseCorrection.Magnetic` (default true) and `AllowElectricOnlyFallback`
+    (default false). A library without the leaves is unchanged, bitwise. The spatial
+    families stay electric-only (named); the kinetic (London) term is out of scope
+    (OI-MAGNETIC-KINETIC-LONDON-TERM). Review fix-ups (decisions 1235 / 1237): the magnetic
+    half of the shift is withheld on the electric loop-fit fallback patches (`magnetic
+    fallback patches`, `withheld magnetic domain correction (J)`), `magnetic confidence pass`
+    gains the loop-response failure fraction (`magnetic loop-response fraction above limit`),
+    the magnetic records are written whenever a leaf was read, the manifest keys are
+    Maxwell-only, `magnetic term applied` means a non-zero ``dK``, and
+    `attach_magnetic_leaves.py` writes relocatable (relative) leaf paths.
+    Phase 2 (decision 1242): the r3 same-mesh rule is TWO-TIER: the optional
+    `MagneticRules.SameMeshToleranceWithMeshIdentity` applies to a twin whose
+    `MagneticSource.MeshOfRecordSha256Match` records both coupon meshes identical to the
+    model's meshes of record (absent = `SameMeshTolerance` everywhere).
+    Decision 1250 (Phase 2, the (ii) resonator): the fixed-trace shift follows the SAME
+    coverage rule as the electric fixed-trace correction (printed on partial coverage, the
+    uncovered requirements kept raw): it is no longer withheld by the closure-independent
+    confidence gate (whose coverage criterion >= 1 - 1e-10 made it NaN on every device
+    with ends); the magnetic loop gate stays; `fixed-trace shift coverage` prints the
+    matched energy share the shift rests on. Decision 1251 (INTERIM): the optional library
+    rule `MagneticRules.ConductorConsistencyTolerance` sets the MAGNETIC conductor-consistency
+    gate's tolerance (absent = the electric gate's 0.02, bitwise as before); the probe form is
+    OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION (Phase 3).
+    Phase 3 (a) + (b) (decisions 1284 / 1292 / 1302 / 1309 / 1323 / 1334): the magnetic
+    conductor-consistency gate reads the LIFTED probe form (its legs lifted off the sheet
+    and set back from the singular edges into their piece; the library leaves
+    `MagneticRules.ProbeLiftOverR` / `ProbeSetbackOverR` / `ProbeSetbackWidthFraction` /
+    `ProbeSheetNudgeOverR` / `ProbeBandHeights`; FLAT = 0 / 0 = the electric legs, the
+    comparison form of record); `MagneticRules.ConductorConsistencyTolerance` may be
+    per-order (`{"3": t3, "4": t4, ...}`, the solve's order applies, an absent order is
+    refused); the magnetic TERM's chain, loop fit, dual gate, fixed-trace shift and ``dK``
+    read the conductor anchors set back `MagneticRules.StateAnchorSetbackOverR` x R into
+    their piece as twin lines (R-MAG-17; absent = 0 = the legacy anchors, bitwise), an
+    anchor within `MagneticRules.StateAnchorEdgeToleranceOverR` x R (default 0.1) of an edge
+    snapped onto it (one rule for the term's state anchors and the probe form's anchor end;
+    the tolerance below half the narrowest model gap when either setback is in effect; the
+    snapped counts recorded as `Correction.MagneticStateAnchorSnapped`); the DIAGNOSTIC
+    CONTROLS `ConductorConsistency.ControlFlipProbePiece` and `ControlStateAnchorSetbackOverR`
+    (`RecordOnly` only; never of record); the per-model / per-patch magnetic energies
+    (`magnetic domain correction (J)` / `magnetic thin energy (J)` in
+    `surface-response-magnetic.csv` and, with `Diagnostics.PatchEnergy`,
+    `surface-response-patch-energy.csv`) and `Diagnostics.WithinRVolumeEnergy` (the raw
+    field's within-R magnetic / electric energies and volume per patch; a per-model sum
+    over-counts a multi-edge model by its edge count, OI-WITHIN-R-MULTI-EDGE-OVERCOUNT); the
+    records `Correction.MagneticProbeForm` / `MagneticProbeLines` / `MagneticGateTolerance` /
+    `MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`; the attach tool's
+    matching flags (`--probe-lift`, `--probe-setback`, `--probe-width-fraction`,
+    `--probe-nudge`, `--probe-band-heights`, `--state-anchor-setback` (default 0.5, the
+    form of record; 0 = the legacy form), `--state-anchor-edge-tolerance`). Named open items:
+    OI-MAGNETIC-DUAL-GATE-3D-ENCLOSED-FLUX (the dual gate's deviation on a device is the 3D
+    field's enclosed flux at junctions / ends, excluded by the calibrated per-order
+    tolerance) and OI-MAGNETIC-SC-GMRES-STAGNATION (the self-consistent GMRES with ``dK``
+    stagnates on a device; the fixed-trace shift of record is unaffected).
   - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
     `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
     hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the

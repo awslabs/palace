@@ -544,6 +544,47 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   Mpi::Barrier(comm);
 }
 
+// OI-MAGNETIC-CSV-WRITE-THROUGH-LINK (fix round P4 re-freeze; decision 1368): the magnetic
+// table writer (PostOperator::PrintSurfaceResponseMagnetic, "rewritten whole at every
+// print") opens surface-response-magnetic.csv for truncation; after SaveIteration that path
+// is a symlink into iteration<N>/, so the writer removes the link first (the same form as
+// the mesh writer). The writer's open sequence, twice across a SaveIteration: the archived
+// first print keeps its bytes and the top-level file is real.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "surface-response-magnetic.csv is rewritten as a real file after "
+                 "SaveIteration (OI-MAGNETIC-CSV-WRITE-THROUGH-LINK)",
+                 "[basesolver][savemesh][magnetic][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const fs::path table = temp_dir / "surface-response-magnetic.csv";
+  auto WriteWhole = [&](const std::string &text)
+  {
+    // The writer's sequence: remove a SaveIteration symlink, then truncate a real file.
+    mesh::RemoveSymlinkBeforeWrite(table);
+    std::ofstream output(table, std::ios::trunc);
+    REQUIRE(output);
+    output << text;
+  };
+  CreateFile(temp_dir / "palace.json", "{}");
+  if (Mpi::Root(comm))
+  {
+    WriteWhole("kind,model\nmodel,0\n");
+  }
+  Mpi::Barrier(comm);
+  SaveIteration(comm, temp_dir, 1, 2);
+  REQUIRE(fs::is_symlink(fs::symlink_status(table)));
+  if (Mpi::Root(comm))
+  {
+    WriteWhole("kind,model\nmodel,0\ngate,0\n");
+    CHECK(!fs::is_symlink(fs::symlink_status(table)));
+    CHECK(fs::is_regular_file(fs::symlink_status(table)));
+    CHECK(ReadFile(table) == "kind,model\nmodel,0\ngate,0\n");
+    CHECK(ReadFile(temp_dir / "iteration01" / "surface-response-magnetic.csv") ==
+          "kind,model\nmodel,0\n");
+  }
+  Mpi::Barrier(comm);
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RebalanceMesh with SaveAdaptMesh keeps the archived iteration mesh",
                  "[basesolver][savemesh][Serial][Parallel]")

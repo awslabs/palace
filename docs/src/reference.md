@@ -1039,6 +1039,13 @@ missing cluster signatures, and unbracketed pair separations are unsupported. Wi
 correction for the complete interface group, avoiding a partial correction. `Error`
 instead terminates the run.
 
+`Magnetic` (default `true`) reads the library's optional magnetic (inductive) leaves on the
+Maxwell path (the section *The magnetic (inductive) defect of finite-thickness metal*
+below); `false` runs the same library electric-only, byte-identical to the library without
+leaves. `AllowElectricOnlyFallback` (default `false`) lets a model whose magnetic leaf is
+refused by rule r1 / r2 / r3 continue electric-only by name instead of aborting the run.
+Both are ignored by a library without leaves.
+
 `GeometryFailurePolicy` (`"RecordRaw"` or `"FailClosed"`; absent = `RecordRaw` on a solve
 run and `FailClosed` on `--surface-response-preflight`) governs the former abort sites of
 the identification / placement that a valid configuration and library can still reach
@@ -2235,6 +2242,217 @@ operator directly.
     correction carrying the magnetic defect is under design; until it lands, treat the
     self-consistent Maxwell frequencies, participations and corrected fields as
     diagnostics, not as results.
+
+#### The magnetic (inductive) defect of finite-thickness metal (2D translational models)
+
+The caveat above is lifted for the TRANSLATIONAL (2D cross-section) model families when
+the library carries their magnetic leaves. In a translational cross-section the
+magnetostatic problem is the exact dual of the electrostatic one at ``\varepsilon = 1``:
+with ``\bm{B} = \nabla \times (A_z \hat{z})`` the magnetic energy is
+``\tfrac{1}{2\mu_0} \int |\nabla A_z|^2``, ``A_z`` is harmonic outside the conductors and
+constant on each PEC conductor, so the 2D magnetic Dirichlet-to-Neumann matrix of a
+conductor geometry EQUALS its electrostatic one with ``\varepsilon = \varepsilon_0``
+everywhere: ``S_m = Q_{domain,vac}`` in solver units (no scale leaf). A model's vacuum twin
+is therefore the SAME electrostatic coupon pair (the same meshes, hats and piece states)
+re-run at ``\varepsilon_r = 1`` (`--substrate-permittivity 1.0`), assembled onto a copy of
+the library by `examples/cpw2d/attach_magnetic_leaves.py` as the OPTIONAL Version-3 leaves
+`MagneticFabricatedMatrix`, `MagneticThinMatrix` and `MagneticSource` (the twin's
+provenance: its process parameters, the regenerated electric matrices' maximum relative
+deviation from the model of record, the basis / piece counts, the mesh digests) with the
+top-level `MagneticRules` (`SameMeshTolerance`, the optional
+`SameMeshToleranceWithMeshIdentity`, `PsdFindingRatio`, `PsdRefusalRatio`, the optional
+`ConductorConsistencyTolerance` and the probe-form leaves `ProbeLiftOverR` /
+`ProbeSetbackOverR` / `ProbeSetbackWidthFraction` / `ProbeSheetNudgeOverR` /
+`ProbeBandHeights`; library parameters, never compiled constants). A library WITHOUT the leaves loads and
+behaves bitwise as before.
+
+The device side reads the FLUX trace ``a_m = \int \bm{B} \cdot \hat{n}\, ds``
+(``\hat{n}`` the in-plane normal of the contour, ``\bm{B} = \nabla \times \bm{E} /
+(i\omega)``) along the SAME contour lines, with the same chain and least-squares lift, as
+the voltage trace ``a = -\int \bm{E} \cdot \hat{t}\, dl``: the magnetic defect is the
+K-side, frequency-independent operator
+``dK = P_m^T W (S_{m,fab} - S_{m,thin}) P_m`` with ``P_m`` the curl trace, which enters
+EVERY corrected operator (the uniform driven sweep, the adaptive PROM as a projected
+``\omega``-independent matrix, the self-consistent eigenproblem's stiffness ``K + dK``
+and ``K_p + dK``, its shift-invert operator and its nonlinear refine). ``dK``
+annihilates gradients (the preconditioner is unchanged) and is positive semidefinite by
+construction of the vacuum twin: the fabricated slab constrains ``A_z`` on a region
+containing the thin sheet, so the frequency goes UP, consistent with ``dL' < 0``. The
+first-order fixed-trace frequency shift of the RAW mode,
+``\delta\omega / \omega = (U_{m,defect} - U_{e,defect}) / (2 U_{raw})`` with
+``U_{m,defect} = \tfrac{1}{2} \sum_p w_p a_m^H dS_m a_m`` and ``U_{e,defect}`` the
+electric domain correction, is THE CORRECTED FREQUENCY OF RECORD (USER decision 1221 D6):
+`fixed-trace frequency shift` and `f fixed-trace corrected (GHz)` in
+`surface-response-confidence.csv`, gated by the magnetic term's own loop gate (`magnetic
+confidence pass`: the response-weighted dual loop residual, the in-plane circulation of
+``\bm{B} \cdot \hat{n}`` around every closed contour, at most 0.05, and the
+response-weight fraction of paths above 0.05 at most 0.01, the electric gate's two
+components) and NOT by the closure-independent confidence gates nor the trace-closure
+spread, which are printed beside it (decision 1250: the shift follows the SAME coverage
+rule as the electric fixed-trace correction it extends, which is printed on partial
+coverage with the uncovered requirements kept raw, decision 394 F2; the closure-independent
+gate's coverage criterion ``\geq 1 - 10^{-10}`` had withheld the shift on every device with
+ends). `fixed-trace shift coverage` is the matched energy share the shift rests on: one
+minus the raw within-R energy of the target interfaces that the electric correction keeps
+RAW (the uncovered requirements, the DomainBoundary claims, the spatial-cluster-priority
+and conductor-consistency exclusions, the loop remainder) over their raw within-R energy
+(1 at full coverage). Both halves are read on the SAME patch set: a patch the electric loop fit
+serves raw (`loop fallback`, share above 0.25) adds neither its electric nor its magnetic
+domain correction to the shift; the magnetic part it would have added is printed as
+`withheld magnetic domain correction (J)` with `magnetic fallback patches` (the magnetic
+image of the loop-fit CSV's `withheld domain correction (J)`), while the self-consistent
+operator carries both terms on such a patch as before. The dual residual's detector weight
+is the patch's magnetic DEFECT energy ``|\tfrac{1}{2} w_p a_m^H dS_m a_m|`` (the electric
+one weighs by the fabricated RESPONSE energy, which the magnetic leaves do not carry):
+OI-MAGNETIC-DETECTOR-WEIGHT, so the unweighted `magnetic loop residual` is printed beside
+the gated weighted one. The MAGNETIC conductor-consistency gate (the dual R0-a gate: the
+probes' H-line integrals at the conductor cross-sections against the conductor's flux
+state) reads the optional library rule `MagneticRules.ConductorConsistencyTolerance`
+(decision 1251, INTERIM; absent = the electric gate's 0.02, bitwise as before): on a device
+its probe line integrals read the discretisation error of the singular edge field (the
+(ii) stub: ratio medians 7.1e-2 / 3.7e-2 / 2.3e-2 at ``p = 2 / 3 / 4``, excluding 96 / 84 /
+57 % of a line whose unwithheld term sits inside the Phase-0 band), so a library sets the
+tolerance it has calibrated with a discrimination control; the per-patch ratios stay
+printed in `surface-response-magnetic.csv` and the magnetic LOOP gate stays the term's gate
+of record. THE PER-ORDER FORM (OI-MAGNETIC-DUAL-GATE-3D-ENCLOSED-FLUX, named: with the
+probe legs lifted AND the state anchors set back, two flux paths between two pieces of the
+3D driven field still differ by the enclosed ``-\int \partial_w B_w \, dA`` — path
+independence holds only in the quasi-TEM limit — by ~3 % at ``p = 3`` and ~1.5 % at ``p =
+4`` on the (ii) stub, nearly ``h``-independent, so no probe or state form reaches the
+electric scale; an enclosed-flux-free comparison is a future design item): the leaf may be
+an object keyed by the solve's Order, `{"3": t_3, "4": t_4, ...}` (each value 1.25 x the
+LIFTED mode-1 maximum measured at that order, the discrimination control holding ``\geq
+4\times`` at each value); the run's order selects its entry, an order ABSENT from the object
+is refused at configuration by name (the gate is not calibrated there), a scalar keeps its
+one-value meaning; the value in effect is printed on the gate line and recorded
+(`palace.json` `Correction.MagneticGateTolerance`). THE PROBE FORM (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION resolved;
+decisions 1256 / 1284 Q-1 / 1292): the magnetic probes read their flux along LIFTED legs
+instead of the electric gate's flat chain. On a PEC piece ``A_z`` is constant, so the flux
+``\int (\hat{w} \times \bm{B}) \cdot d\bm{l}`` from a point of the anchor's piece to a point
+of the probe's piece has the same continuum value along ANY path in the current-free region
+above the sheet; the flat chain ends ON the singular edges (``|\bm{B}| \sim r^{-1/2}``), where
+the FE curl's error is O(1) per element at any order. The lifted path is anchor* -> A -> B
+-> probe*: BOTH ends set back INTO their piece away from the singular edge by the GENERIC
+rule (a point closer than ``s`` to a bounding edge of its piece moves to ``s`` inside along
+``-\mathrm{GapDirection} \times \hat{u}``; a piece bounded on both sides caps ``s`` at a
+fraction of its width; the unbounded ground side binds no cap; a point already ``\geq s``
+inside is unchanged — the six anchor forms of the placement are covered by the one rule),
+nudged ``\varepsilon`` off the sheet to the vacuum side (``\hat{n}`` = AxisV), joined by the
+horizontal leg at the height ``h_m``. The library leaves (`MagneticRules`, never compiled
+constants): `ProbeLiftOverR` (``h_m / R``, default 0.5), `ProbeSetbackOverR` (``s / R``, 0.5,
+applied to both ends), `ProbeSetbackWidthFraction` (0.45), `ProbeSheetNudgeOverR` (1e-6),
+`ProbeBandHeights` (1 = LIFTED at ``h_m``; ``\geq 2`` = BAND, the reading averaged over
+that many Gauss heights in ``[h_m / 2, 3 h_m / 2]``, the pre-registered fallback); a value
+outside its bounds is refused by name. FLAT = `ProbeLiftOverR` 0 AND `ProbeSetbackOverR` 0 =
+the electric legs verbatim (the comparison form of record). The electric gate and its legs
+are untouched; the term ``dK`` is untouched; with no magnetic leaf nothing is built. The
+form and its leaves are printed at configuration and recorded (`palace.json`
+`Correction.MagneticProbeForm` / `MagneticProbeLines`; the manifest's
+`Library.Magnetic.Rules`). The DIAGNOSTIC CONTROL `SurfaceResponseCorrection.
+ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (decision 1292; NOT a
+modelling option) relabels the local piece of one model edge's probes at the probe
+construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
+device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
+printed and recorded as a CONTROL; a run of record never carries it. THE STATE-ANCHOR
+SETBACK OF THE TERM (R-MAG-17; the mx-sc-magnetic Phase 3 measurement: with the chain's
+conductor-path anchor lines starting at the EDGE anchors, the magnetic states carry a
+state-side edge error of ``+0.06..+0.08`` pt of the fixed-trace shift on the (ii) stub): the
+library leaf `MagneticRules.StateAnchorSetbackOverR` (``s_a / R``, in ``[0, 1]``) starts the
+magnetic chain's anchor / end / return lines of every translational magnetic patch from the
+conductor anchors set back ``s_a`` into their piece by the same generic rule (the width
+fraction and the sheet nudge apply), as MAGNETIC TWIN lines beside the electric ones; the
+magnetic chain, its own loop fit (the same cycle-space equations on the twin lines), the
+dual gate's flux states, the fixed-trace shift and the self-consistent ``dK`` (its transpose
+on the twins) all read them; the electric chain and the electric gate are untouched. Absent
+= 0 = the LEGACY edge anchors (every library without the leaf: bitwise); the form of record
+is 0.5, written explicitly in every magnetic library built from now on. The setback in
+effect and the patches re-anchored are printed and recorded (`palace.json`
+`Correction.MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`). A conductor
+anchor is the DEVICE's edge point while the patch's probe edges carry the device sides' feet
+at the origin cross-section, which differ by roundoff or by the local geometry (a tapered or
+curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR` (decision 1323;
+in ``[0, 1]``, absent = 0.1) makes an anchor within that fraction of ``R`` of an edge offset
+lie ON that edge (its piece; the setback measured from the edge offset); an anchor farther
+from every edge must lie in a metal piece (refused by name otherwise). ONE set-back rule
+(decision 1334) serves the term's state anchors (with `StateAnchorSetbackOverR` > 0) and the
+LIFTED probe form's anchor end (with `ProbeSetbackOverR` > 0: the device anchor a hair into
+the gap by roundoff would otherwise be read at the edge point with no record); a library with
+both setbacks 0 is bitwise. The tolerance must stay below half the narrowest magnetic model
+gap / width (a pair model's `Separation`, a cluster's gaps), asserted at load when either
+setback is in effect (the minimum is recorded as `StateAnchorMinGapOverR`), and below half of
+every device gap of a patch; the anchors on an edge, those snapped from a nonzero distance
+and the farthest snap (``/ R``) are printed and recorded
+(`Correction.MagneticStateAnchorSnapped`). The
+DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR` (decision 1302;
+`RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
+to a library in the legacy form and is refused by name on a library whose leaf already sets
+the anchors back. The per-model
+`magnetic domain correction (J)` / `magnetic thin energy (J)` (COL-1: the "energy" rows and
+trailing columns of `surface-response-magnetic.csv`) and the per-patch ones (COL-2: two
+columns of `surface-response-patch-energy.csv` with `Diagnostics.PatchEnergy`, NaN on a
+patch without a leaf) are written only with magnetic leaves. `Diagnostics.WithinRVolumeEnergy`
+(COL-3, the share census of the mx-sc-magnetic Phase 3 (b)) adds to
+`surface-response-patch-energy.csv` the raw field's magnetic and electric energies integrated
+over the patch's within-``R`` box (`within-R magnetic energy (J)`, `within-R electric energy
+(J)`, `within-R volume (m^3)`: the model's full lateral span ``\pm R`` by the cell length, on
+every patch of a translational model, with or without a leaf). A multi-edge model's patches
+tile its cross-section ONCE PER EDGE FEATURE (a gap's two sides, a cluster's ``n`` edges), each
+carrying the trace weight ``1 / n_\mathrm{edges}`` while each patch's box is the model's full
+span: a per-model SUM of the within-``R`` columns over-counts the box energy by
+``n_\mathrm{edges}`` (measured on the (b) devices: the sum exceeded the device's total
+magnetic energy, 1.24x on a DCG line, 2.9x on a 4-edge cluster) and a reader divides by the
+model's edge count (OI-WITHIN-R-MULTI-EDGE-OVERCOUNT; the per-patch values and the trace
+sums are right as written). The self-consistent solve with ``dK`` on a device stagnates in
+GMRES (~0.997 per iteration against the raw solve's 51 iterations; `MaxIts` exhausted, the
+self-consistent confidence record fails; the non-converged iterate carries the raw field):
+OI-MAGNETIC-SC-GMRES-STAGNATION, an S1-class open item of the self-consistent operator; the
+first-order fixed-trace shift of record needs no self-consistent solve. At ``p = 2`` the magnetic loop gate
+fails on the (ii) stub (the shift is NaN there): a device-order floor ``p \geq 3``, named. On the Maxwell path `TranslationalDomainCorrection` is not read:
+the electric domain term and the magnetic term are both fixed-trace by construction (the
+key governs the electrostatic driver only). The self-consistent eigenvalue is the check:
+with a magnetic library, `Re{f self-consistent} (GHz)` is the self-consistent eigenvalue of
+the corrected operator AS CONFIGURED (electric + magnetic), the flag column `magnetic term
+applied` is 1 when that operator carried a NON-ZERO ``dK`` (a patch carries the term after
+the dual gate's exclusions: `magnetic patches` > 0), and `Re{f self-consistent (magnetic)}
+(GHz)` repeats the eigenvalue exactly then; no previously recorded number changes (a
+magnetic library is a NEW library). To reproduce the
+electric-only self-consistent result of the same library, run it again with
+`SurfaceResponseCorrection.Magnetic: false` (the leaves are then not read: that run is
+byte-identical to the library without leaves).
+
+Refusal rules, by name (every verdict in `surface-response-magnetic.csv`, written and the
+magnetic columns present whenever a leaf was READ, also when every leaf is refused or
+continued electric-only, their numerics `nan` when no model carries the term; and in the
+preflight manifest's `Library.Magnetic` / `Summary.MagneticElectricOnly` on the MAXWELL
+preflight only: the electrostatic path carries no magnetic term by construction and its
+manifest is the leaf-less one): (r1) the twin's
+basis / piece counts or basis file differ from the model's; (r2) the twin's recorded
+process parameters differ from the library's `Fabrication` block; (r3) the regenerated
+electric matrices deviate from the model of record by more than `SameMeshTolerance` (the
+same-mesh proof; TWO-TIER: a twin whose `MagneticSource.MeshOfRecordSha256Match` records
+BOTH coupon meshes identical to the model's meshes of record is read against the optional
+`SameMeshToleranceWithMeshIdentity` instead, when the library sets it — a cross-binary /
+cross-rank regeneration of the same mesh deviates at the rounding level, never at the
+different-mesh level; absent, `SameMeshTolerance` applies everywhere); (r4) ``-\lambda_{min}(\mathrm{sym}\, dS_m) / \|dS_m\|_2`` above
+`PsdRefusalRatio` (a value in (`PsdFindingRatio`, `PsdRefusalRatio`] is a named FINDING,
+the leaf applied: the thin-vs-fabricated mesh-matching error at the discretization
+scale). An r1 / r2 / r3 refusal aborts the run unless
+`SurfaceResponseCorrection.AllowElectricOnlyFallback` is true; an r4 refusal, a leaf on a
+SPATIAL model and a blend whose sources do not all carry leaves continue electric-only by
+name, always. A separately named dual conductor-consistency gate reads the flux trace at
+the R0-a probes against the piece's flux state and drops the MAGNETIC term of a failing
+patch only (its electric term stays; a patch R0-a excluded carries neither).
+
+SCOPE (option (C) of the design): the magnetic term exists for the 2D translational
+families only (IsolatedEdge, DifferentConductorGap, SameConductorGap / Strip,
+ParallelEdgeCluster and their curved blends). The SPATIAL families (corners, junctions,
+endpoints, SpatialEdgeCluster) have no scalar duality and stay ELECTRIC-ONLY; their patches
+are NAMED in the coverage report's `MagneticElectricOnly` row (count, length, energy share).
+The kinetic (London) inductance of a real superconductor is a MATERIAL term, not the
+thin-to-fabricated geometric defect, and is OUT OF SCOPE of this term (both coupon sides
+are PEC): OI-MAGNETIC-KINETIC-LONDON-TERM (USER decision 1221 D5). A two-dimensional
+device mesh has no in-plane ``\bm{B}`` (the trace is identically zero): a magnetic leaf
+is refused there by name.
 
 Boundary modes also report raw, fixed-trace, and fixed-flux results only. Their correction
 uses the transverse field ``\bm{E}_t`` and is intended for quasi-TEM modes whose

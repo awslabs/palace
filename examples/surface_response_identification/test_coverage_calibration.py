@@ -168,14 +168,15 @@ class FitTest(unittest.TestCase):
                            "MS": {"classes_share_length": {}}, "MA_sharp": {"classes_share_length": {}}}}]
         self.assertEqual(cc.class_census(cells), {"IsolatedEdge": 2, "ConvexCorner": 1})
 
-    def test_v6_band_file_is_the_default(self):
-        """data/coverage_bands_v6.json (fix round P1; DESIGN-v3 s7; decisions 1230 / 1233 (6) / 1236): the default band file. The ES
+    def test_v6_band_file_kept_beside(self):
+        """data/coverage_bands_v6.json (fix round P1; DESIGN-v3 s7; decisions 1230 / 1233 (6) / 1236): the default band file until v6.1. The ES
         block (n = 28: the 20 v5 inputs + the 8 stage-E ES windows; W31 excluded, named) fits M0 on every Type (no candidate incl. M3
         reached 0.90 unwidened), its C band holds the measured +0.15..+0.33; the Maxwell block is UNCALIBRATED on every Type (the 12
         PROXY inputs: best unwidened LOO 10 / 12 = 0.833 < 0.85; 1236 (A): not carried from v5) until the ENERGY-form v6.1."""
         here = os.path.dirname(os.path.abspath(cr.__file__))
         v6 = cr.load_bands(os.path.join(here, "data", "coverage_bands_v6.json"))
-        self.assertEqual(os.path.basename(cr.DEFAULT_BANDS), "coverage_bands_v6.json")
+        # the default moved to v6.1 at the P4 re-freeze (test_v6_1_band_file_is_the_default); v6 is kept beside
+        self.assertEqual(os.path.basename(cr.DEFAULT_BANDS), "coverage_bands_v6.1.json")
         self.assertEqual((v6["version"], v6["models"], v6["uncalibrated_below"]), ("v6", ["M0", "M1", "M2", "M3"], 0.85))
         es = v6["families"]["ES"]
         self.assertEqual((es["n"], es["class_census"]["DifferentConductorGap"], es["class_census"]["ConvexCorner"]), (28, 5, 2))
@@ -192,6 +193,32 @@ class FitTest(unittest.TestCase):
         for t in ("SA", "MS", "MA", "C"):
             self.assertTrue(mx["types"][t]["uncalibrated"], t)
             self.assertIn("0.833", mx["types"][t]["reason"])
+
+    def test_v6_1_band_file_is_the_default(self):
+        """data/coverage_bands_v6.1.json (fix round P4 re-freeze; REFREEZE-DESIGN s1 DATA-1b / s3 step 5; decisions 1236 (A) / 1364): the
+        default band file. The ES block is v6's, bit-identical (the 28 cells unchanged; 7 pruned palace.json read through substitutes);
+        the Maxwell block adds the three stage-E ENERGY-form cells (n 12 -> 15): SA / MS CALIBRATED (M0 widened to >= 0.90 LOO),
+        MA_sharp / C stay UNCALIBRATED under rule (5) (0.733 / 0.786 < 0.85); the 1364 record lines are in the provenance."""
+        here = os.path.dirname(os.path.abspath(cr.__file__))
+        v6 = cr.load_bands(os.path.join(here, "data", "coverage_bands_v6.json"))
+        v61 = cr.load_bands(os.path.join(here, "data", "coverage_bands_v6.1.json"))
+        self.assertEqual(os.path.basename(cr.DEFAULT_BANDS), "coverage_bands_v6.1.json")
+        self.assertEqual((v61["version"], v61["models"], v61["uncalibrated_below"]), ("v6.1", ["M0", "M1", "M2", "M3"], 0.85))
+        self.assertEqual(v61["families"]["ES"], v6["families"]["ES"])
+        mx = v61["families"]["Maxwell"]
+        self.assertEqual(mx["n"], 15)
+        self.assertTrue(mx["form"].startswith("ENERGY"))
+        for t in ("SA", "MS"):
+            self.assertEqual(mx["types"][t]["model"], "M0", t)
+            self.assertFalse(mx["types"][t].get("uncalibrated"), t)
+            self.assertGreaterEqual(mx["types"][t]["loo_coverage"]["coverage"], 0.9, t)
+            self.assertLess(mx["types"][t]["loo_coverage"]["coverage_unwidened"], 0.9, t)
+        for t in ("MA", "C"):
+            self.assertTrue(mx["types"][t]["uncalibrated"], t)
+        self.assertIn("0.733", mx["types"]["MA"]["reason"])
+        self.assertIn("0.786", mx["types"]["C"]["reason"])
+        self.assertEqual(len(v61["provenance"]["record_lines_1364"]), 5)
+        self.assertEqual([e["window"] for e in v61["provenance"]["excluded"]], ["W31"])
 
     def test_v5_band_file_restates_v3s_fit(self):
         """data/coverage_bands_v5.json (covfix lane, decisions 1125 / 1126 (4) / 1128 / 1129; the default until v6): its fitted
