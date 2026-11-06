@@ -355,6 +355,12 @@ template <typename VecType, typename ScalarType>
 void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType &y,
               ScalarType gamma, VecType &z);
 
+// Additions y += alpha * x and then x = z + beta * x, in one pass over the vectors (the
+// updates of the solution and the search direction in the conjugate gradient method).
+template <typename VecType, typename ScalarType>
+void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
+                 const VecType &z);
+
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
 void Sqrt(Vector &x, double s = 1.0);

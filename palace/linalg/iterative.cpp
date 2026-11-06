@@ -430,7 +430,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   eps = std::max(rel_tol * initial_res, abs_tol);
   converged = (res <= eps);
 
-  // Begin iterations.
+  // Begin iterations. x is updated with each search direction in the same pass as the next
+  // one is computed, and with the last one after the iterations.
   int it = 0;
   if (print_opts.iterations)
   {
@@ -450,7 +451,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
+      linalg::AXPYAndAYPX(alpha, p, x, beta / beta_prev, z);
     }
 
     A->Mult(p, z);
@@ -460,7 +461,6 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
                 "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
     alpha = beta / denom;
 
-    x.Add(alpha, p);
     beta_prev = beta;
     if (dinv)
     {
@@ -485,6 +485,10 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
+  }
+  if (it > 0)
+  {
+    x.Add(alpha, p);
   }
   if (print_opts.iterations)
   {

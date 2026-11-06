@@ -826,6 +826,51 @@ void AXPBYPCZ(double alpha, const ComplexVector &x, double beta, const ComplexVe
   z.AXPBYPCZ(alpha, x, beta, y, gamma);
 }
 
+template <>
+void AXPYAndAYPX(double alpha, Vector &x, Vector &y, double beta, const Vector &z)
+{
+  MFEM_ASSERT(y.Size() == x.Size() && z.Size() == x.Size(),
+              "Size mismatch for vector updates!");
+  const bool use_dev = x.UseDevice() || y.UseDevice() || z.UseDevice();
+  const int N = x.Size();
+  const auto *Z = z.Read(use_dev);
+  auto *X = x.ReadWrite(use_dev);
+  auto *Y = y.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const auto t = X[i];
+                        Y[i] += alpha * t;
+                        X[i] = Z[i] + beta * t;
+                      });
+}
+
+template <>
+void AXPYAndAYPX(std::complex<double> alpha, ComplexVector &x, ComplexVector &y,
+                 std::complex<double> beta, const ComplexVector &z)
+{
+  MFEM_ASSERT(y.Size() == x.Size() && z.Size() == x.Size(),
+              "Size mismatch for vector updates!");
+  const bool use_dev = x.UseDevice() || y.UseDevice() || z.UseDevice();
+  const int N = x.Size();
+  const double ar = alpha.real(), ai = alpha.imag(), br = beta.real(), bi = beta.imag();
+  const auto *ZR = z.Real().Read(use_dev);
+  const auto *ZI = z.Imag().Read(use_dev);
+  auto *XR = x.Real().ReadWrite(use_dev);
+  auto *XI = x.Imag().ReadWrite(use_dev);
+  auto *YR = y.Real().ReadWrite(use_dev);
+  auto *YI = y.Imag().ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const auto tr = XR[i], ti = XI[i];
+                        YR[i] += ar * tr - ai * ti;
+                        YI[i] += ai * tr + ar * ti;
+                        XR[i] = ZR[i] + br * tr - bi * ti;
+                        XI[i] = ZI[i] + bi * tr + br * ti;
+                      });
+}
+
 void Sqrt(Vector &x, double s)
 {
   const bool use_dev = x.UseDevice();
