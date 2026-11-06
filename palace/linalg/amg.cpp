@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include <_hypre_parcsr_ls.h>
 #include <_hypre_parcsr_mv.h>
 
 namespace palace
@@ -112,6 +113,22 @@ void BoomerAmgSolver::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
   {
     hypre_error_flag = prev_error;
     mv_failed = true;
+
+    // The matrix-vector products of the failed solve leave the communication packages of
+    // the hierarchy set up for several components, and a hybrid Gauss-Seidel relaxation
+    // without multicomponent support does not reset them for a single vector: reset them
+    // before the separate solves.
+    auto *amg_data = static_cast<hypre_ParAMGData *>(
+        static_cast<void *>(static_cast<HYPRE_Solver>(*this)));
+    for (int l = 0; l < hypre_ParAMGDataNumLevels(amg_data); l++)
+    {
+      hypre_ParCSRMatrix *Al = hypre_ParAMGDataAArray(amg_data)[l];
+      if (Al && hypre_ParCSRMatrixCommPkg(Al))
+      {
+        hypre_ParCSRCommPkgUpdateVecStarts(hypre_ParCSRMatrixCommPkg(Al), 1,
+                                           hypre_ParCSRMatrixNumRows(Al), 1);
+      }
+    }
     mfem::HypreBoomerAMG::ArrayMult(X, Y);
     return;
   }
