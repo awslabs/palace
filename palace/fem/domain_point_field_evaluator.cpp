@@ -222,7 +222,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
-        scratch.vecs.push_back(attr_vec);
+        scratch.vectors.push_back(attr_vec);
         scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
@@ -238,7 +238,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
         inputs.push_back(
             {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-        scratch.vecs.push_back(mesh_nodes_vec);
+        scratch.vectors.push_back(mesh_nodes_vec);
         scratch.restrictions.push_back(mesh_restr);
         scratch.bases.push_back(mesh_basis);
       }
@@ -257,7 +257,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
         inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         field_sources.emplace_back(name, source);
-        scratch.vecs.push_back(vec);
+        scratch.vectors.push_back(vec);
         scratch.restrictions.push_back(restr);
         scratch.bases.push_back(basis);
       };
@@ -317,7 +317,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         buffer_inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
-        scratch.vecs.push_back(attr_vec);
+        scratch.vectors.push_back(attr_vec);
         scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
@@ -333,7 +333,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
         buffer_inputs.push_back(
             {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-        scratch.vecs.push_back(mesh_nodes_vec);
+        scratch.vectors.push_back(mesh_nodes_vec);
         scratch.restrictions.push_back(mesh_restr);
         scratch.bases.push_back(mesh_basis);
       }
@@ -350,7 +350,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
         buffer_inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         buffer_field_sources.emplace_back(name, source);
-        scratch.vecs.push_back(vec);
+        scratch.vectors.push_back(vec);
         scratch.restrictions.push_back(restr);
         scratch.bases.push_back(basis);
       };
