@@ -3128,7 +3128,7 @@
         },
         "AMSSmoothIts": {
           "type": "integer",
-          "description": "Number of smoothing sweeps on the Nédélec space in each AMS iteration when AMS is the coarse solver of geometric multigrid (`\"MGMaxLevels\"` > 1). If omitted, Palace uses 8 when [`\"AMSSingularOperator\"`](@ref config-solver-linear-amssingularoperator) is enabled (magnetostatic simulations by default) and [`\"MGSmoothIts\"`](@ref config-solver-linear-mgsmoothits) otherwise.",
+          "description": "Number of smoothing sweeps on the Nédélec space in each AMS iteration when AMS is the coarse solver of geometric multigrid (`\"MGMaxLevels\"` > 1). If omitted, Palace uses 8 when [`\"AMSSingularOperator\"`](@ref config-solver-linear-amssingularoperator) is enabled (by default, magnetostatic simulations without superconductor boundaries) and [`\"MGSmoothIts\"`](@ref config-solver-linear-mgsmoothits) otherwise.",
           "exclusiveMinimum": 0
         },
         "DivFreeTol": {
