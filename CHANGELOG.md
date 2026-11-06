@@ -53,7 +53,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     pattern, cached row indices for the redistributions of the right-hand side, the matrix
     values for MC64 gathered on one process only, and fewer barriers in the triangular
     solves. Results are unchanged.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1162](https://github.com/awslabs/palace/pull/1162).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
