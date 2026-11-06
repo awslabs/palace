@@ -174,8 +174,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack~openmp", when="~openmp")
 
     # The STRUMPACK version of the superbuild, with
-    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
-    # off the `with` blocks so the Palace variants are not folded into the patch condition.
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves and its
+    # fix https://github.com/pghysels/STRUMPACK/pull/164. Kept off the `with` blocks so the
+    # Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -185,7 +186,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
                 sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
                 when="@8.1.0",
-            )
+            ),
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "f94faa48ce857905ef68f2826d05d92218a66e26.diff",
+                sha256="4d561698fc2d19c31953ccd91e7df90daf89aedbf6434e016a283b9f7dff7b9a",
+                when="@8.1.0",
+            ),
         ],
     )
 
