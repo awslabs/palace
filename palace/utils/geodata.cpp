@@ -2757,35 +2757,80 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   const auto nedge = static_cast<SCOTCH_Num>(adjncy.size());
   adjncy.resize(adjncy.size() + 1);  // Not empty for a process without edges
 
-  // Parts with a load imbalance ratio of at most 2%. Whatever the build options of
-  // PT-Scotch, the context runs it on one thread per process, with deterministic
-  // communication and its own random generator from a fixed seed. With the default build
-  // options, each process would otherwise start a thread per core of its affinity mask, and
-  // the parts would depend on the arrival order of the messages.
-  SCOTCH_Context context;
-  SCOTCH_Dgraph graph, context_graph;
-  SCOTCH_Strat strat;
-  std::vector<SCOTCH_Num> part(ne);
-  SCOTCH_contextInit(&context);
-  SCOTCH_dgraphInit(&graph, comm);
-  SCOTCH_stratInit(&strat);
-  int ok = (SCOTCH_contextOptionSetNum(&context, SCOTCH_OPTIONNUMDETERMINISTIC, 1) == 0 &&
-            SCOTCH_contextRandomClone(&context) == 0 &&
-            SCOTCH_contextThreadSpawn(&context, 1, nullptr) == 0);
-  if (ok)
+  // PT-Scotch's cost grows with the number of processes, as its band graphs connect all
+  // pairs of processes. So only the first process of each group of consecutive ranks
+  // partitions, with the rows of its group, a contiguous range of the global numbering:
+  // about 100000 elements per process and at least 8 processes. SPEED and SAFETY skip the
+  // second bipartition attempt and the diffusion. Whatever its build options, the context
+  // runs PT-Scotch on one thread per process, with deterministic communication and a fixed
+  // seed.
+  const int nproc = static_cast<int>(
+      std::clamp<SCOTCH_Num>((vtxdist[size] + 99999) / 100000, std::min(size, 8), size));
+  const int group = (size + nproc - 1) / nproc;
+  MPI_Comm group_comm, part_comm;
+  MPI_Comm_split(comm, rank / group, rank, &group_comm);
+  const int group_rank = Mpi::Rank(group_comm), group_size = Mpi::Size(group_comm);
+  const bool leader = (group_rank == 0);
+  MPI_Comm_split(comm, leader ? 0 : MPI_UNDEFINED, rank, &part_comm);
+  std::vector<int> group_counts(2 * group_size), vcounts(group_size), ecounts(group_size),
+      vdispls(group_size + 1, 0), edispls(group_size + 1, 0);
   {
-    SCOTCH_contextRandomSeed(&context, 1);
+    const int loc[2] = {ne, static_cast<int>(nedge)};
+    MPI_Gather(loc, 2, MPI_INT, group_counts.data(), 2, MPI_INT, 0, group_comm);
   }
-  Mpi::GlobalMin(1, &ok, comm);
-  ok = ok && (SCOTCH_dgraphBuild(&graph, 0, ne, ne, xadj.data(), nullptr, nullptr, nullptr,
-                                 nedge, nedge, adjncy.data(), nullptr, nullptr) == 0);
-  ok = ok && (SCOTCH_contextBindDgraph(&context, &graph, &context_graph) == 0);
-  ok = ok &&
-       (SCOTCH_stratDgraphMapBuild(&strat, SCOTCH_STRATDEFAULT, size, size, 0.02) == 0);
-  ok = ok && (SCOTCH_dgraphPart(&context_graph, size, &strat, part.data()) == 0);
-  SCOTCH_stratExit(&strat);
-  SCOTCH_dgraphExit(&graph);
-  SCOTCH_contextExit(&context);
+  for (int i = 0; i < group_size; i++)
+  {
+    vcounts[i] = group_counts[2 * i];
+    ecounts[i] = group_counts[2 * i + 1];
+    vdispls[i + 1] = vdispls[i] + vcounts[i];
+    edispls[i + 1] = edispls[i] + ecounts[i];
+  }
+  const SCOTCH_Num gne = leader ? vdispls[group_size] : 0,
+                   gnedge = leader ? edispls[group_size] : 0;
+  std::vector<SCOTCH_Num> deg(ne), gxadj(gne + 1, 0), gadjncy(gnedge + 1), gpart(gne + 1);
+  for (int e = 0; e < ne; e++)
+  {
+    deg[e] = xadj[e + 1] - xadj[e];
+  }
+  const MPI_Datatype num_type = mpi::DataType<SCOTCH_Num>();
+  MPI_Gatherv(deg.data(), ne, num_type, gxadj.data() + 1, vcounts.data(), vdispls.data(),
+              num_type, 0, group_comm);
+  MPI_Gatherv(adjncy.data(), static_cast<int>(nedge), num_type, gadjncy.data(),
+              ecounts.data(), edispls.data(), num_type, 0, group_comm);
+  std::partial_sum(gxadj.begin(), gxadj.end(), gxadj.begin());
+  int ok = 1;
+  if (leader)
+  {
+    SCOTCH_Context context;
+    SCOTCH_Dgraph graph, context_graph;
+    SCOTCH_Strat strat;
+    SCOTCH_contextInit(&context);
+    SCOTCH_dgraphInit(&graph, part_comm);
+    SCOTCH_stratInit(&strat);
+    ok = (SCOTCH_contextOptionSetNum(&context, SCOTCH_OPTIONNUMDETERMINISTIC, 1) == 0 &&
+          SCOTCH_contextRandomClone(&context) == 0 &&
+          SCOTCH_contextThreadSpawn(&context, 1, nullptr) == 0);
+    if (ok)
+    {
+      SCOTCH_contextRandomSeed(&context, 1);
+    }
+    Mpi::GlobalMin(1, &ok, part_comm);
+    ok = ok &&
+         (SCOTCH_dgraphBuild(&graph, 0, gne, gne, gxadj.data(), nullptr, nullptr, nullptr,
+                             gnedge, gnedge, gadjncy.data(), nullptr, nullptr) == 0);
+    ok = ok && (SCOTCH_contextBindDgraph(&context, &graph, &context_graph) == 0);
+    ok = ok && (SCOTCH_stratDgraphMapBuild(&strat, SCOTCH_STRATSPEED | SCOTCH_STRATSAFETY,
+                                           Mpi::Size(part_comm), size, 0.02) == 0);
+    ok = ok && (SCOTCH_dgraphPart(&context_graph, size, &strat, gpart.data()) == 0);
+    SCOTCH_stratExit(&strat);
+    SCOTCH_dgraphExit(&graph);
+    SCOTCH_contextExit(&context);
+    MPI_Comm_free(&part_comm);
+  }
+  std::vector<SCOTCH_Num> part(ne);
+  MPI_Scatterv(gpart.data(), vcounts.data(), vdispls.data(), num_type, part.data(), ne,
+               num_type, 0, group_comm);
+  MPI_Comm_free(&group_comm);
   Mpi::GlobalMin(1, &ok, comm);
   if (!ok)
   {
