@@ -2653,6 +2653,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseMagnetic() const
     return;
   }
   const auto path = post_dir / "surface-response-magnetic.csv";
+  // OI-MAGNETIC-CSV-WRITE-THROUGH-LINK (fix round P4 re-freeze; decision 1368; the
+  // OI-ADAPT-SAVEMESH-OVERWRITE form): SaveIteration leaves a symlink at this path into the
+  // archived iteration folder; truncating through it would overwrite the archived table
+  // and leave no real top-level file. Remove the link first, then write a real file.
+  mesh::RemoveSymlinkBeforeWrite(path);
   std::ofstream output(path, std::ios::trunc);
   MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
   // Phase 3 (a) COL-1 (R-MAG-14): two trailing columns + one "energy" row per model
