@@ -66,8 +66,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     superbuild builds PT-Scotch 7.0.18, and builds SuperLU_DIST, STRUMPACK, and MUMPS with
     METIS alone. SuperLU_DIST is patched to keep its METIS column ordering, also its
     default ordering, without ParMETIS. From version 0.20, the Spack package depends on
-    `scotch` instead of `parmetis`, and leaves the use of ParMETIS by the sparse direct
-    solvers to their own variants.
+    `scotch` instead of `parmetis`, and still builds SuperLU_DIST with ParMETIS, which
+    Spack's MFEM requires. *Palace* links ParMETIS only for sparse direct solvers built with
+    it, given `PARMETIS_DIR`.
     [PR 1130](https://github.com/awslabs/palace/pull/1130).
   - The superbuild now always builds the dependencies which *Palace* links directly.
     Previously, configuring with cuDSS as the only sparse direct solver failed.

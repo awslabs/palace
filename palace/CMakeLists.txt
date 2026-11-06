@@ -83,6 +83,9 @@ set(METIS_DIR "" CACHE STRING
 set(SCOTCH_DIR "" CACHE STRING
   "Path to Scotch build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
+set(PARMETIS_DIR "" CACHE STRING
+  "Path to ParMETIS installation directory, only to link sparse direct solvers built with it"
+)
 set(SUNDIALS_DIR "" CACHE STRING
   "Path to SUNDIALS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
@@ -710,9 +713,16 @@ if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
   add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
 endif()
 
-# Link PT-Scotch and METIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
+# Link PT-Scotch, ParMETIS if the sparse direct solvers were built with it, and METIS (must
+# come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
+set(PARMETIS_LIBRARIES)
+if(NOT "${PARMETIS_DIR}" STREQUAL "")
+  find_library(PARMETIS_LIBRARIES NAMES parmetis
+    HINTS ${PARMETIS_DIR}/lib ${PARMETIS_DIR}/lib64 NO_DEFAULT_PATH REQUIRED)
+  message(STATUS "Found ParMETIS for the sparse direct solvers: ${PARMETIS_LIBRARIES}")
+endif()
 target_link_libraries(${LIB_TARGET_NAME} PUBLIC
-  SCOTCH::ptscotch SCOTCH::scotch SCOTCH::ptscotcherr METIS::METIS)
+  SCOTCH::ptscotch SCOTCH::scotch SCOTCH::ptscotcherr ${PARMETIS_LIBRARIES} METIS::METIS)
 
 # Link SUNDIALS
 if(PALACE_WITH_SUNDIALS)

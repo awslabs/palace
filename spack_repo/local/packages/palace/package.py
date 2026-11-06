@@ -158,7 +158,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis", when="@:0.19")
+        depends_on("superlu-dist+parmetis")  # Spack's MFEM requires it with SuperLU_DIST
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -600,6 +600,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
             if self.spec.satisfies("@0.20:"):
                 args.append(self.define("SCOTCH_DIR", self.spec["scotch"].prefix))
+                if self.spec.satisfies("^parmetis"):
+                    args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             else:
                 args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
