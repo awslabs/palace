@@ -72,6 +72,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
     no domain element is attached to, are now removed with a warning.
     [PR 1100](https://github.com/awslabs/palace/pull/1100).
+  - Fixed driven-sweep restarts with more than one excitation aborting with
+    `Writing data table at incorrect index`, because the frequencies reloaded from the CSV
+    tables (rounded to their printed precision) were compared exactly with the recomputed
+    ones.
+    [PR 1088](https://github.com/awslabs/palace/pull/1088).
 
 #### Build system
 
