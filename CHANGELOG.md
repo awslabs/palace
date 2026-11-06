@@ -25,7 +25,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     simulations without superconductor boundaries), which reduces the number of linear
     solver iterations, and to `Solver.Linear.MGSmoothIts` otherwise, as before.
     SchemaVer 4-3-0
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1159](https://github.com/awslabs/palace/pull/1159).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
