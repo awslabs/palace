@@ -28,6 +28,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-2d-submesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp

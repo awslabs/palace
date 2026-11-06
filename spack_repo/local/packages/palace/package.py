@@ -190,10 +190,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     )
 
     # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
-    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
-    # the implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
-    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination). Kept off the
-    # `with` blocks so the Palace variants are not folded into the patch conditions.
+    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess), the
+    # implementation of https://github.com/hypre-space/hypre/pull/1652 with fixes
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination), and the
+    # AMS coarse-level agglomeration prototype for
+    # https://github.com/hypre-space/hypre/issues/1654. Kept off the `with` blocks so the
+    # Palace variants are not folded into the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -209,6 +211,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "3401dc5ae8ea728aff0b70ec5873d20194847963/extern/patch/hypre/"
                 "hypre_multicomponent_relax.diff",
                 sha256="fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a",
+                when="@3.2.0:3.2.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "bb09cfaffdcea9735c4e8f09a78c8cf5ed65a92a/extern/patch/hypre/"
+                "hypre_ams_coarse_agglomeration.diff",
+                sha256="2b209ceeea8cfb79cb0ebb482ef754f7dbc7365c6af4e06379d45abacf1994cf",
                 when="@3.2.0:3.2.1",
             ),
         ],

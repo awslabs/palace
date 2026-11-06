@@ -27,6 +27,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch, a prototype for
+    [hypre-space/hypre#1654](https://github.com/hypre-space/hypre/issues/1654), with which
+    AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
+    processes during the solve and runs the additive Pi-space corrections concurrently.
+    These levels have few rows per process and are latency bound at high process counts.
+    The AMS preconditioner also flags a zero initial guess as zero. Results agree up to the
+    summation order. [PR 1154](https://github.com/awslabs/palace/pull/1154).
   - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
     multigrid preconditioner of the divergence-free projection, instead of one. Its
     V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
