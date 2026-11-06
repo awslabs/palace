@@ -155,11 +155,11 @@ The CSV reference provides the expected table layout rather than the numerical o
 
 A polynomial-order study gave these absolute complex transmission errors:
 
-| Order | Lossless | Lossy |
-|:-----:|:--------:|:-----:|
-| 1 | ``5.59\times10^{-3}`` | ``5.53\times10^{-3}`` |
-| 2 | ``6.20\times10^{-6}`` | ``6.05\times10^{-6}`` |
-| 3 | ``1.60\times10^{-9}`` | ``1.59\times10^{-9}`` |
+| Order | Lossless              | Lossy                 |
+|:-----:|:---------------------:|:---------------------:|
+| 1     | ``5.59\times10^{-3}`` | ``5.53\times10^{-3}`` |
+| 2     | ``6.20\times10^{-6}`` | ``6.05\times10^{-6}`` |
+| 3     | ``1.60\times10^{-9}`` | ``1.59\times10^{-9}`` |
 
 One uniform refinement at order 2 reduced the transmission errors by approximately 16.
 Order-3 serial and two-rank amplitudes agreed within ``1.5\times10^{-13}`` in that study.
