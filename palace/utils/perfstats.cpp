@@ -282,6 +282,32 @@ json::json_pointer Pointer(std::string_view path)
   return json::json_pointer(p);
 }
 
+// Element at a slash-separated path, creating objects as needed. Every token is an object
+// key (json_pointer would create arrays for numeric tokens).
+json &At(json &j, std::string_view path)
+{
+  json *node = &j;
+  std::size_t pos = 0;
+  while (pos <= path.size())
+  {
+    auto end = path.find('/', pos);
+    if (end == std::string_view::npos)
+    {
+      end = path.size();
+    }
+    if (end > pos)
+    {
+      if (!node->is_object())
+      {
+        *node = json::object();
+      }
+      node = &(*node)[std::string(path.substr(pos, end - pos))];
+    }
+    pos = end + 1;
+  }
+  return *node;
+}
+
 void ErasePath(json &meta, std::string_view path)
 {
   auto ptr = Pointer(path);
@@ -453,7 +479,7 @@ int RegisterCounter(std::string_view path, Reduce reduce, Accumulate acc)
 
 void SetInfo(std::string_view path, const json &value)
 {
-  state.info[Pointer(path)] = value;
+  At(state.info, path) = value;
   state.info_paths.emplace(path);
 }
 
@@ -550,11 +576,11 @@ void WriteJson(json &meta)
   {
     if (r.counter[i].n > 0)
     {
-      meta[Pointer(r.counter_paths[i])] = CounterJson(r.counter_reduce[i], r.counter[i]);
+      At(meta, r.counter_paths[i]) = CounterJson(r.counter_reduce[i], r.counter[i]);
     }
     if (r.counter_acc[i] != Accumulate::NONE && r.cum_counter[i].n > 0)
     {
-      cum[Pointer(r.counter_paths[i])] = CounterJson(r.counter_reduce[i], r.cum_counter[i]);
+      At(cum, r.counter_paths[i]) = CounterJson(r.counter_reduce[i], r.cum_counter[i]);
     }
   }
   if (!state.info.empty())

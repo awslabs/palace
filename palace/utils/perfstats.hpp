@@ -147,6 +147,16 @@ inline void Add(int id, double v)
   c.value += v;
   c.set = true;
 }
+// Local (rank, current iteration) value of a counter, and whether it was set.
+inline double Get(int id)
+{
+  return detail::registry.counters[id].value;
+}
+inline bool IsSet(int id)
+{
+  return detail::registry.counters[id].set;
+}
+
 inline void Set(int id, double v)
 {
   auto &c = detail::registry.counters[id];

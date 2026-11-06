@@ -149,6 +149,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   perf::ScopedMemoryProbe probe("Estimator/Construction");
+  perf::ScopedRole role("Estimator");
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
   // Detect scalar FE spaces (H1, L2) vs vector FE spaces (ND, RT) based on map type.
   const int dim = smooth_fespace.Dimension();

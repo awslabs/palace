@@ -51,7 +51,7 @@ protected:
   // Variables set during solve to capture solve statistics.
   mutable bool converged;
   mutable double initial_res, final_res;
-  mutable int final_it;
+  mutable int final_it, final_restarts;
 
   // Enable timer contribution for Timer::PRECONDITIONER.
   bool use_timer;
@@ -113,6 +113,8 @@ public:
 
   // Bytes held by the Krylov basis (zero for short-recurrence methods).
   virtual std::size_t GetBasisBytes() const { return 0; }
+  // Returns the number of restarts for the previous solve (GMRES and FGMRES).
+  int GetNumRestarts() const { return final_restarts; }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return comm; }
@@ -146,6 +148,7 @@ protected:
   using IterativeSolver<OperType>::initial_res;
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
+  using IterativeSolver<OperType>::final_restarts;
 
   // Temporary workspace for solve.
   mutable VecType r, z, p;
@@ -182,6 +185,7 @@ protected:
   using IterativeSolver<OperType>::initial_res;
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
+  using IterativeSolver<OperType>::final_restarts;
 
   // Maximum subspace dimension for restarted GMRES.
   mutable int max_dim;
@@ -259,6 +263,7 @@ protected:
   using GmresSolver<OperType>::initial_res;
   using GmresSolver<OperType>::final_res;
   using GmresSolver<OperType>::final_it;
+  using GmresSolver<OperType>::final_restarts;
 
   using GmresSolver<OperType>::max_dim;
   using GmresSolver<OperType>::gs_orthog;

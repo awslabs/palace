@@ -66,6 +66,9 @@ private:
   // Solver role for the performance report.
   std::string role;
 
+  // Inclusive tally of the coarse solve for nested solvers (-1 for none).
+  int coarse_tally;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -94,6 +97,8 @@ public:
   void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
 
   void EnableTimer();
+
+  void SetCoarseTally(int id) { coarse_tally = id; }
 };
 
 }  // namespace palace

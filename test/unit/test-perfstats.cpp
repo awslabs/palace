@@ -301,3 +301,21 @@ TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
   CHECK(r.iter.tally_time[none].max == 1.0);
   BlockTimer::Reset();
 }
+
+TEST_CASE("PerfStats Numeric Path Tokens", "[perfstats][Serial]")
+{
+  BlockTimer::Reset();
+  perf::Set("Test/Levels/0/Rows", 10.0);
+  perf::Set("Test/Levels/1/Rows", 20.0);
+  perf::SetInfo("Test/Info/2", "x");
+  BlockTimer::Finalize(Mpi::World());
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  CHECK(meta["Test"]["Levels"].is_object());
+  CHECK(meta["Test"]["Levels"]["0"]["Rows"] == 10);
+  CHECK(meta["Test"]["Levels"]["1"]["Rows"] == 20);
+  CHECK(meta["Test"]["Info"]["2"] == "x");
+  perf::WriteJson(meta);  // Erase and rewrite
+  CHECK(meta["Test"]["Levels"]["1"]["Rows"] == 20);
+  BlockTimer::Reset();
+}

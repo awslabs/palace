@@ -14,6 +14,7 @@
 #include <stat_c.hpp>
 // clang-format on
 #include "linalg/divfree.hpp"
+#include "linalg/solverstats.hpp"
 #include "utils/communication.hpp"
 
 using namespace std::complex_literals;
@@ -349,6 +350,7 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
   // Print some log information.
   int num_it = static_cast<int>(iparam[2]);
   int num_conv = static_cast<int>(iparam[4]);
+  perf::RecordEigenSolve(opInv->GetRole(), num_it, num_conv, nev);
   if (print > 0)
   {
     Mpi::Print(comm,
