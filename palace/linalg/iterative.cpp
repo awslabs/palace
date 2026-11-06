@@ -4,6 +4,7 @@
 #include "iterative.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -20,6 +21,26 @@ namespace palace
 namespace
 {
 
+// Apply update(i) for all i in [0, N) and return the sum of the terms f(i) after the
+// updates, in one pass over memory: each chunk is updated by a simple loop, which compilers
+// vectorize, and its terms are then summed from cache with several partial sums.
+template <typename UpdateFunction, typename TermFunction>
+double UpdateAndSum(int N, UpdateFunction &&update, TermFunction &&f)
+{
+  constexpr int chunk = 256;
+  double sum = 0.0;
+  for (int begin = 0; begin < N; begin += chunk)
+  {
+    const int end = std::min(begin + chunk, N);
+    for (int i = begin; i < end; i++)
+    {
+      update(i);
+    }
+    sum += linalg::HostSums<1>(begin, end, f)[0];
+  }
+  return sum;
+}
+
 // r -= a z, z = D r, and return the local inner product (z, r), in one pass.
 double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
 {
@@ -27,14 +48,14 @@ double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
   MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
   const auto *D = dinv.HostRead();
   auto *R = r.HostReadWrite(), *Z = z.HostReadWrite();
-  double dot = 0.0;
-  for (int i = 0; i < N; i++)
-  {
-    R[i] -= a * Z[i];
-    Z[i] = D[i] * R[i];
-    dot += R[i] * Z[i];
-  }
-  return dot;
+  return UpdateAndSum(
+      N,
+      [=](int i)
+      {
+        R[i] -= a * Z[i];
+        Z[i] = D[i] * R[i];
+      },
+      [=](int i) { return std::array{R[i] * Z[i]}; });
 }
 
 // The same for complex vectors and a real D, for which (z, r) = rᴴ D r is real. The step
@@ -48,17 +69,16 @@ std::complex<double> CgUpdateJacobi(std::complex<double> a, ComplexVector &r,
   const auto *D = dinv.HostRead();
   auto *RR = r.Real().HostReadWrite(), *RI = r.Imag().HostReadWrite();
   auto *ZR = z.Real().HostReadWrite(), *ZI = z.Imag().HostReadWrite();
-  double rr = 0.0, ii = 0.0;
-  for (int i = 0; i < N; i++)
-  {
-    RR[i] -= ar * ZR[i] - ai * ZI[i];
-    RI[i] -= ai * ZR[i] + ar * ZI[i];
-    ZR[i] = D[i] * RR[i];
-    ZI[i] = D[i] * RI[i];
-    rr += RR[i] * ZR[i];
-    ii += RI[i] * ZI[i];
-  }
-  return rr + ii;
+  return UpdateAndSum(
+      N,
+      [=](int i)
+      {
+        RR[i] -= ar * ZR[i] - ai * ZI[i];
+        RI[i] -= ai * ZR[i] + ar * ZI[i];
+        ZR[i] = D[i] * RR[i];
+        ZI[i] = D[i] * RI[i];
+      },
+      [=](int i) { return std::array{RR[i] * ZR[i] + RI[i] * ZI[i]}; });
 }
 
 template <typename T>

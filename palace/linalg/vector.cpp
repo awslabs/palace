@@ -662,13 +662,51 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
                       });
 }
 
+namespace
+{
+
+// The sums of HostSums over [0, N). With several threads, each sums a contiguous block and
+// the blocks are added in order, so the result only depends on the number of threads.
+template <int M, typename Function>
+std::array<double, M> ThreadedHostSums(int N, Function &&f)
+{
+  const int nt = utils::GetMaxThreads();
+  if (nt == 1)
+  {
+    return HostSums<M>(0, N, f);
+  }
+  std::vector<std::array<double, M>> blocks(nt, std::array<double, M>{});
+  PalacePragmaOmp(parallel)
+  {
+    const std::int64_t t = utils::GetThreadNum(), T = utils::GetNumActiveThreads();
+    blocks[t] =
+        HostSums<M>(static_cast<int>(N * t / T), static_cast<int>(N * (t + 1) / T), f);
+  }
+  std::array<double, M> sum = {};
+  for (const auto &block : blocks)
+  {
+    for (int m = 0; m < M; m++)
+    {
+      sum[m] += block[m];
+    }
+  }
+  return sum;
+}
+
+}  // namespace
+
 double LocalDot(const Vector &x, const Vector &y)
 {
-  static hypre::HypreVector X, Y;
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-  X.Update(x);
-  Y.Update(y);
-  return hypre_SeqVectorInnerProd(X, Y);
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    static hypre::HypreVector X, Y;
+    X.Update(x);
+    Y.Update(y);
+    return hypre_SeqVectorInnerProd(X, Y);
+  }
+  const auto *X = x.HostRead(), *Y = y.HostRead();
+  return ThreadedHostSums<1>(x.Size(), [=](int i) { return std::array{Y[i] * X[i]}; })[0];
 }
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
@@ -686,52 +724,19 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
     }
   }
 
-  // On the host, a single pass over the data instead of one per real inner product. With
-  // several threads, each sums a contiguous block and the blocks are added in order, so the
-  // result only depends on the number of threads.
+  // On the host, a single pass over the data instead of one per real inner product.
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-  const int N = x.Size();
   const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
   const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
-  auto Sum = [=](int begin, int end, double *s)
+  if (&x == &y)
   {
-    double rr = 0.0, ii = 0.0, ir = 0.0, ri = 0.0;
-    for (int i = begin; i < end; i++)
-    {
-      rr += YR[i] * XR[i];
-      ii += YI[i] * XI[i];
-      ir += YR[i] * XI[i];
-      ri += YI[i] * XR[i];
-    }
-    s[0] = rr;
-    s[1] = ii;
-    s[2] = ir;
-    s[3] = ri;
-  };
-  double s[4] = {0.0, 0.0, 0.0, 0.0};
-  const int nt = utils::GetMaxThreads();
-  if (nt == 1)
-  {
-    Sum(0, N, s);
+    return ThreadedHostSums<1>(x.Size(), [=](int i)
+                               { return std::array{XR[i] * XR[i] + XI[i] * XI[i]}; })[0];
   }
-  else
-  {
-    std::vector<double> blocks(4 * nt, 0.0);
-    PalacePragmaOmp(parallel)
-    {
-      const std::int64_t t = utils::GetThreadNum(), T = utils::GetNumActiveThreads();
-      Sum(static_cast<int>(N * t / T), static_cast<int>(N * (t + 1) / T),
-          blocks.data() + 4 * t);
-    }
-    for (int t = 0; t < nt; t++)
-    {
-      for (int k = 0; k < 4; k++)
-      {
-        s[k] += blocks[4 * t + k];
-      }
-    }
-  }
-  return {s[0] + s[1], (&x == &y) ? 0.0 : s[2] - s[3]};
+  const auto sum = ThreadedHostSums<2>(
+      x.Size(), [=](int i)
+      { return std::array{YR[i] * XR[i] + YI[i] * XI[i], YR[i] * XI[i] - YI[i] * XR[i]}; });
+  return {sum[0], sum[1]};
 }
 
 // We implement LocalSum using Hypre instead of using MFEM's Sum because it is

@@ -275,7 +275,7 @@ TEST_CASE("CgSolver zero residual (complex)", "[iterative][Serial][Parallel]")
 // separate operations, which it uses for a subclass of JacobiSmoother.
 TEST_CASE("CgSolver fused Jacobi update", "[iterative][Serial][Parallel]")
 {
-  constexpr int n = 101, max_it = 10;
+  constexpr int n = 1001, max_it = 10;
   MPI_Comm comm = Mpi::World();
   TridiagonalTestOperator A(n);
   // The fused update replaces all but the first application of the preconditioner.

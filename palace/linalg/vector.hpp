@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_VECTOR_HPP
 #define PALACE_LINALG_VECTOR_HPP
 
+#include <array>
 #include <complex>
 #include <vector>
 #include <mfem.hpp>
@@ -242,6 +243,45 @@ void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 // Calculate the local inner product yᴴ x or yᵀ x.
 double LocalDot(const Vector &x, const Vector &y);
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y);
+
+// Return the sums over i in [begin, end) of the M terms f(i), on the host. Each sum is
+// split into several partial sums, which do not wait on each other's additions and are
+// added in a fixed order.
+template <int M, typename Function>
+inline std::array<double, M> HostSums(int begin, int end, Function &&f)
+{
+  constexpr int K = 8;
+  double s[M][K] = {};
+  auto Add = [&](int i, int k)
+  {
+    const std::array<double, M> t = f(i);
+    for (int m = 0; m < M; m++)
+    {
+      s[m][k] += t[m];
+    }
+  };
+  int i = begin;
+  for (; i + K <= end; i += K)
+  {
+    for (int k = 0; k < K; k++)
+    {
+      Add(i + k, k);
+    }
+  }
+  for (int k = 0; i < end; i++, k++)
+  {
+    Add(i, k);
+  }
+  std::array<double, M> sum = {};
+  for (int m = 0; m < M; m++)
+  {
+    for (int k = 0; k < K; k++)
+    {
+      sum[m] += s[m][k];
+    }
+  }
+  return sum;
+}
 
 // Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>
