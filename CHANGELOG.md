@@ -17,6 +17,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Tests
+
+  - Added analytic lossless and lossy dielectric-slab regressions for complex Floquet
+    reflection/transmission and passive absorption with constant material coefficients.
+
 #### Performance Improvements
 
   - Added a hypre patch for

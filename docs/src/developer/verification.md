@@ -138,6 +138,53 @@ palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 mpirun -np 2 palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 ```
 
+## Dielectric slab scattering and absorption
+
+The `floquet_dielectric_slab_lossless` and `floquet_dielectric_slab_lossy` regressions
+verify normal-incidence scattering from a 5 mm dielectric slab between vacuum Floquet ports.
+The real relative permittivity is 4, and the loss tangents are 0 and 0.05, respectively.
+Each port is 37.5 mm from the adjacent slab face; the excitation is TE at 2 GHz.
+The slab fills the periodic cell laterally, so only the specular order is excited.
+
+The checks use the exact Fresnel slab solution with the positive-time phasor convention,
+including the vacuum propagation phase between the interfaces and port reference planes.
+They reconstruct complex TE reflection and transmission, check that cross-polarized TM
+amplitudes vanish, and compare absorption with the analytic value.
+For the lossy slab, the analytic absorbed fraction is approximately 0.0354153647384.
+The CSV reference provides the expected table layout rather than the numerical oracle.
+
+A polynomial-order study gave these absolute complex transmission errors:
+
+| Order | Lossless              | Lossy                 |
+|:-----:|:---------------------:|:---------------------:|
+| 1     | ``5.59\times10^{-3}`` | ``5.53\times10^{-3}`` |
+| 2     | ``6.20\times10^{-6}`` | ``6.05\times10^{-6}`` |
+| 3     | ``1.60\times10^{-9}`` | ``1.59\times10^{-9}`` |
+
+One uniform refinement at order 2 reduced the transmission errors by approximately 16.
+Order-3 serial and two-rank amplitudes agreed within ``1.5\times10^{-13}`` in that study.
+The order-3 fixtures use an absolute complex-amplitude tolerance of ``2\times10^{-8}``,
+an absorption tolerance of ``10^{-8}``, and a linear-solver tolerance of ``10^{-10}``.
+These cases verify interface matching, phase and passive absorption for constant isotropic
+materials; they do not test frequency-dependent constitutive laws or volume loss integration.
+The cases are currently registered for CPU serial/MPI execution; GPU execution has not yet
+been validated.
+
+The mesh uses the existing dielectric-grating topology, with the full middle layer assigned
+to the slab material and the periodic node mappings retained.
+To regenerate it from the repository root with meshio 5.3.5 and NumPy installed:
+
+```bash
+python test/data/regression/input/dielectric_slab/mesh/generate.py
+```
+
+Run the verification cases with:
+
+```bash
+palace-unit-tests "floquet_dielectric_slab_*" --skip-benchmarks
+mpirun -np 2 palace-unit-tests "floquet_dielectric_slab_*" --skip-benchmarks
+```
+
 ## References
 
  1. D. Garcia-Donoro, L. E. Garcia-Castillo, and S. W. Ting, "Verification Process of
