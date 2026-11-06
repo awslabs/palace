@@ -11,7 +11,7 @@ namespace palace
 {
 
 BoomerAmgSolver::BoomerAmgSolver(int cycle_it, int smooth_it, bool agg_coarsen, int print)
-  : mfem::HypreBoomerAMG()
+  : mfem::HypreBoomerAMG(), cycle_it(cycle_it)
 {
   HYPRE_BoomerAMGSetPrintLevel(*this, (print > 1) ? print - 1 : 0);
   HYPRE_BoomerAMGSetMaxIter(*this, cycle_it);
@@ -49,7 +49,10 @@ void BoomerAmgSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &
 
 void BoomerAmgSolver::SetOperator(const mfem::Operator &op)
 {
+  // When the solver already has an operator, mfem::HypreBoomerAMG::SetOperator recreates
+  // the hypre solver with its coarsening and relaxation options, but with one V-cycle.
   mfem::HypreBoomerAMG::SetOperator(op);
+  HYPRE_BoomerAMGSetMaxIter(*this, cycle_it);
   B_mv.reset();
   X_mv.reset();
 }
