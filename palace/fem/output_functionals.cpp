@@ -1554,7 +1554,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       CeedVector vec;
       ceed::InitCeedVector(data, ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
-      scratch.vecs.push_back(vec);
+      scratch.vectors.push_back(vec);
       scratch.restrictions.push_back(restr);
     };
     auto OriginalFaceQ = [&](std::size_t e, int canonical_q)
@@ -1588,7 +1588,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       inputs.push_back(
           {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
       mesh_node_fields.push_back("grad_x_f");
-      scratch.vecs.push_back(mesh_nodes_vec);
+      scratch.vectors.push_back(mesh_nodes_vec);
       scratch.restrictions.push_back(face_mesh_restr);
       scratch.bases.push_back(face_mesh_basis);
     }
@@ -1688,11 +1688,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       mesh_node_fields.push_back("grad_x_" + suffix);
       if (needs_elem_attr)
       {
-        scratch.vecs.push_back(attr_vec);
+        scratch.vectors.push_back(attr_vec);
         scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
-      scratch.vecs.push_back(mesh_nodes_vec);
+      scratch.vectors.push_back(mesh_nodes_vec);
       scratch.restrictions.push_back(mesh_restr);
       scratch.bases.push_back(mesh_basis);
     };
@@ -1766,11 +1766,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           {"grad_x_" + suffix, ident_vec, ident_restr, nullptr, ceed::EvalMode::None});
       if (needs_elem_attr)
       {
-        scratch.vecs.push_back(attr_vec);
+        scratch.vectors.push_back(attr_vec);
         scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
-      scratch.vecs.push_back(ident_vec);
+      scratch.vectors.push_back(ident_vec);
       scratch.restrictions.push_back(ident_restr);
     };
     if (trace_cache)
@@ -1845,7 +1845,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
-      scratch.vecs.push_back(vec);
+      scratch.vectors.push_back(vec);
       scratch.restrictions.push_back(restr);
       scratch.bases.push_back(basis);
     };
@@ -1878,7 +1878,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(face_nbr_exchange->Imported(), ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       field_sources.emplace_back(name, 4);  // 4 -> imported (see ApplyAddGroupOperators)
-      scratch.vecs.push_back(vec);
+      scratch.vectors.push_back(vec);
       scratch.restrictions.push_back(restr);
     };
     // Trace storage is component-major over the complete side lattice.  The input
@@ -1924,7 +1924,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                ceed, static_cast<CeedSize>(trace_points) * num_comp, &vec));
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       field_sources.emplace_back(name, source);
-      scratch.vecs.push_back(vec);
+      scratch.vectors.push_back(vec);
       scratch.restrictions.push_back(restr);
     };
     if (trace_cache)

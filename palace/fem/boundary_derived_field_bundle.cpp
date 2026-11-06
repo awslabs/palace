@@ -232,7 +232,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
         CeedVector vector;
         ceed::InitCeedVector(data, ceed, &vector);
         inputs.push_back({name, vector, restriction, nullptr, ceed::EvalMode::None});
-        scratch.vecs.push_back(vector);
+        scratch.vectors.push_back(vector);
         scratch.restrictions.push_back(restriction);
       };
       AddFixed("grad_x_f", face_jac, 6, nq, face_jac.Size(), geom_offsets);
@@ -251,7 +251,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
             ceed, CeedVectorCreate(ceed, static_cast<CeedSize>(3) * trace_points, &vector));
         inputs.push_back({name, vector, restriction, nullptr, ceed::EvalMode::None});
         field_sources.emplace_back(name, source);
-        scratch.vecs.push_back(vector);
+        scratch.vectors.push_back(vector);
         scratch.restrictions.push_back(restriction);
       };
       if (batched_complex)
