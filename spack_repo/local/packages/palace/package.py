@@ -173,6 +173,38 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
+    # The STRUMPACK version of the superbuild, with
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
+    # off the `with` blocks so the Palace variants are not folded into the patch condition.
+    depends_on(
+        "strumpack@8.1.0",
+        when="@develop+strumpack",
+        patches=[
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
+                sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
+                when="@8.1.0",
+            )
+        ],
+    )
+
+    # https://github.com/hypre-space/hypre/pull/1651: hybrid Gauss-Seidel relaxation
+    # without the halo exchange of a zero initial guess, as in the superbuild. Kept off the
+    # `with` blocks so the Palace variants are not folded into the patch condition.
+    depends_on(
+        "hypre",
+        when="@develop",
+        patches=[
+            patch(
+                "https://github.com/hypre-space/hypre/commit/"
+                "2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1",
+                sha256="bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f",
+                when="@3.2.0:3.2.1",
+            )
+        ],
+    )
+
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
     with when("+slepc"):

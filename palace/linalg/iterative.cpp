@@ -32,49 +32,11 @@ inline void CheckDot(std::complex<T> dot, const char *msg)
 }
 
 template <typename T>
-inline constexpr T SafeMin()
-{
-  // Originally part of <T>LAPACK.
-  // <T>LAPACK is free software: you can redistribute it and/or modify it under
-  // the terms of the BSD 3-Clause license.
-  //
-  // Copyright (c) 2021-2023, University of Colorado Denver. All rights reserved.
-  // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
-  //
-  // Original author: Weslley S Pereira, University of Colorado Denver, USA
-  constexpr int fradix = std::numeric_limits<T>::radix;
-  constexpr int expm = std::numeric_limits<T>::min_exponent;
-  constexpr int expM = std::numeric_limits<T>::max_exponent;
-  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  // all compilers.
-  return std::max(std::pow(fradix, T(expm - 1)), std::pow(fradix, T(1 - expM)));
-}
-
-template <typename T>
-inline constexpr T SafeMax()
-{
-  // Originally part of <T>LAPACK.
-  // <T>LAPACK is free software: you can redistribute it and/or modify it under
-  // the terms of the BSD 3-Clause license.
-  //
-  // Copyright (c) 2021-2023, University of Colorado Denver. All rights reserved.
-  // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
-  //
-  // Original author: Weslley S Pereira, University of Colorado Denver, USA
-  constexpr int fradix = std::numeric_limits<T>::radix;
-  constexpr int expm = std::numeric_limits<T>::min_exponent;
-  constexpr int expM = std::numeric_limits<T>::max_exponent;
-  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  // all compilers.
-  return std::min(std::pow(fradix, T(1 - expm)), std::pow(fradix, T(expM - 1)));
-}
-
-template <typename T>
 inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
 {
   // See LAPACK's s/dlartg.
-  const T safmin = SafeMin<T>();
-  const T safmax = SafeMax<T>();
+  const T safmin = std::numeric_limits<T>::min();
+  const T safmax = 1 / safmin;
   const T root_min = std::sqrt(safmin);
   const T root_max = std::sqrt(safmax / 2);
   if (dy == 0.0)
@@ -116,8 +78,8 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   //   [  cs        sn ] [ dx ]  =  [ r ]
   //   [ -conj(sn)  cs ] [ dy ]     [ 0 ]
   // where cs is real and cs² + |sn|² = 1. See LAPACK's c/zlartg.
-  const T safmin = SafeMin<T>();
-  const T safmax = SafeMax<T>();
+  const T safmin = std::numeric_limits<T>::min();
+  const T safmax = 1 / safmin;
   if (dy == 0.0)
   {
     cs = 1.0;
