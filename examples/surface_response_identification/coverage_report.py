@@ -132,7 +132,11 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # (W31 excluded, named) with the v2 reader, the candidate M3 and the 0.85 UNCALIBRATED rule (M0 on every Type; the C band holds the
 # measured +0.15..+0.33); the Maxwell block UNCALIBRATED (the 12 PROXY inputs: best unwidened LOO 10 / 12 = 0.833 < 0.85 -> LOW)
 # until the ENERGY-form re-fit v6.1 (P0's PatchEnergy-ON runs). The records: readiness-20261029/fixround/P1/bands/records-v6.json.
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v6.json")
+# v6.1 (fix round P4 re-freeze; REFREEZE-DESIGN s1 DATA-1b / s3 step 5; decisions 1236 (A) / 1364): the Maxwell block re-fit with the three
+# stage-E ENERGY-form cells (W06-mx / W05-mx / FE6-mx, the P0 mxenergy runs; cells under the 422 tail form = the whole population's form;
+# the static-limit C of record on the ported lines; FE6's C omitted, F-40), n 12 -> 15: SA / MS CALIBRATED (M0 widened), MA_sharp / C stay
+# UNCALIBRATED (LOW); the ES block = v6's, bit-identical. The records: readiness-20261029/fixround/P4/bands/records-v6.1.json. v6 kept.
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v6.1.json")
 # v2 of the reader (fix round P1, decisions 1209 / 1230 / 1233 (2); DESIGN-v3 s2 2A + s6): the ES rows read PER SOURCE
 # (select_source; the multi-source union), the F2 owner credit CAPPED at the dropped coupons' in-box energy, the uncredited
 # remainder printed as Unclaimed (unattributed), the no-energy RAW classes' ESTIMATE rows, the measured `unpatched` label.
