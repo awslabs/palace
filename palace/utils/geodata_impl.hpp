@@ -41,12 +41,12 @@ std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b);
 
 // Rank of each part of a partition with one part per rank, which groups the parts sharing
 // faces on the same node. pairs lists (p, q, w) for parts p != q sharing faces of weight
-// w > 0, and rank_node the node of each rank, as a label in [0, size) such as its lowest
-// rank. For each of the orders of the parts, the parts are assigned to the nodes in
-// contiguous blocks of the order by ascending label, swapped in pairs between nodes while
-// this reduces the weight between nodes, for up to 20 passes, and given the ranks of their
-// node in the order.
-// Returns the result with the least weight between nodes, the first on ties.
+// w > 0, where repeated pairs add up their weights, and rank_node the node of each rank, as
+// a label in [0, size) such as its lowest rank. For each of the orders of the parts, the
+// parts are assigned to the nodes in contiguous blocks of the order by ascending label,
+// swapped in pairs between nodes while this reduces the weight between nodes, for up to 20
+// passes, and given the ranks of their node in the order. Returns the result with the least
+// weight between nodes, the first on ties.
 std::vector<int> NumberPartsOnNodes(const std::vector<std::vector<int>> &orders,
                                     const std::vector<std::array<int, 3>> &pairs,
                                     const std::vector<int> &rank_node);

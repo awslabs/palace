@@ -2745,17 +2745,16 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
                   adj[e2].push_back(vtxdist[rank] + e1);
                 }
               });
-  std::vector<SCOTCH_Num> xadj(ne + 1, 0), adjncy;
+  std::vector<SCOTCH_Num> deg(ne), adjncy;
   for (int e = 0; e < ne; e++)
   {
     std::ranges::sort(adj[e]);
     const auto dup = std::ranges::unique(adj[e]);
     adj[e].erase(dup.begin(), dup.end());
-    xadj[e + 1] = xadj[e] + static_cast<SCOTCH_Num>(adj[e].size());
+    deg[e] = static_cast<SCOTCH_Num>(adj[e].size());
     adjncy.insert(adjncy.end(), adj[e].begin(), adj[e].end());
   }
   const auto nedge = static_cast<SCOTCH_Num>(adjncy.size());
-  adjncy.resize(adjncy.size() + 1);  // Not empty for a process without edges
 
   // PT-Scotch's cost grows with the number of processes, as its band graphs connect all
   // pairs of processes. So only the first process of each group of consecutive ranks
@@ -2787,11 +2786,7 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   }
   const SCOTCH_Num gne = leader ? vdispls[group_size] : 0,
                    gnedge = leader ? edispls[group_size] : 0;
-  std::vector<SCOTCH_Num> deg(ne), gxadj(gne + 1, 0), gadjncy(gnedge + 1), gpart(gne + 1);
-  for (int e = 0; e < ne; e++)
-  {
-    deg[e] = xadj[e + 1] - xadj[e];
-  }
+  std::vector<SCOTCH_Num> gxadj(gne + 1, 0), gadjncy(gnedge + 1), gpart(gne + 1);
   const MPI_Datatype num_type = mpi::DataType<SCOTCH_Num>();
   MPI_Gatherv(deg.data(), ne, num_type, gxadj.data() + 1, vcounts.data(), vdispls.data(),
               num_type, 0, group_comm);
@@ -2837,9 +2832,7 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
     return false;
   }
 
-  // Number the parts so that the ranks of a node hold neighboring subdomains. Start from
-  // three orders of the parts: along a Hilbert curve through their centroids, with per-axis
-  // and with isotropic scaling, and by the mean current global index of their elements.
+  // Centroid, number of elements, and mean global element index of each part.
   std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0),
       gidx(size, 0.0);
   mfem::Vector center;
@@ -2860,46 +2853,6 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   {
     return false;  // Do not leave a process without elements
   }
-  std::array<double, 3> lo, hi;
-  lo.fill(mfem::infinity());
-  hi.fill(-mfem::infinity());
-  for (int p = 0; p < size; p++)
-  {
-    for (int d = 0; d < dim; d++)
-    {
-      xc[p * dim + d] /= cnt[p];
-      lo[d] = std::min(lo[d], xc[p * dim + d]);
-      hi[d] = std::max(hi[d], xc[p * dim + d]);
-    }
-    gidx[p] /= cnt[p];
-  }
-  double len_max = 0.0;
-  for (int d = 0; d < dim; d++)
-  {
-    len_max = std::max(len_max, hi[d] - lo[d]);
-  }
-  const int b = (dim == 3) ? 21 : 31;
-  const double nb = std::ldexp(1.0, b);
-  std::vector<std::vector<int>> orders(3, std::vector<int>(size));
-  std::vector<std::uint64_t> key(size, 0);
-  for (int s = 0; s < 2; s++)
-  {
-    for (int p = 0; p < size; p++)
-    {
-      std::array<std::uint32_t, 3> X = {0, 0, 0};
-      for (int d = 0; d < dim; d++)
-      {
-        const double len = (s == 0) ? hi[d] - lo[d] : len_max;
-        const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
-        X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
-      }
-      key[p] = HilbertIndex(X, dim, b);
-    }
-    std::iota(orders[s].begin(), orders[s].end(), 0);
-    std::ranges::stable_sort(orders[s], {}, [&key](int p) { return key[p]; });
-  }
-  std::iota(orders[2].begin(), orders[2].end(), 0);
-  std::ranges::stable_sort(orders[2], {}, [&gidx](int p) { return gidx[p]; });
 
   // Gather on the root the faces between the parts, with weight 2 for a local face and 1 on
   // each side of a shared face, and the node of each rank, labeled by its lowest rank.
@@ -2913,20 +2866,22 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
                   faces[{std::min(p, q), std::max(p, q)}] += (e2 >= 0) ? 2 : 1;
                 }
               });
-  std::vector<int> loc, all, counts(size), displs(size + 1, 0);
+  static_assert(sizeof(std::array<int, 3>) == 3 * sizeof(int));
+  std::vector<std::array<int, 3>> loc, pairs;
   for (const auto &[pq, w] : faces)
   {
-    loc.insert(loc.end(), {pq.first, pq.second, w});
+    loc.push_back({pq.first, pq.second, w});
   }
-  const int nloc = static_cast<int>(loc.size());
+  std::vector<int> counts(size), displs(size + 1, 0);
+  const int nloc = 3 * static_cast<int>(loc.size());
   MPI_Gather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
   for (int i = 0; i < size; i++)
   {
     displs[i + 1] = displs[i] + counts[i];
   }
-  all.resize(rank == 0 ? displs[size] : 0);
-  MPI_Gatherv(loc.data(), nloc, MPI_INT, all.data(), counts.data(), displs.data(), MPI_INT,
-              0, comm);
+  pairs.resize(rank == 0 ? displs[size] / 3 : 0);  // Repeated pairs add up their weights
+  MPI_Gatherv(loc.data(), nloc, MPI_INT, pairs.data(), counts.data(), displs.data(),
+              MPI_INT, 0, comm);
   std::vector<int> rank_node(size);
   {
     MPI_Comm node_comm;
@@ -2939,17 +2894,50 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   std::vector<int> new_part(size);
   if (rank == 0)
   {
-    std::map<std::pair<int, int>, int> all_faces;
-    for (std::size_t i = 0; i < all.size(); i += 3)
+    // Number the parts so that the ranks of a node hold neighboring subdomains. Start from
+    // three orders of the parts: along a Hilbert curve through their centroids, with
+    // per-axis and with isotropic scaling, and by the mean current global index of their
+    // elements.
+    std::array<double, 3> lo, hi;
+    lo.fill(mfem::infinity());
+    hi.fill(-mfem::infinity());
+    for (int p = 0; p < size; p++)
     {
-      all_faces[{all[i], all[i + 1]}] += all[i + 2];
+      for (int d = 0; d < dim; d++)
+      {
+        xc[p * dim + d] /= cnt[p];
+        lo[d] = std::min(lo[d], xc[p * dim + d]);
+        hi[d] = std::max(hi[d], xc[p * dim + d]);
+      }
+      gidx[p] /= cnt[p];
     }
-    std::vector<std::array<int, 3>> pairs;
-    pairs.reserve(all_faces.size());
-    for (const auto &[pq, w] : all_faces)
+    double len_max = 0.0;
+    for (int d = 0; d < dim; d++)
     {
-      pairs.push_back({pq.first, pq.second, w});
+      len_max = std::max(len_max, hi[d] - lo[d]);
     }
+    const int b = (dim == 3) ? 21 : 31;
+    const double nb = std::ldexp(1.0, b);
+    std::vector<std::vector<int>> orders(3, std::vector<int>(size));
+    std::vector<std::uint64_t> key(size, 0);
+    for (int s = 0; s < 2; s++)
+    {
+      for (int p = 0; p < size; p++)
+      {
+        std::array<std::uint32_t, 3> X = {0, 0, 0};
+        for (int d = 0; d < dim; d++)
+        {
+          const double len = (s == 0) ? hi[d] - lo[d] : len_max;
+          const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
+          X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+        }
+        key[p] = HilbertIndex(X, dim, b);
+      }
+      std::iota(orders[s].begin(), orders[s].end(), 0);
+      std::ranges::stable_sort(orders[s], {}, [&key](int p) { return key[p]; });
+    }
+    std::iota(orders[2].begin(), orders[2].end(), 0);
+    std::ranges::stable_sort(orders[2], {}, [&gidx](int p) { return gidx[p]; });
     new_part = NumberPartsOnNodes(orders, pairs, rank_node);
   }
   Mpi::Broadcast(size, new_part.data(), 0, comm);  // Same numbering on every process

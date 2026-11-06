@@ -317,6 +317,15 @@ TEST_CASE("NumberPartsOnNodes", "[geodata][Serial]")
       std::swap(p, q);
     }
     CHECK(mesh::NumberPartsOnNodes(orders, flipped, rank_node) == rank);
+
+    // Repeated pairs add up their weights.
+    Pairs split;
+    for (const auto &[p, q, w] : grid)
+    {
+      split.push_back({p, q, w / 2});
+      split.push_back({q, p, w - w / 2});
+    }
+    CHECK(mesh::NumberPartsOnNodes(orders, split, rank_node) == rank);
   }
 }
 
