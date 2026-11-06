@@ -67,6 +67,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
+    edge of any element, for example a conductor face tagged on an outer boundary of the
+    mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
+    no domain element is attached to, are now removed with a warning.
+    [PR 1100](https://github.com/awslabs/palace/pull/1100).
   - Fixed driven-sweep restarts with more than one excitation aborting with
     `Writing data table at incorrect index`, because the frequencies reloaded from the CSV
     tables (rounded to their printed precision) were compared exactly with the recomputed
