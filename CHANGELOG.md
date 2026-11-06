@@ -17,6 +17,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added interface capacitance matrices to adaptive driven circuit synthesis. For each
+    interface of `config["Boundaries"]["Postprocessing"]["Dielectric"]`, the file
+    `rom-interface-<index>-C.csv` holds its electric energy form projected onto the reduced
+    basis and normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ C y` is the surface
+    participation ratio of any synthesized coordinate vector `y` (for example a synthesized
+    eigenvector), and interface (TLS) loss can be modeled as `tan δ · C_Γ` per interface. The
+    matrices are assembled with one evaluation of each basis field at the interface quadrature
+    points, and checked on the synthesized eigenvectors against the interface energy
+    postprocessing.
+    [PR 1156](https://github.com/awslabs/palace/pull/1156).
+
 #### Performance Improvements
 
   - Added a hypre patch for

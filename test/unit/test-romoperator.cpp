@@ -4,6 +4,7 @@
 #include <numbers>
 #include <vector>
 #include <Eigen/Dense>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -21,6 +22,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 
 using namespace palace;
 using namespace nlohmann;
@@ -947,6 +949,172 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The remaining diagonal entry corresponds to port 2 (R = 50 Ohm, no L, no C).
   CHECK_THAT(std::real((*resistance_R_inv)(0, 0)), WithinRel(1.0 / port2_ref_R));
   CHECK_THAT(std::imag((*resistance_R_inv)(0, 0)), WithinAbs(0.0, 1e-15));
+}
+
+// The exported interface capacitance matrices rom-interface-<index>-C.csv are the
+// interface dielectric energy forms projected onto the PROM basis with the normalization of
+// rom-C-re.csv: for the synthesized coordinates y of any field, yᴴ C_Γ y / yᴴ C y is the
+// surface participation ratio U / (½ uᴴ M u) of the prolonged field u.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-Synthesis-InterfaceCapacitanceMatrices",
+                 "[romoperator][postoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  // Exterior boundaries of the 3 × 2 × 1 cube (the lumped port is on attribute 14).
+  std::vector<int> walls;
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14)
+    {
+      walls.push_back(attr);
+    }
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path}, {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1, 2, 3})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}}),
+                                 json::object({{"Attributes", json::array({4, 5, 6})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 9.0}})})}};
+  json dielectric = json::array();
+  int index = 0;
+  for (const auto *type : {"Default", "MA", "MS", "SA"})
+  {
+    dielectric.push_back(json::object({{"Index", ++index},
+                                       {"Type", type},
+                                       {"Attributes", walls},
+                                       {"Thickness", 2.0e-3},
+                                       {"Permittivity", 10.0},
+                                       {"LossTan", 1.0e-3}}));
+  }
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"L", 1.0e-9},
+            {"C", 1.0e-12},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})},
+      {"Postprocessing", {{"Dielectric", dielectric}}}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 30.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperatorTest rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+
+  // A port mode and two field samples (their real and imaginary parts).
+  rom_op.AddLumpedPortModesForSynthesis();
+  for (int seed : {42, 44})
+  {
+    ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+    sample.UseDevice(true);
+    linalg::SetRandom(comm, sample.Real(), seed);
+    linalg::SetRandom(comm, sample.Imag(), seed + 1);
+    rom_op.UpdatePROM(sample, fmt::format("sample_{:d}", seed));
+  }
+  const auto &V = rom_op.GetBasis();
+  const long n = static_cast<long>(V.size());
+  REQUIRE(n == 5);
+
+  RomOperator::InterfaceEnergyForms forms;
+  forms.B = post_op.GetInterfaceElectricFieldEnergyMatrices(V);
+  forms.energy = [&post_op](const ComplexVector &u)
+  { return post_op.GetInterfaceElectricFieldEnergies(u); };
+  REQUIRE(forms.B.size() == 4);
+  rom_op.PrintPROMMatrices(iodata.units, temp_dir, &forms);
+  Mpi::Barrier(comm);
+
+  auto read_matrix = [](const fs::path &p, std::vector<std::string> &labels)
+  {
+    REQUIRE(fs::is_regular_file(p));
+    TableWithCSVFile file(p.string(), /*load_existing_file=*/true);
+    auto &table = file.table;
+    const long cols = static_cast<long>(table.n_cols()),
+               rows = static_cast<long>(table.n_rows());
+    Eigen::MatrixXd M(rows, cols);
+    labels.clear();
+    for (long c = 0; c < cols; c++)
+    {
+      labels.push_back(table[c].header_text);
+      for (long r = 0; r < rows; r++)
+      {
+        M(r, c) = table[c].data[r];
+      }
+    }
+    return M;
+  };
+  std::vector<std::string> labels_C;
+  const Eigen::MatrixXd C = read_matrix(fs::path(temp_dir) / "rom-C-re.csv", labels_C);
+  REQUIRE(C.rows() == n);
+
+  // Port-row scaling and capacitance unit of rom-C-re.csv.
+  Eigen::VectorXd d = Eigen::VectorXd::Ones(n);
+  d(0) = rom_op.GetOrthR()(0, 0);
+  const double unit_farad = iodata.units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  const auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+
+  // Complex synthesized coordinates y, reduced-basis coordinates z = D y, and the prolonged
+  // field u = V z.
+  Eigen::VectorXcd y(n);
+  for (long j = 0; j < n; j++)
+  {
+    y(j) = std::complex<double>(1.0 / (j + 1.0), 0.3 - 0.1 * j);
+  }
+  const Eigen::VectorXcd z = d.cast<std::complex<double>>().cwiseProduct(y);
+  ComplexVector u(space_op.GetNDSpace().GetTrueVSize()), Mu(u.Size());
+  u.UseDevice(true);
+  Mu.UseDevice(true);
+  u = 0.0;
+  for (long j = 0; j < n; j++)
+  {
+    linalg::AXPY(z(j).real(), V[j], u.Real());
+    linalg::AXPY(z(j).imag(), V[j], u.Imag());
+  }
+  M->Mult(u, Mu);
+  const double energy_elec = 0.5 * linalg::Dot(comm, Mu, u).real();
+  REQUIRE(energy_elec > 0.0);
+  const auto energy = post_op.GetInterfaceElectricFieldEnergies(u);
+
+  int num_nonzero = 0;
+  for (const auto &[idx, B] : forms.B)
+  {
+    CAPTURE(idx);
+    std::vector<std::string> labels;
+    const Eigen::MatrixXd C_i = read_matrix(
+        fs::path(temp_dir) / fmt::format("rom-interface-{:d}-C.csv", idx), labels);
+    CHECK(labels == labels_C);
+    const Eigen::MatrixXd C_ref = 2.0 * unit_farad * d.asDiagonal() * B * d.asDiagonal();
+    CHECK((C_i - C_ref).norm() <= 1.0e-14 * C_ref.norm());
+    CHECK((C_i - C_i.transpose()).norm() == 0.0);
+
+    const double p_matrix =
+        (y.adjoint() * C_i * y)(0).real() / (y.adjoint() * C * y)(0).real();
+    const double p_direct = energy.at(idx) / energy_elec;
+    CAPTURE(p_matrix, p_direct);
+    CHECK(p_matrix == Catch::Approx(p_direct).epsilon(1.0e-10));
+    num_nonzero += (p_direct > 0.0);
+  }
+  CHECK(num_nonzero == 4);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

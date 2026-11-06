@@ -61,6 +61,7 @@ of the driven solver as well as the following additional files:
     wave-port-only system, with no `LumpedPort` at all, is permitted and can still produce a
     non-zero ``\widehat{\bm{R}}^{-1}``. The CSV header describes the type of the node (port or
     synthesized). The matrices are in SI units.
+
   - (Optional): `rom-Linv-im.csv`, `rom-Rinv-im.csv`, `rom-C-im.csv`. The imaginary component of the
     synthesized matrices ``\mathrm{Im}~\widehat{\bm{L}}^{-1}``, ``\mathrm{Im}~\widehat{\bm{R}}^{-1}``,
     ``\mathrm{Im}~\widehat{\bm{C}}``. Each matrix is only printed when the *Palace* simulation contains a
@@ -72,8 +73,10 @@ of the driven solver as well as the following additional files:
     term of the fit contributes to ``\mathrm{Im}~\widehat{\bm{L}}^{-1}`` and its quadratic term to
     ``\mathrm{Im}~\widehat{\bm{C}}``. These terms may seem unfamiliar, since in "textbook" circuits
     ``\widehat{\bm{L}}``, ``\widehat{\bm{R}}``, ``\widehat{\bm{C}}`` are real.
+
   - `rom-orthogonalization-matrix-R.csv`. The Gram–Schmidt ``R`` factor of the synthesized circuit
     modes. This is very useful in advanced circuit postprocessing, but can be ignored by most users.
+
   - `rom-port-reference.csv`. The matched reference admittance $Y_{\mathrm{ref}}$ and impedance
     $Z_{\mathrm{ref}} = Y_{\mathrm{ref}}^{-1}$ for every included port. It is written whenever at
     least one port is included. For a lumped port, $Y_{\mathrm{ref}} = 1/R_{\mathrm{ref}}$, where
@@ -91,6 +94,7 @@ of the driven solver as well as the following additional files:
     $Y_{\mathrm{ref}}$ matches its exported `rom-portload-*` load exactly but drops any rational tail of
     the $k_n(\omega)$ fit. The columns give frequency followed by the real and imaginary parts of
     $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
+
   - `rom-coupled-G.csv`, `rom-coupled-H.csv`, `rom-coupled-S.csv`. The complete synthesized model of
     the included-port network is $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} = \bm{G}(\omega)\,\bm{a}$,
     $\bm{b} = \bm{H}(\omega)\,\bm{y} - \bm{a}$, where $\bm{a}$/$\bm{b}$ are the incident/outgoing wave
@@ -109,6 +113,7 @@ of the driven solver as well as the following additional files:
     (unity for lumped ports and for wave ports with zero `Offset`). For a homogeneous fixed-shape
     TE/TEM port ($E_n = 0$, $\bm{W}=0$, frequency-independent coupling) this reduces to the
     terminal-only $Y_{\mathrm{ref}}$ de-embedding.
+
   - (Optional, for cascading): `rom-portload-<label>-{Linv,Rinv,C}-{re,im}.csv`. One set of files per
     included port, with the same node labels and dimensions as the total `rom-*` matrices. The label
     is `port_<idx>_re` (lumped) or `waveport_<idx>_re` (wave). Each set isolates that single port's
@@ -116,10 +121,38 @@ of the driven solver as well as the following additional files:
     dispersion contribution (including any auxiliary states) of a wave port. Downstream cascade tools
     subtract a selected internal port's load from the total matrices to obtain the bare device, then
     add back only the external loads after connecting ports. Only the non-zero parts are written.
+
   - (When synthesized eigenvalue estimates are found): `rom-eigenvalues.csv`,
     `rom-eigenvectors-re.csv`, and `rom-eigenvectors-im.csv`. These contain estimates of the
     synthesized system's eigenfrequencies, quality factors, and HDM errors, together with the real
     and imaginary parts of the corresponding eigenvectors in the synthesized node space.
+
+  - (With interface dielectric postprocessing): `rom-interface-<idx>-C.csv`, one file per
+    [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/reference.md#config-boundaries-postprocessing-dielectric)
+    entry, where `<idx>` is its `"Index"`. It holds the interface capacitance matrix
+    ``\widehat{\bm{C}}_{\Gamma}``: the electric energy form of the interface (the numerator of
+    the participation ratio in `surface-Q.csv`) projected onto the reduced basis and normalized
+    like ``\widehat{\bm{C}}``, with the same node labels and order as `rom-C-re.csv` and zero
+    rows and columns for auxiliary states. It is real, symmetric, and positive semidefinite,
+    independent of frequency, free of port terminations (unlike ``\widehat{\bm{C}}``, which
+    includes the lumped port capacitances), linear in the interface `"Thickness"`, and
+    independent of the interface `"LossTan"`. For the synthesized
+    node coordinates ``\bm{y}`` of a field, such as a row of `rom-eigenvectors-*.csv`, the
+    interface energy of the field is
+    ``\tfrac{1}{2}\bm{y}^{H}\widehat{\bm{C}}_{\Gamma}\bm{y}``, just as its electric energy is
+    ``\tfrac{1}{2}\bm{y}^{H}\widehat{\bm{C}}\bm{y}``, so that its surface participation ratio
+    is
+
+    ```math
+    p_{\Gamma} = \frac{\bm{y}^{H}\widehat{\bm{C}}_{\Gamma}\bm{y}}{\bm{y}^{H}\widehat{\bm{C}}\bm{y}}
+    ```
+
+    and its interface dielectric loss enters as ``\tan\delta_{\Gamma}\,\widehat{\bm{C}}_{\Gamma}``
+    alongside ``\mathrm{Im}~\widehat{\bm{C}}``. Unlike the denominator of `surface-Q.csv`, the
+    electric energy ``\tfrac{1}{2}\bm{y}^{H}\widehat{\bm{C}}\bm{y}`` includes every capacitive
+    boundary term (lumped port and `"Impedance"` capacitances). *Palace* checks the matrices on
+    the synthesized eigenvectors against the interface energy of their fields, and prints the
+    largest participation and the largest deviation for each interface.
 
 There are several constraints and considerations for using this feature:
 
