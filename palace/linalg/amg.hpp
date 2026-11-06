@@ -22,6 +22,9 @@ private:
     void operator()(hypre_ParVector *v) const { hypre_ParVectorDestroy(v); }
   };
 
+  // Number of V-cycles per application.
+  const int cycle_it;
+
   // Multicomponent right-hand side and solution for ArrayMult.
   mutable std::unique_ptr<hypre_ParVector, ParVectorDeleter> B_mv, X_mv;
 
