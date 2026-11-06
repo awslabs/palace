@@ -39,6 +39,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     This speeds up the construction of the error estimator, which is repeated at every
     adaptive mesh refinement iteration.
     [PR 1134](https://github.com/awslabs/palace/pull/1134).
+  - Solved the second divergence-free projection in each shift-and-invert application of
+    the linearized quadratic eigenvalue problem (eigenmode problems with damping) to a
+    relative tolerance of 10⁻³. Its right-hand side is already at round-off, which the
+    projection previously reduced to machine precision.
+    [PR 1138](https://github.com/awslabs/palace/pull/1138).
 
 #### Bug Fixes
 
