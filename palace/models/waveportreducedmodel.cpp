@@ -537,9 +537,13 @@ bool WavePortReducedModel::SolveFromGram(
   std::ranges::stable_sort(ritz_pairs, {}, &RitzPair::distance);
 
   // Check the residuals of the Ritz pairs in ascending target distance, and stop once one
-  // more pair than the selected modes is accepted: the selected modes and the gap check
-  // below are the same as when checking all pairs, while only the few pairs nearest to the
-  // target pay for a residual evaluation.
+  // more pair than the selected modes is accepted, or, once the selected modes are
+  // accepted, at the first pair farther than gap_tol from the last of them: the gap check
+  // below only rejects the selection for an accepted pair within gap_tol of it. The
+  // selected modes and the gap check are the same as when checking all pairs, while only
+  // the pairs nearest to the target pay for a residual evaluation, also when the other
+  // Ritz pairs, which a basis trained on the selected modes does not resolve, all fail.
+  const double gap_tol = 1.0e-10 * std::max(kn_target, 1.0);
   struct Candidate
   {
     std::complex<double> lambda;
@@ -552,7 +556,9 @@ bool WavePortReducedModel::SolveFromGram(
   candidates.reserve(num_modes + 1);
   for (const auto &pair : ritz_pairs)
   {
-    if (candidates.size() > static_cast<std::size_t>(num_modes))
+    if (candidates.size() > static_cast<std::size_t>(num_modes) ||
+        (!candidates.empty() && candidates.size() == static_cast<std::size_t>(num_modes) &&
+         pair.distance - candidates.back().distance > gap_tol))
     {
       break;
     }
@@ -617,7 +623,7 @@ bool WavePortReducedModel::SolveFromGram(
   if (candidates.size() > static_cast<std::size_t>(num_modes))
   {
     const double gap = candidates[num_modes].distance - candidates[num_modes - 1].distance;
-    if (gap <= 1.0e-10 * std::max(kn_target, 1.0))
+    if (gap <= gap_tol)
     {
       return false;
     }
