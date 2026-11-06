@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -48,6 +49,31 @@ struct ProblemData;
 struct SolverData;
 
 }  // namespace config
+
+// D6 (USER 1221; decision 1229): the first-order fixed-trace frequency shift of the raw
+// mode from a postprocessed Maxwell response, d omega / omega = (U_m,defect - U_e,defect) /
+// (2 U_raw) with U_e,defect = response.domain_correction (the electric fixed-trace domain
+// correction, lowering the frequency when positive), U_m,defect =
+// response.magnetic_domain_correction (the magnetic one, raising it) and U_raw the raw
+// normalization energy (1/2 E^H M E plus the lumped-port capacitor energy); NaN unless the
+// response carries the magnetic term and passes magnetic_confident (the magnetic term's
+// own loop gate). Decision 1250 (mx-sc-magnetic Phase 2): the shift follows the SAME
+// coverage rule as the electric fixed-trace correction it extends, which the binary prints
+// on partial coverage with the uncovered requirements kept raw (decision 394 F2); it is NOT
+// gated by closure_independent_confident (whose coverage criterion >= 1 - 1e-10 withheld
+// it on every device with ends) nor by the trace-closure spread: those flags are printed
+// beside it, and `fixed-trace shift coverage` (FixedTraceShiftCoverage) names the matched
+// energy share the shift rests on. One function, so that the column of record and its
+// unit test read the same formula (review d1227 MAJOR-2).
+double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
+                                double raw_normalization_energy);
+
+// Decision 1250: the matched energy share used by the fixed-trace shift = 1 - (the raw
+// within-R interface energy the electric correction keeps RAW: the uncovered requirements,
+// the DomainBoundary claims, the spatial-cluster priority and conductor-consistency
+// exclusions and the loop remainder) / (the raw within-R energy of the target interfaces);
+// 1 at full coverage, NaN when there is no within-R energy to cover.
+double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_energy);
 
 // Statically specify if solver uses real or complex fields.
 
@@ -279,6 +305,7 @@ protected:
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       surface_response_exclusion_energy;
   bool surface_response_exclusion_energy_enabled = false;
+  bool surface_response_within_r_volume_energy_enabled = false;  // COL-3 (R-MAG-15)
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B): the per-patch export
@@ -334,6 +361,9 @@ protected:
     // Section 8: per target interface, the raw field's within-R energy per exclusion class
     // (surface-response-exclusion-energy.csv); empty without Diagnostics.ExclusionEnergy.
     std::map<int, std::map<std::string, double>> exclusion_energy_partition;
+    // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
+    // placed patch the raw field's within-box volume energies (empty when off).
+    std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;
     // OI-MX-LOOPGATE (decision 955): per target interface, the circulating remainders' raw
     // within-R energy per model row ("m<idx>": rho_p x the raw energy on the patch's
     // claims; the Total is their sum), of the raw field (both closures) and of the
@@ -350,6 +380,19 @@ protected:
     double self_consistent_mode_overlap = 0.0;
     bool has_postprocessed = false;
     bool has_self_consistent = false;
+    // The magnetic (inductive) term (mx-sc-magnetic DESIGN-v2; USER 1221 D6; decision
+    // 1229): the first-order fixed-trace frequency shift of the raw mode / frequency,
+    // d omega / omega = (U_m,defect - U_e,defect) / (2 U_raw) with U_e,defect the electric
+    // domain correction, U_m,defect the magnetic one and U_raw the raw normalization
+    // energy; gated by the magnetic term's own loop gate only (decision 1250: NOT by
+    // closure_independent_confident nor the trace-closure spread, which are printed beside
+    // it; the shift follows the electric correction's coverage rule): NaN when withheld
+    // (FixedTraceFrequencyShift). Written only when a magnetic leaf was read (the columns
+    // exist then; NaN when no model carries the term). fixed_trace_shift_coverage = the
+    // matched energy share the shift rests on (FixedTraceShiftCoverage; decision 1250).
+    double fixed_trace_frequency_shift = std::numeric_limits<double>::quiet_NaN();
+    double fixed_trace_shift_coverage = std::numeric_limits<double>::quiet_NaN();
+    double magnetic_domain_correction = 0.0;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;
     SurfaceResponseOperator::MaxwellResponse self_consistent_confidence;
@@ -379,6 +422,25 @@ protected:
   mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_energy;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_traces;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_loops;
+  // surface-response-magnetic.csv (DESIGN-v2 section 3; decision 1229 Q4): only when a
+  // magnetic leaf was read (every verdict, also when every leaf is refused; decision 1235);
+  // rewritten at every print (root only) with the per-model leaf status rows and the dual
+  // R0-a gate's per-patch rows so far.
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_magnetic;
+  // COL-1 (mx-sc-magnetic Phase 3 (a), R-MAG-14): the per-model "energy" rows of
+  // surface-response-magnetic.csv accumulated over the prints (one per model carrying the
+  // term, per source and frequency / mode): the model's applied magnetic domain correction
+  // and its within-R magnetic thin energy.
+  struct MagneticEnergyRow
+  {
+    int model = 0;
+    int source = 0;
+    double frequency_GHz = 0.0;
+    double domain_correction = 0.0;
+    double thin_energy = 0.0;
+  };
+  mutable std::vector<MagneticEnergyRow> surface_response_magnetic_energy_rows;
+  void PrintSurfaceResponseMagnetic() const;
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
   mutable bool surface_response_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;

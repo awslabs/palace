@@ -1654,18 +1654,84 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
                 "Response-correction \"MortarOversampling\" must be between 1 and 8!");
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
+    data.allow_electric_only_fallback =
+        correction.value("AllowElectricOnlyFallback", data.allow_electric_only_fallback);
+    data.magnetic_leaves = correction.value("Magnetic", data.magnetic_leaves);
     if (auto gate = correction.find("ConductorConsistency"); gate != correction.end())
     {
       MFEM_VERIFY(gate->is_object(),
                   "Response-correction \"ConductorConsistency\" must be an object!");
       data.conductor_consistency_record_only =
           gate->value("RecordOnly", data.conductor_consistency_record_only);
+      if (auto flips = gate->find("ControlFlipProbePiece"); flips != gate->end())
+      {
+        // Decision 1292 (B): a diagnostic CONTROL admitted only with RecordOnly true.
+        MFEM_VERIFY(
+            flips->is_array() && !flips->empty(),
+            "Response-correction \"ConductorConsistency.ControlFlipProbePiece\" must "
+            "be a non-empty array of {Model, Edge, Piece} objects!");
+        MFEM_VERIFY(
+            data.conductor_consistency_record_only,
+            "Response-correction \"ConductorConsistency.ControlFlipProbePiece\" is a "
+            "diagnostic CONTROL admitted only with \"RecordOnly\": true (decision "
+            "1292)!");
+        for (const auto &flip : *flips)
+        {
+          MFEM_VERIFY(flip.is_object() && flip.contains("Model") && flip.contains("Edge") &&
+                          flip.contains("Piece") && flip.at("Model").is_string() &&
+                          flip.at("Edge").is_number_integer() &&
+                          flip.at("Piece").is_number_integer(),
+                      "Every \"ControlFlipProbePiece\" entry must carry a string \"Model\" "
+                      "and integer \"Edge\" / \"Piece\"!");
+          for (const auto &[key, value] : flip.items())
+          {
+            (void)value;
+            MFEM_VERIFY(key == "Model" || key == "Edge" || key == "Piece",
+                        "\"ControlFlipProbePiece\" entry has an unknown key \"" << key
+                                                                                << "\"!");
+          }
+          ResponseCorrectionData::ControlFlipProbePieceData entry;
+          entry.model = flip.at("Model").get<std::string>();
+          entry.edge = flip.at("Edge").get<int>();
+          entry.piece = flip.at("Piece").get<int>();
+          MFEM_VERIFY(!entry.model.empty() && entry.edge >= 0 && entry.piece >= 1,
+                      "\"ControlFlipProbePiece\" requires a model name, Edge >= 0 and "
+                      "Piece >= 1!");
+          data.control_flip_probe_pieces.push_back(std::move(entry));
+        }
+      }
+      if (gate->contains("ControlStateAnchorSetbackOverR"))
+      {
+        // Decision 1302: a diagnostic CONTROL admitted only with RecordOnly true on a
+        // PostprocessOnly run.
+        data.control_state_anchor_setback_over_r =
+            gate->at("ControlStateAnchorSetbackOverR").get<double>();
+        MFEM_VERIFY(
+            data.control_state_anchor_setback_over_r > 0.0 &&
+                data.control_state_anchor_setback_over_r <= 1.0,
+            "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
+            "must be in (0, 1]!");
+        MFEM_VERIFY(
+            data.conductor_consistency_record_only,
+            "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
+            "is a diagnostic CONTROL admitted only with \"RecordOnly\": true "
+            "(decision 1302)!");
+        MFEM_VERIFY(
+            data.correction_mode ==
+                ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY,
+            "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
+            "is admitted only with \"CorrectionMode\": \"PostprocessOnly\" (the term "
+            "is not of record under the control; decision 1302)!");
+      }
       for (const auto &[key, value] : gate->items())
       {
         (void)value;
-        MFEM_VERIFY(key == "RecordOnly",
+        MFEM_VERIFY(key == "RecordOnly" || key == "ControlFlipProbePiece" ||
+                        key == "ControlStateAnchorSetbackOverR",
                     "Response-correction \"ConductorConsistency\" has an unknown key \""
-                        << key << "\" (RecordOnly is the only key)!");
+                        << key
+                        << "\" (RecordOnly, ControlFlipProbePiece and "
+                           "ControlStateAnchorSetbackOverR are the only keys)!");
       }
     }
     if (auto diagnostics = correction.find("Diagnostics"); diagnostics != correction.end())
@@ -1673,12 +1739,21 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       MFEM_VERIFY(diagnostics->is_object(),
                   "Response-correction \"Diagnostics\" must be an object!");
       data.exclusion_energy = diagnostics->value("ExclusionEnergy", data.exclusion_energy);
+      data.within_r_volume_energy =
+          diagnostics->value("WithinRVolumeEnergy", data.within_r_volume_energy);
+      MFEM_VERIFY(
+          !data.within_r_volume_energy || data.patch_energy,
+          "Response-correction \"Diagnostics.WithinRVolumeEnergy\" writes per-patch "
+          "columns of surface-response-patch-energy.csv and requires "
+          "\"PatchEnergy\": true!");
       for (const auto &[key, value] : diagnostics->items())
       {
         (void)value;
-        MFEM_VERIFY(key == "ExclusionEnergy",
-                    "Response-correction \"Diagnostics\" has an unknown key \""
-                        << key << "\" (ExclusionEnergy is the only key)!");
+        MFEM_VERIFY(
+            key == "ExclusionEnergy" || key == "WithinRVolumeEnergy",
+            "Response-correction \"Diagnostics\" has an unknown key \""
+                << key
+                << "\" (ExclusionEnergy and WithinRVolumeEnergy are the only keys)!");
       }
     }
     if (auto domain_boundary = correction.find("DomainBoundary");

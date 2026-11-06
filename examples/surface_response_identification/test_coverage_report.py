@@ -842,6 +842,33 @@ class TestFixRoundRecordRows(unittest.TestCase):
         self.assertEqual(L["identification_raw_exclusions"], {"UnclusterableComponent": 80.0})
         self.assertEqual(len(L["geometric_near_pairs"]), 1)
 
+    def test_magnetic_electric_only_row_and_energy_share(self):
+        # mx-sc-magnetic DESIGN-v2 / decision 1229 Q4: the NAMED row from Summary.MagneticElectricOnly (length) and the
+        # ENERGY share of the models without a magnetic term from the model-energy CSV joined on Library.Magnetic.Models.
+        manifest = cr.read_json(self.mpath)
+        manifest["Summary"]["MagneticElectricOnly"] = {"Count": 4, "Length": 30.0, "Treatment": "ElectricOnly"}
+        manifest["Library"]["Magnetic"] = {
+            "Rules": {"SameMeshTolerance": 1e-12, "PsdFindingRatio": 1e-2, "PsdRefusalRatio": 0.1},
+            "AllowElectricOnlyFallback": False,
+            "Models": [{"Index": 1, "Name": "isolated-edge", "Status": "Finding", "Rule": "r4", "PsdRatio": 0.0109},
+                       {"Index": 2, "Name": "same-conductor-gap-2um", "Status": "Refused", "Rule": "r3", "PsdRatio": 0.0}]}
+        mpath = os.path.join(self.tmp, "surface-response-requirements-mag.json")
+        _dump(manifest, mpath)
+        L = cr.length_partition(cr.load_manifest(mpath), ["SA"])
+        named = L["types"]["SA"]["named"]["MagneticElectricOnly"]
+        self.assertEqual(named["Count"], 4)
+        self.assertEqual(named["Treatment"], "ElectricOnly")
+        self.assertAlmostEqual(named["Share"], 30.0 / 200.0)
+        fab = {1: {"SA": 3e-17}, 2: {"SA": 1e-17}}
+        m = cr.magnetic_electric_only(manifest, fab, ["SA"])
+        self.assertTrue(m["present"])
+        self.assertAlmostEqual(m["by_type"]["SA"]["electric_only_energy_share"], 0.25)
+        self.assertEqual(m["by_type"]["SA"]["models_without_term"], [2])
+        # A library without leaves: no row, no share (the report of an electric-only run is unchanged).
+        self.assertNotIn("MagneticElectricOnly", L_without := cr.length_partition(cr.load_manifest(self.mpath), ["SA"])["types"]["SA"]["named"])
+        self.assertEqual(cr.magnetic_electric_only(cr.read_json(self.mpath), fab, ["SA"]), {"present": False})
+        del L_without
+
     def test_exclusion_energy_export_rows(self):
         post = os.path.join(self.tmp, "postpro")
         os.makedirs(post)
