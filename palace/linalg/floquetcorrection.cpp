@@ -63,7 +63,8 @@ FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
   auto jac = std::make_unique<JacobiSmoother<OperType>>(rt_fespace.GetComm());
-  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(jac));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(jac),
+                                                  "FloquetCorrection");
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(rt_fespace.GetTrueVSize());

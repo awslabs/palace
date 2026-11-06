@@ -34,6 +34,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -454,6 +455,7 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(
 
 void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 {
+  perf::ScopedRole role("ModeEigen");
   // GMRES iterative solver preconditioned with a sparse direct solver.
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, verbose);
   gmres->SetInitialGuess(false);
@@ -555,11 +557,12 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         return {};
       }(),
       false, false, false, reorder_reuse);
-  ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
+  ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc), "ModeEigen");
 }
 
 void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 {
+  perf::ScopedRole role("ModeEigen");
   MFEM_VERIFY(bmo, "Multigrid linear solver requires BMO ctor (2D domain path)!");
   const int print = verbose - 1;
 
@@ -709,7 +712,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   krylov->SetMaxIter(linear.max_it);
   krylov->EnableTimer();
 
-  ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc));
+  ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc),
+                                           "ModeEigen");
 }
 
 std::unique_ptr<ComplexMultigridOperator>

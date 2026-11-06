@@ -91,7 +91,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
-  SaveMetadata(ksp);
   PostprocessTerminals(post_op, laplace_op.GetSources(), V);
   post_op.MeasureFinalize(indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};

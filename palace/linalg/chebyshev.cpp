@@ -5,6 +5,8 @@
 
 #include <cmath>
 #include <mfem/general/forall.hpp>
+#include "linalg/solverstats.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -36,6 +38,7 @@ bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
 
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
+  perf::ScopedTally t(perf::LambdaMaxTally());
   // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
   // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
   // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
@@ -54,6 +57,7 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 
 double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
 {
+  perf::ScopedTally t(perf::LambdaMaxTally());
   if (A.IsReal())
   {
     MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
@@ -240,7 +244,10 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
   {
     if (this->initial_guess || it > 0)
     {
-      ApplyOp(*A, y, r);
+      {
+        perf::ScopedTally t(perf_op);
+        ApplyOp(*A, y, r);
+      }
       linalg::AXPBY(1.0, x, -1.0, r);
     }
     else
@@ -255,7 +262,10 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
     for (int k = 1; k < order; k++)
     {
       y += d;
-      ApplyOp(*A, d, r, -1.0);
+      {
+        perf::ScopedTally t(perf_op);
+        ApplyOp(*A, d, r, -1.0);
+      }
       const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
       const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
       ApplyOrderK(sd, sr, dinv, r, d);
@@ -311,7 +321,10 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
   {
     if (this->initial_guess || it > 0)
     {
-      ApplyOp(*A, y, r);
+      {
+        perf::ScopedTally t(perf_op);
+        ApplyOp(*A, y, r);
+      }
       linalg::AXPBY(1.0, x, -1.0, r);
     }
     else
@@ -326,7 +339,10 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
     for (int k = 1; k < order; k++)
     {
       y += d;
-      ApplyOp(*A, d, r, -1.0);
+      {
+        perf::ScopedTally t(perf_op);
+        ApplyOp(*A, d, r, -1.0);
+      }
       const double rho = 1.0 / (2.0 * theta / delta - rhop);
       const double sd = rho * rhop;
       const double sr = 2.0 * rho / delta;

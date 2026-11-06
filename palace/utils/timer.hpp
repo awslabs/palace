@@ -9,7 +9,6 @@
 #include <stack>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <vector>
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
@@ -30,7 +29,8 @@ public:
 
   enum Index
   {
-    INIT = 0,
+    STARTUP = 0,           // Process start to the first timer
+    INIT,                  // Initialization
     MESH_PREPROCESS,       // Preprocessing mesh
     CONSTRUCT,             // Space and operator construction
     WAVE_PORT,             // Wave port solver
@@ -40,6 +40,7 @@ public:
     KSP,                   // Linear solver
     KSP_SETUP,             // Linear solver setup
     KSP_PRECONDITIONER,    // Linear solver preconditioner
+    KSP_COARSE_SETUP,      // Linear solver coarse-level setup/factorization
     KSP_COARSE_SOLVE,      // Linear solver coarse-level solve
     TS,                    // Time integrator
     EPS,                   // Eigenvalue problem solver
@@ -51,6 +52,7 @@ public:
     SOLVE_ESTIMATOR,       // Evaluation of estimator
     ADAPTATION,            // Adaptation
     REBALANCE,             // Rebalancing
+    ADAPT_MESH_OUTPUT,     // Writing the adapted mesh
     POSTPRO,               // Solution postprocessing
     POSTPRO_FARFIELD,      // Computing far-fields
     POSTPRO_PARAVIEW,      // Paraview calculations and I/O
@@ -62,6 +64,7 @@ public:
 
   // clang-format off
   static constexpr auto descriptions = std::to_array<std::string_view>({
+      "Startup",
       "Initialization",
       "  Mesh Preprocessing",
       "Operator Construction",
@@ -72,6 +75,7 @@ public:
       "Linear Solve",
       "  Setup",
       "  Preconditioner",
+      "  Coarse Setup",
       "  Coarse Solve",
       "Time Stepping",
       "Eigenvalue Solve",
@@ -83,29 +87,47 @@ public:
       "  Solve",
       "Adaptation",
       "  Rebalancing",
+      "  Adapted Mesh Output",
       "Postprocessing",
       "  Far Fields",
       "  Paraview",
       "  Grid function",
       "Disk IO",
       "Total"});
+
+  // Keys used in palace.json.
+  static constexpr auto names = std::to_array<std::string_view>({
+      "STARTUP", "INIT", "MESH_PREPROCESS", "CONSTRUCT", "WAVE_PORT", "WAVE_PORT_SOLVE",
+      "WAVE_PORT_FIELD", "WAVE_PORT_POSTPRO", "KSP", "KSP_SETUP", "KSP_PRECONDITIONER",
+      "KSP_COARSE_SETUP", "KSP_COARSE_SOLVE", "TS", "EPS", "DIV_FREE", "CONSTRUCT_PROM",
+      "SOLVE_PROM", "ESTIMATION", "CONSTRUCT_ESTIMATOR", "SOLVE_ESTIMATOR", "ADAPTATION",
+      "REBALANCE", "ADAPT_MESH_OUTPUT", "POSTPRO", "POSTPRO_FARFIELD", "POSTPRO_PARAVIEW",
+      "POSTPRO_GRIDFUNCTION", "IO", "TOTAL"});
   // clang-format on
   static_assert(descriptions.size() == NUM_TIMINGS);
+  static_assert(names.size() == NUM_TIMINGS);
 
 private:
   TimePoint start_time;
+  TimePoint iteration_start_time, iteration_end_time;
   TimePoint last_lap_time;
   std::vector<Duration> data;
   std::vector<int> counts;
-  long start_memory;
+  long iteration_start_memory;
   long last_memory;
   std::vector<long> mem_data;
 
+  // Totals of previous iterations (rank-local).
+  std::vector<Duration> cum_data;
+  std::vector<long> cum_counts;
+
 public:
   Timer()
-    : start_time(Now()), last_lap_time(start_time), data(NUM_TIMINGS), counts(NUM_TIMINGS),
-      start_memory(memory_reporting::GetPeakMemory()), last_memory(start_memory),
-      mem_data(NUM_TIMINGS, 0)
+    : start_time(Now()), iteration_start_time(start_time), iteration_end_time(start_time),
+      last_lap_time(start_time), data(NUM_TIMINGS), counts(NUM_TIMINGS),
+      iteration_start_memory(memory_reporting::GetPeakMemory()),
+      last_memory(iteration_start_memory), mem_data(NUM_TIMINGS, 0), cum_data(NUM_TIMINGS),
+      cum_counts(NUM_TIMINGS, 0)
   {
   }
 
@@ -122,6 +144,13 @@ public:
 
   // Return the time elapsed since timer creation.
   Duration TimeFromStart() const { return Now() - start_time; }
+
+  // Close the current iteration's TOTAL at the current time.
+  void MarkIterationEnd()
+  {
+    iteration_end_time = Now();
+    MarkTime(TOTAL, iteration_end_time - iteration_start_time);
+  }
 
   // Lap and record a timing step.
   Duration MarkTime(Index idx, bool count_it = true)
@@ -144,11 +173,20 @@ public:
     return data[idx];
   }
 
-  // Provide map-like read-only access to the timing data.
+  // Provide map-like read-only access to the timing data of the current iteration.
   auto Data(Index idx) const { return data[idx].count(); }
 
-  // Return number of times timer.MarkTime(idx) or TimerBlock b(idx) was called.
+  // Return number of times timer.MarkTime(idx) or TimerBlock b(idx) was called in the
+  // current iteration.
   auto Counts(Index idx) const { return counts[idx]; }
+
+  // Totals over all iterations, including the current one.
+  double CumulativeData(Index idx) const
+  {
+    return (idx == Timer::TOTAL) ? Duration(iteration_end_time - start_time).count()
+                                 : (cum_data[idx] + data[idx]).count();
+  }
+  long CumulativeCounts(Index idx) const { return cum_counts[idx] + counts[idx]; }
 
   // Snapshot peak RSS and return delta from last snapshot.
   long MemoryLap()
@@ -159,8 +197,11 @@ public:
     return delta;
   }
 
-  // Return peak RSS growth since timer creation.
-  long MemoryFromStart() const { return memory_reporting::GetPeakMemory() - start_memory; }
+  // Return peak RSS growth since the start of the current iteration.
+  long MemoryFromStart() const
+  {
+    return memory_reporting::GetPeakMemory() - iteration_start_memory;
+  }
 
   // Lap and record a memory delta for the given phase.
   long MarkMemory(Index idx) { return MarkMemory(idx, MemoryLap()); }
@@ -181,6 +222,26 @@ public:
 
   // Provide read-only access to the memory data (bytes) for a given phase.
   auto MemoryData(Index idx) const { return mem_data[idx]; }
+
+  // Fold the current iteration into the cumulative totals and restart counting from zero.
+  // The new iteration starts at the end of the previous one, so that iteration totals add
+  // up. The memory baseline is the peak RSS at the call (after any high-water mark reset).
+  void StartIteration()
+  {
+    for (int i = 0; i < NUM_TIMINGS; i++)
+    {
+      if (i != TOTAL)
+      {
+        cum_data[i] += data[i];
+      }
+      cum_counts[i] += counts[i];
+      data[i] = Duration::zero();
+      counts[i] = 0;
+      mem_data[i] = 0;
+    }
+    iteration_start_time = iteration_end_time;
+    iteration_start_memory = last_memory = memory_reporting::GetPeakMemory();
+  }
 };
 
 class BlockTimer
@@ -190,56 +251,8 @@ class BlockTimer
 private:
   inline static Timer timer;
   inline static std::stack<Index> stack;
+  inline static bool started = false;
   bool count;
-
-  // Stored reduction results (populated by Finalize).
-  struct ReducedData
-  {
-    std::vector<double> min, max, sum, avg;
-    void resize(int n)
-    {
-      min.resize(n);
-      max.resize(n);
-      sum.resize(n);
-      avg.resize(n);
-    }
-    bool empty() const { return min.empty(); }
-  };
-
-  inline static ReducedData reduced_time;
-  inline static ReducedData reduced_rank_mem;
-  inline static ReducedData reduced_node_mem;
-  inline static int num_nodes = 0;
-
-  // Print a summary table with three columns. The row_fn callback produces the three
-  // column values for a given timer index.
-  template <typename RowFn>
-  static void PrintTable(MPI_Comm comm, const std::string &title, const std::string &col1,
-                         const std::string &col2, const std::string &col3, RowFn &&row_fn)
-  {
-    constexpr int w = 12;  // Data column width
-    constexpr int h = 26;  // Left-hand side width
-    // clang-format off
-    Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
-               title, h, col1, w, col2, w, col3, w);
-    // clang-format on
-    Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
-    {
-      if (timer.Counts(static_cast<Timer::Index>(i)) > 0)
-      {
-        if (i == Timer::TOTAL)
-        {
-          Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
-        }
-        auto [v1, v2, v3] = row_fn(i);
-        // clang-format off
-        Mpi::Print(comm, "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
-                   timer.descriptions[i], h, v1, w, v2, w, v3, w);
-        // clang-format on
-      }
-    }
-  }
 
 public:
   BlockTimer(Index i, bool count = true) : count(count)
@@ -249,8 +262,18 @@ public:
     {
       if (stack.empty())
       {
-        timer.Lap();
-        timer.MemoryLap();
+        if (!started)
+        {
+          // Everything before the first timer is startup.
+          started = true;
+          timer.MarkTime(Timer::STARTUP);
+          timer.MarkMemory(Timer::STARTUP);
+        }
+        else
+        {
+          timer.Lap();
+          timer.MemoryLap();
+        }
       }
       else
       {
@@ -275,135 +298,31 @@ public:
   // Read-only access the static Timer object.
   static const Timer &GlobalTimer() { return timer; }
 
-  // Access all stored reduction results (populated by Finalize).
-  struct Reductions
+  // The exclusive row currently being timed (STARTUP before the first timer, TOTAL between
+  // top-level timers).
+  static Index Current()
   {
-    const ReducedData &time;
-    const ReducedData &rank_mem;
-    const ReducedData &node_mem;
-    int num_nodes;
-  };
-  static Reductions GetReductions()
-  {
-    MFEM_VERIFY(IsFinalized(),
-                "BlockTimer::Finalize() must be called before accessing results!");
-    return {reduced_time, reduced_rank_mem, reduced_node_mem, num_nodes};
+    return !stack.empty() ? stack.top() : (started ? Timer::TOTAL : Timer::STARTUP);
   }
 
-  // Finalize timers and perform MPI reductions. Must be called before Print().
-  static void Finalize(MPI_Comm comm)
-  {
-    // Drain any open timers.
-    while (!stack.empty())
-    {
-      timer.MarkTime(stack.top());
-      timer.MarkMemory(stack.top());
-      stack.pop();
-    }
-    timer.MarkTime(Timer::TOTAL, timer.TimeFromStart());
-    timer.MarkMemory(Timer::TOTAL, timer.MemoryFromStart());
+  // Close open timers and reduce all timers, tallies, counters and memory statistics
+  // across ranks (collective). Results are available on all ranks via perf::Results().
+  static void Finalize(MPI_Comm comm);
 
-    const int n = Timer::NUM_TIMINGS;
-    const int np = Mpi::Size(comm);
+  // Whether Finalize has been called since the last Reset/StartIteration.
+  static bool IsFinalized();
 
-    // Reduce timing data across ranks.
-    reduced_time.resize(n);
-    for (int i = Timer::INIT; i < n; i++)
-    {
-      reduced_time.min[i] = reduced_time.max[i] = reduced_time.avg[i] =
-          timer.Data(static_cast<Timer::Index>(i));
-    }
-    Mpi::GlobalMin(n, reduced_time.min.data(), comm);
-    Mpi::GlobalMax(n, reduced_time.max.data(), comm);
-    Mpi::GlobalSum(n, reduced_time.avg.data(), comm);
-    for (int i = Timer::INIT; i < n; i++)
-    {
-      reduced_time.avg[i] /= np;
-    }
+  // Start a new reporting iteration (AMR): counts and times restart from zero and the peak
+  // memory is reset where supported. Totals are kept for the Cumulative report.
+  static void StartIteration();
 
-    // Reduce per-rank memory data across ranks.
-    reduced_rank_mem.resize(n);
-    for (int i = Timer::INIT; i < n; i++)
-    {
-      reduced_rank_mem.min[i] = reduced_rank_mem.max[i] = reduced_rank_mem.sum[i] =
-          static_cast<double>(timer.MemoryData(static_cast<Timer::Index>(i)));
-    }
-    Mpi::GlobalMin(n, reduced_rank_mem.min.data(), comm);
-    Mpi::GlobalMax(n, reduced_rank_mem.max.data(), comm);
-    Mpi::GlobalSum(n, reduced_rank_mem.sum.data(), comm);
-
-    // Reduce per-node memory data across nodes.
-    reduced_node_mem.resize(n);
-    for (int i = Timer::INIT; i < n; i++)
-    {
-      auto stats = memory_reporting::ComputeNodeMemoryStats(
-          "", timer.MemoryData(static_cast<Timer::Index>(i)), comm);
-      reduced_node_mem.min[i] = static_cast<double>(stats.min);
-      reduced_node_mem.max[i] = static_cast<double>(stats.max);
-      reduced_node_mem.sum[i] = static_cast<double>(stats.sum);
-    }
-
-    // Count nodes.
-    MPI_Comm node_comm;
-    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &node_comm);
-    int node_rank = Mpi::Rank(node_comm);
-    MPI_Comm_free(&node_comm);
-    int is_leader = (node_rank == 0) ? 1 : 0;
-    num_nodes = 0;
-    MPI_Allreduce(&is_leader, &num_nodes, 1, MPI_INT, MPI_SUM, comm);
-  }
-
-  // Whether Finalize has been called.
-  static bool IsFinalized() { return !reduced_time.empty(); }
-
-  // Clear all process-wide BlockTimer state. Used by palace::Run to
-  // prevent timing/memory statistics from bleeding between successive
-  // solves when Palace is embedded (e.g. in the regression test
-  // harness). Production main() calls Run once, so this is a no-op
-  // for the CLI executable.
-  static void Reset()
-  {
-    timer = Timer();
-    while (!stack.empty())
-    {
-      stack.pop();
-    }
-    reduced_time = ReducedData();
-    reduced_rank_mem = ReducedData();
-    reduced_node_mem = ReducedData();
-    num_nodes = 0;
-  }
+  // Clear all process-wide timing and reporting state. Used by palace::Run's callers to
+  // prevent statistics from bleeding between successive solves when Palace is embedded
+  // (e.g. in the regression test harness).
+  static void Reset();
 
   // Print timing and memory tables from stored reduction results.
-  static void Print(MPI_Comm comm)
-  {
-    MFEM_VERIFY(IsFinalized(), "BlockTimer::Finalize() must be called before Print()!");
-    // Timing table.
-    constexpr int p = 3;
-    PrintTable(comm, "Elapsed Time Report (s)", "Min.", "Max.", "Avg.",
-               [&](int i) -> std::tuple<std::string, std::string, std::string>
-               {
-                 return {fmt::format("{:.{}f}", reduced_time.min[i], p),
-                         fmt::format("{:.{}f}", reduced_time.max[i], p),
-                         fmt::format("{:.{}f}", reduced_time.avg[i], p)};
-               });
-
-    // Memory table: per-node max, total across nodes, and cumulative total HWM.
-    const auto &nm = reduced_node_mem;
-    double hwm = 0.0;
-    PrintTable(comm, "Peak Memory", "Per-Node", "Total", "Total HWM",
-               [&](int i) -> std::tuple<std::string, std::string, std::string>
-               {
-                 if (i != Timer::TOTAL)
-                 {
-                   hwm += nm.sum[i];
-                 }
-                 return {memory_reporting::FormatBytes(nm.max[i]),
-                         memory_reporting::FormatBytes(nm.sum[i]),
-                         (i == Timer::TOTAL) ? memory_reporting::FormatBytes(nm.sum[i])
-                                             : memory_reporting::FormatBytes(hwm)};
-               });
-  }
+  static void Print(MPI_Comm comm);
 };
 
 }  // namespace palace

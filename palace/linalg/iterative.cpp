@@ -10,6 +10,7 @@
 #include <string>
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -270,7 +271,7 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
 
 template <OperatorType OperType>
 IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
-  : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr)
+  : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr), final_restarts(0)
 {
   print_opts.Warnings();
   if (print > 0)
@@ -297,6 +298,14 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   final_it = 0;
 
   use_timer = false;
+}
+
+template <OperatorType OperType>
+void IterativeSolver<OperType>::SetPerfTallies(const std::string &prefix,
+                                               Timer::Index parent)
+{
+  perf_apply = perf::RegisterTally(prefix + "/ApplyBA", parent);
+  perf_orth = perf::RegisterTally(prefix + "/Orthogonalize", parent);
 }
 
 template <OperatorType OperType>
@@ -382,7 +391,10 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
       linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
     }
 
-    A->Mult(p, z);
+    {
+      perf::ScopedTally t(this->perf_apply);
+      A->Mult(p, z);
+    }
     denom = linalg::Dot(comm, z, p);
     CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
     MFEM_VERIFY(denom != 0.0,
@@ -395,6 +407,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (B)
     {
+      perf::ScopedTally t(this->perf_apply);
       ApplyB(B, r, z, this->use_timer);
     }
     else
@@ -568,12 +581,18 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
+      {
+        perf::ScopedTally t(this->perf_apply);
+        ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
+      }
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
-      w *= 1.0 / Hj[j + 1];
+      {
+        perf::ScopedTally t(this->perf_orth);
+        linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
+        Hj[j + 1] = linalg::Norml2(comm, w);
+        w *= 1.0 / Hj[j + 1];
+      }
 
       for (int k = 0; k < j; k++)
       {
@@ -646,6 +665,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   final_res = beta;
   final_it = it;
+  final_restarts = converged ? restart : std::max(restart - 1, 0);
 }
 
 template <OperatorType OperType>
@@ -747,12 +767,18 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
+      {
+        perf::ScopedTally t(this->perf_apply);
+        ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
+      }
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
-      w *= 1.0 / Hj[j + 1];
+      {
+        perf::ScopedTally t(this->perf_orth);
+        linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
+        Hj[j + 1] = linalg::Norml2(comm, w);
+        w *= 1.0 / Hj[j + 1];
+      }
 
       for (int k = 0; k < j; k++)
       {
@@ -812,6 +838,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   final_res = beta;
   final_it = it;
+  final_restarts = converged ? restart : std::max(restart - 1, 0);
 }
 
 template class IterativeSolver<Operator>;

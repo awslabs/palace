@@ -4,10 +4,15 @@
 #ifndef PALACE_LINALG_SOLVER_HPP
 #define PALACE_LINALG_SOLVER_HPP
 
+#include <string>
 #include <type_traits>
+#include <utility>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -37,6 +42,10 @@ public:
 
   // Set the operator associated with the solver, or update it if called repeatedly.
   virtual void SetOperator(const OperType &op) = 0;
+
+  // Register inclusive performance tallies named under prefix, measured within the given
+  // exclusive timer row. No-op by default.
+  virtual void SetPerfTallies(const std::string &prefix, Timer::Index parent) {}
 
   // Apply the solver for the transpose problem.
   void MultTranspose(const VecType &x, VecType &y) const override
@@ -95,15 +104,46 @@ private:
   // Drop small entries.
   void DropSmallEntries();
 
+  // Performance reporting: the first application after SetOperator (where lazy solvers
+  // factorize or set up) is timed as Timer::KSP_COARSE_SETUP, later ones as apply_timer.
+  // Solvers which factorize in SetOperator (MUMPS) time that as Timer::KSP_COARSE_SETUP.
+  bool time_setup = false, eager_setup = false;
+  Timer::Index apply_timer = Timer::NUM_TIMINGS;
+  mutable bool setup_pending = false;
+  int num_setups = 0;
+  int perf_setups = -1, perf_refact, perf_applies, perf_rows, perf_rows_rank;
+
+  // Call the wrapped solver's SetOperator.
+  void SetInnerOperator(const mfem::HypreParMatrix &op);
+  // Performance probes: memory of the factorization (SetOperator and the first Mult) for
+  // direct solvers, hierarchy summary for hypre solvers, and the optional residual check of
+  // the first solve after each setup (matrix not owned).
+  std::string role;
+  bool direct;
+  mutable bool first_mult = false;
+  mutable perf::MemoryProbe probe;
+  const mfem::HypreParMatrix *A_check = nullptr;
+  void BeginSetup();
+  void EndSetup(const mfem::HypreParMatrix *Ac);
+  void FinishSetup(const std::vector<std::pair<const Vector *, const Vector *>> &bx) const;
+
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
                     bool complex_matrix = true, bool drop_small_entries = true,
                     bool reorder_reuse = true)
     : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
       save_assembled(save_assembled), complex_matrix(complex_matrix),
-      drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse)
+      drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse),
+      role(perf::CurrentRole()),
+      direct(!dynamic_cast<const mfem::HypreSolver *>(this->pc.get()))
   {
+    InitEagerSetup();
   }
+
+  // Enable timing (and coarse solver counters, keyed by the current solver role), see
+  // above. Applications after the first are timed as apply_timer (NUM_TIMINGS: not timed).
+  void EnableTimer(bool setup, Timer::Index apply = Timer::NUM_TIMINGS);
+  void InitEagerSetup();
 
   // Access the underlying solver.
   const mfem::Solver &GetSolver() { return *pc; }

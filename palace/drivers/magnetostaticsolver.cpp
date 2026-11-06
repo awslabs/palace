@@ -498,7 +498,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // non-convergence early return leaves palace.json describing the last converged
   // iteration.
   SaveMetadata(curlcurl_op.GetSolutionNDSpaces());
-  SaveMetadata(ksp);
   if (surf_flux_op.HasSingleLoopExcitations())
   {
     PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), surf_flux_op, A, I_inc,

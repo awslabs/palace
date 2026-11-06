@@ -51,10 +51,13 @@ protected:
   // Variables set during solve to capture solve statistics.
   mutable bool converged;
   mutable double initial_res, final_res;
-  mutable int final_it;
+  mutable int final_it, final_restarts;
 
   // Enable timer contribution for Timer::PRECONDITIONER.
   bool use_timer;
+
+  // Performance tally ids: preconditioned operator application and orthogonalization.
+  int perf_apply = -1, perf_orth = -1;
 
 public:
   IterativeSolver(MPI_Comm comm, int print);
@@ -93,6 +96,8 @@ public:
   // Set the preconditioner for the solver.
   void SetPreconditioner(const Solver<OperType> &pc) { B = &pc; }
 
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
+
   // Returns if the previous solve converged or not.
   bool GetConverged() const { return converged && (rel_tol > 0.0 || abs_tol > 0.0); }
 
@@ -105,6 +110,11 @@ public:
 
   // Returns the number of iterations for the previous solve.
   int GetNumIterations() const { return final_it; }
+
+  // Bytes held by the Krylov basis (zero for short-recurrence methods).
+  virtual std::size_t GetBasisBytes() const { return 0; }
+  // Returns the number of restarts for the previous solve (GMRES and FGMRES).
+  int GetNumRestarts() const { return final_restarts; }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return comm; }
@@ -138,6 +148,7 @@ protected:
   using IterativeSolver<OperType>::initial_res;
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
+  using IterativeSolver<OperType>::final_restarts;
 
   // Temporary workspace for solve.
   mutable VecType r, z, p;
@@ -174,6 +185,7 @@ protected:
   using IterativeSolver<OperType>::initial_res;
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
+  using IterativeSolver<OperType>::final_restarts;
 
   // Maximum subspace dimension for restarted GMRES.
   mutable int max_dim;
@@ -212,6 +224,16 @@ public:
   // Set the side for preconditioning.
   virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }
 
+  std::size_t GetBasisBytes() const override
+  {
+    std::size_t n = 0;
+    for (const auto &v : V)
+    {
+      n += v.Size();
+    }
+    return n * sizeof(ScalarType);
+  }
+
   void Mult(const VecType &b, VecType &x) const override;
 };
 
@@ -241,6 +263,7 @@ protected:
   using GmresSolver<OperType>::initial_res;
   using GmresSolver<OperType>::final_res;
   using GmresSolver<OperType>::final_it;
+  using GmresSolver<OperType>::final_restarts;
 
   using GmresSolver<OperType>::max_dim;
   using GmresSolver<OperType>::gs_orthog;
@@ -268,6 +291,16 @@ public:
   {
     MFEM_VERIFY(side == PreconditionerSide::RIGHT,
                 "FGMRES solver only supports right preconditioning!");
+  }
+
+  std::size_t GetBasisBytes() const override
+  {
+    std::size_t n = 0;
+    for (const auto &z : Z)
+    {
+      n += z.Size();
+    }
+    return GmresSolver<OperType>::GetBasisBytes() + n * sizeof(ScalarType);
   }
 
   void Mult(const VecType &b, VecType &x) const override;

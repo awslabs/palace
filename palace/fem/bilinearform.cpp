@@ -9,6 +9,8 @@
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "utils/omp.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -30,6 +32,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
                               const FiniteElementSpace &test_fespace,
                               bool skip_zero_coeff_elems) const
 {
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::PARTIAL));
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
   const auto &mesh = trial_fespace.GetMesh();
@@ -142,6 +145,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
 std::unique_ptr<hypre::HypreCSRMatrix> BilinearForm::FullAssemble(const ceed::Operator &op,
                                                                   bool skip_zeros, bool set)
 {
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::FULL));
   return ceed::CeedOperatorFullAssemble(op, skip_zeros, set);
 }
 
@@ -245,6 +249,7 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
 
 std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 {
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::PARTIAL));
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
   const auto &mesh = trial_fespace.GetMesh();

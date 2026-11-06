@@ -7,12 +7,28 @@
 
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
 
 namespace
 {
+
+// Inclusive tallies for the parallel prolongation P and its transpose in forward operator
+// applications (local work plus the halo exchange inside them).
+int HaloTallyP()
+{
+  static const int id = perf::RegisterPhaseTally("Halo/P");
+  return id;
+}
+
+int HaloTallyPT()
+{
+  static const int id = perf::RegisterPhaseTally("Halo/PT");
+  return id;
+}
 
 // A += B for an assembled square operator, keeping the diagonal entry first in each row.
 void AddToAssembled(std::unique_ptr<mfem::HypreParMatrix> &A, const mfem::HypreParMatrix &B)
@@ -118,6 +134,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   {
     return *RAP;
   }
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::PARALLEL));
 
   // Build the square or rectangular assembled HypreParMatrix.
   const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(A);
@@ -257,22 +274,28 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
 
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<Vector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    perf::ScopedTally t(HaloTallyP());
+    if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<Vector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
+    }
+    else
+    {
+      trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    }
   }
 
   // Apply the operator on the L-vector.
   A->Mult(lx, ly);
 
-  RestrictionMatrixMult(ly, y);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, y);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == DiagonalPolicy::DIAG_ONE)
@@ -347,23 +370,29 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
 
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<Vector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    perf::ScopedTally t(HaloTallyP());
+    if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<Vector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
+    }
+    else
+    {
+      trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    }
   }
 
   // Apply the operator on the L-vector.
   A->Mult(lx, ly);
 
   auto &ty = test_fespace.GetTVector<Vector>();
-  RestrictionMatrixMult(ly, ty);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, ty);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == DiagonalPolicy::DIAG_ONE)
@@ -554,24 +583,30 @@ void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<ComplexVector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    perf::ScopedTally t(HaloTallyP());
+    if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<ComplexVector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
+      trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
+    }
+    else
+    {
+      trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
+      trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    }
   }
 
   // Apply the operator on the L-vector.
   A->Mult(lx, ly);
 
-  RestrictionMatrixMult(ly, y);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, y);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -668,25 +703,31 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<ComplexVector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    perf::ScopedTally t(HaloTallyP());
+    if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<ComplexVector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
+      trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
+    }
+    else
+    {
+      trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
+      trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    }
   }
 
   // Apply the operator on the L-vector.
   A->Mult(lx, ly);
 
   auto &ty = test_fespace.GetTVector<ComplexVector>();
-  RestrictionMatrixMult(ly, ty);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, ty);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)

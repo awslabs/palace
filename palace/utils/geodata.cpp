@@ -27,7 +27,9 @@
 #include "utils/meshio.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
@@ -142,9 +144,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm))
     {
+      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/Root", Timer::IO));
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       use_mesh_partitioner &= smesh->Conforming();
     }
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad", Timer::IO));
     Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
   }
 
@@ -159,10 +163,12 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
+      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/NodeRoot", Timer::IO));
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad", Timer::IO));
     Mpi::Barrier(comm);
   }
   if (node_comm != MPI_COMM_NULL)
@@ -322,6 +328,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
                                          MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
+  perf::ScopedTally t(perf::RegisterTally("Startup/Partition", Timer::MESH_PREPROCESS));
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = UseAmr(refinement);
 
@@ -2717,6 +2724,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   MPI_Comm comm = mesh->GetComm();
   if (iodata.model.refinement.save_adapt_mesh)
   {
+    BlockTimer bt1(Timer::ADAPT_MESH_OUTPUT);
     // Create a separate serial mesh to write to disk. When MFEM is built with zlib the mesh
     // is gzip-compressed and written with a ".meshgz" extension; MFEM detects gzip from the
     // file's magic bytes on read, so a restart reopens it transparently regardless of the

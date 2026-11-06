@@ -53,6 +53,10 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-perfprobes.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-perfstats.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-perftallies.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-solverstats.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp

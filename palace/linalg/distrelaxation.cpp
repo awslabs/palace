@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -95,6 +96,19 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 }  // namespace
 
 template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::SetPerfTallies(const std::string &prefix,
+                                                      Timer::Index parent)
+{
+  perf_main = perf::RegisterTally(prefix + "/Main", parent);
+  perf_aux = perf::RegisterTally(prefix + "/Aux", parent);
+  perf_res = perf::RegisterTally(prefix + "/Residual", parent);
+  perf_gt = perf::RegisterTally(prefix + "/GT", parent);
+  perf_g = perf::RegisterTally(prefix + "/G", parent);
+  B->SetPerfTallies(prefix + "/Main", parent);
+  B_G->SetPerfTallies(prefix + "/Aux", parent);
+}
+
+template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother.
@@ -102,17 +116,30 @@ void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecTy
   {
     // y = y + B (x - A y)
     B->SetInitialGuess(this->initial_guess || it > 0);
-    B->Mult2(x, y, r);
+    {
+      perf::ScopedTally t(perf_main);
+      B->Mult2(x, y, r);
+    }
 
     // y = y + G B_G Gᵀ (x - A y)
-    A->Mult(y, r);
-    linalg::AXPBY(1.0, x, -1.0, r);
-    RealMultTranspose(*G, r, x_G);
-    if (dbc_tdof_list_G)
     {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+      perf::ScopedTally t(perf_res);
+      A->Mult(y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
     }
-    B_G->Mult2(x_G, y_G, r_G);
+    {
+      perf::ScopedTally t(perf_gt);
+      RealMultTranspose(*G, r, x_G);
+      if (dbc_tdof_list_G)
+      {
+        linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+      }
+    }
+    {
+      perf::ScopedTally t(perf_aux);
+      B_G->Mult2(x_G, y_G, r_G);
+    }
+    perf::ScopedTally t(perf_g);
     RealAddMult(*G, y_G, y);
   }
 }
@@ -128,23 +155,35 @@ void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType 
     // y = y + G B_Gᵀ Gᵀ (x - A y)
     if (this->initial_guess || it > 0)
     {
-      A->Mult(y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
+      {
+        perf::ScopedTally t(perf_res);
+        A->Mult(y, r);
+        linalg::AXPBY(1.0, x, -1.0, r);
+      }
+      perf::ScopedTally t(perf_gt);
       RealMultTranspose(*G, r, x_G);
     }
     else
     {
       y = 0.0;
+      perf::ScopedTally t(perf_gt);
       RealMultTranspose(*G, x, x_G);
     }
     if (dbc_tdof_list_G)
     {
       linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
-    B_G->MultTranspose2(x_G, y_G, r_G);
-    RealAddMult(*G, y_G, y);
+    {
+      perf::ScopedTally t(perf_aux);
+      B_G->MultTranspose2(x_G, y_G, r_G);
+    }
+    {
+      perf::ScopedTally t(perf_g);
+      RealAddMult(*G, y_G, y);
+    }
 
     // y = y + Bᵀ (x - A y)
+    perf::ScopedTally t(perf_main);
     B->MultTranspose2(x, y, r);
   }
 }

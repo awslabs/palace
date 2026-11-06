@@ -5,6 +5,7 @@
 #define PALACE_LINALG_GEOMETRIC_MULTIGRID_HPP
 
 #include <memory>
+#include <string>
 #include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
@@ -50,8 +51,23 @@ private:
   // MFEM Operator interface for multiple RHS.
   mutable std::vector<VecType> X, Y, R;
 
-  // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
-  bool use_timer;
+  // Enable timer contribution for Timer::KSP_COARSE_SOLVE, unless the coarse solver times
+  // itself (setup vs. apply).
+  bool use_timer, coarse_timer;
+
+  // Performance tally ids per level: pre-/post-smoothing, residual, restriction,
+  // prolongation (index 0 holds the coarse solve).
+  struct LevelTallies
+  {
+    int pre = -1, post = -1, res = -1, restr = -1, prol = -1;
+  };
+  std::vector<LevelTallies> perf;
+
+  // Solver role for the performance report.
+  std::string role;
+
+  // Inclusive tally of the coarse solve for nested solvers (-1 for none).
+  int coarse_tally;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
@@ -78,7 +94,11 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override;
 
-  void EnableTimer() { use_timer = true; }
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
+
+  void EnableTimer();
+
+  void SetCoarseTally(int id) { coarse_tally = id; }
 };
 
 }  // namespace palace

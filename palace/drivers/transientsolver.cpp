@@ -88,7 +88,6 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Final postprocessing & printing.
   BlockTimer bt1(Timer::POSTPRO);
   time_op.PrintStats();
-  SaveMetadata(time_op.GetLinearSolver());
   post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};
 }
