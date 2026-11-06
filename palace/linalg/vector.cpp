@@ -3,6 +3,7 @@
 
 #include "vector.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <random>
 #include <mfem/general/forall.hpp>
@@ -869,6 +870,61 @@ void AXPYAndAYPX(std::complex<double> alpha, ComplexVector &x, ComplexVector &y,
                         XR[i] = ZR[i] + br * tr - bi * ti;
                         XI[i] = ZI[i] + bi * tr + br * ti;
                       });
+}
+
+void LinearCombination(const std::vector<Vector> &X, const std::complex<double> *c,
+                       ComplexVector &y)
+{
+  const std::size_t n = X.size();
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    y = 0.0;
+    for (std::size_t j = 0; j < n; j += 2)
+    {
+      if (j + 1 < n)
+      {
+        AXPBYPCZ(c[j].real(), X[j], c[j + 1].real(), X[j + 1], 1.0, y.Real());
+        AXPBYPCZ(c[j].imag(), X[j], c[j + 1].imag(), X[j + 1], 1.0, y.Imag());
+      }
+      else
+      {
+        AXPY(c[j].real(), X[j], y.Real());
+        AXPY(c[j].imag(), X[j], y.Imag());
+      }
+    }
+    return;
+  }
+
+  // On the host, add all terms to one block of y at a time, which stays in cache, so each
+  // X[j] is read once and y is written once. The terms are added in the same order as on
+  // the device.
+  constexpr int B = 1024;
+  const int N = y.Size();
+  std::vector<const double *> XP(n);
+  for (std::size_t j = 0; j < n; j++)
+  {
+    MFEM_ASSERT(X[j].Size() == N, "Size mismatch for linear combination!");
+    XP[j] = X[j].HostRead();
+  }
+  auto *YR = y.Real().HostWrite();
+  auto *YI = y.Imag().HostWrite();
+  PalacePragmaOmp(parallel for schedule(static))
+  for (int b = 0; b < N; b += B)
+  {
+    const int e = std::min(b + B, N);
+    std::fill(YR + b, YR + e, 0.0);
+    std::fill(YI + b, YI + e, 0.0);
+    for (std::size_t j = 0; j < n; j++)
+    {
+      const double cr = c[j].real(), ci = c[j].imag();
+      const double *Xj = XP[j];
+      for (int i = b; i < e; i++)
+      {
+        YR[i] += cr * Xj[i];
+        YI[i] += ci * Xj[i];
+      }
+    }
+  }
 }
 
 void Sqrt(Vector &x, double s)

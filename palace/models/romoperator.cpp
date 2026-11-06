@@ -313,26 +313,6 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
   q = svd.matrixV().col(m);
 }
 
-template <typename VecType>
-inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
-                                   const VecType &y, ComplexVector &u)
-{
-  u = 0.0;
-  for (std::size_t j = 0; j < n; j += 2)
-  {
-    if (j + 1 < n)
-    {
-      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());
-      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());
-    }
-    else
-    {
-      linalg::AXPY(y(j).real(), V[j], u.Real());
-      linalg::AXPY(y(j).imag(), V[j], u.Imag());
-    }
-  }
-}
-
 }  // namespace
 
 MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
@@ -1583,7 +1563,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
-  ProlongatePROMSolution(V.size(), V, RHSr, u);
+  linalg::LinearCombination(V, RHSr.data(), u);
 }
 
 RomOperator::WavePortDispersionFit

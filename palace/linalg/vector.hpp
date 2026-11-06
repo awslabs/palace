@@ -361,6 +361,10 @@ template <typename VecType, typename ScalarType>
 void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
                  const VecType &z);
 
+// Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex coefficients c.
+void LinearCombination(const std::vector<Vector> &X, const std::complex<double> *c,
+                       ComplexVector &y);
+
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
 void Sqrt(Vector &x, double s = 1.0);
