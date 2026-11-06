@@ -163,9 +163,9 @@ A polynomial-order study on this mesh gave the following absolute transmission e
 
 | Order | Absolute complex transmission error |
 |:-----:|:-----------------------------------:|
-| 1 | ``6.59\times10^{-3}`` |
-| 2 | ``5.54\times10^{-6}`` |
-| 3 | ``1.99\times10^{-9}`` |
+| 1     | ``6.59\times10^{-3}``               |
+| 2     | ``5.54\times10^{-6}``               |
+| 3     | ``1.99\times10^{-9}``               |
 
 The order-3 regression uses an absolute amplitude tolerance of ``2\times10^{-8}``, above
 the measured discretization error but below the error at order 2, and a power-balance
