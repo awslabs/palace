@@ -1553,16 +1553,12 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
               "calculation!");
   port_nd_transfer->Transfer(E.Real(), port_E->Real());
   port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
-  std::complex<double> dot[2] = {
-      {((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
-       ((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real())},
-      {-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
-       -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real())}};
-  Mpi::GlobalSum(2, dot, port_nd_fespace->GetComm());
-  // The unconjugated reaction of the mode with itself only vanishes for a circularly
-  // polarized combination of degenerate modes: fall back to the power projection, exact
-  // for a field of this mode only.
-  return (std::abs(modal_reaction) > 0.0) ? dot[0] / modal_reaction : dot[1] / modal_power;
+  std::complex<double> dot(((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
+                           ((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
+  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
+  // The reaction of the mode is only small for a nearly circularly polarized combination of
+  // degenerate modes, for which WarnReaction warns.
+  return dot / modal_reaction;
 }
 
 int WavePortData::GetModePolaritySign(int high_attr, int low_attr) const
@@ -1984,9 +1980,11 @@ void WavePortOperator::Initialize(double omega)
       }
       if (data.HasVoltageCoords())
       {
-        auto Z_pv = data.GetCharacteristicImpedance().real() * electromagnetics::Z0_;
-        Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹, Z_PV = {:.3e} Ω\n", idx,
-                   data.mode_idx, data.kn0.real() * kc, data.kn0.imag() * kc, Z_pv);
+        const auto Z_pv = data.GetCharacteristicImpedance() * electromagnetics::Z0_;
+        Mpi::Print(
+            " Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹, Z_PV = {:.3e}{:+.3e}i Ω\n",
+            idx, data.mode_idx, data.kn0.real() * kc, data.kn0.imag() * kc, Z_pv.real(),
+            Z_pv.imag());
       }
       else
       {

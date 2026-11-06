@@ -116,15 +116,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the S-parameters of numeric wave ports with lossy port modes, for example with
     `"Conductivity"` or `"Impedance"` boundaries on the port boundary, or lossy dielectrics.
     The wave port boundary condition and excitation now use the complex propagation constant
-    of the port mode, including its attenuation, instead of its real part. Below cutoff,
-    the propagation constant is now the root with `Im{kₙ} < 0`, which decays away from the
-    port, also for the modes of `"BoundaryMode"` simulations: for a lossless cross-section,
-    the sign of its imaginary part followed the roundoff of the mode solve. The
-    characteristic impedance `Z_PV` of a lossy port mode is now complex, `|V|² / P*` with
-    the complex power `P` of the mode, consistent with the total-field impedance in
-    `port-Z.csv`. Circuit synthesis now also fits the complex propagation constant of a
-    lossy port mode, so that the synthesized port loads carry the attenuation of the port
-    lines.
+    of the port mode, including its attenuation, instead of its real part. The S-parameters
+    of lossy port modes are now the amplitudes of their pseudo-waves, from the unconjugated
+    reaction of the field with the port mode, instead of the conjugated (power) projection
+    onto it, which does not separate the incident and reflected waves of a lossy mode: this
+    changes their values, but not those of lossless propagating modes. Below cutoff, the
+    propagation constant is now the root with `Im{kₙ} < 0`, which decays away from the port,
+    also for the modes of `"BoundaryMode"` simulations: for a lossless cross-section, the
+    sign of its imaginary part followed the roundoff of the mode solve. The characteristic
+    impedance `Z_PV` of a lossy port mode is now complex, `|V|² / P*` with the complex power
+    `P` of the mode, consistent with the total-field impedance in `port-Z.csv`. Circuit
+    synthesis now also fits the complex propagation constant of a lossy port mode, so that
+    the synthesized port loads carry the attenuation of the port lines.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
   - Fixed a crash of circuit synthesis (`"AdaptiveCircuitSynthesis"`) when several wave
     ports share a boundary, for example inactive wave ports extracting the S-parameters of
