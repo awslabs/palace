@@ -119,6 +119,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - Reworked the performance report in `palace.json` (new `SchemaVersion` 2). Every
+    `iterationX/palace.json` of an adaptive run now describes that iteration alone, as if it
+    were a separate simulation (times, counts and peak memory restart at each iteration, and
+    the work between iterations is charged to the iteration using the new mesh), and a
+    `Cumulative` block holds the totals over all iterations so far. `ElapsedTime` keys are
+    now the timer names (for example `KSP_COARSE_SOLVE` instead of `CoarseSolve`, which made
+    `Setup`, `Solve` and `Construction` ambiguous); `Durations` holds the average over MPI
+    processes instead of the root process's value, with `Min`, `Max` and `MaxRank` maps next
+    to it. `LinearSolver/TotalSolves` and `TotalIts` now count all main linear solves of the
+    iteration rather than those of the last solver object, and other solvers (for example
+    the divergence-free projection and the error estimator) are reported under
+    `LinearSolver/<Role>`. New rows `Startup`, `Coarse Setup` (coarse solver setup and
+    factorization, previously part of `Coarse Solve`, or of `Setup` for MUMPS) and `Adapted
+    Mesh Output` (previously part of `Rebalancing`) appear in the log and in `palace.json`,
+    together with inclusive tallies (multigrid levels, smoothers, Krylov operator and
+    orthogonalization, halo exchanges, reductions and waits), solver counters, resolved
+    solver choices and memory attribution. The log tables keep their layout. An opt-in check
+    of the coarse solve residual is enabled with `config["Problem"]["Verbose"] >= 2` or the
+    `PALACE_PERF_VERIFY` environment variable.
+
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
