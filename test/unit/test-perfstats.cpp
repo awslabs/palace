@@ -290,7 +290,7 @@ TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
   const auto &r = perf::GetResults();
   const int all = TallyIndex(r.iter, "Test/Phase");
   const int io = TallyIndex(r.iter, "Test/Phase/IO");
-  const int none = TallyIndex(r.iter, "Test/Phase/TOTAL");
+  const int none = TallyIndex(r.iter, "Test/Phase/STARTUP");
   REQUIRE(all >= 0);
   REQUIRE(io >= 0);
   REQUIRE(none >= 0);
