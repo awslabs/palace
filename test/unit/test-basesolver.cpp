@@ -38,6 +38,7 @@ class TestSolver : public BaseSolver
 {
 public:
   using BaseSolver::BaseSolver;
+  using BaseSolver::ComputeErrorEstimation;
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &) const override
   {
@@ -133,6 +134,27 @@ mfem::Mesh BuildNCPrismMesh()
 }
 
 }  // namespace
+
+TEST_CASE("ComputeErrorEstimation follows AMR unless forced", "[basesolver][Serial]")
+{
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  const TestSolver solver(iodata, /*root=*/false);
+  for (auto type : {ProblemType::ELECTROSTATIC, ProblemType::TRANSIENT})
+  {
+    iodata.problem.type = type;
+    iodata.model.refinement.max_it = 0;
+    iodata.solver.linear.always_error_estimation = false;
+    CHECK_FALSE(solver.ComputeErrorEstimation());
+    iodata.solver.linear.always_error_estimation = true;
+    CHECK(solver.ComputeErrorEstimation());
+
+    // Transient simulations do not support AMR.
+    iodata.model.refinement.max_it = 2;
+    iodata.solver.linear.always_error_estimation = false;
+    CHECK(solver.ComputeErrorEstimation() == (type != ProblemType::TRANSIENT));
+  }
+}
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SaveIteration moves files and leaves symlinks", "[basesolver][Serial]")

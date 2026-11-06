@@ -842,6 +842,12 @@ where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operator
 orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
 discretized by Nédélec and Raviart-Thomas elements, respectively.
 
+By default, the error indicator is only computed when AMR is enabled, that is when
+[`config["Model"]["Refinement"]["MaxIts"]`](config/reference.md#config-model-refinement-maxits)
+is positive. To report it for a simulation without AMR, set
+[`config["Solver"]["Linear"]["AlwaysComputeErrorEstimation"]`](config/reference.md#config-solver-linear-alwayscomputeerrorestimation)
+to `true`.
+
 ## Far-field extraction
 
 This feature is based upon Stratton-Chu's transformations [6] in the limit of ``kr \gg 1``

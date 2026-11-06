@@ -198,7 +198,8 @@ Also, at the final step of the simulation the following element-wise quantities 
 for visualization:
 
   - Mesh partitioning (1-based): `Rank`
-  - Error indicator: `Indicator`
+  - Error indicator: `Indicator`, when computed (see
+    [`config["Solver"]["Linear"]["AlwaysComputeErrorEstimation"]`](../config/reference.md#config-solver-linear-alwayscomputeerrorestimation))
 
 When saving fields in the grid function (GLVis) format, the file names have the format
 `Field_xxxxxx.gf.yyyyyy` where `Field` is the variable name of the postprocessed scalar

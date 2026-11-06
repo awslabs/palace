@@ -9,6 +9,7 @@
 #include <complex>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
@@ -444,11 +445,16 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ModeEigenSolver eig(mode_op, dbc_tdof_list, num_modes, bm.max_size, bm.tol, which_eig,
                       iodata.solver.linear, bm.type, iodata.problem.verbose);
 
-  BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
-      mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(), mode_op.GetRTSpaceHierarchy(),
-      mode_op.GetCurlSpace(), mode_op.GetH1SpaceHierarchy(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
+  std::optional<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(),
+                      mode_op.GetRTSpaceHierarchy(), mode_op.GetCurlSpace(),
+                      mode_op.GetH1SpaceHierarchy(), iodata.solver.linear.estimator_tol,
+                      iodata.solver.linear.estimator_max_it, 0,
+                      iodata.solver.linear.estimator_mg,
+                      iodata.boundaries.GetSheetAttributes());
+  }
 
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
 
@@ -491,7 +497,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     SaveMetadata(*ksp);
   }
-  Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
+  Mpi::Print("\n{}\n\n", estimator ? "Computing solution error estimates and performing "
+                                     "postprocessing"
+                                   : "Performing postprocessing");
 
   const int h1_size = mode_op.GetH1TrueVSize();
   const int l2_size = mode_op.GetCurlSpace().GetTrueVSize();
@@ -521,7 +529,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
 
-    if (i < num_modes && ModeEigenSolver::IsPropagating(kn))
+    if (estimator && i < num_modes && ModeEigenSolver::IsPropagating(kn))
     {
       // Bz = curl(Et) / (i·omega) = (Im(curl Et) - i·Re(curl Et)) / omega.
       ComplexVector bz(l2_size);
@@ -537,7 +545,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bz.Real() *= 1.0 / omega;
       bz.Imag() = curl_etr;
       bz.Imag() *= -1.0 / omega;
-      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      estimator->AddErrorIndicator(et, bz, total_domain_energy, indicator);
     }
   }
   Mpi::Print("\n");

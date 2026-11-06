@@ -1007,7 +1007,7 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.always_error_estimation = false;
   opts.gridfunction_fields = true;
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
 }
@@ -1017,7 +1017,7 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.always_error_estimation = false;
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
 }
@@ -1085,6 +1085,7 @@ TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regressio
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
+  opts.always_error_estimation = false;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
@@ -1227,6 +1228,7 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
+  opts.always_error_estimation = false;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
@@ -1241,6 +1243,7 @@ TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regressio
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
+  opts.always_error_estimation = false;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
@@ -1270,6 +1273,7 @@ TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
+  opts.always_error_estimation = false;
   opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
@@ -1364,14 +1368,14 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
 // 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
 // TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
-// error-indicators.csv / domain-E.csv are kept for the file-set check but not diffed.
+// domain-E.csv is kept for the file-set check but not diffed.
 TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.excluded_files = {"domain-E.csv"};
+  opts.always_error_estimation = false;
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
   opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
@@ -1437,7 +1441,7 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   opts.skip_rowcount = true;
   opts.min_rows = 1;
-  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
   // Multi-MB partition-dependent pencil matrices consumed by no check here (their export is
   // exercised by the adapter round-trip); not stored rather than kept as dead weight.
   opts.unstored_files = {"rom-Linv",
@@ -1448,9 +1452,10 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
                          "rom-coupled-S",
                          "rom-coupled-G",
                          "rom-coupled-H"};
-  // The error-estimator extrema and synthesized Y_ref drift with the partition/BLAS near
-  // the pole, so these are presence-only here.
-  opts.excluded_files = {"rom-eigenvectors", "error-indicators.csv", "rom-port-reference"};
+  // The synthesized Y_ref drifts with the partition/BLAS near the pole, so it is
+  // presence-only here.
+  opts.excluded_files = {"rom-eigenvectors", "rom-port-reference"};
+  opts.always_error_estimation = false;
   // Near the iris resonance both S paths wobble with partition/backend by up to ~1.3e-4;
   // 1e-3 clears that while still catching the dB-scale shift a regressed W would produce.
   opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-3);
@@ -1554,7 +1559,7 @@ TEST_CASE("coaxial_matched", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.always_error_estimation = false;
   palace::test::RunRegressionCase("coaxial", "coaxial_matched.json", "matched", opts);
 }
 
@@ -1583,7 +1588,7 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   opts.skip_rowcount = true;
   opts.min_rows = 1;
-  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
   opts.unstored_files = {"rom-Linv",
                          "rom-Rinv",
                          "rom-C-",
@@ -1592,9 +1597,9 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
                          "rom-coupled-S",
                          "rom-coupled-G",
                          "rom-coupled-H"};
-  opts.excluded_files = {"rom-eigenvectors",    "rom-port-reference", "port-I.csv",
-                         "port-V.csv",          "port-Z.csv",         "domain-E.csv",
-                         "error-indicators.csv"};
+  opts.excluded_files = {"rom-eigenvectors", "rom-port-reference", "port-I.csv",
+                         "port-V.csv",       "port-Z.csv",         "domain-E.csv"};
+  opts.always_error_estimation = false;
   // Full mixed 2x2 round-trip: synthesized-vs-field S to ~6e-4 here, so 2e-3 clears
   // cross-backend noise while catching a broken cross-type coupling map.
   opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-3);
@@ -1634,7 +1639,7 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.always_error_estimation = false;
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   opts.custom_checks["probe-E.csv"] = CompareComplexValues(opts.rtol, opts.atol);
   opts.custom_checks["probe-B.csv"] = CompareComplexValues(opts.rtol, opts.atol);
@@ -1819,8 +1824,8 @@ TEST_CASE("adapter_driven_synth_inactive", "[Serial][Parallel][Regression]")
       "rom-coupled-S",   "rom-coupled-G", "rom-coupled-H", "rom-Linv",
       "rom-Rinv",        "rom-C-",        "rom-portload-", "rom-orthogonalization-matrix-R",
       "rom-eigenvectors"};
-  opts.excluded_files = {"rom-eigenvalues", "rom-port-reference", "port-S",
-                         "error-indicators.csv", "domain-E.csv"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-port-reference", "port-S", "domain-E.csv"};
+  opts.always_error_estimation = false;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth_inactive.json",
                                   "driven_synth_inactive", opts);
@@ -1854,6 +1859,7 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-2;
   opts.atol = 1.0e-16;
+  opts.always_error_estimation = false;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
                            "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
   opts.abs_columns = {"\u03ba_ext"};
@@ -1966,8 +1972,8 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.always_error_estimation = false;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   // The energies are below atol, so compare them with the relative tolerance only.

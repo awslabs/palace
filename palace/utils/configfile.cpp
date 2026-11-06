@@ -1651,6 +1651,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   estimator_tol = linear.value("EstimatorTol", estimator_tol);
   estimator_max_it = linear.value("EstimatorMaxIts", estimator_max_it);
   estimator_mg = linear.value("EstimatorMG", estimator_mg);
+  always_error_estimation =
+      linear.value("AlwaysComputeErrorEstimation", always_error_estimation);
   gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 

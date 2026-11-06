@@ -17,6 +17,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Interface Changes
+
+  - The flux-recovery error estimator now only runs by default when adaptive mesh
+    refinement uses it (`Model.Refinement.MaxIts` > 0, except for transient simulations).
+    Simulations without AMR no longer write `error-indicators.csv` or the `Indicator` field,
+    and skip the estimator setup and the per-solve flux projections, which took a large
+    fraction of the run time and memory of some simulations. Set the new
+    `Solver.Linear.AlwaysComputeErrorEstimation` to `true` to compute the error indicator
+    without AMR. SchemaVer 4-2-0
+    [PR 1128](https://github.com/awslabs/palace/pull/1128).
+
 #### Performance Improvements
 
   - Added a hypre patch for

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <iostream>
 #include <numbers>
+#include <optional>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -110,7 +111,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  std::optional<FluxErrorEstimator<ComplexVector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -202,8 +207,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
       // Calculate and record the error indicators.
-      Mpi::Print(" Updating solution error estimates\n");
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      if (estimator)
+      {
+        Mpi::Print(" Updating solution error estimates\n");
+        estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+      }
     }
 
     // Final postprocessing & printing.
@@ -243,7 +251,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  std::optional<FluxErrorEstimator<ComplexVector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -293,9 +305,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Add the HDM solution to the PROM reduced basis.
     prom_op.UpdatePROM(E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
     prom_op.UpdateMRI(excitation_idx, omega, E);
+    if (!estimator)
+    {
+      return;
+    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for energy postprocessing and error estimation.
+    // PostOperator for the domain energy normalizing the error indicator.
     BlockTimer bt0(Timer::POSTPRO);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
@@ -311,7 +327,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 
   // Loop excitations to add to PROM.

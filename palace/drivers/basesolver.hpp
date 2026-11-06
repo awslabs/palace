@@ -54,6 +54,10 @@ protected:
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
 
+  // Whether to compute the error indicator after each solve: always for adaptive mesh
+  // refinement, which uses it, and otherwise only on request.
+  bool ComputeErrorEstimation() const;
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);

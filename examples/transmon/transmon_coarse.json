@@ -123,7 +123,8 @@
     "Linear": {
       "Type": "Default",
       "Tol": 1.0e-12,
-      "MaxIts": 500
+      "MaxIts": 500,
+      "AlwaysComputeErrorEstimation": true
     }
   }
 }

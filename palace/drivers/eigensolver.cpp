@@ -5,6 +5,7 @@
 
 #include <complex>
 #include <numbers>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
@@ -419,7 +420,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   eigen->SetLinearSolver(*ksp);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  std::optional<FluxErrorEstimator<ComplexVector>> estimator;
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // Eigenvalue problem solve.
@@ -471,7 +476,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(*ksp);
 
   // Calculate and record the error indicators, and postprocess the results.
-  Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
+  Mpi::Print("\n{}\n", estimator ? "Computing solution error estimates and performing "
+                                   "postprocessing"
+                                 : "Performing postprocessing");
   const int num_requested = iodata.solver.eigenmode.n;
   const int num_report = num_conv;
   MFEM_VERIFY(num_report >= num_requested, "Eigenmode solve only found "
@@ -573,9 +580,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
-    if (i < num_requested)
+    if (estimator && i < num_requested)
     {
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
   }
   post_op.MeasureFinalize(indicator);
