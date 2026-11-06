@@ -655,6 +655,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(
       iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
       space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  initial_guess = iodata.solver.linear.initial_guess;
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
@@ -945,8 +946,16 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
     r.Add(1i * omega, RHS1);
   }
 
-  // Solve the linear system.
+  // Solve the linear system. A nonzero initial guess returned unchanged would add no new
+  // direction to the PROM basis: then solve again from zero, with the same operators.
+  const bool nonzero_guess = initial_guess && linalg::Norml2(space_op.GetComm(), u) > 0.0;
+  const int num_it = ksp->NumTotalMultIterations();
   ksp->Mult(r, u);
+  if (nonzero_guess && ksp->NumTotalMultIterations() == num_it)
+  {
+    u = 0.0;
+    ksp->Mult(r, u);
+  }
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const

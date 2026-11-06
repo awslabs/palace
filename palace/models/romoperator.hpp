@@ -265,8 +265,10 @@ protected:
   bool has_RHS1 = true;
   bool has_RHS2 = true;
 
-  // HDM linear system solver and preconditioner.
+  // HDM linear system solver and preconditioner, and whether it uses the given solution
+  // vector as initial guess.
   std::unique_ptr<ComplexKspSolver> ksp;
+  bool initial_guess = false;
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
@@ -535,7 +537,10 @@ public:
   // repeating HDM-scale projections.
   void PrepareOnlineExcitations();
 
-  // Assemble and solve the HDM at the specified frequency.
+  // Assemble and solve the HDM at the specified frequency. With initial guesses enabled, u
+  // is the initial guess. If the solver returns a nonzero initial guess unchanged (it
+  // already meets the tolerance), the system is solved again from zero, so that the
+  // solution adds a new direction to the PROM basis.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires

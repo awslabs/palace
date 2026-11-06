@@ -17,6 +17,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Interface Changes
+
+  - Adaptive frequency sweeps now start the HDM solve at each sampled frequency from the
+    PROM solution there (with `"InitialGuess": true`, they used to start from the solution
+    at the previous sample), and `config["Solver"]["Linear"]["InitialGuess"]` now defaults
+    to `true` for all driven simulations. This reduces the linear solver iterations of the
+    offline phase. The results of adaptive sweeps change, and so can the number and the
+    frequencies of the samples: with an `"AdaptiveTol"` tighter than the accuracy of the
+    linear solves, a sweep can now converge instead of sampling up to
+    `"AdaptiveMaxSamples"`. Set `"InitialGuess": false` to restore the previous behavior.
+    SchemaVer 5-0-0
+    [PR 1126](https://github.com/awslabs/palace/pull/1126).
+
 #### Performance Improvements
 
   - Added a hypre patch for

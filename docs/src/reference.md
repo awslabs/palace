@@ -515,6 +515,12 @@ that, the interpolation suggests the next sample from an error indicator that ca
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
 
+The HDM solve at a selected frequency starts from the PROM solution there when
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear)
+is enabled (the default), so fewer linear solver iterations are needed as the PROM
+improves. If the PROM solution already meets the tolerance of the linear solver, the HDM
+is solved again from zero, so that the sample still adds a new direction to the basis.
+
 ### Convergence criterion
 
 At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM
@@ -534,6 +540,16 @@ related to, but not the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
+
+The tolerance of the linear solver
+([`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear)) bounds the
+relative residual of the HDM solution, not its error, which can be much larger. Near the
+accuracy of the HDM solve, ``\varepsilon`` no longer measures the PROM error alone. When the
+HDM solve starts from zero (`"InitialGuess": false`), ``\varepsilon`` includes the error of
+the HDM solve, and can stay above an `"AdaptiveTol"` tighter than this accuracy until
+`"AdaptiveMaxSamples"` is reached. When it starts from the PROM solution, ``\varepsilon``
+measures the correction of the linear solver to the PROM solution, and can fall below such a
+tolerance.
 
 The indicator is also not a mathematical certificate of the maximum error over the entire
 frequency interval. The convergence memory mitigates accidental early termination when one
