@@ -225,6 +225,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
+    [PR 1089](https://github.com/awslabs/palace/pull/1089).
+  - The Floquet port DtN correction and the wave-port modal correction now pack their
+    rank-one terms per port, so that each term only touches the degrees of freedom of its
+    own port, and compute their dot products on GPUs with block reductions instead of one
+    thread per term. [PR 1155](https://github.com/awslabs/palace/pull/1155).
   - GPU builds now share one Umpire device memory pool between MFEM and hypre, created on
     each rank's GPU, and use standard host memory instead of the slow Umpire host allocator.
     hypre no longer reserves its own 4 GiB device pool per rank, which reduces peak GPU memory
