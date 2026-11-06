@@ -119,7 +119,7 @@ PALACE_ENUM_STRING_DEFINE(PreconditionerSide, {{PreconditionerSide::DEFAULT, "De
 PALACE_ENUM_STRING_DEFINE(SymbolicFactorization,
                           {{SymbolicFactorization::DEFAULT, "Default"},
                            {SymbolicFactorization::METIS, "METIS"},
-                           {SymbolicFactorization::PARMETIS, "ParMETIS"},
+                           {SymbolicFactorization::METIS, "ParMETIS"},  // Deprecated alias
                            {SymbolicFactorization::SCOTCH, "Scotch"},
                            {SymbolicFactorization::PTSCOTCH, "PTScotch"},
                            {SymbolicFactorization::PORD, "PORD"},

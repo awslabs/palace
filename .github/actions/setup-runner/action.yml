@@ -130,7 +130,7 @@ runs:
         # Pinned to oneAPI 2026.1: the icpx of 2026.2 crashes building SLATE and STRUMPACK
         # (https://github.com/awslabs/palace/issues/1116).
         sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp-2026.1 intel-oneapi-compiler-fortran-2026.1 \
-          intel-oneapi-mkl-devel-2026.1 intel-oneapi-mpi-devel-2021.18
+          intel-oneapi-mkl-devel-2026.1 intel-oneapi-mpi-devel-2021.18 bison flex
         end_timer "Setup Intel OneAPI"
 
     - name: Setup LLVM

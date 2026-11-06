@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(SUPERLU_DEPENDENCIES parmetis)
+set(SUPERLU_DEPENDENCIES metis)
 
 set(SUPERLU_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SUPERLU_OPTIONS
@@ -21,9 +21,9 @@ list(APPEND SUPERLU_OPTIONS
   "-Denable_single=ON"
   "-Denable_complex16=ON"
   "-Denable_python=OFF"
-  "-DTPL_ENABLE_PARMETISLIB=ON"
-  "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-  "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
+  "-DTPL_ENABLE_PARMETISLIB=OFF"
+  "-DTPL_ENABLE_METISLIB=ON"
+  "-DTPL_METIS_LIBRARIES=${METIS_LIBRARIES}"
   "-DTPL_ENABLE_COMBBLASLIB=OFF"
 )
 
@@ -104,9 +104,9 @@ list(APPEND SUPERLU_OPTIONS
 string(REPLACE ";" "; " SUPERLU_OPTIONS_PRINT "${SUPERLU_OPTIONS}")
 message(STATUS "SUPERLU_OPTIONS: ${SUPERLU_OPTIONS_PRINT}")
 
-# Fix column permutations
+# Enable the METIS ordering without ParMETIS
 set(SUPERLU_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_metis.diff"
 )
 
 include(ExternalProject)

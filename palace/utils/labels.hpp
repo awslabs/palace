@@ -167,7 +167,6 @@ enum class SymbolicFactorization : char
 {
   DEFAULT,
   METIS,
-  PARMETIS,
   SCOTCH,
   PTSCOTCH,
   PORD,

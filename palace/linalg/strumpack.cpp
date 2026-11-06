@@ -55,9 +55,6 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
       // this->SetReorderingStrategy(strumpack::ReorderingStrategy::AND);
       break;
-    case SymbolicFactorization::PARMETIS:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
-      break;
     case SymbolicFactorization::SCOTCH:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
       break;

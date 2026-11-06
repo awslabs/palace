@@ -150,20 +150,6 @@ set(EXTERN_MUMPS_GIT_TAG
   "Git tag for external MUMPS build"
 )
 
-# ParMETIS
-set(EXTERN_PARMETIS_URL
-  "https://bitbucket.org/petsc/pkg-parmetis.git" CACHE STRING
-  "URL for external ParMETIS build"
-)
-set(EXTERN_PARMETIS_GIT_BRANCH
-  "master" CACHE STRING
-  "Git branch for external ParMETIS build"
-)
-set(EXTERN_PARMETIS_GIT_TAG
-  "v4.0.3-p11" CACHE STRING
-  "Git tag for external ParMETIS build"
-)
-
 # PETSc (for SLEPc)
 set(EXTERN_PETSC_URL
   "https://gitlab.com/petsc/petsc.git" CACHE STRING
@@ -190,6 +176,20 @@ set(EXTERN_SCALAPACK_GIT_BRANCH
 set(EXTERN_SCALAPACK_GIT_TAG
   "v2.2.3" CACHE STRING
   "Git tag for external ScaLAPACK build"
+)
+
+# Scotch (PT-Scotch)
+set(EXTERN_SCOTCH_URL
+  "https://gitlab.inria.fr/scotch/scotch.git" CACHE STRING
+  "URL for external Scotch build"
+)
+set(EXTERN_SCOTCH_GIT_BRANCH
+  "master" CACHE STRING
+  "Git branch for external Scotch build"
+)
+set(EXTERN_SCOTCH_GIT_TAG
+  "v7.0.18" CACHE STRING
+  "Git tag for external Scotch build"
 )
 
 # SLEPc

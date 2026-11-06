@@ -5,7 +5,9 @@
 
 #include "geodata_impl.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <random>
 #include <unordered_set>
@@ -23,6 +25,226 @@ using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 {
   return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
+}
+
+std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b)
+{
+  const std::uint32_t M = 1u << (b - 1);
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    const std::uint32_t P = Q - 1;
+    for (int i = 0; i < dim; i++)
+    {
+      if (X[i] & Q)
+      {
+        X[0] ^= P;
+      }
+      else
+      {
+        const std::uint32_t t = (X[0] ^ X[i]) & P;
+        X[0] ^= t;
+        X[i] ^= t;
+      }
+    }
+  }
+  for (int i = 1; i < dim; i++)
+  {
+    X[i] ^= X[i - 1];
+  }
+  std::uint32_t t = 0;
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    if (X[dim - 1] & Q)
+    {
+      t ^= Q - 1;
+    }
+  }
+  for (int i = 0; i < dim; i++)
+  {
+    X[i] ^= t;
+  }
+  std::uint64_t key = 0;
+  for (int j = b - 1; j >= 0; j--)
+  {
+    for (int i = 0; i < dim; i++)
+    {
+      key = (key << 1) | ((X[i] >> j) & 1u);
+    }
+  }
+  return key;
+}
+
+namespace
+{
+
+// Weights of a part to its neighbor parts or nodes, as (index, weight).
+using WeightList = std::vector<std::pair<int, int>>;
+
+int GetWeight(const WeightList &W, int k)
+{
+  const auto it = std::ranges::lower_bound(W, k, {}, &std::pair<int, int>::first);
+  return (it != W.end() && it->first == k) ? it->second : 0;
+}
+
+void AddWeight(WeightList &W, int k, int w)
+{
+  const auto it = std::ranges::lower_bound(W, k, {}, &std::pair<int, int>::first);
+  if (it == W.end() || it->first != k)
+  {
+    W.emplace(it, k, w);
+  }
+  else if ((it->second += w) == 0)
+  {
+    W.erase(it);
+  }
+}
+
+std::vector<int> NumberPartsFromOrder(const std::vector<int> &order,
+                                      const std::vector<WeightList> &adj,
+                                      const std::vector<std::vector<int>> &node_ranks)
+{
+  const int n = static_cast<int>(order.size()), nn = static_cast<int>(node_ranks.size());
+  std::vector<int> node(n);  // Contiguous blocks of the order
+  for (int k = 0, i = 0; k < nn; k++)
+  {
+    for (std::size_t j = 0; j < node_ranks[k].size(); j++)
+    {
+      node[order[i++]] = k;
+    }
+  }
+  std::vector<WeightList> W(n);               // Weights to each node, sorted by node
+  std::vector<std::vector<int>> members(nn);  // Parts on each node, ascending
+  for (int p = 0; p < n; p++)
+  {
+    for (const auto &[q, w] : adj[p])
+    {
+      AddWeight(W[p], node[q], w);
+    }
+    members[node[p]].push_back(p);
+  }
+
+  // Swapping p on node a with q on node b reduces the weight between nodes by
+  // W[p][b] - W[p][a] + W[q][a] - W[q][b] - 2 w(p, q). For each p, swap with the first q
+  // of largest positive gain, by ascending b and q, among the nodes b with W[p][b] >
+  // W[p][a]. A swap with a positive gain passes this test for p or for q, so no swap
+  // reduces the weight once a pass makes none.
+  constexpr int max_passes = 20;
+  std::vector<int> wp(n, 0);  // w(p, q) for the current p
+  auto Move = [&members](int x, int from, int to)
+  {
+    auto &f = members[from], &t = members[to];
+    f.erase(std::ranges::lower_bound(f, x));
+    t.insert(std::ranges::lower_bound(t, x), x);
+  };
+  for (int pass = 0; pass < max_passes && nn > 1; pass++)
+  {
+    bool swapped = false;
+    for (int p = 0; p < n; p++)
+    {
+      const int a = node[p], wa = GetWeight(W[p], a);
+      for (const auto &[q, w] : adj[p])
+      {
+        wp[q] += w;
+      }
+      int best = 0, bq = -1;
+      for (const auto &[b, wb] : W[p])
+      {
+        if (b == a || wb <= wa)
+        {
+          continue;
+        }
+        for (int q : members[b])
+        {
+          const int g = wb - wa + GetWeight(W[q], a) - GetWeight(W[q], b) - 2 * wp[q];
+          if (g > best)
+          {
+            best = g;
+            bq = q;
+          }
+        }
+      }
+      for (const auto &[q, w] : adj[p])
+      {
+        wp[q] = 0;
+      }
+      if (bq < 0)
+      {
+        continue;
+      }
+      const int b = node[bq];
+      for (const auto &[r, w] : adj[p])
+      {
+        AddWeight(W[r], a, -w);
+        AddWeight(W[r], b, w);
+      }
+      for (const auto &[r, w] : adj[bq])
+      {
+        AddWeight(W[r], b, -w);
+        AddWeight(W[r], a, w);
+      }
+      node[p] = b;
+      node[bq] = a;
+      Move(p, a, b);
+      Move(bq, b, a);
+      swapped = true;
+    }
+    if (!swapped)
+    {
+      break;
+    }
+  }
+
+  std::vector<int> pos(n), new_part(n);
+  for (int i = 0; i < n; i++)
+  {
+    pos[order[i]] = i;
+  }
+  for (int k = 0; k < nn; k++)
+  {
+    std::ranges::sort(members[k], {}, [&pos](int p) { return pos[p]; });
+    for (std::size_t j = 0; j < members[k].size(); j++)
+    {
+      new_part[members[k][j]] = node_ranks[k][j];
+    }
+  }
+  return new_part;
+}
+
+}  // namespace
+
+std::vector<int> NumberPartsOnNodes(const std::vector<std::vector<int>> &orders,
+                                    const std::vector<std::array<int, 3>> &pairs,
+                                    const std::vector<int> &rank_node)
+{
+  const int n = static_cast<int>(rank_node.size());
+  std::vector<std::vector<int>> node_ranks(1 + std::ranges::max(rank_node));
+  for (int r = 0; r < n; r++)
+  {
+    node_ranks[rank_node[r]].push_back(r);
+  }
+  std::vector<WeightList> adj(n);
+  for (const auto &[p, q, w] : pairs)
+  {
+    adj[p].emplace_back(q, w);
+    adj[q].emplace_back(p, w);
+  }
+  std::vector<int> best_part;
+  std::int64_t best_cut = 0;
+  for (const auto &order : orders)
+  {
+    auto new_part = NumberPartsFromOrder(order, adj, node_ranks);
+    std::int64_t cut = 0;
+    for (const auto &[p, q, w] : pairs)
+    {
+      cut += (rank_node[new_part[p]] != rank_node[new_part[q]]) ? w : 0;
+    }
+    if (best_part.empty() || cut < best_cut)
+    {
+      best_part = std::move(new_part);
+      best_cut = cut;
+    }
+  }
+  return best_part;
 }
 
 // Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and

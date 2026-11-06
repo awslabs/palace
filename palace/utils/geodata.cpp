@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -18,6 +20,8 @@
 #include <unordered_set>
 #include <utility>
 #include <Eigen/Dense>
+#include <mpi.h>
+#include <ptscotch.h>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
@@ -2677,6 +2681,278 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
+// Partition the elements of a nonconforming mesh with PT-Scotch, on the element adjacency
+// graph through all conforming and nonconforming faces. MFEM's default partition splits the
+// sequence of refinement tree leaves into equal chunks, which fragments the subdomains over
+// the AMR iterations. The parts are numbered so that the ranks of a node hold neighboring
+// subdomains (see NumberPartsOnNodes). Returns false if PT-Scotch fails or would leave a
+// process without elements.
+bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
+                                           mfem::Array<int> &partitioning)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const int ne = mesh.GetNE(), dim = mesh.SpaceDimension();
+  std::vector<SCOTCH_Num> vtxdist(size + 1, 0);
+  {
+    long long ne_ll = ne;
+    std::vector<long long> counts(size);
+    MPI_Allgather(&ne_ll, 1, MPI_LONG_LONG, counts.data(), 1, MPI_LONG_LONG, comm);
+    for (int i = 0; i < size; i++)
+    {
+      vtxdist[i + 1] = vtxdist[i] + static_cast<SCOTCH_Num>(counts[i]);
+    }
+    if (std::ranges::min(counts) == 0)
+    {
+      return false;  // Leave the empty processes to MFEM's partition
+    }
+  }
+
+  // Calls f(e1, e2, v2) for each face between elements e1 and e2 != e1, where v2 is
+  // value(e2) exchanged in a piecewise constant field, and e2 < 0 for a face neighbor.
+  mfem::L2_FECollection fec(0, mesh.Dimension());
+  mfem::ParFiniteElementSpace fes(&mesh, &fec);
+  mfem::ParGridFunction field(&fes);
+  mfem::Array<int> vdofs;
+  auto ForEachFace = [&](auto &&value, auto &&f)
+  {
+    double *h_field = field.HostWrite();
+    for (int e = 0; e < ne; e++)
+    {
+      fes.GetElementVDofs(e, vdofs);
+      h_field[vdofs[0]] = static_cast<double>(value(e));
+    }
+    field.ExchangeFaceNbrData();
+    const double *nbr = field.FaceNbrData().HostRead();
+    for (int i = 0; i < mesh.GetNumFacesWithGhost(); i++)
+    {
+      const auto info = mesh.GetFaceInformation(i);
+      const int e1 = info.element[0].index, e2 = info.element[1].index;
+      if (info.IsLocal() && e1 != e2)  // A periodic face can connect an element to itself
+      {
+        f(e1, e2, static_cast<double>(value(e2)));
+      }
+      else if (info.IsShared())
+      {
+        fes.GetFaceNbrElementVDofs(e2, vdofs);
+        f(e1, -1, nbr[vdofs[0]]);
+      }
+    }
+  };
+  std::vector<std::vector<SCOTCH_Num>> adj(ne);
+  ForEachFace([&](int e) { return vtxdist[rank] + e; },
+              [&](int e1, int e2, double g2)
+              {
+                adj[e1].push_back(static_cast<SCOTCH_Num>(g2));
+                if (e2 >= 0)
+                {
+                  adj[e2].push_back(vtxdist[rank] + e1);
+                }
+              });
+  std::vector<SCOTCH_Num> deg(ne), adjncy;
+  for (int e = 0; e < ne; e++)
+  {
+    std::ranges::sort(adj[e]);
+    const auto dup = std::ranges::unique(adj[e]);
+    adj[e].erase(dup.begin(), dup.end());
+    deg[e] = static_cast<SCOTCH_Num>(adj[e].size());
+    adjncy.insert(adjncy.end(), adj[e].begin(), adj[e].end());
+  }
+  const auto nedge = static_cast<SCOTCH_Num>(adjncy.size());
+
+  // PT-Scotch's cost grows with the number of processes, as its band graphs connect all
+  // pairs of processes. So only the first process of each group of consecutive ranks
+  // partitions, with the rows of its group, a contiguous range of the global numbering:
+  // about 100000 elements per process and at least 8 processes. SPEED and SAFETY skip the
+  // second bipartition attempt and the diffusion. Whatever its build options, the context
+  // runs PT-Scotch on one thread per process, with deterministic communication and a fixed
+  // seed.
+  const int nproc = static_cast<int>(
+      std::clamp<SCOTCH_Num>((vtxdist[size] + 99999) / 100000, std::min(size, 8), size));
+  MPI_Comm group_comm, part_comm;
+  MPI_Comm_split(comm, static_cast<int>(static_cast<long long>(rank) * nproc / size), rank,
+                 &group_comm);
+  const int group_rank = Mpi::Rank(group_comm), group_size = Mpi::Size(group_comm);
+  const bool leader = (group_rank == 0);
+  MPI_Comm_split(comm, leader ? 0 : MPI_UNDEFINED, rank, &part_comm);
+  std::vector<int> group_counts(2 * group_size), vcounts(group_size), ecounts(group_size),
+      vdispls(group_size + 1, 0), edispls(group_size + 1, 0);
+  {
+    const int loc[2] = {ne, static_cast<int>(nedge)};
+    MPI_Gather(loc, 2, MPI_INT, group_counts.data(), 2, MPI_INT, 0, group_comm);
+  }
+  for (int i = 0; i < group_size; i++)
+  {
+    vcounts[i] = group_counts[2 * i];
+    ecounts[i] = group_counts[2 * i + 1];
+    vdispls[i + 1] = vdispls[i] + vcounts[i];
+    edispls[i + 1] = edispls[i] + ecounts[i];
+  }
+  const SCOTCH_Num gne = leader ? vdispls[group_size] : 0,
+                   gnedge = leader ? edispls[group_size] : 0;
+  std::vector<SCOTCH_Num> gxadj(gne + 1, 0), gadjncy(gnedge + 1), gpart(gne + 1);
+  const MPI_Datatype num_type = mpi::DataType<SCOTCH_Num>();
+  MPI_Gatherv(deg.data(), ne, num_type, gxadj.data() + 1, vcounts.data(), vdispls.data(),
+              num_type, 0, group_comm);
+  MPI_Gatherv(adjncy.data(), static_cast<int>(nedge), num_type, gadjncy.data(),
+              ecounts.data(), edispls.data(), num_type, 0, group_comm);
+  std::partial_sum(gxadj.begin(), gxadj.end(), gxadj.begin());
+  int ok = 1;
+  if (leader)
+  {
+    SCOTCH_Context context;
+    SCOTCH_Dgraph graph, context_graph;
+    SCOTCH_Strat strat;
+    SCOTCH_contextInit(&context);
+    SCOTCH_dgraphInit(&graph, part_comm);
+    SCOTCH_stratInit(&strat);
+    ok = (SCOTCH_contextOptionSetNum(&context, SCOTCH_OPTIONNUMDETERMINISTIC, 1) == 0 &&
+          SCOTCH_contextRandomClone(&context) == 0 &&
+          SCOTCH_contextThreadSpawn(&context, 1, nullptr) == 0);
+    if (ok)
+    {
+      SCOTCH_contextRandomSeed(&context, 1);
+    }
+    Mpi::GlobalMin(1, &ok, part_comm);
+    ok = ok &&
+         (SCOTCH_dgraphBuild(&graph, 0, gne, gne, gxadj.data(), nullptr, nullptr, nullptr,
+                             gnedge, gnedge, gadjncy.data(), nullptr, nullptr) == 0);
+    ok = ok && (SCOTCH_contextBindDgraph(&context, &graph, &context_graph) == 0);
+    ok = ok && (SCOTCH_stratDgraphMapBuild(&strat, SCOTCH_STRATSPEED | SCOTCH_STRATSAFETY,
+                                           Mpi::Size(part_comm), size, 0.02) == 0);
+    ok = ok && (SCOTCH_dgraphPart(&context_graph, size, &strat, gpart.data()) == 0);
+    SCOTCH_stratExit(&strat);
+    SCOTCH_dgraphExit(&graph);
+    SCOTCH_contextExit(&context);
+    MPI_Comm_free(&part_comm);
+  }
+  std::vector<SCOTCH_Num> part(ne);
+  MPI_Scatterv(gpart.data(), vcounts.data(), vdispls.data(), num_type, part.data(), ne,
+               num_type, 0, group_comm);
+  MPI_Comm_free(&group_comm);
+  Mpi::GlobalMin(1, &ok, comm);
+  if (!ok)
+  {
+    return false;
+  }
+
+  // Centroid, number of elements, and mean global element index of each part.
+  std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0),
+      gidx(size, 0.0);
+  mfem::Vector center;
+  for (int e = 0; e < ne; e++)
+  {
+    mesh.GetElementCenter(e, center);  // From the nodes, correct on periodic meshes
+    for (int d = 0; d < dim; d++)
+    {
+      xc[part[e] * dim + d] += center(d);
+    }
+    cnt[part[e]] += 1.0;
+    gidx[part[e]] += static_cast<double>(vtxdist[rank] + e);
+  }
+  Mpi::GlobalSum(static_cast<int>(xc.size()), xc.data(), comm);
+  Mpi::GlobalSum(size, cnt.data(), comm);
+  Mpi::GlobalSum(size, gidx.data(), comm);
+  if (std::find(cnt.begin(), cnt.end(), 0.0) != cnt.end())
+  {
+    return false;  // Do not leave a process without elements
+  }
+
+  // Gather on the root the faces between the parts, with weight 2 for a local face and 1 on
+  // each side of a shared face, and the node of each rank, labeled by its lowest rank.
+  std::map<std::pair<int, int>, int> faces;
+  ForEachFace([&](int e) { return part[e]; },
+              [&](int e1, int e2, double p2)
+              {
+                const int p = static_cast<int>(part[e1]), q = static_cast<int>(p2);
+                if (p != q)
+                {
+                  faces[{std::min(p, q), std::max(p, q)}] += (e2 >= 0) ? 2 : 1;
+                }
+              });
+  static_assert(sizeof(std::array<int, 3>) == 3 * sizeof(int));
+  std::vector<std::array<int, 3>> loc, pairs;
+  for (const auto &[pq, w] : faces)
+  {
+    loc.push_back({pq.first, pq.second, w});
+  }
+  std::vector<int> counts(size), displs(size + 1, 0);
+  const int nloc = 3 * static_cast<int>(loc.size());
+  MPI_Gather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+  for (int i = 0; i < size; i++)
+  {
+    displs[i + 1] = displs[i] + counts[i];
+  }
+  pairs.resize(rank == 0 ? displs[size] / 3 : 0);  // Repeated pairs add up their weights
+  MPI_Gatherv(loc.data(), nloc, MPI_INT, pairs.data(), counts.data(), displs.data(),
+              MPI_INT, 0, comm);
+  std::vector<int> rank_node(size);
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node_comm);
+    int node = rank;
+    Mpi::Broadcast(1, &node, 0, node_comm);
+    MPI_Comm_free(&node_comm);
+    MPI_Gather(&node, 1, MPI_INT, rank_node.data(), 1, MPI_INT, 0, comm);
+  }
+  std::vector<int> new_part(size);
+  if (rank == 0)
+  {
+    // Number the parts so that the ranks of a node hold neighboring subdomains. Start from
+    // three orders of the parts: along a Hilbert curve through their centroids, with
+    // per-axis and with isotropic scaling, and by the mean current global index of their
+    // elements.
+    std::array<double, 3> lo, hi;
+    lo.fill(mfem::infinity());
+    hi.fill(-mfem::infinity());
+    for (int p = 0; p < size; p++)
+    {
+      for (int d = 0; d < dim; d++)
+      {
+        xc[p * dim + d] /= cnt[p];
+        lo[d] = std::min(lo[d], xc[p * dim + d]);
+        hi[d] = std::max(hi[d], xc[p * dim + d]);
+      }
+      gidx[p] /= cnt[p];
+    }
+    double len_max = 0.0;
+    for (int d = 0; d < dim; d++)
+    {
+      len_max = std::max(len_max, hi[d] - lo[d]);
+    }
+    const int b = (dim == 3) ? 21 : 31;
+    const double nb = std::ldexp(1.0, b);
+    std::vector<std::vector<int>> orders(3, std::vector<int>(size));
+    std::vector<std::uint64_t> key(size, 0);
+    for (int s = 0; s < 2; s++)
+    {
+      for (int p = 0; p < size; p++)
+      {
+        std::array<std::uint32_t, 3> X = {0, 0, 0};
+        for (int d = 0; d < dim; d++)
+        {
+          const double len = (s == 0) ? hi[d] - lo[d] : len_max;
+          const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
+          X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+        }
+        key[p] = HilbertIndex(X, dim, b);
+      }
+      std::iota(orders[s].begin(), orders[s].end(), 0);
+      std::ranges::stable_sort(orders[s], {}, [&key](int p) { return key[p]; });
+    }
+    std::iota(orders[2].begin(), orders[2].end(), 0);
+    std::ranges::stable_sort(orders[2], {}, [&gidx](int p) { return gidx[p]; });
+    new_part = NumberPartsOnNodes(orders, pairs, rank_node);
+  }
+  Mpi::Broadcast(size, new_part.data(), 0, comm);  // Same numbering on every process
+  partitioning.SetSize(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    partitioning[e] = new_part[part[e]];
+  }
+  return true;
+}
+
 }  // namespace
 
 void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
@@ -2788,7 +3064,17 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   {
     if (mesh->Nonconforming())
     {
-      mesh->Rebalance();
+      mfem::Array<int> partitioning;
+      if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
+      {
+        mesh->Rebalance(partitioning);
+      }
+      else
+      {
+        Mpi::Warning(comm, "Could not partition the nonconforming mesh with PT-Scotch, "
+                           "rebalancing it with MFEM's default partition!\n");
+        mesh->Rebalance();
+      }
     }
     else
     {

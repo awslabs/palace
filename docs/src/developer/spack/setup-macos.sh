@@ -8,8 +8,10 @@ set -euo pipefail
 tools=(
   autoconf
   automake
+  bison
   cmake
   diffutils
+  flex
   libtool
   m4
   perl

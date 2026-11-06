@@ -1,0 +1,146 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c6952d4..1b76841 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -34,6 +34,9 @@ option(TPL_BLAS_LIBRARIES "List of absolute paths to blas libraries [].")
+ option(TPL_ENABLE_PARMETISLIB   "Enable the ParMETIS library" ON)
+ option(TPL_PARMETIS_LIBRARIES "List of absolute paths to ParMETIS link libraries [].")
+ option(TPL_PARMETIS_INCLUDE_DIRS "List of absolute paths to ParMETIS include directories [].")
++#-- METIS
++option(TPL_ENABLE_METISLIB   "Enable the METIS library" OFF)
++option(TPL_METIS_LIBRARIES "List of absolute paths to METIS link libraries [].")
+ #-- COLAMD
+ option(TPL_ENABLE_COLAMDLIB   "Enable the COLAMD library" OFF)
+ option(TPL_COLAMD_LIBRARIES "List of absolute paths to COLAMD link libraries [].")
+@@ -474,6 +477,23 @@ if(PARMETIS_FOUND)
+   set(HAVE_PARMETIS TRUE)
+ endif()
+ 
++#--------------------- METIS ---------------------
++if (HAVE_PARMETIS)
++  set(HAVE_METIS TRUE)
++elseif (TPL_ENABLE_METISLIB)
++  if (NOT TPL_METIS_LIBRARIES)
++    message(FATAL_ERROR "TPL_METIS_LIBRARIES option should be set for METIS support to be enabled.")
++  endif()
++
++  message("-- Enabled support for METIS.")
++  set(HAVE_METIS TRUE)
++
++  set(METIS_LIB ${TPL_METIS_LIBRARIES})
++  # fix up METIS library names
++  string (REPLACE ";" " " METIS_LIB_STR "${METIS_LIB}")
++  set(METIS_LIB_EXPORT ${METIS_LIB_STR})
++endif()
++
+ #--------------------- COLAMD ---------------------
+ if (TPL_ENABLE_COLAMD)   ## want to use colamd
+   if (NOT TPL_COLAMD_LIBRARIES)
+diff --git a/SRC/CMakeLists.txt b/SRC/CMakeLists.txt
+index 9483a61..6688ebc 100755
+--- a/SRC/CMakeLists.txt
++++ b/SRC/CMakeLists.txt
+@@ -390,10 +390,10 @@ endif()
+ 
+ if (TPL_ENABLE_NVSHMEM)
+ set(superlu_dist_libs ${MPI_C_LIBRARIES} ${MPI_CXX_LIBRARIES} ${BLAS_LIB} ${LAPACK_LIB}
+-    ${PARMETIS_LIB} ${COLAMD_LIB} ${COMBBLAS_LIB} ${MAGMA_LIB} ${CUDA_LIB} ${HIP_LIB} ${NVSHMEM_LIB}) 
++    ${PARMETIS_LIB} ${METIS_LIB} ${COLAMD_LIB} ${COMBBLAS_LIB} ${MAGMA_LIB} ${CUDA_LIB} ${HIP_LIB} ${NVSHMEM_LIB}) 
+ else()
+ set(superlu_dist_libs ${MPI_C_LIBRARIES} ${MPI_CXX_LIBRARIES} ${BLAS_LIB} ${LAPACK_LIB}
+-    ${PARMETIS_LIB} ${COLAMD_LIB} ${COMBBLAS_LIB} ${MAGMA_LIB} ${CUDA_LIB} ${HIP_LIB})
++    ${PARMETIS_LIB} ${METIS_LIB} ${COLAMD_LIB} ${COMBBLAS_LIB} ${MAGMA_LIB} ${CUDA_LIB} ${HIP_LIB})
+ endif()
+ 
+ if (NOT MSVC)
+diff --git a/SRC/prec-independent/get_perm_c.c b/SRC/prec-independent/get_perm_c.c
+index c6c853f..b485980 100755
+--- a/SRC/prec-independent/get_perm_c.c
++++ b/SRC/prec-independent/get_perm_c.c
+@@ -38,7 +38,7 @@ get_metis_dist(
+ 	  int *perm_c    /* out - the column permutation vector. */
+ 	  )
+ {
+-#ifdef HAVE_PARMETIS
++#ifdef HAVE_METIS
+     int_t i, nm;
+     int_t *perm, *iperm;
+ 
+@@ -113,7 +113,7 @@ get_metis_dist(
+ #if ( DEBUGlevel>=1 )
+     CHECK_MALLOC(0, "Exit get_metis_dist()");
+ #endif
+-#endif /* HAVE_PARMETIS */
++#endif /* HAVE_METIS */
+     return;
+ } /* end get_metis_dist */
+ 
+@@ -532,7 +532,7 @@ get_perm_c_dist(int pnum, int ispec, SuperMatrix *A, int *perm_c)
+ 	      printf(".. Use approximate minimum degree column ordering.\n");
+ #endif
+ 	      return;
+-#ifdef HAVE_PARMETIS
++#ifdef HAVE_METIS
+         case METIS_AT_PLUS_A: /* METIS ordering on A'+A */
+ 	      if ( m != n ) ABORT("Matrix is not square");
+ 	      at_plus_a_dist(n, Astore->nnz, Astore->colptr, Astore->rowind,
+@@ -550,7 +550,7 @@ get_perm_c_dist(int pnum, int ispec, SuperMatrix *A, int *perm_c)
+ 	      if ( !pnum ) printf(".. Use METIS ordering on A'+A\n");
+ #endif
+ 	      return;
+-#endif /* matching ifdef HAVE_PARMETIS */
++#endif /* matching ifdef HAVE_METIS */
+ 
+         default:
+ 	      ABORT("Invalid ISPEC");
+diff --git a/SRC/prec-independent/get_perm_c_batch.c b/SRC/prec-independent/get_perm_c_batch.c
+index 948e87c..58dd650 100755
+--- a/SRC/prec-independent/get_perm_c_batch.c
++++ b/SRC/prec-independent/get_perm_c_batch.c
+@@ -123,7 +123,7 @@ get_perm_c_batch(
+ 		get_colamd_dist(m, n, Astore->nnz, Astore->colptr, Astore->rowind,
+ 				perm_c);
+ 		break;
+-#ifdef HAVE_PARMETIS
++#ifdef HAVE_METIS
+             case METIS_AT_PLUS_A: /* METIS ordering on A'+A */
+ 		if ( m != n ) ABORT("Matrix is not square");
+ 		at_plus_a_dist(n, Astore->nnz, Astore->colptr, Astore->rowind,
+diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
+index b88addd..5a6a5be 100755
+--- a/SRC/prec-independent/util.c
++++ b/SRC/prec-independent/util.c
+@@ -210,7 +210,7 @@ void set_default_options_dist(superlu_dist_options_t *options)
+     options->Fact = DOFACT;
+     options->Equil = YES;
+     options->ParSymbFact = NO;
+-#ifdef HAVE_PARMETIS
++#ifdef HAVE_METIS
+     options->ColPerm = METIS_AT_PLUS_A;
+ #else
+     options->ColPerm = MMD_AT_PLUS_A;
+diff --git a/SRC/superlu_dist_config.h.in b/SRC/superlu_dist_config.h.in
+index 1e2040f..3f1c189 100644
+--- a/SRC/superlu_dist_config.h.in
++++ b/SRC/superlu_dist_config.h.in
+@@ -12,6 +12,9 @@
+ /* Enable parmetis */
+ #cmakedefine HAVE_PARMETIS @HAVE_PARMETIS@
+ 
++/* Enable metis */
++#cmakedefine HAVE_METIS @HAVE_METIS@
++
+ /* Enable colamd */
+ #cmakedefine HAVE_COLAMD @HAVE_COLAMD@
+ 
+diff --git a/superlu_dist.pc.in b/superlu_dist.pc.in
+index 51f2c91..93d7efb 100644
+--- a/superlu_dist.pc.in
++++ b/superlu_dist.pc.in
+@@ -8,5 +8,5 @@ Version: @PROJECT_VERSION@
+ URL: https://portal.nersc.gov/project/sparse/superlu/
+ 
+ Libs: -L${libdir} -lsuperlu_dist
+-Libs.private: @BLAS_LIB@ @LAPACK_LIB@ @PARMETIS_LIB@ @COLAMD_LIB@ @COMBBLAS_LIB@ @HIP_LIB_EXPORT@ -lm
++Libs.private: @BLAS_LIB@ @LAPACK_LIB@ @PARMETIS_LIB@ @METIS_LIB_EXPORT@ @COLAMD_LIB@ @COMBBLAS_LIB@ @HIP_LIB_EXPORT@ -lm
+ Cflags: -I${includedir}

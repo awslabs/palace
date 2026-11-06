@@ -42,9 +42,6 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, MatrixSymmetry sym, SymbolicFactorizatio
     case SymbolicFactorization::METIS:
       SetReorderingStrategy(mfem::MUMPSSolver::METIS);
       break;
-    case SymbolicFactorization::PARMETIS:
-      SetReorderingStrategy(mfem::MUMPSSolver::PARMETIS);
-      break;
     case SymbolicFactorization::SCOTCH:
       SetReorderingStrategy(mfem::MUMPSSolver::SCOTCH);
       break;
