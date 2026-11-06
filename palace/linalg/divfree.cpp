@@ -11,7 +11,9 @@
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/solver.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/timer.hpp"
 
@@ -39,6 +41,100 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
   return std::make_unique<ComplexParOperator>(std::move(a), nullptr, fespace);
 }
 
+// Apply a real operator, or its transpose, to a vector or to both parts of a complex
+// vector.
+void Apply(const Operator &A, const Vector &x, Vector &y)
+{
+  A.Mult(x, y);
+}
+
+void Apply(const Operator &A, const ComplexVector &x, ComplexVector &y)
+{
+  A.Mult(x.Real(), y.Real());
+  A.Mult(x.Imag(), y.Imag());
+}
+
+void AddApply(const Operator &A, const Vector &x, Vector &y, double a)
+{
+  A.AddMult(x, y, a);
+}
+
+void AddApply(const Operator &A, const ComplexVector &x, ComplexVector &y, double a)
+{
+  A.AddMult(x.Real(), y.Real(), a);
+  A.AddMult(x.Imag(), y.Imag(), a);
+}
+
+void ApplyTranspose(const Operator &A, const Vector &x, Vector &y)
+{
+  A.MultTranspose(x, y);
+}
+
+void ApplyTranspose(const Operator &A, const ComplexVector &x, ComplexVector &y)
+{
+  A.MultTranspose(x.Real(), y.Real());
+  A.MultTranspose(x.Imag(), y.Imag());
+}
+
+// The operator Gᵀ B G on the potentials, with identity rows and columns for the essential
+// true DOFs.
+template <OperatorType OperType>
+class GradientOperator : public OperType
+{
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+
+private:
+  const OperType &B;
+  const Operator &Grad;
+  const mfem::Array<int> *dbc_tdof_list;
+  mutable VecType x_free, u, Bu;
+
+public:
+  GradientOperator(const OperType &B, const Operator &Grad,
+                   const mfem::Array<int> *dbc_tdof_list)
+    : OperType(Grad.Width()), B(B), Grad(Grad), dbc_tdof_list(dbc_tdof_list),
+      x_free(Grad.Width()), u(Grad.Height()), Bu(Grad.Height())
+  {
+    x_free.UseDevice(true);
+    u.UseDevice(true);
+    Bu.UseDevice(true);
+  }
+
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    x_free = x;
+    if (dbc_tdof_list)
+    {
+      linalg::SetSubVector(x_free, *dbc_tdof_list, 0.0);
+    }
+    Apply(Grad, x_free, u);
+    B.Mult(u, Bu);
+    ApplyTranspose(Grad, Bu, y);
+    if (dbc_tdof_list)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, x);
+    }
+  }
+};
+
+// A linear solver as a preconditioner.
+template <OperatorType OperType>
+class KspPreconditioner : public Solver<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+
+private:
+  const BaseKspSolver<OperType> &ksp;
+
+public:
+  KspPreconditioner(const BaseKspSolver<OperType> &ksp) : ksp(ksp) {}
+
+  void SetOperator(const OperType &) override {}
+
+  void Mult(const VecType &x, VecType &y) const override { ksp.Mult(x, y); }
+};
+
 }  // namespace
 
 template <typename VecType>
@@ -49,6 +145,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
     int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
+  comm = nd_fespace.GetComm();
 
   // If no boundaries on the mesh have been marked, add a single degree of freedom
   // constraint so the system for the projection is not singular. This amounts to enforcing
@@ -193,6 +290,41 @@ void DivFreeSolver<VecType>::Mult(VecType &y, double tol) const
   ksp->SetRelTol(tol);
   Mult(y);
   ksp->SetRelTol(tol0);
+}
+
+template <typename VecType>
+void DivFreeSolver<VecType>::Mult(const OperType &B, VecType &y) const
+{
+  BlockTimer bt(Timer::DIV_FREE);
+
+  // Solve Gᵀ B G ψ = Gᵀ B y with GMRES, preconditioned with the solver for Gᵀ M G, and
+  // subtract the gradient of ψ.
+  VecType By(y.Size());
+  By.UseDevice(true);
+  B.Mult(y, By);
+  ApplyTranspose(*Grad, By, rhs);
+  if (bdr_tdof_list_M)
+  {
+    linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
+  }
+  GradientOperator<OperType> A(B, *Grad, bdr_tdof_list_M);
+  KspPreconditioner<OperType> pc(*ksp);
+  GmresSolver<OperType> gmres(comm, 0);
+  gmres.SetOperator(A);
+  gmres.SetPreconditioner(pc);
+  gmres.SetRelTol(1.0e-12);
+  gmres.SetMaxIter(100);
+  gmres.SetRestartDim(100);
+  psi = 0.0;
+  gmres.Mult(rhs, psi);
+  if (!gmres.GetConverged())
+  {
+    Mpi::Warning(comm,
+                 "Divergence-free correction did not converge in {:d} iterations "
+                 "(relative residual {:.3e})!\n",
+                 gmres.GetNumIterations(), gmres.GetFinalRes() / gmres.GetInitialRes());
+  }
+  AddApply(*Grad, psi, y, -1.0);
 }
 
 template class DivFreeSolver<Vector>;

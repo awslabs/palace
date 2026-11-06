@@ -168,6 +168,16 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
   Concretize(j_electrostatic, "Save", electrostatic.n_post);
 }
 
+void ConcretizeSensitivity(const config::SensitivityData &sensitivity, json &j_sensitivity)
+{
+  Concretize(j_sensitivity, "MaterialProperties", sensitivity.material_properties);
+  Concretize(j_sensitivity, "LumpedPorts", sensitivity.lumped_ports);
+  if (sensitivity.shape)
+  {
+    Concretize(j_sensitivity["Shape"], "BoundaryTags", sensitivity.shape->boundary_tags);
+  }
+}
+
 void ConcretizeMagnetostatic(const config::MagnetostaticSolverData &magnetostatic,
                              json &j_magnetostatic)
 {
@@ -561,6 +571,11 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
   if (config.contains("Boundaries"))
   {
     ConcretizeBoundaries(iodata.boundaries, config["Boundaries"]);
+  }
+
+  if (config.contains("Sensitivity"))
+  {
+    ConcretizeSensitivity(iodata.sensitivity, config["Sensitivity"]);
   }
 
   return config;

@@ -3,13 +3,19 @@
 
 #include "eigensolver.hpp"
 
+#include <algorithm>
+#include <array>
 #include <complex>
+#include <map>
 #include <numbers>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -22,8 +28,10 @@
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/sensitivityexport.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -31,6 +39,45 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// The properties of a material which the eigenmodes depend on.
+std::vector<MaterialProperty> GetMaterialProperties(const config::MaterialData &material)
+{
+  auto IsNonzero = [](const auto &tensor)
+  { return std::ranges::any_of(tensor.s, [](double v) { return v != 0.0; }); };
+  std::vector<MaterialProperty> properties = {MaterialProperty::PERMITTIVITY};
+  if (IsNonzero(material.tandelta))
+  {
+    properties.push_back(MaterialProperty::LOSS_TANGENT);
+  }
+  if (IsNonzero(material.sigma))
+  {
+    properties.push_back(MaterialProperty::CONDUCTIVITY);
+  }
+  properties.push_back(MaterialProperty::PERMEABILITY);
+  if (material.lambda_L > 0.0)
+  {
+    properties.push_back(MaterialProperty::LONDON_DEPTH);
+  }
+  return properties;
+}
+
+// The unconjugated product xᵀ A x.
+std::complex<double> TransposeProduct(MPI_Comm comm, const ComplexOperator &A,
+                                      const ComplexVector &x, ComplexVector &y)
+{
+  A.Mult(x, y);
+  std::complex<double> dot = {
+      linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),
+      linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};
+  Mpi::GlobalSum(1, &dot, comm);
+  return dot;
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -509,6 +556,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       E.Get(eigenvectors[i].data(), E.Size(), false);
     }
   }
+  auto GetOmega = [&](int i)
+  {
+    // The linear EVP has eigenvalue μ = -λ² = ω², the quadratic one λ = iω.
+    return (!has_C && !has_A2) ? std::sqrt(eigenvalues[i]) : eigenvalues[i] / 1i;
+  };
+  if (!iodata.sensitivity.empty())
+  {
+    std::vector<std::complex<double>> omega(num_report);
+    for (int i = 0; i < num_report; i++)
+    {
+      omega[i] = GetOmega(i);
+    }
+    PostprocessSensitivities(space_op, *eigen, C.get(), *M, has_A2, divfree.get(), omega);
+  }
 
   if (stage_eigenvectors)
   {
@@ -535,19 +596,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigenvalues[i];
+    const std::complex<double> omega = GetOmega(i);
     double error_bkwd = errors_bkwd[i];
     double error_abs = errors_abs[i];
-    if (!has_C && !has_A2)
-    {
-      // Linear EVP has eigenvalue μ = -λ² = ω².
-      omega = std::sqrt(omega);
-    }
-    else
-    {
-      // Quadratic EVP solves for eigenvalue λ = iω.
-      omega /= 1i;
-    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
@@ -580,6 +631,224 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};
+}
+
+void EigenSolver::PostprocessSensitivities(
+    SpaceOperator &space_op, const EigenvalueSolver &eigen, const ComplexOperator *C,
+    const ComplexOperator &M, bool has_A2, const DivFreeSolver<ComplexVector> *divfree,
+    const std::vector<std::complex<double>> &omega) const
+{
+  // T(λ) = K + λ C + λ² M + A2(λ), with λ = iω, is complex symmetric, so its left
+  // eigenvectors are its right ones: a simple eigenvalue changes by
+  // dλ = -xᵀ ∂T x / xᵀ T'(λ) x, and no adjoint solve is needed.
+  const auto &sensitivity = iodata.sensitivity;
+  Mpi::Print("\nComputing the sensitivities of {:d} objective{}\n",
+             sensitivity.objectives.size(), (sensitivity.objectives.size() > 1) ? "s" : "");
+  SensitivityExport output(iodata, space_op.GetMesh());
+  const auto comm = space_op.GetComm();
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector x(size), y(size);
+  x.UseDevice(true);
+  y.UseDevice(true);
+
+  // The derivatives of ω of a mode: the real and imaginary parts of its gradient, and its
+  // derivatives with respect to relative changes of the properties of each material and of
+  // the elements (R, L, C) of each lumped port.
+  struct ModeDerivatives
+  {
+    std::array<Vector, 2> shape;
+    std::vector<std::vector<std::pair<MaterialProperty, std::complex<double>>>> materials;
+    std::map<int, std::array<std::optional<std::complex<double>>, 3>> ports;
+  };
+  std::map<int, ModeDerivatives> derivatives;
+  auto GetDerivatives = [&](int m) -> const ModeDerivatives &
+  {
+    if (auto it = derivatives.find(m); it != derivatives.end())
+    {
+      return it->second;
+    }
+    auto &dm = derivatives[m];
+    for (std::size_t k = 0; k < omega.size(); k++)
+    {
+      if (static_cast<int>(k) != m &&
+          std::abs(omega[k] - omega[m]) < 1.0e-6 * std::abs(omega[m]))
+      {
+        Mpi::Warning("Mode {:d} is degenerate, so its derivatives are not defined: the "
+                     "result is for its computed eigenvector!\n",
+                     m + 1);
+        break;
+      }
+    }
+    const std::complex<double> lambda = 1i * omega[m], lambda2 = lambda * lambda;
+    eigen.GetEigenvector(m, x);
+    if (divfree)
+    {
+      // The projection of the eigenvalue solve makes x divergence-free with respect to the
+      // permittivity, while the eigenvector satisfies Gᵀ (T(λ) - K) x = 0 with the losses:
+      // restore its irrotational part, to which the derivatives of the forms are sensitive.
+      std::vector<std::complex<double>> a = {1.0};
+      std::vector<const ComplexOperator *> ops = {&M};
+      if (C)
+      {
+        a.push_back(1.0 / lambda);
+        ops.push_back(C);
+      }
+      std::unique_ptr<ComplexOperator> A2;
+      if (has_A2)
+      {
+        A2 = space_op.GetExtraSystemMatrix(omega[m], Operator::DIAG_ZERO);
+        if (A2)
+        {
+          a.push_back(1.0 / lambda2);
+          ops.push_back(A2.get());
+        }
+      }
+      divfree->Mult(*BuildParSumOperator(a, ops), x);
+    }
+    std::complex<double> d = 2.0 * lambda * TransposeProduct(comm, M, x, y);
+    if (C)
+    {
+      d += TransposeProduct(comm, *C, x, y);
+    }
+    if (has_A2)
+    {
+      // Fourth-order central difference in λ of xᵀ A2(λ) x.
+      const double h = 1.0e-3 * std::abs(lambda);
+      auto A2 = [&](double t)
+      {
+        auto A = space_op.GetExtraSystemMatrix((lambda + t) / 1i, Operator::DIAG_ZERO);
+        return A ? TransposeProduct(comm, *A, x, y) : 0.0;
+      };
+      d += (8.0 * (A2(h) - A2(-h)) - (A2(2.0 * h) - A2(-2.0 * h))) / (12.0 * h);
+    }
+
+    // dω = -i dλ = c xᵀ ∂T x, with c = i / xᵀ T'(λ) x.
+    const std::complex<double> c = 1i / d;
+    auto Derivative = [&](const ComplexOperator *dT) -> std::complex<double>
+    { return dT ? c * TransposeProduct(comm, *dT, x, y) : 0.0; };
+    if (output.HasShape())
+    {
+      const auto dT = space_op.GetSystemShapeDerivative(1.0, lambda, lambda2, omega[m]);
+      Vector gr, gi;
+      GetComplexShapeGradient(*dT[0], *dT[1], x, gr, gi);
+      dm.shape[0] = gr;
+      dm.shape[0] *= c.real();
+      dm.shape[0].Add(-c.imag(), gi);
+      dm.shape[1] = gr;
+      dm.shape[1] *= c.imag();
+      dm.shape[1].Add(c.real(), gi);
+    }
+    if (sensitivity.material_properties)
+    {
+      for (const auto &material : iodata.domains.materials)
+      {
+        auto &dmat = dm.materials.emplace_back();
+        for (const auto property : GetMaterialProperties(material))
+        {
+          const auto dT = space_op.GetSystemMaterialDerivative(
+              property, material.attributes, 1.0, lambda, lambda2, omega[m]);
+          dmat.emplace_back(property, Derivative(dT.get()));
+        }
+      }
+    }
+    if (sensitivity.lumped_ports)
+    {
+      for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+      {
+        const auto dT = space_op.GetLumpedPortDerivatives(idx, 1.0, lambda, lambda2);
+        auto &dport = dm.ports[idx];
+        for (int e = 0; e < 3; e++)
+        {
+          if (dT[e])
+          {
+            dport[e] = Derivative(dT[e].get());
+          }
+        }
+      }
+    }
+    return dm;
+  };
+
+  const double GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                     (2.0 * std::numbers::pi);
+  constexpr std::array<const char *, 3> port_elements = {"R", "L", "C"};
+  for (const auto &[idx, data] : sensitivity.objectives)
+  {
+    // The derivative of f = Re{ω} / 2π or Q = |ω| / 2 |Im{ω}| is ar Re{dω} + ai Im{dω}.
+    const int m = data.mode - 1;
+    const auto w = omega[m];
+    nlohmann::json entry = {
+        {"Index", idx}, {"Type", ToString(data.type)}, {"Mode", data.mode}};
+    double ar, ai, scale;
+    if (data.type == SensitivityObjective::FREQUENCY)
+    {
+      entry["Value"] = w.real() * GHz;
+      entry["Unit"] = "GHz";
+      ar = 1.0;
+      ai = 0.0;
+      scale = GHz;
+    }
+    else
+    {
+      if (w.imag() == 0.0)
+      {
+        Mpi::Warning("Mode {:d} has no losses, so the quality factor of sensitivity "
+                     "objective {:d} is not defined!\n",
+                     data.mode, idx);
+        continue;
+      }
+      const double Q = 0.5 * std::abs(w) / std::abs(w.imag());
+      entry["Value"] = Q;
+      entry["Unit"] = "";
+      ar = Q * w.real() / std::norm(w);
+      ai = Q * (w.imag() / std::norm(w) - 1.0 / w.imag());
+      scale = 1.0;
+    }
+    auto Objective = [&](std::complex<double> dw)
+    { return (ar * dw.real() + ai * dw.imag()) * scale; };
+    const auto &dm = GetDerivatives(m);
+    if (sensitivity.material_properties)
+    {
+      auto materials = nlohmann::json::array();
+      for (std::size_t k = 0; k < dm.materials.size(); k++)
+      {
+        nlohmann::json material = {{"Index", k + 1},
+                                   {"Attributes", iodata.domains.materials[k].attributes}};
+        for (const auto &[property, dw] : dm.materials[k])
+        {
+          material[ToString(property)] = Objective(dw);
+        }
+        materials.push_back(std::move(material));
+      }
+      entry["MaterialProperties"] = std::move(materials);
+    }
+    if (sensitivity.lumped_ports)
+    {
+      auto ports = nlohmann::json::array();
+      for (const auto &[port, dport] : dm.ports)
+      {
+        nlohmann::json p = {{"Index", port}};
+        for (int e = 0; e < 3; e++)
+        {
+          if (dport[e])
+          {
+            p[port_elements[e]] = Objective(*dport[e]);
+          }
+        }
+        ports.push_back(std::move(p));
+      }
+      entry["LumpedPorts"] = std::move(ports);
+    }
+    Vector g;
+    if (output.HasShape())
+    {
+      g = dm.shape[0];
+      g *= ar;
+      g.Add(ai, dm.shape[1]);
+    }
+    output.AddObjective(std::move(entry), output.HasShape() ? &g : nullptr, scale);
+  }
+  output.Write(post_dir / "sensitivity");
 }
 
 }  // namespace palace

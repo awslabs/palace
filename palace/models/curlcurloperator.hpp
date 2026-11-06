@@ -25,6 +25,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class ShapeDerivativeOperator;
 class Units;
 template <ProblemType T>
 class PostOperator;
@@ -291,6 +292,17 @@ public:
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
   void GetCurrentExcitationVector(int idx, Vector &RHS);
+
+  // The stiffness operator of the elements with the given domain attributes, without
+  // boundary conditions, on L-vectors of the finest ND space.
+  std::unique_ptr<Operator> GetStiffness(const std::vector<int> &attributes) const;
+
+  // Construct the derivatives with respect to the positions of the mesh nodes of the
+  // stiffness form, and of the excitation of current source idx at a fixed current
+  // density. Not available with superconductor sheets.
+  std::unique_ptr<ShapeDerivativeOperator> GetStiffnessShapeDerivative() const;
+  std::unique_ptr<ShapeDerivativeOperator>
+  GetCurrentExcitationShapeDerivative(int idx) const;
 
   // Assemble flux loop excitation vector for specified flux loop index
   template <ProblemType T>

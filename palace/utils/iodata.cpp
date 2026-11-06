@@ -268,6 +268,10 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   {
     solver = config::SolverData(*solver_it);
   }
+  if (auto sensitivity_it = config.find("Sensitivity"); sensitivity_it != config.end())
+  {
+    sensitivity = config::SensitivityData(*sensitivity_it);
+  }
 
   // Check for unsupported sections. Work on a copy since we don't own the input.
   {
@@ -277,6 +281,7 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
     remaining.erase("Domains");
     remaining.erase("Boundaries");
     remaining.erase("Solver");
+    remaining.erase("Sensitivity");
     MFEM_VERIFY(remaining.empty(), "Found an unsupported configuration file section!\n"
                                        << remaining.dump(2));
   }
@@ -804,6 +809,91 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
+  // Sensitivities are available for the capacitances and inductances of electrostatic and
+  // magnetostatic problems, and for the frequencies and quality factors of eigenmode
+  // problems.
+  if (!sensitivity.empty())
+  {
+    for (const auto &[idx, data] : sensitivity.objectives)
+    {
+      switch (data.type)
+      {
+        case SensitivityObjective::CAPACITANCE:
+          MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                      "\"Sensitivity\" objective "
+                          << idx << " requires an electrostatic problem!");
+          for (auto i : data.terminals)
+          {
+            MFEM_VERIFY(boundaries.terminal.contains(i),
+                        "\"Sensitivity\" objective " << idx << " refers to terminal " << i
+                                                     << ", which is not a \"Terminal\"!");
+          }
+          break;
+        case SensitivityObjective::INDUCTANCE:
+          MFEM_VERIFY(problem.type == ProblemType::MAGNETOSTATIC,
+                      "\"Sensitivity\" objective " << idx
+                                                   << " requires a magnetostatic problem!");
+          for (auto i : data.terminals)
+          {
+            MFEM_VERIFY(boundaries.current.contains(i),
+                        "\"Sensitivity\" objective "
+                            << idx << " refers to terminal " << i
+                            << ", which is not a \"SurfaceCurrent\"!");
+          }
+          break;
+        case SensitivityObjective::FREQUENCY:
+        case SensitivityObjective::QUALITY_FACTOR:
+          MFEM_VERIFY(problem.type == ProblemType::EIGENMODE,
+                      "\"Sensitivity\" objective " << idx
+                                                   << " requires an eigenmode problem!");
+          MFEM_VERIFY(data.mode >= 1 && data.mode <= solver.eigenmode.n,
+                      "\"Sensitivity\" objective " << idx << " refers to mode " << data.mode
+                                                   << ", but only " << solver.eigenmode.n
+                                                   << " modes are computed!");
+          break;
+      }
+    }
+    MFEM_VERIFY(
+        problem.type != ProblemType::EIGENMODE ||
+            (boundaries.waveport.empty() && boundaries.floquetport.empty() &&
+             std::ranges::all_of(boundaries.periodic.wave_vector,
+                                 [](double k) { return k == 0.0; })),
+        "\"Sensitivity\" is not available for eigenmode problems with wave ports or "
+        "Floquet periodicity!");
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      const bool short_ports =
+          boundaries.current.size() > 1 &&
+          std::ranges::any_of(boundaries.current,
+                              [this](const auto &source)
+                              {
+                                return source.second.inactive_port_mode.value_or(
+                                           solver.magnetostatic.inactive_port_mode) ==
+                                       InactivePortMode::SHORT;
+                              });
+      MFEM_VERIFY(boundaries.fluxloop.empty() && boundaries.superconductor.empty() &&
+                      !short_ports,
+                  "\"Sensitivity\" is not available for magnetostatic problems with flux "
+                  "loops, superconductors or shorted inactive ports!");
+      const bool coaxial_sources = std::ranges::any_of(
+          boundaries.current,
+          [](const auto &source)
+          {
+            return std::ranges::any_of(
+                source.second.elements, [](const auto &element)
+                { return element.coordinate_system == CoordinateSystem::CYLINDRICAL; });
+          });
+      MFEM_VERIFY(!sensitivity.shape || !coaxial_sources,
+                  "\"Sensitivity\" \"Shape\" is not available with coaxial surface "
+                  "current sources!");
+    }
+    MFEM_VERIFY(!sensitivity.lumped_ports || problem.type == ProblemType::EIGENMODE,
+                "\"Sensitivity\" \"LumpedPorts\" is only available for eigenmode "
+                "problems!");
+    MFEM_VERIFY(!sensitivity.shape || boundaries.periodic.boundary_pairs.empty(),
+                "\"Sensitivity\" \"Shape\" is not available with periodic boundaries!");
+  }
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
@@ -833,6 +923,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   for (auto &data : domains.materials)
   {
     config::Nondimensionalize(units, data);
+  }
+
+  // Export region of the sensitivities.
+  if (sensitivity.shape)
+  {
+    config::Nondimensionalize(units, *sensitivity.shape);
   }
 
   // Probe location coordinates.

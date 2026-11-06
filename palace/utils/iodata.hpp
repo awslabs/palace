@@ -33,6 +33,7 @@ public:
   config::DomainData domains;
   config::BoundaryData boundaries;
   config::SolverData solver;
+  config::SensitivityData sensitivity;
 
   // Class that holds mesh scale and converts between SI quantities and normalized values.
   Units units;
