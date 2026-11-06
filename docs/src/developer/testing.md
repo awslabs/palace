@@ -523,6 +523,16 @@ or which produced the synchronize event. Same-repository pull requests run
 immediately. Pull requests from forks run after a maintainer approves the
 workflow through GitHub's **Approve and run** prompt.
 
+### Selecting a macOS CI runner
+
+The CMake and Spack macOS build workflows use `macos-15-xlarge` by default.
+Set the repository Actions variable `PALACE_MACOS_RUNNER` to select another ARM64
+macOS runner, for example `macos-15` for the standard GitHub-hosted runner.
+The macOS configurations use Apple Silicon tools and libraries, so an Intel runner is
+not interchangeable.
+Standard runners have less memory and fewer CPU cores than the default larger runner;
+build times and test scheduling can differ.
+
 ### Building and running regression tests
 
 Regression cases live in `test/unit/regression/cases.cpp` and are

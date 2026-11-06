@@ -126,7 +126,7 @@ jobs:
         #   with-eigensolver: slepc
         #   with-solver: strumpack
 
-    runs-on: macos-15-xlarge
+    runs-on: ${{ vars.PALACE_MACOS_RUNNER || 'macos-15-xlarge' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.filter.outputs.test == 'true'
