@@ -210,7 +210,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("parmetis+petsc_patches", when="@:0.19")
 
     with when("@0.20:"):
-        depends_on("scotch@7.0.7:+mpi~metis~threads determinism=FULL build_system=cmake")
+        depends_on("scotch@7.0.7:+mpi~metis build_system=cmake")
         depends_on("scotch+shared", when="+shared")
         depends_on("scotch~shared", when="~shared")
         depends_on("scotch+int64", when="+int64")
