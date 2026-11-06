@@ -34,15 +34,12 @@ bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
   return valid;
 }
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, ComplexVector &x0)
+double LambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
 {
   // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
   // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
   // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
   // A with essential DOFs eliminated using a unit diagonal.
-  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
-              "Chebyshev smoother spectral estimation requires a finite, nonzero operator "
-              "diagonal!");
   Vector dinv_sqrt(dinv);
   dinv_sqrt.Abs();
   linalg::Sqrt(dinv_sqrt);
@@ -50,6 +47,14 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Comple
   ProductOperator ADinvSqrt(A, DinvSqrt);
   ProductOperator S(DinvSqrt, ADinvSqrt);
   return linalg::SpectralNorm(comm, S, true, &x0);
+}
+
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
+{
+  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
+              "Chebyshev smoother spectral estimation requires a finite, nonzero operator "
+              "diagonal!");
+  return LambdaMax(comm, A, dinv, x0);
 }
 
 double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
@@ -60,13 +65,26 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
     MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
                 "Chebyshev smoother spectral estimation requires a finite, nonzero real "
                 "operator diagonal!");
-    ComplexVector dinv_sqrt(dinv);
-    dinv_sqrt.Real().Abs();
-    linalg::Sqrt(dinv_sqrt.Real());
-    ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
-    ComplexProductOperator ADinvSqrt(A, DinvSqrt);
-    ComplexProductOperator S(DinvSqrt, ADinvSqrt);
-    return linalg::SpectralNorm(comm, S, true, &x0);
+
+    // Estimate in real arithmetic, which halves the cost, starting from and returning the
+    // real part of x0.
+    const int n = A.Height();
+    Vector x0r;
+    if (x0.Size() == n)
+    {
+      x0r.SetSize(n);
+      x0r.UseDevice(true);
+      x0r = x0.Real();
+    }
+    const double lambda_max = LambdaMax(comm, *A.Real(), dinv.Real(), x0r);
+    if (x0r.Size() == n)
+    {
+      x0.SetSize(n);
+      x0.UseDevice(true);
+      x0.Real() = x0r;
+      x0.Imag() = 0.0;
+    }
+    return lambda_max;
   }
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
