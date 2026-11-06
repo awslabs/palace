@@ -185,6 +185,10 @@ protected:
   // Use left or right preconditioning.
   PreconditionerSide pc_side;
 
+  // [PR 1126 review experiment] Reject a nonzero initial guess whose relative initial
+  // residual exceeds this value, and start from zero instead (disabled when <= 0).
+  double guess_reject_tol = 0.0;
+
   // Temporary workspace for solve.
   mutable std::vector<VecType> V;
   mutable VecType r;
@@ -211,6 +215,9 @@ public:
 
   // Set the side for preconditioning.
   virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }
+
+  // [PR 1126 review experiment] See guess_reject_tol.
+  void SetInitialGuessRejectTol(double tol) { guess_reject_tol = tol; }
 
   void Mult(const VecType &b, VecType &x) const override;
 };

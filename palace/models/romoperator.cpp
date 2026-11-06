@@ -656,6 +656,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
       space_op.GetNDSpaces(), &space_op.GetH1Spaces());
   initial_guess = iodata.solver.linear.initial_guess;
+  if (initial_guess)
+  {
+    // [PR 1126 review experiment] Start from zero when the PROM solution is a poor guess.
+    ksp->SetInitialGuessRejectTol(1.0e-2);
+  }
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 

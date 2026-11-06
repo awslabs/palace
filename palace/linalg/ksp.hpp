@@ -74,6 +74,15 @@ public:
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 
+  // [PR 1126 review experiment] Forward to GmresSolver::SetInitialGuessRejectTol.
+  void SetInitialGuessRejectTol(double tol)
+  {
+    if (auto *gmres = dynamic_cast<GmresSolver<OperType> *>(ksp.get()))
+    {
+      gmres->SetInitialGuessRejectTol(tol);
+    }
+  }
+
   void Mult(const VecType &x, VecType &y) const;
 };
 

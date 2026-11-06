@@ -527,6 +527,23 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         }
         CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
         initial_res = beta_rhs;
+        if (guess_reject_tol > 0.0 && true_beta > guess_reject_tol * initial_res)
+        {
+          // The initial guess is not good enough: start from zero. V[0] holds B b for left
+          // preconditioning.
+          Mpi::Print(comm, "{}GMRES initial guess rejected (relative residual {:.3e})\n",
+                     std::string(tab_width, ' '), true_beta / initial_res);
+          x = 0.0;
+          if (B && pc_side == PreconditionerSide::LEFT)
+          {
+            r = V[0];
+          }
+          else
+          {
+            r = b;
+          }
+          true_beta = initial_res;
+        }
       }
       else
       {
@@ -706,6 +723,14 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         auto beta_rhs = linalg::Norml2(comm, b);
         CheckDot(beta_rhs, "FGMRES residual norm is not valid: beta_rhs = ");
         initial_res = beta_rhs;
+        if (this->guess_reject_tol > 0.0 && true_beta > this->guess_reject_tol * initial_res)
+        {
+          Mpi::Print(comm, "{}FGMRES initial guess rejected (relative residual {:.3e})\n",
+                     std::string(tab_width, ' '), true_beta / initial_res);
+          x = 0.0;
+          Z[0] = b;
+          true_beta = initial_res;
+        }
       }
       else
       {
