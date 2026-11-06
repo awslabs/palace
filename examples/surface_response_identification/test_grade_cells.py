@@ -9,7 +9,8 @@ cells of decision 1215 (bit-exact per cell and per source / frequency), the Q1 l
 JSON as CARRIED: supervisor decision 1233 (1)). The fixed-shell tail form (USER 1308 F-C5 (b); decisions 1310 / 1312 / 1314): the
 FIXED_SHELL_TAILS table from its provenance constants, tail_of under both forms, the reference-rings rule (exit 3 / the information
 override) and the reference-depth rule (converged / coarser / not recorded, decisions 1314 / 1318) on a synthetic window, and -- when the records are present -- W12's MA_sharp cell under the fixed-shell form against its r10 p4
-reference (the depth label INFORMATION; the 422 default unchanged)."""
+reference (the depth label INFORMATION); the DEFAULT tail form = fixed-shell since the P4 re-freeze (decision 1360), the 422
+records reproduced with an explicit --tail-form 422."""
 
 import json
 import os
@@ -97,8 +98,9 @@ class LetterRules(unittest.TestCase):
         self.assertEqual(gc.model_class("parallel-edge-cluster-95b13e7fdc7c-pieces3"), "stack (ParallelEdgeCluster)")
         self.assertEqual(gc.model_class("spatialedgecluster_edgecount-10_13c7cc02fd9b"), "spatial cluster 10-edge")
         self.assertEqual(gc.model_class("different-conductor-gap-3um"), "gap pair")
-        self.assertEqual(gc.tail_of("convex-corner-90deg", {})[0], gc.TAILS["corner"])
-        self.assertEqual(gc.tail_of("isolated-edge", {})[0], gc.TAILS["isolated"])
+        # the 422 table of record, EXPLICIT (the default is fixed-shell since the P4 re-freeze, decision 1360)
+        self.assertEqual(gc.tail_of("convex-corner-90deg", {}, "422")[0], gc.TAILS["corner"])
+        self.assertEqual(gc.tail_of("isolated-edge", {}, "422")[0], gc.TAILS["isolated"])
         self.assertEqual(gc.tail_of("spatialedgecluster_edgecount-3_abc@1", {"spatialedgecluster_edgecount-3_abc": (0.02, 0.01, 0.03)})[0], (0.02, 0.01, 0.03))
         self.assertEqual(gc.tail_of("spatialedgecluster_edgecount-3_zzz", {})[0], gc.SPATIAL_DEFAULT_TAIL)
 
@@ -125,7 +127,10 @@ class LetterRules(unittest.TestCase):
         self.assertEqual(gc.tail_of("convex-corner-90deg", {}, "fixed-shell")[0], gc.FIXED_SHELL_TAILS["corner"])
         self.assertEqual(gc.tail_of("isolated-edge", {}, "fixed-shell")[0], gc.FIXED_SHELL_TAILS["isolated"])
         self.assertEqual(gc.tail_of("different-conductor-gap-3um", {}, "fixed-shell")[0], gc.FIXED_SHELL_TAILS["strip"])
-        self.assertEqual(gc.tail_of("convex-corner-90deg", {}, "422"), gc.tail_of("convex-corner-90deg", {}))
+        # the DEFAULT since the P4 re-freeze (decision 1360) = fixed-shell; 422 is explicit
+        self.assertEqual(gc.DEFAULT_TAIL_FORM, "fixed-shell")
+        self.assertEqual(gc.tail_of("convex-corner-90deg", {}, "fixed-shell"), gc.tail_of("convex-corner-90deg", {}))
+        self.assertNotEqual(gc.tail_of("convex-corner-90deg", {}, "422"), gc.tail_of("convex-corner-90deg", {}))
         # the spatial clusters keep their library record under both forms (1314 Q2)
         sp = {"spatialedgecluster_edgecount-3_abc": (0.02, 0.01, 0.03)}
         self.assertEqual(gc.tail_of("spatialedgecluster_edgecount-3_abc@1", sp, "fixed-shell")[0], (0.02, 0.01, 0.03))
@@ -156,10 +161,14 @@ class LetterRules(unittest.TestCase):
         self.assertEqual(gc.reference_depth_information({"RowHeightsUm": [0.01]}, os.path.join("/nonexistent", "run"), "422"), (None, None))
 
     def test_ma_sharp_convention_b(self):
-        sharp = gc.ma_sharp_convention_b(2.0, {0: 1.0}, {0: "isolated-edge"}, {})
+        sharp = gc.ma_sharp_convention_b(2.0, {0: 1.0}, {0: "isolated-edge"}, {}, "422")
         self.assertAlmostEqual(sharp["device_sharp_E_J"], 1.0 + 1.0678)
+        self.assertEqual(sharp["tail_form"], "422")
+        default = gc.ma_sharp_convention_b(2.0, {0: 1.0}, {0: "isolated-edge"}, {})
+        self.assertEqual(default["tail_form"], "fixed-shell")
+        self.assertAlmostEqual(default["device_sharp_E_J"], 1.0 + 1.0 + gc.FIXED_SHELL_TAILS["isolated"][0])
         self.assertEqual(sharp["bracket_E_J"], [1.0 + 1.06, 1.0 + 1.0726])
-        spatial = gc.ma_sharp_convention_b(2.0, {0: 1.0}, {0: "spatialedgecluster_edgecount-3_abc"}, {"spatialedgecluster_edgecount-3_abc": (0.03, 0.02, 0.04)})
+        spatial = gc.ma_sharp_convention_b(2.0, {0: 1.0}, {0: "spatialedgecluster_edgecount-3_abc"}, {"spatialedgecluster_edgecount-3_abc": (0.03, 0.02, 0.04)}, "422")
         self.assertEqual(spatial["bracket_E_J"], [2.0, 1.0 + 1.06])  # the spatial bar [0, 2 x record]
 
 
@@ -214,7 +223,7 @@ class SyntheticWindows(unittest.TestCase):
         with open(values, "w") as handle:
             json.dump(es_values_reference(sources, p_ref, c_ref, ma_sharp_ref), handle)
         out = os.path.join(self.tmp, "grade.json")
-        rc = gc.main(["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--label", "syn"])
+        rc = gc.main(["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--label", "syn", "--tail-form", "422"])
         self.assertEqual(rc, 0)
         with open(out) as handle:
             g = json.load(handle)
@@ -233,7 +242,7 @@ class SyntheticWindows(unittest.TestCase):
         self.assertEqual(list(off), ["2"])
         self.assertAlmostEqual(off["2"]["abs_over_Cii_pct"], 0.0)
         # a single source graded with --sources 1 -> the single-source rule
-        rc = gc.main(["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--sources", "1"])
+        rc = gc.main(["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--sources", "1", "--tail-form", "422"])
         self.assertEqual(rc, 0)
         with open(out) as handle:
             g1 = json.load(handle)
@@ -297,8 +306,14 @@ class SyntheticWindows(unittest.TestCase):
             g = json.load(handle)
         self.assertEqual(g["cells"]["MA_sharp"]["letter"], "PASS")
         self.assertTrue(g["cells"]["MA_sharp"]["counted"])
-        # the 422 default on the same window: the reference was set for the fixed-shell tail, so the 422 device (B) reads lower
+        # the DEFAULT form (no --tail-form) = fixed-shell since the P4 re-freeze (decision 1360): identical to the explicit call
         self.assertEqual(gc.main(base), 0)
+        with open(out) as handle:
+            g_default = json.load(handle)
+        self.assertEqual(g_default["tail_form"], "fixed-shell")
+        self.assertEqual(g_default["cells"], g["cells"])
+        # the 422 form EXPLICIT on the same window: the reference was set for the fixed-shell tail, so the 422 device (B) reads lower
+        self.assertEqual(gc.main(base + ["--tail-form", "422"]), 0)
         with open(out) as handle:
             g = json.load(handle)
         self.assertEqual(g["tail_form"], "422")
@@ -348,7 +363,7 @@ class SyntheticWindows(unittest.TestCase):
             json.dump(ref, handle)
         out = os.path.join(self.tmp, "g.json")
         # direct: C_eff(f) grows past the 0.5 % bar at the upper frequencies -> FAIL fail-closed
-        self.assertEqual(gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--c-form", "direct", "--out", out]), 0)
+        self.assertEqual(gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--c-form", "direct", "--out", out, "--tail-form", "422"]), 0)
         with open(out) as handle:
             direct = json.load(handle)
         self.assertEqual(direct["cells"]["C"]["letter"], "FAIL")
@@ -356,7 +371,7 @@ class SyntheticWindows(unittest.TestCase):
         self.assertEqual(direct["cells"]["SA"]["letter"], "PASS")
         self.assertEqual(direct["cells"]["SA"]["rule"][:28], "every frequency must PASS (f")
         # static-limit (Q1): C_s thin / C_s thick - 1 = +0.2 % -> PASS; C_eff(f) printed beside
-        self.assertEqual(gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--c-form", "static-limit", "--out", out]), 0)
+        self.assertEqual(gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--c-form", "static-limit", "--out", out, "--tail-form", "422"]), 0)
         with open(out) as handle:
             sl = json.load(handle)
         self.assertEqual(sl["cells"]["C"]["letter"], "PASS")
@@ -364,7 +379,7 @@ class SyntheticWindows(unittest.TestCase):
         self.assertEqual(sorted(sl["cells"]["C"]["C_eff_by_f_pct"]), ["5.2", "5.7", "6.2"])
         self.assertEqual(sl["cells"]["C"]["direct_form_beside"]["letter"], "FAIL")
         # information (F-40): not counted
-        self.assertEqual(gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--c-form", "information", "--out", out]), 0)
+        self.assertEqual(gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--c-form", "information", "--out", out, "--tail-form", "422"]), 0)
         with open(out) as handle:
             info = json.load(handle)
         self.assertFalse(info["cells"]["C"]["counted"])
@@ -375,12 +390,12 @@ class SyntheticWindows(unittest.TestCase):
         with open(values, "w") as handle:
             json.dump(ref2, handle)
         self.assertEqual(gc.main(["--form", "maxwell", "--device", run2, "--reference-values", values, "--c-form", "information", "--frequencies", "1.0",
-                                  "--p-denominator", "E_norm-minus-E_cap", "--out", out]), 0)
+                                  "--p-denominator", "E_norm-minus-E_cap", "--out", out, "--tail-form", "422"]), 0)
         with open(out) as handle:
             cap = json.load(handle)
         for T in ("SA", "MS", "MA_sharp"):
             self.assertAlmostEqual(cap["cells"][T]["x_pct"], 0.0, places=9)
-        self.assertEqual(gc.main(["--form", "maxwell", "--device", run2, "--reference-values", values, "--c-form", "information", "--frequencies", "1.0", "--out", out]), 0)
+        self.assertEqual(gc.main(["--form", "maxwell", "--device", run2, "--reference-values", values, "--c-form", "information", "--frequencies", "1.0", "--out", out, "--tail-form", "422"]), 0)
         with open(out) as handle:
             nocap = json.load(handle)
         self.assertAlmostEqual(nocap["cells"]["SA"]["x_pct"], -50.0, places=9)
@@ -415,10 +430,13 @@ class StageERecords(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp)
 
-    def es_args(self, w):
+    def es_args(self, w, tail_form="422"):
+        """The 1215 records were read under the 422 tail form: explicit here (the default is fixed-shell since the P4 re-freeze); tail_form=None = the default."""
         args = ["--form", "es", "--device", os.path.join(E, "thin", "runs", f"{w}-thin-corr"), "--reference", os.path.join(E, "ref", "runs", "ref", f"{w}-ref-r10-p4"),
                 "--shells-dir", SHELLS, "--library", LIBRARY_E, "--band", os.path.join(E, "thin", "predicted", w, "coverage-report.json"), "--label", w,
                 "--out", os.path.join(self.tmp, f"{w}.json")]
+        if tail_form is not None:
+            args += ["--tail-form", tail_form]
         if not os.path.isfile(os.path.join(E, "thin", "runs", f"{w}-thin-corr", "postpro", "palace.json")):
             args += ["--model-catalog", os.path.join(E, "grade", "records", f"{w}-thin-corr-model-catalog.json")]
         return args
@@ -426,7 +444,7 @@ class StageERecords(unittest.TestCase):
     def mx_args(self, w, c_form):
         args = ["--form", "maxwell", "--device", os.path.join(E, "mxthin", "runs", f"{w}-mxthin-corr"), "--shells-dir", SHELLS, "--library", LIBRARY_E,
                 "--band", os.path.join(E, "mxthin", "predicted", w, "coverage-report.json"), "--c-form", c_form, "--label", f"{w}-mx",
-                "--out", os.path.join(self.tmp, f"{w}-mx-{c_form}.json")]
+                "--out", os.path.join(self.tmp, f"{w}-mx-{c_form}.json"), "--tail-form", "422"]
         if not os.path.isfile(os.path.join(E, "mxthin", "runs", f"{w}-mxthin-corr", "postpro", "palace.json")):
             args += ["--model-catalog", os.path.join(E, "grade", "records", f"{w}-mxthin-corr-model-catalog.json")]
         for F, run in MX_REFERENCES[w].items():
@@ -458,7 +476,7 @@ class StageERecords(unittest.TestCase):
     def test_es_w12_fixed_shell_form_information(self):
         """The fixed-shell form on W12 against its r10 p4 reference (rings {10, 30, 50} = of record): the reference is coarser than r5 p5,
         so the MA_sharp cell is INFORMATION (1314), its letters-as-read PASS; the 422 cells of this window are unchanged by the form."""
-        self.assertEqual(gc.main(self.es_args("W12") + ["--tail-form", "fixed-shell"]), 0)
+        self.assertEqual(gc.main(self.es_args("W12", "fixed-shell")), 0)
         got = load(os.path.join(self.tmp, "W12.json"))
         record = load(os.path.join(E, "grade", "results", "W12-grade.json"))
         cell = got["cells"]["MA_sharp"]
@@ -469,6 +487,19 @@ class StageERecords(unittest.TestCase):
         for T in ("SA", "MS", "C"):
             self.assertEqual((got["cells"][T]["x_pct"], got["cells"][T]["letter"]), (record["cells"][T]["x_pct"], record["cells"][T]["letter"]))
         self.assertEqual(got["per_member"]["4"]["reference"]["MA_sharp"]["Rings_um"], [0.01, 0.03, 0.05])
+
+    def test_es_w12_default_form_is_fixed_shell(self):
+        """The DEFAULT tail form since the P4 re-freeze (decision 1360; REFREEZE-DESIGN s3 step 2): W12 read WITHOUT --tail-form = the
+        fixed-shell reading (MA_sharp INFORMATION (depth) +4.313 % as read against its r10 p4 reference), not the 422 record."""
+        self.assertEqual(gc.main(self.es_args("W12", None)), 0)
+        got = load(os.path.join(self.tmp, "W12.json"))
+        self.assertEqual(got["tail_form"], "fixed-shell")
+        cell = got["cells"]["MA_sharp"]
+        self.assertEqual(cell["letter"], f"{gc.INFORMATION_DEPTH}: PASS")
+        self.assertFalse(cell["counted"])
+        self.assertAlmostEqual(cell["x_pct"], 4.312724261723555, places=9)
+        record = load(os.path.join(E, "grade", "results", "W12-grade.json"))
+        self.assertNotEqual(cell["x_pct"], record["cells"]["MA_sharp"]["x_pct"])
 
     def test_maxwell_11_cells_direct_form(self):
         for w, c_form in (("W06", "direct"), ("W05", "direct"), ("FE6", "information")):
@@ -512,7 +543,7 @@ class MaxwellCard995(unittest.TestCase):
             values = refresh_values(w, os.path.join(self.tmp, f"ref-{w}.json"))
             out = os.path.join(self.tmp, f"{w}.json")
             rc = gc.main(["--form", "maxwell", "--device", run, "--reference-values", values, "--library", LIBRARY_V3J, "--frequencies", "1.0",
-                          "--p-denominator", "E_norm-minus-E_cap", "--c-form", "information", "--label", w, "--out", out])
+                          "--p-denominator", "E_norm-minus-E_cap", "--c-form", "information", "--label", w, "--out", out, "--tail-form", "422"])
             self.assertEqual(rc, 0)
             got = load(out)["cells"]
             for T in ("SA", "MS", "MA_sharp"):

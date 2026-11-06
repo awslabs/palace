@@ -23,8 +23,8 @@ single-frequency window is the same rule with one member.
     t_m = the class tail of the model's name (TAILS below; a spatial cluster's own library record `MA.Summary.Deficit.
     Consistent.Median` with the bar [0, 2 x record]); the bracket from the tail bars gives INCONCLUSIVE when ft is inside the
     bar and the bracket is outside (the verdict of record).
-  * the TAIL FORM (--tail-form; USER decision 1308 F-C5 (b), supervisor decisions 1310 / 1312 / 1314): `422` (the default until the
-    P4 re-freeze) = the class tails of record above; `fixed-shell` = ONE estimator on both sides, both estimating the converged
+  * the TAIL FORM (--tail-form; USER decision 1308 F-C5 (b), supervisor decisions 1310 / 1312 / 1314): `fixed-shell` (the DEFAULT since the P4
+    re-freeze, decision 1360; `422` = the class tails of record above, explicit for the reproduction of the records read under it) = ONE estimator on both sides, both estimating the converged
     fixed-shell-R10 sharp energy S* (rings {10, 30, 50} nm = {R/190, 3R/190, R/38}, R = 1.9 um; 50 nm = t/2): the device class tails
     FIXED_SHELL_TAILS = S*_class / raw_class(library rung) - 1 (the factor mapping the library-rung raw the device applies onto S*),
     and the reference's shells REQUIRED to carry that ring set (FIXED_SHELL_RINGS_UM: every stage-E r10 reference of record does); a
@@ -73,6 +73,9 @@ TAILS = {
 }
 SPATIAL_DEFAULT_TAIL = (0.0302, 0.0200, 0.0340)
 TAIL_FORMS = ("422", "fixed-shell")
+# The DEFAULT tail form since the P4 re-freeze (REFREEZE-DESIGN s3 step 2; USER 1308 (b) "replacing the 422 convention"; decision 1360):
+# fixed-shell. The 422 form stays available and is passed EXPLICITLY (--tail-form 422) to reproduce the records read under it.
+DEFAULT_TAIL_FORM = "fixed-shell"
 # FIXED-SHELL-R10 (decision 1310 Q-A): the ring boundaries (um) both sides' Consistent estimator is read on; the last = t/2.
 FIXED_SHELL_RINGS_UM = (0.01, 0.03, 0.05)
 # The fixed-shell class tails (supervisor decisions 1312 / 1313 / 1314 implementing USER 1308 F-C5 (b); the P3-FC5 lane record):
@@ -194,7 +197,7 @@ def model_class(name):
     return "other"
 
 
-def tail_of(name, spatial_tails, tail_form="422"):
+def tail_of(name, spatial_tails, tail_form=DEFAULT_TAIL_FORM):
     """tabulate_rerun2.tail_of -> ((tail, lo, hi), source text); the class table by `tail_form` (TAILS = 422; FIXED_SHELL_TAILS =
     fixed-shell), the class map and the spatial clusters' library records the same under both forms."""
     table = TAILS if tail_form == "422" else FIXED_SHELL_TAILS
@@ -257,7 +260,7 @@ def interfaces_by_type(config_path):
     return out, cfg
 
 
-def ma_sharp_convention_b(e_surf_ma, model_energies, catalog, sp_tails, tail_form="422"):
+def ma_sharp_convention_b(e_surf_ma, model_energies, catalog, sp_tails, tail_form=DEFAULT_TAIL_FORM):
     """The device MA_sharp (B): -> {E_out_plus_uncovered_J, models_MA_E_J, n_models, device_sharp_E_J, bracket_E_J, per_class}; the class
     tails t_m by `tail_form` (tail_of)."""
     base = e_surf_ma - sum(model_energies.values())
@@ -331,7 +334,7 @@ def reference_depth_information(shells_catalog, reference_run, tail_form):
     return depth, depth_information(depth, tail_form)
 
 
-def ma_sharp_from_shells(shells_catalog, p_all, e_elec, edge_out, ma_interfaces=(3,), tail_form="422", rings_information=False):
+def ma_sharp_from_shells(shells_catalog, p_all, e_elec, edge_out, ma_interfaces=(3,), tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """The thick reference's MA_sharp from its recorded MA shells (collect17.ma_sharp, A15.2 (4): rings summed over the
     planes per edge kind; the HEADLINE estimator of radial_ma_profile). p_all = {interface index: p_surf} of the reference
     row, e_elec its E_elec, edge_out = {interface: {R_um (rounded 9): E_out (J)}} of the same source / frequency,
@@ -447,7 +450,7 @@ def offdiag(row, prefix, src):
     return out
 
 
-def es_device_source(final, src, iface, catalog, sp_tails, tail_form="422"):
+def es_device_source(final, src, iface, catalog, sp_tails, tail_form=DEFAULT_TAIL_FORM):
     """The ES device's per-Type values for source `src` (row i == src of every CSV of the final cycle)."""
     q = read_csv(os.path.join(final, "surface-Q-corrected.csv"))
     row = row_of_source(q, src)
@@ -478,7 +481,7 @@ def es_device_source(final, src, iface, catalog, sp_tails, tail_form="422"):
     return out
 
 
-def es_reference_source(ref, src, iface, shells_dir, tail_form="422", rings_information=False):
+def es_reference_source(ref, src, iface, shells_dir, tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """The thick reference's per-Type values for source `src` (the Type sums over `iface`); MA_sharp from the recorded shells."""
     post = os.path.join(ref, "postpro")
     row = row_of_source(read_csv(os.path.join(post, "surface-Q.csv")), src)
@@ -512,7 +515,7 @@ def port_v2(rows, F, port=1):
     return fnum(v[0][f"Re{{V[{port}]}} (V)"]) ** 2 + fnum(v[0][f"Im{{V[{port}]}} (V)"]) ** 2
 
 
-def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True, excitation=None, tail_form="422"):
+def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True, excitation=None, tail_form=DEFAULT_TAIL_FORM):
     """The Maxwell device's per-Type values at frequency F (the top-level postpro = the final solve). The per-interface
     rows of surface-Q-corrected.csv at F (and excitation `excitation` when the CSV carries an `exc` column and several
     excitations); p = E_surf corrected / denominator (E_norm corrected, or E_norm corrected - E_cap: A1.1.1)."""
@@ -578,7 +581,7 @@ def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True
     return out
 
 
-def mx_reference_f(ref, F, iface, shells_dir, tail_form="422", rings_information=False):
+def mx_reference_f(ref, F, iface, shells_dir, tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """The thick driven reference at F: p_surf[k] of surface-Q.csv, E_elec / E_mag of domain-E.csv, C_eff = 2 E_elec / |V|^2,
     MA_sharp from the recorded shells at F."""
     post = os.path.join(ref, "postpro")
@@ -604,7 +607,7 @@ def mx_reference_f(ref, F, iface, shells_dir, tail_form="422", rings_information
             "shells_catalog": cat_path}
 
 
-def reference_from_values(values, member, tail_form="422", rings_information=False):
+def reference_from_values(values, member, tail_form=DEFAULT_TAIL_FORM, rings_information=False):
     """A reference given as values (--reference-values JSON): {"members": {"<source or f>": {"SA_p", "MS_p", "MA_sharp_p",
     "C_F" | "C_eff_F", optional "MA_p", "E_elec_J", "C_offdiag_F", "MA_sharp_rings_um", "MA_sharp_reference_depth"}}} or the same keys
     at the top level for every member. Under tail_form fixed-shell the member's (or top-level) MA_sharp_rings_um = the ring boundaries
@@ -843,9 +846,10 @@ def main(argv=None):
     parser.add_argument("--p-denominator", choices=P_DENOMINATORS, default="E_norm",
                         help="Maxwell: p = E_surf / E_norm (the binary's p_surf) or / (E_norm - E_cap) (the junction-driven form of the cards, A1.1.1)")
     parser.add_argument("--c-form", choices=C_FORMS, help="Maxwell (required): the C cell's form -- static-limit (USER 1230 Q1), direct (1214), information (F-40)")
-    parser.add_argument("--tail-form", choices=TAIL_FORMS, default="422",
-                        help="the MA_sharp tail form: 422 (the class tails of record; the default until the P4 re-freeze) or fixed-shell (FIXED_SHELL_TAILS on the device, "
-                             "the reference's rings required = FIXED_SHELL_RINGS_UM; USER 1308 / decision 1310)")
+    parser.add_argument("--tail-form", choices=TAIL_FORMS, default=DEFAULT_TAIL_FORM,
+                        help="the MA_sharp tail form: fixed-shell (the DEFAULT since the P4 re-freeze: FIXED_SHELL_TAILS on the device, the reference's rings "
+                             "required = FIXED_SHELL_RINGS_UM; USER 1308 / decision 1310) or 422 (the class tails of record; explicit, for the "
+                             "reproduction of the records read under it)")
     parser.add_argument("--reference-rings-information", action="store_true",
                         help="fixed-shell: grade a reference recorded with another ring set and label its MA_sharp cell INFORMATION instead of refusing (1310 Q-D)")
     parser.add_argument("--label", help="the window's name in the output")
