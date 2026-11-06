@@ -287,7 +287,9 @@ appends HDM samples and orthogonalizes them against these port modes.
     fields, so each occupies a single column with the `_re` suffix. Wave ports follow as
     `waveport_<idx>_re` and, when the wave-port modal field has a non-zero imaginary part, an
     additional `waveport_<idx>_im` column — so a wave port may occupy two columns, unlike a lumped
-    port. Next come the synthesized interior nodes from the HDM samples (`sample_e*` below). Finally,
+    port. Next come the anchor solves of any lumped ports with `"SynthesisAnchor"`
+    (`anchor_<idx>_re`, see [Quasistatic Anchor Solves](#Quasistatic-Anchor-Solves) below), then
+    the synthesized interior nodes from the HDM samples (`sample_e*` below). Finally,
     when a frequency-dependent boundary enters the [Augmented
     regime](#Synthesizing-Frequency-Dependent-Boundary-Conditions), the matrices grow by
     auxiliary-state rows and columns appended at the end, labeled `<prefix>_p<k>d<j>`, where
@@ -296,6 +298,47 @@ appends HDM samples and orthogonalizes them against these port modes.
     index, and `j` is the kept singular-direction index. These auxiliary states are internal
     realization nodes for the rational dispersion fit, not physical ports. The matrix dimension is
     therefore the number of basis nodes plus the number of auxiliary states.
+
+### Quasistatic Anchor Solves
+
+Setting `"SynthesisAnchor": true` on an inductive lumped port (`"L"` or `"Ls"` > 0, included in
+synthesis), such as a Josephson junction port, adds the quasistatic response of the device to a
+drive on that port to the ROM basis, right after the port modes. The anchor solve is the screened
+quasistatic system
+
+```math
+\left(\bm{K} + \nu^2\bm{M}\right)\bm{x} = \bm{b}_p ,
+```
+
+with $\bm{b}_p$ the drive of port $p$ and a screening angular frequency $\nu$ well below the
+sweep band, where $\nu/2\pi$ is set by
+[`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) (by
+default one tenth of the lowest sweep frequency). The positive screening term makes the system
+positive definite, so the solve cannot resonate with modes of the device. Frequency-dependent
+boundaries enter $\bm{K}$ at their static (DC) limit: an inductive `"RationalImpedance"` keeps its
+DC term, while wave-port and `"Conductivity"` terms vanish at DC, and the second-order
+`"Absorbing"` term, a pole at $\omega = 0$ with no static limit, is left out. The anchor adds one
+real column, `anchor_<idx>_re`, to the synthesized matrices and to
+`rom-orthogonalization-matrix-R.csv`.
+
+Since the drive of port $p$ projects onto its own port row only, the synthesized coordinates
+$\bm{v}$ of the anchor (its column of `rom-orthogonalization-matrix-R.csv`, with the port rows
+divided by their diagonal entries) satisfy
+
+```math
+\left(\widehat{\bm{L}}^{-1} + \nu^2\widehat{\bm{C}}\right)\bm{v} = s\,\bm{e}_p
+```
+
+for a scalar $s$. The anchor is therefore the field of a unit current through the port in the
+inductive limit, up to the $O(\nu^2/\omega^2)$ screening term, which junction-anchored
+(bare-basis) netlist extraction can use directly instead of a pseudo-inverse of
+$\widehat{\bm{L}}^{-1}$. Setting
+[`"AdaptiveCircuitSynthesisAnchorExtrapolate"`](../config/reference.md#config-solver-driven)
+removes the screening term: each anchor is then solved at both $\nu$ and $\nu/2$ and combined by
+Richardson extrapolation, $\bm{x}_0 \approx [4\bm{x}(\nu/2) - \bm{x}(\nu)]/3$, which leaves an
+$O(\nu^4)$ error, so that $\widehat{\bm{L}}^{-1}\bm{v} = s\,\bm{e}_p$ holds to the solver
+tolerance, at the cost of a second solve per anchor. For a SQUID modeled as two arm ports, anchor a
+single arm: the responses of the two arms are collinear, so a second anchor adds no new direction.
 
 ### Orthogonalization
 

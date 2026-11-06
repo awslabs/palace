@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-1-0",
+  "$id": "urn:palace:schema:4-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1152,6 +1152,12 @@
           "description": "Controls whether this lumped port contributes a port-mode basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always enforced; only the inclusion of the port mode in the synthesized circuit matrices is affected. Set to `false` on passive terminations whose row/column in the synthesized ``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed \u2014 for example, peripheral 50 Ohm launcher pads kept in the simulation for correct physics but not measured. Setting this to `false` reduces the size of the PROM basis by one vector per excluded port. Excited ports must always be included; the configuration parser will reject a port with `\"Excitation\" > 0` and `\"IncludeInSynthesis\": false`.",
           "default": true,
           "x-palace-advanced": true
+        },
+        "SynthesisAnchor": {
+          "type": "boolean",
+          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). An anchor solve computes the screened quasistatic (inductive-limit) field response to a unit drive on this port, ``(K_0 + \\nu^2 M)\\,x = b_p``, where ``K_0`` is the static (DC) limit of the system stiffness (frequency-dependent boundaries enter at DC: an inductive `\"RationalImpedance\"` keeps its DC term, while wave ports, `\"Conductivity\"`, and second-order `\"Absorbing\"` boundaries drop out), and adds it to the reduced-order basis as a column labeled `anchor_<index>_re` in the exported circuit matrices. Default `false`; `true` requires an inductive port (`\"L\"` or `\"Ls\"` > 0) with `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu`` is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
+          "default": false,
+          "x-palace-advanced": true
         }
       }
     },
@@ -1243,6 +1249,12 @@
           "type": "boolean",
           "description": "Controls whether this lumped port contributes a port-mode basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always enforced; only the inclusion of the port mode in the synthesized circuit matrices is affected. Set to `false` on passive terminations whose row/column in the synthesized ``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed \u2014 for example, peripheral 50 Ohm launcher pads kept in the simulation for correct physics but not measured. Setting this to `false` reduces the size of the PROM basis by one vector per excluded port. Excited ports must always be included; the configuration parser will reject a port with `\"Excitation\" > 0` and `\"IncludeInSynthesis\": false`.",
           "default": true,
+          "x-palace-advanced": true
+        },
+        "SynthesisAnchor": {
+          "type": "boolean",
+          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). An anchor solve computes the screened quasistatic (inductive-limit) field response to a unit drive on this port, ``(K_0 + \\nu^2 M)\\,x = b_p``, where ``K_0`` is the static (DC) limit of the system stiffness (frequency-dependent boundaries enter at DC: an inductive `\"RationalImpedance\"` keeps its DC term, while wave ports, `\"Conductivity\"`, and second-order `\"Absorbing\"` boundaries drop out), and adds it to the reduced-order basis as a column labeled `anchor_<index>_re` in the exported circuit matrices. Default `false`; `true` requires an inductive port (`\"L\"` or `\"Ls\"` > 0) with `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu`` is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
+          "default": false,
           "x-palace-advanced": true
         }
       }
@@ -2629,6 +2641,19 @@
           "$ref": "#/$defs/AdaptiveCircuitSynthesisDomainOrthogonalization",
           "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
           "default": "Energy",
+          "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesisAnchorFreq": {
+          "type": "number",
+          "description": "Screening frequency ``\\nu / 2\\pi``, GHz, for the quasistatic anchor solves performed during adaptive driven circuit synthesis (see [SynthesisAnchor](@ref config-boundaries-lumpedport) on `LumpedPort`). Each anchored port is solved as ``(K_0 + \\nu^2 M)\\,x = b_p``, with ``K_0`` the static (DC) system stiffness — an imaginary-frequency (screened electrostatic-like) system that is symmetric positive definite for any ``\\nu > 0``. Choose ``\\nu`` well below the sweep band so the anchor captures the quasistatic (inductive-limit) junction response. `0` (default) selects ``\\nu`` automatically as 1/10 of the lowest sweep sample frequency.",
+          "minimum": 0.0,
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesisAnchorExtrapolate": {
+          "type": "boolean",
+          "description": "Cancel the ``O(\\nu^2)`` screening bias of the quasistatic anchor solves (see [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq)) by Richardson extrapolation: each anchored port is solved at both ``\\nu`` and ``\\nu/2`` and combined as ``[4 x(\\nu/2) - x(\\nu)]/3``, which reproduces the unscreened response ``K_0 x = b_p`` up to ``O(\\nu^4)``. The exported `anchor_<index>_re` column then satisfies the unscreened L-column identity ``L^{-1} v = s\\,e_p`` (rather than the screened ``L^{-1} v + \\nu^2 C v = s\\,e_p``), which downstream junction-anchored extraction may rely on for exact inductive block-diagonality. Costs one extra linear solve and one extra preconditioner setup per anchored port. Default `false`.",
+          "default": false,
           "x-palace-advanced": true
         }
       },

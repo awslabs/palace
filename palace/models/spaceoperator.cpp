@@ -707,6 +707,28 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  return AssembleExtraSystemMatrix(dfbr, dfbi, fbr, fbi, diag_policy);
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit qs,
+                                    Operator::DiagonalPolicy diag_policy)
+{
+  // ω → 0 limit of A2(ω) for the screened quasistatic anchor solves; see the quasistatic
+  // AddExtraSystemBdrCoefficients overload.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+      dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      fbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemBdrCoefficients(qs, dfbr, dfbi, fbr, fbi);
+  return AssembleExtraSystemMatrix(dfbr, dfbi, fbr, fbi, diag_policy);
+}
+
+std::unique_ptr<ComplexOperator> SpaceOperator::AssembleExtraSystemMatrix(
+    MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+    Operator::DiagonalPolicy diag_policy)
+{
   int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -1491,6 +1513,33 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
+void SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit,
+                                                  MaterialPropertyCoefficient &dfbr,
+                                                  MaterialPropertyCoefficient &dfbi,
+                                                  MaterialPropertyCoefficient &fbr,
+                                                  MaterialPropertyCoefficient &fbi)
+{
+  // The ω → 0 limit of the frequency-dependent boundary terms, defining the static system
+  // stiffness K + A2(0) of the quasistatic (inductive-limit) anchor solves. As for the
+  // damping matrix (whose iω·C term also vanishes), a boundary term contributes only if it
+  // stays finite and nonzero at DC:
+  //  - Rational surface impedance: the Robin coefficient g(s) = s·D(s)/N(s) tends to
+  //    D(0)/N'(0) when Zs has a transmission zero at s = 0 (Zs ~ s·L, an inductive sheet,
+  //    which carries DC current) and to zero otherwise. The real-ω overload implements
+  //    exactly this limit at ω = 0.
+  //  - Surface conductivity: iω/Zs(ω) → 0 (as √ω for the skin-effect impedance, as ω for a
+  //    finite thickness). No contribution.
+  //  - Wave ports: the stamped i·Re(k_n(ω))·M_p vanishes (k_n ∝ ω for a TEM or quasi-TEM
+  //    mode, Re(k_n) = 0 below cutoff), as does the modal correction W ∝ ω. No
+  //    contribution, and no port mode is solved at ω = 0.
+  //  - Second-order farfield: (i/(2ω))·M_ff is a radiation correction with a pole at ω = 0
+  //    and no static limit (circuit synthesis realizes this pole by auxiliary states, not
+  //    in L⁻¹). Omitted, so the farfield boundary takes the same natural condition at DC as
+  //    the first-order absorbing boundary.
+  //  - Floquet ports are not supported with circuit synthesis.
+  surf_rz_op.AddExtraSystemBdrCoefficients(0.0, fbr, fbi);
+}
+
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,
                                                 MaterialPropertyCoefficient &f)
 {
@@ -1648,6 +1697,37 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS2);
   linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
   return nnz2;
+}
+
+bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &RHS)
+{
+  // Assemble the drive vector (dual/linear-form vector, without the iω factor) for a
+  // single lumped port selected by port index, independent of any "Excitation" grouping.
+  // Used for the quasistatic anchor solves in circuit synthesis. The assembly mirrors
+  // AddExcitationVector1Internal restricted to the one port.
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
+  RHS = 0.0;
+
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  lumped_port_op.AddPortExcitationBdrCoefficient(port_idx, fb);
+
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return false;
+  }
+
+  mfem::ParLinearForm rhs(&GetNDSpace().Get());
+  rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+  rhs.UseFastAssembly(false);
+  rhs.UseDevice(false);
+  rhs.Assemble();
+  rhs.UseDevice(true);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS.Real());
+  linalg::SetSubVector(RHS.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  return true;
 }
 
 bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
@@ -1826,5 +1906,10 @@ template std::unique_ptr<ComplexOperator>
                                                                  std::complex<double>,
                                                                  std::complex<double>,
                                                                  std::complex<double>);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>,
+                                           SpaceOperator::QuasistaticLimit>(
+        std::complex<double>, std::complex<double>, std::complex<double>,
+        SpaceOperator::QuasistaticLimit);
 
 }  // namespace palace

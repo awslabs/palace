@@ -676,6 +676,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     // per included port.
     max_prom_size += 2 * NumSynthesisWavePortModes();
 
+    // Each anchor-flagged port adds exactly one real basis vector (the anchor solve
+    // keeps only the real quasistatic response; see
+    // AddLumpedPortAnchorModesForSynthesis).
+    max_prom_size += NumSynthesisAnchorPorts();
+
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
         space_op, iodata.solver.driven.adaptive_circuit_synthesis_domain_orthog};
@@ -987,6 +992,19 @@ std::size_t RomOperator::NumSynthesisWavePortModes() const
   return n;
 }
 
+std::size_t RomOperator::NumSynthesisAnchorPorts() const
+{
+  std::size_t n = 0;
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    if (port_data.synthesis_anchor)
+    {
+      n++;
+    }
+  }
+  return n;
+}
+
 void RomOperator::AddLumpedPortModesForSynthesis()
 {
   // Add modes for lumped port to use them a circuit matrices.
@@ -1068,6 +1086,118 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
     }
     space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
+  }
+}
+
+void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapolate)
+{
+  MFEM_VERIFY(nu > 0.0, "Anchor solves require a positive screening frequency!");
+  if (NumSynthesisAnchorPorts() == 0)
+  {
+    return;
+  }
+
+  // The anchor is the screened quasistatic response (K₀ + ν²M) x(ν) = b_p, where
+  // K₀ = K + A2(0) is the static system stiffness: the ω → 0 limit of the system matrix
+  // A(ω) = K + iωC − ω²M + A2(ω) without its mass term. Damping (iωC) vanishes in this
+  // limit, and so do the frequency-dependent boundary terms A2(ω) of wave ports and surface
+  // conductivity; an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a
+  // finite DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
+  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). The positive
+  // mass coefficient makes the (real part of the) system positive definite — unlike the
+  // driven system at real frequency ω, which is indefinite (K − ω²M) and can resonate with
+  // band or near-degenerate modes. The same positive coefficient also gives a genuinely
+  // positive-definite preconditioner without the sign-shift heuristic used for the driven
+  // case, assembled from the same quasistatic boundary terms (no boundary is evaluated at
+  // ω = 0, where the second-order farfield and surface conductivity terms are singular and
+  // a wave port has no mode).
+  //
+  // The screening biases the anchor away from the unscreened (bare inductive-limit)
+  // response x₀ solving K₀ x₀ = b_p: in ε = ν² the resolvent expansion is
+  //
+  //   x(ε) = x₀ − ε K₀⁻¹ M x₀ + O(ε²),
+  //
+  // so the exported column satisfies L⁻¹ v + ν² C v = s e_p rather than L⁻¹ v = s e_p, an
+  // O((ν/ω)²) relative deviation from the bare L-column identity. When `extrapolate` is
+  // set, solve at both ν and ν/2 and combine by Richardson extrapolation,
+  //
+  //   x₀ ≈ [4 x(ν²/4) − x(ν²)] / 3,
+  //
+  // which cancels the leading O(ε) term exactly and leaves O(ν⁴). This costs one extra
+  // solve and one extra operator/preconditioner setup per shift, and yields a column that
+  // satisfies the bare L-column identity to the solver tolerance.
+  const int n_shifts = extrapolate ? 2 : 1;
+  if (extrapolate)
+  {
+    Mpi::Print("\nComputing quasistatic anchor solves for {:d} lumped ports (ν² screening, "
+               "Richardson-extrapolated over ν and ν/2)\n",
+               NumSynthesisAnchorPorts());
+  }
+  else
+  {
+    Mpi::Print(
+        "\nComputing quasistatic anchor solves for {:d} lumped ports (ν² screening)\n",
+        NumSynthesisAnchorPorts());
+  }
+
+  ComplexVector rhs, u;
+  rhs.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  rhs.UseDevice(true);
+  u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+
+  // DC limit of the frequency-dependent boundary terms (null when none contributes).
+  constexpr SpaceOperator::QuasistaticLimit dc{};
+  auto A2_dc = space_op.GetExtraSystemMatrix(dc, Operator::DIAG_ZERO);
+
+  // Accumulate the per-port extrapolation across shifts so each (expensive) operator and
+  // preconditioner assembly is shared by every anchored port at that shift. Shift 0 is ν
+  // (weight −1/3 when extrapolating, 1 otherwise), shift 1 is ν/2 (weight +4/3).
+  std::map<int, ComplexVector> u_port;
+  for (int is = 0; is < n_shifts; is++)
+  {
+    const double nu_s = (is == 0) ? nu : 0.5 * nu;
+    const double weight = extrapolate ? ((is == 0) ? (-1.0 / 3.0) : (4.0 / 3.0)) : 1.0;
+    auto A = space_op.GetSystemMatrix(
+        std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0),
+        std::complex<double>(nu_s * nu_s, 0.0), K.get(), C.get(), M.get(), A2_dc.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
+                                                               nu_s * nu_s + 0.0i, dc);
+    // Safe to repurpose the shared solver: every SolveHDM call resets the operators.
+    ksp->SetOperators(*A, *P);
+    for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+    {
+      if (!port_data.synthesis_anchor)
+      {
+        continue;
+      }
+      if (!space_op.GetLumpedPortExcitationVector(port_idx, rhs))
+      {
+        continue;
+      }
+      ksp->Mult(rhs, u);
+      auto it = u_port.find(port_idx);
+      if (it == u_port.end())
+      {
+        auto &acc = u_port[port_idx];
+        acc.SetSize(u.Size());
+        acc.UseDevice(true);
+        acc = 0.0;
+        acc.Add(weight, u);
+      }
+      else
+      {
+        it->second.Add(weight, u);
+      }
+    }
+  }
+
+  for (auto &[port_idx, u_p] : u_port)
+  {
+    // Keep only the real part: the anchor is the quasistatic (inductive-limit) response,
+    // a real field configuration.
+    u_p.Imag() = 0.0;
+    UpdatePROM(u_p, fmt::format("anchor_{:d}", port_idx));
   }
 }
 

@@ -384,6 +384,10 @@ protected:
   // the port rows, one elsewhere), as applied by CalculateNormalizedPROMMatrices.
   Eigen::VectorXd GetSynthesisPortScaling() const;
 
+  // Number of lumped ports flagged for a quasistatic anchor solve (synthesis_anchor).
+  // Used for basis storage reservation alongside NumSynthesisPortModes.
+  std::size_t NumSynthesisAnchorPorts() const;
+
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
@@ -554,6 +558,26 @@ public:
   // vectors are added per wave port (real + imaginary parts that survive the
   // orthogonalisation tolerance).
   void AddWavePortModesForSynthesis(double omega_ref);
+
+  // Solve the screened quasistatic system (K₀ + ν²M) x = b_p for each anchor-flagged
+  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
+  // static system stiffness, K plus the DC limit of the frequency-dependent boundary terms
+  // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
+  // inductive rational surface impedance, since wave-port and surface-conductivity terms
+  // vanish at DC like the damping matrix, and the second-order farfield pole at ω = 0 is
+  // omitted. The positive screening term makes the system symmetric positive definite, so
+  // the solve cannot resonate with band or near-degenerate basis modes; with ν well below
+  // the sweep band the solution is the quasistatic (inductive-limit) response of the port.
+  // Must be called after AddLumpedPortModesForSynthesis and before the offline sampling
+  // loop, so the leading port-mode block and the RHS1r projection bookkeeping stay
+  // consistent.
+  //
+  // The exported column satisfies the screened identity L⁻¹ v + ν² C v = s e_p; the
+  // deviation from the unscreened L-column identity L⁻¹ v = s e_p is O((ν/ω)²). With
+  // `extrapolate` set, solve at both ν and ν/2 and Richardson-extrapolate,
+  // x₀ ≈ [4 x(ν/2) − x(ν)]/3, cancelling that term so the column satisfies the
+  // unscreened identity to O(ν⁴) at the cost of one extra solve per anchored port.
+  void AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapolate = false);
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
