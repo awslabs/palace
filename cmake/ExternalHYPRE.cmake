@@ -127,11 +127,12 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
 # AMS: agglomerate the coarse levels of the auxiliary space BoomerAMG hierarchies onto
 # fewer processes during the solve, run the additive Pi-space corrections concurrently,
 # and skip work on a zero initial guess (prototype for
-# https://github.com/hypre-space/hypre/issues/1654)
+# https://github.com/hypre-space/hypre/issues/1654), hosted in this repository until hypre
+# has a commit for it
 download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
-  hypre_ams_coarse_agglomeration.patch
-  "https://github.com/simlapointe/hypre/commit/b340e1d6f2ae118049a78b36565af3d78dcb096c.patch?full_index=1"
-  c66e1c9ae731adec42bc6112c9ccd8f4c16964ea4be53f575d229e9d071833eb
+  hypre_ams_coarse_agglomeration.diff
+  "https://raw.githubusercontent.com/awslabs/palace/bb09cfaffdcea9735c4e8f09a78c8cf5ed65a92a/extern/patch/hypre/hypre_ams_coarse_agglomeration.diff"
+  2b209ceeea8cfb79cb0ebb482ef754f7dbc7365c6af4e06379d45abacf1994cf
 )
 
 include(ExternalProject)
