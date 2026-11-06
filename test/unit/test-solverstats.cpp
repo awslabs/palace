@@ -39,8 +39,8 @@ TEST_CASE("SolverStats Histogram Buckets", "[perfstats][Serial]")
   CHECK(perf::KspStats::Bucket(4) == 3);
   CHECK(perf::KspStats::Bucket(1023) == 10);
   CHECK(perf::KspStats::Bucket(1 << 20) == 11);
-  CHECK(perf::KspStats::BucketName(0) == "0");
-  CHECK(perf::KspStats::BucketName(1) == "1");
+  CHECK(perf::KspStats::BucketName(0) == "0-0");
+  CHECK(perf::KspStats::BucketName(1) == "1-1");
   CHECK(perf::KspStats::BucketName(3) == "4-7");
   CHECK(perf::KspStats::BucketName(11) == "1024+");
 }
@@ -68,11 +68,11 @@ TEST_CASE("SolverStats Krylov And Eigen", "[perfstats][Serial][Parallel]")
   CHECK(V("NotConvergedIts") == 100.0);
   CHECK(V("ZeroItSolves") == 1.0);
   CHECK(V("Restarts") == 3.0);
-  CHECK(V("ItsHistogram/0") == 1.0);
+  CHECK(V("ItsHistogram/0-0") == 1.0);
   CHECK(V("ItsHistogram/2-3") == 1.0);
   CHECK(V("ItsHistogram/8-15") == 1.0);
   CHECK(V("ItsHistogram/64-127") == 1.0);
-  CHECK(V("ItsHistogram/1") == -1.0);  // Untouched buckets are not written
+  CHECK(V("ItsHistogram/1-1") == -1.0);  // Untouched buckets are not written
   CHECK_THAT(V("MaxFinalRelRes"), WithinRel(1e-2, 1e-12));
   CHECK_THAT(V("MeanReductionFactor"),
              WithinRel((0.2 + std::pow(1e-3, 0.01)) / 3.0, 1e-12));

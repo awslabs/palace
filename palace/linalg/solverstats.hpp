@@ -17,7 +17,7 @@ namespace palace::perf
 class KspStats
 {
 public:
-  // Iteration histogram buckets: 0, 1, 2-3, 4-7, ..., 512-1023, 1024+.
+  // Iteration histogram buckets: 0-0, 1-1, 2-3, 4-7, ..., 512-1023, 1024+.
   static constexpr int NUM_BUCKETS = 12;
   static int Bucket(int its);
   static std::string BucketName(int b);

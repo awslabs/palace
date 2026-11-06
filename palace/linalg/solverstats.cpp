@@ -25,7 +25,7 @@ std::string KspStats::BucketName(int b)
 {
   if (b <= 1)
   {
-    return std::to_string(b);
+    return fmt::format("{0}-{0}", b);  // Not a bare number, which is a JSON array index
   }
   if (b == NUM_BUCKETS - 1)
   {
