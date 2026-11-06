@@ -1,0 +1,29 @@
+diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
+index 10dd69afae..2f38a6c0ec 100644
+--- a/repos/spack_repo/builtin/packages/mfem/package.py
++++ b/repos/spack_repo/builtin/packages/mfem/package.py
+@@ -876,16 +876,18 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             ]
+ 
+         if "+superlu-dist" in spec:
++            superlu = spec["superlu-dist"]
+             lapack_blas = spec["lapack"].libs + spec["blas"].libs
++            superlu_deps = [superlu]
++            superlu_libs = ["superlu_dist"]
++            if "^parmetis" in superlu:
++                superlu_deps.append(superlu["parmetis"])
++                superlu_libs.append("parmetis")
+             options += [
+-                "SUPERLU_OPT=-I%s -I%s"
+-                % (spec["superlu-dist"].prefix.include, spec["parmetis"].prefix.include),
++                "SUPERLU_OPT=%s" % " ".join("-I%s" % dep.prefix.include for dep in superlu_deps),
+                 "SUPERLU_LIB=%s %s"
+                 % (
+-                    ld_flags_from_dirs(
+-                        [spec["superlu-dist"].prefix.lib, spec["parmetis"].prefix.lib],
+-                        ["superlu_dist", "parmetis"],
+-                    ),
++                    ld_flags_from_dirs([dep.prefix.lib for dep in superlu_deps], superlu_libs),
+                     ld_flags_from_library_list(lapack_blas),
+                 ),
+             ]
