@@ -205,9 +205,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 when="@3.2.0:3.2.1",
             ),
             patch(
-                "https://github.com/simlapointe/hypre/commit/"
-                "c72f918f54c89948c48f6f7c91b1c8202b0cb703.patch?full_index=1",
-                sha256="dcef115daf7bdefb688bd2dd6db5b6568cc020cb392d4abd6850697fbb196687",
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/"
+                "hypre_multicomponent_relax.diff",
+                sha256="fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a",
                 when="@3.2.0:3.2.1",
             ),
         ],
