@@ -116,7 +116,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the S-parameters of numeric wave ports with lossy port modes, for example with
     `"Conductivity"` or `"Impedance"` boundaries on the port boundary, or lossy dielectrics.
     The wave port boundary condition and excitation now use the complex propagation constant
-    of the port mode, including its attenuation, instead of its real part. The
+    of the port mode, including its attenuation, instead of its real part. Below cutoff,
+    the propagation constant is now the root with `Im{kₙ} < 0`, which decays away from the
+    port, also for the modes of `"BoundaryMode"` simulations: for a lossless cross-section,
+    the sign of its imaginary part followed the roundoff of the mode solve. The
     characteristic impedance `Z_PV` of a lossy port mode is now complex, `|V|² / P*` with
     the complex power `P` of the mode, consistent with the total-field impedance in
     `port-Z.csv`. Circuit synthesis now also fits the complex propagation constant of a

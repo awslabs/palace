@@ -1030,7 +1030,7 @@ void WavePortData::Initialize(double omega)
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // 1 / (-k_n² - σ).
-  kn0 = std::sqrt(-sigma - 1.0 / lambda);
+  kn0 = mode_assembly::PropagationConstant(-sigma - 1.0 / lambda, omega);
   omega0 = omega;
   WarnEvanescent(kn0, omega);
 
@@ -1247,9 +1247,9 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
     }
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
-  // k_n = √(−σ − 1/λ_evp). Principal branch gives Re(k_n) ≥ 0 (forward-propagating /
-  // forward-decaying sheet), which is the physical convention for the +z mode.
-  mode_cache.kn = std::sqrt(-sigma - 1.0 / lambda);
+  // k_n = √(−σ − 1/λ_evp), on the same branch as in Initialize() at real ω, and its
+  // analytic continuation at complex ω.
+  mode_cache.kn = mode_assembly::PropagationConstant(-sigma - 1.0 / lambda, omega);
   mode_cache.e = std::move(e_tmp);
   mode_cache.omega = omega;
   mode_cache.valid = true;
