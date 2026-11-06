@@ -177,13 +177,10 @@ spack -e . develop --path=~/repos/palace palace@develop
 !!! note "Using Palace's local package recipe"
 
     The commands above use the public `builtin.palace` recipe. To use the recipe
-    from your *Palace* checkout instead, apply the [Spack MFEM
-    workaround](#Working-Around-a-Spack-Bug-with-Patches), register the local
-    repository within the environment, and select `local.palace` explicitly:
+    from your *Palace* checkout instead, register the local repository within the
+    environment and select `local.palace` explicitly:
 
     ```sh
-    ln -sf "$(spack location --repo builtin)"/packages/mfem \
-      ~/repos/palace/spack_repo/local/packages/
     spack -e . repo add --scope="env:$(pwd)" ~/repos/palace/spack_repo/local
     spack -e . develop --path=~/repos/palace local.palace@develop
     ```
@@ -264,33 +261,32 @@ One important detail is that the `local` repository takes priority over
 Spack will use your local version. While this is convenient, we'll continue
 using the explicit `local.` prefix in examples for clarity.
 
-#### Working Around a Spack Bug with Patches
+#### Dependencies Patched by Palace
 
-There's currently a known issue in Spack that affects packages using patches
-when they come from non-builtin repositories (see the [bug
-report](https://github.com/spack/spack/issues/51505)). Since *Palace* uses
-patches, you'll run into this problem. The workaround is straightforward but a
-bit inelegant: you need to add a copy of the MFEM package to your local
-repository as well.
+There's currently a known issue in Spack that affects packages that patch their
+dependencies when they come from non-builtin repositories (see the [bug
+report](https://github.com/spack/spack/issues/51505)): Spack looks for the
+patched dependency in the same repository, and fails when it is not there.
+*Palace* patches MFEM, so the local repository also contains an MFEM package.
+It derives from the built-in recipe and adds nothing, so it needs no
+maintenance:
 
-Rather than maintaining a duplicate copy of the MFEM recipe, you can create a
-symbolic link from Spack's built-in MFEM package to your local repository:
+```python
+from spack_repo.builtin.packages.mfem.package import Mfem as BuiltinMfem
 
-```sh
-ln -s "$(spack location --repo builtin)"/packages/mfem ~/repos/palace/spack_repo/local/packages/
+from spack.package import *
+
+
+class Mfem(BuiltinMfem):
+    """MFEM, in this repository so that Palace can apply its patches to it."""
 ```
 
-This command uses Spack's `location` subcommand to find where the built-in
-repository lives, then creates a symlink to the MFEM package directory. To
-verify that the symlink was created correctly, run:
+When you add a patch to another dependency of *Palace*, add a package like this
+one for that dependency as well. You can check that Spack finds it with
 
 ```sh
 spack info local.mfem | head -n 4
 ```
-
-If you see MFEM's package information, you're all set. This workaround ensures
-that when Spack processes patches for *Palace*, it can find MFEM in the same
-repository namespace and avoid the bug.
 
 ## Iterating on Package Changes
 
