@@ -38,6 +38,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, or a list of them, set by `Solver.Driven.AdaptiveCircuitSynthesisAnchorFreq`,
     and `AdaptiveCircuitSynthesisAnchorExtrapolate` removes the screening by Richardson
     extrapolation. SchemaVer 6-2-0
+    [PR 1157](https://github.com/awslabs/palace/pull/1157).
 
 #### Interface Changes
 
