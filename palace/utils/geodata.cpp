@@ -2765,9 +2765,9 @@ bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
   // seed.
   const int nproc = static_cast<int>(
       std::clamp<SCOTCH_Num>((vtxdist[size] + 99999) / 100000, std::min(size, 8), size));
-  const int group = (size + nproc - 1) / nproc;
   MPI_Comm group_comm, part_comm;
-  MPI_Comm_split(comm, rank / group, rank, &group_comm);
+  MPI_Comm_split(comm, static_cast<int>(static_cast<long long>(rank) * nproc / size), rank,
+                 &group_comm);
   const int group_rank = Mpi::Rank(group_comm), group_size = Mpi::Size(group_comm);
   const bool leader = (group_rank == 0);
   MPI_Comm_split(comm, leader ? 0 : MPI_UNDEFINED, rank, &part_comm);
