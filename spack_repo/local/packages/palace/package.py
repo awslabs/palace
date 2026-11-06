@@ -158,7 +158,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis")  # Spack's MFEM requires it with SuperLU_DIST
+        depends_on("superlu-dist+parmetis", when="@:0.19")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
