@@ -33,6 +33,54 @@ namespace
 // palace::test::CustomCheck so TEST_CASEs can register them per-CSV.
 // ---------------------------------------------------------------------------
 
+// Normal-incidence Fresnel solution for a 5 mm slab between vacuum Floquet ports.
+palace::test::CustomCheck TestDielectricSlab(double loss_tangent)
+{
+  return
+      [loss_tangent](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  {
+    REQUIRE(actual.n_rows() == 1);
+    REQUIRE(actual.n_complete_rows() == 1);
+    REQUIRE(actual.n_cols() == 9);
+    CHECK_THAT(actual[0].data[0], Catch::Matchers::WithinAbs(2.0, 1.0e-12));
+    constexpr std::complex<double> imaginary{0.0, 1.0};
+    // Positive-time phasors: passive epsilon has a negative imaginary part.
+    const auto index = std::sqrt(4.0 * (1.0 - imaginary * loss_tangent));
+    const double k0 = 2.0 * std::numbers::pi * 2.0e9 / 299792458.0;
+    const auto q = std::exp(-imaginary * k0 * index * 0.005);
+    const auto rho = (1.0 - index) / (1.0 + index);
+    const auto denominator = 1.0 - rho * rho * q * q;
+    // Both reference factors have 75 mm path in vacuum: reflection travels to
+    // the first interface and back; transmission crosses both 37.5 mm gaps.
+    const auto phase = std::exp(-imaginary * k0 * 0.075);
+    const auto reflection = rho * (1.0 - q * q) / denominator * phase;
+    const auto transmission = (1.0 - rho * rho) * q / denominator * phase;
+    double outgoing_power = 0.0;
+    for (std::size_t column = 1; column + 1 < actual.n_cols(); column += 2)
+    {
+      const auto &header = actual[column].header_text;
+      INFO("Floquet channel: " << header);
+      const double magnitude = std::pow(10.0, actual[column].data[0] / 20.0);
+      const double angle = actual[column + 1].data[0] * std::numbers::pi / 180.0;
+      const auto amplitude = std::polar(magnitude, angle);
+      const auto expected = header == "|S[P1(0;0)TE][1]| (dB)"   ? reflection
+                            : header == "|S[P2(0;0)TE][1]| (dB)" ? transmission
+                                                                 : std::complex<double>{};
+      CHECK(std::abs(amplitude - expected) < 2.0e-8);
+      outgoing_power += std::norm(amplitude);
+    }
+    const double absorption = 1.0 - outgoing_power;
+    const double expected_absorption =
+        1.0 - std::norm(reflection) - std::norm(transmission);
+    CHECK_THAT(absorption, Catch::Matchers::WithinAbs(expected_absorption, 1.0e-8));
+    if (loss_tangent > 0.0)
+    {
+      CHECK(absorption > 0.0);
+      CHECK(absorption < 1.0);
+    }
+  };
+}
+
 // Magnitude-only farfield check. Phase of the complex E components is not
 // reproducible across MPI partitions, so we compare
 //   |E|(row) = sqrt(|Ex|^2 + |Ey|^2 + |Ez|^2)
@@ -1476,6 +1524,24 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_uniform.json",
                                   "uniform", opts);
+}
+
+TEST_CASE("floquet_dielectric_slab_lossless", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(0.0);
+  palace::test::RunRegressionCase("dielectric_slab", "lossless.json", "lossless", opts);
+}
+
+TEST_CASE("floquet_dielectric_slab_lossy", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(0.05);
+  palace::test::RunRegressionCase("dielectric_slab", "lossy.json", "lossy", opts);
 }
 
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
