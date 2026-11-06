@@ -23,6 +23,15 @@ of points to a `3 × N` matrix of velocities, with lengths in μm by default.
 that a velocity vanishes or is rigid on the given boundary attributes, and
 `write_sensitivity` writes the format.
 
+`morph_mesh` moves the nodes of an MFEM mesh, such as one that *Palace* saves, by velocities
+and parameter changes, and reports the change in element quality; `morph_quality` compares a
+mesh with an earlier one, to decide when to replace it. Finite differences of simulations on
+morphed meshes check the contraction:
+
+```julia
+quality = morph_mesh("region.mesh", "region_morphed.mesh", velocities, (gap=1.0,))
+```
+
 ## Installation
 
 ```julia

@@ -161,4 +161,120 @@ using PalaceSensitivity, Test, LinearAlgebra, Random
         @test derivative(smm, 7, V) ≈ derivative(s, 7, V)
         @test_throws DimensionMismatch jacobian(s, (Y -> zeros(2, 3),))
     end
+
+    @testset "Morphing MFEM meshes" begin
+        dir = mktempdir()
+        header(elements, boundary) = """
+        MFEM mesh v1.0
+
+        dimension
+        3
+
+        elements
+        $(length(elements))
+        $(join(elements, "\n"))
+
+        boundary
+        $(length(boundary))
+        $(join(boundary, "\n"))
+
+        vertices
+        """
+        coordinates(X) =
+            join(("$(X[1, j]) $(X[2, j]) $(X[3, j])" for j in axes(X, 2)), "\n")
+        shear(Y) = [0.5 .* Y[3:3, :]; zeros(2, size(Y, 2))]
+
+        # One tetrahedron, with vertex coordinates, and with P1 nodes by vertex dimension
+        # and by node.
+        X = [0.0 1 0 0; 0 0 1 0; 0 0 0 1]
+        tet = header(["1 4 0 1 2 3"], ["2 2 0 1 2"]) * "4\n"
+        nodes =
+            tet *
+            "\nnodes\nFiniteElementSpace\nFiniteElementCollection: H1_3D_P1\nVDim: 3\n"
+        meshes = (
+            vertices=tet * "3\n" * coordinates(X) * "\n",
+            by_vdim=nodes * "Ordering: 1\n\n" * coordinates(X) * "\n",
+            by_nodes=nodes *
+                     "Ordering: 0\n\n" *
+                     join(string.(vec(permutedims(X))), "\n") *
+                     "\n"
+        )
+        for (name, text) in pairs(meshes)
+            src, dst = joinpath(dir, "$name.mesh"), joinpath(dir, "$(name)_morphed.mesh")
+            write(src, text)
+            q = morph_mesh(src, dst, shear)
+            @test q.num_elements == 1
+            @test q.min_jacobian_ratio ≈ q.max_jacobian_ratio ≈ 1 # a shear keeps volumes
+            @test q.max_strain ≈ 0.5
+            @test PalaceSensitivity._read_mfem(dst).nodes ≈ X .+ shear(X)
+            # Everything but the coordinates, the last lines of the file, is unchanged.
+            k = name == :by_nodes ? 12 : 4
+            @test readlines(dst)[1:(end - k)] == readlines(src)[1:(end - k)]
+        end
+        # Nodes that are not an H1 grid function cannot be checked.
+        src = joinpath(dir, "l2.mesh")
+        write(src, replace(meshes.by_vdim, "H1_3D_P1" => "L2_T1_3D_P1"))
+        @test_throws r"H1 grid function" morph_mesh(src, joinpath(dir, "l2_m.mesh"), shear)
+        @test isnothing(morph_mesh(src, joinpath(dir, "l2_m.mesh"), shear; check=false))
+
+        # A unit hexahedron, prism and pyramid, side by side.
+        hex = [0 1 1 0 0 1 1 0; 0 0 1 1 0 0 1 1; 0 0 0 0 1 1 1 1]
+        prism = [0 1 0 0 1 0; 0 0 1 0 0 1; 0 0 0 1 1 1] .+ [2, 0, 0]
+        pyramid = [0 1 1 0 0; 0 0 1 1 0; 0 0 0 0 1] .+ [4, 0, 0]
+        Xm = hcat(hex, prism, pyramid)
+        elements =
+            ["1 5 $(join(0:7, ' '))", "1 6 $(join(8:13, ' '))", "1 7 $(join(14:18, ' '))"]
+        src = joinpath(dir, "mixed.mesh")
+        write(
+            src,
+            header(elements, String[]) * "$(size(Xm, 2))\n3\n" * coordinates(Xm) * "\n"
+        )
+        q = morph_mesh(src, joinpath(dir, "mixed_sheared.mesh"), shear)
+        @test (q.num_elements, q.num_inverted) == (3, 0)
+        @test q.min_jacobian_ratio ≈ q.max_jacobian_ratio ≈ 1
+        # A reflection inverts every element, and nothing is written.
+        flip(Y) = [zeros(2, size(Y, 2)); -2 .* Y[3:3, :]]
+        @test_throws r"inverts 3 of 3" morph_mesh(src, joinpath(dir, "flipped.mesh"), flip)
+        @test !isfile(joinpath(dir, "flipped.mesh"))
+        # Moving a corner of the hexahedron through the opposite face inverts the element at
+        # that corner, although its volume stays positive.
+        function corner(Y)
+            D = zeros(size(Y))
+            D[3, 7] = -1.5 # vertex 7, (1, 1, 1), to z = -0.5
+            return D
+        end
+        q = morph_mesh(src, joinpath(dir, "corner.mesh"), corner; check=false)
+        @test q.num_inverted == 1 && q.min_jacobian_ratio < 0
+
+        # Units: a mesh in mm moved by 1 μm, and the combination of velocities and parameter
+        # changes.
+        q = morph_mesh(src, joinpath(dir, "mm.mesh"), Y -> ones(size(Y)); length_unit=1e-3)
+        @test q.max_displacement ≈ sqrt(3) / 1000
+        velocities = (a=Y -> [ones(1, size(Y, 2)); zeros(2, size(Y, 2))], b=shear)
+        dst = joinpath(dir, "combined.mesh")
+        morph_mesh(src, dst, velocities, (a=0.25, b=2.0))
+        @test PalaceSensitivity._read_mfem(dst).nodes ≈ Xm .+ [0.25, 0, 0] .+ 2 .* shear(Xm)
+        @test_throws ArgumentError morph_mesh(src, dst, velocities, (c=1.0,))
+        @test_throws r"must be a number" morph_mesh(src, dst, velocities, (a="1",))
+
+        # The quality of a sequence of morphs, relative to the first mesh.
+        scale(Y) = 0.1 .* Y
+        morph_mesh(src, joinpath(dir, "step1.mesh"), scale)
+        morph_mesh(joinpath(dir, "step1.mesh"), joinpath(dir, "step2.mesh"), scale)
+        @test morph_quality(src, joinpath(dir, "step2.mesh")).max_jacobian_ratio ≈ 1.21^3
+        @test_throws r"does not have the nodes" morph_quality(
+            src,
+            joinpath(dir, "vertices.mesh")
+        )
+
+        # Only uncompressed MFEM meshes.
+        write(joinpath(dir, "compressed.mesh"), UInt8[0x1f, 0x8b, 0x08, 0x00])
+        @test_throws r"gzip" morph_mesh(joinpath(dir, "compressed.mesh"), dst, shear)
+        write(joinpath(dir, "nc.mesh"), "MFEM NC mesh v1.0\n")
+        @test_throws r"Unsupported mesh format" morph_mesh(
+            joinpath(dir, "nc.mesh"),
+            dst,
+            shear
+        )
+    end
 end
