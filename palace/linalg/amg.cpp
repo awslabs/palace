@@ -3,6 +3,8 @@
 
 #include "amg.hpp"
 
+#include <_hypre_parcsr_mv.h>
+
 namespace palace
 {
 
@@ -31,6 +33,16 @@ BoomerAmgSolver::BoomerAmgSolver(int cycle_it, int smooth_it, bool agg_coarsen, 
 
   // int coarse_relax_type = 8;  // l1-symm. GS (inexact coarse solve)
   // HYPRE_BoomerAMGSetCycleRelaxType(*this, coarse_relax_type, 3);
+}
+
+void BoomerAmgSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const
+{
+  if (!iterative_mode)
+  {
+    x.HypreWrite();
+    hypre_ParVectorSetZeros(x);
+  }
+  mfem::HypreBoomerAMG::Mult(b, x);
 }
 
 }  // namespace palace

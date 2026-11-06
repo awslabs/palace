@@ -24,11 +24,38 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch for
+    [hypre-space/hypre#1651](https://github.com/hypre-space/hypre/pull/1651), which skips
+    the halo exchange of a zero initial guess in the hybrid Gauss-Seidel relaxation of
+    BoomerAMG and AMS, and marked the zero initial guess of the BoomerAMG preconditioner as
+    zero. This saves one halo exchange per level and V-cycle, which is latency bound on the
+    coarse levels at high process counts. Results are unchanged.
+    [PR 1139](https://github.com/awslabs/palace/pull/1139).
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#163](https://github.com/pghysels/STRUMPACK/pull/163), which lowers
+    the communication cost of its distributed solve phase: point-to-point exchanges of only
+    the nonempty messages instead of all-to-all collectives, cached right-hand side
+    redistribution patterns and extend-add index maps, and the row interchanges of the
+    forward solve applied in one exchange. This speeds up the repeated solves of STRUMPACK
+    as the coarse solver at high process counts, with unchanged results.
+    [PR 1143](https://github.com/awslabs/palace/pull/1143).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
     adaptive mesh refinement iteration.
     [PR 1134](https://github.com/awslabs/palace/pull/1134).
+  - Solved the second divergence-free projection in each shift-and-invert application of
+    the linearized quadratic eigenvalue problem (eigenmode problems with damping) to a
+    relative tolerance of 10⁻³. Its right-hand side is already at round-off, which the
+    projection previously reduced to machine precision.
+    [PR 1138](https://github.com/awslabs/palace/pull/1138).
+  - Operator norm estimates, such as the maximum eigenvalue estimate of each Chebyshev
+    smoother, now use the Lanczos method with the same tolerance in all builds, instead of
+    SLEPc or the power iteration. Each Chebyshev smoother also starts its estimate from the
+    dominant vector of its previous operator, and estimates real operators in real
+    arithmetic. This makes the multigrid preconditioner setup several times faster at
+    each frequency of a driven sweep.
+    [PR 1140](https://github.com/awslabs/palace/pull/1140).
 
 #### Bug Fixes
 
@@ -64,6 +91,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
+    edge of any element, for example a conductor face tagged on an outer boundary of the
+    mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
+    no domain element is attached to, are now removed with a warning.
+    [PR 1100](https://github.com/awslabs/palace/pull/1100).
+  - Fixed driven-sweep restarts with more than one excitation aborting with
+    `Writing data table at incorrect index`, because the frequencies reloaded from the CSV
+    tables (rounded to their printed precision) were compared exactly with the recomputed
+    ones.
+    [PR 1088](https://github.com/awslabs/palace/pull/1088).
 
 #### Build system
 

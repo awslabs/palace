@@ -24,6 +24,11 @@ public:
                       iodata.solver.linear.amg_agg_coarsen, print)
   {
   }
+
+  // Unless the initial guess is used, zero it and mark it as zero, which lets the first
+  // relaxation skip the exchange of its off-processor values (same result).
+  void Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const override;
+  using mfem::HypreBoomerAMG::Mult;
 };
 
 }  // namespace palace

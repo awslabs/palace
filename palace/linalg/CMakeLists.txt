@@ -30,6 +30,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
