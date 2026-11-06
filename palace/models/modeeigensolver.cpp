@@ -34,7 +34,6 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
-#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -169,7 +168,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   sigma_cached = sigma;
   omega_cached = omega;
   reduced_model->ResetSolution();
-  const auto t_start = Timer::Now();
 
   const bool real_frequency = (omega.imag() == 0.0);
   const bool local_solver_rank = (solver_comm != MPI_COMM_NULL);
@@ -189,27 +187,10 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     // not assemble the full finite-element operator.
     local_reduced_accepted = reduced_model->TrySolve(omega.real(), sigma);
   }
-  // Port-solver ranks agree on whether the reduced solve is accepted and, for the cost
-  // check, on the wall-clock time of this reduced solve and of a typical exact solve
-  // (maxima over the ranks, since the non-port ranks wait for the port ranks).
   const bool reduced_attempted = reduced_model->IsEnabled() && !reduce_not_ready;
-  const bool cost_check = reduced_attempted && reduced_cost_check;
-  double reduced_status[3] = {
-      (local_solver_rank && reduced_attempted && !local_reduced_accepted) ? 1.0 : 0.0,
-      Timer::Duration(Timer::Now() - t_start).count(),
-      cost_check ? reduced_model->GetTypicalExactSolveTime() : 0.0};
-  Mpi::GlobalMax(3, reduced_status, nd_fespace.GetComm());
-  const bool reduced_rejected = (reduced_status[0] > 0.0);
-  if (cost_check && reduced_status[2] > 0.0)
-  {
-    // Retire the reduced model when its solves are not cheaper than exact ones. An accepted
-    // reduced solution is still used for this solve.
-    reduced_model->RecordSolveTimes(reduced_status[1], reduced_status[2]);
-    if (!(reduced_status[1] < reduced_status[2]))
-    {
-      reduced_model->Retire();
-    }
-  }
+  int reduced_rejected =
+      (local_solver_rank && reduced_attempted && !local_reduced_accepted) ? 1 : 0;
+  Mpi::GlobalMax(1, &reduced_rejected, nd_fespace.GetComm());
 
   if (reduced_attempted && !reduced_rejected)
   {
@@ -229,7 +210,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 
   // Truth/fallback and all complex-frequency queries retain the original exact assembly.
   // All FE-space ranks reach this call together.
-  const auto t_exact = Timer::Now();
   AssembleFrequencyDependent(omega, sigma);
 
   // The sparse matrix sum and doubled-real block construction below are MPI-collective on
@@ -337,7 +317,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   int num_conv = eigen->Solve();
   if (real_frequency)
   {
-    reduced_model->RecordExactSolve(Timer::Duration(Timer::Now() - t_exact).count());
+    reduced_model->RecordExactSolve();
   }
 
   // Build a permutation sorted by proximity to the shift target so that mode ordering is
@@ -376,8 +356,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 void ModeEigenSolver::SetSynthesisTol(double eig_tol_new, double ksp_tol_new)
 {
   eig_tol = eig_tol_new;
-  // Exact solves at the previous tolerances do not represent the cost of the next ones.
-  reduced_model->ResetExactSolveTimes();
   if (eigen)
   {
     eigen->SetTol(eig_tol);
@@ -393,13 +371,25 @@ void ModeEigenSolver::ConfigureReducedModelTraining(std::size_t max_basis_size)
   reduced_model->ConfigureTraining(max_basis_size);
 }
 
-void ModeEigenSolver::EnableReducedModel(double adaptive_tol, bool cost_check)
+void ModeEigenSolver::EnableReducedModel(double adaptive_tol, double basis_limit_factor)
 {
-  reduced_cost_check = cost_check;
-  int has_basis = reduced_model->HasBasis() ? 1 : 0;
-  Mpi::GlobalMax(1, &has_basis, nd_fespace.GetComm());
-  reduced_model->Enable(has_basis != 0, adaptive_tol, opA.get(), last_assembled_omega,
-                        last_assembled_sigma);
+  // The basis is only stored on the processes with port unknowns. A reduced solve costs
+  // O(n³) for n basis vectors, in the dense eigenvalue problem, and an exact solve of the
+  // sparse cross-section problem with N unknowns roughly O(N^{3/2}), so the reduced model
+  // is only used with a basis of at most basis_limit_factor·√N vectors.
+  unsigned long long basis_size = reduced_model->GetBasisSize();
+  Mpi::GlobalMax(1, &basis_size, nd_fespace.GetComm());
+  std::size_t basis_limit = 0;
+  if (basis_limit_factor > 0.0)
+  {
+    const auto num_unknowns =
+        static_cast<double>(nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize());
+    basis_limit =
+        std::max(static_cast<std::size_t>(basis_limit_factor * std::sqrt(num_unknowns)),
+                 std::size_t{1});
+  }
+  reduced_model->Enable(basis_size > 0, basis_size, basis_limit, adaptive_tol, opA.get(),
+                        last_assembled_omega, last_assembled_sigma);
 }
 
 std::complex<double> ModeEigenSolver::GetEigenvalue(int i) const

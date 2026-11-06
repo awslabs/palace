@@ -31,12 +31,10 @@ public:
     std::size_t offline_basis_rank = 0;
     std::size_t online_basis_cap = 0;
     double worst_residual = 0.0;
-    // Wall-clock times of the latest reduced solve and of a typical exact solve, compared
-    // when the reduced model is enabled with a cost check (zero otherwise), and whether
-    // the reduced model was retired because exact solves are cheaper.
-    double reduced_solve_time = 0.0;
-    double exact_solve_time = 0.0;
-    bool retired = false;
+    // Largest basis of a reduced model in use, or zero for no limit, and whether the
+    // reduced model is not used because its offline basis is larger.
+    std::size_t basis_limit = 0;
+    bool over_basis_limit = false;
   };
 
   WavePortReducedModel(int num_modes, double eig_tol, int nd_size, int h1_size,
@@ -45,7 +43,12 @@ public:
                        const ComplexOperator &opB);
 
   void ConfigureTraining(std::size_t max_basis_size);
-  void Enable(bool enable, double adaptive_tol, const ComplexOperator *truth_operator,
+
+  // Enable the reduced model, unless its basis of basis_size vectors (the same on all
+  // processes) is larger than a nonzero basis_limit, which then also caps its online
+  // enrichment.
+  void Enable(bool enable, std::size_t basis_size, std::size_t basis_limit,
+              double adaptive_tol, const ComplexOperator *truth_operator,
               std::complex<double> truth_omega, double truth_sigma);
   void ResetSolution() { has_solution = false; }
 
@@ -59,27 +62,9 @@ public:
 
   void ObserveExactEigenvectors(int num_converged, const EigenvalueSolver &eigen,
                                 const std::vector<int> &mode_perm);
-  // Record an exact real-frequency solve and, once training is configured, its wall-clock
-  // time for the cost check of the reduced model.
-  void RecordExactSolve(double seconds);
-
-  // Forget the recorded exact solve times, when the cost of exact solves changes (with
-  // their tolerances).
-  void ResetExactSolveTimes() { exact_solve_times.clear(); }
-
-  // Typical (median) time of the recorded exact solves, or zero without any.
-  double GetTypicalExactSolveTime() const;
+  void RecordExactSolve() { stats.exact_solves++; }
   void RecordReducedSolve();
   void RecordFallback() { stats.fallbacks++; }
-  void RecordSolveTimes(double reduced_time, double exact_time)
-  {
-    stats.reduced_solve_time = reduced_time;
-    stats.exact_solve_time = exact_time;
-  }
-
-  // Stop using and enriching the reduced model, because its solves cost at least as much
-  // as exact solves. The solution of the latest reduced solve remains available.
-  void Retire();
 
   const Stats &GetStats() const { return stats; }
   std::size_t GetBasisSize() const { return basis.size(); }
@@ -116,7 +101,6 @@ private:
   double tolerance = 0.0;
   Stats stats;
 
-  std::vector<double> exact_solve_times;
   std::vector<ComplexVector> basis;
   std::vector<std::complex<double>> eigenvalues;
   std::vector<ComplexVector> eigenvectors;
