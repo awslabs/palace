@@ -299,7 +299,9 @@ void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac)
   {
     probe.Stop();
   }
-  A_check = perf::Verification() ? Ac : nullptr;
+  // Only the main solver's coarse solve is checked: nested solvers (e.g. wave port mode
+  // solves) may run on a subset of the matrix communicator.
+  A_check = (perf::Verification() && role == "Main") ? Ac : nullptr;
 }
 
 template <OperatorType OperType>
