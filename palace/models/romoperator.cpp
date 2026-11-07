@@ -1154,17 +1154,25 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return true;
   };
 
+  // [PR 1126 review experiment] Drop a linearly dependent part with a warning instead of
+  // aborting: the PROM already represents it to ORTHOG_TOL.
   if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    V.pop_back();
+    Mpi::Warning(comm, "Dropping linearly dependent real part of {} from the PROM basis!\n",
+                 node_label);
   }
   if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    V.pop_back();
+    Mpi::Warning(comm, "Dropping linearly dependent imaginary part of {} from the PROM "
+                 "basis!\n",
+                 node_label);
+  }
+  if (V.size() != dim_V_new)
+  {
+    dim_V_new = V.size();
+    orth_R.conservativeResize(dim_V_new, dim_V_new);
   }
 
   if (dim_V_new == dim_V_old)
