@@ -782,6 +782,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring("The environment differs"));
   CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 10.0), 3, 5),
                     Catch::Matchers::ContainsSubstring("The environment differs"));
+  // Also with fewer environment DOFs than the model, like the mesh of the region.
+  CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 10.0), 3, 3),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
   // So is a changed boundary condition on the environment (its terminal removed).
   IoData no_env_terminal = make_config("Online", 1.0, 10.0);
   no_env_terminal.boundaries.terminal.erase(2);
@@ -828,17 +831,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THROWS_WITH(
       condense(make_config("Magnetostatic", "Online", 1)),
       Catch::Matchers::ContainsSubstring("is electrostatic, unlike this run"));
-  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 2)),
-                    Catch::Matchers::ContainsSubstring(
-                        "\"Solver\"/\"Order\" must be those of the offline run"));
-  // The model is read by the root process. A truncated one (its head intact) is not one.
+  CHECK_THROWS_WITH(
+      condense(make_config("Electrostatic", "Online", 2)),
+      Catch::Matchers::ContainsSubstring("has \"Order\": 1, unlike this run (2)"));
+  // The model is read by the root process: a model of another format version, and a
+  // truncated one.
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::fstream f(model_path, std::ios::binary | std::ios::in | std::ios::out);
+    const int version = 1000;
+    f.seekp(sizeof(int));
+    f.write(reinterpret_cast<const char *>(&version), sizeof(int));
+  }
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
+                    Catch::Matchers::ContainsSubstring("written by another version"));
+  condense(make_config("Electrostatic", "Offline", 1));
   if (Mpi::Root(Mpi::World()))
   {
     std::filesystem::resize_file(model_path, std::filesystem::file_size(model_path) / 2);
   }
-  CHECK_THROWS_WITH(
-      condense(make_config("Electrostatic", "Online", 1)),
-      Catch::Matchers::ContainsSubstring("is not a saved substructuring model"));
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
+                    Catch::Matchers::ContainsSubstring("is incomplete"));
   if (Mpi::Root(Mpi::World()))
   {
     std::ofstream(model_path, std::ios::binary) << "not a substructuring model";
@@ -1434,18 +1447,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   off.CondenseEnvironment();
   const mfem::DenseMatrix C_off = off.CapacitanceMatrix(terms);
 
-  // Strip the terminal-mode section: keep the header (2 ints), signature (nG x 3), S_E (nG
-  // x nG), reference length (1 int + 1 double) and environment fingerprint (1 int + 5
-  // doubles).
+  // Strip the terminal-mode section: keep the head (5 ints, nG the fourth), signatures (nG
+  // x 3), S_E (nG x nG), reference length (1 int + 1 double), environment fingerprint (1
+  // int + 5 doubles) and element moments (1 int + 12 doubles).
   if (Mpi::Root(Mpi::World()))
   {
-    int nG = 0;
+    int head[5] = {0, 0, 0, 0, 0};
     {
       std::ifstream f(model_path, std::ios::binary);
-      f.read(reinterpret_cast<char *>(&nG), sizeof(int));
+      f.read(reinterpret_cast<char *>(head), sizeof(head));
     }
-    const auto kept = static_cast<std::uintmax_t>(4 * sizeof(int)) +
-                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 6);
+    const int nG = head[3];
+    const auto kept = static_cast<std::uintmax_t>(8 * sizeof(int)) +
+                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 18);
     REQUIRE(std::filesystem::file_size(model_path) > kept);
     std::filesystem::resize_file(model_path, kept);
   }

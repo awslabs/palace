@@ -427,6 +427,10 @@ struct SubstructuringSolver::Impl
   // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
   // sums over elements, which the partition changes by rounding only.
   static constexpr double kFingerprintTol = 1.0e-9;
+  static constexpr const char *kEnvironmentDiffers =
+      "The environment differs from the one the saved substructuring model was condensed "
+      "from (environment mesh, materials, boundary conditions, order or problem type "
+      "changed): rerun in \"Offline\" mode to condense it again!";
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
@@ -605,24 +609,36 @@ struct SubstructuringSolver::Impl
         BlockTimer bt(Timer::IO);
         saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
       }
-      MFEM_VERIFY(saved.nG >= 0, "Cannot read the saved substructuring model \""
-                                     << sub.save_model
-                                     << "\" (run in \"Offline\" mode first)!");
-      MFEM_VERIFY(saved.width > 0, "\"" << sub.save_model
-                                        << "\" is not a saved substructuring model: run "
-                                           "in \"Offline\" mode to write one!");
+      const std::string &model = sub.save_model;
+      MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
+                                          << model
+                                          << "\" (run in \"Offline\" mode first)!");
+      MFEM_VERIFY(saved.version > 0, "\"" << model
+                                          << "\" is not a saved substructuring model: run "
+                                             "in \"Offline\" mode to write one!");
+      MFEM_VERIFY(saved.version == kModelVersion,
+                  "The saved substructuring model \""
+                      << model
+                      << "\" was written by another version of Palace: rerun in "
+                         "\"Offline\" mode!");
+      MFEM_VERIFY(saved.width > 0, "The saved substructuring model \""
+                                       << model
+                                       << "\" is incomplete: rerun in \"Offline\" mode!");
       MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
                   "The saved substructuring model \""
-                      << sub.save_model << "\" is "
+                      << model << "\" is "
                       << (magnetostatic ? "electrostatic" : "magnetostatic")
                       << ", unlike this run!");
-      double n_env = 0.0;
-      for (int i = 0; i < nt; i++)
-      {
-        n_env += em[i] && !dir_mark[i];
-      }
-      Mpi::GlobalSum(1, &n_env, parent_fes.GetComm());
-      region_only = !saved.env_fp.empty() && n_env < saved.env_fp[0];
+      MFEM_VERIFY(saved.order == iodata.solver.order,
+                  "The saved substructuring model \""
+                      << model << "\" has \"Order\": " << saved.order
+                      << ", unlike this run (" << iodata.solver.order << ")!");
+      // The mesh holds the environment of the model, or its part in the mesh of the region.
+      const auto moments = ElementMoments(parent, sub.environment_attributes);
+      region_only = !MomentsMatch(moments, saved.env_moments, kFingerprintTol);
+      MFEM_VERIFY(!region_only ||
+                      MomentsMatch(moments, saved.region_moments, kFingerprintTol),
+                  kEnvironmentDiffers);
       if (region_only)
       {
         model_eps = saved.regularization;
@@ -2054,17 +2070,23 @@ struct SubstructuringSolver::Impl
                  MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
   }
 
-  // Model-file sections following S_E: [kLengthMagic][Model.Lc of the offline run],
-  // [kEnvFpMagic][environment fingerprint, 5 doubles], [kEpsMagic][the magnetostatic
-  // regularization eps] (magnetostatics), [kSKenMagic][S^K nG x nG] (magnetostatics),
-  // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
-  // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B
-  // KxK].
-  static constexpr int kSKenMagic = 0x4e454b53;    // "SKEN"
-  static constexpr int kModesMagic = 0x33444f4d;   // "MOD3"
-  static constexpr int kEnvFpMagic = 0x33564e45;   // "ENV3"
-  static constexpr int kLengthMagic = 0x434e454c;  // "LENC"
-  static constexpr int kEpsMagic = 0x5350454d;     // "MEPS"
+  // A model file: [kModelMagic][kModelVersion][Solver.Order][nG][signature type]
+  // [signatures nG x width][S_E nG x nG], then the sections [kLengthMagic][Model.Lc of the
+  // offline run], [kEnvFpMagic][environment fingerprint, 5 doubles], [kEpsMagic][the
+  // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
+  // the environment and of its elements in the mesh of the region, 12 doubles],
+  // [kSKenMagic][S^K nG x nG] (magnetostatics), [kModesMagic][K][ids][fingerprints
+  // 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode KxK], and
+  // [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK].
+  static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
+  static constexpr int kModelVersion = 1;
+  static constexpr int kHeadInts = 5;
+  static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
+  static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"
+  static constexpr int kEnvFpMagic = 0x33564e45;    // "ENV3"
+  static constexpr int kLengthMagic = 0x434e454c;   // "LENC"
+  static constexpr int kEpsMagic = 0x5350454d;      // "MEPS"
+  static constexpr int kEnvMeshMagic = 0x48534d45;  // "EMSH"
 
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
@@ -2073,85 +2095,108 @@ struct SubstructuringSolver::Impl
     return (sig_type == 3) ? 13 : (sig_type == 2) ? 12 : (sig_type == 1) ? 3 : 0;
   }
 
-  // The head of a model, from rank 0: the interface size (-1: the file cannot be read),
-  // signature type and width (0: not a model, or a truncated one), the interface
-  // signatures, the offsets of S_E and of the sections after it, the reference length (0:
-  // not saved), the environment fingerprint (empty: not saved) and the magnetostatic
-  // regularization (0: not saved). Collective.
+  // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
+  // not a model), order, interface size, signature type and width (0: another version, or
+  // an incomplete model), the interface signatures, the offsets of S_E and of the sections
+  // after it, the reference length, environment fingerprint, element moments of the
+  // environment and of the mesh of the region, and magnetostatic regularization (0 or
+  // empty: not saved). Collective.
   struct SavedHead
   {
-    int nG = -1, sig_type = 0, width = 0;
+    int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
     std::vector<double> sig, env_fp;
+    std::array<double, 6> env_moments = {}, region_moments = {};
     double length = 0.0, regularization = 0.0;
     std::streamoff S_pos = 0, sections_pos = 0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm)
   {
     SavedHead h;
-    int head[4] = {-1, 0, 0, 0};  // nG, signature type, width, has fingerprint
+    // Version, order, nG, signature type, width, with the fingerprint, with the moments.
+    int head[7] = {-1, 0, 0, 0, 0, 0, 0};
     auto offsets = [&h](std::streamoff nG, std::streamoff width)
     {
-      h.S_pos = 2 * static_cast<std::streamoff>(sizeof(int)) +
+      h.S_pos = kHeadInts * static_cast<std::streamoff>(sizeof(int)) +
                 static_cast<std::streamoff>(sizeof(double)) * nG * width;
       h.sections_pos = h.S_pos + static_cast<std::streamoff>(sizeof(double)) * nG * nG;
     };
     if (Mpi::Root(comm))
     {
       std::ifstream f(path, std::ios::binary | std::ios::ate);
-      const std::streamoff size = f ? static_cast<std::streamoff>(f.tellg()) : 0;
+      const std::streamoff size = f ? static_cast<std::streamoff>(f.tellg()) : -1;
       f.seekg(0);
-      if (f.read(reinterpret_cast<char *>(&head[0]), sizeof(int)) &&
-          f.read(reinterpret_cast<char *>(&head[1]), sizeof(int)) && head[0] >= 0)
+      int v[kHeadInts] = {0, 0, 0, 0, 0};
+      head[0] = (size < 0) ? -1 : 0;
+      if (f.read(reinterpret_cast<char *>(v), sizeof(v)) && v[0] == kModelMagic)
       {
+        head[0] = v[1];
+        head[1] = v[2];
+        head[2] = v[3];
+        head[3] = v[4];
         // The file holds the signatures and S_E (in floating point: any nG read).
-        const double n = head[0], w = SignatureFileWidth(head[1]);
-        const double end = 2.0 * sizeof(int) + sizeof(double) * n * (w + n);
-        head[2] = (w > 0.0 && end <= static_cast<double>(size)) ? static_cast<int>(w) : 0;
+        const double n = v[3], w = SignatureFileWidth(v[4]);
+        const double end = kHeadInts * sizeof(int) + sizeof(double) * n * (w + n);
+        head[4] = (v[1] == kModelVersion && n >= 0.0 && w > 0.0 &&
+                   end <= static_cast<double>(size))
+                      ? static_cast<int>(w)
+                      : 0;
       }
-      else
+      if (head[4] > 0)
       {
-        head[0] = -1;
-      }
-      if (head[2] > 0)
-      {
-        offsets(head[0], head[2]);
-        h.sig.resize(static_cast<std::size_t>(head[0]) * head[2]);
+        offsets(head[2], head[4]);
+        h.sig.resize(static_cast<std::size_t>(head[2]) * head[4]);
         f.read(reinterpret_cast<char *>(h.sig.data()), sizeof(double) * h.sig.size());
         f.seekg(h.sections_pos);
         int magic = 0;
-        f.read(reinterpret_cast<char *>(&magic), sizeof(int));
-        if (magic == kLengthMagic)
+        auto read = [&f](double *x, int n)
         {
-          f.read(reinterpret_cast<char *>(&h.length), sizeof(double));
-          f.read(reinterpret_cast<char *>(&magic), sizeof(int));
-        }
-        if (f && magic == kEnvFpMagic)
+          return static_cast<bool>(f.read(reinterpret_cast<char *>(x), sizeof(double) * n));
+        };
+        while (f.read(reinterpret_cast<char *>(&magic), sizeof(int)))
         {
-          h.env_fp.resize(5);
-          f.read(reinterpret_cast<char *>(h.env_fp.data()), sizeof(double) * 5);
-          head[3] = f ? 1 : 0;
-          if (f.read(reinterpret_cast<char *>(&magic), sizeof(int)) && magic == kEpsMagic)
+          if (magic == kLengthMagic)
           {
-            f.read(reinterpret_cast<char *>(&h.regularization), sizeof(double));
+            read(&h.length, 1);
+          }
+          else if (magic == kEpsMagic)
+          {
+            read(&h.regularization, 1);
+          }
+          else if (magic == kEnvFpMagic)
+          {
+            h.env_fp.resize(5);
+            head[5] = read(h.env_fp.data(), 5);
+          }
+          else if (magic == kEnvMeshMagic)
+          {
+            head[6] = read(h.env_moments.data(), 6) && read(h.region_moments.data(), 6);
+          }
+          else
+          {
+            break;  // the sections loaded with S_E
           }
         }
       }
     }
-    Mpi::Broadcast(4, head, 0, comm);
-    Mpi::Broadcast(1, &h.length, 0, comm);
-    Mpi::Broadcast(1, &h.regularization, 0, comm);
-    h.nG = head[0];
-    h.sig_type = head[1];
-    h.width = head[2];
-    if (h.nG < 0 || h.width == 0)
+    Mpi::Broadcast(7, head, 0, comm);
+    h.version = head[0];
+    h.order = head[1];
+    h.nG = head[2];
+    h.sig_type = head[3];
+    h.width = (head[5] && head[6]) ? head[4] : 0;
+    if (h.width == 0)
     {
       return h;
     }
+    Mpi::Broadcast(1, &h.length, 0, comm);
+    Mpi::Broadcast(1, &h.regularization, 0, comm);
     offsets(h.nG, h.width);
     h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
     Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
-    h.env_fp.resize(head[3] ? 5 : 0);
-    Mpi::Broadcast(static_cast<int>(h.env_fp.size()), h.env_fp.data(), 0, comm);
+    h.env_fp.resize(5);
+    Mpi::Broadcast(5, h.env_fp.data(), 0, comm);
+    Mpi::Broadcast(6, h.env_moments.data(), 0, comm);
+    Mpi::Broadcast(6, h.region_moments.data(), 0, comm);
     return h;
   }
   // The head of the model of an online run (read by the constructor).
@@ -2247,6 +2292,21 @@ struct SubstructuringSolver::Impl
   // Environment fingerprint of a loaded model.
   std::array<double, 5> saved_env_fp = {0.0, 0.0, 0.0, 0.0, 0.0};
   bool have_env_fp = false;
+
+  void AppendEnvMoments(const std::string &path, const std::vector<char> &written)
+  {
+    BlockTimer bt(Timer::IO);
+    const auto &env = iodata.solver.substructuring->environment_attributes;
+    const std::array<double, 6> m[2] = {
+        ElementMoments(parent, env), ElementMoments(parent, env, written)};  // collective
+    if (Mpi::Root(parent_fes.GetComm()))
+    {
+      std::ofstream f(path, std::ios::binary | std::ios::app);
+      f.write(reinterpret_cast<const char *>(&kEnvMeshMagic), sizeof(int));
+      f.write(reinterpret_cast<const char *>(m[0].data()), sizeof(double) * 6);
+      f.write(reinterpret_cast<const char *>(m[1].data()), sizeof(double) * 6);
+    }
+  }
 
   void AppendEnvFingerprint(const std::string &path)
   {
@@ -2418,7 +2478,7 @@ struct SubstructuringSolver::Impl
   // environment) and, in magnetostatics, those of the surface currents and flux loops,
   // whose excitations need their boundaries (the films of the flux loops whole), and the
   // two-sided films of RegionFilmClosure. Collective.
-  void WriteRegionMesh(const std::string &path)
+  std::vector<char> WriteRegionMesh(const std::string &path)
   {
     BlockTimer bt(Timer::IO);
     std::vector<char> keep(parent_fes.GetTrueVSize(), 0);
@@ -2457,10 +2517,11 @@ struct SubstructuringSolver::Impl
     const std::vector<char> plain =
         broken ? RegionFilmClosure(keep, loop_films) : std::vector<char>();
     const auto &sub = *iodata.solver.substructuring;
-    palace::WriteRegionMesh(path, parent_fes, sub.region_attributes,
-                            sub.environment_attributes, keep,
-                            iodata.units.GetMeshLengthRelativeScale(), plain);
+    std::vector<char> written = palace::WriteRegionMesh(
+        path, parent_fes, sub.region_attributes, sub.environment_attributes, keep,
+        iodata.units.GetMeshLengthRelativeScale(), plain);
     Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
+    return written;
   }
 
   // Abort if a loaded model was condensed from a different environment than the current
@@ -2477,11 +2538,7 @@ struct SubstructuringSolver::Impl
       ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
                      kFingerprintTol * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
     }
-    MFEM_VERIFY(ok,
-                "The environment differs from the one the saved substructuring model was "
-                "condensed from (environment mesh, materials, boundary conditions, "
-                "order or problem type changed): rerun in \"Offline\" mode to "
-                "condense it again!");
+    MFEM_VERIFY(ok, kEnvironmentDiffers);
   }
 
   void AppendSK(const std::string &path) const
@@ -2553,11 +2610,12 @@ struct SubstructuringSolver::Impl
         magic = 0;
       }
       MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-      if (magic == kLengthMagic || magic == kEpsMagic)
+      if (magic == kLengthMagic || magic == kEpsMagic || magic == kEnvMeshMagic)
       {
         if (root)
         {
-          f.seekg(sizeof(double), std::ios::cur);  // read by ReadSavedHead
+          f.seekg(sizeof(double) * ((magic == kEnvMeshMagic) ? 12 : 1),
+                  std::ios::cur);  // read by ReadSavedHead
         }
       }
       else if (magic == kEnvFpMagic)
@@ -3421,8 +3479,8 @@ void SubstructuringSolver::CondenseEnvironment()
     MFEM_VERIFY(saved.nG == nG,
                 "Saved substructuring model interface size ("
                     << saved.nG << ") does not match this run (" << nG
-                    << "): the interface (Gamma) and \"Solver\"/\"Order\" must be those of "
-                       "the offline run!");
+                    << "); the interface (Gamma) must be identical between the offline and "
+                       "online runs.");
     MFEM_VERIFY(saved.width == sig_w,
                 "The interface of the saved substructuring model "
                     << ((saved.width == 13) ? "is" : "is not")
@@ -3658,8 +3716,9 @@ void SubstructuringSolver::CondenseEnvironment()
       if (rank == 0)
       {
         std::ofstream f(model_path, std::ios::binary);
-        f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
-        f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
+        const int head[Impl::kHeadInts] = {Impl::kModelMagic, Impl::kModelVersion,
+                                           impl->iodata.solver.order, nG, sig_type};
+        f.write(reinterpret_cast<const char *>(head), sizeof(head));
         f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
         f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
         f.write(reinterpret_cast<const char *>(&Impl::kLengthMagic), sizeof(int));
@@ -3669,8 +3728,8 @@ void SubstructuringSolver::CondenseEnvironment()
       MPI_Bcast(&written, 1, MPI_INT, 0, comm);
       MFEM_VERIFY(written,
                   "Cannot write the substructuring model \"" << model_path << "\"!");
-      impl->AppendEnvFingerprint(model_path);             // collective
-      impl->WriteRegionMesh(RegionMeshPath(model_path));  // collective
+      impl->AppendEnvFingerprint(model_path);  // collective
+      impl->AppendEnvMoments(model_path, impl->WriteRegionMesh(RegionMeshPath(model_path)));
       if (impl->have_sk)
       {
         impl->AppendSK(model_path);  // collective

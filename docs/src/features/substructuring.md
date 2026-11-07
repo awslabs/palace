@@ -68,11 +68,11 @@ the boundary conditions of the environment that reach the interface and, in magn
 surface currents and flux loops of the environment (with the films of the flux loops whole and, if
 these elements reach a `"TwoSided"` film where it crosses the interface, the environment along every
 such crossing). An `"Online"` run on it (`"Model"/"Mesh"`, with the configuration otherwise
-unchanged) reads and partitions the region only. The environment is then that of the model, and its
-fingerprint is not checked; the interface is found from the saved interface DOFs, and the
-nondimensionalization is that of the model. Every excitation with sources in the environment must be
-in the model, the fields are written in the region and on the interface only, and adaptive
-refinement needs the full mesh.
+unchanged) reads and partitions the region only. The environment is then that of the model, and the
+mesh must hold the environment elements written with it; the interface is found from the saved
+interface DOFs, and the nondimensionalization is that of the model. Every excitation with sources in
+the environment must be in the model, the fields are written in the region and on the interface
+only, and adaptive refinement needs the full mesh.
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).

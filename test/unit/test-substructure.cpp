@@ -42,6 +42,55 @@ TEST_CASE("Interface true DOFs are identified consistently in parallel",
   CHECK(count(2) == 169);
 }
 
+TEST_CASE("Element moments tell sets of elements apart", "[substructure][Serial][Parallel]")
+{
+  // A box [0, 2] x [-0.3, 0.3]^2, and the same rotated by 90 degrees about the z axis: the
+  // same count, volume and distances from the origin, told apart by the centroid moments
+  // (of which some vanish, up to rounding). The moments are those of any partition, and a
+  // subset differs.
+  auto box = [](bool rotate)
+  {
+    mfem::Mesh serial =
+        mfem::Mesh::MakeCartesian3D(4, 2, 2, mfem::Element::HEXAHEDRON, 2.0, 0.6, 0.6);
+    serial.Transform(
+        [rotate](const mfem::Vector &x, mfem::Vector &y)
+        {
+          y = x;
+          y(1) -= 0.3;
+          y(2) -= 0.3;
+          if (rotate)
+          {
+            y(0) = -(x(1) - 0.3);
+            y(1) = x(0);
+          }
+        });
+    return serial;
+  };
+  mfem::Mesh serial = box(false), rotated = box(true);
+  mfem::ParMesh mesh(Mpi::World(), serial), mesh_rotated(Mpi::World(), rotated);
+  std::vector<int> part(serial.GetNE());
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    part[e] = (serial.GetNE() - 1 - e) % Mpi::Size(Mpi::World());  // another partition
+  }
+  mfem::ParMesh mesh_repartitioned(Mpi::World(), serial, part.data());
+  const auto m = ElementMoments(mesh, {1});
+  CHECK(m[0] == 16.0);
+  CHECK(std::abs(m[1] - 0.72) <= 1.0e-12);
+  CHECK(MomentsMatch(m, ElementMoments(mesh_repartitioned, {1}), 1.0e-12));
+  const auto r = ElementMoments(mesh_rotated, {1});
+  CHECK(r[0] == m[0]);
+  CHECK(std::abs(r[1] - m[1]) <= 1.0e-12 * m[1]);
+  CHECK(std::abs(r[2] - m[2]) <= 1.0e-12 * m[2]);
+  CHECK_FALSE(MomentsMatch(m, r, 1.0e-9));
+  std::vector<char> half(mesh.GetNE(), 0);
+  for (int e = 0; e < mesh.GetNE(); e += 2)
+  {
+    half[e] = 1;
+  }
+  CHECK_FALSE(MomentsMatch(m, ElementMoments(mesh, {1}, half), 1.0e-9));
+}
+
 TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]")
 {
   // Point-tangent DOFs u(p).t, with signatures (t_b, p_a t_b): a DOF at a saved point
