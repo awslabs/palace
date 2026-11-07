@@ -255,6 +255,26 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+// The energy 1/2 u^T K u of a field with the energy operator of the whole domain.
+double Energy(const SubstructuringSolver &ss, const Vector &u)
+{
+  return 0.5 * ss.MutualEnergy(u, u);
+}
+
+// The energy matrices of London flux states and of surface currents alone.
+mfem::DenseMatrix SheetEnergies(SubstructuringSolver &ss, const std::vector<int> &ids,
+                                const std::vector<Vector> &a,
+                                std::vector<Vector> *fields = nullptr, int n_fields = 0)
+{
+  return ss.MagnetostaticEnergyMatrix({}, {}, ids, a, {}, nullptr, fields, n_fields);
+}
+mfem::DenseMatrix CurrentEnergies(SubstructuringSolver &ss, const std::vector<int> &ids,
+                                  const std::vector<Vector> &J,
+                                  std::vector<Vector> *fields = nullptr, int n_fields = 0)
+{
+  return ss.MagnetostaticEnergyMatrix(ids, J, {}, {}, {}, nullptr, fields, n_fields);
+}
+
 }  // namespace
 
 TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
@@ -366,8 +386,8 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     // Electrostatic energy (QoI) must match the monolith. Monolith energy = 1/2 X^T (B -
     // r), computed here directly as 1/2 u_full^T A_full u_full via the substructuring
     // accessor on the reference field.
-    const double e_sub = ss.ElectrostaticEnergy(u);
-    const double e_ref = ss.ElectrostaticEnergy(u_full);
+    const double e_sub = Energy(ss, u);
+    const double e_ref = Energy(ss, u_full);
     CHECK(std::abs(e_sub - e_ref) <= 1.0e-8 * std::abs(e_ref));
 
     // Capacitance sweep: solve each terminal excitation and form C_ij = phi_i^T K phi_j.
@@ -532,7 +552,7 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
   lf.ParallelAssemble(f);
 
   Vector u = ss.SolveSource(f);
-  const double e_sub = ss.ElectrostaticEnergy(u);  // 1/2 u^T K_curlcurl u (magnetic energy)
+  const double e_sub = Energy(ss, u);  // 1/2 u^T K_curlcurl u (magnetic energy)
 
   // Monolith reference with the identical approach: solve curl-curl + small mass (definite,
   // AMS-convergent), measure energy with the pure curl-curl operator.
@@ -610,7 +630,7 @@ TEST_CASE("SubstructuringSolver magnetostatic Dirichlet excitation",
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
   Vector u = ss.SolveExcitation(1);  // tangential A = 1 on attr-1 boundary, 0 on attr-2
-  const double e_sub = ss.ElectrostaticEnergy(u);
+  const double e_sub = Energy(ss, u);
 
   // Monolith: same Dirichlet data, curl-curl + small mass (definite), pure-curl-curl
   // energy.
@@ -906,7 +926,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const std::vector<int> terms = {1, 2};
   auto full_field_C = [&terms](SubstructuringSolver &ss)
   {
-    std::vector<Vector> u = ss.SolveExcitations(terms);
+    std::vector<Vector> u;
+    for (int t : terms)
+    {
+      u.push_back(ss.SolveExcitation(t));
+    }
     mfem::DenseMatrix C(2);
     for (int i = 0; i < 2; i++)
     {
@@ -1063,7 +1087,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Recover a field on demand; it matches the full solve.
   (void)on.EnergyMatrix(ids, lifts_on, &fields, 1);
   CHECK(on.EnvironmentFactored());
-  const Vector u_full = on.SolveDirichlet(lifts_on[0]);
+  const Vector u_full = on.SolveDirichlets({lifts_on[0]})[0];
   Vector d(fields[0]);
   d -= u_full;
   const double un = std::sqrt(mfem::InnerProduct(Mpi::World(), u_full, u_full));
@@ -1226,14 +1250,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh_off.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
   SubstructuringSolver off(iodata_off, mesh_off);
   off.CondenseEnvironment();
-  const mfem::DenseMatrix E_off = off.CurrentEnergyMatrix({1}, current(*mesh_off.back()));
+  const mfem::DenseMatrix E_off = CurrentEnergies(off, {1}, current(*mesh_off.back()));
 
   IoData iodata_on = make_config("Online");
   std::vector<std::unique_ptr<Mesh>> mesh_on;
   mesh_on.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4, true)));
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
-  const mfem::DenseMatrix E_on = on.CurrentEnergyMatrix({1}, current(*mesh_on.back()));
+  const mfem::DenseMatrix E_on = CurrentEnergies(on, {1}, current(*mesh_on.back()));
   CHECK_FALSE(on.EnvironmentFactored());
   CAPTURE(E_on(0, 0), E_off(0, 0));
   CHECK(std::abs(E_on(0, 0) - E_off(0, 0)) <= 1.0e-9 * std::abs(E_off(0, 0)));
@@ -1692,7 +1716,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
   Vector u_on = on.SolveExcitation(1);
-  const double e_sub = on.ElectrostaticEnergy(u_on);
+  const double e_sub = Energy(on, u_on);
 
   // Monolith on the online mesh, same excitation (attr 1 -> 1 V, attr 2 -> 0).
   auto &pmesh = mesh_on.back()->Get();
@@ -2009,11 +2033,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
 
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
-  REQUIRE(ss.HasSheets());
-  const mfem::DenseMatrix E = ss.SheetEnergyMatrix({1, 2}, a);
+  const mfem::DenseMatrix E = SheetEnergies(ss, {1, 2}, a);
   // The full-field path (fields requested) gives the same energies.
   std::vector<Vector> fields;
-  const mfem::DenseMatrix E_full = ss.SheetEnergyMatrix({1, 2}, a, &fields, 2);
+  const mfem::DenseMatrix E_full = SheetEnergies(ss, {1, 2}, a, &fields, 2);
 
   // Monolith: A = K_cc + M_sheet + eps M, u = A^-1 M_sheet a (PEC pinned) with one
   // refinement step for the regularization, and the energy formula above.
@@ -2125,7 +2148,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
-  const mfem::DenseMatrix E_on = on.SheetEnergyMatrix({1, 2}, a);
+  const mfem::DenseMatrix E_on = SheetEnergies(on, {1, 2}, a);
   CHECK_FALSE(on.EnvironmentFactored());
   double don = 0.0;
   for (int i = 0; i < 2; i++)
@@ -2141,7 +2164,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   // sources, as in the full-field path. They differ only in the zero-energy gauge (the
   // regularization fixes it to rounding), so they are compared in the energy norm.
   std::vector<Vector> fields_on;
-  on.SheetEnergyMatrix({1, 2}, a, &fields_on, 2);
+  SheetEnergies(on, {1, 2}, a, &fields_on, 2);
   REQUIRE(fields_on.size() == 2);
   auto energy_norm = [&](const Vector &v)
   {
@@ -2254,10 +2277,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
-  CHECK(ss.HasSheets() == london);
-  const mfem::DenseMatrix E = ss.CurrentEnergyMatrix({1, 2}, J12);
+  const mfem::DenseMatrix E = CurrentEnergies(ss, {1, 2}, J12);
   std::vector<Vector> fields;
-  const mfem::DenseMatrix E_full = ss.CurrentEnergyMatrix({1, 2}, J12, &fields, 2);
+  const mfem::DenseMatrix E_full = CurrentEnergies(ss, {1, 2}, J12, &fields, 2);
 
   // Monolith: L = K + M_sheet, u = L^+ J from A = L + eps M with two refinement steps
   // (PEC pinned), and E_ij = u_i^T L u_j.
@@ -2353,8 +2375,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
-  const mfem::DenseMatrix E_on = on.CurrentEnergyMatrix({1, 2}, J12);
-  const mfem::DenseMatrix E_on3 = on.CurrentEnergyMatrix({1, 2, 3}, J123);
+  const mfem::DenseMatrix E_on = CurrentEnergies(on, {1, 2}, J12);
+  const mfem::DenseMatrix E_on3 = CurrentEnergies(on, {1, 2, 3}, J123);
   CHECK_FALSE(on.EnvironmentFactored());
   CHECK(max_diff(E_on, E) <= 1.0e-9 * m);
   CAPTURE(E_on3(2, 2), E_mono(2, 2), E_on3(0, 2), E_mono(0, 2));
@@ -2363,7 +2385,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Online fields agree with the full-field path in the energy norm (they differ only in
   // the zero-energy gauge).
   std::vector<Vector> fields_on;
-  on.CurrentEnergyMatrix({1, 2}, J12, &fields_on, 2);
+  CurrentEnergies(on, {1, 2}, J12, &fields_on, 2);
   REQUIRE(fields_on.size() == 2);
   for (int k = 0; k < 2; k++)
   {
@@ -2380,18 +2402,18 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // A reversed excitation does not match the saved source modes.
   std::vector<Vector> J_rev = {J[0]};
   J_rev[0].Neg();
-  const mfem::DenseMatrix E_rev = on.CurrentEnergyMatrix({1}, J_rev);
+  const mfem::DenseMatrix E_rev = CurrentEnergies(on, {1}, J_rev);
   CHECK(std::abs(E_rev(0, 0) - E(0, 0)) <= 1.0e-9 * m);
 
   // A current ending on the free sheet does not close (with PEC only).
   if (london)
   {
-    CHECK_NOTHROW(on.CurrentEnergyMatrix({4}, {J[3]}));
+    CHECK_NOTHROW(CurrentEnergies(on, {4}, {J[3]}));
   }
 #if defined(MFEM_USE_EXCEPTIONS)
   else
   {
-    CHECK_THROWS_WITH(on.CurrentEnergyMatrix({4}, {J[3]}),
+    CHECK_THROWS_WITH(CurrentEnergies(on, {4}, {J[3]}),
                       Catch::Matchers::ContainsSubstring("does not close"));
   }
 #endif
@@ -2639,7 +2661,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   lf.Assemble();
   Vector f(pfes.GetTrueVSize());
   lf.ParallelAssemble(f);
-  const double e_sub = ss.ElectrostaticEnergy(ss.SolveSource(f));
+  const double e_sub = Energy(ss, ss.SolveSource(f));
 
   mfem::Vector nu_by_attr(2), mass_by_attr(2);
   nu_by_attr(0) = 1.0 / mu_r;
@@ -2714,7 +2736,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh_on.push_back(std::make_unique<Mesh>(MakeRefinedGradedSplit(4, 5, 6)));
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
-  const double e_on = on.ElectrostaticEnergy(on.SolveSource(f));
+  const double e_on = Energy(on, on.SolveSource(f));
   CAPTURE(e_on);
   CHECK(std::abs(e_on - e_sub) <= 1.0e-7 * std::abs(e_sub));  // iterative region solves
 }
@@ -2905,7 +2927,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
     SubstructuringSolver off(iodata, mesh);
     off.CondenseEnvironment();
-    (void)off.CurrentEnergyMatrix({1}, {current(mesh.back()->Get())});
+    (void)CurrentEnergies(off, {1}, {current(mesh.back()->Get())});
   }
   IoData iodata_on = make_config("Online");
   auto count_env = [](const mfem::ParMesh &m)
@@ -3456,7 +3478,7 @@ TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs toler
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(10)));
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
-    return ss.ElectrostaticEnergy(ss.SolveExcitation(1));
+    return Energy(ss, ss.SolveExcitation(1));
   };
   const double e_exact = energy_at(0.0);
   CHECK(e_exact > 1.0e-12);
@@ -3498,7 +3520,7 @@ TEST_CASE("SubstructuringSolver HODLR compressed apply matches dense (parallel)"
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(8)));
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
-    return ss.ElectrostaticEnergy(ss.SolveExcitation(1));
+    return Energy(ss, ss.SolveExcitation(1));
   };
   const double e_dense = energy_at(0.0);
   const double e_comp = energy_at(1.0e-8);

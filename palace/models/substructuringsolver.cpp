@@ -779,7 +779,7 @@ struct SubstructuringSolver::Impl
     A_region = AssembleParent(region_eps, magnetostatic, true, &sheet_region);
     if (magnetostatic)
     {
-      // Energy operator: the pure curl-curl (see SheetEnergyMatrix for the London sheets).
+      // Energy operator: the pure curl-curl (see SourceEnergyMatrix for the London sheets).
       A_region_energy = AssembleParent(region_eps, false);
       K_region_e = A_region_energy.get();
       if (has_sheets)
@@ -3696,7 +3696,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!impl->magnetostatic)
     {
-      // Terminal modes (the flux-loop source modes are computed by SheetEnergyMatrix).
+      // Terminal modes (the flux-loop source modes are computed by SourceEnergyMatrix).
       std::vector<int> ids;
       std::vector<Vector> lifts;
       for (const auto &[idx, dofs] : impl->terminal_tdofs)
@@ -3976,25 +3976,8 @@ Vector TerminalDbc(const std::map<int, std::vector<int>> &terminal_tdofs, int dr
 
 Vector SubstructuringSolver::SolveExcitation(int drive_idx)
 {
-  return SolveExcitations({drive_idx})[0];
-}
-
-std::vector<Vector>
-SubstructuringSolver::SolveExcitations(const std::vector<int> &drive_terminal_indices)
-{
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  std::vector<Vector> dbcs;
-  dbcs.reserve(drive_terminal_indices.size());
-  for (int idx : drive_terminal_indices)
-  {
-    dbcs.push_back(TerminalDbc(impl->terminal_tdofs, idx, impl->nt));
-  }
-  return SolveDirichletBatch(dbcs);
-}
-
-Vector SubstructuringSolver::SolveDirichlet(const Vector &dbc_values)
-{
-  return SolveDirichlets({dbc_values})[0];
+  return SolveDirichletBatch({TerminalDbc(impl->terminal_tdofs, drive_idx, impl->nt)})[0];
 }
 
 std::vector<Vector>
@@ -4162,24 +4145,6 @@ std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vec
   }
   impl->RecoverEnvInterior(u, &fE);  // u_E = A_EE^-1 (f_E - (A_env u)|_E)
   return u;
-}
-
-mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int> &ids,
-                                                          const std::vector<Vector> &a,
-                                                          std::vector<Vector> *fields,
-                                                          int n_fields)
-{
-  MFEM_VERIFY(impl->magnetostatic && impl->has_sheets,
-              "SheetEnergyMatrix needs London superconductor sheets!");
-  return MagnetostaticEnergyMatrix({}, {}, ids, a, {}, nullptr, fields, n_fields);
-}
-
-mfem::DenseMatrix SubstructuringSolver::CurrentEnergyMatrix(const std::vector<int> &ids,
-                                                            const std::vector<Vector> &J,
-                                                            std::vector<Vector> *fields,
-                                                            int n_fields)
-{
-  return MagnetostaticEnergyMatrix(ids, J, {}, {}, {}, nullptr, fields, n_fields);
 }
 
 mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
@@ -4852,11 +4817,6 @@ Vector SubstructuringSolver::TerminalLift(int terminal_index) const
   return impl->TerminalMode(terminal_index);
 }
 
-bool SubstructuringSolver::HasSheets() const
-{
-  return impl->has_sheets;
-}
-
 bool SubstructuringSolver::EnvironmentFactored() const
 {
   return impl->env_built;
@@ -4928,11 +4888,6 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
     pv.SetTime(static_cast<double>(ids[j]));
     pv.Save();
   }
-}
-
-double SubstructuringSolver::ElectrostaticEnergy(const Vector &u) const
-{
-  return 0.5 * MutualEnergy(u, u);
 }
 
 }  // namespace palace
