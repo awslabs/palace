@@ -1,0 +1,895 @@
+diff --git a/SRC/complex16/pzgstrs.c b/SRC/complex16/pzgstrs.c
+index a324b4f092f9c0b1f24858a4084d83422d7f4579..b03ebfafc671b6a477ac4a5c10e262e5301a29cd 100755
+--- a/SRC/complex16/pzgstrs.c
++++ b/SRC/complex16/pzgstrs.c
+@@ -244,6 +244,178 @@ z_acc_usolve_flops(int_t nsupers, int nrhs, gridinfo_t *grid,
+  * </pre>
+  */
+ 
++/* Node-aware exchange of the B-to-X values (row indices already known):
++   send_dbuf[] holds the values packed by destination as in the direct
++   exchange, recv_dbuf[] receives them in the same layout. */
++static void
++b2x_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, zSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 doublecomplex *send_dbuf, doublecomplex *recv_dbuf)
++{
++    const int tag_direct = 1, tag_fwd = 3, tag_agg = 100;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nagg_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    doublecomplex *aggbuf = NULL;
++    MPI_Request *reqs, *agg_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    agg_reqs = reqs + procs + 2*ndiag + 2;
++
++    /* Stage 1 receives of an aggregator. */
++    for (k = 0; k < a->nagg; ++k) tot += a->agg_tot[k];
++    if ( tot && !(aggbuf = doublecomplexMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->agg_cnt[k*lsize + s];
++            if ( c && lo + s != iam )
++                MPI_Irecv(&aggbuf[(tot + a->agg_off[k*lsize + s]) * nrhs], c * nrhs,
++                          SuperLU_MPI_DOUBLE_COMPLEX, lo + s, tag_agg + q, grid->comm, &agg_reqs[nagg_req++]);
++        }
++        tot += a->agg_tot[k];
++    }
++    /* Receives of a diagonal process: directly from its own node, one
++       forwarded message from each other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( RecvCnt[s] )
++                        MPI_Irecv(&recv_dbuf[rdispls[s] * (size_t)nrhs], RecvCnt[s] * nrhs,
++                                  SuperLU_MPI_DOUBLE_COMPLEX, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = rdispls[nlo + ncnt - 1] + RecvCnt[nlo + ncnt - 1] - rdispls[nlo];
++                if ( c )
++                    MPI_Irecv(&recv_dbuf[rdispls[nlo] * (size_t)nrhs], c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX,
++                              nlo + a->my_q % ncnt, tag_fwd, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Sends. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = SendCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX, ag,
++                      tag_agg + q, grid->comm, &reqs[nreq++]);
++        else { /* I am the aggregator: copy my own rows. */
++            int_t off = 0;
++            for (k = 0; k < a->nagg && a->agg_q[k] != q; ++k) off += a->agg_tot[k];
++            off += a->agg_off[k*lsize + (iam - lo)];
++            for (i = 0; i < c * nrhs; ++i)
++                aggbuf[off * nrhs + i] = send_dbuf[sdispls[d] * (size_t)nrhs + i];
++        }
++    }
++    /* Stage 2: forward the gathered rows. */
++    if ( nagg_req ) MPI_Waitall(nagg_req, agg_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        if ( a->agg_tot[k] )
++            MPI_Isend(&aggbuf[tot * nrhs], a->agg_tot[k] * nrhs, SuperLU_MPI_DOUBLE_COMPLEX, diag[q],
++                      tag_fwd, grid->comm, &reqs[nreq++]);
++        tot += a->agg_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
++/* Node-aware exchange of the X-to-B values (row indices already known): a
++   diagonal process sends the rows for the processes of another node in one
++   message to its aggregator there, which scatters them. send_dbuf[] and
++   recv_dbuf[] have the layout of the direct exchange. */
++static void
++x2b_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, zSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 doublecomplex *send_dbuf, doublecomplex *recv_dbuf)
++{
++    const int tag_direct = 1, tag_blk = 5, tag_fwd = 100 + grid->nprow * grid->npcol;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nblk_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    doublecomplex *aggbuf = NULL;
++    MPI_Request *reqs, *blk_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    blk_reqs = reqs + procs + 2*ndiag + 2 + lsize*a->nagg;
++
++    /* Aggregator: receive the block of each diagonal process I serve. */
++    for (k = 0; k < a->nagg; ++k) tot += a->x2b_tot[k];
++    if ( tot && !(aggbuf = doublecomplexMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        if ( a->x2b_tot[k] )
++            MPI_Irecv(&aggbuf[tot * nrhs], a->x2b_tot[k] * nrhs, SuperLU_MPI_DOUBLE_COMPLEX,
++                      diag[a->agg_q[k]], tag_blk, grid->comm, &blk_reqs[nblk_req++]);
++        tot += a->x2b_tot[k];
++    }
++    /* Receiver: from the diagonal processes of my node directly, from the
++       aggregators of my node for the others. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = RecvCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX, ag,
++                      tag_fwd + q, grid->comm, &reqs[nreq++]);
++    }
++    /* Diagonal process: direct sends on my node, one block per other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( SendCnt[s] )
++                        MPI_Isend(&send_dbuf[sdispls[s] * (size_t)nrhs], SendCnt[s] * nrhs,
++                                  SuperLU_MPI_DOUBLE_COMPLEX, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = sdispls[nlo + ncnt - 1] + SendCnt[nlo + ncnt - 1] - sdispls[nlo];
++                if ( c )
++                    MPI_Isend(&send_dbuf[sdispls[nlo] * (size_t)nrhs], c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX,
++                              nlo + a->my_q % ncnt, tag_blk, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Aggregator: scatter the blocks to the processes of my node. */
++    if ( nblk_req ) MPI_Waitall(nblk_req, blk_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        int d;
++        q = a->agg_q[k];
++        d = diag[q];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->x2b_cnt[k*lsize + s];
++            doublecomplex *src = &aggbuf[(tot + a->x2b_off[k*lsize + s]) * nrhs];
++            if ( !c ) continue;
++            if ( lo + s == iam ) {
++                for (i = 0; i < c * nrhs; ++i)
++                    recv_dbuf[rdispls[d] * (size_t)nrhs + i] = src[i];
++            } else
++                MPI_Isend(src, c * nrhs, SuperLU_MPI_DOUBLE_COMPLEX, lo + s, tag_fwd + q, grid->comm,
++                          &reqs[nreq++]);
++        }
++        tot += a->x2b_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
+ int_t
+ pzReDistribute_B_to_X(doublecomplex *B, int_t m_loc, int nrhs, int_t ldb,
+                       int_t fst_row, int_t *ilsum, doublecomplex *x,
+@@ -432,6 +604,14 @@ pzReDistribute_B_to_X(doublecomplex *B, int_t m_loc, int nrhs, int_t ldb,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 
+ 
++	if ( cached && !gstrs_comm->b2x_agg )
++		gstrs_comm->b2x_agg = pxb2x_agg_setup(grid, SOLVEstruct->num_diag_procs,
++						      SOLVEstruct->diag_procs, SendCnt,
++						     gstrs_comm->X_to_B_SendCnt + 2*procs);
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		b2x_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -455,6 +635,7 @@ pzReDistribute_B_to_X(doublecomplex *B, int_t m_loc, int nrhs, int_t ldb,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 
+ 
+ 		/* ------------------------------------------------------------
+@@ -711,6 +892,10 @@ pzReDistribute_X_to_B(int_t n, doublecomplex *B, int_t m_loc, int_t ldb, int_t f
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 	// MPI_Barrier( grid->comm );
+ 
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		x2b_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -735,6 +920,7 @@ pzReDistribute_X_to_B(int_t n, doublecomplex *B, int_t m_loc, int_t ldb, int_t f
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 	// MPI_Barrier( grid->comm );
+ 
+ 
+diff --git a/SRC/complex16/pzutil.c b/SRC/complex16/pzutil.c
+index c8d3220d3b489e56e371d667abf2d0f1c3da90c2..29885cae793eff8b459e1d2b734b7de88afac540 100755
+--- a/SRC/complex16/pzutil.c
++++ b/SRC/complex16/pzutil.c
+@@ -929,6 +929,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
+     gstrs_comm->perm_cache = NULL;
++    gstrs_comm->b2x_agg = NULL;
+ 
+     return 0;
+ } /* PZGSTRS_INIT */
+diff --git a/SRC/double/pdgstrs.c b/SRC/double/pdgstrs.c
+index 71926fec445e0efdebfae4f1bc0d68679022b1aa..a6bbf267047c6b059c45ee881e048a7260d766ac 100755
+--- a/SRC/double/pdgstrs.c
++++ b/SRC/double/pdgstrs.c
+@@ -421,6 +421,178 @@ dreadMM_dist_intoL_CSR(FILE *fp, int_t *m, int_t *n, int_t *nonz,
+  * </pre>
+  */
+ 
++/* Node-aware exchange of the B-to-X values (row indices already known):
++   send_dbuf[] holds the values packed by destination as in the direct
++   exchange, recv_dbuf[] receives them in the same layout. */
++static void
++b2x_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, dSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 double *send_dbuf, double *recv_dbuf)
++{
++    const int tag_direct = 1, tag_fwd = 3, tag_agg = 100;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nagg_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    double *aggbuf = NULL;
++    MPI_Request *reqs, *agg_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    agg_reqs = reqs + procs + 2*ndiag + 2;
++
++    /* Stage 1 receives of an aggregator. */
++    for (k = 0; k < a->nagg; ++k) tot += a->agg_tot[k];
++    if ( tot && !(aggbuf = doubleMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->agg_cnt[k*lsize + s];
++            if ( c && lo + s != iam )
++                MPI_Irecv(&aggbuf[(tot + a->agg_off[k*lsize + s]) * nrhs], c * nrhs,
++                          MPI_DOUBLE, lo + s, tag_agg + q, grid->comm, &agg_reqs[nagg_req++]);
++        }
++        tot += a->agg_tot[k];
++    }
++    /* Receives of a diagonal process: directly from its own node, one
++       forwarded message from each other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( RecvCnt[s] )
++                        MPI_Irecv(&recv_dbuf[rdispls[s] * (size_t)nrhs], RecvCnt[s] * nrhs,
++                                  MPI_DOUBLE, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = rdispls[nlo + ncnt - 1] + RecvCnt[nlo + ncnt - 1] - rdispls[nlo];
++                if ( c )
++                    MPI_Irecv(&recv_dbuf[rdispls[nlo] * (size_t)nrhs], c * nrhs, MPI_DOUBLE,
++                              nlo + a->my_q % ncnt, tag_fwd, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Sends. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = SendCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, ag,
++                      tag_agg + q, grid->comm, &reqs[nreq++]);
++        else { /* I am the aggregator: copy my own rows. */
++            int_t off = 0;
++            for (k = 0; k < a->nagg && a->agg_q[k] != q; ++k) off += a->agg_tot[k];
++            off += a->agg_off[k*lsize + (iam - lo)];
++            for (i = 0; i < c * nrhs; ++i)
++                aggbuf[off * nrhs + i] = send_dbuf[sdispls[d] * (size_t)nrhs + i];
++        }
++    }
++    /* Stage 2: forward the gathered rows. */
++    if ( nagg_req ) MPI_Waitall(nagg_req, agg_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        if ( a->agg_tot[k] )
++            MPI_Isend(&aggbuf[tot * nrhs], a->agg_tot[k] * nrhs, MPI_DOUBLE, diag[q],
++                      tag_fwd, grid->comm, &reqs[nreq++]);
++        tot += a->agg_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
++/* Node-aware exchange of the X-to-B values (row indices already known): a
++   diagonal process sends the rows for the processes of another node in one
++   message to its aggregator there, which scatters them. send_dbuf[] and
++   recv_dbuf[] have the layout of the direct exchange. */
++static void
++x2b_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, dSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 double *send_dbuf, double *recv_dbuf)
++{
++    const int tag_direct = 1, tag_blk = 5, tag_fwd = 100 + grid->nprow * grid->npcol;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nblk_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    double *aggbuf = NULL;
++    MPI_Request *reqs, *blk_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    blk_reqs = reqs + procs + 2*ndiag + 2 + lsize*a->nagg;
++
++    /* Aggregator: receive the block of each diagonal process I serve. */
++    for (k = 0; k < a->nagg; ++k) tot += a->x2b_tot[k];
++    if ( tot && !(aggbuf = doubleMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        if ( a->x2b_tot[k] )
++            MPI_Irecv(&aggbuf[tot * nrhs], a->x2b_tot[k] * nrhs, MPI_DOUBLE,
++                      diag[a->agg_q[k]], tag_blk, grid->comm, &blk_reqs[nblk_req++]);
++        tot += a->x2b_tot[k];
++    }
++    /* Receiver: from the diagonal processes of my node directly, from the
++       aggregators of my node for the others. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = RecvCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, ag,
++                      tag_fwd + q, grid->comm, &reqs[nreq++]);
++    }
++    /* Diagonal process: direct sends on my node, one block per other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( SendCnt[s] )
++                        MPI_Isend(&send_dbuf[sdispls[s] * (size_t)nrhs], SendCnt[s] * nrhs,
++                                  MPI_DOUBLE, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = sdispls[nlo + ncnt - 1] + SendCnt[nlo + ncnt - 1] - sdispls[nlo];
++                if ( c )
++                    MPI_Isend(&send_dbuf[sdispls[nlo] * (size_t)nrhs], c * nrhs, MPI_DOUBLE,
++                              nlo + a->my_q % ncnt, tag_blk, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Aggregator: scatter the blocks to the processes of my node. */
++    if ( nblk_req ) MPI_Waitall(nblk_req, blk_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        int d;
++        q = a->agg_q[k];
++        d = diag[q];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->x2b_cnt[k*lsize + s];
++            double *src = &aggbuf[(tot + a->x2b_off[k*lsize + s]) * nrhs];
++            if ( !c ) continue;
++            if ( lo + s == iam ) {
++                for (i = 0; i < c * nrhs; ++i)
++                    recv_dbuf[rdispls[d] * (size_t)nrhs + i] = src[i];
++            } else
++                MPI_Isend(src, c * nrhs, MPI_DOUBLE, lo + s, tag_fwd + q, grid->comm,
++                          &reqs[nreq++]);
++        }
++        tot += a->x2b_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
+ int_t
+ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+                       int_t fst_row, int_t *ilsum, double *x,
+@@ -608,6 +780,14 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 
+ 
++	if ( cached && !gstrs_comm->b2x_agg )
++		gstrs_comm->b2x_agg = pxb2x_agg_setup(grid, SOLVEstruct->num_diag_procs,
++						      SOLVEstruct->diag_procs, SendCnt,
++						     gstrs_comm->X_to_B_SendCnt + 2*procs);
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		b2x_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -631,6 +811,7 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 
+ 
+ 		/* ------------------------------------------------------------
+@@ -886,6 +1067,10 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 	// MPI_Barrier( grid->comm );
+ 
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		x2b_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -910,6 +1095,7 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 	// MPI_Barrier( grid->comm );
+ 
+ 
+diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
+index 962d7ba42273b95ad2f0d628e1355d7004ffe0a8..6de4b20eb5f167b0c9de039f6c69fe4dfc6fe775 100755
+--- a/SRC/double/pdutil.c
++++ b/SRC/double/pdutil.c
+@@ -931,6 +931,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
+     gstrs_comm->perm_cache = NULL;
++    gstrs_comm->b2x_agg = NULL;
+ 
+     return 0;
+ } /* PDGSTRS_INIT */
+diff --git a/SRC/include/superlu_defs.h b/SRC/include/superlu_defs.h
+index 8df47ea29163147d14146f89437de76121d34e00..58b7e8261c9779b48047b7e2498654a919d45c2f 100755
+--- a/SRC/include/superlu_defs.h
++++ b/SRC/include/superlu_defs.h
+@@ -549,8 +549,33 @@ typedef struct {
+        solution (see pdPermute_Dense_Matrix_cached()), built by the first
+        solve. */
+     struct pxperm_cache *perm_cache;
++
++    /* Node-aware two-stage B-to-X exchange (see pdReDistribute_B_to_X()). */
++    struct pxb2x_agg *b2x_agg;
+ } pxgstrs_comm_t;
+ 
++/* In the B-to-X redistribution every process sends a few rows to each
++   diagonal process, so a diagonal process receives one message from nearly
++   every process. With the node-aware exchange, the rows destined for a
++   diagonal process on another node are first gathered by one process of the
++   sending node ("aggregator"), which forwards them in a single message. */
++typedef struct pxb2x_agg {
++    int    enabled;
++    int    nnodes, mynode;
++    int    *node_lo, *node_cnt;   /* first rank and size of each node */
++    int    *agg_of_q;             /* per diagonal process: my aggregator, -1 if same node */
++    int    my_q;                  /* my index in diag_procs[], -1 if not diagonal */
++    int    nagg;                  /* number of diagonal processes I aggregate for */
++    int    *agg_q;                /* their indices in diag_procs[] */
++    int_t  *agg_tot;              /* rows forwarded to each of them */
++    int_t  *agg_cnt, *agg_off;    /* nagg x node size: rows from each node process */
++    /* Same for the X-to-B exchange (the aggregator scatters to its node). */
++    int_t  *x2b_tot, *x2b_cnt, *x2b_off;
++} pxb2x_agg_t;
++
++extern pxb2x_agg_t *pxb2x_agg_setup(gridinfo_t *, int, int_t *, int *, int *);
++extern void pxb2x_agg_free(pxb2x_agg_t *);
++
+ typedef struct pxperm_cache {
+     int    nsend, nrecv;       /* number of partner processes */
+     int    *send_proc, *send_cnt, *send_displ;  /* rows sent to each partner */
+diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
+index 9b4edaa1bf9136fb1a5f486049df25b76ce398e4..0b7242bef257037e8c4972860b0ab754a66d9dba 100755
+--- a/SRC/prec-independent/util.c
++++ b/SRC/prec-independent/util.c
+@@ -330,9 +330,141 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
+     if ( gstrs_comm->B_to_X_recv_idx ) SUPERLU_FREE(gstrs_comm->B_to_X_recv_idx);
+     if ( gstrs_comm->X_to_B_recv_idx ) SUPERLU_FREE(gstrs_comm->X_to_B_recv_idx);
+     if ( gstrs_comm->perm_cache ) pxperm_cache_free(gstrs_comm->perm_cache);
++    if ( gstrs_comm->b2x_agg ) pxb2x_agg_free(gstrs_comm->b2x_agg);
+     SUPERLU_FREE(gstrs_comm);
+ }
+ 
++/* Set up the node-aware B-to-X and X-to-B exchanges of p[sdz]gstrs()
++   (collective over grid->comm): diag[] lists the ndiag diagonal processes,
++   SendCnt[] the B-to-X rows sent to each process and x2bRecvCnt[] the X-to-B
++   rows received from each process. The exchanges are only enabled when the
++   processes of each node have consecutive ranks, there is more than one node,
++   the tags fit under MPI_TAG_UB, and SUPERLU_SOLVE_NODE_AGG is not set to 0. */
++pxb2x_agg_t *
++pxb2x_agg_setup(gridinfo_t *grid, int ndiag, int_t *diag, int *SendCnt,
++                int *x2bRecvCnt)
++{
++    pxb2x_agg_t *a;
++    MPI_Comm ncomm;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int lsize, leader, r, q, n, ok = 1, *lead, *cnt, *allcnt;
++
++    if ( !(a = (pxb2x_agg_t *) SUPERLU_MALLOC(sizeof(pxb2x_agg_t))) )
++        ABORT("Malloc fails for b2x_agg.");
++    a->enabled = 0;
++#if MPI_VERSION < 3
++    return a; /* MPI_Comm_split_type() is MPI-3 */
++#else
++    {   /* The tags of the exchanges go up to 100 + 2*procs; MPI guarantees
++           MPI_TAG_UB >= 32767. The environment variable is read on every process
++           but the decision is collective, so that all of them agree. */
++        int *tag_ub, flag, on = 1, all_on;
++        char *env = getenv("SUPERLU_SOLVE_NODE_AGG");
++        MPI_Comm_get_attr(grid->comm, MPI_TAG_UB, &tag_ub, &flag);
++        if ( (flag ? *tag_ub : 32767) < 100 + 2*procs ) on = 0;
++        if ( env && atoi(env) == 0 ) on = 0;
++        MPI_Allreduce(&on, &all_on, 1, MPI_INT, MPI_MIN, grid->comm);
++        if ( !all_on ) return a;
++    }
++    MPI_Comm_split_type(grid->comm, MPI_COMM_TYPE_SHARED, iam, MPI_INFO_NULL, &ncomm);
++    MPI_Comm_size(ncomm, &lsize);
++    MPI_Allreduce(&iam, &leader, 1, MPI_INT, MPI_MIN, ncomm);
++    if ( !(lead = SUPERLU_MALLOC(procs * sizeof(int))) ) ABORT("Malloc fails for lead[].");
++    MPI_Allgather(&leader, 1, MPI_INT, lead, 1, MPI_INT, grid->comm);
++    /* Each node must be a block of consecutive ranks. */
++    for (r = 0, n = 0; r < procs; ++r) {
++        if ( lead[r] == r ) ++n;
++        else if ( r == 0 || lead[r] != lead[r-1] ) ok = 0;
++    }
++    if ( !ok || n < 2 ) {
++        SUPERLU_FREE(lead);
++        MPI_Comm_free(&ncomm);
++        return a;
++    }
++    a->enabled = 1;
++    a->nnodes = n;
++    if ( !(a->node_lo = SUPERLU_MALLOC((2*n + ndiag + 1) * sizeof(int))) )
++        ABORT("Malloc fails for b2x_agg arrays.");
++    a->node_cnt = a->node_lo + n;
++    a->agg_of_q = a->node_cnt + n;
++    for (r = 0, n = -1; r < procs; ++r) {
++        if ( lead[r] == r ) { ++n; a->node_lo[n] = r; a->node_cnt[n] = 0; }
++        ++a->node_cnt[n];
++        if ( r == iam ) a->mynode = n;
++    }
++    /* Node of each diagonal process, my index among them. */
++    a->my_q = -1;
++    a->nagg = 0;
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], nd;
++        if ( d == iam ) a->my_q = q;
++        for (nd = 0; nd < a->nnodes; ++nd)
++            if ( d >= a->node_lo[nd] && d < a->node_lo[nd] + a->node_cnt[nd] ) break;
++        if ( nd == a->mynode ) a->agg_of_q[q] = -1;
++        else {
++            a->agg_of_q[q] = a->node_lo[a->mynode] + q % a->node_cnt[a->mynode];
++            if ( a->agg_of_q[q] == iam ) ++a->nagg;
++        }
++    }
++    /* Rows sent by each process of the node to each diagonal process. */
++    if ( !(cnt = SUPERLU_MALLOC(2 * (ndiag + 1) * (lsize + 1) * sizeof(int))) )
++        ABORT("Malloc fails for cnt[].");
++    allcnt = cnt + 2*ndiag + 2;
++    /* B-to-X rows sent to, and X-to-B rows received from, each diagonal process. */
++    for (q = 0; q < ndiag; ++q) {
++        cnt[2*q] = SendCnt[diag[q]];
++        cnt[2*q + 1] = x2bRecvCnt[diag[q]];
++    }
++    /* The ranks of ncomm are ordered as in grid->comm (key iam) and each node is a
++       block of consecutive ranks, so process lo + ls of the node is rank ls. */
++    MPI_Allgather(cnt, 2*ndiag, MPI_INT, allcnt, 2*ndiag, MPI_INT, ncomm);
++    if ( a->nagg ) {
++        int k = 0, ls;
++        if ( !(a->agg_q = SUPERLU_MALLOC(a->nagg * sizeof(int))) )
++            ABORT("Malloc fails for agg_q[].");
++        if ( !(a->agg_tot = intMalloc_dist(a->nagg * (2*lsize + 1))) )
++            ABORT("Malloc fails for agg_tot[].");
++        a->agg_cnt = a->agg_tot + a->nagg;
++        a->agg_off = a->agg_cnt + a->nagg * lsize;
++        if ( !(a->x2b_tot = intMalloc_dist(a->nagg * (2*lsize + 1))) )
++            ABORT("Malloc fails for x2b_tot[].");
++        a->x2b_cnt = a->x2b_tot + a->nagg;
++        a->x2b_off = a->x2b_cnt + a->nagg * lsize;
++        for (q = 0; q < ndiag; ++q) {
++            if ( a->agg_of_q[q] != iam ) continue;
++            a->agg_q[k] = q;
++            a->agg_tot[k] = a->x2b_tot[k] = 0;
++            for (ls = 0; ls < lsize; ++ls) {
++                a->agg_cnt[k*lsize + ls] = allcnt[ls*2*ndiag + 2*q];
++                a->agg_off[k*lsize + ls] = a->agg_tot[k];
++                a->agg_tot[k] += allcnt[ls*2*ndiag + 2*q];
++                a->x2b_cnt[k*lsize + ls] = allcnt[ls*2*ndiag + 2*q + 1];
++                a->x2b_off[k*lsize + ls] = a->x2b_tot[k];
++                a->x2b_tot[k] += allcnt[ls*2*ndiag + 2*q + 1];
++            }
++            ++k;
++        }
++    }
++    SUPERLU_FREE(cnt);
++    SUPERLU_FREE(lead);
++    MPI_Comm_free(&ncomm);
++    return a;
++#endif
++}
++
++void pxb2x_agg_free(pxb2x_agg_t *a)
++{
++    if ( a->enabled ) {
++        SUPERLU_FREE(a->node_lo); /* also holds node_cnt[] and agg_of_q[] */
++        if ( a->nagg ) {
++            SUPERLU_FREE(a->agg_q);
++            SUPERLU_FREE(a->agg_tot);
++            SUPERLU_FREE(a->x2b_tot);
++        }
++    }
++    SUPERLU_FREE(a);
++}
++
+ void pxperm_cache_free(pxperm_cache_t *c)
+ {
+     SUPERLU_FREE(c->send_proc);
+diff --git a/SRC/single/psgstrs.c b/SRC/single/psgstrs.c
+index 3e6509e6c7e48c4f303d84d85414e95e78d4ab13..8245506657580b80b401a32eacf4e94ee82c4032 100755
+--- a/SRC/single/psgstrs.c
++++ b/SRC/single/psgstrs.c
+@@ -319,6 +319,178 @@ s_acc_usolve_flops(int_t nsupers, int nrhs, gridinfo_t *grid,
+  * </pre>
+  */
+ 
++/* Node-aware exchange of the B-to-X values (row indices already known):
++   send_dbuf[] holds the values packed by destination as in the direct
++   exchange, recv_dbuf[] receives them in the same layout. */
++static void
++b2x_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, sSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 float *send_dbuf, float *recv_dbuf)
++{
++    const int tag_direct = 1, tag_fwd = 3, tag_agg = 100;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nagg_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    float *aggbuf = NULL;
++    MPI_Request *reqs, *agg_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    agg_reqs = reqs + procs + 2*ndiag + 2;
++
++    /* Stage 1 receives of an aggregator. */
++    for (k = 0; k < a->nagg; ++k) tot += a->agg_tot[k];
++    if ( tot && !(aggbuf = floatMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->agg_cnt[k*lsize + s];
++            if ( c && lo + s != iam )
++                MPI_Irecv(&aggbuf[(tot + a->agg_off[k*lsize + s]) * nrhs], c * nrhs,
++                          MPI_FLOAT, lo + s, tag_agg + q, grid->comm, &agg_reqs[nagg_req++]);
++        }
++        tot += a->agg_tot[k];
++    }
++    /* Receives of a diagonal process: directly from its own node, one
++       forwarded message from each other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( RecvCnt[s] )
++                        MPI_Irecv(&recv_dbuf[rdispls[s] * (size_t)nrhs], RecvCnt[s] * nrhs,
++                                  MPI_FLOAT, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = rdispls[nlo + ncnt - 1] + RecvCnt[nlo + ncnt - 1] - rdispls[nlo];
++                if ( c )
++                    MPI_Irecv(&recv_dbuf[rdispls[nlo] * (size_t)nrhs], c * nrhs, MPI_FLOAT,
++                              nlo + a->my_q % ncnt, tag_fwd, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Sends. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = SendCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, MPI_FLOAT, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, MPI_FLOAT, ag,
++                      tag_agg + q, grid->comm, &reqs[nreq++]);
++        else { /* I am the aggregator: copy my own rows. */
++            int_t off = 0;
++            for (k = 0; k < a->nagg && a->agg_q[k] != q; ++k) off += a->agg_tot[k];
++            off += a->agg_off[k*lsize + (iam - lo)];
++            for (i = 0; i < c * nrhs; ++i)
++                aggbuf[off * nrhs + i] = send_dbuf[sdispls[d] * (size_t)nrhs + i];
++        }
++    }
++    /* Stage 2: forward the gathered rows. */
++    if ( nagg_req ) MPI_Waitall(nagg_req, agg_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        if ( a->agg_tot[k] )
++            MPI_Isend(&aggbuf[tot * nrhs], a->agg_tot[k] * nrhs, MPI_FLOAT, diag[q],
++                      tag_fwd, grid->comm, &reqs[nreq++]);
++        tot += a->agg_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
++/* Node-aware exchange of the X-to-B values (row indices already known): a
++   diagonal process sends the rows for the processes of another node in one
++   message to its aggregator there, which scatters them. send_dbuf[] and
++   recv_dbuf[] have the layout of the direct exchange. */
++static void
++x2b_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, sSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 float *send_dbuf, float *recv_dbuf)
++{
++    const int tag_direct = 1, tag_blk = 5, tag_fwd = 100 + grid->nprow * grid->npcol;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nblk_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    float *aggbuf = NULL;
++    MPI_Request *reqs, *blk_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    blk_reqs = reqs + procs + 2*ndiag + 2 + lsize*a->nagg;
++
++    /* Aggregator: receive the block of each diagonal process I serve. */
++    for (k = 0; k < a->nagg; ++k) tot += a->x2b_tot[k];
++    if ( tot && !(aggbuf = floatMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        if ( a->x2b_tot[k] )
++            MPI_Irecv(&aggbuf[tot * nrhs], a->x2b_tot[k] * nrhs, MPI_FLOAT,
++                      diag[a->agg_q[k]], tag_blk, grid->comm, &blk_reqs[nblk_req++]);
++        tot += a->x2b_tot[k];
++    }
++    /* Receiver: from the diagonal processes of my node directly, from the
++       aggregators of my node for the others. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = RecvCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, MPI_FLOAT, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, MPI_FLOAT, ag,
++                      tag_fwd + q, grid->comm, &reqs[nreq++]);
++    }
++    /* Diagonal process: direct sends on my node, one block per other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( SendCnt[s] )
++                        MPI_Isend(&send_dbuf[sdispls[s] * (size_t)nrhs], SendCnt[s] * nrhs,
++                                  MPI_FLOAT, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = sdispls[nlo + ncnt - 1] + SendCnt[nlo + ncnt - 1] - sdispls[nlo];
++                if ( c )
++                    MPI_Isend(&send_dbuf[sdispls[nlo] * (size_t)nrhs], c * nrhs, MPI_FLOAT,
++                              nlo + a->my_q % ncnt, tag_blk, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Aggregator: scatter the blocks to the processes of my node. */
++    if ( nblk_req ) MPI_Waitall(nblk_req, blk_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        int d;
++        q = a->agg_q[k];
++        d = diag[q];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->x2b_cnt[k*lsize + s];
++            float *src = &aggbuf[(tot + a->x2b_off[k*lsize + s]) * nrhs];
++            if ( !c ) continue;
++            if ( lo + s == iam ) {
++                for (i = 0; i < c * nrhs; ++i)
++                    recv_dbuf[rdispls[d] * (size_t)nrhs + i] = src[i];
++            } else
++                MPI_Isend(src, c * nrhs, MPI_FLOAT, lo + s, tag_fwd + q, grid->comm,
++                          &reqs[nreq++]);
++        }
++        tot += a->x2b_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
+ int_t
+ psReDistribute_B_to_X(float *B, int_t m_loc, int nrhs, int_t ldb,
+                       int_t fst_row, int_t *ilsum, float *x,
+@@ -506,6 +678,14 @@ psReDistribute_B_to_X(float *B, int_t m_loc, int nrhs, int_t ldb,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 
+ 
++	if ( cached && !gstrs_comm->b2x_agg )
++		gstrs_comm->b2x_agg = pxb2x_agg_setup(grid, SOLVEstruct->num_diag_procs,
++						      SOLVEstruct->diag_procs, SendCnt,
++						     gstrs_comm->X_to_B_SendCnt + 2*procs);
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		b2x_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -529,6 +709,7 @@ psReDistribute_B_to_X(float *B, int_t m_loc, int nrhs, int_t ldb,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 
+ 
+ 		/* ------------------------------------------------------------
+@@ -784,6 +965,10 @@ psReDistribute_X_to_B(int_t n, float *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 	// MPI_Barrier( grid->comm );
+ 
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		x2b_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -808,6 +993,7 @@ psReDistribute_X_to_B(int_t n, float *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 	// MPI_Barrier( grid->comm );
+ 
+ 
+diff --git a/SRC/single/psutil.c b/SRC/single/psutil.c
+index 0a4da8e5248f2294007b2dfc33db55c709c69dbf..efa7a529b925526a19e2d638e27039702927188d 100755
+--- a/SRC/single/psutil.c
++++ b/SRC/single/psutil.c
+@@ -930,6 +930,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
+     gstrs_comm->perm_cache = NULL;
++    gstrs_comm->b2x_agg = NULL;
+ 
+     return 0;
+ } /* PSGSTRS_INIT */

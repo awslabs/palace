@@ -1,0 +1,1273 @@
+diff --git a/SRC/complex16/pzgssvx.c b/SRC/complex16/pzgssvx.c
+index 7d0bd91a31c0df056e4bd7720c9d00f1b706c9db..d07864b1053a0e2424fa705543f35b11e6685b73 100755
+--- a/SRC/complex16/pzgssvx.c
++++ b/SRC/complex16/pzgssvx.c
+@@ -796,7 +796,8 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+              (parSymbFact == NO || options->RowPerm != NO) ) {
+              /* Performs serial symbolic factorzation and/or MC64 */
+ 
+-            need_value = (options->RowPerm == LargeDiag_MC64);
++            /* Values are only needed by MC64, which runs on process 0. */
++            need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 
+             pzCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 
+@@ -808,7 +809,7 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+             if ( need_value ) {
+                 a_GA = (doublecomplex *) GAstore->nzval;
+-                GA_mem_use += nnz * sizeof(doublecomplex);
++                if ( a_GA ) GA_mem_use += nnz * sizeof(doublecomplex); /* on process 0 only if need_value == 2 */
+             } else assert(GAstore->nzval == NULL);
+ 	}
+ 
+@@ -1781,9 +1782,10 @@ if ( options->GPURES == YES ){
+ 
+ #endif
+ 	}else{
+-		pzPermute_Dense_Matrix(fst_row, m_loc, SOLVEstruct->row_to_proc,
++		pzPermute_Dense_Matrix_cached(fst_row, m_loc, SOLVEstruct->row_to_proc,
+ 					SOLVEstruct->inv_perm_c,
+-					X, ldx, B, ldb, nrhs, grid);
++					X, ldx, B, ldb, nrhs, grid,
++					SOLVEstruct->gstrs_comm);
+ #if ( DEBUGlevel>=2 )
+ 		printf("\n (%d) .. After pzPermute_Dense_Matrix(): b =\n", iam);
+ 		for (i = 0; i < m_loc; ++i)
+diff --git a/SRC/complex16/pzgssvx3d.c b/SRC/complex16/pzgssvx3d.c
+index 545f269ca3e8d57df58caef1c0179d69ffd61e6c..8ed38b8c3c42959fc304703c7e373b1855a3a65f 100755
+--- a/SRC/complex16/pzgssvx3d.c
++++ b/SRC/complex16/pzgssvx3d.c
+@@ -714,11 +714,13 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    if (Fact != SamePattern_SameRowPerm &&
+ 			(parSymbFact == NO || options->RowPerm != NO))
+ 	    {
+-		int need_value = (options->RowPerm == LargeDiag_MC64);
++		/* Values are only needed by MC64, which runs on process 0. */
++		int need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 		pzCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 		GAstore = (NCformat *)GA.Store;
+ 		nnz = GAstore->nnz;
+-		GA_mem_use = (nnz + n + 1) * sizeof(int_t) + need_value * nnz * sizeof(doublecomplex);
++		GA_mem_use = (nnz + n + 1) * sizeof(int_t)
++		             + (GAstore->nzval ? nnz * sizeof(doublecomplex) : 0);
+ 		if (!need_value)
+ 		    assert(GAstore->nzval == NULL);
+ 	    }
+diff --git a/SRC/complex16/pzgstrs.c b/SRC/complex16/pzgstrs.c
+index aaca135322ab7d84bd21f0e8cd893c59bd27ed7e..a324b4f092f9c0b1f24858a4084d83422d7f4579 100755
+--- a/SRC/complex16/pzgstrs.c
++++ b/SRC/complex16/pzgstrs.c
+@@ -400,7 +400,9 @@ pzReDistribute_B_to_X(doublecomplex *B, int_t m_loc, int nrhs, int_t ldb,
+ 		MPI_Wait(&req_d,&status);
+ 	#endif
+ #endif
+-	MPI_Barrier( grid->comm );
++	/* The CPU trisolve sends its L-solve messages on their own communicator,
++	   so they cannot be mistaken for these. */
++	if ( get_acc_solve() ) MPI_Barrier( grid->comm );
+ 
+ 
+ 	Nreq_send=0;
+@@ -681,7 +683,8 @@ pzReDistribute_X_to_B(int_t n, doublecomplex *B, int_t m_loc, int_t ldb, int_t f
+ 	#endif
+ #endif
+ 
+-	MPI_Barrier( grid->comm );
++	/* pzgstrs() ends its CPU trisolve with a barrier. */
++	if ( get_acc_solve() ) MPI_Barrier( grid->comm );
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs && !cached;pp++){
+@@ -1056,6 +1059,7 @@ pzgstrs(superlu_dist_options_t *options, int_t n,
+     int  nfrecv = 0; /* Count of total messages to be recv'd. */
+     int  nbrecv = 0; /* Count of total messages to be recv'd. */
+     int  nleaf = 0, nroot = 0;
++    MPI_Comm comm_L;
+     int  nleaftmp = 0, nroottmp = 0;
+     int_t  msgsize;
+         /*-- Counts used for U-solve --*/
+@@ -1170,7 +1174,7 @@ pzgstrs(superlu_dist_options_t *options, int_t n,
+     }
+ #endif
+ 
+-    MPI_Barrier( grid->comm );
++    if ( get_acc_solve() ) MPI_Barrier( grid->comm ); /* GPU trisolve */
+     t1_sol = SuperLU_timer_();
+     t = SuperLU_timer_();
+ 
+@@ -1391,11 +1395,28 @@ if ( options->GPURES == YES ) {
+ 	}
+     }
+ 
++	/* ---------------------------------------------------------
++	   The L-solve messages use their own communicator: a process that
++	   finished its L-solve can start the U-solve (whose receives match any
++	   tag on grid->comm) without a barrier in between.
++	   --------------------------------------------------------- */
++	comm_L = grid->comm;
++	if ( !get_acc_solve() ) { /* CPU trisolve */
++	    if ( Llu->comm_L == MPI_COMM_NULL )
++		MPI_Comm_dup(grid->comm, &Llu->comm_L);
++	    comm_L = Llu->comm_L;
++	    for (lk = 0; lk < CEILING( nsupers, grid->npcol ); ++lk)
++		if ( LBtree_ptr[lk].empty_ == NO ) LBtree_ptr[lk].comm_ = comm_L;
++	    for (lk = 0; lk < CEILING( nsupers, grid->nprow ); ++lk)
++		if ( LRtree_ptr[lk].empty_ == NO ) LRtree_ptr[lk].comm_ = comm_L;
++	}
++
+ 	/* ---------------------------------------------------------
+ 	   Initialize the async Bcast trees on all processes.
+ 	   --------------------------------------------------------- */
+ 	nsupers_j = CEILING( nsupers, grid->npcol ); /* Number of local block columns */
+ 
++
+ 	nbtree = 0;
+ 	for (lk=0;lk<nsupers_j;++lk){
+ 		if(LBtree_ptr[lk].empty_==NO){
+@@ -1835,7 +1856,7 @@ if (get_acc_solve()){  /* GPU trisolve*/
+ 
+ 			/* Receive a message. */
+ 			MPI_Recv( recvbuf0, maxrecvsz, SuperLU_MPI_DOUBLE_COMPLEX,
+-				MPI_ANY_SOURCE, MPI_ANY_TAG, grid->comm, &status );
++				MPI_ANY_SOURCE, MPI_ANY_TAG, comm_L, &status );
+ 			// MPI_Irecv(recvbuf0,maxrecvsz,SuperLU_MPI_DOUBLE_COMPLEX,MPI_ANY_SOURCE,MPI_ANY_TAG,grid->comm,&req);
+ 			// ready=0;
+ 			// while(ready==0){
+@@ -2045,7 +2066,6 @@ if (get_acc_solve()){  /* GPU trisolve*/
+ 				// deallocate requests here
+ 			}
+ 		}
+-		MPI_Barrier( grid->comm );
+ 
+ 	}  /* end CPU trisolve */
+ #if ( PROFlevel>=1 )
+diff --git a/SRC/complex16/pzutil.c b/SRC/complex16/pzutil.c
+index 6c3f5378addc575748be2a18daf0eab164d68770..c8d3220d3b489e56e371d667abf2d0f1c3da90c2 100755
+--- a/SRC/complex16/pzutil.c
++++ b/SRC/complex16/pzutil.c
+@@ -31,7 +31,8 @@ at the top-level directory.
+  */
+ int pzCompRow_loc_to_CompCol_global
+ (
+- int_t need_value, /* Input. Whether need to gather numerical values */
++ int_t need_value, /* Input. Whether need to gather numerical values
++                      (2: on process 0 only) */
+  SuperMatrix *A,   /* Input. Distributed matrix in NRformat_loc format. */
+  gridinfo_t *grid, /* Input */
+  SuperMatrix *GA   /* Output */
+@@ -240,7 +241,15 @@ int pzCompRow_loc_to_CompCol_global
+     it = nnz_loc;
+     MPI_Allgatherv(rowind_buf, it, mpi_int_t, GAstore->rowind,
+ 		   itemp_32, rdispls, mpi_int_t, grid->comm);
+-    if ( need_value ) {
++    if ( need_value == 2 ) {
++      /* The numerical values are only needed on process 0 (MC64). */
++      GAstore->nzval = NULL;
++      if ( !grid->iam &&
++           !(GAstore->nzval = (doublecomplex *) doublecomplexMalloc_dist (nnz)) )
++          ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
++      MPI_Gatherv(a_buf, it, SuperLU_MPI_DOUBLE_COMPLEX, GAstore->nzval,
++		  itemp_32, rdispls, SuperLU_MPI_DOUBLE_COMPLEX, 0, grid->comm);
++    } else if ( need_value ) {
+       if ( !(GAstore->nzval = (doublecomplex *) doublecomplexMalloc_dist (nnz)) )
+           ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
+       MPI_Allgatherv(a_buf, it, SuperLU_MPI_DOUBLE_COMPLEX, GAstore->nzval,
+@@ -401,6 +410,127 @@ int pzPermute_Dense_Matrix
+     return 0;
+ } /* pzPermute_Dense_Matrix */
+ 
++/*! \brief Same as pzPermute_Dense_Matrix(), but the communication pattern
++ * (partner processes, counts and received row indices) only depends on perm[]
++ * and row_to_proc[]: it is computed by the first call and saved in gstrs_comm,
++ * and the numerical values are then exchanged point to point with the
++ * processes that share entries only (no dense all-to-all collectives).
++ */
++int pzPermute_Dense_Matrix_cached
++(
++ int_t fst_row,
++ int_t m_loc,
++ int_t row_to_proc[],
++ int perm[],
++ doublecomplex X[], int ldx,
++ doublecomplex B[], int ldb,
++ int nrhs,
++ gridinfo_t *grid,
++ pxgstrs_comm_t *gstrs_comm
++)
++{
++    const int tag = 24;
++    pxperm_cache_t *c = gstrs_comm->perm_cache;
++    int_t i, j, k, l;
++    int p, q, procs = grid->nprow * grid->npcol, nreq;
++    doublecomplex *send_dbuf, *recv_dbuf;
++    MPI_Request *reqs;
++
++    if ( !c ) {
++        int *sendcnts, *recvcnts, *ptr;
++        int_t *send_ibuf, *recv_ibuf;
++        if ( !(c = (pxperm_cache_t *) SUPERLU_MALLOC(sizeof(pxperm_cache_t))) )
++            ABORT("Malloc fails for perm_cache.");
++        if ( !(sendcnts = SUPERLU_MALLOC(3*procs * sizeof(int))) )
++            ABORT("Malloc fails for sendcnts[].");
++        recvcnts = sendcnts + procs;
++        ptr = recvcnts + procs;
++        for (p = 0; p < procs; ++p) sendcnts[p] = 0;
++        for (i = fst_row; i < fst_row + m_loc; ++i) ++sendcnts[row_to_proc[perm[i]]];
++        MPI_Alltoall(sendcnts, 1, MPI_INT, recvcnts, 1, MPI_INT, grid->comm);
++        c->nsend = c->nrecv = 0;
++        for (p = 0; p < procs; ++p) {
++            if ( sendcnts[p] ) ++c->nsend;
++            if ( recvcnts[p] ) ++c->nrecv;
++        }
++        /* One allocation for the six partner arrays. */
++        if ( !(c->send_proc = SUPERLU_MALLOC(3*(c->nsend + c->nrecv + 2) * sizeof(int))) )
++            ABORT("Malloc fails for perm_cache arrays.");
++        c->send_cnt = c->send_proc + c->nsend + 1;
++        c->send_displ = c->send_cnt + c->nsend + 1;
++        c->recv_proc = c->send_displ + c->nsend + 1;
++        c->recv_cnt = c->recv_proc + c->nrecv + 1;
++        c->recv_displ = c->recv_cnt + c->nrecv + 1;
++        for (p = 0, q = 0, k = 0; p < procs; ++p) {
++            ptr[p] = k;
++            if ( sendcnts[p] ) {
++                c->send_proc[q] = p; c->send_cnt[q] = sendcnts[p];
++                c->send_displ[q] = k; k += sendcnts[p]; ++q;
++            }
++        }
++        for (p = 0, q = 0, l = 0; p < procs; ++p) {
++            if ( recvcnts[p] ) {
++                c->recv_proc[q] = p; c->recv_cnt[q] = recvcnts[p];
++                c->recv_displ[q] = l; l += recvcnts[p]; ++q;
++            }
++        }
++        c->nrecvtot = l;
++        if ( !(c->send_pos = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for perm_cache positions.");
++        c->recv_row = c->send_pos + m_loc;
++        if ( !(send_ibuf = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for send_ibuf[].");
++        recv_ibuf = send_ibuf + m_loc;
++        for (i = fst_row; i < fst_row + m_loc; ++i) {
++            j = perm[i];
++            p = row_to_proc[j];
++            c->send_pos[i - fst_row] = ptr[p];
++            send_ibuf[ptr[p]++] = j;
++        }
++        if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        nreq = 0;
++        for (q = 0; q < c->nrecv; ++q)
++            MPI_Irecv(&recv_ibuf[c->recv_displ[q]], c->recv_cnt[q], mpi_int_t,
++                      c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++        for (q = 0; q < c->nsend; ++q)
++            MPI_Isend(&send_ibuf[c->send_displ[q]], c->send_cnt[q], mpi_int_t,
++                      c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        for (i = 0; i < l; ++i) c->recv_row[i] = recv_ibuf[i] - fst_row;
++        SUPERLU_FREE(reqs);
++        SUPERLU_FREE(send_ibuf);
++        SUPERLU_FREE(sendcnts);
++        gstrs_comm->perm_cache = c;
++    }
++
++    /* Exchange the numerical values (RHS stored in row major in the buffers). */
++    if ( !(send_dbuf = doublecomplexMalloc_dist((m_loc + c->nrecvtot + 1) * (size_t)nrhs)) )
++        ABORT("Malloc fails for send_dbuf[].");
++    recv_dbuf = send_dbuf + m_loc * (size_t)nrhs;
++    for (i = 0; i < m_loc; ++i) {
++        l = c->send_pos[i] * nrhs;
++        for (k = 0; k < nrhs; ++k) send_dbuf[l + k] = X[i + k*ldx];
++    }
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    nreq = 0;
++    for (q = 0; q < c->nrecv; ++q)
++        MPI_Irecv(&recv_dbuf[c->recv_displ[q] * (size_t)nrhs], c->recv_cnt[q] * nrhs,
++                  SuperLU_MPI_DOUBLE_COMPLEX, c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++    for (q = 0; q < c->nsend; ++q)
++        MPI_Isend(&send_dbuf[c->send_displ[q] * (size_t)nrhs], c->send_cnt[q] * nrhs,
++                  SuperLU_MPI_DOUBLE_COMPLEX, c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++    MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    for (i = 0, l = 0; i < c->nrecvtot; ++i) {
++        j = c->recv_row[i];
++        for (k = 0; k < nrhs; ++k) B[j + k*ldb] = recv_dbuf[l++];
++    }
++    SUPERLU_FREE(reqs);
++    SUPERLU_FREE(send_dbuf);
++    return 0;
++} /* pzPermute_Dense_Matrix_cached */
++
+ 
+ /*! \brief Allocate storage in LUstruct */
+ void zLUstructInit(const int_t n, zLUstruct_t *LUstruct)
+@@ -417,6 +547,7 @@ void zLUstructInit(const int_t n, zLUstruct_t *LUstruct)
+     LUstruct->Llu->sched_perm_c_supno = NULL;
+     LUstruct->Llu->sched_nsupers = 0;
+     LUstruct->Llu->sched_opts = 0;
++    LUstruct->Llu->comm_L = MPI_COMM_NULL;
+     LUstruct->dt = 'z';
+     LUstruct->trf3Dpart = NULL;
+ }
+@@ -434,6 +565,12 @@ void zLUstructFree(zLUstruct_t *LUstruct)
+     SUPERLU_FREE(LUstruct->Glu_persist);
+     if ( LUstruct->Llu->sched_perm_c_supno )
+         SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
++    if ( LUstruct->Llu->comm_L != MPI_COMM_NULL ) { /* see pzgstrs() */
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&LUstruct->Llu->comm_L);
++        LUstruct->Llu->comm_L = MPI_COMM_NULL;
++    }
+     SUPERLU_FREE(LUstruct->Llu);
+     zDestroy_trf3Dpartition(LUstruct->trf3Dpart);
+ 
+@@ -457,6 +594,12 @@ zDestroy_LU(int_t n, gridinfo_t *grid, zLUstruct_t *LUstruct)
+ #endif
+ 
+     zDestroy_Tree(n, grid, LUstruct);
++    if ( Llu->comm_L != MPI_COMM_NULL ) { /* see pzgstrs() */
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&Llu->comm_L);
++        Llu->comm_L = MPI_COMM_NULL;
++    }
+ 
+     if ( Llu->sched_perm_c_supno ) {
+         SUPERLU_FREE(Llu->sched_perm_c_supno);
+@@ -785,6 +928,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
++    gstrs_comm->perm_cache = NULL;
+ 
+     return 0;
+ } /* PZGSTRS_INIT */
+diff --git a/SRC/complex16/zssvx3dAux.c b/SRC/complex16/zssvx3dAux.c
+index 2eba0394ca234282ac84c05597ac752360851b97..51691399c117620d74ca83bd37e9b1bd0b283ea2 100644
+--- a/SRC/complex16/zssvx3dAux.c
++++ b/SRC/complex16/zssvx3dAux.c
+@@ -249,14 +249,14 @@ void zfindRowPerm_MC64(gridinfo_t* grid, int_t job,
+     LOG_FUNC_ENTER();
+     #endif
+     // Check input parameters
+-    if (colptr == NULL || rowind == NULL || a_GA == NULL ||
++    int root = 0;
++    /* The values are only needed on the root, which runs MC64. */
++    if (colptr == NULL || rowind == NULL || (grid->iam == root && a_GA == NULL) ||
+         perm_r == NULL ) {
+         fprintf(stderr, "Error: NULL input parameter.\n");
+         return;
+     }
+ 
+-    int root = 0;
+-
+     // If the current node is the root node, perform the permutation computation
+     if (grid->iam == root) {
+         *iinfo = zldperm_dist(job, m, nnz, colptr, rowind, a_GA, perm_r, R1, C1);
+diff --git a/SRC/double/dssvx3dAux.c b/SRC/double/dssvx3dAux.c
+index 41de23e0187799b8666db72b13277edb3ba222b5..db0c1b5e45c145e5d082cfb5d2993e7464b8e449 100644
+--- a/SRC/double/dssvx3dAux.c
++++ b/SRC/double/dssvx3dAux.c
+@@ -249,14 +249,14 @@ void dfindRowPerm_MC64(gridinfo_t* grid, int_t job,
+     LOG_FUNC_ENTER();
+     #endif
+     // Check input parameters
+-    if (colptr == NULL || rowind == NULL || a_GA == NULL ||
++    int root = 0;
++    /* The values are only needed on the root, which runs MC64. */
++    if (colptr == NULL || rowind == NULL || (grid->iam == root && a_GA == NULL) ||
+         perm_r == NULL ) {
+         fprintf(stderr, "Error: NULL input parameter.\n");
+         return;
+     }
+ 
+-    int root = 0;
+-
+     // If the current node is the root node, perform the permutation computation
+     if (grid->iam == root) {
+         *iinfo = dldperm_dist(job, m, nnz, colptr, rowind, a_GA, perm_r, R1, C1);
+diff --git a/SRC/double/pdgssvx.c b/SRC/double/pdgssvx.c
+index 59f3187fd7cc345aa8d1492426d65c9863dc8a4d..1b6ca0d73d88981bd0809bf20e710e72a0c7ba69 100755
+--- a/SRC/double/pdgssvx.c
++++ b/SRC/double/pdgssvx.c
+@@ -796,7 +796,8 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+              (parSymbFact == NO || options->RowPerm != NO) ) {
+              /* Performs serial symbolic factorzation and/or MC64 */
+ 
+-            need_value = (options->RowPerm == LargeDiag_MC64);
++            /* Values are only needed by MC64, which runs on process 0. */
++            need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 
+             pdCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 
+@@ -808,7 +809,7 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+             if ( need_value ) {
+                 a_GA = (double *) GAstore->nzval;
+-                GA_mem_use += nnz * sizeof(double);
++                if ( a_GA ) GA_mem_use += nnz * sizeof(double); /* on process 0 only if need_value == 2 */
+             } else assert(GAstore->nzval == NULL);
+ 	}
+ 
+@@ -1776,9 +1777,10 @@ if ( options->GPURES == YES ){
+ 
+ #endif
+ 	}else{
+-		pdPermute_Dense_Matrix(fst_row, m_loc, SOLVEstruct->row_to_proc,
++		pdPermute_Dense_Matrix_cached(fst_row, m_loc, SOLVEstruct->row_to_proc,
+ 					SOLVEstruct->inv_perm_c,
+-					X, ldx, B, ldb, nrhs, grid);
++					X, ldx, B, ldb, nrhs, grid,
++					SOLVEstruct->gstrs_comm);
+ #if ( DEBUGlevel>=2 )
+ 		printf("\n (%d) .. After pdPermute_Dense_Matrix(): b =\n", iam);
+ 		for (i = 0; i < m_loc; ++i)
+diff --git a/SRC/double/pdgssvx3d.c b/SRC/double/pdgssvx3d.c
+index 959be9d3dc55081566ae0faf14af7a897717a8df..3efd705039feb1806e10a1bc21fb0ebbb73f0a2a 100755
+--- a/SRC/double/pdgssvx3d.c
++++ b/SRC/double/pdgssvx3d.c
+@@ -715,11 +715,13 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    if (Fact != SamePattern_SameRowPerm &&
+ 			(parSymbFact == NO || options->RowPerm != NO))
+ 	    {
+-		int need_value = (options->RowPerm == LargeDiag_MC64);
++		/* Values are only needed by MC64, which runs on process 0. */
++		int need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 		pdCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 		GAstore = (NCformat *)GA.Store;
+ 		nnz = GAstore->nnz;
+-		GA_mem_use = (nnz + n + 1) * sizeof(int_t) + need_value * nnz * sizeof(double);
++		GA_mem_use = (nnz + n + 1) * sizeof(int_t)
++		             + (GAstore->nzval ? nnz * sizeof(double) : 0);
+ 		if (!need_value)
+ 		    assert(GAstore->nzval == NULL);
+ 	    }
+diff --git a/SRC/double/pdgstrs.c b/SRC/double/pdgstrs.c
+index 92f267fb3dea6510ed4c8a1d7878927030753831..71926fec445e0efdebfae4f1bc0d68679022b1aa 100755
+--- a/SRC/double/pdgstrs.c
++++ b/SRC/double/pdgstrs.c
+@@ -576,7 +576,9 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 		MPI_Wait(&req_d,&status);
+ 	#endif
+ #endif
+-	MPI_Barrier( grid->comm );
++	/* The CPU trisolve sends its L-solve messages on their own communicator,
++	   so they cannot be mistaken for these. */
++	if ( get_acc_solve() ) MPI_Barrier( grid->comm );
+ 
+ 
+ 	Nreq_send=0;
+@@ -856,7 +858,8 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	#endif
+ #endif
+ 
+-	MPI_Barrier( grid->comm );
++	/* pdgstrs() ends its CPU trisolve with a barrier. */
++	if ( get_acc_solve() ) MPI_Barrier( grid->comm );
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs && !cached;pp++){
+@@ -1230,6 +1233,7 @@ pdgstrs(superlu_dist_options_t *options, int_t n,
+     int  nfrecv = 0; /* Count of total messages to be recv'd. */
+     int  nbrecv = 0; /* Count of total messages to be recv'd. */
+     int  nleaf = 0, nroot = 0;
++    MPI_Comm comm_L;
+     int  nleaftmp = 0, nroottmp = 0;
+     int_t  msgsize;
+         /*-- Counts used for U-solve --*/
+@@ -1387,7 +1391,7 @@ pdgstrs(superlu_dist_options_t *options, int_t n,
+     }
+ #endif
+ 
+-    MPI_Barrier( grid->comm );
++    if ( get_acc_solve() ) MPI_Barrier( grid->comm ); /* GPU trisolve */
+     t1_sol = SuperLU_timer_();
+     t = SuperLU_timer_();
+ 
+@@ -1607,11 +1611,28 @@ if ( options->GPURES == YES ) {
+ 	}
+     }
+ 
++	/* ---------------------------------------------------------
++	   The L-solve messages use their own communicator: a process that
++	   finished its L-solve can start the U-solve (whose receives match any
++	   tag on grid->comm) without a barrier in between.
++	   --------------------------------------------------------- */
++	comm_L = grid->comm;
++	if ( !get_acc_solve() ) { /* CPU trisolve */
++	    if ( Llu->comm_L == MPI_COMM_NULL )
++		MPI_Comm_dup(grid->comm, &Llu->comm_L);
++	    comm_L = Llu->comm_L;
++	    for (lk = 0; lk < CEILING( nsupers, grid->npcol ); ++lk)
++		if ( LBtree_ptr[lk].empty_ == NO ) LBtree_ptr[lk].comm_ = comm_L;
++	    for (lk = 0; lk < CEILING( nsupers, grid->nprow ); ++lk)
++		if ( LRtree_ptr[lk].empty_ == NO ) LRtree_ptr[lk].comm_ = comm_L;
++	}
++
+ 	/* ---------------------------------------------------------
+ 	   Initialize the async Bcast trees on all processes.
+ 	   --------------------------------------------------------- */
+ 	nsupers_j = CEILING( nsupers, grid->npcol ); /* Number of local block columns */
+ 
++
+ 	nbtree = 0;
+ 	for (lk=0;lk<nsupers_j;++lk){
+ 		if(LBtree_ptr[lk].empty_==NO){
+@@ -2356,7 +2377,7 @@ t1 = SuperLU_timer_();
+ 
+ 			/* Receive a message. */
+ 			MPI_Recv( recvbuf0, maxrecvsz, MPI_DOUBLE,
+-				MPI_ANY_SOURCE, MPI_ANY_TAG, grid->comm, &status );
++				MPI_ANY_SOURCE, MPI_ANY_TAG, comm_L, &status );
+ 			// MPI_Irecv(recvbuf0,maxrecvsz,MPI_DOUBLE,MPI_ANY_SOURCE,MPI_ANY_TAG,grid->comm,&req);
+ 			// ready=0;
+ 			// while(ready==0){
+@@ -2560,7 +2581,6 @@ t1 = SuperLU_timer_();
+ 				// deallocate requests here
+ 			}
+ 		}
+-		MPI_Barrier( grid->comm );
+ 
+ 	}  /* end CPU trisolve */
+ #if ( PROFlevel>=1 )
+diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
+index 5f8a9868d55e5ad395ab1997ca881033d5c42993..962d7ba42273b95ad2f0d628e1355d7004ffe0a8 100755
+--- a/SRC/double/pdutil.c
++++ b/SRC/double/pdutil.c
+@@ -33,7 +33,8 @@ at the top-level directory.
+  */
+ int pdCompRow_loc_to_CompCol_global
+ (
+- int_t need_value, /* Input. Whether need to gather numerical values */
++ int_t need_value, /* Input. Whether need to gather numerical values
++                      (2: on process 0 only) */
+  SuperMatrix *A,   /* Input. Distributed matrix in NRformat_loc format. */
+  gridinfo_t *grid, /* Input */
+  SuperMatrix *GA   /* Output */
+@@ -242,7 +243,15 @@ int pdCompRow_loc_to_CompCol_global
+     it = nnz_loc;
+     MPI_Allgatherv(rowind_buf, it, mpi_int_t, GAstore->rowind,
+ 		   itemp_32, rdispls, mpi_int_t, grid->comm);
+-    if ( need_value ) {
++    if ( need_value == 2 ) {
++      /* The numerical values are only needed on process 0 (MC64). */
++      GAstore->nzval = NULL;
++      if ( !grid->iam &&
++           !(GAstore->nzval = (double *) doubleMalloc_dist (nnz)) )
++          ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
++      MPI_Gatherv(a_buf, it, MPI_DOUBLE, GAstore->nzval,
++		  itemp_32, rdispls, MPI_DOUBLE, 0, grid->comm);
++    } else if ( need_value ) {
+       if ( !(GAstore->nzval = (double *) doubleMalloc_dist (nnz)) )
+           ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
+       MPI_Allgatherv(a_buf, it, MPI_DOUBLE, GAstore->nzval,
+@@ -403,6 +412,127 @@ int pdPermute_Dense_Matrix
+     return 0;
+ } /* pdPermute_Dense_Matrix */
+ 
++/*! \brief Same as pdPermute_Dense_Matrix(), but the communication pattern
++ * (partner processes, counts and received row indices) only depends on perm[]
++ * and row_to_proc[]: it is computed by the first call and saved in gstrs_comm,
++ * and the numerical values are then exchanged point to point with the
++ * processes that share entries only (no dense all-to-all collectives).
++ */
++int pdPermute_Dense_Matrix_cached
++(
++ int_t fst_row,
++ int_t m_loc,
++ int_t row_to_proc[],
++ int perm[],
++ double X[], int ldx,
++ double B[], int ldb,
++ int nrhs,
++ gridinfo_t *grid,
++ pxgstrs_comm_t *gstrs_comm
++)
++{
++    const int tag = 24;
++    pxperm_cache_t *c = gstrs_comm->perm_cache;
++    int_t i, j, k, l;
++    int p, q, procs = grid->nprow * grid->npcol, nreq;
++    double *send_dbuf, *recv_dbuf;
++    MPI_Request *reqs;
++
++    if ( !c ) {
++        int *sendcnts, *recvcnts, *ptr;
++        int_t *send_ibuf, *recv_ibuf;
++        if ( !(c = (pxperm_cache_t *) SUPERLU_MALLOC(sizeof(pxperm_cache_t))) )
++            ABORT("Malloc fails for perm_cache.");
++        if ( !(sendcnts = SUPERLU_MALLOC(3*procs * sizeof(int))) )
++            ABORT("Malloc fails for sendcnts[].");
++        recvcnts = sendcnts + procs;
++        ptr = recvcnts + procs;
++        for (p = 0; p < procs; ++p) sendcnts[p] = 0;
++        for (i = fst_row; i < fst_row + m_loc; ++i) ++sendcnts[row_to_proc[perm[i]]];
++        MPI_Alltoall(sendcnts, 1, MPI_INT, recvcnts, 1, MPI_INT, grid->comm);
++        c->nsend = c->nrecv = 0;
++        for (p = 0; p < procs; ++p) {
++            if ( sendcnts[p] ) ++c->nsend;
++            if ( recvcnts[p] ) ++c->nrecv;
++        }
++        /* One allocation for the six partner arrays. */
++        if ( !(c->send_proc = SUPERLU_MALLOC(3*(c->nsend + c->nrecv + 2) * sizeof(int))) )
++            ABORT("Malloc fails for perm_cache arrays.");
++        c->send_cnt = c->send_proc + c->nsend + 1;
++        c->send_displ = c->send_cnt + c->nsend + 1;
++        c->recv_proc = c->send_displ + c->nsend + 1;
++        c->recv_cnt = c->recv_proc + c->nrecv + 1;
++        c->recv_displ = c->recv_cnt + c->nrecv + 1;
++        for (p = 0, q = 0, k = 0; p < procs; ++p) {
++            ptr[p] = k;
++            if ( sendcnts[p] ) {
++                c->send_proc[q] = p; c->send_cnt[q] = sendcnts[p];
++                c->send_displ[q] = k; k += sendcnts[p]; ++q;
++            }
++        }
++        for (p = 0, q = 0, l = 0; p < procs; ++p) {
++            if ( recvcnts[p] ) {
++                c->recv_proc[q] = p; c->recv_cnt[q] = recvcnts[p];
++                c->recv_displ[q] = l; l += recvcnts[p]; ++q;
++            }
++        }
++        c->nrecvtot = l;
++        if ( !(c->send_pos = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for perm_cache positions.");
++        c->recv_row = c->send_pos + m_loc;
++        if ( !(send_ibuf = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for send_ibuf[].");
++        recv_ibuf = send_ibuf + m_loc;
++        for (i = fst_row; i < fst_row + m_loc; ++i) {
++            j = perm[i];
++            p = row_to_proc[j];
++            c->send_pos[i - fst_row] = ptr[p];
++            send_ibuf[ptr[p]++] = j;
++        }
++        if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        nreq = 0;
++        for (q = 0; q < c->nrecv; ++q)
++            MPI_Irecv(&recv_ibuf[c->recv_displ[q]], c->recv_cnt[q], mpi_int_t,
++                      c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++        for (q = 0; q < c->nsend; ++q)
++            MPI_Isend(&send_ibuf[c->send_displ[q]], c->send_cnt[q], mpi_int_t,
++                      c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        for (i = 0; i < l; ++i) c->recv_row[i] = recv_ibuf[i] - fst_row;
++        SUPERLU_FREE(reqs);
++        SUPERLU_FREE(send_ibuf);
++        SUPERLU_FREE(sendcnts);
++        gstrs_comm->perm_cache = c;
++    }
++
++    /* Exchange the numerical values (RHS stored in row major in the buffers). */
++    if ( !(send_dbuf = doubleMalloc_dist((m_loc + c->nrecvtot + 1) * (size_t)nrhs)) )
++        ABORT("Malloc fails for send_dbuf[].");
++    recv_dbuf = send_dbuf + m_loc * (size_t)nrhs;
++    for (i = 0; i < m_loc; ++i) {
++        l = c->send_pos[i] * nrhs;
++        for (k = 0; k < nrhs; ++k) send_dbuf[l + k] = X[i + k*ldx];
++    }
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    nreq = 0;
++    for (q = 0; q < c->nrecv; ++q)
++        MPI_Irecv(&recv_dbuf[c->recv_displ[q] * (size_t)nrhs], c->recv_cnt[q] * nrhs,
++                  MPI_DOUBLE, c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++    for (q = 0; q < c->nsend; ++q)
++        MPI_Isend(&send_dbuf[c->send_displ[q] * (size_t)nrhs], c->send_cnt[q] * nrhs,
++                  MPI_DOUBLE, c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++    MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    for (i = 0, l = 0; i < c->nrecvtot; ++i) {
++        j = c->recv_row[i];
++        for (k = 0; k < nrhs; ++k) B[j + k*ldb] = recv_dbuf[l++];
++    }
++    SUPERLU_FREE(reqs);
++    SUPERLU_FREE(send_dbuf);
++    return 0;
++} /* pdPermute_Dense_Matrix_cached */
++
+ 
+ /*! \brief Allocate storage in LUstruct */
+ void dLUstructInit(const int_t n, dLUstruct_t *LUstruct)
+@@ -419,6 +549,7 @@ void dLUstructInit(const int_t n, dLUstruct_t *LUstruct)
+     LUstruct->Llu->sched_perm_c_supno = NULL;
+     LUstruct->Llu->sched_nsupers = 0;
+     LUstruct->Llu->sched_opts = 0;
++    LUstruct->Llu->comm_L = MPI_COMM_NULL;
+     LUstruct->dt = 'd';
+     LUstruct->trf3Dpart = NULL;
+ }
+@@ -436,6 +567,12 @@ void dLUstructFree(dLUstruct_t *LUstruct)
+     SUPERLU_FREE(LUstruct->Glu_persist);
+     if ( LUstruct->Llu->sched_perm_c_supno )
+         SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
++    if ( LUstruct->Llu->comm_L != MPI_COMM_NULL ) { /* see pdgstrs() */
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&LUstruct->Llu->comm_L);
++        LUstruct->Llu->comm_L = MPI_COMM_NULL;
++    }
+     SUPERLU_FREE(LUstruct->Llu);
+     dDestroy_trf3Dpartition(LUstruct->trf3Dpart);
+ 
+@@ -459,6 +596,12 @@ dDestroy_LU(int_t n, gridinfo_t *grid, dLUstruct_t *LUstruct)
+ #endif
+ 
+     dDestroy_Tree(n, grid, LUstruct);
++    if ( Llu->comm_L != MPI_COMM_NULL ) { /* see pdgstrs() */
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&Llu->comm_L);
++        Llu->comm_L = MPI_COMM_NULL;
++    }
+ 
+     if ( Llu->sched_perm_c_supno ) {
+         SUPERLU_FREE(Llu->sched_perm_c_supno);
+@@ -787,6 +930,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
++    gstrs_comm->perm_cache = NULL;
+ 
+     return 0;
+ } /* PDGSTRS_INIT */
+diff --git a/SRC/include/superlu_ddefs.h b/SRC/include/superlu_ddefs.h
+index ed8cf844559ec819fbcab025b7966d05eefb2037..65e3e297f6fbad2bf22339efab48b876450c952c 100755
+--- a/SRC/include/superlu_ddefs.h
++++ b/SRC/include/superlu_ddefs.h
+@@ -318,6 +318,11 @@ typedef struct {
+     int_t *sched_perm_c_supno;
+     int_t sched_nsupers;
+     int   sched_opts;  /* options of that schedule (see pdgstrf()) */
++
++    /* Communicator of the L-solve messages, a duplicate of grid->comm created by
++       the first solve, so that the L- and U-solves need no barrier. The L-solve
++       trees use it; dDestroy_LU() frees it with them. */
++    MPI_Comm comm_L;
+ } dLocalLU_t;
+ 
+ typedef struct
+@@ -611,6 +616,9 @@ extern void    pdgsequ (SuperMatrix *, double *, double *, double *,
+ extern double  pdlangs (char *, SuperMatrix *, gridinfo_t *);
+ extern void    pdlaqgs (SuperMatrix *, double *, double *, double,
+ 			double, double, char *);
++extern int     pdPermute_Dense_Matrix_cached(int_t, int_t, int_t [], int perm[],
++				      double X[], int ldx, double B[], int ldb,
++				      int nrhs, gridinfo_t *, pxgstrs_comm_t *);
+ extern int     pdPermute_Dense_Matrix(int_t, int_t, int_t [], int perm[],
+ 				      double [], int, double [], int, int,
+ 				      gridinfo_t *);
+diff --git a/SRC/include/superlu_defs.h b/SRC/include/superlu_defs.h
+index cd4f15fa65c6a8183de8217fb339195c61611b88..8df47ea29163147d14146f89437de76121d34e00 100755
+--- a/SRC/include/superlu_defs.h
++++ b/SRC/include/superlu_defs.h
+@@ -544,8 +544,24 @@ typedef struct {
+        so later solves exchange the numerical values only. */
+     int_t  *B_to_X_recv_idx;
+     int_t  *X_to_B_recv_idx;
++
++    /* Communication pattern of the final permutation B <= Pc'*X of the
++       solution (see pdPermute_Dense_Matrix_cached()), built by the first
++       solve. */
++    struct pxperm_cache *perm_cache;
+ } pxgstrs_comm_t;
+ 
++typedef struct pxperm_cache {
++    int    nsend, nrecv;       /* number of partner processes */
++    int    *send_proc, *send_cnt, *send_displ;  /* rows sent to each partner */
++    int    *recv_proc, *recv_cnt, *recv_displ;  /* rows received from each partner */
++    int_t  *send_pos;          /* position in the send buffer of each local row */
++    int_t  *recv_row;          /* local row of each received entry */
++    int_t  nrecvtot;
++} pxperm_cache_t;
++
++extern void pxperm_cache_free(pxperm_cache_t *);
++
+ /*
+  *-- This contains the options used to control the solution process.
+  *
+diff --git a/SRC/include/superlu_sdefs.h b/SRC/include/superlu_sdefs.h
+index fcfd84ad1e213c1c2c6774154635c0a248d35ff8..9f13d488f7631882f340e9a681dcac4c4996a50b 100755
+--- a/SRC/include/superlu_sdefs.h
++++ b/SRC/include/superlu_sdefs.h
+@@ -318,6 +318,11 @@ typedef struct {
+     int_t *sched_perm_c_supno;
+     int_t sched_nsupers;
+     int   sched_opts;  /* options of that schedule (see psgstrf()) */
++
++    /* Communicator of the L-solve messages, a duplicate of grid->comm created by
++       the first solve, so that the L- and U-solves need no barrier. The L-solve
++       trees use it; sDestroy_LU() frees it with them. */
++    MPI_Comm comm_L;
+ } sLocalLU_t;
+ 
+ typedef struct
+@@ -611,6 +616,9 @@ extern void    psgsequ (SuperMatrix *, float *, float *, float *,
+ extern float  pslangs (char *, SuperMatrix *, gridinfo_t *);
+ extern void    pslaqgs (SuperMatrix *, float *, float *, float,
+ 			float, float, char *);
++extern int     psPermute_Dense_Matrix_cached(int_t, int_t, int_t [], int perm[],
++				      float X[], int ldx, float B[], int ldb,
++				      int nrhs, gridinfo_t *, pxgstrs_comm_t *);
+ extern int     psPermute_Dense_Matrix(int_t, int_t, int_t [], int perm[],
+ 				      float [], int, float [], int, int,
+ 				      gridinfo_t *);
+diff --git a/SRC/include/superlu_zdefs.h b/SRC/include/superlu_zdefs.h
+index 32b8791c56e62a2edf5889807cf9a7ef7d9c065e..3cb1d15ad81449f3c6f3d5081d0fd3bb5590045a 100755
+--- a/SRC/include/superlu_zdefs.h
++++ b/SRC/include/superlu_zdefs.h
+@@ -318,6 +318,11 @@ typedef struct {
+     int_t *sched_perm_c_supno;
+     int_t sched_nsupers;
+     int   sched_opts;  /* options of that schedule (see pzgstrf()) */
++
++    /* Communicator of the L-solve messages, a duplicate of grid->comm created by
++       the first solve, so that the L- and U-solves need no barrier. The L-solve
++       trees use it; zDestroy_LU() frees it with them. */
++    MPI_Comm comm_L;
+ } zLocalLU_t;
+ 
+ typedef struct
+@@ -611,6 +616,9 @@ extern void    pzgsequ (SuperMatrix *, double *, double *, double *,
+ extern double  pzlangs (char *, SuperMatrix *, gridinfo_t *);
+ extern void    pzlaqgs (SuperMatrix *, double *, double *, double,
+ 			double, double, char *);
++extern int     pzPermute_Dense_Matrix_cached(int_t, int_t, int_t [], int perm[],
++				      doublecomplex X[], int ldx, doublecomplex B[], int ldb,
++				      int nrhs, gridinfo_t *, pxgstrs_comm_t *);
+ extern int     pzPermute_Dense_Matrix(int_t, int_t, int_t [], int perm[],
+ 				      doublecomplex [], int, doublecomplex [], int, int,
+ 				      gridinfo_t *);
+diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
+index 7e066976efd0f6bd40f29ed0ab6edbd291d22d63..9b4edaa1bf9136fb1a5f486049df25b76ce398e4 100755
+--- a/SRC/prec-independent/util.c
++++ b/SRC/prec-independent/util.c
+@@ -329,9 +329,17 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
+     SUPERLU_FREE(gstrs_comm->ptr_to_ibuf);
+     if ( gstrs_comm->B_to_X_recv_idx ) SUPERLU_FREE(gstrs_comm->B_to_X_recv_idx);
+     if ( gstrs_comm->X_to_B_recv_idx ) SUPERLU_FREE(gstrs_comm->X_to_B_recv_idx);
++    if ( gstrs_comm->perm_cache ) pxperm_cache_free(gstrs_comm->perm_cache);
+     SUPERLU_FREE(gstrs_comm);
+ }
+ 
++void pxperm_cache_free(pxperm_cache_t *c)
++{
++    SUPERLU_FREE(c->send_proc);
++    SUPERLU_FREE(c->send_pos);
++    SUPERLU_FREE(c);
++}
++
+ /*! \brief Diagnostic print of segment info after panel_dfs().
+  */
+ void print_panel_seg_dist(int_t n, int_t w, int_t jcol, int_t nseg,
+diff --git a/SRC/single/psgssvx.c b/SRC/single/psgssvx.c
+index 128993bf4c02c4a3d8a5c08e750eefd67f8f0559..c91f5963867880e5f576a71db5ead16766daba74 100755
+--- a/SRC/single/psgssvx.c
++++ b/SRC/single/psgssvx.c
+@@ -796,7 +796,8 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+              (parSymbFact == NO || options->RowPerm != NO) ) {
+              /* Performs serial symbolic factorzation and/or MC64 */
+ 
+-            need_value = (options->RowPerm == LargeDiag_MC64);
++            /* Values are only needed by MC64, which runs on process 0. */
++            need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 
+             psCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 
+@@ -808,7 +809,7 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+             if ( need_value ) {
+                 a_GA = (float *) GAstore->nzval;
+-                GA_mem_use += nnz * sizeof(float);
++                if ( a_GA ) GA_mem_use += nnz * sizeof(float); /* on process 0 only if need_value == 2 */
+             } else assert(GAstore->nzval == NULL);
+ 	}
+ 
+@@ -1776,9 +1777,10 @@ if ( options->GPURES == YES ){
+ 
+ #endif
+ 	}else{
+-		psPermute_Dense_Matrix(fst_row, m_loc, SOLVEstruct->row_to_proc,
++		psPermute_Dense_Matrix_cached(fst_row, m_loc, SOLVEstruct->row_to_proc,
+ 					SOLVEstruct->inv_perm_c,
+-					X, ldx, B, ldb, nrhs, grid);
++					X, ldx, B, ldb, nrhs, grid,
++					SOLVEstruct->gstrs_comm);
+ #if ( DEBUGlevel>=2 )
+ 		printf("\n (%d) .. After psPermute_Dense_Matrix(): b =\n", iam);
+ 		for (i = 0; i < m_loc; ++i)
+diff --git a/SRC/single/psgssvx3d.c b/SRC/single/psgssvx3d.c
+index 983fe05f9e6ac99030d8b8812f71394d2711d2c1..298c05b5f73bbde3158ac532e37ba8ee55a2928a 100755
+--- a/SRC/single/psgssvx3d.c
++++ b/SRC/single/psgssvx3d.c
+@@ -715,11 +715,13 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    if (Fact != SamePattern_SameRowPerm &&
+ 			(parSymbFact == NO || options->RowPerm != NO))
+ 	    {
+-		int need_value = (options->RowPerm == LargeDiag_MC64);
++		/* Values are only needed by MC64, which runs on process 0. */
++		int need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 		psCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 		GAstore = (NCformat *)GA.Store;
+ 		nnz = GAstore->nnz;
+-		GA_mem_use = (nnz + n + 1) * sizeof(int_t) + need_value * nnz * sizeof(float);
++		GA_mem_use = (nnz + n + 1) * sizeof(int_t)
++		             + (GAstore->nzval ? nnz * sizeof(float) : 0);
+ 		if (!need_value)
+ 		    assert(GAstore->nzval == NULL);
+ 	    }
+diff --git a/SRC/single/psgssvx3d_d2.c b/SRC/single/psgssvx3d_d2.c
+index 59876d7b7bceef4b8756c2b67fc7a2e602128ec1..9df6eb1e25111c331a5c8259c6530784ec1f3655 100755
+--- a/SRC/single/psgssvx3d_d2.c
++++ b/SRC/single/psgssvx3d_d2.c
+@@ -724,11 +724,13 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    if (Fact != SamePattern_SameRowPerm &&
+ 			(parSymbFact == NO || options->RowPerm != NO))
+ 	    {
+-		int need_value = (options->RowPerm == LargeDiag_MC64);
++		/* Values are only needed by MC64, which runs on process 0. */
++		int need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 		psCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 		GAstore = (NCformat *)GA.Store;
+ 		nnz = GAstore->nnz;
+-		GA_mem_use = (nnz + n + 1) * sizeof(int_t) + need_value * nnz * sizeof(float);
++		GA_mem_use = (nnz + n + 1) * sizeof(int_t)
++		             + (GAstore->nzval ? nnz * sizeof(float) : 0);
+ 		if (!need_value)
+ 		    assert(GAstore->nzval == NULL);
+ 	    }
+diff --git a/SRC/single/psgssvx_d2.c b/SRC/single/psgssvx_d2.c
+index 1104dae20eed1b0d31cb00f09859be8d8159b687..9f21b16cd5a4a583675e52e64c92c3e215d25f18 100755
+--- a/SRC/single/psgssvx_d2.c
++++ b/SRC/single/psgssvx_d2.c
+@@ -813,7 +813,8 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
+              (parSymbFact == NO || options->RowPerm != NO) ) {
+              /* Performs serial symbolic factorzation and/or MC64 */
+ 
+-            need_value = (options->RowPerm == LargeDiag_MC64);
++            /* Values are only needed by MC64, which runs on process 0. */
++            need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 
+             psCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 
+@@ -825,7 +826,7 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+             if ( need_value ) {
+                 a_GA = (float *) GAstore->nzval;
+-                GA_mem_use += nnz * sizeof(float);
++                if ( a_GA ) GA_mem_use += nnz * sizeof(float); /* on process 0 only if need_value == 2 */
+             } else assert(GAstore->nzval == NULL);
+ 	}
+ 
+diff --git a/SRC/single/psgstrs.c b/SRC/single/psgstrs.c
+index c021259372976eadf98c07d322f731917011b267..3e6509e6c7e48c4f303d84d85414e95e78d4ab13 100755
+--- a/SRC/single/psgstrs.c
++++ b/SRC/single/psgstrs.c
+@@ -474,7 +474,9 @@ psReDistribute_B_to_X(float *B, int_t m_loc, int nrhs, int_t ldb,
+ 		MPI_Wait(&req_d,&status);
+ 	#endif
+ #endif
+-	MPI_Barrier( grid->comm );
++	/* The CPU trisolve sends its L-solve messages on their own communicator,
++	   so they cannot be mistaken for these. */
++	if ( get_acc_solve() ) MPI_Barrier( grid->comm );
+ 
+ 
+ 	Nreq_send=0;
+@@ -754,7 +756,8 @@ psReDistribute_X_to_B(int_t n, float *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	#endif
+ #endif
+ 
+-	MPI_Barrier( grid->comm );
++	/* psgstrs() ends its CPU trisolve with a barrier. */
++	if ( get_acc_solve() ) MPI_Barrier( grid->comm );
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs && !cached;pp++){
+@@ -1136,6 +1139,7 @@ psgstrs(superlu_dist_options_t *options, int_t n,
+     int  nfrecv = 0; /* Count of total messages to be recv'd. */
+     int  nbrecv = 0; /* Count of total messages to be recv'd. */
+     int  nleaf = 0, nroot = 0;
++    MPI_Comm comm_L;
+     int  nleaftmp = 0, nroottmp = 0;
+     int_t  msgsize;
+         /*-- Counts used for U-solve --*/
+@@ -1250,7 +1254,7 @@ psgstrs(superlu_dist_options_t *options, int_t n,
+     }
+ #endif
+ 
+-    MPI_Barrier( grid->comm );
++    if ( get_acc_solve() ) MPI_Barrier( grid->comm ); /* GPU trisolve */
+     t1_sol = SuperLU_timer_();
+     t = SuperLU_timer_();
+ 
+@@ -1470,11 +1474,28 @@ if ( options->GPURES == YES ) {
+ 	}
+     }
+ 
++	/* ---------------------------------------------------------
++	   The L-solve messages use their own communicator: a process that
++	   finished its L-solve can start the U-solve (whose receives match any
++	   tag on grid->comm) without a barrier in between.
++	   --------------------------------------------------------- */
++	comm_L = grid->comm;
++	if ( !get_acc_solve() ) { /* CPU trisolve */
++	    if ( Llu->comm_L == MPI_COMM_NULL )
++		MPI_Comm_dup(grid->comm, &Llu->comm_L);
++	    comm_L = Llu->comm_L;
++	    for (lk = 0; lk < CEILING( nsupers, grid->npcol ); ++lk)
++		if ( LBtree_ptr[lk].empty_ == NO ) LBtree_ptr[lk].comm_ = comm_L;
++	    for (lk = 0; lk < CEILING( nsupers, grid->nprow ); ++lk)
++		if ( LRtree_ptr[lk].empty_ == NO ) LRtree_ptr[lk].comm_ = comm_L;
++	}
++
+ 	/* ---------------------------------------------------------
+ 	   Initialize the async Bcast trees on all processes.
+ 	   --------------------------------------------------------- */
+ 	nsupers_j = CEILING( nsupers, grid->npcol ); /* Number of local block columns */
+ 
++
+ 	nbtree = 0;
+ 	for (lk=0;lk<nsupers_j;++lk){
+ 		if(LBtree_ptr[lk].empty_==NO){
+@@ -1912,7 +1933,7 @@ if (get_acc_solve()){  /* GPU trisolve*/
+ 
+ 			/* Receive a message. */
+ 			MPI_Recv( recvbuf0, maxrecvsz, MPI_FLOAT,
+-				MPI_ANY_SOURCE, MPI_ANY_TAG, grid->comm, &status );
++				MPI_ANY_SOURCE, MPI_ANY_TAG, comm_L, &status );
+ 			// MPI_Irecv(recvbuf0,maxrecvsz,MPI_FLOAT,MPI_ANY_SOURCE,MPI_ANY_TAG,grid->comm,&req);
+ 			// ready=0;
+ 			// while(ready==0){
+@@ -2116,7 +2137,6 @@ if (get_acc_solve()){  /* GPU trisolve*/
+ 				// deallocate requests here
+ 			}
+ 		}
+-		MPI_Barrier( grid->comm );
+ 
+ 	}  /* end CPU trisolve */
+ #if ( PROFlevel>=1 )
+diff --git a/SRC/single/psutil.c b/SRC/single/psutil.c
+index 3687c28061b8e4c9a460ec8e3e2b902574d894eb..0a4da8e5248f2294007b2dfc33db55c709c69dbf 100755
+--- a/SRC/single/psutil.c
++++ b/SRC/single/psutil.c
+@@ -32,7 +32,8 @@ at the top-level directory.
+  */
+ int psCompRow_loc_to_CompCol_global
+ (
+- int_t need_value, /* Input. Whether need to gather numerical values */
++ int_t need_value, /* Input. Whether need to gather numerical values
++                      (2: on process 0 only) */
+  SuperMatrix *A,   /* Input. Distributed matrix in NRformat_loc format. */
+  gridinfo_t *grid, /* Input */
+  SuperMatrix *GA   /* Output */
+@@ -241,7 +242,15 @@ int psCompRow_loc_to_CompCol_global
+     it = nnz_loc;
+     MPI_Allgatherv(rowind_buf, it, mpi_int_t, GAstore->rowind,
+ 		   itemp_32, rdispls, mpi_int_t, grid->comm);
+-    if ( need_value ) {
++    if ( need_value == 2 ) {
++      /* The numerical values are only needed on process 0 (MC64). */
++      GAstore->nzval = NULL;
++      if ( !grid->iam &&
++           !(GAstore->nzval = (float *) floatMalloc_dist (nnz)) )
++          ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
++      MPI_Gatherv(a_buf, it, MPI_FLOAT, GAstore->nzval,
++		  itemp_32, rdispls, MPI_FLOAT, 0, grid->comm);
++    } else if ( need_value ) {
+       if ( !(GAstore->nzval = (float *) floatMalloc_dist (nnz)) )
+           ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
+       MPI_Allgatherv(a_buf, it, MPI_FLOAT, GAstore->nzval,
+@@ -402,6 +411,127 @@ int psPermute_Dense_Matrix
+     return 0;
+ } /* psPermute_Dense_Matrix */
+ 
++/*! \brief Same as psPermute_Dense_Matrix(), but the communication pattern
++ * (partner processes, counts and received row indices) only depends on perm[]
++ * and row_to_proc[]: it is computed by the first call and saved in gstrs_comm,
++ * and the numerical values are then exchanged point to point with the
++ * processes that share entries only (no dense all-to-all collectives).
++ */
++int psPermute_Dense_Matrix_cached
++(
++ int_t fst_row,
++ int_t m_loc,
++ int_t row_to_proc[],
++ int perm[],
++ float X[], int ldx,
++ float B[], int ldb,
++ int nrhs,
++ gridinfo_t *grid,
++ pxgstrs_comm_t *gstrs_comm
++)
++{
++    const int tag = 24;
++    pxperm_cache_t *c = gstrs_comm->perm_cache;
++    int_t i, j, k, l;
++    int p, q, procs = grid->nprow * grid->npcol, nreq;
++    float *send_dbuf, *recv_dbuf;
++    MPI_Request *reqs;
++
++    if ( !c ) {
++        int *sendcnts, *recvcnts, *ptr;
++        int_t *send_ibuf, *recv_ibuf;
++        if ( !(c = (pxperm_cache_t *) SUPERLU_MALLOC(sizeof(pxperm_cache_t))) )
++            ABORT("Malloc fails for perm_cache.");
++        if ( !(sendcnts = SUPERLU_MALLOC(3*procs * sizeof(int))) )
++            ABORT("Malloc fails for sendcnts[].");
++        recvcnts = sendcnts + procs;
++        ptr = recvcnts + procs;
++        for (p = 0; p < procs; ++p) sendcnts[p] = 0;
++        for (i = fst_row; i < fst_row + m_loc; ++i) ++sendcnts[row_to_proc[perm[i]]];
++        MPI_Alltoall(sendcnts, 1, MPI_INT, recvcnts, 1, MPI_INT, grid->comm);
++        c->nsend = c->nrecv = 0;
++        for (p = 0; p < procs; ++p) {
++            if ( sendcnts[p] ) ++c->nsend;
++            if ( recvcnts[p] ) ++c->nrecv;
++        }
++        /* One allocation for the six partner arrays. */
++        if ( !(c->send_proc = SUPERLU_MALLOC(3*(c->nsend + c->nrecv + 2) * sizeof(int))) )
++            ABORT("Malloc fails for perm_cache arrays.");
++        c->send_cnt = c->send_proc + c->nsend + 1;
++        c->send_displ = c->send_cnt + c->nsend + 1;
++        c->recv_proc = c->send_displ + c->nsend + 1;
++        c->recv_cnt = c->recv_proc + c->nrecv + 1;
++        c->recv_displ = c->recv_cnt + c->nrecv + 1;
++        for (p = 0, q = 0, k = 0; p < procs; ++p) {
++            ptr[p] = k;
++            if ( sendcnts[p] ) {
++                c->send_proc[q] = p; c->send_cnt[q] = sendcnts[p];
++                c->send_displ[q] = k; k += sendcnts[p]; ++q;
++            }
++        }
++        for (p = 0, q = 0, l = 0; p < procs; ++p) {
++            if ( recvcnts[p] ) {
++                c->recv_proc[q] = p; c->recv_cnt[q] = recvcnts[p];
++                c->recv_displ[q] = l; l += recvcnts[p]; ++q;
++            }
++        }
++        c->nrecvtot = l;
++        if ( !(c->send_pos = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for perm_cache positions.");
++        c->recv_row = c->send_pos + m_loc;
++        if ( !(send_ibuf = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for send_ibuf[].");
++        recv_ibuf = send_ibuf + m_loc;
++        for (i = fst_row; i < fst_row + m_loc; ++i) {
++            j = perm[i];
++            p = row_to_proc[j];
++            c->send_pos[i - fst_row] = ptr[p];
++            send_ibuf[ptr[p]++] = j;
++        }
++        if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        nreq = 0;
++        for (q = 0; q < c->nrecv; ++q)
++            MPI_Irecv(&recv_ibuf[c->recv_displ[q]], c->recv_cnt[q], mpi_int_t,
++                      c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++        for (q = 0; q < c->nsend; ++q)
++            MPI_Isend(&send_ibuf[c->send_displ[q]], c->send_cnt[q], mpi_int_t,
++                      c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        for (i = 0; i < l; ++i) c->recv_row[i] = recv_ibuf[i] - fst_row;
++        SUPERLU_FREE(reqs);
++        SUPERLU_FREE(send_ibuf);
++        SUPERLU_FREE(sendcnts);
++        gstrs_comm->perm_cache = c;
++    }
++
++    /* Exchange the numerical values (RHS stored in row major in the buffers). */
++    if ( !(send_dbuf = floatMalloc_dist((m_loc + c->nrecvtot + 1) * (size_t)nrhs)) )
++        ABORT("Malloc fails for send_dbuf[].");
++    recv_dbuf = send_dbuf + m_loc * (size_t)nrhs;
++    for (i = 0; i < m_loc; ++i) {
++        l = c->send_pos[i] * nrhs;
++        for (k = 0; k < nrhs; ++k) send_dbuf[l + k] = X[i + k*ldx];
++    }
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    nreq = 0;
++    for (q = 0; q < c->nrecv; ++q)
++        MPI_Irecv(&recv_dbuf[c->recv_displ[q] * (size_t)nrhs], c->recv_cnt[q] * nrhs,
++                  MPI_FLOAT, c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++    for (q = 0; q < c->nsend; ++q)
++        MPI_Isend(&send_dbuf[c->send_displ[q] * (size_t)nrhs], c->send_cnt[q] * nrhs,
++                  MPI_FLOAT, c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++    MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    for (i = 0, l = 0; i < c->nrecvtot; ++i) {
++        j = c->recv_row[i];
++        for (k = 0; k < nrhs; ++k) B[j + k*ldb] = recv_dbuf[l++];
++    }
++    SUPERLU_FREE(reqs);
++    SUPERLU_FREE(send_dbuf);
++    return 0;
++} /* psPermute_Dense_Matrix_cached */
++
+ 
+ /*! \brief Allocate storage in LUstruct */
+ void sLUstructInit(const int_t n, sLUstruct_t *LUstruct)
+@@ -418,6 +548,7 @@ void sLUstructInit(const int_t n, sLUstruct_t *LUstruct)
+     LUstruct->Llu->sched_perm_c_supno = NULL;
+     LUstruct->Llu->sched_nsupers = 0;
+     LUstruct->Llu->sched_opts = 0;
++    LUstruct->Llu->comm_L = MPI_COMM_NULL;
+     LUstruct->dt = 's';
+     LUstruct->trf3Dpart = NULL;
+ }
+@@ -435,6 +566,12 @@ void sLUstructFree(sLUstruct_t *LUstruct)
+     SUPERLU_FREE(LUstruct->Glu_persist);
+     if ( LUstruct->Llu->sched_perm_c_supno )
+         SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
++    if ( LUstruct->Llu->comm_L != MPI_COMM_NULL ) { /* see psgstrs() */
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&LUstruct->Llu->comm_L);
++        LUstruct->Llu->comm_L = MPI_COMM_NULL;
++    }
+     SUPERLU_FREE(LUstruct->Llu);
+     sDestroy_trf3Dpartition(LUstruct->trf3Dpart);
+ 
+@@ -458,6 +595,12 @@ sDestroy_LU(int_t n, gridinfo_t *grid, sLUstruct_t *LUstruct)
+ #endif
+ 
+     sDestroy_Tree(n, grid, LUstruct);
++    if ( Llu->comm_L != MPI_COMM_NULL ) { /* see psgstrs() */
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&Llu->comm_L);
++        Llu->comm_L = MPI_COMM_NULL;
++    }
+ 
+     if ( Llu->sched_perm_c_supno ) {
+         SUPERLU_FREE(Llu->sched_perm_c_supno);
+@@ -786,6 +929,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
++    gstrs_comm->perm_cache = NULL;
+ 
+     return 0;
+ } /* PSGSTRS_INIT */
+diff --git a/SRC/single/sssvx3dAux.c b/SRC/single/sssvx3dAux.c
+index 1d86ba64bb1282093e261194c8c4a928715ac908..1c8c4dddf03484bcd2bb0a9a2db3b5dbf0294c5f 100644
+--- a/SRC/single/sssvx3dAux.c
++++ b/SRC/single/sssvx3dAux.c
+@@ -249,14 +249,14 @@ void sfindRowPerm_MC64(gridinfo_t* grid, int_t job,
+     LOG_FUNC_ENTER();
+     #endif
+     // Check input parameters
+-    if (colptr == NULL || rowind == NULL || a_GA == NULL ||
++    int root = 0;
++    /* The values are only needed on the root, which runs MC64. */
++    if (colptr == NULL || rowind == NULL || (grid->iam == root && a_GA == NULL) ||
+         perm_r == NULL ) {
+         fprintf(stderr, "Error: NULL input parameter.\n");
+         return;
+     }
+ 
+-    int root = 0;
+-
+     // If the current node is the root node, perform the permutation computation
+     if (grid->iam == root) {
+         *iinfo = sldperm_dist(job, m, nnz, colptr, rowind, a_GA, perm_r, R1, C1);
