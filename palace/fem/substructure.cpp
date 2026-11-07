@@ -266,12 +266,15 @@ double SignatureTolerance(const std::vector<double> &saved)
 
 }  // namespace
 
-std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
-                                       const std::vector<double> &saved, int width)
+std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, int width,
+                                       const std::vector<double> &saved, int saved_width)
 {
-  MFEM_VERIFY(width == 3 || width == 12, "Unknown DOF signature width " << width << "!");
+  auto known = [](int w) { return w == 3 || w == 12 || w == 13; };
+  MFEM_VERIFY(known(width) && known(saved_width) && (width == 3) == (saved_width == 3),
+              "Unknown DOF signature widths " << width << " and " << saved_width << "!");
   const double tol = SignatureTolerance(saved);
-  const auto pc = SignaturePoints(candidates, width), ps = SignaturePoints(saved, width);
+  const auto pc = SignaturePoints(candidates, width),
+             ps = SignaturePoints(saved, saved_width);
   // The saved points by their first coordinate, searched within the tolerance.
   std::vector<int> order(ps.size());
   for (std::size_t s = 0; s < order.size(); s++)

@@ -786,6 +786,71 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THROWS_WITH(condense(no_env_terminal, 3, 4),
                     Catch::Matchers::ContainsSubstring("The environment differs"));
 }
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver saved model of another problem or order",
+                 "[substructure][Serial][Parallel]")
+{
+  // A model is loaded by a run of its problem type and order only, and a file that is not
+  // one is reported as such.
+  const std::string model_path = (temp_dir / "substruct_problem.bin").string();
+  auto make_config =
+      [&model_path](const std::string &type, const std::string &mode, int order)
+  {
+    const json terminals = {{{"Index", 1}, {"Attributes", {1}}},
+                            {{"Index", 2}, {"Attributes", {2}}}};
+    json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", (type == "Electrostatic")
+                                      ? json{{"Terminal", terminals}}
+                                      : json{{"PEC", {{"Attributes", {1, 2}}}}}},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", mode},
+                       {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  auto condense = [](const IoData &iodata)
+  {
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  };
+  condense(make_config("Electrostatic", "Offline", 1));
+  CHECK_NOTHROW(condense(make_config("Electrostatic", "Online", 1)));
+  CHECK_THROWS_WITH(
+      condense(make_config("Magnetostatic", "Online", 1)),
+      Catch::Matchers::ContainsSubstring("is electrostatic, unlike this run"));
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 2)),
+                    Catch::Matchers::ContainsSubstring(
+                        "\"Solver\"/\"Order\" must be those of the offline run"));
+  // The model is read by the root process. A truncated one (its head intact) is not one.
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::resize_file(model_path, std::filesystem::file_size(model_path) / 2);
+  }
+  CHECK_THROWS_WITH(
+      condense(make_config("Electrostatic", "Online", 1)),
+      Catch::Matchers::ContainsSubstring("is not a saved substructuring model"));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream(model_path, std::ios::binary) << "not a substructuring model";
+  }
+  CHECK_THROWS_WITH(
+      condense(make_config("Electrostatic", "Online", 1)),
+      Catch::Matchers::ContainsSubstring("is not a saved substructuring model"));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::remove(model_path);
+  }
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
+                    Catch::Matchers::ContainsSubstring("Cannot read the saved"));
+}
 #endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

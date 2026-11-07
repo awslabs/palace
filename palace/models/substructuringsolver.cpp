@@ -587,17 +587,28 @@ struct SubstructuringSolver::Impl
     double model_eps = 0.0;
     if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
     {
-      const SavedHead head = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      MFEM_VERIFY(saved.nG >= 0, "Cannot read the saved substructuring model \""
+                                     << sub.save_model
+                                     << "\" (run in \"Offline\" mode first)!");
+      MFEM_VERIFY(saved.width > 0, "\"" << sub.save_model
+                                        << "\" is not a saved substructuring model: run "
+                                           "in \"Offline\" mode to write one!");
+      MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
+                  "The saved substructuring model \""
+                      << sub.save_model << "\" is "
+                      << (magnetostatic ? "electrostatic" : "magnetostatic")
+                      << ", unlike this run!");
       double n_env = 0.0;
       for (int i = 0; i < nt; i++)
       {
         n_env += em[i] && !dir_mark[i];
       }
       Mpi::GlobalSum(1, &n_env, parent_fes.GetComm());
-      region_only = !head.env_fp.empty() && head.width > 0 && n_env < head.env_fp[0];
+      region_only = !saved.env_fp.empty() && n_env < saved.env_fp[0];
       if (region_only)
       {
-        model_eps = head.regularization;
+        model_eps = saved.regularization;
         MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                     "Adaptive refinement with substructuring needs the full mesh, not the "
                     "mesh of the region!");
@@ -626,8 +637,9 @@ struct SubstructuringSolver::Impl
         {
           g += (g >= 0) ? off : 0;
         }
-        const auto match = MatchSignaturePoints(TrueDofSignatures(parent_fes, index, nc),
-                                                head.sig, head.width);
+        const auto match =
+            MatchSignaturePoints(TrueDofSignatures(parent_fes, index, nc),
+                                 SignatureWidth(parent_fes), saved.sig, saved.width);
         for (int t = 0; t < nt; t++)
         {
           const int t0 = ParentTrueDof(t);
@@ -2009,46 +2021,58 @@ struct SubstructuringSolver::Impl
   static constexpr int kLengthMagic = 0x434e454c;  // "LENC"
   static constexpr int kEpsMagic = 0x5350454d;     // "MEPS"
 
-  // The width of the interface signatures of a model by their type: 0 none (identical
-  // mesh), 1 H1 coordinates, 2 H(curl) moments, 3 with the side moments of split DOFs.
+  // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
+  // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
   static int SignatureFileWidth(int sig_type)
   {
     return (sig_type == 3) ? 13 : (sig_type == 2) ? 12 : (sig_type == 1) ? 3 : 0;
   }
 
-  // The interface signatures (without the side moments of split DOFs), reference length
-  // (0: not saved), environment fingerprint (empty: not saved) and magnetostatic
-  // regularization (0: not saved) of a model, from rank 0; nG < 0 if it cannot be read.
-  // Collective.
+  // The head of a model, from rank 0: the interface size (-1: the file cannot be read),
+  // signature type and width (0: not a model, or a truncated one), the interface
+  // signatures, the offsets of S_E and of the sections after it, the reference length (0:
+  // not saved), the environment fingerprint (empty: not saved) and the magnetostatic
+  // regularization (0: not saved). Collective.
   struct SavedHead
   {
-    int nG = -1, width = 0;
+    int nG = -1, sig_type = 0, width = 0;
     std::vector<double> sig, env_fp;
     double length = 0.0, regularization = 0.0;
+    std::streamoff S_pos = 0, sections_pos = 0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm)
   {
     SavedHead h;
-    int head[3] = {-1, 0, 0};  // nG, signature width, has fingerprint
+    int head[4] = {-1, 0, 0, 0};  // nG, signature type, width, has fingerprint
+    auto offsets = [&h](std::streamoff nG, std::streamoff width)
+    {
+      h.S_pos = 2 * static_cast<std::streamoff>(sizeof(int)) +
+                static_cast<std::streamoff>(sizeof(double)) * nG * width;
+      h.sections_pos = h.S_pos + static_cast<std::streamoff>(sizeof(double)) * nG * nG;
+    };
     if (Mpi::Root(comm))
     {
-      std::ifstream f(path, std::ios::binary);
-      int sig_type = 0;
+      std::ifstream f(path, std::ios::binary | std::ios::ate);
+      const std::streamoff size = f ? static_cast<std::streamoff>(f.tellg()) : 0;
+      f.seekg(0);
       if (f.read(reinterpret_cast<char *>(&head[0]), sizeof(int)) &&
-          f.read(reinterpret_cast<char *>(&sig_type), sizeof(int)))
+          f.read(reinterpret_cast<char *>(&head[1]), sizeof(int)) && head[0] >= 0)
       {
-        const int width = SignatureFileWidth(sig_type);
-        head[1] = std::min(width, 12);
-        h.sig.resize(static_cast<std::size_t>(head[0]) * head[1]);
-        for (int g = 0; g < head[0]; g++)
-        {
-          f.read(reinterpret_cast<char *>(&h.sig[static_cast<std::size_t>(g) * head[1]]),
-                 sizeof(double) * head[1]);
-          f.seekg(static_cast<std::streamoff>(sizeof(double)) * (width - head[1]),
-                  std::ios::cur);
-        }
-        f.seekg(static_cast<std::streamoff>(sizeof(double)) * head[0] * head[0],
-                std::ios::cur);
+        // The file holds the signatures and S_E (in floating point: any nG read).
+        const double n = head[0], w = SignatureFileWidth(head[1]);
+        const double end = 2.0 * sizeof(int) + sizeof(double) * n * (w + n);
+        head[2] = (w > 0.0 && end <= static_cast<double>(size)) ? static_cast<int>(w) : 0;
+      }
+      else
+      {
+        head[0] = -1;
+      }
+      if (head[2] > 0)
+      {
+        offsets(head[0], head[2]);
+        h.sig.resize(static_cast<std::size_t>(head[0]) * head[2]);
+        f.read(reinterpret_cast<char *>(h.sig.data()), sizeof(double) * h.sig.size());
+        f.seekg(h.sections_pos);
         int magic = 0;
         f.read(reinterpret_cast<char *>(&magic), sizeof(int));
         if (magic == kLengthMagic)
@@ -2060,33 +2084,33 @@ struct SubstructuringSolver::Impl
         {
           h.env_fp.resize(5);
           f.read(reinterpret_cast<char *>(h.env_fp.data()), sizeof(double) * 5);
-          head[2] = f ? 1 : 0;
+          head[3] = f ? 1 : 0;
           if (f.read(reinterpret_cast<char *>(&magic), sizeof(int)) && magic == kEpsMagic)
           {
             f.read(reinterpret_cast<char *>(&h.regularization), sizeof(double));
           }
         }
       }
-      else
-      {
-        head[0] = -1;
-      }
     }
-    Mpi::Broadcast(3, head, 0, comm);
+    Mpi::Broadcast(4, head, 0, comm);
     Mpi::Broadcast(1, &h.length, 0, comm);
     Mpi::Broadcast(1, &h.regularization, 0, comm);
     h.nG = head[0];
-    h.width = head[1];
-    if (h.nG < 0)
+    h.sig_type = head[1];
+    h.width = head[2];
+    if (h.nG < 0 || h.width == 0)
     {
       return h;
     }
+    offsets(h.nG, h.width);
     h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
     Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
-    h.env_fp.resize(head[2] ? 5 : 0);
+    h.env_fp.resize(head[3] ? 5 : 0);
     Mpi::Broadcast(static_cast<int>(h.env_fp.size()), h.env_fp.data(), 0, comm);
     return h;
   }
+  // The head of the model of an online run (read by the constructor).
+  SavedHead saved;
 
   // Fixed projected polynomial field k of the fingerprints (the same on both sides of the
   // two-sided films).
@@ -3345,50 +3369,19 @@ void SubstructuringSolver::CondenseEnvironment()
   bool loaded = false;
   if (online && !model_path.empty())
   {
-    int nG_file = -1;
-    if (rank == 0)
-    {
-      std::ifstream f(model_path, std::ios::binary);
-      if (f.good())
-      {
-        f.read(reinterpret_cast<char *>(&nG_file), sizeof(int));
-      }
-    }
-    MPI_Bcast(&nG_file, 1, MPI_INT, 0, comm);
-    MFEM_VERIFY(nG_file >= 0, "Cannot read the saved substructuring model \""
-                                  << model_path << "\" (run in \"Offline\" mode first)!");
-    MFEM_VERIFY(nG_file == nG,
+    // The head of the model, read and checked by the constructor.
+    const Impl::SavedHead &saved = impl->saved;
+    MFEM_VERIFY(saved.nG == nG,
                 "Saved substructuring model interface size ("
-                    << nG_file << ") does not match this run (" << nG
-                    << "); the interface (Gamma) must be identical between the offline and "
-                       "online runs.");
-    int sig_type = 0;
-    if (rank == 0)
-    {
-      std::ifstream f(model_path, std::ios::binary);
-      f.seekg(sizeof(int));
-      f.read(reinterpret_cast<char *>(&sig_type), sizeof(int));
-    }
-    MPI_Bcast(&sig_type, 1, MPI_INT, 0, comm);
-    const int file_w = Impl::SignatureFileWidth(sig_type);
-    MFEM_VERIFY(file_w == 0 || file_w == sig_w,
+                    << saved.nG << ") does not match this run (" << nG
+                    << "): the interface (Gamma) and \"Solver\"/\"Order\" must be those of "
+                       "the offline run!");
+    MFEM_VERIFY(saved.width == sig_w,
                 "The interface of the saved substructuring model "
-                    << ((file_w == 13) ? "is" : "is not")
+                    << ((saved.width == 13) ? "is" : "is not")
                     << " split by \"TwoSided\" superconductor films, unlike in this run; "
                        "the interface (Gamma) must be identical between the offline and "
                        "online runs.");
-    std::vector<double> saved_sig;
-    if (file_w > 0)
-    {
-      saved_sig.assign(static_cast<std::size_t>(nG) * file_w, 0.0);
-      if (rank == 0)
-      {
-        std::ifstream f(model_path, std::ios::binary);
-        f.seekg(2 * sizeof(int));
-        f.read(reinterpret_cast<char *>(saved_sig.data()), sizeof(double) * nG * file_w);
-      }
-      MPI_Bcast(saved_sig.data(), nG * file_w, MPI_DOUBLE, 0, comm);
-    }
     // Rank 0 reads the saved S_E, re-orders it onto the current numbering and scatters the
     // rows.
     std::vector<double> S_full;
@@ -3396,8 +3389,8 @@ void SubstructuringSolver::CondenseEnvironment()
     {
       S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
       std::ifstream f(model_path, std::ios::binary);
-      f.seekg(static_cast<std::streamoff>(2 * sizeof(int) + sizeof(double) * nG * file_w));
-      f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * nG * nG);
+      f.seekg(saved.S_pos);
+      f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * S_full.size());
     }
     // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
     // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: online
@@ -3405,22 +3398,11 @@ void SubstructuringSolver::CondenseEnvironment()
     // DOFs whose basis depends on the face orientation (second-order face DOFs on
     // tetrahedra).
     SignatureMap map;
-    if (sig_type >= 2)
-    {
-      map = MatchSignatureBasis(gamma_sig(), saved_sig, file_w);
-    }
-    else
-    {
-      // Identity (no signatures saved), or H1 by the DOF coordinates.
-      map.rows.resize(nG);
-      for (int g = 0; g < nG; g++)
-      {
-        map.rows[g] = {{g, 1.0}};
-      }
-    }
-    if (sig_type == 1)
+    if (saved.sig_type == 1)
     {
       const std::vector<double> cur = gamma_sig();
+      const int w = saved.width;
+      map.rows.resize(nG);
       std::vector<int> perm(nG);
       double worst = 0.0;
       for (int g = 0; g < nG; g++)
@@ -3430,10 +3412,10 @@ void SubstructuringSolver::CondenseEnvironment()
         for (int s = 0; s < nG; s++)
         {
           double dp = 0.0;
-          for (int d = 0; d < file_w; d++)
+          for (int d = 0; d < w; d++)
           {
-            const double a = cur[static_cast<std::size_t>(g) * file_w + d];
-            const double b = saved_sig[static_cast<std::size_t>(s) * file_w + d];
+            const double a = cur[static_cast<std::size_t>(g) * w + d];
+            const double b = saved.sig[static_cast<std::size_t>(s) * w + d];
             dp += (a - b) * (a - b);
           }
           if (dp < bd)
@@ -3453,24 +3435,22 @@ void SubstructuringSolver::CondenseEnvironment()
         bijective = bijective && !used[perm[g]];
         used[perm[g]] = 1;
       }
-      double gworst = 0.0;
-      MPI_Allreduce(&worst, &gworst, 1, MPI_DOUBLE, MPI_MAX, comm);
-      MFEM_VERIFY(bijective && std::sqrt(gworst) < 1e-8,
+      MFEM_VERIFY(bijective && std::sqrt(worst) < 1e-8,
                   "Online interface DOFs do not match the saved model (max mismatch "
-                      << std::sqrt(gworst) << "); the interface Gamma must be identical.");
+                      << std::sqrt(worst) << "); the interface Gamma must be identical.");
     }
-    if (rank == 0 && file_w > 0)
+    else
+    {
+      map = MatchSignatureBasis(gamma_sig(), saved.sig, saved.width);
+    }
+    if (rank == 0)
     {
       S_full = map.DualMatrix(S_full);
     }
     impl->ScatterRows(S_full, nG, impl->S_rows);
     loaded = true;
     // Sections after S_E (fingerprint, S^K, modes).
-    const std::streamoff sections_pos =
-        static_cast<std::streamoff>(2 * sizeof(int)) +
-        static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
-        static_cast<std::streamoff>(sizeof(double)) * nG * nG;
-    impl->LoadSections(model_path, sections_pos, map);
+    impl->LoadSections(model_path, saved.sections_pos, map);
     if (impl->region_only)
     {
       Mpi::Print(" The mesh holds the region (the environment is that of the model)\n");
