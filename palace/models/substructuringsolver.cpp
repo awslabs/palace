@@ -460,9 +460,9 @@ struct SubstructuringSolver::Impl
   int env_dbc_local = 0;                           // owned Dirichlet DOFs of env elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
   std::vector<char> region_dbc;                    // Dirichlet DOFs of region elements
-  // Online on a mesh of the region (written offline next to the model): Γ also holds the
-  // region's boundary DOFs at the saved interface DOFs, and the environment is that of the
-  // model (not checked).
+  // Online on a mesh of the region (written offline next to the model, whose environment
+  // elements it holds): Γ also holds the region's boundary DOFs at the saved interface
+  // DOFs, and the environment is that of the model.
   bool region_only = false;
 
   std::unique_ptr<RegionCondensedOperator> region_op;
@@ -600,7 +600,7 @@ struct SubstructuringSolver::Impl
       region_dbc[i] = rm[i] && dir_mark[i];
     }
 
-    // A mesh of the region holds fewer environment DOFs than the model was condensed from.
+    // Online, the head of the model and whether the mesh is that of the region.
     std::vector<char> cut(nt, 0);
     double model_eps = 0.0;
     if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
