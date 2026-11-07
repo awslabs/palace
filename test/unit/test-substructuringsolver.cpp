@@ -1807,6 +1807,38 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
   CHECK(std::abs(C(0, 0) - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
 }
 
+TEST_CASE("SubstructuringSolver rejects the interface compression with London sheets",
+          "[substructure][Serial][Parallel]")
+{
+  // The region solve with the sheets factors the dense interface operator.
+  auto make = [](double tol)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {1, 2}}}},
+          {"Superconductor",
+           {{{"Attributes", {4}}, {"PenetrationDepth", 0.2}, {"Thickness", 0.05}}}}}},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"InterfaceOffdiagTol", tol}}}}}};
+    IoData iodata(config, false);
+    RegionDesign design;
+    design.sheet = true;
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+    SubstructuringSolver ss(iodata, mesh);
+  };
+  CHECK_THROWS_WITH(make(1.0e-8), Catch::Matchers::ContainsSubstring(
+                                      "London superconductor sheets needs the dense "
+                                      "interface operator"));
+  CHECK_NOTHROW(make(0.0));
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet energies",
                  "[substructure][Serial][Parallel]")
 {

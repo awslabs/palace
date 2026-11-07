@@ -722,6 +722,11 @@ struct SubstructuringSolver::Impl
     if (magnetostatic)
     {
       SetUpSheets(ra_arr, std::move(two_sided));
+      // The region solve factors A_region_free + S_E with the dense S_E (see
+      // EnsureRegionFactor), which the compression discards.
+      MFEM_VERIFY(!has_sheets || sub.interface_offdiag_tol == 0.0,
+                  "Substructuring with London superconductor sheets needs the dense "
+                  "interface operator (\"InterfaceOffdiagTol\": 0)!");
       mag_eps = (model_eps > 0.0) ? model_eps
                 : has_sheets      ? kMagRegularizationSheets
                                   : kMagRegularization;

@@ -103,7 +103,8 @@ which keeps the condensation exact.
     but is not bounded by it; `1e-12` is a conservative choice.
   - `"InterfaceOffdiagTol"`: relative tolerance of a hierarchical (HODLR) compression of
     ``\bm{S}_E``, which reduces its memory for large interfaces. It does not reduce the time to
-    condense the environment.
+    condense the environment, and it is not available with London sheets (flux loops and
+    `"Superconductor"` boundaries), whose region solve factors the dense ``\bm{S}_E``.
 
 ### Adaptive mesh refinement
 

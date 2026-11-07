@@ -2978,7 +2978,7 @@
           "type": "number",
           "minimum": 0,
           "default": 0,
-          "description": "Relative tolerance for a hierarchical (HODLR) compression of the condensed interface operator, reducing its memory; 0 keeps it dense (exact)."
+          "description": "Relative tolerance for a hierarchical (HODLR) compression of the condensed interface operator, reducing its memory; 0 keeps it dense (exact). Not available with London superconductor sheets (flux loops and \"Superconductor\" boundaries), whose region solve factors the dense operator."
         },
         "FactorizationTol": {
           "type": "number",
