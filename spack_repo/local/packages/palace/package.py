@@ -432,12 +432,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
-            # SuperLUSolver
+            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
                 sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
-                when="@4.10.0",
+                when="@4.10:",
             ),
         ],
     )
