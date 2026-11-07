@@ -2191,9 +2191,34 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   basis_B.reserve(n);
   const auto &curl = fem_op->GetCurlMatrix();
   Vector b_true(curl.Height());
-  for (const auto &v : basis)
+  // [Experiment] Without wave ports, the only measurements that need the full solution are
+  // the lumped port voltages, which are linear in E: store them for each basis vector.
+  reduced_voltages_ready = false;
+  reduced_lumped_voltage.clear();
+  const bool reduced_voltages = (fem_op->GetWavePortOp().Size() == 0);
+  if (reduced_voltages)
+  {
+    for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
+    {
+      reduced_lumped_voltage.emplace(idx, Eigen::VectorXd::Zero(static_cast<long>(n)));
+    }
+    if (E->HasImag())
+    {
+      E->Imag() = 0.0;
+    }
+  }
+  for (std::size_t j = 0; const auto &v : basis)
   {
     E->Real().SetFromTrueDofs(v);
+    if (reduced_voltages && !reduced_lumped_voltage.empty())
+    {
+      const auto voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+      for (auto &[idx, vj] : reduced_lumped_voltage)
+      {
+        vj(static_cast<long>(j)) = voltages.at(idx).real();
+      }
+    }
+    j++;
     basis_E.emplace_back(E->Real());
     curl.Mult(v, b_true);
     B->Real().SetFromTrueDofs(b_true);
@@ -2230,6 +2255,7 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
                                                       project(ops.second.get(), basis_B)));
   }
   reduced_postprocessing_ready = true;
+  reduced_voltages_ready = reduced_voltages;
 }
 
 template <ProblemType solver_t>
@@ -2242,7 +2268,13 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   BlockTimer bt0(Timer::POSTPRO);
   MFEM_VERIFY(reduced_postprocessing_ready && y.size() == reduced_energy_E.rows(),
               "Invalid reduced postprocessing state!");
-  SetEGridFunction(e);
+  // [Experiment] Once checked, the reduced voltages replace the expanded solution.
+  const bool use_reduced_voltages =
+      reduced_voltages_ready && reduced_postprocessing_checked;
+  if (!use_reduced_voltages)
+  {
+    SetEGridFunction(e);
+  }
 
   auto quadratic = [&y](const Eigen::MatrixXd &Q)
   { return 0.5 * std::real(y.dot(Q.cast<std::complex<double>>() * y)); };
@@ -2313,7 +2345,51 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
                    max_error / std::max(max_reference, 1.0e-300));
     }
   }
-  const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+  auto reduced_voltage = [&](int idx)
+  {
+    const auto &vj = reduced_lumped_voltage.at(idx);
+    std::complex<double> V = 0.0;
+    for (long j = 0; j < y.size(); j++)
+    {
+      V += y(j) * vj(j);
+    }
+    return V;
+  };
+  std::map<int, std::complex<double>> port_voltages;
+  if (use_reduced_voltages)
+  {
+    for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
+    {
+      port_voltages.emplace(idx, reduced_voltage(idx));
+    }
+  }
+  else
+  {
+    port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+    if (reduced_voltages_ready)
+    {
+      // First online point: check the reduced voltages against the expanded solution.
+      double max_error = 0.0, max_reference = 0.0;
+      for (const auto &[idx, V] : port_voltages)
+      {
+        max_error = std::max(max_error, std::abs(reduced_voltage(idx) - V));
+        max_reference = std::max(max_reference, std::abs(V));
+      }
+      if (max_error > 1.0e-9 * std::max(max_reference, 1.0e-300))
+      {
+        reduced_voltages_ready = false;
+        Mpi::Warning("Reduced lumped port voltages disagree with full evaluation (relative "
+                     "error {:.3e}); expanding the online solution.\n",
+                     max_error / std::max(max_reference, 1.0e-300));
+      }
+      else
+      {
+        Mpi::Print(" Reduced lumped port voltages agree with full evaluation (relative "
+                   "error {:.3e}); skipping the online solution expansion\n",
+                   max_error / std::max(max_reference, 1.0e-300));
+      }
+    }
+  }
   for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
   {
     auto &vi = measurement_cache.lumped_port_vi[idx];

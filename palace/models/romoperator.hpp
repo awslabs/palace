@@ -562,8 +562,10 @@ public:
   void UpdateMRI(int excitation_idx, double omega, const ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
-  // into the high-dimensional space.
-  void SolvePROM(int excitation_idx, double omega, ComplexVector &u);
+  // into the high-dimensional space. [Experiment] With prolongate = false, only the reduced
+  // solution (GetReducedSolution) is computed and u is left untouched.
+  void SolvePROM(int excitation_idx, double omega, ComplexVector &u,
+                 bool prolongate = true);
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.

@@ -421,8 +421,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                    (2 * std::numbers::pi),
                Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble and solve the PROM linear system.
-    prom_op.SolvePROM(excitation_idx, omega, E);
+    // Assemble and solve the PROM linear system. [Experiment] When the reduced
+    // postprocessing needs only the reduced solution, skip its expansion.
+    const bool reduced_only = post_op.HasReducedPostprocessing() &&
+                              !post_op.WillWriteFields(static_cast<int>(omega_i)) &&
+                              post_op.CanSkipProlongation();
+    prom_op.SolvePROM(excitation_idx, omega, E, !reduced_only);
     Mpi::Print("\n");
     if (omega_i == 0 && post_op.WillWriteFields())
     {

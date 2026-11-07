@@ -313,6 +313,10 @@ protected:
   bool reduced_postprocessing_checked = false;
   Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+  // [Experiment] Lumped port voltages of the reduced basis vectors, when they give every
+  // remaining online measurement and the online solution need not be expanded.
+  bool reduced_voltages_ready = false;
+  std::map<int, Eigen::VectorXd> reduced_lumped_voltage;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -480,6 +484,13 @@ public:
                               std::complex<double> omega, const Eigen::VectorXcd &y)
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
+  // [Experiment] Whether MeasureAndPrintReduced needs only the reduced solution, so the
+  // online solution need not be expanded into the full space.
+  bool CanSkipProlongation() const
+  {
+    return reduced_postprocessing_ready && reduced_postprocessing_checked &&
+           reduced_voltages_ready;
+  }
 
   double MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                             std::complex<double> omega, double error_abs, double error_bkwd,

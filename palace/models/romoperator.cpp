@@ -1259,7 +1259,8 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
   mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
 }
 
-void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u,
+                            bool prolongate)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
@@ -1564,7 +1565,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
-  linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
+  if (prolongate)
+  {
+    linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
+  }
 }
 
 RomOperator::WavePortDispersionFit
