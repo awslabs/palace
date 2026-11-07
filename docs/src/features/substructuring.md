@@ -15,7 +15,7 @@ region, once; each redesign then only solves the region against the condensed en
 
 Substructuring is available for [electrostatic](../guide/problem.md#Electrostatic-problems) capacitance
 extraction and [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction with
-flux-loop excitations.
+flux-loop and surface-current excitations.
 
 ## How it works
 

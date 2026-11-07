@@ -90,7 +90,7 @@ public:
   {
   }
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
+            const mfem::IntegrationPoint &) override
   {
     auto it = mats.find(T.Attribute);
     if (it != mats.end())
@@ -413,6 +413,14 @@ struct SubstructuringSolver::Impl
   // Region-free size up to which the region is factored on one rank (MUMPS's per-rank
   // workspace dominates a small factorization spread over many ranks).
   static constexpr long long kSerialRegionFactorDofs = 100000;
+  // Conjugate gradients without a direct factorization: the environment interior solves
+  // condense S_E column by column, so their error enters S_E itself, while the energies
+  // are stationary in the error of the region solves.
+  static constexpr double kEnvCgTol = 1.0e-12, kRegionCgTol = 1.0e-10;
+  static constexpr int kEnvCgMaxIts = 1000, kRegionCgMaxIts = 2000;
+  // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
+  // sums over elements, which the partition changes by rounding only.
+  static constexpr double kFingerprintTol = 1.0e-9;
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
@@ -1355,7 +1363,7 @@ struct SubstructuringSolver::Impl
                     std::abs(src_fp[2 * col[j] + 1])});
       for (int q = 0; q < 2; q++)
       {
-        if (std::abs(fp[1 + q] - src_fp[2 * col[j] + q]) > 1.0e-9 * scale + 1e-300)
+        if (std::abs(fp[1 + q] - src_fp[2 * col[j] + q]) > kFingerprintTol * scale + 1e-300)
         {
           ok = false;
         }
@@ -1981,7 +1989,7 @@ struct SubstructuringSolver::Impl
       {
         const double ref = mode_fp[2 * col[j] + q];
         if (std::abs(fp[q] - ref) >
-            1.0e-9 * std::max(std::abs(ref), std::abs(fp[q])) + 1e-300)
+            kFingerprintTol * std::max(std::abs(ref), std::abs(fp[q])) + 1e-300)
         {
           ok = false;
         }
@@ -2453,7 +2461,7 @@ struct SubstructuringSolver::Impl
     for (int q = 2; q < 5; q++)
     {
       ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
-                     1.0e-10 * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
+                     kFingerprintTol * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
     }
     MFEM_VERIFY(ok,
                 "The environment differs from the one the saved substructuring model was "
@@ -2726,9 +2734,9 @@ struct SubstructuringSolver::Impl
         }
         auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
         pcg->SetInitialGuess(false);
-        pcg->SetRelTol(1.0e-12);
+        pcg->SetRelTol(kEnvCgTol);
         pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-        pcg->SetMaxIter(1000);
+        pcg->SetMaxIter(kEnvCgMaxIts);
         env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
         env_ksp->SetOperators(*env_A_ee, *env_A_ee);
       }
@@ -2890,9 +2898,9 @@ struct SubstructuringSolver::Impl
         iodata, comm, std::move(amg), env_hierarchy->GetProlongationOperators());
     auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
     pcg->SetInitialGuess(false);
-    pcg->SetRelTol(1.0e-12);
+    pcg->SetRelTol(kEnvCgTol);
     pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-    pcg->SetMaxIter(1000);
+    pcg->SetMaxIter(kEnvCgMaxIts);
     env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
     env_ksp->SetOperators(*env_mg_op, *env_mg_op);
 
@@ -3804,9 +3812,9 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
     pcg->SetInitialGuess(false);
-    pcg->SetRelTol(1.0e-10);
+    pcg->SetRelTol(Impl::kRegionCgTol);
     pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-    pcg->SetMaxIter(2000);
+    pcg->SetMaxIter(Impl::kRegionCgMaxIts);
     impl->region_op = std::make_unique<RegionCondensedOperator>(
         *impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
     impl->region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));

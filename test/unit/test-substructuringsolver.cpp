@@ -1743,6 +1743,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
 }
 
+namespace
+{
+
 // Monolithic reference capacitance C_ij = u_i^T K u_j (terminal i at 1 V on boundary
 // attribute i + 1, the others at 0 V), with MFEM directly (independent of substructuring).
 // eps_by_attr: permittivity by element attribute.
@@ -1830,6 +1833,8 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
   pmesh->GeneralRefinement(marked, 1);
   return pmesh;
 }
+
+}  // namespace
 
 TEST_CASE("SubstructuringSolver grounded PEC boundaries",
           "[substructure][Serial][Parallel]")
