@@ -1,5 +1,5 @@
 diff --git a/SRC/complex16/pzgssvx.c b/SRC/complex16/pzgssvx.c
-index 7d0bd91a31c0df056e4bd7720c9d00f1b706c9db..d07864b1053a0e2424fa705543f35b11e6685b73 100755
+index 7d0bd91a31c0df056e4bd7720c9d00f1b706c9db..ecbe34bb1ef678d76a3a492e9bd587f129b1c70f 100755
 --- a/SRC/complex16/pzgssvx.c
 +++ b/SRC/complex16/pzgssvx.c
 @@ -796,7 +796,8 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
@@ -12,16 +12,17 @@ index 7d0bd91a31c0df056e4bd7720c9d00f1b706c9db..d07864b1053a0e2424fa705543f35b11
  
              pzCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
  
-@@ -808,7 +809,7 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+@@ -808,7 +809,8 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
  
              if ( need_value ) {
                  a_GA = (doublecomplex *) GAstore->nzval;
 -                GA_mem_use += nnz * sizeof(doublecomplex);
-+                if ( a_GA ) GA_mem_use += nnz * sizeof(doublecomplex); /* on process 0 only if need_value == 2 */
++                /* With need_value == 2, only process 0 stores the values. */
++                if ( a_GA ) GA_mem_use += nnz * sizeof(doublecomplex);
              } else assert(GAstore->nzval == NULL);
  	}
  
-@@ -1781,9 +1782,10 @@ if ( options->GPURES == YES ){
+@@ -1781,9 +1783,10 @@ if ( options->GPURES == YES ){
  
  #endif
  	}else{
@@ -143,7 +144,7 @@ index aaca135322ab7d84bd21f0e8cd893c59bd27ed7e..a324b4f092f9c0b1f24858a4084d8342
  	}  /* end CPU trisolve */
  #if ( PROFlevel>=1 )
 diff --git a/SRC/complex16/pzutil.c b/SRC/complex16/pzutil.c
-index 6c3f5378addc575748be2a18daf0eab164d68770..c8d3220d3b489e56e371d667abf2d0f1c3da90c2 100755
+index 6c3f5378addc575748be2a18daf0eab164d68770..c3c766ec363ae95e6db283dfa17ee32cb31c2557 100755
 --- a/SRC/complex16/pzutil.c
 +++ b/SRC/complex16/pzutil.c
 @@ -31,7 +31,8 @@ at the top-level directory.
@@ -309,33 +310,23 @@ index 6c3f5378addc575748be2a18daf0eab164d68770..c8d3220d3b489e56e371d667abf2d0f1
      LUstruct->dt = 'z';
      LUstruct->trf3Dpart = NULL;
  }
-@@ -434,6 +565,12 @@ void zLUstructFree(zLUstruct_t *LUstruct)
+@@ -434,6 +565,7 @@ void zLUstructFree(zLUstruct_t *LUstruct)
      SUPERLU_FREE(LUstruct->Glu_persist);
      if ( LUstruct->Llu->sched_perm_c_supno )
          SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
-+    if ( LUstruct->Llu->comm_L != MPI_COMM_NULL ) { /* see pzgstrs() */
-+        int finalized;
-+        MPI_Finalized(&finalized);
-+        if ( !finalized ) MPI_Comm_free(&LUstruct->Llu->comm_L);
-+        LUstruct->Llu->comm_L = MPI_COMM_NULL;
-+    }
++    superlu_comm_free(&LUstruct->Llu->comm_L); /* see pzgstrs() */
      SUPERLU_FREE(LUstruct->Llu);
      zDestroy_trf3Dpartition(LUstruct->trf3Dpart);
  
-@@ -457,6 +594,12 @@ zDestroy_LU(int_t n, gridinfo_t *grid, zLUstruct_t *LUstruct)
+@@ -457,6 +589,7 @@ zDestroy_LU(int_t n, gridinfo_t *grid, zLUstruct_t *LUstruct)
  #endif
  
      zDestroy_Tree(n, grid, LUstruct);
-+    if ( Llu->comm_L != MPI_COMM_NULL ) { /* see pzgstrs() */
-+        int finalized;
-+        MPI_Finalized(&finalized);
-+        if ( !finalized ) MPI_Comm_free(&Llu->comm_L);
-+        Llu->comm_L = MPI_COMM_NULL;
-+    }
++    superlu_comm_free(&Llu->comm_L); /* see pzgstrs() */
  
      if ( Llu->sched_perm_c_supno ) {
          SUPERLU_FREE(Llu->sched_perm_c_supno);
-@@ -785,6 +928,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+@@ -785,6 +918,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
      gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
      gstrs_comm->B_to_X_recv_idx = NULL;
      gstrs_comm->X_to_B_recv_idx = NULL;
@@ -388,7 +379,7 @@ index 41de23e0187799b8666db72b13277edb3ba222b5..db0c1b5e45c145e5d082cfb5d2993e74
      if (grid->iam == root) {
          *iinfo = dldperm_dist(job, m, nnz, colptr, rowind, a_GA, perm_r, R1, C1);
 diff --git a/SRC/double/pdgssvx.c b/SRC/double/pdgssvx.c
-index 59f3187fd7cc345aa8d1492426d65c9863dc8a4d..1b6ca0d73d88981bd0809bf20e710e72a0c7ba69 100755
+index 59f3187fd7cc345aa8d1492426d65c9863dc8a4d..3ff2ca6d2ffd8d6c9e8f1c7fa04deb49f6ff57af 100755
 --- a/SRC/double/pdgssvx.c
 +++ b/SRC/double/pdgssvx.c
 @@ -796,7 +796,8 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
@@ -401,16 +392,17 @@ index 59f3187fd7cc345aa8d1492426d65c9863dc8a4d..1b6ca0d73d88981bd0809bf20e710e72
  
              pdCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
  
-@@ -808,7 +809,7 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+@@ -808,7 +809,8 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
  
              if ( need_value ) {
                  a_GA = (double *) GAstore->nzval;
 -                GA_mem_use += nnz * sizeof(double);
-+                if ( a_GA ) GA_mem_use += nnz * sizeof(double); /* on process 0 only if need_value == 2 */
++                /* With need_value == 2, only process 0 stores the values. */
++                if ( a_GA ) GA_mem_use += nnz * sizeof(double);
              } else assert(GAstore->nzval == NULL);
  	}
  
-@@ -1776,9 +1777,10 @@ if ( options->GPURES == YES ){
+@@ -1776,9 +1778,10 @@ if ( options->GPURES == YES ){
  
  #endif
  	}else{
@@ -532,7 +524,7 @@ index 92f267fb3dea6510ed4c8a1d7878927030753831..71926fec445e0efdebfae4f1bc0d6867
  	}  /* end CPU trisolve */
  #if ( PROFlevel>=1 )
 diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
-index 5f8a9868d55e5ad395ab1997ca881033d5c42993..962d7ba42273b95ad2f0d628e1355d7004ffe0a8 100755
+index 5f8a9868d55e5ad395ab1997ca881033d5c42993..b63c8f6dc37c5afd8dc1484f6b80cb1d9560208f 100755
 --- a/SRC/double/pdutil.c
 +++ b/SRC/double/pdutil.c
 @@ -33,7 +33,8 @@ at the top-level directory.
@@ -698,33 +690,23 @@ index 5f8a9868d55e5ad395ab1997ca881033d5c42993..962d7ba42273b95ad2f0d628e1355d70
      LUstruct->dt = 'd';
      LUstruct->trf3Dpart = NULL;
  }
-@@ -436,6 +567,12 @@ void dLUstructFree(dLUstruct_t *LUstruct)
+@@ -436,6 +567,7 @@ void dLUstructFree(dLUstruct_t *LUstruct)
      SUPERLU_FREE(LUstruct->Glu_persist);
      if ( LUstruct->Llu->sched_perm_c_supno )
          SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
-+    if ( LUstruct->Llu->comm_L != MPI_COMM_NULL ) { /* see pdgstrs() */
-+        int finalized;
-+        MPI_Finalized(&finalized);
-+        if ( !finalized ) MPI_Comm_free(&LUstruct->Llu->comm_L);
-+        LUstruct->Llu->comm_L = MPI_COMM_NULL;
-+    }
++    superlu_comm_free(&LUstruct->Llu->comm_L); /* see pdgstrs() */
      SUPERLU_FREE(LUstruct->Llu);
      dDestroy_trf3Dpartition(LUstruct->trf3Dpart);
  
-@@ -459,6 +596,12 @@ dDestroy_LU(int_t n, gridinfo_t *grid, dLUstruct_t *LUstruct)
+@@ -459,6 +591,7 @@ dDestroy_LU(int_t n, gridinfo_t *grid, dLUstruct_t *LUstruct)
  #endif
  
      dDestroy_Tree(n, grid, LUstruct);
-+    if ( Llu->comm_L != MPI_COMM_NULL ) { /* see pdgstrs() */
-+        int finalized;
-+        MPI_Finalized(&finalized);
-+        if ( !finalized ) MPI_Comm_free(&Llu->comm_L);
-+        Llu->comm_L = MPI_COMM_NULL;
-+    }
++    superlu_comm_free(&Llu->comm_L); /* see pdgstrs() */
  
      if ( Llu->sched_perm_c_supno ) {
          SUPERLU_FREE(Llu->sched_perm_c_supno);
-@@ -787,6 +930,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+@@ -787,6 +920,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
      gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
      gstrs_comm->B_to_X_recv_idx = NULL;
      gstrs_comm->X_to_B_recv_idx = NULL;
@@ -759,10 +741,10 @@ index ed8cf844559ec819fbcab025b7966d05eefb2037..65e3e297f6fbad2bf22339efab48b876
  				      double [], int, double [], int, int,
  				      gridinfo_t *);
 diff --git a/SRC/include/superlu_defs.h b/SRC/include/superlu_defs.h
-index cd4f15fa65c6a8183de8217fb339195c61611b88..8df47ea29163147d14146f89437de76121d34e00 100755
+index cd4f15fa65c6a8183de8217fb339195c61611b88..41dc265050a3789f78e7fcc84d030fcd95049a80 100755
 --- a/SRC/include/superlu_defs.h
 +++ b/SRC/include/superlu_defs.h
-@@ -544,8 +544,24 @@ typedef struct {
+@@ -544,8 +544,25 @@ typedef struct {
         so later solves exchange the numerical values only. */
      int_t  *B_to_X_recv_idx;
      int_t  *X_to_B_recv_idx;
@@ -783,6 +765,7 @@ index cd4f15fa65c6a8183de8217fb339195c61611b88..8df47ea29163147d14146f89437de761
 +} pxperm_cache_t;
 +
 +extern void pxperm_cache_free(pxperm_cache_t *);
++extern void superlu_comm_free(MPI_Comm *);
 +
  /*
   *-- This contains the options used to control the solution process.
@@ -840,10 +823,10 @@ index 32b8791c56e62a2edf5889807cf9a7ef7d9c065e..3cb1d15ad81449f3c6f3d5081d0fd3bb
  				      doublecomplex [], int, doublecomplex [], int, int,
  				      gridinfo_t *);
 diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
-index 7e066976efd0f6bd40f29ed0ab6edbd291d22d63..9b4edaa1bf9136fb1a5f486049df25b76ce398e4 100755
+index 7e066976efd0f6bd40f29ed0ab6edbd291d22d63..ac244466a9185d17e7db1d467dd30bc283d98cd5 100755
 --- a/SRC/prec-independent/util.c
 +++ b/SRC/prec-independent/util.c
-@@ -329,9 +329,17 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
+@@ -329,9 +329,29 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
      SUPERLU_FREE(gstrs_comm->ptr_to_ibuf);
      if ( gstrs_comm->B_to_X_recv_idx ) SUPERLU_FREE(gstrs_comm->B_to_X_recv_idx);
      if ( gstrs_comm->X_to_B_recv_idx ) SUPERLU_FREE(gstrs_comm->X_to_B_recv_idx);
@@ -858,11 +841,23 @@ index 7e066976efd0f6bd40f29ed0ab6edbd291d22d63..9b4edaa1bf9136fb1a5f486049df25b7
 +    SUPERLU_FREE(c);
 +}
 +
++/*! \brief Free a communicator of SuperLU_DIST and set it to MPI_COMM_NULL
++ * (nothing to do if it is MPI_COMM_NULL or if MPI is already finalized).
++ */
++void superlu_comm_free(MPI_Comm *comm)
++{
++    int finalized;
++    if ( *comm == MPI_COMM_NULL ) return;
++    MPI_Finalized(&finalized);
++    if ( !finalized ) MPI_Comm_free(comm);
++    *comm = MPI_COMM_NULL;
++}
++
  /*! \brief Diagnostic print of segment info after panel_dfs().
   */
  void print_panel_seg_dist(int_t n, int_t w, int_t jcol, int_t nseg,
 diff --git a/SRC/single/psgssvx.c b/SRC/single/psgssvx.c
-index 128993bf4c02c4a3d8a5c08e750eefd67f8f0559..c91f5963867880e5f576a71db5ead16766daba74 100755
+index 128993bf4c02c4a3d8a5c08e750eefd67f8f0559..b4083d80e13054c7233e59673573820d6d9b948d 100755
 --- a/SRC/single/psgssvx.c
 +++ b/SRC/single/psgssvx.c
 @@ -796,7 +796,8 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
@@ -875,16 +870,17 @@ index 128993bf4c02c4a3d8a5c08e750eefd67f8f0559..c91f5963867880e5f576a71db5ead167
  
              psCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
  
-@@ -808,7 +809,7 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+@@ -808,7 +809,8 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
  
              if ( need_value ) {
                  a_GA = (float *) GAstore->nzval;
 -                GA_mem_use += nnz * sizeof(float);
-+                if ( a_GA ) GA_mem_use += nnz * sizeof(float); /* on process 0 only if need_value == 2 */
++                /* With need_value == 2, only process 0 stores the values. */
++                if ( a_GA ) GA_mem_use += nnz * sizeof(float);
              } else assert(GAstore->nzval == NULL);
  	}
  
-@@ -1776,9 +1777,10 @@ if ( options->GPURES == YES ){
+@@ -1776,9 +1778,10 @@ if ( options->GPURES == YES ){
  
  #endif
  	}else{
@@ -938,7 +934,7 @@ index 59876d7b7bceef4b8756c2b67fc7a2e602128ec1..9df6eb1e25111c331a5c8259c6530784
  		    assert(GAstore->nzval == NULL);
  	    }
 diff --git a/SRC/single/psgssvx_d2.c b/SRC/single/psgssvx_d2.c
-index 1104dae20eed1b0d31cb00f09859be8d8159b687..9f21b16cd5a4a583675e52e64c92c3e215d25f18 100755
+index 1104dae20eed1b0d31cb00f09859be8d8159b687..6fa33efb96fd0c368eeaf84902ce30d935505147 100755
 --- a/SRC/single/psgssvx_d2.c
 +++ b/SRC/single/psgssvx_d2.c
 @@ -813,7 +813,8 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
@@ -951,12 +947,13 @@ index 1104dae20eed1b0d31cb00f09859be8d8159b687..9f21b16cd5a4a583675e52e64c92c3e2
  
              psCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
  
-@@ -825,7 +826,7 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
+@@ -825,7 +826,8 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
  
              if ( need_value ) {
                  a_GA = (float *) GAstore->nzval;
 -                GA_mem_use += nnz * sizeof(float);
-+                if ( a_GA ) GA_mem_use += nnz * sizeof(float); /* on process 0 only if need_value == 2 */
++                /* With need_value == 2, only process 0 stores the values. */
++                if ( a_GA ) GA_mem_use += nnz * sizeof(float);
              } else assert(GAstore->nzval == NULL);
  	}
  
@@ -1049,7 +1046,7 @@ index c021259372976eadf98c07d322f731917011b267..3e6509e6c7e48c4f303d84d85414e95e
  	}  /* end CPU trisolve */
  #if ( PROFlevel>=1 )
 diff --git a/SRC/single/psutil.c b/SRC/single/psutil.c
-index 3687c28061b8e4c9a460ec8e3e2b902574d894eb..0a4da8e5248f2294007b2dfc33db55c709c69dbf 100755
+index 3687c28061b8e4c9a460ec8e3e2b902574d894eb..222ab23febd002ee6566301a797eeb6a909b0fab 100755
 --- a/SRC/single/psutil.c
 +++ b/SRC/single/psutil.c
 @@ -32,7 +32,8 @@ at the top-level directory.
@@ -1215,33 +1212,23 @@ index 3687c28061b8e4c9a460ec8e3e2b902574d894eb..0a4da8e5248f2294007b2dfc33db55c7
      LUstruct->dt = 's';
      LUstruct->trf3Dpart = NULL;
  }
-@@ -435,6 +566,12 @@ void sLUstructFree(sLUstruct_t *LUstruct)
+@@ -435,6 +566,7 @@ void sLUstructFree(sLUstruct_t *LUstruct)
      SUPERLU_FREE(LUstruct->Glu_persist);
      if ( LUstruct->Llu->sched_perm_c_supno )
          SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
-+    if ( LUstruct->Llu->comm_L != MPI_COMM_NULL ) { /* see psgstrs() */
-+        int finalized;
-+        MPI_Finalized(&finalized);
-+        if ( !finalized ) MPI_Comm_free(&LUstruct->Llu->comm_L);
-+        LUstruct->Llu->comm_L = MPI_COMM_NULL;
-+    }
++    superlu_comm_free(&LUstruct->Llu->comm_L); /* see psgstrs() */
      SUPERLU_FREE(LUstruct->Llu);
      sDestroy_trf3Dpartition(LUstruct->trf3Dpart);
  
-@@ -458,6 +595,12 @@ sDestroy_LU(int_t n, gridinfo_t *grid, sLUstruct_t *LUstruct)
+@@ -458,6 +590,7 @@ sDestroy_LU(int_t n, gridinfo_t *grid, sLUstruct_t *LUstruct)
  #endif
  
      sDestroy_Tree(n, grid, LUstruct);
-+    if ( Llu->comm_L != MPI_COMM_NULL ) { /* see psgstrs() */
-+        int finalized;
-+        MPI_Finalized(&finalized);
-+        if ( !finalized ) MPI_Comm_free(&Llu->comm_L);
-+        Llu->comm_L = MPI_COMM_NULL;
-+    }
++    superlu_comm_free(&Llu->comm_L); /* see psgstrs() */
  
      if ( Llu->sched_perm_c_supno ) {
          SUPERLU_FREE(Llu->sched_perm_c_supno);
-@@ -786,6 +929,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+@@ -786,6 +919,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
      gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
      gstrs_comm->B_to_X_recv_idx = NULL;
      gstrs_comm->X_to_B_recv_idx = NULL;

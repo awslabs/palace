@@ -224,10 +224,10 @@ index a324b4f092f9c0b1f24858a4084d83422d7f4579..b03ebfafc671b6a477ac4a5c10e262e5
  
  
 diff --git a/SRC/complex16/pzutil.c b/SRC/complex16/pzutil.c
-index c8d3220d3b489e56e371d667abf2d0f1c3da90c2..29885cae793eff8b459e1d2b734b7de88afac540 100755
+index c3c766ec363ae95e6db283dfa17ee32cb31c2557..f3da1be07b504cc6042402af8350ecb47840e30d 100755
 --- a/SRC/complex16/pzutil.c
 +++ b/SRC/complex16/pzutil.c
-@@ -929,6 +929,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+@@ -919,6 +919,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
      gstrs_comm->B_to_X_recv_idx = NULL;
      gstrs_comm->X_to_B_recv_idx = NULL;
      gstrs_comm->perm_cache = NULL;
@@ -461,10 +461,10 @@ index 71926fec445e0efdebfae4f1bc0d68679022b1aa..a6bbf267047c6b059c45ee881e048a72
  
  
 diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
-index 962d7ba42273b95ad2f0d628e1355d7004ffe0a8..6de4b20eb5f167b0c9de039f6c69fe4dfc6fe775 100755
+index b63c8f6dc37c5afd8dc1484f6b80cb1d9560208f..d3eb49636f8de29b41288daf3bb978b7b5b45322 100755
 --- a/SRC/double/pdutil.c
 +++ b/SRC/double/pdutil.c
-@@ -931,6 +931,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+@@ -921,6 +921,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
      gstrs_comm->B_to_X_recv_idx = NULL;
      gstrs_comm->X_to_B_recv_idx = NULL;
      gstrs_comm->perm_cache = NULL;
@@ -473,7 +473,7 @@ index 962d7ba42273b95ad2f0d628e1355d7004ffe0a8..6de4b20eb5f167b0c9de039f6c69fe4d
      return 0;
  } /* PDGSTRS_INIT */
 diff --git a/SRC/include/superlu_defs.h b/SRC/include/superlu_defs.h
-index 8df47ea29163147d14146f89437de76121d34e00..58b7e8261c9779b48047b7e2498654a919d45c2f 100755
+index 41dc265050a3789f78e7fcc84d030fcd95049a80..844014160b70790b2e831254dc5c6501a2c33d19 100755
 --- a/SRC/include/superlu_defs.h
 +++ b/SRC/include/superlu_defs.h
 @@ -549,8 +549,33 @@ typedef struct {
@@ -511,7 +511,7 @@ index 8df47ea29163147d14146f89437de76121d34e00..58b7e8261c9779b48047b7e2498654a9
      int    nsend, nrecv;       /* number of partner processes */
      int    *send_proc, *send_cnt, *send_displ;  /* rows sent to each partner */
 diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
-index 9b4edaa1bf9136fb1a5f486049df25b76ce398e4..0b7242bef257037e8c4972860b0ab754a66d9dba 100755
+index ac244466a9185d17e7db1d467dd30bc283d98cd5..e168738b4a2e6734b578ee52aef50a28f9a19be2 100755
 --- a/SRC/prec-independent/util.c
 +++ b/SRC/prec-independent/util.c
 @@ -330,9 +330,141 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
@@ -882,10 +882,10 @@ index 3e6509e6c7e48c4f303d84d85414e95e78d4ab13..8245506657580b80b401a32eacf4e94e
  
  
 diff --git a/SRC/single/psutil.c b/SRC/single/psutil.c
-index 0a4da8e5248f2294007b2dfc33db55c709c69dbf..efa7a529b925526a19e2d638e27039702927188d 100755
+index 222ab23febd002ee6566301a797eeb6a909b0fab..eee6eb35f84d559d4f58d06470bc4344bb534b97 100755
 --- a/SRC/single/psutil.c
 +++ b/SRC/single/psutil.c
-@@ -930,6 +930,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+@@ -920,6 +920,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
      gstrs_comm->B_to_X_recv_idx = NULL;
      gstrs_comm->X_to_B_recv_idx = NULL;
      gstrs_comm->perm_cache = NULL;
