@@ -42,6 +42,11 @@ class MumpsSchurSolverT
 namespace
 {
 
+// Relative tolerance of the comparisons of the environment with that of a saved model: its
+// fingerprint and element moments are sums over elements, which the partition changes by
+// rounding only.
+constexpr double kEnvironmentTol = 1.0e-10;
+
 // BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization is faster
 // than its full-rank one here, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
@@ -97,15 +102,17 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   // A mesh of the region (online): Γ also holds the region's boundary DOFs at the points
   // of the saved interface DOFs, where the environment was cut off.
   std::vector<char> cut(nt, 0);
-  if (saved)
+  if (saved && saved->version >= 5)
   {
-    double n_env = 0.0;
-    for (int i = 0; i < nt; i++)
-    {
-      n_env += !dbc[i] && em[i] && !rm[i];
-    }
-    Mpi::GlobalSum(1, &n_env, comm);
-    region_only = (n_env < saved->env_fp.at(0));
+    // The mesh holds the environment of the model, or its part in the mesh of the region (a
+    // model of an older version is of the full mesh).
+    const auto moments = EnvironmentMoments();
+    region_only = !MomentsMatch(moments, saved->env_moments, kEnvironmentTol);
+    MFEM_VERIFY(
+        !region_only || MomentsMatch(moments, saved->region_moments, kEnvironmentTol),
+        "The environment differs from the one the saved substructuring model was "
+        "condensed from (environment mesh, materials, boundary conditions, order or "
+        "problem type changed): rerun in \"Offline\" mode to condense it again!");
   }
   if (region_only)
   {
@@ -1081,9 +1088,10 @@ DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) con
       bdr_attributes);
 }
 
-void DrivenSubstructure::WriteRegionMesh(const std::string &path,
-                                         const std::vector<int> &port_attributes,
-                                         double length_scale) const
+std::vector<char>
+DrivenSubstructure::WriteRegionMesh(const std::string &path,
+                                    const std::vector<int> &port_attributes,
+                                    double length_scale) const
 {
   // The region, and the environment elements touching the DOFs of the environment's ports
   // or the region's Dirichlet DOFs (on Γ, set by boundary conditions of the environment).
@@ -1105,7 +1113,15 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
   {
     keep[dl[q]] = keep[dl[q]] || rm[dl[q]];
   }
-  palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
+  return palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
+}
+
+std::array<double, 6>
+DrivenSubstructure::EnvironmentMoments(const std::vector<char> &mark) const
+{
+  return ElementMoments(
+      *const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get()).GetParMesh(),
+      env.attrs, mark);
 }
 
 namespace
@@ -1233,7 +1249,7 @@ void ReadVec(std::ifstream &f, std::vector<T> &v, std::size_t n)
 bool DrivenSubstructureModel::SameEnvironment(const std::vector<double> &a,
                                               const std::vector<double> &b)
 {
-  constexpr double tol = 1.0e-10;
+  constexpr double tol = kEnvironmentTol;
   if (a.size() != b.size() || a.size() < 2 || a.size() % 2 != 0)
   {
     return false;
@@ -1467,14 +1483,16 @@ std::size_t DrivenSubstructureModel::HeaderBytes() const
 {
   // Version 1: 8 ints and the frequencies; version 2: 10 ints, and room for capacity
   // frequencies and weights; version 3: and the reference length after the ints; version 4:
-  // 11 ints, and the region's boundary attributes after the ports.
+  // 11 ints, and the region's boundary attributes after the ports; version 5: and the
+  // element moments after the reference length.
   const std::size_t common =
       sizeof(double) * signatures.size() + sizeof(double) * env_fp.size() +
       sizeof(int) * excitations.size() + sizeof(double) * exc_fp.size() +
       sizeof(int) * ports.size() + sizeof(int) * region_bdr_attributes.size();
   return (version == 1) ? sizeof(int) * 8 + common + sizeof(double) * omega.size()
                         : sizeof(int) * ((version > 3) ? 11 : 10) +
-                              ((version > 2) ? sizeof(double) : 0) + common +
+                              ((version > 2) ? sizeof(double) : 0) +
+                              ((version > 4) ? sizeof(double) * 12 : 0) + common +
                               (sizeof(double) + sizeof(std::complex<double>)) * capacity;
 }
 
@@ -1486,14 +1504,14 @@ std::size_t DrivenSubstructureModel::RecordBytes() const
 
 void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
 {
-  MFEM_VERIFY(version == 4 && capacity >= static_cast<int>(omega.size()) &&
+  MFEM_VERIFY(version == 5 && capacity >= static_cast<int>(omega.size()) &&
                   (weights.empty() || weights.size() == omega.size()),
               "Invalid substructuring model header!");
   std::fstream f(path, create ? (std::ios::binary | std::ios::out | std::ios::trunc)
                               : (std::ios::binary | std::ios::in | std::ios::out));
   MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
   const int head[11] = {kDrivenModelMagic,
-                        4,
+                        5,
                         nG,
                         sig_w,
                         static_cast<int>(env_fp.size()),
@@ -1509,6 +1527,8 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
   wt.resize(capacity, 0.0);
   f.write(reinterpret_cast<const char *>(head), sizeof(head));
   f.write(reinterpret_cast<const char *>(&length_scale), sizeof(double));
+  f.write(reinterpret_cast<const char *>(env_moments.data()), sizeof(double) * 6);
+  f.write(reinterpret_cast<const char *>(region_moments.data()), sizeof(double) * 6);
   for (const auto *v : {&signatures, &env_fp})
   {
     f.write(reinterpret_cast<const char *>(v->data()),
@@ -1543,6 +1563,8 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
 {
   int head[11] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   length_scale = 0.0;
+  env_moments = {};
+  region_moments = {};
   std::ifstream f;
   if (Mpi::Root(comm))
   {
@@ -1557,11 +1579,18 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
       {
         f.read(reinterpret_cast<char *>(&length_scale), sizeof(double));
       }
+      if (head[1] > 4)
+      {
+        f.read(reinterpret_cast<char *>(env_moments.data()), sizeof(double) * 6);
+        f.read(reinterpret_cast<char *>(region_moments.data()), sizeof(double) * 6);
+      }
     }
   }
   Mpi::Broadcast(11, head, 0, comm);
   Mpi::Broadcast(1, &length_scale, 0, comm);
-  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 4,
+  Mpi::Broadcast(6, env_moments.data(), 0, comm);
+  Mpi::Broadcast(6, region_moments.data(), 0, comm);
+  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 5,
               "Cannot read the driven substructuring model \""
                   << path << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
   version = head[1];
@@ -1621,7 +1650,9 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
       saved.exc_fp.size() != exc_fp.size() || saved.ports != ports ||
       saved.region_bdr_attributes != region_bdr_attributes || saved.omega != omega ||
       saved.weights != weights || saved.capacity != capacity ||
-      saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp))
+      saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp) ||
+      !MomentsMatch(saved.env_moments, env_moments, kEnvironmentTol) ||
+      !MomentsMatch(saved.region_moments, region_moments, kEnvironmentTol))
   {
     return false;
   }

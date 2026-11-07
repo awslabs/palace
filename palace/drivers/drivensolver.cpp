@@ -484,6 +484,38 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
       port_l.push_back((p > 0) ? VoltageFunctional(space_op, p, port_dofs.at(p))
                                : ComplexVector());
     }
+    if (save)
+    {
+      Mpi::Print(" Saving the substructuring model to {} ({}{:d} frequencies, {:d} "
+                 "excitations with environment sources, {:d} environment ports)\n",
+                 model_path, adaptive ? "up to " : "", model.capacity,
+                 model.excitations.size(), env_ports.size());
+      // The mesh of the region for online runs, with the environment's ports, and the
+      // element moments of the environment and of its part in that mesh (in the header).
+      std::vector<int> port_attrs;
+      for (int p : env_ports)
+      {
+        if (p > 0)
+        {
+          for (const auto &elem : iodata.boundaries.lumpedport.at(p).elements)
+          {
+            port_attrs.insert(port_attrs.end(), elem.attributes.begin(),
+                              elem.attributes.end());
+          }
+        }
+        else
+        {
+          const auto &attrs = iodata.boundaries.waveport.at(-p).attributes;
+          port_attrs.insert(port_attrs.end(), attrs.begin(), attrs.end());
+        }
+      }
+      const auto region_mesh = RegionMeshPath(model_path);
+      const std::vector<char> written = ds->WriteRegionMesh(
+          region_mesh, port_attrs, iodata.units.GetMeshLengthRelativeScale());
+      Mpi::Print(" Writing the mesh of the region for online runs to {}\n", region_mesh);
+      model.env_moments = ds->EnvironmentMoments();
+      model.region_moments = ds->EnvironmentMoments(written);
+    }
     if (save && first_freq > 0)
     {
       // A restarted sweep continues the saved model, from its records before the restart.
@@ -512,35 +544,6 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     else if (save && root)
     {
       model.WriteHeader(model_path);
-    }
-    if (save)
-    {
-      Mpi::Print(" Saving the substructuring model to {} ({}{:d} frequencies, {:d} "
-                 "excitations with environment sources, {:d} environment ports)\n",
-                 model_path, adaptive ? "up to " : "", model.capacity,
-                 model.excitations.size(), env_ports.size());
-      // The mesh of the region for online runs, with the environment's ports.
-      std::vector<int> port_attrs;
-      for (int p : env_ports)
-      {
-        if (p > 0)
-        {
-          for (const auto &elem : iodata.boundaries.lumpedport.at(p).elements)
-          {
-            port_attrs.insert(port_attrs.end(), elem.attributes.begin(),
-                              elem.attributes.end());
-          }
-        }
-        else
-        {
-          const auto &attrs = iodata.boundaries.waveport.at(-p).attributes;
-          port_attrs.insert(port_attrs.end(), attrs.begin(), attrs.end());
-        }
-      }
-      const auto region_mesh = RegionMeshPath(model_path);
-      ds->WriteRegionMesh(region_mesh, port_attrs,
-                          iodata.units.GetMeshLengthRelativeScale());
-      Mpi::Print(" Writing the mesh of the region for online runs to {}\n", region_mesh);
     }
   }
   else if (online)

@@ -3029,6 +3029,46 @@ TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh"
       Catch::Matchers::ContainsSubstring("\"Region\" attribute 4 is not a domain"));
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "DrivenSubstructure recognizes the environment of a saved model",
+                 "[substructure][Serial][Parallel]")
+{
+  // The element moments of the environment of a model, and of its part in the mesh of the
+  // region, tell a full mesh from another environment (a coarser mesh).
+  json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                 {"Boundaries",
+                  {{"PEC", {{"Attributes", {1}}}},
+                   {"LumpedPort",
+                    {{{"Index", 1},
+                      {"R", 1.0},
+                      {"Attributes", {2}},
+                      {"Direction", "+Y"},
+                      {"Excitation", true}}}}}},
+                 {"Solver",
+                  {{"Device", "CPU"},
+                   {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> mesh, coarse;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 2)));
+  coarse.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 2, 2)));
+  SpaceOperator space_op(iodata, mesh), space_coarse(iodata, coarse);
+  DrivenSubstructure off(space_op, {1}, {2});
+  DrivenSubstructureModel model;
+  model.nG = off.InterfaceSize();
+  model.sig_w = SignatureWidth(space_op.GetNDSpace().Get());
+  model.signatures =
+      TrueDofSignatures(space_op.GetNDSpace().Get(), off.InterfaceIndex(), model.nG);
+  const auto written =
+      off.WriteRegionMesh((temp_dir / "substruct_driven_region.mesh").string(), {2}, 1.0);
+  model.env_moments = off.EnvironmentMoments();
+  model.region_moments = off.EnvironmentMoments(written);
+  CHECK_FALSE(DrivenSubstructure(space_op, {1}, {2}, true, &model).RegionOnly());
+  CHECK_THROWS_WITH(DrivenSubstructure(space_coarse, {1}, {2}, true, &model),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
+}
+
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel]")
 {

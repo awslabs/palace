@@ -82,8 +82,11 @@ private:
 struct DrivenSubstructureModel
 {
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
-  int version = 4, nG = 0, sig_w = 0;
+  int version = 5, nG = 0, sig_w = 0;
   double length_scale = 0.0;  // model.Lc of the offline run (0: not saved, version < 3)
+  // ElementMoments of the environment and of its elements in the mesh of the region (zero
+  // before version 5).
+  std::array<double, 6> env_moments = {}, region_moments = {};
   std::vector<double> signatures;  // nG x sig_w
   std::vector<double> env_fp;      // environment fingerprint
   std::vector<int> excitations;    // excitations with environment sources
@@ -153,9 +156,9 @@ private:
 class DrivenSubstructure
 {
 public:
-  // Online, with the saved model: a mesh holding less of the environment than the model
-  // was condensed from (as the region mesh written offline) holds the region, and Γ is the
-  // set of the region's boundary DOFs at the points of the saved interface DOFs.
+  // Online, with the saved model: a mesh holding the environment elements written with
+  // the model in the mesh of the region holds the region, and Γ is the set of the region's
+  // boundary DOFs at the points of the saved interface DOFs.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
                      const DrivenSubstructureModel *saved = nullptr);
@@ -223,9 +226,14 @@ public:
   // Write a mesh of the region for online runs, in mesh length units (coordinates times
   // length_scale): the region, and the environment elements on the boundary elements with
   // the given attributes (the environment's ports, whose excitations and outputs need
-  // them). Collective.
-  void WriteRegionMesh(const std::string &path, const std::vector<int> &port_attributes,
-                       double length_scale) const;
+  // them). Returns the local environment elements written. Collective.
+  std::vector<char> WriteRegionMesh(const std::string &path,
+                                    const std::vector<int> &port_attributes,
+                                    double length_scale) const;
+
+  // ElementMoments of the environment elements (those marked, if mark is not empty).
+  // Collective.
+  std::array<double, 6> EnvironmentMoments(const std::vector<char> &mark = {}) const;
 
   // The wave ports in the environment (each wave port lies inside one side).
   std::vector<int> EnvironmentWavePorts() const;
