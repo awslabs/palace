@@ -13,6 +13,7 @@
 #include <memory>
 #include <numbers>
 #include <numeric>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -1563,7 +1564,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
-  linalg::LinearCombination(V, RHSr.data(), u);
+  linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }
 
 RomOperator::WavePortDispersionFit
@@ -3507,14 +3508,13 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
 
     // Prolongate the basis block: u = Σ_j (v_conc_j y_j) V[j] (V real, y complex; the
     // v_conc factor undoes the port-row scaling baked into the synthesized pencil).
-    u = 0.0;
-    for (std::size_t j = 0; j < n_basis && j < static_cast<std::size_t>(est.eigvec.size());
-         j++)
+    const auto m = std::min(n_basis, static_cast<std::size_t>(est.eigvec.size()));
+    std::vector<std::complex<double>> y(m);
+    for (std::size_t j = 0; j < m; j++)
     {
-      const std::complex<double> yj = v_conc[static_cast<long>(j)] * est.eigvec(j);
-      linalg::AXPY(yj.real(), V[j], u.Real());
-      linalg::AXPY(yj.imag(), V[j], u.Imag());
+      y[j] = v_conc[static_cast<long>(j)] * est.eigvec(j);
     }
+    linalg::LinearCombination(std::span(V).first(m), y, u);
     const double unorm = linalg::Norml2(comm, u);
     if (unorm == 0.0)
     {

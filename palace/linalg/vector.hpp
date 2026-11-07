@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <span>
 #include <vector>
 #include <mfem.hpp>
 #include "utils/communication.hpp"
@@ -362,7 +363,7 @@ void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
                  const VecType &z);
 
 // Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex coefficients c.
-void LinearCombination(const std::vector<Vector> &X, const std::complex<double> *c,
+void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
                        ComplexVector &y);
 
 // Compute element-wise square root, optionally with scaling (multiplied before the square

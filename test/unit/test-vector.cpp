@@ -7,6 +7,8 @@
 
 #include <cmath>
 #include <complex>
+#include <limits>
+#include <span>
 #include <vector>
 
 #include "linalg/vector.hpp"
@@ -147,47 +149,52 @@ TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")
   CHECK_THAT(nrm2_copy.imag(), WithinAbs(0.0, tol));
 }
 
-TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel]")
+TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
 {
-  const int N = GENERATE(1, 7, 1024, 1025, 3001);
+  const int N = GENERATE(1, 7, 64, 1024, 1025, 3001);
   const int n = GENERATE(0, 1, 2, 5, 6);
   const bool real_c = GENERATE(false, true);
-  std::vector<Vector> X(n, Vector(N));
-  std::vector<std::complex<double>> c(n);
-  for (int j = 0; j < n; j++)
+  const int rank = Mpi::Rank(Mpi::World());
+  std::vector<Vector> X(n + 1, Vector(N));
+  std::vector<std::complex<double>> c(n + 1);
+  for (int j = 0; j <= n; j++)
   {
+    X[j].UseDevice(true);
+    auto *Xj = X[j].HostWrite();
     for (int i = 0; i < N; i++)
     {
-      X[j][i] = std::sin(0.3 * i + 1.7 * j + 0.1 * Mpi::Rank(Mpi::World()));
+      Xj[i] = std::sin(0.3 * i + 1.7 * j + 0.1 * rank);
     }
     c[j] = {std::cos(0.9 * j + 0.2), real_c ? 0.0 : std::sin(1.3 * j - 0.4)};
   }
-
-  // Reference: pairs of vector additions.
-  ComplexVector ref(N);
-  ref = 0.0;
-  for (int j = 0; j < n; j += 2)
+  if (n > 2)
   {
-    if (j + 1 < n)
-    {
-      linalg::AXPBYPCZ(c[j].real(), X[j], c[j + 1].real(), X[j + 1], 1.0, ref.Real());
-      linalg::AXPBYPCZ(c[j].imag(), X[j], c[j + 1].imag(), X[j + 1], 1.0, ref.Imag());
-    }
-    else
-    {
-      linalg::AXPY(c[j].real(), X[j], ref.Real());
-      linalg::AXPY(c[j].imag(), X[j], ref.Imag());
-    }
+    // A zero coefficient skips its term, which may hold anything.
+    c[1] = 0.0;
+    X[1].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
   }
+  // The last vector is not part of the combination.
+  X[n].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
 
   ComplexVector y(N);
+  y.UseDevice(true);
   y = 1.0;  // Overwritten
-  linalg::LinearCombination(X, c.data(), y);
+  linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y);
+
+  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
   int mismatch = 0;
   for (int i = 0; i < N; i++)
   {
-    mismatch += !(std::abs(y.Real()[i] - ref.Real()[i]) <= 1.0e-14 &&
-                  std::abs(y.Imag()[i] - ref.Imag()[i]) <= 1.0e-14);
+    double ref_r = 0.0, ref_i = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      if (c[j] != 0.0)
+      {
+        ref_r += c[j].real() * X[j].HostRead()[i];
+        ref_i += c[j].imag() * X[j].HostRead()[i];
+      }
+    }
+    mismatch += !(std::abs(YR[i] - ref_r) <= 1.0e-14 && std::abs(YI[i] - ref_i) <= 1.0e-14);
   }
   CHECK(mismatch == 0);
 }

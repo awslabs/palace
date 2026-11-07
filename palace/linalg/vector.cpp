@@ -872,10 +872,16 @@ void AXPYAndAYPX(std::complex<double> alpha, ComplexVector &x, ComplexVector &y,
                       });
 }
 
-void LinearCombination(const std::vector<Vector> &X, const std::complex<double> *c,
+void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
                        ComplexVector &y)
 {
   const std::size_t n = X.size();
+  const int N = y.Size();
+  MFEM_VERIFY(c.size() == n, "Size mismatch for linear combination coefficients!");
+  for (const auto &Xj : X)
+  {
+    MFEM_VERIFY(Xj.Size() == N, "Size mismatch for linear combination!");
+  }
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
     y = 0.0;
@@ -897,18 +903,18 @@ void LinearCombination(const std::vector<Vector> &X, const std::complex<double> 
 
   // On the host, add all terms to one block of y at a time, which stays in cache, so each
   // X[j] is read once and y is written once. The terms are added in the same order as on
-  // the device.
-  constexpr int B = 1024;
-  const int N = y.Size();
+  // the device, which also skips the zero parts of the coefficients. The blocks are
+  // smaller when needed to give every thread one.
+  const int nt = utils::GetMaxThreads();
+  const int B = std::clamp((N + nt - 1) / nt, 64, 1024);
   std::vector<const double *> XP(n);
   for (std::size_t j = 0; j < n; j++)
   {
-    MFEM_ASSERT(X[j].Size() == N, "Size mismatch for linear combination!");
     XP[j] = X[j].HostRead();
   }
   auto *YR = y.Real().HostWrite();
   auto *YI = y.Imag().HostWrite();
-  PalacePragmaOmp(parallel for schedule(static))
+  PalacePragmaOmp(parallel for schedule(static) if (N > B))
   for (int b = 0; b < N; b += B)
   {
     const int e = std::min(b + B, N);
@@ -918,10 +924,19 @@ void LinearCombination(const std::vector<Vector> &X, const std::complex<double> 
     {
       const double cr = c[j].real(), ci = c[j].imag();
       const double *Xj = XP[j];
-      for (int i = b; i < e; i++)
+      if (cr != 0.0)
       {
-        YR[i] += cr * Xj[i];
-        YI[i] += ci * Xj[i];
+        for (int i = b; i < e; i++)
+        {
+          YR[i] += cr * Xj[i];
+        }
+      }
+      if (ci != 0.0)
+      {
+        for (int i = b; i < e; i++)
+        {
+          YI[i] += ci * Xj[i];
+        }
       }
     }
   }
