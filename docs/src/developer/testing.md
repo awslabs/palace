@@ -532,6 +532,9 @@ The macOS configurations use Apple Silicon tools and libraries, so an Intel runn
 not interchangeable.
 Standard runners have less memory and fewer CPU cores than the default larger runner;
 build times and test scheduling can differ.
+If the CMake workflow's unit-test step exceeds its five-minute default, set the
+repository Actions variable `PALACE_MACOS_UNIT_TEST_TIMEOUT` to a positive integer
+number of minutes, for example `10`.
 
 ### Building and running regression tests
 
