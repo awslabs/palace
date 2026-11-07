@@ -189,8 +189,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ],
     )
 
-    # The SuperLU_DIST version of the superbuild, with
-    # https://github.com/xiaoyeli/superlu_dist/pull/250,
+    # The SuperLU_DIST version of the superbuild, with the copies in
+    # extern/patch/superlu_dist of https://github.com/xiaoyeli/superlu_dist/pull/250,
     # https://github.com/xiaoyeli/superlu_dist/pull/251,
     # https://github.com/xiaoyeli/superlu_dist/pull/252 and
     # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
@@ -201,30 +201,31 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         when="@develop+superlu-dist",
         patches=[
             patch(
-                "https://github.com/xiaoyeli/superlu_dist/commit/"
-                "e349e08c7ebd16e7dd932d9ffb0e13081f225fa9.diff",
-                sha256="46c1cf726cebd589971c2337e54af5aa0fab21667f120a766865aea940448c02",
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "superlu_dist_pr250.diff",
+                sha256="d8c22daed9ed89b982f7f12dd62db5509cc5a5a852c6f57bd10b3d7f330273ab",
                 when="@9.3.1",
             ),
             patch(
-                "https://github.com/xiaoyeli/superlu_dist/compare/"
-                "317342a2ea12dd003817090ac0870037c334b91e..."
-                "a2eb138450ca24ec2b9756f24d136054dc23eadf.diff",
-                sha256="b20fa2513e2ce4048f6741b0289771ffd5ebadee41903dcb95b9ec0d42310614",
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "superlu_dist_pr251.diff",
+                sha256="fbda88f8172a04bc7bbcda7f5fb8e5e697a92d3bd26682e7693703dae03d54f6",
                 when="@9.3.1",
             ),
             patch(
-                "https://github.com/xiaoyeli/superlu_dist/compare/"
-                "a2eb138450ca24ec2b9756f24d136054dc23eadf..."
-                "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0.diff",
-                sha256="5c3b08d6445aedb9aa4cedc3e4603353a4f0657912382ea1170a837a285f2292",
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "superlu_dist_pr252.diff",
+                sha256="6de34fa15306352d08d5975af1c9b8b2ed958d8e8b267eb4cc0a3aa206208734",
                 when="@9.3.1",
             ),
             patch(
-                "https://github.com/xiaoyeli/superlu_dist/compare/"
-                "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0..."
-                "06024a25396a8316054a879e1d77b053d90dc9fd.diff",
-                sha256="89cb71b071893b58637bbdc5ef969787b478642a4170944b4615436ef86e6479",
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "superlu_dist_pr253.diff",
+                sha256="bbc8368e3beb2eafacd33c485d9c37b0b90246680c7a97aa0af108b9088f91a7",
                 when="@9.3.1",
             ),
         ],
