@@ -13,6 +13,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
+#include "linalg/lowrank.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -63,30 +64,20 @@ struct FloquetOrder
   std::array<ComplexVector, 3> v_comp;  // Cartesian component projections.
 };
 
-// Low-rank complex operator: F*x = sum_k g_k conj(v_k) (v_k^T x).
-// Bilinear convention: v^T x (no conjugation in inner product), conj(v) in outer vector.
-// Used for the Floquet port boundary matrix.
+// Low-rank complex operator: F*x = sum_k g_k v_k (v_k^H x), used for the Floquet port
+// boundary matrix.
 class LowRankComplexOperator : public ComplexOperator
 {
-public:
-  struct Term
-  {
-    const ComplexVector *v;  // Projection vector (not owned)
-    std::complex<double> g;  // Frequency-dependent scalar weight
-  };
-
 private:
-  std::vector<Term> terms;
-  MPI_Comm comm;
-  mutable ComplexVector tmp;
+  LowRankComplexUpdate<true> update;
 
 public:
-  LowRankComplexOperator(MPI_Comm comm, int n) : ComplexOperator(n), comm(comm), tmp(n)
+  // The projection vectors are copied, so they need not outlive the operator.
+  LowRankComplexOperator(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &v,
+                         const std::vector<std::complex<double>> &g)
+    : ComplexOperator(n), update(comm, v, g)
   {
-    tmp.UseDevice(true);
   }
-
-  void AddTerm(const ComplexVector *v, std::complex<double> g) { terms.push_back({v, g}); }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
 
@@ -144,13 +135,14 @@ public:
                              const mfem::Vector &kF_wrapped, const mfem::Vector &b,
                              double b_sq);
 
-  // Get the boundary DtN operator F(omega) for this port.
-  // Returns a LowRankComplexOperator with DtN correction coefficients.
-  std::unique_ptr<ComplexOperator> GetBoundaryOperator() const;
+  // Append this port's DtN correction terms (projection vector and coefficient) for the
+  // boundary operator F(omega).
+  void AddBoundaryTerms(std::vector<const ComplexVector *> &v,
+                        std::vector<std::complex<double>> &g) const;
 
   // Compute the DtN correction coefficient g_correction for a single mode at the current
   // frequency. Returns 0 if the mode should be skipped (negligible or near-cutoff cap).
-  // Used by both GetBoundaryOperator and the ROM projection.
+  // Used by both AddBoundaryTerms and the ROM projection.
   std::complex<double> ComputeDtNCorrectionCoeff(const FloquetOrder &order,
                                                  bool is_te) const;
 
@@ -244,6 +236,8 @@ class FloquetPortOperator
 private:
   const MaterialOperator &mat_op;
   std::map<int, FloquetPortData> ports;
+  MPI_Comm comm;
+  int n;
 
 public:
   FloquetPortOperator(const std::map<int, config::FloquetPortData> &floquetport,

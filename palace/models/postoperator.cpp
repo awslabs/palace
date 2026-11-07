@@ -1118,32 +1118,52 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 }
 
-void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
-                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
-                        std::unique_ptr<GridFunction> &A)
+namespace
 {
-  // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
-  // the mesh which would carry into the fields during the mapping from reference to
-  // physical space through the element Jacobians. No transformation for V is needed (H1
-  // interpolation). Because the coefficients are always evaluating E, B in neighboring
-  // elements, the Jacobian scaling is the same for the domain and boundary data
-  // collections (instead of being different for B due to the dim - 1 evaluation). Wave
-  // port fields also do not require rescaling since their submesh object where they are
-  // evaluated remains nondimensionalized.
-  if (E)
+
+// Exponent p of the factor L^p which undoes the effect of scaling the mesh by L on the
+// values of a field mapped from the reference element. The mapping is set by the map type
+// of the finite element space: the identity for VALUE (H1, or L2 with VALUE map type),
+// J^-T for H(curl), J / |J| for H(div), and 1 / |J| for L2 with INTEGRAL map type, where
+// the Jacobian J scales as L and its determinant |J| as L^dim.
+int PiolaExponent(const mfem::ParFiniteElementSpace &fespace)
+{
+  const int dim = fespace.GetParMesh()->Dimension();
+  switch (fespace.FEColl()->GetMapType(dim))
   {
-    // Piola transform: J^-T
-    *E *= L;
+    case mfem::FiniteElement::VALUE:
+      return 0;
+    case mfem::FiniteElement::H_CURL:
+      return 1;
+    case mfem::FiniteElement::H_DIV:
+      return dim - 1;
+    case mfem::FiniteElement::INTEGRAL:
+      return dim;
+    default:
+      MFEM_ABORT("Unsupported finite element map type for mesh scaling!");
+      return 0;
   }
-  if (B)
+}
+
+}  // namespace
+
+void ScaleGridFunction(double L, GridFunction &u)
+{
+  const int p = PiolaExponent(*u.ParFESpace());
+  if (p != 0)
   {
-    // Piola transform: J / |J|
-    *B *= std::pow(L, dim - 1);
+    u *= std::pow(L, p);
   }
-  if (A)
+}
+
+void ScaleGridFunctions(double L, std::initializer_list<GridFunction *> fields)
+{
+  for (auto *u : fields)
   {
-    // Piola transform: J^-T
-    *A *= L;
+    if (u)
+    {
+      ScaleGridFunction(L, *u);
+    }
   }
 }
 
@@ -1205,19 +1225,15 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
-    // H1 scalar field: no Piola transform scaling (unlike ND vector Et which gets
-    // mesh_Lc0).
     units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
   }
-  // In-plane B projected onto the ND space (not its natural H(div) space), so the
-  // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
   if (Bt_inplane)
   {
-    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // libCEED-evaluated derived domain fields are registered as lazy point evaluators;
@@ -1246,7 +1262,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
@@ -1255,7 +1272,6 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -1347,7 +1363,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
@@ -1355,7 +1372,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
   if (Bt_inplane)
   {
-    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // Create grid function for vector coefficients.
@@ -1502,7 +1518,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
@@ -1511,7 +1528,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }

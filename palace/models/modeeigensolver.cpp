@@ -468,16 +468,17 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
   if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||
       pc_type == LinearSolver::BOOMER_AMG)
   {
-#if defined(MFEM_USE_SUPERLU)
-    pc_type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+    // Same preference as for frequency domain problems (IoData::CheckConfiguration).
+#if defined(MFEM_USE_STRUMPACK)
     pc_type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+    pc_type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
     pc_type = LinearSolver::MUMPS;
 #elif defined(MFEM_USE_CUDSS)
     pc_type = LinearSolver::CUDSS;
 #else
-    MFEM_ABORT("ModeEigenSolver requires building with SuperLU_DIST, STRUMPACK, "
+    MFEM_ABORT("ModeEigenSolver requires building with STRUMPACK, SuperLU_DIST, "
                "MUMPS, or cuDSS!");
 #endif
   }

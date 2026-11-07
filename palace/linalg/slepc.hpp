@@ -41,11 +41,6 @@ void Initialize(int &argc, char **&argv, const char rc_file[], const char help[]
 void Initialize();
 void Finalize();
 
-// Compute and return the maximum singular value of the given operator, σₙ² = λₙ(Aᴴ A) .
-PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                              PetscReal tol = PETSC_DEFAULT,
-                              PetscInt max_it = PETSC_DEFAULT);
-
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic
 // polynomial eigenvalue problems. Shift-and-invert spectral transformations can be used to
