@@ -202,30 +202,30 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         patches=[
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
-                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
                 "superlu_dist_pr250.diff",
                 sha256="d8c22daed9ed89b982f7f12dd62db5509cc5a5a852c6f57bd10b3d7f330273ab",
                 when="@9.3.1",
             ),
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
-                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
                 "superlu_dist_pr251.diff",
                 sha256="fbda88f8172a04bc7bbcda7f5fb8e5e697a92d3bd26682e7693703dae03d54f6",
                 when="@9.3.1",
             ),
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
-                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
                 "superlu_dist_pr252.diff",
-                sha256="6de34fa15306352d08d5975af1c9b8b2ed958d8e8b267eb4cc0a3aa206208734",
+                sha256="7b84bceb7e45333aaabdf38ce85c19d58aa20febd55bf664c4279669335a47dc",
                 when="@9.3.1",
             ),
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
-                "c4eab4b0dc8c090a1a64e65319d5d68f5d0d6802/extern/patch/superlu_dist/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
                 "superlu_dist_pr253.diff",
-                sha256="bbc8368e3beb2eafacd33c485d9c37b0b90246680c7a97aa0af108b9088f91a7",
+                sha256="8de4200968cfc3d8c2d5a5e60ec2c00c624dc6668d510a709dd79eb475ebfa34",
                 when="@9.3.1",
             ),
         ],
