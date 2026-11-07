@@ -59,6 +59,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     arithmetic. This makes the multigrid preconditioner setup several times faster at
     each frequency of a driven sweep.
     [PR 1140](https://github.com/awslabs/palace/pull/1140).
+  - Fused the residual update, Jacobi preconditioner and inner product of each conjugate
+    gradient iteration into a single pass over memory on CPUs with one thread per process,
+    and computed inner products on CPUs with several partial sums, complex ones in a single
+    pass over memory. Each conjugate gradient iteration also updates the solution in the
+    same pass as the next search direction, with any preconditioner and on CPUs and GPUs.
+    This speeds up the error estimator's flux recovery and the GMRES orthogonalization of
+    driven and eigenmode simulations. [PR 1146](https://github.com/awslabs/palace/pull/1146).
 
 #### Bug Fixes
 
