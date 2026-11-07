@@ -15,6 +15,13 @@ namespace palace
 
 class FiniteElementSpace;
 
+// Abort unless every domain attribute of the mesh is in the region or the environment, and
+// every region attribute is one of the mesh (the mesh of the region written for online runs
+// holds only part of the environment).
+void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
+                                   const std::vector<int> &region_attributes,
+                                   const std::vector<int> &environment_attributes);
+
 // Parallel-capable interface identification in true-DOF space. Given the parent finite
 // element space and the region/environment domain attribute sets, mark each parent true DOF
 // touched by region element support, by environment support, and by both (the shared

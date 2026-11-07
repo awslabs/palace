@@ -495,13 +495,17 @@ struct SubstructuringSolver::Impl
                     new mfem::H1_FECollection(iodata.solver.order, parent.Dimension()))),
       parent_space(mesh, fec.get()), parent_fes(parent_space.Get())
   {
+    MFEM_VERIFY(iodata.solver.substructuring,
+                "SubstructuringSolver requires a Solver.Substructuring configuration!");
+    const auto &sub = *iodata.solver.substructuring;
+    CheckSubstructuringAttributes(parent, sub.region_attributes,
+                                  sub.environment_attributes);
     std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided;
     if (magnetostatic)
     {
       two_sided = SetUpBrokenSpace();
     }
     nt = SolutionSpace().GetTrueVSize();
-    const auto &sub = *iodata.solver.substructuring;
     for (int a : sub.region_attributes)
     {
       ra_arr.Append(a);
@@ -3267,8 +3271,6 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
   : impl(std::make_unique<Impl>(iodata, *mesh.back()))
 {
-  MFEM_VERIFY(iodata.solver.substructuring,
-              "SubstructuringSolver requires a Solver.Substructuring configuration!");
 }
 
 SubstructuringSolver::~SubstructuringSolver() = default;

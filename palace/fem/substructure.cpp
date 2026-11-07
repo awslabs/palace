@@ -95,6 +95,29 @@ int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
 
 }  // namespace
 
+void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
+                                   const std::vector<int> &region_attributes,
+                                   const std::vector<int> &environment_attributes)
+{
+  // The attributes of a ParMesh are those of all processes.
+  auto in = [](const std::vector<int> &s, int a)
+  { return std::ranges::find(s, a) != s.end(); };
+  for (int a : mesh.attributes)
+  {
+    MFEM_VERIFY(in(region_attributes, a) || in(environment_attributes, a),
+                "Domain attribute " << a
+                                    << " of the mesh is in neither the substructuring "
+                                       "\"Region\" nor the \"Environment\"!");
+  }
+  for (int a : region_attributes)
+  {
+    MFEM_VERIFY(mesh.attributes.Find(a) >= 0, "Substructuring \"Region\" attribute "
+                                                  << a
+                                                  << " is not a domain attribute of "
+                                                     "the mesh!");
+  }
+}
+
 int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,

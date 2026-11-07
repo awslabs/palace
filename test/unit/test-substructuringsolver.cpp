@@ -416,6 +416,36 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
   }
 }
 
+TEST_CASE("SubstructuringSolver rejects attribute sets that do not split the mesh",
+          "[substructure][Serial][Parallel]")
+{
+  auto make = [](const std::vector<int> &region, const std::vector<int> &environment)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", region}}},
+            {"Environment", {{"Attributes", environment}}}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(2)));
+    SubstructuringSolver ss(iodata, mesh);
+  };
+  // An attribute in neither set would be left out of both operators.
+  CHECK_THROWS_WITH(make({1}, {3}),
+                    Catch::Matchers::ContainsSubstring("Domain attribute 2 of the mesh is "
+                                                       "in neither"));
+  CHECK_THROWS_WITH(make({1, 4}, {2}), Catch::Matchers::ContainsSubstring(
+                                           "\"Region\" attribute 4 is not a domain"));
+  CHECK_NOTHROW(make({1}, {2}));
+}
+
 TEST_CASE("SubstructuringSolver anisotropic permittivity",
           "[substructure][Serial][Parallel]")
 {
