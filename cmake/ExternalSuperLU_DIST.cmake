@@ -113,7 +113,8 @@ set(SUPERLU_PATCH_FILES
 # the same sparsity pattern, and of repeated solves
 # (https://github.com/xiaoyeli/superlu_dist/pull/250,
 # https://github.com/xiaoyeli/superlu_dist/pull/251,
-# https://github.com/xiaoyeli/superlu_dist/pull/252)
+# https://github.com/xiaoyeli/superlu_dist/pull/252,
+# https://github.com/xiaoyeli/superlu_dist/pull/253)
 include(PatchHelpers)
 download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
   superlu_dist_pr250.diff
@@ -129,6 +130,11 @@ download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patc
   superlu_dist_pr252.diff
   "https://github.com/xiaoyeli/superlu_dist/compare/a2eb138450ca24ec2b9756f24d136054dc23eadf...a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0.diff"
   5c3b08d6445aedb9aa4cedc3e4603353a4f0657912382ea1170a837a285f2292
+)
+download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
+  superlu_dist_pr253.diff
+  "https://github.com/xiaoyeli/superlu_dist/compare/a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0...06024a25396a8316054a879e1d77b053d90dc9fd.diff"
+  89cb71b071893b58637bbdc5ef969787b478642a4170944b4615436ef86e6479
 )
 
 include(ExternalProject)

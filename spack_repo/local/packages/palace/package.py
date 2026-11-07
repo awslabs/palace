@@ -191,8 +191,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # The SuperLU_DIST version of the superbuild, with
     # https://github.com/xiaoyeli/superlu_dist/pull/250,
-    # https://github.com/xiaoyeli/superlu_dist/pull/251 and
-    # https://github.com/xiaoyeli/superlu_dist/pull/252 for lower communication costs in
+    # https://github.com/xiaoyeli/superlu_dist/pull/251,
+    # https://github.com/xiaoyeli/superlu_dist/pull/252 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
     # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
     # the Palace variants are not folded into the patch condition.
     depends_on(
@@ -217,6 +218,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "a2eb138450ca24ec2b9756f24d136054dc23eadf..."
                 "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0.diff",
                 sha256="5c3b08d6445aedb9aa4cedc3e4603353a4f0657912382ea1170a837a285f2292",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/compare/"
+                "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0..."
+                "06024a25396a8316054a879e1d77b053d90dc9fd.diff",
+                sha256="89cb71b071893b58637bbdc5ef969787b478642a4170944b4615436ef86e6479",
                 when="@9.3.1",
             ),
         ],
