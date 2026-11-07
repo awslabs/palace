@@ -2962,6 +2962,35 @@ TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
   }
 }
 
+TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh",
+          "[substructure][Serial][Parallel]")
+{
+  json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                 {"Boundaries",
+                  {{"PEC", {{"Attributes", {1}}}},
+                   {"LumpedPort",
+                    {{{"Index", 1},
+                      {"R", 1.0},
+                      {"Attributes", {2}},
+                      {"Direction", "+Y"},
+                      {"Excitation", true}}}}}},
+                 {"Solver",
+                  {{"Device", "CPU"},
+                   {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 2)));
+  SpaceOperator space_op(iodata, mesh);
+  CHECK_THROWS_WITH(DrivenSubstructure(space_op, {1}, {3}),
+                    Catch::Matchers::ContainsSubstring("Domain attribute 2 of the mesh is "
+                                                       "in neither"));
+  CHECK_THROWS_WITH(
+      DrivenSubstructure(space_op, {1, 4}, {2}),
+      Catch::Matchers::ContainsSubstring("\"Region\" attribute 4 is not a domain"));
+}
+
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel]")
 {

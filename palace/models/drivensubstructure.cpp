@@ -73,15 +73,7 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   region.attrs = region_attributes;
   const auto &fes = space_op.GetNDSpace().Get();
   const auto &mesh = *fes.GetParMesh();
-  for (int e = 0; e < mesh.GetNE(); e++)
-  {
-    const int a = mesh.GetAttribute(e);
-    MFEM_VERIFY(std::ranges::find(region.attrs, a) != region.attrs.end() ||
-                    std::ranges::find(env.attrs, a) != env.attrs.end(),
-                "Domain attribute " << a
-                                    << " is neither in the region nor in the "
-                                       "environment!");
-  }
+  CheckSubstructuringAttributes(mesh, region.attrs, env.attrs);
 
   // Interface DOFs: on region and environment elements; environment (region) interior: on
   // environment (region) elements only; all without the Dirichlet DOFs.
@@ -136,9 +128,9 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     {
       g += (g >= 0) ? off : 0;
     }
-    const auto match = MatchSignaturePoints(TrueDofSignatures(fes, index, nc),
-                                            SignatureWidth(fes), saved->signatures,
-                                            saved->sig_w);
+    const auto match =
+        MatchSignaturePoints(TrueDofSignatures(fes, index, nc), SignatureWidth(fes),
+                             saved->signatures, saved->sig_w);
     for (int i = 0; i < nt; i++)
     {
       cut[i] = (index[i] >= 0) && match[index[i]];
