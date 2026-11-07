@@ -15,6 +15,10 @@ int GetDeviceCount();
 // Assign devices round-robin over MPI ranks.
 int GetDeviceId(MPI_Comm comm, int ngpu);
 
+// Return whether vector operations run on the host in a single thread (no device backend
+// and one OpenMP thread).
+bool IsSerialHost();
+
 }  // namespace palace::utils
 
 #endif  // DEVICE_HPP

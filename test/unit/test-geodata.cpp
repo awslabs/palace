@@ -14,6 +14,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fixtures.hpp"
 #include "test-helpers.hpp"
 
 #include "utils/geodata.hpp"
@@ -435,6 +436,126 @@ TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
 
   CHECK(mesh->CheckElementOrientation(false) == 0);
   CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Mesh loader removes boundary elements which are not faces of the mesh",
+                 "[geodata][Serial]")
+{
+  // Gmsh mesh of the unit square, with two triangles split along the diagonal from (0, 0)
+  // to (1, 1), and four boundary elements on its boundary. Three more boundary elements are
+  // not an edge of any triangle: the other diagonal of the square (attribute 2), the edge
+  // from (2, 0) to (2, 1) whose vertices are not vertices of any triangle (attribute 3),
+  // and the edge from (1, 0) to (2, 0) with the attribute 1 of the square boundary. A
+  // second order mesh has a curved edge from (0, 0) to (1, 0) through (0.5, -0.1), which
+  // adds 2/3 * 0.1 to the area of the square.
+  const int order = GENERATE(1, 2);
+  const bool clean_unused_elements = GENERATE(false, true);
+  CAPTURE(order, clean_unused_elements);
+  std::vector<std::array<double, 2>> nodes = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0},
+                                              {0.0, 1.0}, {2.0, 0.0}, {2.0, 1.0}};
+  std::vector<std::array<int, 3>> edge_nodes;  // Vertices and second order node of edges
+  auto EdgeNode = [&](int v0, int v1)
+  {
+    for (const auto &[w0, w1, node] : edge_nodes)
+    {
+      if ((w0 == v0 && w1 == v1) || (w0 == v1 && w1 == v0))
+      {
+        return node;
+      }
+    }
+    edge_nodes.push_back({v0, v1, static_cast<int>(nodes.size())});
+    nodes.push_back({0.5 * (nodes[v0][0] + nodes[v1][0]),
+                     0.5 * (nodes[v0][1] + nodes[v1][1]) - (v0 + v1 == 1 ? 0.1 : 0.0)});
+    return edge_nodes.back()[2];
+  };
+  struct GmshElement
+  {
+    int type, attr;
+    std::vector<int> nodes;
+  };
+  std::vector<GmshElement> elements;
+  for (auto [v0, v1, attr] : std::vector<std::array<int, 3>>{
+           {0, 1, 1}, {1, 2, 1}, {2, 3, 1}, {3, 0, 1}, {1, 3, 2}, {4, 5, 3}, {1, 4, 1}})
+  {
+    elements.push_back({order == 1 ? 1 : 8, attr,
+                        order == 1 ? std::vector<int>{v0, v1}
+                                   : std::vector<int>{v0, v1, EdgeNode(v0, v1)}});
+  }
+  for (auto [v0, v1, v2] : std::vector<std::array<int, 3>>{{0, 1, 2}, {0, 2, 3}})
+  {
+    elements.push_back({order == 1 ? 2 : 9, 1,
+                        order == 1 ? std::vector<int>{v0, v1, v2}
+                                   : std::vector<int>{v0, v1, v2, EdgeNode(v0, v1),
+                                                      EdgeNode(v1, v2), EdgeNode(v2, v0)}});
+  }
+  const auto mesh_file = temp_dir / "mesh.msh";
+  {
+    std::ofstream fo(mesh_file);
+    fo << "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n" << nodes.size() << "\n";
+    for (std::size_t i = 0; i < nodes.size(); i++)
+    {
+      fo << i + 1 << " " << nodes[i][0] << " " << nodes[i][1] << " 0\n";
+    }
+    fo << "$EndNodes\n$Elements\n" << elements.size() << "\n";
+    for (std::size_t i = 0; i < elements.size(); i++)
+    {
+      fo << i + 1 << " " << elements[i].type << " 2 " << elements[i].attr << " "
+         << elements[i].attr;
+      for (auto v : elements[i].nodes)
+      {
+        fo << " " << v + 1;
+      }
+      fo << "\n";
+    }
+    fo << "$EndElements\n";
+  }
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.mesh = mesh_file.string();
+  iodata.model.clean_unused_elements = clean_unused_elements;
+  iodata.domains.attributes = {1};
+  auto mesh = mesh::Load(iodata, Mpi::World());
+  REQUIRE(mesh);
+
+  // The boundary elements which are not edges of the mesh are removed, together with the
+  // vertices of only these boundary elements.
+  CHECK(mesh->GetNE() == 2);
+  CHECK(mesh->GetNV() == 4);
+  REQUIRE(mesh->GetNBE() == 4);
+  REQUIRE(mesh->bdr_attributes.Size() == 1);
+  CHECK(mesh->bdr_attributes[0] == 1);
+  double length = 0.0;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    CAPTURE(be);
+    int e1, e2;
+    REQUIRE(mesh->GetBdrElementFaceIndex(be) >= 0);
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &e1, &e2);
+    CHECK(e1 >= 0);
+    CHECK(e2 < 0);
+    auto *T = mesh->GetBdrElementTransformation(be);
+    const auto &ir = mfem::IntRules.Get(T->GetGeometryType(), 10);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      T->SetIntPoint(&ir.IntPoint(q));
+      length += ir.IntPoint(q).weight * T->Weight();
+    }
+  }
+  CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+
+  // The geometry of the mesh is unchanged.
+  REQUIRE(mesh->GetNodes());
+  CHECK(mesh->GetNodes()->FESpace()->GetMaxElementOrder() == order);
+  double area = 0.0;
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    area += mesh->GetElementVolume(e);
+  }
+  CHECK_THAT(area, WithinRel(order == 1 ? 1.0 : 1.0 + 0.2 / 3.0, 1.0e-12));
+  const double curved_length = 0.5 * std::sqrt(1.16) + std::asinh(0.4) / 0.8;
+  CHECK_THAT(length, WithinRel(order == 1 ? 4.0 : 3.0 + curved_length, 1.0e-8));
 }
 
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")

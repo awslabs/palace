@@ -9,7 +9,7 @@ examples/substructuring/mesh/
 examples/**/__pycache__/
 test/data/regression/input/**/postpro/
 test/data/regression/input/**/log/
-spack_repo/local/packages/palace/__pycache__/
+spack_repo/local/packages/*/__pycache__/
 .*.swp
 *.sif
 .DS_Store

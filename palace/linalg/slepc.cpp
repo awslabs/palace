@@ -147,54 +147,6 @@ inline VecType PetscVecType()
   return VECSTANDARD;
 }
 
-struct MatShellContext
-{
-  const ComplexOperator &A;
-  ComplexVector &x, &y;
-};
-
-PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
-{
-  PetscFunctionBeginUser;
-  MatShellContext *ctx;
-  PetscCall(MatShellGetContext(A, (void **)&ctx));
-  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.Mult(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-}
-
-PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
-{
-  PetscFunctionBeginUser;
-  MatShellContext *ctx;
-  PetscCall(MatShellGetContext(A, (void **)&ctx));
-  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-}
-
-PetscErrorCode __mat_apply_hermitian_transpose_shell(Mat A, Vec x, Vec y)
-{
-  PetscFunctionBeginUser;
-  MatShellContext *ctx;
-  PetscCall(MatShellGetContext(A, (void **)&ctx));
-  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultHermitianTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-};
-
 inline void ConfigurePCShell(ST st, void *ctx, PetscErrorCode (*__pc_apply)(PC, Vec, Vec))
 {
   KSP ksp;
@@ -242,85 +194,6 @@ void Initialize()
 void Finalize()
 {
   PalacePetscCall(SlepcFinalize());
-}
-
-PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm,
-                              PetscReal tol, PetscInt max_it)
-{
-  // This method assumes the provided operator has the required operations for SLEPc's EPS
-  // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
-  // is not Hermitian).
-  MFEM_VERIFY(A.Height() == A.Width(), "Spectral norm requires a square matrix!");
-  const PetscInt n = A.Height();
-  ComplexVector x(n), y(n);
-  x.UseDevice(true);
-  y.UseDevice(true);
-  MatShellContext ctx = {A, x, y};
-  Mat A0;
-  PalacePetscCall(
-      MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
-  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
-  PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
-  if (herm)
-  {
-    EPS eps;
-    PetscInt num_conv;
-    PetscScalar eig;
-    PalacePetscCall(EPSCreate(comm, &eps));
-    PalacePetscCall(EPSSetOperators(eps, A0, nullptr));
-    PalacePetscCall(EPSSetProblemType(eps, EPS_HEP));
-    PalacePetscCall(EPSSetWhichEigenpairs(eps, EPS_LARGEST_MAGNITUDE));
-    PalacePetscCall(EPSSetDimensions(eps, 1, PETSC_DEFAULT, PETSC_DEFAULT));
-    PalacePetscCall(EPSSetTolerances(eps, tol, max_it));
-    PalacePetscCall(EPSSolve(eps));
-    PalacePetscCall(EPSGetConverged(eps, &num_conv));
-    if (num_conv < 1)
-    {
-      Mpi::Warning(comm, "SLEPc EPS solve did not converge for maximum singular value!\n");
-      eig = 0.0;
-    }
-    else
-    {
-      PalacePetscCall(EPSGetEigenvalue(eps, 0, &eig, nullptr));
-      MFEM_VERIFY(PetscImaginaryPart(eig) == 0.0,
-                  "Unexpected complex eigenvalue for Hermitian matrix (λ = " << eig
-                                                                             << ")!");
-    }
-    PalacePetscCall(EPSDestroy(&eps));
-    PalacePetscCall(MatDestroy(&A0));
-    return PetscAbsScalar(eig);
-  }
-  else
-  {
-    PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT_TRANSPOSE,
-                                         (void (*)(void))__mat_apply_transpose_shell));
-    PalacePetscCall(
-        MatShellSetOperation(A0, MATOP_MULT_HERMITIAN_TRANSPOSE,
-                             (void (*)(void))__mat_apply_hermitian_transpose_shell));
-    SVD svd;
-    PetscInt num_conv;
-    PetscReal sigma;
-    PalacePetscCall(SVDCreate(comm, &svd));
-    PalacePetscCall(SVDSetOperators(svd, A0, nullptr));
-    PalacePetscCall(SVDSetProblemType(svd, SVD_STANDARD));
-    PalacePetscCall(SVDSetWhichSingularTriplets(svd, SVD_LARGEST));
-    PalacePetscCall(SVDSetDimensions(svd, 1, PETSC_DEFAULT, PETSC_DEFAULT));
-    PalacePetscCall(SVDSetTolerances(svd, tol, max_it));
-    PalacePetscCall(SVDSolve(svd));
-    PalacePetscCall(SVDGetConverged(svd, &num_conv));
-    if (num_conv < 1)
-    {
-      Mpi::Warning(comm, "SLEPc SVD solve did not converge for maximum singular value!\n");
-      sigma = 0.0;
-    }
-    else
-    {
-      PalacePetscCall(SVDGetSingularTriplet(svd, 0, &sigma, nullptr, nullptr));
-    }
-    PalacePetscCall(SVDDestroy(&svd));
-    PalacePetscCall(MatDestroy(&A0));
-    return sigma;
-  }
 }
 
 // Eigensolver base class methods.
@@ -1982,9 +1855,11 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
                      0.0);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-      ctx->opProj->Mult(ctx->y1);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      // Without this projection, gradients are eigenvectors with λ = 0, which dominate the
+      // targeted eigenvalues when these are farther from σ than σ from 0. The divergence of
+      // y1 is already at round-off for a projected basis, so a loose relative tolerance
+      // suffices to keep it from growing.
+      ctx->opProj->Mult(ctx->y1, 1.0e-3);
     }
   }
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));

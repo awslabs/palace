@@ -662,26 +662,81 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
                       });
 }
 
+namespace
+{
+
+// The sums of HostSums over [0, N). With several threads, each sums a contiguous block and
+// the blocks are added in order, so the result only depends on the number of threads.
+template <int M, typename Function>
+std::array<double, M> ThreadedHostSums(int N, Function &&f)
+{
+  const int nt = utils::GetMaxThreads();
+  if (nt == 1)
+  {
+    return HostSums<M>(0, N, f);
+  }
+  std::vector<std::array<double, M>> blocks(nt, std::array<double, M>{});
+  PalacePragmaOmp(parallel)
+  {
+    const std::int64_t t = utils::GetThreadNum(), T = utils::GetNumActiveThreads();
+    blocks[t] =
+        HostSums<M>(static_cast<int>(N * t / T), static_cast<int>(N * (t + 1) / T), f);
+  }
+  std::array<double, M> sum = {};
+  for (const auto &block : blocks)
+  {
+    for (int m = 0; m < M; m++)
+    {
+      sum[m] += block[m];
+    }
+  }
+  return sum;
+}
+
+}  // namespace
+
 double LocalDot(const Vector &x, const Vector &y)
 {
-  static hypre::HypreVector X, Y;
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-  X.Update(x);
-  Y.Update(y);
-  return hypre_SeqVectorInnerProd(X, Y);
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    static hypre::HypreVector X, Y;
+    X.Update(x);
+    Y.Update(y);
+    return hypre_SeqVectorInnerProd(X, Y);
+  }
+  const auto *X = x.HostRead(), *Y = y.HostRead();
+  return ThreadedHostSums<1>(x.Size(), [=](int i) { return std::array{Y[i] * X[i]}; })[0];
 }
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    if (&x == &y)
+    {
+      return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
+    }
+    else
+    {
+      return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
+              LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
+    }
+  }
+
+  // On the host, a single pass over the data instead of one per real inner product.
+  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
+  const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
+  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
   if (&x == &y)
   {
-    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
+    return ThreadedHostSums<1>(x.Size(), [=](int i)
+                               { return std::array{XR[i] * XR[i] + XI[i] * XI[i]}; })[0];
   }
-  else
-  {
-    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
-            LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
-  }
+  const auto sum = ThreadedHostSums<2>(
+      x.Size(), [=](int i)
+      { return std::array{YR[i] * XR[i] + YI[i] * XI[i], YR[i] * XI[i] - YI[i] * XR[i]}; });
+  return {sum[0], sum[1]};
 }
 
 // We implement LocalSum using Hypre instead of using MFEM's Sum because it is
@@ -769,6 +824,51 @@ void AXPBYPCZ(double alpha, const ComplexVector &x, double beta, const ComplexVe
               double gamma, ComplexVector &z)
 {
   z.AXPBYPCZ(alpha, x, beta, y, gamma);
+}
+
+template <>
+void AXPYAndAYPX(double alpha, Vector &x, Vector &y, double beta, const Vector &z)
+{
+  MFEM_ASSERT(y.Size() == x.Size() && z.Size() == x.Size(),
+              "Size mismatch for vector updates!");
+  const bool use_dev = x.UseDevice() || y.UseDevice() || z.UseDevice();
+  const int N = x.Size();
+  const auto *Z = z.Read(use_dev);
+  auto *X = x.ReadWrite(use_dev);
+  auto *Y = y.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const auto t = X[i];
+                        Y[i] += alpha * t;
+                        X[i] = Z[i] + beta * t;
+                      });
+}
+
+template <>
+void AXPYAndAYPX(std::complex<double> alpha, ComplexVector &x, ComplexVector &y,
+                 std::complex<double> beta, const ComplexVector &z)
+{
+  MFEM_ASSERT(y.Size() == x.Size() && z.Size() == x.Size(),
+              "Size mismatch for vector updates!");
+  const bool use_dev = x.UseDevice() || y.UseDevice() || z.UseDevice();
+  const int N = x.Size();
+  const double ar = alpha.real(), ai = alpha.imag(), br = beta.real(), bi = beta.imag();
+  const auto *ZR = z.Real().Read(use_dev);
+  const auto *ZI = z.Imag().Read(use_dev);
+  auto *XR = x.Real().ReadWrite(use_dev);
+  auto *XI = x.Imag().ReadWrite(use_dev);
+  auto *YR = y.Real().ReadWrite(use_dev);
+  auto *YI = y.Imag().ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const auto tr = XR[i], ti = XI[i];
+                        YR[i] += ar * tr - ai * ti;
+                        YI[i] += ai * tr + ar * ti;
+                        XR[i] = ZR[i] + br * tr - bi * ti;
+                        XI[i] = ZI[i] + bi * tr + br * ti;
+                      });
 }
 
 void Sqrt(Vector &x, double s)

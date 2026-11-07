@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-0",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3023,7 +3023,7 @@
       "properties": {
         "Type": {
           "$ref": "#/$defs/LinearSolverType",
-          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects the solver based on the problem type and available sparse direct solvers."
+          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects BoomerAMG for electrostatic problems, AMS for magnetostatic and transient problems, and otherwise the first available sparse direct solver among STRUMPACK, SuperLU_DIST, and MUMPS (AMS if none is available)."
         },
         "KSPType": {
           "$ref": "#/$defs/KrylovSolver",

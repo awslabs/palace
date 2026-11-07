@@ -571,10 +571,10 @@ void IoData::CheckConfiguration()
     else
     {
       // Prefer sparse direct solver for frequency domain problems if available.
-#if defined(MFEM_USE_SUPERLU)
-      solver.linear.type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+#if defined(MFEM_USE_STRUMPACK)
       solver.linear.type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
       solver.linear.type = LinearSolver::MUMPS;
 #else

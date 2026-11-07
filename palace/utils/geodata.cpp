@@ -48,6 +48,10 @@ constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
                                      const config::BoundaryData &);
 
+// Read a serial mesh from a stream like the mfem::Mesh stream constructor, but removing the
+// boundary elements which are not faces of any element of the mesh.
+std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &, bool, bool, bool);
+
 // Clean the provided serial mesh by removing unused domain and boundary elements.
 void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &);
 
@@ -2830,7 +2834,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       mesh::ConvertMeshNastran(mesh_file, fi, remove_curvature);
       // mesh::ConvertMeshNastran(mesh_file, fo, remove_curvature);
     }
-    mesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+    mesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation);
   }
   else
   {
@@ -2843,7 +2847,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
     {
       MFEM_ABORT("Unable to open mesh file \"" << mesh_file << "\"!");
     }
-    mesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+    mesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation);
   }
   if (remove_curvature)
   {
@@ -2909,6 +2913,120 @@ void TransferHighOrderNodes(const mfem::Mesh &orig_mesh, mfem::Mesh &new_mesh,
   }
 }
 
+// Replace the mesh by a new mesh with the domain and boundary elements which are not
+// deleted, where the maps give the index in the new mesh of each element, or -1 if deleted.
+void DeleteMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
+                        const std::vector<int> &elem_delete_map, int new_ne,
+                        const std::vector<int> &bdr_elem_delete_map, int new_nbe)
+{
+  MFEM_VERIFY(!orig_mesh->Nonconforming(),
+              "Mesh element cleaning is not supported for nonconforming meshes!");
+  auto new_mesh =
+      std::make_unique<mfem::Mesh>(orig_mesh->Dimension(), orig_mesh->GetNV(), new_ne,
+                                   new_nbe, orig_mesh->SpaceDimension());
+
+  // Copy vertices and non-deleted domain and boundary elements.
+  for (int v = 0; v < orig_mesh->GetNV(); v++)
+  {
+    new_mesh->AddVertex(orig_mesh->GetVertex(v));
+  }
+  for (int e = 0; e < orig_mesh->GetNE(); e++)
+  {
+    if (elem_delete_map[e] >= 0)
+    {
+      mfem::Element *el = orig_mesh->GetElement(e)->Duplicate(new_mesh.get());
+      new_mesh->AddElement(el);
+    }
+  }
+  for (int be = 0; be < orig_mesh->GetNBE(); be++)
+  {
+    if (bdr_elem_delete_map[be] >= 0)
+    {
+      mfem::Element *bdr_el = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
+      new_mesh->AddBdrElement(bdr_el);
+    }
+  }
+
+  // Finalize the new mesh topology and replace the old mesh. If a curved mesh, set up the
+  // new mesh by projecting nodes onto the new mesh for the non-trimmed vdofs. No need to
+  // mark for refinement or fix orientations, since everything is copied from the previous
+  // mesh.
+  constexpr bool generate_bdr = false;
+  new_mesh->FinalizeTopology(generate_bdr);
+  new_mesh->RemoveUnusedVertices();  // Remove vertices from the deleted elements
+  if (orig_mesh->GetNodes())
+  {
+    TransferHighOrderNodes(*orig_mesh, *new_mesh, &elem_delete_map);
+  }
+  orig_mesh = std::move(new_mesh);
+}
+
+std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &input, bool generate_edges,
+                                           bool refine, bool fix_orientation)
+{
+  // Read the mesh without finalizing it (see mfem::Mesh::Load), to first remove the
+  // boundary elements which are not a face (an edge in 2D) of any element of the mesh:
+  // finalizing the mesh, like most operations on it, accesses memory out of bounds for
+  // them. No domain element is attached to these boundary elements, which can come for
+  // example from a mesher tagging all of an outer boundary when part of it is also the
+  // boundary of a region which is not meshed, like a conductor modeled as a hole in the
+  // mesh. In 3D, mfem::Mesh::Loader itself aborts on such boundary elements (MFEM 4.10).
+  struct UnfinalizedMesh : public mfem::Mesh
+  {
+    UnfinalizedMesh(std::istream &input, bool generate_edges)
+    {
+      Loader(input, generate_edges);
+    }
+  };
+  auto mesh = std::make_unique<mfem::Mesh>(UnfinalizedMesh(input, generate_edges));
+
+  // The boundary elements of nonconforming and NURBS meshes are faces of the mesh by
+  // construction, and those of 1D meshes are vertices.
+  if (mesh->Conforming() && !mesh->NURBSext && mesh->Dimension() > 1)
+  {
+    std::vector<int> elem_delete_map(mesh->GetNE()),
+        bdr_elem_delete_map(mesh->GetNBE(), -1);
+    std::iota(elem_delete_map.begin(), elem_delete_map.end(), 0);
+    int new_nbe = 0;
+    std::set<int> bdr_warn_list;
+    std::vector<std::string> warn_vertices;
+    for (int be = 0; be < mesh->GetNBE(); be++)
+    {
+      if (mesh->GetBdrElementFaceIndex(be) >= 0)
+      {
+        bdr_elem_delete_map[be] = new_nbe++;
+        continue;
+      }
+      if (bdr_warn_list.empty())
+      {
+        mfem::Array<int> verts;
+        mesh->GetBdrElementVertices(be, verts);
+        for (auto v : verts)
+        {
+          const auto *coord = mesh->GetVertex(v);
+          warn_vertices.push_back(fmt::format(
+              "({:.6g})", fmt::join(coord, coord + mesh->SpaceDimension(), ", ")));
+        }
+      }
+      bdr_warn_list.insert(mesh->GetBdrAttribute(be));
+    }
+    if (new_nbe < mesh->GetNBE())
+    {
+      Mpi::Warning(
+          "Removed {:d} boundary elements which are not faces of any element of the "
+          "mesh, the first one with vertices {}!\nNo domain element is attached to "
+          "them, so the boundary conditions on them have no effect.\n",
+          mesh->GetNBE() - new_nbe, fmt::join(warn_vertices, ", "));
+      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+      Mpi::Print("\n");
+      DeleteMeshElements(mesh, elem_delete_map, mesh->GetNE(), bdr_elem_delete_map,
+                         new_nbe);
+    }
+  }
+  mesh->Finalize(refine, fix_orientation);
+  return mesh;
+}
+
 void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
                const std::vector<int> &mat_attr_list)
 {
@@ -2963,46 +3081,7 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
   {
     return;
   }
-  MFEM_VERIFY(!orig_mesh->Nonconforming(),
-              "Mesh element cleaning is not supported for nonconforming meshes!");
-  auto new_mesh =
-      std::make_unique<mfem::Mesh>(orig_mesh->Dimension(), orig_mesh->GetNV(), new_ne,
-                                   new_nbe, orig_mesh->SpaceDimension());
-
-  // Copy vertices and non-deleted domain and boundary elements.
-  for (int v = 0; v < orig_mesh->GetNV(); v++)
-  {
-    new_mesh->AddVertex(orig_mesh->GetVertex(v));
-  }
-  for (int e = 0; e < orig_mesh->GetNE(); e++)
-  {
-    if (elem_delete_map[e] >= 0)
-    {
-      mfem::Element *el = orig_mesh->GetElement(e)->Duplicate(new_mesh.get());
-      new_mesh->AddElement(el);
-    }
-  }
-  for (int be = 0; be < orig_mesh->GetNBE(); be++)
-  {
-    if (bdr_elem_delete_map[be] >= 0)
-    {
-      mfem::Element *bdr_el = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
-      new_mesh->AddBdrElement(bdr_el);
-    }
-  }
-
-  // Finalize the new mesh topology and replace the old mesh. If a curved mesh, set up the
-  // new mesh by projecting nodes onto the new mesh for the non-trimmed vdofs. No need to
-  // mark for refinement or fix orientations, since everything is copied from the previous
-  // mesh.
-  constexpr bool generate_bdr = false;
-  new_mesh->FinalizeTopology(generate_bdr);
-  new_mesh->RemoveUnusedVertices();  // Remove vertices from the deleted elements
-  if (orig_mesh->GetNodes())
-  {
-    TransferHighOrderNodes(*orig_mesh, *new_mesh, &elem_delete_map);
-  }
-  orig_mesh = std::move(new_mesh);
+  DeleteMeshElements(orig_mesh, elem_delete_map, new_ne, bdr_elem_delete_map, new_nbe);
 }
 
 void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex,
