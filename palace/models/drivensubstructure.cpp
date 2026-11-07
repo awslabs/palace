@@ -137,7 +137,8 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
       g += (g >= 0) ? off : 0;
     }
     const auto match = MatchSignaturePoints(TrueDofSignatures(fes, index, nc),
-                                            saved->signatures, saved->sig_w);
+                                            SignatureWidth(fes), saved->signatures,
+                                            saved->sig_w);
     for (int i = 0; i < nt; i++)
     {
       cut[i] = (index[i] >= 0) && match[index[i]];

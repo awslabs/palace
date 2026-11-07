@@ -95,6 +95,29 @@ int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
 
 }  // namespace
 
+void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
+                                   const std::vector<int> &region_attributes,
+                                   const std::vector<int> &environment_attributes)
+{
+  // The attributes of a ParMesh are those of all processes.
+  auto in = [](const std::vector<int> &s, int a)
+  { return std::ranges::find(s, a) != s.end(); };
+  for (int a : mesh.attributes)
+  {
+    MFEM_VERIFY(in(region_attributes, a) || in(environment_attributes, a),
+                "Domain attribute " << a
+                                    << " of the mesh is in neither the substructuring "
+                                       "\"Region\" nor the \"Environment\"!");
+  }
+  for (int a : region_attributes)
+  {
+    MFEM_VERIFY(mesh.attributes.Find(a) >= 0, "Substructuring \"Region\" attribute "
+                                                  << a
+                                                  << " is not a domain attribute of "
+                                                     "the mesh!");
+  }
+}
+
 int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
@@ -243,12 +266,15 @@ double SignatureTolerance(const std::vector<double> &saved)
 
 }  // namespace
 
-std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
-                                       const std::vector<double> &saved, int width)
+std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, int width,
+                                       const std::vector<double> &saved, int saved_width)
 {
-  MFEM_VERIFY(width == 3 || width == 12, "Unknown DOF signature width " << width << "!");
+  auto known = [](int w) { return w == 3 || w == 12 || w == 13; };
+  MFEM_VERIFY(known(width) && known(saved_width) && (width == 3) == (saved_width == 3),
+              "Unknown DOF signature widths " << width << " and " << saved_width << "!");
   const double tol = SignatureTolerance(saved);
-  const auto pc = SignaturePoints(candidates, width), ps = SignaturePoints(saved, width);
+  const auto pc = SignaturePoints(candidates, width),
+             ps = SignaturePoints(saved, saved_width);
   // The saved points by their first coordinate, searched within the tolerance.
   std::vector<int> order(ps.size());
   for (std::size_t s = 0; s < order.size(); s++)

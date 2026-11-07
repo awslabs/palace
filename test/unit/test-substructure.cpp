@@ -68,7 +68,7 @@ TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]"
   add(candidates, {0.5, -0.2, 1.0e-6}, {0.0, 0.6, 0.8});
   add(candidates, {0.1 + 1.0e-12, 0.2, 0.3}, {1.0, 0.0, 0.0});
   add(candidates, {0.5, 0.4, 0.0}, {0.6, 0.8, 0.0});
-  const auto match = MatchSignaturePoints(candidates, saved, 12);
+  const auto match = MatchSignaturePoints(candidates, 12, saved, 12);
   REQUIRE(match.size() == 5);
   CHECK(match[0]);
   CHECK(match[1]);
@@ -127,7 +127,7 @@ TEST_CASE("H1 DOFs at the points of saved ones", "[substructure][Serial]")
   const std::vector<double> saved = {0.1, 0.2, 0.3, 0.5, -0.2, 0.0},
                             candidates = {0.5, -0.2, 0.0,  0.1,   0.2 + 1.0e-12,
                                           0.3, 0.5,  -0.2, 1.0e-6};
-  const auto match = MatchSignaturePoints(candidates, saved, 3);
+  const auto match = MatchSignaturePoints(candidates, 3, saved, 3);
   REQUIRE(match.size() == 3);
   CHECK(match[0]);
   CHECK(match[1]);

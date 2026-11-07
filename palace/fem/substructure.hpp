@@ -16,6 +16,13 @@ namespace palace
 
 class FiniteElementSpace;
 
+// Abort unless every domain attribute of the mesh is in the region or the environment, and
+// every region attribute is one of the mesh (the mesh of the region written for online runs
+// holds only part of the environment).
+void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
+                                   const std::vector<int> &region_attributes,
+                                   const std::vector<int> &environment_attributes);
+
 // Parallel-capable interface identification in true-DOF space. Given the parent finite
 // element space and the region/environment domain attribute sets, mark each parent true DOF
 // touched by region element support, by environment support, and by both (the shared
@@ -63,10 +70,11 @@ struct SignatureMap
   std::vector<T> DualMatrix(const std::vector<T> &S) const;
 };
 
-// Which of a set of DOFs (H1 or H(curl) signatures) lie at the point of one of a saved set
-// of DOFs, within the tolerance of MatchSignatureBasis.
-std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
-                                       const std::vector<double> &saved, int width);
+// Which of a set of DOFs (H1 or H(curl) signatures of the given width) lie at the point of
+// one of a saved set of DOFs (of saved_width, 13 with the side moments of split DOFs),
+// within the tolerance of MatchSignatureBasis.
+std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, int width,
+                                       const std::vector<double> &saved, int saved_width);
 
 // The map from the saved to the current H(curl) signatures, aborting unless the current
 // signatures equal M times the saved ones within a relative tolerance. A 13th column (width

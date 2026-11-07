@@ -138,6 +138,9 @@ private:
   // Region-condensed solves for a batch of prescribed Dirichlet fields.
   std::vector<Vector> SolveDirichletBatch(const std::vector<Vector> &dbcs);
 
+  // Region-condensed solves of A u = f for a batch of full parent-space sources f.
+  std::vector<Vector> SolveSourceBatch(const std::vector<Vector> &f);
+
   // EnergyMatrix for Dirichlet data given on the Dirichlet true DOFs only.
   mfem::DenseMatrix EnergyMatrixDbc(const std::vector<int> &ids,
                                     const std::vector<Vector> &xd,

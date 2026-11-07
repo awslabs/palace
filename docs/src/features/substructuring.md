@@ -14,7 +14,8 @@ an **environment** (everything else). The environment is condensed onto its inte
 region, once; each redesign then only solves the region against the condensed environment.
 
 Substructuring is available for [electrostatic](../guide/problem.md#Electrostatic-problems) capacitance
-extraction, [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction, and
+extraction, [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction with
+flux-loop and surface-current excitations, and
 [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) frequency sweeps (see
 [Driven problems](#Driven-problems)).
 
@@ -79,7 +80,9 @@ A redesign of the region is re-meshed inside the mesh of the region with
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
 The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
-electrostatic or magnetostatic simulation. Field output follows
+electrostatic or magnetostatic simulation. The capacitance and inductance matrices are written to
+the files of a regular simulation (`terminal-C.csv`, `terminal-M.csv`, and the others); the domain
+and surface postprocessing of a regular simulation is not computed. Field output follows
 `"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`; the environment part
 of a saved field is recovered only when fields are written.
 
@@ -104,7 +107,8 @@ which keeps the condensation exact.
     but is not bounded by it; `1e-12` is a conservative choice.
   - `"InterfaceOffdiagTol"`: relative tolerance of a hierarchical (HODLR) compression of
     ``\bm{S}_E``, which reduces its memory for large interfaces. It does not reduce the time to
-    condense the environment.
+    condense the environment, and it is not available with London sheets (flux loops and
+    `"Superconductor"` boundaries), whose region solve factors the dense ``\bm{S}_E``.
 
 ### Adaptive mesh refinement
 
@@ -150,9 +154,8 @@ Magnetostatic substructuring extracts the inductance matrix from
 [`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop) and
 [`config["Boundaries"]["SurfaceCurrent"]`](../config/reference.md#config-boundaries-surfacecurrent)
 excitations, alone or together (with flux loops grouped in an excitation or held at zero fluxoid, as
-in a regular simulation), including the kinetic inductance of superconducting films, and writes the
-same output files as a regular simulation. The `"PEC"` boundaries are the Dirichlet boundaries of
-the condensation. The flux-loop films and the
+in a regular simulation), including the kinetic inductance of superconducting films. The `"PEC"`
+boundaries are the Dirichlet boundaries of the condensation. The flux-loop films and the
 [`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
 films are London sheets, as in a regular simulation: a film without a `"Superconductor"` entry has
 the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The sheet term

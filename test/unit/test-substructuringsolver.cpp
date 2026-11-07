@@ -422,6 +422,36 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
   }
 }
 
+TEST_CASE("SubstructuringSolver rejects attribute sets that do not split the mesh",
+          "[substructure][Serial][Parallel]")
+{
+  auto make = [](const std::vector<int> &region, const std::vector<int> &environment)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", region}}},
+            {"Environment", {{"Attributes", environment}}}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(2)));
+    SubstructuringSolver ss(iodata, mesh);
+  };
+  // An attribute in neither set would be left out of both operators.
+  CHECK_THROWS_WITH(make({1}, {3}),
+                    Catch::Matchers::ContainsSubstring("Domain attribute 2 of the mesh is "
+                                                       "in neither"));
+  CHECK_THROWS_WITH(make({1, 4}, {2}), Catch::Matchers::ContainsSubstring(
+                                           "\"Region\" attribute 4 is not a domain"));
+  CHECK_NOTHROW(make({1}, {2}));
+}
+
 TEST_CASE("SubstructuringSolver anisotropic permittivity",
           "[substructure][Serial][Parallel]")
 {
@@ -761,6 +791,71 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   no_env_terminal.boundaries.terminal.erase(2);
   CHECK_THROWS_WITH(condense(no_env_terminal, 3, 4),
                     Catch::Matchers::ContainsSubstring("The environment differs"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver saved model of another problem or order",
+                 "[substructure][Serial][Parallel]")
+{
+  // A model is loaded by a run of its problem type and order only, and a file that is not
+  // one is reported as such.
+  const std::string model_path = (temp_dir / "substruct_problem.bin").string();
+  auto make_config =
+      [&model_path](const std::string &type, const std::string &mode, int order)
+  {
+    const json terminals = {{{"Index", 1}, {"Attributes", {1}}},
+                            {{"Index", 2}, {"Attributes", {2}}}};
+    json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", (type == "Electrostatic")
+                                      ? json{{"Terminal", terminals}}
+                                      : json{{"PEC", {{"Attributes", {1, 2}}}}}},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", mode},
+                       {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  auto condense = [](const IoData &iodata)
+  {
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  };
+  condense(make_config("Electrostatic", "Offline", 1));
+  CHECK_NOTHROW(condense(make_config("Electrostatic", "Online", 1)));
+  CHECK_THROWS_WITH(
+      condense(make_config("Magnetostatic", "Online", 1)),
+      Catch::Matchers::ContainsSubstring("is electrostatic, unlike this run"));
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 2)),
+                    Catch::Matchers::ContainsSubstring(
+                        "\"Solver\"/\"Order\" must be those of the offline run"));
+  // The model is read by the root process. A truncated one (its head intact) is not one.
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::resize_file(model_path, std::filesystem::file_size(model_path) / 2);
+  }
+  CHECK_THROWS_WITH(
+      condense(make_config("Electrostatic", "Online", 1)),
+      Catch::Matchers::ContainsSubstring("is not a saved substructuring model"));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream(model_path, std::ios::binary) << "not a substructuring model";
+  }
+  CHECK_THROWS_WITH(
+      condense(make_config("Electrostatic", "Online", 1)),
+      Catch::Matchers::ContainsSubstring("is not a saved substructuring model"));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::remove(model_path);
+  }
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
+                    Catch::Matchers::ContainsSubstring("Cannot read the saved"));
 }
 #endif
 
@@ -1654,6 +1749,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
 }
 
+namespace
+{
+
 // Monolithic reference capacitance C_ij = u_i^T K u_j (terminal i at 1 V on boundary
 // attribute i + 1, the others at 0 V), with MFEM directly (independent of substructuring).
 // eps_by_attr: permittivity by element attribute.
@@ -1742,6 +1840,8 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
   return pmesh;
 }
 
+}  // namespace
+
 TEST_CASE("SubstructuringSolver grounded PEC boundaries",
           "[substructure][Serial][Parallel]")
 {
@@ -1781,6 +1881,38 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
       MonolithCapacitance(mesh.back()->Get(), order, eps_by_attr, 1, {2, 3});
   CAPTURE(C(0, 0), C_mono(0, 0));
   CHECK(std::abs(C(0, 0) - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
+}
+
+TEST_CASE("SubstructuringSolver rejects the interface compression with London sheets",
+          "[substructure][Serial][Parallel]")
+{
+  // The region solve with the sheets factors the dense interface operator.
+  auto make = [](double tol)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {1, 2}}}},
+          {"Superconductor",
+           {{{"Attributes", {4}}, {"PenetrationDepth", 0.2}, {"Thickness", 0.05}}}}}},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"InterfaceOffdiagTol", tol}}}}}};
+    IoData iodata(config, false);
+    RegionDesign design;
+    design.sheet = true;
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+    SubstructuringSolver ss(iodata, mesh);
+  };
+  CHECK_THROWS_WITH(make(1.0e-8), Catch::Matchers::ContainsSubstring(
+                                      "London superconductor sheets needs the dense "
+                                      "interface operator"));
+  CHECK_NOTHROW(make(0.0));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet energies",
