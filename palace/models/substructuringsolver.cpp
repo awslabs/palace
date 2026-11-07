@@ -429,7 +429,7 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<FiniteElementSpaceHierarchy> reg_hierarchy;
   std::unique_ptr<MultigridOperator> reg_mg_op;
   std::vector<mfem::Array<int>> reg_dbc_lists;
-  std::unique_ptr<KspSolver> reg_gmg_ksp;  // inner GMG solve on the region submesh
+  std::unique_ptr<GeometricMultigridSolver<Operator>> reg_gmg;  // one cycle per apply
   mfem::Array<int> reg_ess;
   mutable mfem::ParGridFunction reg_pgf, reg_sgf;
   mutable mfem::Vector reg_srhs, reg_ssol;
@@ -3265,16 +3265,10 @@ struct SubstructuringSolver::Impl
     auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
         std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
     amg->SetDropSmallEntries(false);
-    MPI_Comm comm = reg_submesh->GetComm();
-    auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-        iodata, comm, std::move(amg), reg_hierarchy->GetProlongationOperators());
-    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-    pcg->SetInitialGuess(false);
-    pcg->SetRelTol(1.0e-10);
-    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-    pcg->SetMaxIter(1000);
-    reg_gmg_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
-    reg_gmg_ksp->SetOperators(*reg_mg_op, *reg_mg_op);
+    reg_gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
+        iodata, reg_submesh->GetComm(), std::move(amg),
+        reg_hierarchy->GetProlongationOperators());
+    reg_gmg->SetOperator(*reg_mg_op);
 
     reg_sgf.SetSpace(reg_solve_fes);
     reg_srhs.SetSize(reg_solve_fes->GetTrueVSize());
@@ -3303,7 +3297,7 @@ struct SubstructuringSolver::Impl
     reg_sgf.GetTrueDofs(reg_srhs);
     linalg::SetSubVector(reg_srhs, reg_ess, 0.0);
     reg_ssol = 0.0;
-    reg_gmg_ksp->Mult(reg_srhs, reg_ssol);
+    reg_gmg->Mult(reg_srhs, reg_ssol);
     reg_sgf.SetFromTrueDofs(reg_ssol);
     reg_pgf = 0.0;
     reg_submesh->Transfer(reg_sgf, reg_pgf);
