@@ -1750,6 +1750,31 @@ struct SubstructuringSolver::Impl
     }
   }
 
+  // E_ij = u_i^T K u_j with the energy operator of the whole domain, applied once per
+  // field. Collective.
+  mfem::DenseMatrix EnergyGram(const std::vector<mfem::Vector> &u)
+  {
+    const int n = static_cast<int>(u.size());
+    mfem::DenseMatrix E(n);
+    mfem::Vector Ku(nt), t(nt);
+    for (int j = 0; j < n; j++)
+    {
+      K_region_e->Mult(u[j], Ku);
+      Kenv().Mult(u[j], t);
+      Ku += t;
+      for (int i = 0; i < n; i++)
+      {
+        E(i, j) = u[i] * Ku;
+      }
+    }
+    if (n > 0)
+    {
+      MPI_Allreduce(MPI_IN_PLACE, E.GetData(), n * n, MPI_DOUBLE, MPI_SUM,
+                    parent_fes.GetComm());
+    }
+    return E;
+  }
+
   // Unit Dirichlet lift of terminal idx: 1 on its true DOFs.
   mfem::Vector TerminalMode(int idx) const
   {
@@ -3951,66 +3976,59 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
 
 Vector SubstructuringSolver::SolveSource(const Vector &f)
 {
+  return SolveSourceBatch({f})[0];
+}
+
+std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vector> &f)
+{
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   impl->EnsureEnv();
-  impl->EnsureRegionFactor(1);
-  const int nt = impl->nt;
+  const int nt = impl->nt, n = static_cast<int>(f.size());
+  impl->EnsureRegionFactor(n);
 
-  // Environment interior source response: solve A_EE w = f_E, correction (A_env w)|_Gamma.
-  Vector fE(nt), w(nt), Aw(nt);
-  const double *ff = f.HostRead();
+  // Environment interior source responses w = A_EE^-1 f_E, in one batch.
+  std::vector<Vector> fE(n, Vector(nt)), w(n, Vector(nt));
+  std::vector<const mfem::Vector *> X(n);
+  std::vector<mfem::Vector *> Y(n);
+  for (int k = 0; k < n; k++)
   {
-    double *fe = fE.HostWrite();
+    const double *ff = f[k].HostRead();
+    double *fe = fE[k].HostWrite();
     for (int i = 0; i < nt; i++)
     {
       fe[i] = impl->is_env_int[i] ? ff[i] : 0.0;
     }
+    w[k] = 0.0;
+    X[k] = &fE[k];
+    Y[k] = &w[k];
   }
-  w = 0.0;
-  impl->ApplyAeeInv(fE, w);
-  impl->Aenv().Mult(w, Aw);  // assembled: each rank reads its own interface entries
-
-  // RHS: region/interface source minus the environment source correction on the interface.
-  Vector b(nt);
+  if (n > 0)
   {
-    const double *aw = Aw.HostRead();
+    impl->ApplyAeeInvMulti(X, Y);
+  }
+
+  // Region-condensed loads: the region and interface sources minus the environment source
+  // correction (A_env w)|_Gamma (assembled: each rank reads its own interface entries).
+  std::vector<Vector> x(n, Vector(impl->rf_idx.Size()));
+  Vector Aw(nt), b(nt);
+  for (int k = 0; k < n; k++)
+  {
+    impl->Aenv().Mult(w[k], Aw);
+    const double *ff = f[k].HostRead(), *aw = Aw.HostRead();
     double *bb = b.HostWrite();
     for (int i = 0; i < nt; i++)
     {
-      bb[i] = impl->is_region_free[i] ? ff[i] : 0.0;
-      bb[i] -= impl->is_gamma[i] ? aw[i] : 0.0;
+      bb[i] = (impl->is_region_free[i] ? ff[i] : 0.0) - (impl->is_gamma[i] ? aw[i] : 0.0);
     }
+    b.GetSubVector(impl->rf_idx, x[k]);
   }
-
-  std::vector<Vector> xs(1, Vector(impl->rf_idx.Size()));
-  b.GetSubVector(impl->rf_idx, xs[0]);
-  impl->SolveRegion(xs);
-  Vector u = impl->RegionField(xs[0]);
-
-  // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
-  Vector Au(nt), rhs(nt), uE(nt);
-  impl->Aenv().Mult(u, Au);
+  impl->SolveRegion(x);
+  std::vector<Vector> u(n);
+  for (int k = 0; k < n; k++)
   {
-    const double *fe = fE.HostRead(), *au = Au.HostRead();
-    double *r = rhs.HostWrite();
-    for (int i = 0; i < nt; i++)
-    {
-      r[i] = impl->is_env_int[i] ? fe[i] - au[i] : 0.0;
-    }
+    u[k] = impl->RegionField(x[k]);
   }
-  uE = 0.0;
-  impl->ApplyAeeInv(rhs, uE);
-  {
-    const double *ue = uE.HostRead();
-    double *uu = u.HostReadWrite();
-    for (int i = 0; i < nt; i++)
-    {
-      if (impl->is_env_int[i])
-      {
-        uu[i] = ue[i];
-      }
-    }
-  }
+  impl->RecoverEnvInterior(u, &fE);  // u_E = A_EE^-1 (f_E - (A_env u)|_E)
   return u;
 }
 
@@ -4131,69 +4149,75 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   //   G_ij = u_i^T K u_j + (u_i - a_i)^T M_sheet (u_j - a_j) - J_i^T u_j - J_j^T u_i,
   // the native energy for London flux states (J = 0). The kinetic term is formed from the
   // differences (u - a is small for a stiff sheet, and the expanded form would cancel).
-  auto kinetic = [&](const Vector &ui, const Vector &uj, const Source &si, const Source &sj)
-  {
-    Vector di(ui), dj(uj), Mdj(nt);
-    if (si.HasA())
-    {
-      di -= *si.a;
-    }
-    if (sj.HasA())
-    {
-      dj -= *sj.a;
-    }
-    impl->Msheet().Mult(dj, Mdj);
-    return di * Mdj;
-  };
   auto current = [&](const Vector &ui, const Vector &uj, const Source &si, const Source &sj)
   { return (si.HasJ() ? *si.J * uj : 0.0) + (sj.HasJ() ? *sj.J * ui : 0.0); };
 
   // Without the energy interface operator S^K (no model saved or loaded): full solves with
-  // the environment.
+  // the environment, in one batch, and each operator applied once per source.
   if (!impl->mat_dtn_K)
   {
     MFEM_VERIFY(!region_fields, "Region solutions need a saved substructuring model!");
-    std::vector<Vector> u(n, Vector(nt));
-    Vector b(nt);
-    if (work)
-    {
-      work->assign(n, 0.0);
-    }
+    std::vector<Vector> b(n, Vector(nt));
     for (int k = 0; k < n; k++)
     {
-      b = 0.0;
+      b[k] = 0.0;
       if (src[k].HasA())
       {
-        impl->Msheet().Mult(*src[k].a, b);
+        impl->Msheet().Mult(*src[k].a, b[k]);
       }
       if (src[k].HasJ())
       {
-        b += *src[k].J;
+        b[k] += *src[k].J;
       }
-      b.SetSubVector(impl->dbc_tdofs, 0.0);
-      u[k] = SolveSource(b);
-      if (work)
+      b[k].SetSubVector(impl->dbc_tdofs, 0.0);
+    }
+    const std::vector<Vector> u = SolveSourceBatch(b);
+    std::vector<Vector> d(u), Md(n, Vector(nt));
+    for (int j = 0; j < n; j++)
+    {
+      if (src[j].HasA())
       {
-        (*work)[k] = mfem::InnerProduct(comm, b, u[k]);
+        d[j] -= *src[j].a;
       }
-      for (int l = 0; l < nl; l++)
+      Md[j] = 0.0;
+      if (impl->has_sheets)
       {
-        fun->values(l, k) = mfem::InnerProduct(comm, *fun->l[l], u[k]);
+        impl->Msheet().Mult(d[j], Md[j]);
       }
     }
-    mfem::DenseMatrix E(n);
+    // The kinetic and current terms, the source works b_k^T u_k and the functionals,
+    // reduced together.
+    const std::size_t nn = static_cast<std::size_t>(n) * n;
+    std::vector<double> loc(nn + n + static_cast<std::size_t>(nl) * n, 0.0);
     for (int i = 0; i < n; i++)
     {
       for (int j = 0; j < n; j++)
       {
-        double loc = -current(u[i], u[j], src[i], src[j]), glob = 0.0;
-        if (impl->has_sheets)
-        {
-          loc += kinetic(u[i], u[j], src[i], src[j]);
-        }
-        MPI_Allreduce(&loc, &glob, 1, MPI_DOUBLE, MPI_SUM, comm);
-        E(i, j) = MutualEnergy(u[i], u[j]) + glob;
+        loc[i * n + j] = (d[i] * Md[j]) - current(u[i], u[j], src[i], src[j]);
       }
+      loc[nn + i] = b[i] * u[i];
+      for (int l = 0; l < nl; l++)
+      {
+        loc[nn + n + l * n + i] = *fun->l[l] * u[i];
+      }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, loc.data(), static_cast<int>(loc.size()), MPI_DOUBLE,
+                  MPI_SUM, comm);
+    mfem::DenseMatrix E = impl->EnergyGram(u);
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        E(i, j) += loc[i * n + j];
+      }
+      for (int l = 0; l < nl; l++)
+      {
+        fun->values(l, i) = loc[nn + n + l * n + i];
+      }
+    }
+    if (work)
+    {
+      work->assign(loc.begin() + nn, loc.begin() + nn + n);
     }
     if (fields)
     {
@@ -4462,14 +4486,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   if (impl->EnergyDiffers() && !impl->mat_dtn_K)
   {
     std::vector<Vector> u = SolveDirichletBatch(full());
-    mfem::DenseMatrix E(n);
-    for (int i = 0; i < n; i++)
-    {
-      for (int j = 0; j < n; j++)
-      {
-        E(i, j) = MutualEnergy(u[i], u[j]);
-      }
-    }
+    mfem::DenseMatrix E = impl->EnergyGram(u);
     if (fields)
     {
       fields->assign(u.begin(), u.begin() + nf);
