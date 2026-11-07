@@ -4,6 +4,7 @@
 #include "bilinearform.hpp"
 
 #include <algorithm>
+#include <optional>
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -49,13 +50,20 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
 
   // Classify each integrator once, before the thread/geometry loops. An integrator outside
   // the shared lossy-domain or active-boundary support union remains unrestricted; an empty
-  // support creates no sub-operator.
+  // support creates no sub-operator. The domain integrators restricted to the elements of
+  // given attributes are assembled separately below.
   auto GetIntegratorSubsets = [&](const auto &integs, bool use_bdr)
   {
     std::vector<std::optional<ceed::CeedElementSubset>> subsets;
     subsets.reserve(integs.size());
-    for (const auto &integ : integs)
+    for (std::size_t i = 0; i < integs.size(); i++)
     {
+      const auto &integ = integs[i];
+      if (!use_bdr && !domain_integ_attr[i].empty())
+      {
+        subsets.emplace_back(std::nullopt);
+        continue;
+      }
       if (!skip_zero_coeff_elems)
       {
         subsets.emplace_back(ceed::CeedElementSubset::Full);
@@ -83,6 +91,17 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   };
   const auto domain_subsets = GetIntegratorSubsets(domain_integs, false);
   const auto boundary_subsets = GetIntegratorSubsets(boundary_integs, true);
+
+  // The distinct attribute lists of the restricted domain integrators.
+  std::vector<std::vector<int>> restrictions;
+  for (const auto &attr_list : domain_integ_attr)
+  {
+    if (!attr_list.empty() &&
+        std::ranges::find(restrictions, attr_list) == restrictions.end())
+    {
+      restrictions.push_back(attr_list);
+    }
+  }
 
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
@@ -128,6 +147,41 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
                           data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
           // Sub-operator owned by ceed::Operator.
           op->AddSubOperator(sub_op);
+        }
+      }
+    }
+
+    // Assemble the domain integrators restricted to the elements of given attributes.
+    for (const auto &attr_list : restrictions)
+    {
+      for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed, attr_list))
+      {
+        if (mfem::Geometry::Dimension[geom] != mesh.Dimension())
+        {
+          continue;
+        }
+        const auto trial_map_type =
+            trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+        const auto test_map_type =
+            test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+        CeedElemRestriction trial_restr =
+            trial_fespace.GetCeedElemRestriction(ceed, geom, data, attr_list);
+        CeedElemRestriction test_restr =
+            test_fespace.GetCeedElemRestriction(ceed, geom, data, attr_list);
+        CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
+        CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
+        for (std::size_t k = 0; k < domain_integs.size(); k++)
+        {
+          if (domain_integ_attr[k] != attr_list)
+          {
+            continue;
+          }
+          const auto &integ = domain_integs[k];
+          CeedOperator sub_op;
+          integ->SetMapTypes(trial_map_type, test_map_type);
+          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
+                          data.geom_data, data.geom_data_restr, &sub_op);
+          op->AddSubOperator(sub_op, nullptr, attr_list);  // Owned by ceed::Operator
         }
       }
     }

@@ -177,10 +177,12 @@ struct Measurement
   // - I_inc(omega) = I_in, for driven so that Jcoeff_excitation = 1.0
   double Jcoeff_excitation = 1.0;  // transient || driven
 
-  // Eigenmode data including error from solver.
+  // Eigenmode data including error from solver, and the fraction of the field energy in the
+  // PML regions (see DomainPostOperator).
   double eigenmode_Q = 0.0;
   double error_bkwd = 0.0;
   double error_abs = 0.0;
+  double pml_energy_fraction = 0.0;
 
   // "Actual measurements".
 
@@ -390,8 +392,9 @@ protected:
 
   // Eigenmode.
   std::optional<TableWithCSVFile> eig;
+  bool eig_pml = false;
 
-  void InitializeEig()
+  void InitializeEig(bool has_pml)
     requires(solver_t == ProblemType::EIGENMODE);
   void PrintEig()
     requires(solver_t == ProblemType::EIGENMODE);

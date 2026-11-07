@@ -26,6 +26,7 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
   op_t.resize(nt, nullptr);
   u.resize(nt, nullptr);
   v.resize(nt, nullptr);
+  sub_op_attr.resize(nt);
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
@@ -62,7 +63,8 @@ Operator::~Operator()
   }
 }
 
-void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
+void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t,
+                              const std::vector<int> &attr_list)
 {
   // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
@@ -77,6 +79,7 @@ void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
               "Dimensions mismatch for CeedOperator!");
   PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(op[id], sub_op));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+  sub_op_attr[id].push_back(attr_list);
   if (sub_op_t)
   {
     Ceed ceed_t;
@@ -1229,8 +1232,9 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
 std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                               const FiniteElementSpace &fespace_coarse)
 {
-  auto SingleOperatorCoarsen =
-      [&fespace_coarse](Ceed ceed, CeedOperator op_fine, CeedOperator *op_coarse)
+  auto SingleOperatorCoarsen = [&fespace_coarse](Ceed ceed, CeedOperator op_fine,
+                                                 const std::vector<int> &attr_list,
+                                                 CeedOperator *op_coarse)
   {
     CeedBasis basis_fine;
     CeedElemTopology geom;
@@ -1239,23 +1243,36 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
 
     // The coarse operator reuses the fine operator's quadrature data, so its finite element
     // restriction must consume the identical element subset in the same mesh order.
+    // Sub-operators can be restricted to the elements of given attributes, or to the shared
+    // element subset.
     const auto mfem_geom = GetMfemTopology(geom);
-    const auto &geom_data =
-        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(mfem_geom);
-    CeedElemRestriction restr_fine;
-    CeedInt num_elem;
-    PalaceCeedCall(ceed, CeedOperatorGetActiveElemRestriction(op_fine, &restr_fine));
-    PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(restr_fine, &num_elem));
-    CeedElementSubset subset = CeedElementSubset::Full;
-    if (num_elem != static_cast<CeedInt>(geom_data.indices.size()))
+    CeedElemRestriction restr_coarse;
+    if (!attr_list.empty())
     {
-      MFEM_VERIFY(num_elem == static_cast<CeedInt>(geom_data.active_indices.size()),
-                  "Fine operator uses an unknown element subset in CeedOperatorCoarsen!");
-      subset = CeedElementSubset::Active;
+      const auto &geom_data =
+          fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed, attr_list).at(mfem_geom);
+      restr_coarse =
+          fespace_coarse.GetCeedElemRestriction(ceed, mfem_geom, geom_data, attr_list);
     }
-    CeedElemRestriction restr_coarse =
-        fespace_coarse.GetCeedElemRestriction(ceed, mfem_geom, geom_data, subset);
-    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMfemTopology(geom));
+    else
+    {
+      const auto &geom_data =
+          fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(mfem_geom);
+      CeedElemRestriction restr_fine;
+      CeedInt num_elem;
+      PalaceCeedCall(ceed, CeedOperatorGetActiveElemRestriction(op_fine, &restr_fine));
+      PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(restr_fine, &num_elem));
+      CeedElementSubset subset = CeedElementSubset::Full;
+      if (num_elem != static_cast<CeedInt>(geom_data.indices.size()))
+      {
+        MFEM_VERIFY(num_elem == static_cast<CeedInt>(geom_data.active_indices.size()),
+                    "Fine operator uses an unknown element subset in CeedOperatorCoarsen!");
+        subset = CeedElementSubset::Active;
+      }
+      restr_coarse =
+          fespace_coarse.GetCeedElemRestriction(ceed, mfem_geom, geom_data, subset);
+    }
+    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, mfem_geom);
 
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
                                                           basis_coarse, op_coarse, nullptr,
@@ -1291,9 +1308,10 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
       CeedOperator sub_op_coarse;
-      SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
+      const auto &attr_list = op_fine.GetSubOperatorAttributes(id, k);
+      SingleOperatorCoarsen(ceed, sub_ops_fine[k], attr_list, &sub_op_coarse);
       // Sub-operator owned by ceed::Operator.
-      op_coarse->AddSubOperator(sub_op_coarse);
+      op_coarse->AddSubOperator(sub_op_coarse, nullptr, attr_list);
     }
   }
 

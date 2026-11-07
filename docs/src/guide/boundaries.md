@@ -69,11 +69,149 @@ and is available for eigenmode or frequency or time domain driven simulation typ
 second-order absorbing boundary condition is only available for frequency domain
 simulations.
 
-[Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
-boundaries for frequency and time domain electromagnetic formulations are not yet
-implemented, but are
-[common](https://www.sciencedirect.com/science/article/abs/pii/S0021999112000344) in solvers
-for computational electromagnetics and will be a useful addition.
+## Perfectly matched layer
+
+A [perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer) is
+an absorbing region surrounding the physical domain, which typically reflects much less
+than an absorbing boundary condition, at the cost of additional mesh elements. In *Palace*,
+the domains of the PML regions are specified with the `"Attributes"` of the blocks of
+[`config["Domains"]["PML"]`](../config/reference.md#config-domains-pml), and a PML is
+available for 3D frequency domain driven and eigenmode simulations. The material properties
+of these domains in
+[`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
+(relative permittivity and permeability, possibly anisotropic, and loss tangent) define the
+background medium matched by the layer. The waves are attenuated before they reach the outer
+boundary of the layer, which can be left as a PEC or natural (PMC) boundary.
+
+In most cases, the default parameters are appropriate, and it is sufficient to mesh the layer
+as a shell of a few elements around a box-shaped physical domain and to list its domains:
+
+```json
+"Domains":
+{
+  "Materials":
+  [
+    { "Attributes": [1, 2], "Permittivity": 1.0 }
+  ],
+  "PML": [{ "Attributes": [2] }]
+}
+```
+
+The uniaxial PML terminates an axis-aligned, box-shaped physical domain by stretching the
+coordinate normal to each face of the box with the complex factor
+``s = \kappa + \sigma / (\varepsilon_0 (\alpha + i\omega))``, where ``\kappa``,
+``\sigma``, and ``\alpha`` are graded polynomially from their values at the interface with
+the physical domain (1, 0, and 0) to `"KappaMax"`, `"SigmaMax"`, and ``2\pi`` `"AlphaMax"`
+at the outer edge of the layer. Layers on several faces, including the edge and corner
+regions of the box, are supported. By default, the faces and thicknesses of the layer of a
+block are detected by comparing the bounding boxes of the physical (non-PML) region and of
+the PML regions of the block. Alternatively, they can be specified using `"Direction"` and
+`"Thickness"`, which is required for the blocks whose PML regions do not lie outside of the
+bounding box of the physical region (the thickness is measured inward from the bounding box
+of the PML regions of the block). A real stretch `"KappaMax"` > 1 improves the absorption of
+evanescent waves, when near fields reach the layer, but reduces the accuracy for propagating
+waves on a given mesh.
+
+The PML regions of a block may have different materials (a layered background medium, when
+a material interface crosses the layer) and elements of any type (for example prisms and
+hexahedra extruded from the faces of the box, with tetrahedra in the physical region), and
+PEC surfaces may cross them, such as a ground plane which extends to the outer boundary. The
+stretch must be continuous, which is checked at the start of the simulation: the physical
+region may only touch a PML block on the inner faces of the layer, where there is no
+stretch, and not on the faces of the layer across its thickness. A region which extends
+through the layer to the outer boundary must therefore be part of the PML block, with its
+material as the background medium of the layer, and an absorber which does not line the
+whole face of the domain must be modeled with a lossy material rather than a PML.
+
+The absorption of the layer is limited by its discretization: a strongly absorbing layer
+reflects and absorbs spuriously when its stretch changes too much between neighboring
+elements. By default (`"SigmaMax": "Auto"`), the conductivity of each face is therefore
+computed from the size ``h`` of the PML elements normal to the face, measured on the mesh,
+and the finite element order ``p``, as
+``\sigma_\text{max} = 0.8 (n + 1) p / (\eta_0 n_r h)`` for the grading order ``n`` and
+the smallest refractive index ``n_r`` of the materials of the PML regions of the block. The
+theoretical reflection at normal incidence of a layer of ``N`` elements is then
+``e^{-1.6 p N}``, and ``e^{-1.6 p N \cos\theta}`` at the angle of incidence ``\theta``:
+for a given order, it is set by the number of elements across the layer, and not by its
+thickness. The thickness ``d`` still matters through the element size ``h = d / N``, which
+must resolve the fields in the layer like the mesh of the physical region does (for
+example, about ``\lambda / 10`` for second-order elements, for the wavelength
+``\lambda`` in the materials of the PML regions at the highest frequency of interest): a
+thick layer of few elements is under-resolved, and reflects. In practice, choose the element
+size ``h`` from the wavelength and the order, as for the physical region, and the number of
+elements ``N`` from the required absorption: 4 to 8 elements are typically sufficient for
+second-order elements, with more for grazing incidence. The thickness ``d = N h`` follows.
+More elements increase the absorption but also increases the simulation time so that PML
+regions are best limited to the faces through which waves leave the domain. A structured
+(extruded) mesh of layers of elements, aligned with the faces of the box, is recommended
+in the PML regions.
+
+The theoretical reflection, which is printed for each face, is that of the continuous
+layer. The discretized layer reflects more, which dominates at normal and moderate
+incidence where the theoretical reflection is very small: at normal incidence and with the
+default `"SigmaMax"`, second-order elements reflect about -80 to -85 dB with 8 elements
+and -93 to -100 dB with 12 elements for ``h`` between ``\lambda / 32`` and
+``\lambda / 16``, and refining the mesh at a fixed number of elements does not reduce
+this reflection. The default conductivity is chosen for oblique and grazing incidence,
+where the theoretical reflection is reached. For waves which leave the domain near normal
+incidence (such as the backscattered field of a scatterer), a weaker absorption, with a
+`"ReflectionTarget"` slightly below the required reflection, reflects less (for example
+5 to 20 dB less with 8 to 12 second-order elements and a target of ``10^{-6}`` to
+``10^{-7}``), at the cost of larger reflections at grazing incidence.
+
+A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
+of the structures, which it distorts instead. The PML regions should therefore be placed at
+a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
+lowest frequency of interest. Otherwise, a weaker absorption (a larger `"ReflectionTarget"`)
+reduces the spurious losses, at the cost of larger reflections of the propagating waves.
+
+By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
+frequency for driven simulations, or the target frequency for eigenmode simulations. This
+static PML keeps the system matrices independent of frequency, and so eigenmode problems
+remain linear, while the absorption in the layer grows with frequency. With
+`"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
+frequency, for an absorption independent of frequency, and a complex frequency shift
+`"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency.
+
+In eigenmode simulations, the PML adds modes which are not those of the physical problem:
+modes of the layer, with low quality factors and often large imaginary parts of the
+frequency, or negative ones for growing modes (the quality factor in `eig.csv` is always
+positive), and clusters of modes of the continuum of waves leaving the domain. With PML
+regions, the fraction of the field energy of each mode in the PML regions is written to
+`eig.csv` (`"PML fraction"`) to identify them: it is small for the modes of the physical
+problem. Clusters of such modes near the target slow down the convergence of the eigenvalue
+solver, so that it is best to request few modes
+([`config["Solver"]["Eigenmode"]["N"]`](../config/reference.md#config-solver-eigenmode-n))
+with a `"Target"` close to the modes of interest and a moderate `"Tol"`. When more modes are
+needed, the maximum number of iterations of the eigenvalue solver (`"MaxIts"`) must allow for
+the many restarts which such clusters require: if fewer than `"N"` modes converge within
+`"MaxIts"` iterations, the converged modes are written, with a warning.
+
+The total field energies written to `domain-E.csv` exclude the PML regions. In the PML
+regions, the field energies of the domains of
+[`config["Domains"]["Postprocessing"]["Energy"]`](../config/reference.md#config-domains-postprocessing-energy),
+as well as the PML fractions of eigenmodes, are computed with the material properties of the
+background medium: the fields in the layer are those of the stretched coordinates, so that
+these energies measure the field in the layer rather than physical energies (and their
+participation ratios, relative to the energy of the physical region, can exceed one).
+
+PML can cause convergence difficulties in iterative linear solvers. By default,
+([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
+the multigrid preconditioner is therefore complemented by a sparse direct solve of the
+PML regions, which restores the convergence of the multigrid preconditioner without PML.
+Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
+STRUMPACK, or MUMPS) and AMS is not supported with PML regions.
+
+Sample configurations are provided in the
+[`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
+[`examples/pml_layered`](https://github.com/awslabs/palace/blob/main/examples/pml_layered),
+and [`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
+directories: a rectangular waveguide terminated by a PML (driven simulations, an adaptive
+sweep with circuit synthesis, eigenmode simulations of a cavity coupled to the waveguide
+through an iris, and an E-plane bifurcation whose arms of different lengths are terminated
+by two PML blocks), a layered substrate and vacuum parallel-plate waveguide whose material
+interface crosses the PML, and a periodic cell with a Floquet port for plane-wave absorption
+at oblique incidence (at grazing incidence, and with an adaptive sweep at 45°).
 
 ## Finite conductivity boundary
 
