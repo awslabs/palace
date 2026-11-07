@@ -2441,6 +2441,112 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v,
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
 }
+
+template <ProblemType solver_t>
+typename PostOperator<solver_t>::EnergyMatrices
+PostOperator<solver_t>::MeasureEnergyMatrices(const std::vector<Vector> &potentials)
+  requires(solver_t == ProblemType::ELECTROSTATIC)
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  EnergyMatrices matrices;
+  const int n = static_cast<int>(potentials.size());
+  const auto comm = fem_op->GetComm();
+
+  // Domain energies, with the same operators as for the energies of the individual
+  // solutions and the Maxwell capacitance matrix: (C_k)ᵢⱼ = Vᵢᵀ M_k Vⱼ for domain k.
+  if (!dom_post_op.M_i.empty())
+  {
+    std::vector<Vector> V_l(n);
+    for (int i = 0; i < n; i++)
+    {
+      SetVGridFunction(potentials[i], false);
+      V_l[i].UseDevice(true);
+      V_l[i] = V->Real();
+    }
+    for (const auto &[idx, ops] : dom_post_op.M_i)
+    {
+      auto &C = matrices.domain[idx];
+      C.SetSize(n);
+      C = 0.0;
+      if (!ops.first)
+      {
+        continue;
+      }
+      for (int i = 0; i < n; i++)
+      {
+        ops.first->Mult(V_l[i], dom_post_op.D);
+        for (int j = i; j < n; j++)
+        {
+          C(i, j) = linalg::LocalDot(V_l[j], dom_post_op.D);
+        }
+      }
+      Mpi::GlobalSum(n * n, C.Data(), comm);
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = 0; j < i; j++)
+        {
+          C(i, j) = C(j, i);
+        }
+      }
+    }
+  }
+
+  // Interface dielectric energies. The integrands are quadratic in E, so the cross terms
+  // follow from the energies of the pairwise sums: (C_k)ᵢⱼ = W_k(Eᵢ + Eⱼ) - W_k(Eᵢ) -
+  // W_k(Eⱼ) for i ≠ j, and (C_k)ᵢᵢ = 2 W_k(Eᵢ), where W_k is the interface energy of
+  // surface k.
+  if (!surf_post_op.eps_surfs.empty())
+  {
+    const auto &Grad = fem_op->GetGradMatrix();
+    Vector v(Grad.Width()), e(Grad.Height());
+    v.UseDevice(true);
+    e.UseDevice(true);
+    const int n_eps = static_cast<int>(surf_post_op.eps_surfs.size());
+    auto MeasureInterfaceEnergies = [&](const Vector &v_, double *energies)
+    {
+      // E = -∇V on the true dofs, as for the individual solutions.
+      e = 0.0;
+      Grad.AddMult(v_, e, -1.0);
+      SetEGridFunction(e);
+      int k = 0;
+      for (const auto &[idx, data] : surf_post_op.eps_surfs)
+      {
+        energies[k++] = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
+      }
+    };
+    std::vector<double> W(n * n_eps), W_ij(n_eps);
+    for (int i = 0; i < n; i++)
+    {
+      MeasureInterfaceEnergies(potentials[i], W.data() + i * n_eps);
+    }
+    for (const auto &[idx, data] : surf_post_op.eps_surfs)
+    {
+      matrices.surface[idx].SetSize(n);
+    }
+    for (int i = 0; i < n; i++)
+    {
+      int k = 0;
+      for (auto &[idx, C] : matrices.surface)
+      {
+        C(i, i) = 2.0 * W[i * n_eps + k++];
+      }
+      for (int j = i + 1; j < n; j++)
+      {
+        v = potentials[i];
+        v += potentials[j];
+        MeasureInterfaceEnergies(v, W_ij.data());
+        k = 0;
+        for (auto &[idx, C] : matrices.surface)
+        {
+          C(i, j) = C(j, i) = W_ij[k] - W[i * n_eps + k] - W[j * n_eps + k];
+          k++;
+        }
+      }
+    }
+  }
+  return matrices;
+}
+
 template <ProblemType solver_t>
 double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
                                                   const Vector &b, int idx)

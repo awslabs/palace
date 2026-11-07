@@ -73,6 +73,25 @@
           "Attributes": [4],  // Sphere B
 	        "Type": "Electric"
         }
+      ],
+      "Dielectric":  // Metal-air interface participation of a thin oxide layer
+      [
+        {
+          "Index": 1,
+          "Attributes": [3],  // Sphere A
+          "Type": "MA",
+          "Thickness": 2.0e-7,  // 2 nm
+          "Permittivity": 10.0,
+          "LossTan": 1.0e-3
+        },
+        {
+          "Index": 2,
+          "Attributes": [4],  // Sphere B
+          "Type": "MA",
+          "Thickness": 2.0e-7,  // 2 nm
+          "Permittivity": 10.0,
+          "LossTan": 1.0e-3
+        }
       ]
     }
   },

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <numbers>
 #include <fmt/format.h>
@@ -1044,4 +1045,151 @@ TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",
 
   GridFunction gf_complex(nd_fespace, true);
   CheckScaling(gf_complex, scale);
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Electrostatic energy matrices",
+                 "[postoperator][Serial][Parallel]")
+{
+  // The energy matrices over a set of potentials must reproduce the domain and interface
+  // dielectric energies of any linear combination of the potentials, as evaluated directly
+  // for a single potential (a 1 x 1 energy matrix is twice the energy).
+  Units units(0.496, 1.453);
+  IoData iodata = IoData(units);
+  iodata.problem.type = ProblemType::ELECTROSTATIC;
+  iodata.problem.output = temp_dir.string();
+  iodata.solver.order = 2;
+  iodata.domains = config::DomainData(json::parse(R"({
+    "Materials": [{"Attributes": [1], "Permittivity": 4.0},
+                  {"Attributes": [2], "Permittivity": 1.0}],
+    "Postprocessing": {"Energy": [{"Index": 1, "Attributes": [1]},
+                                  {"Index": 2, "Attributes": [2]}]}
+  })"));
+  iodata.boundaries = config::BoundaryData(json::parse(R"({
+    "Ground": {"Attributes": [1]},
+    "Terminal": [{"Index": 1, "Attributes": [3]}, {"Index": 2, "Attributes": [5]}],
+    "Postprocessing": {"Dielectric": [
+      {"Index": 1, "Attributes": [1], "Type": "MS", "Thickness": 0.01, "Permittivity": 10.0},
+      {"Index": 2, "Attributes": [6], "Type": "MA", "Thickness": 0.01, "Permittivity": 10.0},
+      {"Index": 3, "Attributes": [2, 4], "Thickness": 0.02, "Permittivity": 5.0}]}
+  })"));
+  iodata.CheckConfiguration();
+
+  // Unit cube with a substrate (attribute 1) below z = 1/2 and vacuum (attribute 2) above,
+  // so that the metal-substrate and metal-air interfaces select different sides.
+  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON));
+  mfem::Vector center(3);
+  for (int e = 0; e < serial_mesh->GetNE(); e++)
+  {
+    serial_mesh->GetElementCenter(e, center);
+    serial_mesh->SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  auto comm = Mpi::World();
+  iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
+  iodata.NondimensionalizeInputs(serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  LaplaceOperator laplace_op(iodata, mesh);
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+
+  // The energies are bilinear forms in any potentials, not only in Laplace solutions.
+  auto &h1_fespace = laplace_op.GetH1Space();
+  const std::vector<std::function<double(const mfem::Vector &)>> potentials = {
+      [](const mfem::Vector &x) { return x(0); },
+      [](const mfem::Vector &x) { return x(1) * x(1) + 0.5 * x(2); },
+      [](const mfem::Vector &x) { return std::sin(std::numbers::pi * x(0)) * x(2); }};
+  std::vector<Vector> V;
+  for (const auto &f : potentials)
+  {
+    mfem::FunctionCoefficient coeff(f);
+    mfem::ParGridFunction gf(&h1_fespace.Get());
+    gf.ProjectCoefficient(coeff);
+    auto &v = V.emplace_back(h1_fespace.GetTrueVSize());
+    gf.GetTrueDofs(v);
+  }
+  const auto matrices = post_op.MeasureEnergyMatrices(V);
+  REQUIRE(matrices.domain.size() == 2);
+  REQUIRE(matrices.surface.size() == 3);
+
+  const int n = static_cast<int>(V.size());
+  auto CheckSymmetric = [n](const mfem::DenseMatrix &C)
+  {
+    REQUIRE(C.Height() == n);
+    REQUIRE(C.Width() == n);
+    for (int i = 0; i < n; i++)
+    {
+      CHECK(C(i, i) >= 0.0);
+      for (int j = 0; j < i; j++)
+      {
+        CHECK(C(i, j) == C(j, i));
+      }
+    }
+  };
+  for (const auto &[idx, C] : matrices.domain)
+  {
+    CheckSymmetric(C);
+  }
+  for (const auto &[idx, C] : matrices.surface)
+  {
+    CheckSymmetric(C);
+  }
+
+  // Quadratic form aᵀ C a, with a tolerance relative to the magnitudes of its terms.
+  auto CheckQuadraticForm =
+      [n](const std::vector<double> &a, const mfem::DenseMatrix &C, double direct)
+  {
+    double quad = 0.0, scale = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        quad += a[i] * C(i, j) * a[j];
+        scale += std::abs(a[i] * C(i, j) * a[j]);
+      }
+    }
+    CHECK(scale > 0.0);
+    CHECK_THAT(quad, WithinAbs(direct, 1.0e-10 * scale));
+  };
+  for (const auto &a : std::vector<std::vector<double>>{
+           {1.0, 0.0, 0.0}, {0.7, -1.3, 0.4}, {1.0, 1.0, 1.0}, {-0.2, 0.5, 2.0}})
+  {
+    Vector v(V[0].Size());
+    v = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      v.Add(a[i], V[i]);
+    }
+    const auto direct = post_op.MeasureEnergyMatrices({v});
+    for (const auto &[idx, C] : matrices.domain)
+    {
+      CheckQuadraticForm(a, C, direct.domain.at(idx)(0, 0));
+    }
+    for (const auto &[idx, C] : matrices.surface)
+    {
+      CheckQuadraticForm(a, C, direct.surface.at(idx)(0, 0));
+    }
+  }
+
+  // The domain energy matrices of a partition of the domain sum to the total energy form,
+  // which defines the Maxwell capacitance matrix.
+  auto &V_gf = post_op.GetVGridFunction().Real();
+  const auto &dom_post_op = post_op.GetDomainPostOp();
+  std::vector<Vector> V_l;
+  for (const auto &v : V)
+  {
+    V_gf.SetFromTrueDofs(v);
+    V_l.emplace_back(V_gf);
+  }
+  for (int i = 0; i < n; i++)
+  {
+    dom_post_op.M_elec->Mult(V_l[i], dom_post_op.D);
+    for (int j = 0; j < n; j++)
+    {
+      const double total = linalg::Dot<Vector>(comm, V_l[j], dom_post_op.D);
+      const double sum = matrices.domain.at(1)(i, j) + matrices.domain.at(2)(i, j);
+      CHECK_THAT(sum, WithinRel(total, 1.0e-12) || WithinAbs(total, 1.0e-14));
+    }
+  }
 }

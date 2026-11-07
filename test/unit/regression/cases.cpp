@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -343,6 +344,86 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
         INFO("row " << r + 1 << " column '" << rc.header_text << "'");
         CHECK_THAT(ac.data[r], Catch::Matchers::WithinRel(rc.data[r], rtol) ||
                                    Catch::Matchers::WithinAbs(rc.data[r], atol));
+      }
+    }
+  };
+}
+
+// Reference-free checks of an electrostatic participation-weighted capacitance matrix file
+// (domain-Cp.csv or surface-Cp.csv), after the reference diff at the case tolerances. The
+// matrices are symmetric and their diagonals are the participation ratios of the single
+// terminal excitations in the sibling p_file (domain-E.csv or surface-Q.csv) times the
+// diagonal of the Maxwell capacitance matrix in terminal-C.csv. If full_domain is given,
+// the matrix of that domain energy index covers the whole computational domain and must
+// equal C, which checks the off-diagonal cross terms against the independently computed
+// capacitances.
+palace::test::CustomCheck TestEnergyMatrices(std::string name, std::string p_name,
+                                             std::string p_file,
+                                             palace::test::RegressionOptions opts,
+                                             std::optional<int> full_domain = std::nullopt)
+{
+  return [name, p_name, p_file, opts, full_domain](palace::Table &actual,
+                                                   palace::Table &reference,
+                                                   const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+
+    // Columns are "<name>[k][i][j] (F)" for the terminal indices j, rows are terminals i.
+    constexpr double rtol = 1.0e-9;
+    const auto dir = actual_path.parent_path();
+    palace::TableWithCSVFile c_file((dir / "terminal-C.csv").string(),
+                                    /*load_existing_file=*/true);
+    palace::TableWithCSVFile p_table((dir / p_file).string(), /*load_existing_file=*/true);
+    auto find_column = [](palace::Table &table, const std::string &header)
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column.data;
+        }
+      }
+      FAIL("Missing column \"" << header << "\"");
+      return &table[0].data;
+    };
+    const auto terminals = c_file.table[0].data;
+    const std::size_t n = terminals.size();
+    REQUIRE(n > 0);
+    REQUIRE(actual.n_rows() == n);
+    REQUIRE((actual.n_cols() - 1) % n == 0);
+    auto C = [&](std::size_t i, std::size_t j)
+    {
+      const auto t = std::to_string(static_cast<int>(terminals[j]));
+      return (*find_column(c_file.table, "C[i][" + t + "] (F)"))[i];
+    };
+    for (std::size_t c = 1; c < actual.n_cols(); c += n)
+    {
+      const std::string &header = actual[c].header_text;
+      const std::size_t k0 = header.find('[') + 1;
+      const int k = std::stoi(header.substr(k0, header.find(']') - k0));
+      auto Ck = [&](std::size_t i, std::size_t j)
+      {
+        const auto t = std::to_string(static_cast<int>(terminals[j]));
+        return (*find_column(actual,
+                             name + "[" + std::to_string(k) + "][i][" + t + "] (F)"))[i];
+      };
+      const auto &p = *find_column(p_table.table, p_name + "[" + std::to_string(k) + "]");
+      for (std::size_t i = 0; i < n; i++)
+      {
+        INFO(name << "[" << k << "], terminal row " << i + 1);
+        CHECK_THAT(Ck(i, i), Catch::Matchers::WithinRel(p[i] * C(i, i), rtol) ||
+                                 Catch::Matchers::WithinAbs(p[i] * C(i, i), opts.atol));
+        for (std::size_t j = 0; j < i; j++)
+        {
+          CHECK(Ck(i, j) == Ck(j, i));
+        }
+        if (full_domain && k == *full_domain)
+        {
+          for (std::size_t j = 0; j < n; j++)
+          {
+            CHECK_THAT(Ck(i, j), Catch::Matchers::WithinRel(C(i, j), rtol));
+          }
+        }
       }
     }
   };
@@ -1009,6 +1090,13 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.gridfunction_fields = true;
+  // The interface energies are far below the default absolute tolerance scale.
+  auto surface_opts = opts;
+  surface_opts.atol = 1.0e-30;
+  opts.custom_checks["domain-Cp.csv"] =
+      TestEnergyMatrices("Cp_elec", "p_elec", "domain-E.csv", opts, /*full_domain=*/1);
+  opts.custom_checks["surface-Cp.csv"] =
+      TestEnergyMatrices("Cp_surf", "p_surf", "surface-Q.csv", surface_opts);
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
 }
 
@@ -1915,6 +2003,8 @@ TEST_CASE("cavity2d_electrostatic", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.custom_checks["domain-Cp.csv"] =
+      TestEnergyMatrices("Cp_elec", "p_elec", "domain-E.csv", opts, /*full_domain=*/1);
   palace::test::RunRegressionCase("cavity2d", "cavity2d_electrostatic.json",
                                   "electrostatic", opts);
 }

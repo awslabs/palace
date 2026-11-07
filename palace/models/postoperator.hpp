@@ -489,6 +489,21 @@ public:
   double MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
     requires(solver_t == ProblemType::ELECTROSTATIC);
 
+  // Bilinear forms of the electric field energy in each domain energy postprocessing region
+  // and of the interface dielectric energy of each interface dielectric postprocessing
+  // surface, over a set of potential solutions Vᵢ (the terminal excitations). They are
+  // normalized like the Maxwell capacitance matrix: the energy of V = ∑ᵢ aᵢ Vᵢ is ½ aᵀ C a.
+  // The diagonal entries are twice the energies measured for each solution, and the
+  // off-diagonal entries follow from the energies of the pairwise sums (polarization
+  // identity), so every entry uses the same integration as the energy of a single solution.
+  // The nondimensional matrices are keyed by postprocessing index.
+  struct EnergyMatrices
+  {
+    std::map<int, mfem::DenseMatrix> domain, surface;
+  };
+  EnergyMatrices MeasureEnergyMatrices(const std::vector<Vector> &potentials)
+    requires(solver_t == ProblemType::ELECTROSTATIC);
+
   double MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)
     requires(solver_t == ProblemType::MAGNETOSTATIC);
 

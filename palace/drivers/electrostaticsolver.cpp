@@ -139,6 +139,11 @@ void ElectrostaticSolver::PostprocessTerminals(
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
 
+  // The bilinear forms of the domain energy and interface dielectric postprocessing over
+  // the terminal excitations, normalized like C, from which the participation ratios of any
+  // terminal voltages follow without further solves (collective).
+  const auto energy_matrices = post_op.MeasureEnergyMatrices(V);
+
   // Only root writes to disk (every process has full matrices).
   if (!root)
   {
@@ -175,6 +180,44 @@ void ElectrostaticSolver::PostprocessTerminals(
   PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
   PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
   PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
+
+  // Write the participation-weighted (partial) capacitance matrices of the domain energy
+  // and interface dielectric postprocessing: for terminal voltages V, the energy of domain
+  // or surface k is ½ Vᵀ Cp_k V and its participation ratio is (Vᵀ Cp_k V) / (Vᵀ C V).
+  auto PrintMatrices =
+      [&terminal_sources, this](const std::string &file, const std::string &name,
+                                const std::string &unit,
+                                const std::map<int, mfem::DenseMatrix> &mats, double scale)
+  {
+    if (mats.empty())
+    {
+      return;
+    }
+    TableWithCSVFile output(post_dir / file);
+    output.table.insert(Column("i", "i", 0, 0, 2, ""));
+    for (const auto &[idx, data] : terminal_sources)
+    {
+      output.table["i"] << double(idx);
+    }
+    for (const auto &[k, mat] : mats)
+    {
+      int j = 0;
+      for (const auto &[idx2, data2] : terminal_sources)
+      {
+        const auto key = fmt::format("k{}i2{}", k, idx2);
+        output.table.insert(key, fmt::format("{}[{}][i][{}] {}", name, k, idx2, unit));
+        auto &col = output.table[key];
+        for (std::size_t i = 0; i < terminal_sources.size(); i++)
+        {
+          col << mat(i, j) * scale;
+        }
+        j++;
+      }
+    }
+    output.WriteFullTableTrunc();
+  };
+  PrintMatrices("domain-Cp.csv", "Cp_elec", "(F)", energy_matrices.domain, F);
+  PrintMatrices("surface-Cp.csv", "Cp_surf", "(F)", energy_matrices.surface, F);
 
   // Also write out a file with terminal voltage excitations.
   {
