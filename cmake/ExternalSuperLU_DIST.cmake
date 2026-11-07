@@ -109,6 +109,24 @@ set(SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
 )
 
+# Lower the communication cost of the symbolic factorization, of refactorizations with
+# the same sparsity pattern, and of repeated solves: copies of
+# https://github.com/xiaoyeli/superlu_dist/pull/250,
+# https://github.com/xiaoyeli/superlu_dist/pull/251,
+# https://github.com/xiaoyeli/superlu_dist/pull/252 and
+# https://github.com/xiaoyeli/superlu_dist/pull/253, made for v9.3.1
+if(EXTERN_SUPERLU_GIT_TAG STREQUAL "v9.3.1")
+  list(APPEND SUPERLU_PATCH_FILES
+    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr250.diff"
+    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr251.diff"
+    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr252.diff"
+    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr253.diff"
+  )
+else()
+  message(WARNING "The SuperLU_DIST patches of xiaoyeli/superlu_dist#250-#253 are made "
+                  "for v9.3.1 and are not applied to ${EXTERN_SUPERLU_GIT_TAG}")
+endif()
+
 include(ExternalProject)
 ExternalProject_Add(superlu_dist
   DEPENDS           ${SUPERLU_DEPENDENCIES}
@@ -119,7 +137,10 @@ ExternalProject_Add(superlu_dist
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/superlu_dist-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${SUPERLU_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${SUPERLU_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SUPERLU_OPTIONS}"
   TEST_COMMAND      ""
 )
