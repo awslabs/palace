@@ -52,7 +52,7 @@ jobs:
   build-test-macos-spack:
     needs: filter
     if: needs.filter.outputs.test == 'true'
-    runs-on: macos-15-xlarge
+    runs-on: ${{ vars.PALACE_MACOS_RUNNER || 'macos-15-xlarge' }}
     env:
       # Catch2 discovery launches the MPI unit-test binary with 8 ranks, more
       # than the runner's slots. OpenMPI 5 delegates mapping to PRRTE.
