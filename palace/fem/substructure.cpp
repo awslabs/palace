@@ -593,11 +593,12 @@ public:
 
 }  // namespace
 
-void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
-                     const std::vector<int> &region_attributes,
-                     const std::vector<int> &environment_attributes,
-                     const std::vector<char> &keep, double length_scale,
-                     const std::vector<char> &plain_bdr)
+std::vector<char> WriteRegionMesh(const std::string &path,
+                                  mfem::ParFiniteElementSpace &fespace,
+                                  const std::vector<int> &region_attributes,
+                                  const std::vector<int> &environment_attributes,
+                                  const std::vector<char> &keep, double length_scale,
+                                  const std::vector<char> &plain_bdr)
 {
   // On a copy of the mesh, the environment elements touching the kept DOFs take shifted
   // attributes for the domain submesh, and get theirs back in the written mesh.
@@ -613,6 +614,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
   const int shift = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
   auto in = [](const std::vector<int> &s, int a)
   { return std::find(s.begin(), s.end(), a) != s.end(); };
+  std::vector<char> written(mesh.GetNE(), 0);
   mfem::Array<int> dofs;
   for (int e = 0; e < mesh.GetNE(); e++)
   {
@@ -625,6 +627,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
                     [&](int d) { return lm[d >= 0 ? d : -1 - d] != 0.0; }))
     {
       mesh.SetAttribute(e, parent.GetAttribute(e) + shift);
+      written[e] = 1;
     }
   }
   // The plain boundary elements take the attribute of the boundary faces the submesh
@@ -703,6 +706,47 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
     }
     write(sub);
   }
+  return written;
+}
+
+std::array<double, 6> ElementMoments(mfem::ParMesh &mesh,
+                                     const std::vector<int> &attributes,
+                                     const std::vector<char> &mark)
+{
+  std::array<double, 6> m = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if ((!mark.empty() && !mark[e]) ||
+        std::ranges::find(attributes, mesh.GetAttribute(e)) == attributes.end())
+    {
+      continue;
+    }
+    const double v = mesh.GetElementVolume(e);
+    mesh.GetElementCenter(e, c);
+    m[0] += 1.0;
+    m[1] += v;
+    m[2] += v * c.Norml2();
+    for (int d = 0; d < c.Size() && d < 3; d++)
+    {
+      m[3 + d] += v * c(d);
+    }
+  }
+  Mpi::GlobalSum(6, m.data(), mesh.GetComm());
+  return m;
+}
+
+bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                  double tol)
+{
+  bool match = (a[0] == b[0]);
+  for (int q = 1; q < 6; q++)
+  {
+    const int s = std::min(q, 2);  // the scale of the moment
+    match =
+        match && std::abs(a[q] - b[q]) <= tol * std::max(std::abs(a[s]), std::abs(b[s]));
+  }
+  return match;
 }
 
 }  // namespace palace

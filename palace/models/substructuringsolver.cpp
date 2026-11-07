@@ -41,6 +41,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -107,12 +108,17 @@ public:
 
 // Sparse direct solver for the environment and region factorizations: MUMPS, SuperLU_DIST
 // or STRUMPACK, in this order of preference (null without one).
-constexpr bool kHasDirectSolver =
-#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
-    true;
+constexpr const char *kDirectSolverName =
+#if defined(MFEM_USE_MUMPS)
+    "MUMPS";
+#elif defined(MFEM_USE_SUPERLU)
+    "SuperLU_DIST";
+#elif defined(MFEM_USE_STRUMPACK)
+    "STRUMPACK";
 #else
-    false;
+    "";
 #endif
+constexpr bool kHasDirectSolver = (kDirectSolverName[0] != '\0');
 
 #if defined(MFEM_USE_MUMPS)
 // MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
@@ -421,6 +427,10 @@ struct SubstructuringSolver::Impl
   // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
   // sums over elements, which the partition changes by rounding only.
   static constexpr double kFingerprintTol = 1.0e-9;
+  static constexpr const char *kEnvironmentDiffers =
+      "The environment differs from the one the saved substructuring model was condensed "
+      "from (environment mesh, materials, boundary conditions, order or problem type "
+      "changed): rerun in \"Offline\" mode to condense it again!";
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
@@ -450,9 +460,9 @@ struct SubstructuringSolver::Impl
   int env_dbc_local = 0;                           // owned Dirichlet DOFs of env elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
   std::vector<char> region_dbc;                    // Dirichlet DOFs of region elements
-  // Online on a mesh of the region (written offline next to the model): Γ also holds the
-  // region's boundary DOFs at the saved interface DOFs, and the environment is that of the
-  // model (not checked).
+  // Online on a mesh of the region (written offline next to the model, whose environment
+  // elements it holds): Γ also holds the region's boundary DOFs at the saved interface
+  // DOFs, and the environment is that of the model.
   bool region_only = false;
 
   std::unique_ptr<RegionCondensedOperator> region_op;
@@ -590,30 +600,45 @@ struct SubstructuringSolver::Impl
       region_dbc[i] = rm[i] && dir_mark[i];
     }
 
-    // A mesh of the region holds fewer environment DOFs than the model was condensed from.
+    // Online, the head of the model and whether the mesh is that of the region.
     std::vector<char> cut(nt, 0);
     double model_eps = 0.0;
     if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
     {
-      saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
-      MFEM_VERIFY(saved.nG >= 0, "Cannot read the saved substructuring model \""
-                                     << sub.save_model
-                                     << "\" (run in \"Offline\" mode first)!");
-      MFEM_VERIFY(saved.width > 0, "\"" << sub.save_model
-                                        << "\" is not a saved substructuring model: run "
-                                           "in \"Offline\" mode to write one!");
+      {
+        BlockTimer bt(Timer::IO);
+        saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      }
+      const std::string &model = sub.save_model;
+      MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
+                                          << model
+                                          << "\" (run in \"Offline\" mode first)!");
+      MFEM_VERIFY(saved.version > 0, "\"" << model
+                                          << "\" is not a saved substructuring model: run "
+                                             "in \"Offline\" mode to write one!");
+      MFEM_VERIFY(saved.version == kModelVersion,
+                  "The saved substructuring model \""
+                      << model
+                      << "\" was written by another version of Palace: rerun in "
+                         "\"Offline\" mode!");
+      MFEM_VERIFY(saved.width > 0, "The saved substructuring model \""
+                                       << model
+                                       << "\" is incomplete: rerun in \"Offline\" mode!");
       MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
                   "The saved substructuring model \""
-                      << sub.save_model << "\" is "
+                      << model << "\" is "
                       << (magnetostatic ? "electrostatic" : "magnetostatic")
                       << ", unlike this run!");
-      double n_env = 0.0;
-      for (int i = 0; i < nt; i++)
-      {
-        n_env += em[i] && !dir_mark[i];
-      }
-      Mpi::GlobalSum(1, &n_env, parent_fes.GetComm());
-      region_only = !saved.env_fp.empty() && n_env < saved.env_fp[0];
+      MFEM_VERIFY(saved.order == iodata.solver.order,
+                  "The saved substructuring model \""
+                      << model << "\" has \"Order\": " << saved.order
+                      << ", unlike this run (" << iodata.solver.order << ")!");
+      // The mesh holds the environment of the model, or its part in the mesh of the region.
+      const auto moments = ElementMoments(parent, sub.environment_attributes);
+      region_only = !MomentsMatch(moments, saved.env_moments, kFingerprintTol);
+      MFEM_VERIFY(!region_only ||
+                      MomentsMatch(moments, saved.region_moments, kFingerprintTol),
+                  kEnvironmentDiffers);
       if (region_only)
       {
         model_eps = saved.regularization;
@@ -754,7 +779,7 @@ struct SubstructuringSolver::Impl
     A_region = AssembleParent(region_eps, magnetostatic, true, &sheet_region);
     if (magnetostatic)
     {
-      // Energy operator: the pure curl-curl (see SheetEnergyMatrix for the London sheets).
+      // Energy operator: the pure curl-curl (see SourceEnergyMatrix for the London sheets).
       A_region_energy = AssembleParent(region_eps, false);
       K_region_e = A_region_energy.get();
       if (has_sheets)
@@ -1374,6 +1399,7 @@ struct SubstructuringSolver::Impl
 
   void AppendSourceModes(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     const int K = static_cast<int>(src_ids.size());
     const std::vector<double> G_full = GatherRows(SG_rows, K);
     const std::vector<double> H_full = GatherRows(SH_rows, K);
@@ -1490,6 +1516,7 @@ struct SubstructuringSolver::Impl
   // solver. Fills S_rows. Collective.
   void MaterializeMumps()
   {
+    BlockTimer bt(Timer::KSP_SETUP);
     mfem::Array<int> other;
     for (int i = 0; i < nt; i++)
     {
@@ -1707,6 +1734,7 @@ struct SubstructuringSolver::Impl
                 "full mesh!");
     if (!env_built)
     {
+      BlockTimer bt(Timer::KSP_SETUP);
       BuildEnvSubmeshSolver();
       env_built = true;
     }
@@ -2042,17 +2070,23 @@ struct SubstructuringSolver::Impl
                  MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
   }
 
-  // Model-file sections following S_E: [kLengthMagic][Model.Lc of the offline run],
-  // [kEnvFpMagic][environment fingerprint, 5 doubles], [kEpsMagic][the magnetostatic
-  // regularization eps] (magnetostatics), [kSKenMagic][S^K nG x nG] (magnetostatics),
-  // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
-  // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B
-  // KxK].
-  static constexpr int kSKenMagic = 0x4e454b53;    // "SKEN"
-  static constexpr int kModesMagic = 0x33444f4d;   // "MOD3"
-  static constexpr int kEnvFpMagic = 0x33564e45;   // "ENV3"
-  static constexpr int kLengthMagic = 0x434e454c;  // "LENC"
-  static constexpr int kEpsMagic = 0x5350454d;     // "MEPS"
+  // A model file: [kModelMagic][kModelVersion][Solver.Order][nG][signature type]
+  // [signatures nG x width][S_E nG x nG], then the sections [kLengthMagic][Model.Lc of the
+  // offline run], [kEnvFpMagic][environment fingerprint, 5 doubles], [kEpsMagic][the
+  // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
+  // the environment and of its elements in the mesh of the region, 12 doubles],
+  // [kSKenMagic][S^K nG x nG] (magnetostatics), [kModesMagic][K][ids][fingerprints
+  // 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode KxK], and
+  // [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK].
+  static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
+  static constexpr int kModelVersion = 1;
+  static constexpr int kHeadInts = 5;
+  static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
+  static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"
+  static constexpr int kEnvFpMagic = 0x33564e45;    // "ENV3"
+  static constexpr int kLengthMagic = 0x434e454c;   // "LENC"
+  static constexpr int kEpsMagic = 0x5350454d;      // "MEPS"
+  static constexpr int kEnvMeshMagic = 0x48534d45;  // "EMSH"
 
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
@@ -2061,85 +2095,108 @@ struct SubstructuringSolver::Impl
     return (sig_type == 3) ? 13 : (sig_type == 2) ? 12 : (sig_type == 1) ? 3 : 0;
   }
 
-  // The head of a model, from rank 0: the interface size (-1: the file cannot be read),
-  // signature type and width (0: not a model, or a truncated one), the interface
-  // signatures, the offsets of S_E and of the sections after it, the reference length (0:
-  // not saved), the environment fingerprint (empty: not saved) and the magnetostatic
-  // regularization (0: not saved). Collective.
+  // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
+  // not a model), order, interface size, signature type and width (0: another version, or
+  // an incomplete model), the interface signatures, the offsets of S_E and of the sections
+  // after it, the reference length, environment fingerprint, element moments of the
+  // environment and of the mesh of the region, and magnetostatic regularization (0 or
+  // empty: not saved). Collective.
   struct SavedHead
   {
-    int nG = -1, sig_type = 0, width = 0;
+    int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
     std::vector<double> sig, env_fp;
+    std::array<double, 6> env_moments = {}, region_moments = {};
     double length = 0.0, regularization = 0.0;
     std::streamoff S_pos = 0, sections_pos = 0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm)
   {
     SavedHead h;
-    int head[4] = {-1, 0, 0, 0};  // nG, signature type, width, has fingerprint
+    // Version, order, nG, signature type, width, with the fingerprint, with the moments.
+    int head[7] = {-1, 0, 0, 0, 0, 0, 0};
     auto offsets = [&h](std::streamoff nG, std::streamoff width)
     {
-      h.S_pos = 2 * static_cast<std::streamoff>(sizeof(int)) +
+      h.S_pos = kHeadInts * static_cast<std::streamoff>(sizeof(int)) +
                 static_cast<std::streamoff>(sizeof(double)) * nG * width;
       h.sections_pos = h.S_pos + static_cast<std::streamoff>(sizeof(double)) * nG * nG;
     };
     if (Mpi::Root(comm))
     {
       std::ifstream f(path, std::ios::binary | std::ios::ate);
-      const std::streamoff size = f ? static_cast<std::streamoff>(f.tellg()) : 0;
+      const std::streamoff size = f ? static_cast<std::streamoff>(f.tellg()) : -1;
       f.seekg(0);
-      if (f.read(reinterpret_cast<char *>(&head[0]), sizeof(int)) &&
-          f.read(reinterpret_cast<char *>(&head[1]), sizeof(int)) && head[0] >= 0)
+      int v[kHeadInts] = {0, 0, 0, 0, 0};
+      head[0] = (size < 0) ? -1 : 0;
+      if (f.read(reinterpret_cast<char *>(v), sizeof(v)) && v[0] == kModelMagic)
       {
+        head[0] = v[1];
+        head[1] = v[2];
+        head[2] = v[3];
+        head[3] = v[4];
         // The file holds the signatures and S_E (in floating point: any nG read).
-        const double n = head[0], w = SignatureFileWidth(head[1]);
-        const double end = 2.0 * sizeof(int) + sizeof(double) * n * (w + n);
-        head[2] = (w > 0.0 && end <= static_cast<double>(size)) ? static_cast<int>(w) : 0;
+        const double n = v[3], w = SignatureFileWidth(v[4]);
+        const double end = kHeadInts * sizeof(int) + sizeof(double) * n * (w + n);
+        head[4] = (v[1] == kModelVersion && n >= 0.0 && w > 0.0 &&
+                   end <= static_cast<double>(size))
+                      ? static_cast<int>(w)
+                      : 0;
       }
-      else
+      if (head[4] > 0)
       {
-        head[0] = -1;
-      }
-      if (head[2] > 0)
-      {
-        offsets(head[0], head[2]);
-        h.sig.resize(static_cast<std::size_t>(head[0]) * head[2]);
+        offsets(head[2], head[4]);
+        h.sig.resize(static_cast<std::size_t>(head[2]) * head[4]);
         f.read(reinterpret_cast<char *>(h.sig.data()), sizeof(double) * h.sig.size());
         f.seekg(h.sections_pos);
         int magic = 0;
-        f.read(reinterpret_cast<char *>(&magic), sizeof(int));
-        if (magic == kLengthMagic)
+        auto read = [&f](double *x, int n)
         {
-          f.read(reinterpret_cast<char *>(&h.length), sizeof(double));
-          f.read(reinterpret_cast<char *>(&magic), sizeof(int));
-        }
-        if (f && magic == kEnvFpMagic)
+          return static_cast<bool>(f.read(reinterpret_cast<char *>(x), sizeof(double) * n));
+        };
+        while (f.read(reinterpret_cast<char *>(&magic), sizeof(int)))
         {
-          h.env_fp.resize(5);
-          f.read(reinterpret_cast<char *>(h.env_fp.data()), sizeof(double) * 5);
-          head[3] = f ? 1 : 0;
-          if (f.read(reinterpret_cast<char *>(&magic), sizeof(int)) && magic == kEpsMagic)
+          if (magic == kLengthMagic)
           {
-            f.read(reinterpret_cast<char *>(&h.regularization), sizeof(double));
+            read(&h.length, 1);
+          }
+          else if (magic == kEpsMagic)
+          {
+            read(&h.regularization, 1);
+          }
+          else if (magic == kEnvFpMagic)
+          {
+            h.env_fp.resize(5);
+            head[5] = read(h.env_fp.data(), 5);
+          }
+          else if (magic == kEnvMeshMagic)
+          {
+            head[6] = read(h.env_moments.data(), 6) && read(h.region_moments.data(), 6);
+          }
+          else
+          {
+            break;  // the sections loaded with S_E
           }
         }
       }
     }
-    Mpi::Broadcast(4, head, 0, comm);
-    Mpi::Broadcast(1, &h.length, 0, comm);
-    Mpi::Broadcast(1, &h.regularization, 0, comm);
-    h.nG = head[0];
-    h.sig_type = head[1];
-    h.width = head[2];
-    if (h.nG < 0 || h.width == 0)
+    Mpi::Broadcast(7, head, 0, comm);
+    h.version = head[0];
+    h.order = head[1];
+    h.nG = head[2];
+    h.sig_type = head[3];
+    h.width = (head[5] && head[6]) ? head[4] : 0;
+    if (h.width == 0)
     {
       return h;
     }
+    Mpi::Broadcast(1, &h.length, 0, comm);
+    Mpi::Broadcast(1, &h.regularization, 0, comm);
     offsets(h.nG, h.width);
     h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
     Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
-    h.env_fp.resize(head[3] ? 5 : 0);
-    Mpi::Broadcast(static_cast<int>(h.env_fp.size()), h.env_fp.data(), 0, comm);
+    h.env_fp.resize(5);
+    Mpi::Broadcast(5, h.env_fp.data(), 0, comm);
+    Mpi::Broadcast(6, h.env_moments.data(), 0, comm);
+    Mpi::Broadcast(6, h.region_moments.data(), 0, comm);
     return h;
   }
   // The head of the model of an online run (read by the constructor).
@@ -2236,8 +2293,24 @@ struct SubstructuringSolver::Impl
   std::array<double, 5> saved_env_fp = {0.0, 0.0, 0.0, 0.0, 0.0};
   bool have_env_fp = false;
 
+  void AppendEnvMoments(const std::string &path, const std::vector<char> &written)
+  {
+    BlockTimer bt(Timer::IO);
+    const auto &env = iodata.solver.substructuring->environment_attributes;
+    const std::array<double, 6> m[2] = {
+        ElementMoments(parent, env), ElementMoments(parent, env, written)};  // collective
+    if (Mpi::Root(parent_fes.GetComm()))
+    {
+      std::ofstream f(path, std::ios::binary | std::ios::app);
+      f.write(reinterpret_cast<const char *>(&kEnvMeshMagic), sizeof(int));
+      f.write(reinterpret_cast<const char *>(m[0].data()), sizeof(double) * 6);
+      f.write(reinterpret_cast<const char *>(m[1].data()), sizeof(double) * 6);
+    }
+  }
+
   void AppendEnvFingerprint(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     const std::array<double, 5> fp = EnvironmentFingerprint();  // collective
     if (Mpi::Root(parent_fes.GetComm()))
     {
@@ -2405,8 +2478,9 @@ struct SubstructuringSolver::Impl
   // environment) and, in magnetostatics, those of the surface currents and flux loops,
   // whose excitations need their boundaries (the films of the flux loops whole), and the
   // two-sided films of RegionFilmClosure. Collective.
-  void WriteRegionMesh(const std::string &path)
+  std::vector<char> WriteRegionMesh(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     std::vector<char> keep(parent_fes.GetTrueVSize(), 0);
     for (int t = 0; t < nt; t++)
     {
@@ -2443,10 +2517,11 @@ struct SubstructuringSolver::Impl
     const std::vector<char> plain =
         broken ? RegionFilmClosure(keep, loop_films) : std::vector<char>();
     const auto &sub = *iodata.solver.substructuring;
-    palace::WriteRegionMesh(path, parent_fes, sub.region_attributes,
-                            sub.environment_attributes, keep,
-                            iodata.units.GetMeshLengthRelativeScale(), plain);
+    std::vector<char> written = palace::WriteRegionMesh(
+        path, parent_fes, sub.region_attributes, sub.environment_attributes, keep,
+        iodata.units.GetMeshLengthRelativeScale(), plain);
     Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
+    return written;
   }
 
   // Abort if a loaded model was condensed from a different environment than the current
@@ -2463,15 +2538,12 @@ struct SubstructuringSolver::Impl
       ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
                      kFingerprintTol * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
     }
-    MFEM_VERIFY(ok,
-                "The environment differs from the one the saved substructuring model was "
-                "condensed from (environment mesh, materials, boundary conditions, "
-                "order or problem type changed): rerun in \"Offline\" mode to "
-                "condense it again!");
+    MFEM_VERIFY(ok, kEnvironmentDiffers);
   }
 
   void AppendSK(const std::string &path) const
   {
+    BlockTimer bt(Timer::IO);
     const std::vector<double> full = GatherRows(SK_rows, nG_global);
     if (Mpi::Root(parent_fes.GetComm()))
     {
@@ -2482,6 +2554,7 @@ struct SubstructuringSolver::Impl
   }
   void AppendModes(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     const int K = static_cast<int>(mode_ids.size());
     const int has_gk = have_gk ? 1 : 0;
     const std::vector<double> G_full = GatherRows(G_rows, K);
@@ -2537,11 +2610,12 @@ struct SubstructuringSolver::Impl
         magic = 0;
       }
       MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-      if (magic == kLengthMagic || magic == kEpsMagic)
+      if (magic == kLengthMagic || magic == kEpsMagic || magic == kEnvMeshMagic)
       {
         if (root)
         {
-          f.seekg(sizeof(double), std::ios::cur);  // read by ReadSavedHead
+          f.seekg(sizeof(double) * ((magic == kEnvMeshMagic) ? 12 : 1),
+                  std::ios::cur);  // read by ReadSavedHead
         }
       }
       else if (magic == kEnvFpMagic)
@@ -2997,6 +3071,7 @@ struct SubstructuringSolver::Impl
     {
       return;
     }
+    BlockTimer bt(Timer::KSP_SETUP);
     // The exact factor solves each batch directly (one multi-RHS solve), the other one
     // preconditions CG per excitation. With London sheets, CG at their small regularization
     // leaves an error in the near-null space, so the exact factor is used when it fits.
@@ -3044,6 +3119,7 @@ struct SubstructuringSolver::Impl
   // Collective.
   void SolveRegion(std::vector<mfem::Vector> &x) const
   {
+    BlockTimer bt(Timer::KSP);
     const int n = static_cast<int>(x.size());
     if (region_exact)
     {
@@ -3132,6 +3208,7 @@ struct SubstructuringSolver::Impl
                         const std::vector<mfem::Vector *> &Y) const
   {
     MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
+    BlockTimer bt(Timer::KSP);
     MFEM_VERIFY(env_built, "Environment solver used before EnsureEnv()!");
     if (!env_parent_direct && !EnvMumps())
     {
@@ -3396,13 +3473,14 @@ void SubstructuringSolver::CondenseEnvironment()
   bool loaded = false;
   if (online && !model_path.empty())
   {
+    BlockTimer bt_io(Timer::IO);
     // The head of the model, read and checked by the constructor.
     const Impl::SavedHead &saved = impl->saved;
     MFEM_VERIFY(saved.nG == nG,
                 "Saved substructuring model interface size ("
                     << saved.nG << ") does not match this run (" << nG
-                    << "): the interface (Gamma) and \"Solver\"/\"Order\" must be those of "
-                       "the offline run!");
+                    << "); the interface (Gamma) must be identical between the offline and "
+                       "online runs.");
     MFEM_VERIFY(saved.width == sig_w,
                 "The interface of the saved substructuring model "
                     << ((saved.width == 13) ? "is" : "is not")
@@ -3618,7 +3696,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!impl->magnetostatic)
     {
-      // Terminal modes (the flux-loop source modes are computed by SheetEnergyMatrix).
+      // Terminal modes (the flux-loop source modes are computed by SourceEnergyMatrix).
       std::vector<int> ids;
       std::vector<Vector> lifts;
       for (const auto &[idx, dofs] : impl->terminal_tdofs)
@@ -3630,6 +3708,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!model_path.empty())
     {
+      BlockTimer bt_io(Timer::IO);
       const int sig_type = impl->magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
       const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
       const std::vector<double> S_full = impl->GatherRows(impl->S_rows, nG);
@@ -3637,8 +3716,9 @@ void SubstructuringSolver::CondenseEnvironment()
       if (rank == 0)
       {
         std::ofstream f(model_path, std::ios::binary);
-        f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
-        f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
+        const int head[Impl::kHeadInts] = {Impl::kModelMagic, Impl::kModelVersion,
+                                           impl->iodata.solver.order, nG, sig_type};
+        f.write(reinterpret_cast<const char *>(head), sizeof(head));
         f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
         f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
         f.write(reinterpret_cast<const char *>(&Impl::kLengthMagic), sizeof(int));
@@ -3648,8 +3728,8 @@ void SubstructuringSolver::CondenseEnvironment()
       MPI_Bcast(&written, 1, MPI_INT, 0, comm);
       MFEM_VERIFY(written,
                   "Cannot write the substructuring model \"" << model_path << "\"!");
-      impl->AppendEnvFingerprint(model_path);             // collective
-      impl->WriteRegionMesh(RegionMeshPath(model_path));  // collective
+      impl->AppendEnvFingerprint(model_path);  // collective
+      impl->AppendEnvMoments(model_path, impl->WriteRegionMesh(RegionMeshPath(model_path)));
       if (impl->have_sk)
       {
         impl->AppendSK(model_path);  // collective
@@ -3761,6 +3841,7 @@ void SubstructuringSolver::CondenseEnvironment()
   // Region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct factor,
   // region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact factor,
   // SolveRegion bypasses CG).
+  std::string region_solver;
   {
     std::unique_ptr<Solver<Operator>> pc;
     // Direct factorization when the region fits.
@@ -3789,15 +3870,18 @@ void SubstructuringSolver::CondenseEnvironment()
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->ApplyRegionFactor(r, z); });
+      region_solver = fmt::format("{} factorization", kDirectSolverName);
     }
     else if (impl->BuildRegionGmg())
     {
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->ApplyRegionGmgPc(r, z); });
+      region_solver = "conjugate gradients with geometric multigrid";
     }
     else if (impl->magnetostatic)
     {
+      region_solver = "conjugate gradients with AMS";
       auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
       ams->SetPrintLevel(0);
       pc = std::make_unique<MfemWrapperSolver<Operator>>(
@@ -3806,6 +3890,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else
     {
+      region_solver = "conjugate gradients with BoomerAMG";
       pc = std::make_unique<MfemWrapperSolver<Operator>>(
           std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
           /*complex_matrix=*/false, /*drop_small_entries=*/false);
@@ -3820,6 +3905,51 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
     impl->region_ksp->SetOperators(*impl->region_op, *impl->A_region_free);
   }
+
+  // Summary: the sizes, and how the environment was condensed and the region is solved.
+  std::string env_solver;
+  if (loaded)
+  {
+    env_solver = fmt::format("loaded from {}", model_path);
+  }
+  else
+  {
+    if (mumps_done)
+    {
+      env_solver = "MUMPS partial factorization";
+      if (subcfg.factorization_tol > 0.0)
+      {
+        env_solver +=
+            fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
+      }
+    }
+    else if (impl->env_parent_direct)
+    {
+      env_solver = fmt::format("{} factorization", kDirectSolverName);
+    }
+    else
+    {
+      env_solver = fmt::format("conjugate gradients with {}",
+                               impl->env_hierarchy   ? "geometric multigrid"
+                               : impl->magnetostatic ? "AMS"
+                                                     : "BoomerAMG");
+    }
+    if (!model_path.empty())
+    {
+      env_solver += fmt::format(", saved to {}", model_path);
+    }
+  }
+  long long counts[2] = {0, 0};  // region and environment interiors
+  for (int i = 0; i < impl->nt; i++)
+  {
+    counts[0] += impl->is_region_free[i] && !impl->is_gamma[i];
+    counts[1] += impl->is_env_int[i];
+  }
+  MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_LONG_LONG, MPI_SUM, comm);
+  Mpi::Print(comm,
+             "\nSubstructuring, number of global unknowns:\n Region: {:d}, environment: "
+             "{:d}, interface: {:d}\n Environment: {}\n Region: {}\n",
+             counts[0], counts[1], nG, env_solver, region_solver);
 }
 
 namespace
@@ -3846,25 +3976,8 @@ Vector TerminalDbc(const std::map<int, std::vector<int>> &terminal_tdofs, int dr
 
 Vector SubstructuringSolver::SolveExcitation(int drive_idx)
 {
-  return SolveExcitations({drive_idx})[0];
-}
-
-std::vector<Vector>
-SubstructuringSolver::SolveExcitations(const std::vector<int> &drive_terminal_indices)
-{
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  std::vector<Vector> dbcs;
-  dbcs.reserve(drive_terminal_indices.size());
-  for (int idx : drive_terminal_indices)
-  {
-    dbcs.push_back(TerminalDbc(impl->terminal_tdofs, idx, impl->nt));
-  }
-  return SolveDirichletBatch(dbcs);
-}
-
-Vector SubstructuringSolver::SolveDirichlet(const Vector &dbc_values)
-{
-  return SolveDirichlets({dbc_values})[0];
+  return SolveDirichletBatch({TerminalDbc(impl->terminal_tdofs, drive_idx, impl->nt)})[0];
 }
 
 std::vector<Vector>
@@ -4032,24 +4145,6 @@ std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vec
   }
   impl->RecoverEnvInterior(u, &fE);  // u_E = A_EE^-1 (f_E - (A_env u)|_E)
   return u;
-}
-
-mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int> &ids,
-                                                          const std::vector<Vector> &a,
-                                                          std::vector<Vector> *fields,
-                                                          int n_fields)
-{
-  MFEM_VERIFY(impl->magnetostatic && impl->has_sheets,
-              "SheetEnergyMatrix needs London superconductor sheets!");
-  return MagnetostaticEnergyMatrix({}, {}, ids, a, {}, nullptr, fields, n_fields);
-}
-
-mfem::DenseMatrix SubstructuringSolver::CurrentEnergyMatrix(const std::vector<int> &ids,
-                                                            const std::vector<Vector> &J,
-                                                            std::vector<Vector> *fields,
-                                                            int n_fields)
-{
-  return MagnetostaticEnergyMatrix(ids, J, {}, {}, {}, nullptr, fields, n_fields);
 }
 
 mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
@@ -4627,6 +4722,7 @@ ErrorIndicator
 SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fields,
                                            const mfem::DenseMatrix &E) const
 {
+  BlockTimer bt(Timer::ESTIMATION);
   MFEM_VERIFY(E.Height() == static_cast<int>(region_fields.size()),
               "RegionErrorIndicator: one energy per field!");
   const auto &iodata = impl->iodata;
@@ -4721,11 +4817,6 @@ Vector SubstructuringSolver::TerminalLift(int terminal_index) const
   return impl->TerminalMode(terminal_index);
 }
 
-bool SubstructuringSolver::HasSheets() const
-{
-  return impl->has_sheets;
-}
-
 bool SubstructuringSolver::EnvironmentFactored() const
 {
   return impl->env_built;
@@ -4778,6 +4869,7 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
                                          const std::vector<int> &ids,
                                          const std::vector<Vector> &fields) const
 {
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
   MFEM_VERIFY(ids.size() == fields.size(), "WriteParaView requires one field per id!");
   const int order = impl->iodata.solver.order;
   mfem::ParGridFunction phi(&impl->parent_fes);
@@ -4796,11 +4888,6 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
     pv.SetTime(static_cast<double>(ids[j]));
     pv.Save();
   }
-}
-
-double SubstructuringSolver::ElectrostaticEnergy(const Vector &u) const
-{
-  return 0.5 * MutualEnergy(u, u);
 }
 
 }  // namespace palace

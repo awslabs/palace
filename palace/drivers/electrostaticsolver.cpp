@@ -43,6 +43,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region solves against the
     // condensed environment; only the fields to be saved need the environment interior.
+    BlockTimer bt1(Timer::POSTPRO);
     Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
                (n > 1) ? "s" : "");
     const int n_save = std::min(iodata.solver.electrostatic.n_post, n);

@@ -151,12 +151,26 @@ std::string RegionMeshPath(const std::string &model_path);
 // units (coordinates times length_scale): the region, and the environment elements touching
 // the marked local true DOFs, with their boundary elements. The local boundary elements
 // marked in plain_bdr (if not empty) are written with the attribute of the boundary faces
-// the submesh generates. Collective.
-void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
-                     const std::vector<int> &region_attributes,
-                     const std::vector<int> &environment_attributes,
-                     const std::vector<char> &keep, double length_scale,
-                     const std::vector<char> &plain_bdr = {});
+// the submesh generates. Returns the local environment elements written. Collective.
+std::vector<char> WriteRegionMesh(const std::string &path,
+                                  mfem::ParFiniteElementSpace &fespace,
+                                  const std::vector<int> &region_attributes,
+                                  const std::vector<int> &environment_attributes,
+                                  const std::vector<char> &keep, double length_scale,
+                                  const std::vector<char> &plain_bdr = {});
+
+// The number, volume, and volume times the centroid distance from the origin and the
+// centroid of the elements with the given attributes (and mark[e], if not empty), summed
+// over the processes: a description of a set of elements independent of the partition and
+// of the element numbering. Collective.
+std::array<double, 6> ElementMoments(mfem::ParMesh &mesh,
+                                     const std::vector<int> &attributes,
+                                     const std::vector<char> &mark = {});
+
+// Whether two ElementMoments describe the same elements within the relative tolerance (the
+// centroid moments relative to the distance moment, as they may vanish).
+bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                  double tol);
 
 }  // namespace palace
 

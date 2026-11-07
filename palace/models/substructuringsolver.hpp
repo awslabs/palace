@@ -28,21 +28,73 @@ public:
                        const std::vector<std::unique_ptr<Mesh>> &mesh);
   ~SubstructuringSolver();
 
+  // Online, with a saved model: Model.Lc from the model (that of its offline run), which a
+  // configured one must equal. Collective.
+  static void UseModelLength(IoData &iodata, MPI_Comm comm);
+
   // Condense the environment to S_E (or load it from a saved model). Called once, before
   // any solve.
   void CondenseEnvironment();
+
+  // Maxwell capacitance matrix over the given terminals (EnergyMatrix of the terminal unit
+  // potentials). If fields is non-null, it receives the full fields of the first n_fields
+  // terminals; if region_fields is non-null, it receives the solutions of all terminals on
+  // the region and interface (zero on the environment interior).
+  mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
+                                      std::vector<Vector> *fields = nullptr,
+                                      int n_fields = 0,
+                                      std::vector<Vector> *region_fields = nullptr);
+
+  // Magnetostatic energy matrix of surface currents and London flux states (currents
+  // first). Surface current k drives the assembled excitation J_k (zero on the Dirichlet
+  // DOFs), with E_ij = u_i^T K u_j (+ the sheet kinetic energy u_i^T M_sheet u_j) in a form
+  // stationary in the regularization of the solve; a current that does not close is
+  // rejected. Flux loop k with the fluxoid generator a_k drives the source M_sheet a_k with
+  // the superconducting films as free London sheets, with E_ij = u_i^T K u_j + (u_i -
+  // a_i)^T M_sheet (u_j - a_j) as in the native solver. The cross block is zero (the two
+  // kinds of states are energy-orthogonal). With the aperture flux functionals l_c of the
+  // ports, linked_flux(c, f) = l_c^T u_f for the flux states f. If fields is non-null, it
+  // receives the full fields of the first n_fields states; if region_fields is non-null
+  // (with a saved model), it receives the solutions of all states on the region and
+  // interface (zero on the environment interior).
+  mfem::DenseMatrix MagnetostaticEnergyMatrix(
+      const std::vector<int> &current_ids, const std::vector<Vector> &J,
+      const std::vector<int> &flux_ids, const std::vector<Vector> &a,
+      const std::vector<Vector> &apertures, mfem::DenseMatrix *linked_flux,
+      std::vector<Vector> *fields = nullptr, int n_fields = 0,
+      std::vector<Vector> *region_fields = nullptr);
+
+  // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
+  // (electrostatics) or curl-flux (magnetostatics) estimator on the region solutions of
+  // CapacitanceMatrix or MagnetostaticEnergyMatrix, normalized by the energies E_kk / 2,
+  // and zero on the environment.
+  ErrorIndicator RegionErrorIndicator(const std::vector<Vector> &region_fields,
+                                      const mfem::DenseMatrix &E) const;
+
+  // Terminal indices (sorted).
+  std::vector<int> TerminalIndices() const;
+
+  // Global parent true-DOF size.
+  long long int GlobalTrueVSize() const;
+
+  // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
+  // step per excitation (time = excitation index).
+  void WriteParaView(const std::string &dir, const std::vector<int> &ids,
+                     const std::vector<Vector> &fields) const;
+
+  // Verification: the general solves and energies against which the tests check the
+  // condensation (the simulations use the above).
 
   // Solve for the given terminal driven to 1 V, all other terminals grounded. Returns the
   // full parent field.
   Vector SolveExcitation(int drive_terminal_index);
 
-  // Solve for an arbitrary prescribed field on the Dirichlet DOFs. Returns the full parent
-  // field.
-  Vector SolveDirichlet(const Vector &dbc_values);
-
-  // Batched versions of the above (the environment solves run as multi-RHS blocks).
-  std::vector<Vector> SolveExcitations(const std::vector<int> &drive_terminal_indices);
+  // Solve for arbitrary prescribed fields on the Dirichlet DOFs, in one batch. Returns the
+  // full parent fields.
   std::vector<Vector> SolveDirichlets(const std::vector<Vector> &dbc_values);
+
+  // Solve A u = f for a full parent-space source f. Returns the full parent field.
+  Vector SolveSource(const Vector &f);
 
   // Energy matrix E_ij = u_i^T K u_j (K the energy operator) of Dirichlet-lift excitations
   // (lifts[k] a full parent true-DOF vector with the Dirichlet data, labeled ids[k]). Once
@@ -54,85 +106,14 @@ public:
                                  const std::vector<Vector> &lifts,
                                  std::vector<Vector> *fields = nullptr, int n_fields = 0);
 
-  // Magnetostatic energy matrix of London flux states: flux loop k with the fluxoid
-  // generator a_k drives the source M_sheet a_k with the superconducting films as free
-  // London sheets, and E_ij = u_i^T K u_j + (u_i - a_i)^T M_sheet (u_j - a_j) as in the
-  // native solver. If fields is non-null, it receives the full fields of the first n_fields
-  // states.
-  mfem::DenseMatrix SheetEnergyMatrix(const std::vector<int> &ids,
-                                      const std::vector<Vector> &a,
-                                      std::vector<Vector> *fields = nullptr,
-                                      int n_fields = 0);
-
-  // Magnetostatic energy matrix of surface-current excitations: port k drives the assembled
-  // excitation J_k (zero on the Dirichlet DOFs), and E_ij = u_i^T K u_j (+ the sheet
-  // kinetic energy u_i^T M_sheet u_j), in a form stationary in the regularization of the
-  // solve. A current that does not close is rejected.
-  mfem::DenseMatrix CurrentEnergyMatrix(const std::vector<int> &ids,
-                                        const std::vector<Vector> &J,
-                                        std::vector<Vector> *fields = nullptr,
-                                        int n_fields = 0);
-
-  // Magnetostatic energy matrix of surface currents and London flux states (currents
-  // first), with the blocks of CurrentEnergyMatrix and SheetEnergyMatrix and a zero cross
-  // block (the two kinds of states are energy-orthogonal). With the aperture flux
-  // functionals l_c of the ports, linked_flux(c, f) = l_c^T u_f for the flux states f. If
-  // region_fields is non-null (with a saved model), it receives the solutions of all states
-  // on the region and interface (zero on the environment interior).
-  mfem::DenseMatrix MagnetostaticEnergyMatrix(
-      const std::vector<int> &current_ids, const std::vector<Vector> &J,
-      const std::vector<int> &flux_ids, const std::vector<Vector> &a,
-      const std::vector<Vector> &apertures, mfem::DenseMatrix *linked_flux,
-      std::vector<Vector> *fields = nullptr, int n_fields = 0,
-      std::vector<Vector> *region_fields = nullptr);
-
-  // Whether the model has London superconductor sheets (magnetostatics).
-  bool HasSheets() const;
-
-  // Maxwell capacitance matrix over the given terminals (EnergyMatrix of the terminal unit
-  // potentials). If region_fields is non-null, it receives the solutions of all terminals
-  // on the region and interface (zero on the environment interior).
-  mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
-                                      std::vector<Vector> *fields = nullptr,
-                                      int n_fields = 0,
-                                      std::vector<Vector> *region_fields = nullptr);
-
-  // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
-  // (electrostatics) or curl-flux (magnetostatics) estimator on the region solutions of
-  // CapacitanceMatrix or MagnetostaticEnergyMatrix, normalized by the energies E_kk / 2,
-  // and zero on the environment.
-  ErrorIndicator RegionErrorIndicator(const std::vector<Vector> &region_fields,
-                                      const mfem::DenseMatrix &E) const;
+  // Mutual energy u_i^T K u_j with the full (region + environment) energy operator.
+  double MutualEnergy(const Vector &ui, const Vector &uj) const;
 
   // Unit Dirichlet lift of a terminal (1 on its true DOFs, 0 elsewhere).
   Vector TerminalLift(int terminal_index) const;
 
   // Whether the environment interior solver has been set up.
   bool EnvironmentFactored() const;
-
-  // Solve A u = f for a full parent-space source f. Returns the full parent field.
-  Vector SolveSource(const Vector &f);
-
-  // Terminal indices (sorted).
-  std::vector<int> TerminalIndices() const;
-
-  // Mutual energy u_i^T K u_j with the full (region + environment) energy operator.
-  double MutualEnergy(const Vector &ui, const Vector &uj) const;
-
-  // Energy 1/2 u^T K u with the full energy operator.
-  double ElectrostaticEnergy(const Vector &u) const;
-
-  // Global parent true-DOF size.
-  long long int GlobalTrueVSize() const;
-
-  // Online, with a saved model: Model.Lc from the model (that of its offline run), which a
-  // configured one must equal. Collective.
-  static void UseModelLength(IoData &iodata, MPI_Comm comm);
-
-  // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
-  // step per excitation (time = excitation index).
-  void WriteParaView(const std::string &dir, const std::vector<int> &ids,
-                     const std::vector<Vector> &fields) const;
 
 private:
   // Region-condensed solves for a batch of prescribed Dirichlet fields.
