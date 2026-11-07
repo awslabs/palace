@@ -27,6 +27,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch, based on
+    [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
+    multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
+    the BoomerAMG preconditioner now applies one V-cycle to several right-hand sides at
+    once, such as the real and imaginary parts of a complex vector, with one halo exchange
+    per level for all of them. This speeds up the divergence-free projection at high
+    process counts. Results are unchanged.
+    [PR 1145](https://github.com/awslabs/palace/pull/1145).
   - Added a hypre patch for
     [hypre-space/hypre#1651](https://github.com/hypre-space/hypre/pull/1651), which skips
     the halo exchange of a zero initial guess in the hybrid Gauss-Seidel relaxation of
@@ -72,6 +80,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     arithmetic. This makes the multigrid preconditioner setup several times faster at
     each frequency of a driven sweep.
     [PR 1140](https://github.com/awslabs/palace/pull/1140).
+  - Fused the residual update, Jacobi preconditioner and inner product of each conjugate
+    gradient iteration into a single pass over memory on CPUs with one thread per process,
+    and computed inner products on CPUs with several partial sums, complex ones in a single
+    pass over memory. Each conjugate gradient iteration also updates the solution in the
+    same pass as the next search direction, with any preconditioner and on CPUs and GPUs.
+    This speeds up the error estimator's flux recovery and the GMRES orthogonalization of
+    driven and eigenmode simulations. [PR 1146](https://github.com/awslabs/palace/pull/1146).
+  - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
+    reduction per operator application instead of four per rank-one term, and only touch
+    the port degrees of freedom instead of full-length vectors.
 
 #### Bug Fixes
 

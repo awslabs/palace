@@ -4,10 +4,13 @@
 #include "iterative.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <typeinfo>
+#include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
 #include "utils/timer.hpp"
@@ -17,6 +20,66 @@ namespace palace
 
 namespace
 {
+
+// Apply update(i) for all i in [0, N) and return the sum of the terms f(i) after the
+// updates, in one pass over memory: each chunk is updated by a simple loop, which compilers
+// vectorize, and its terms are then summed from cache with several partial sums.
+template <typename UpdateFunction, typename TermFunction>
+double UpdateAndSum(int N, UpdateFunction &&update, TermFunction &&f)
+{
+  constexpr int chunk = 256;
+  double sum = 0.0;
+  for (int begin = 0; begin < N; begin += chunk)
+  {
+    const int end = std::min(begin + chunk, N);
+    for (int i = begin; i < end; i++)
+    {
+      update(i);
+    }
+    sum += linalg::HostSums<1>(begin, end, f)[0];
+  }
+  return sum;
+}
+
+// r -= a z, z = D r, and return the local inner product (z, r), in one pass.
+double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
+{
+  const int N = r.Size();
+  MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  const auto *D = dinv.HostRead();
+  auto *R = r.HostReadWrite(), *Z = z.HostReadWrite();
+  return UpdateAndSum(
+      N,
+      [=](int i)
+      {
+        R[i] -= a * Z[i];
+        Z[i] = D[i] * R[i];
+      },
+      [=](int i) { return std::array{R[i] * Z[i]}; });
+}
+
+// The same for complex vectors and a real D, for which (z, r) = rᴴ D r is real. The step
+// size a is complex unless the operator is Hermitian (and then only up to rounding).
+std::complex<double> CgUpdateJacobi(std::complex<double> a, ComplexVector &r,
+                                    ComplexVector &z, const Vector &dinv)
+{
+  const int N = r.Size();
+  MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  const double ar = a.real(), ai = a.imag();
+  const auto *D = dinv.HostRead();
+  auto *RR = r.Real().HostReadWrite(), *RI = r.Imag().HostReadWrite();
+  auto *ZR = z.Real().HostReadWrite(), *ZI = z.Imag().HostReadWrite();
+  return UpdateAndSum(
+      N,
+      [=](int i)
+      {
+        RR[i] -= ar * ZR[i] - ai * ZI[i];
+        RI[i] -= ai * ZR[i] + ar * ZI[i];
+        ZR[i] = D[i] * RR[i];
+        ZI[i] = D[i] * RI[i];
+      },
+      [=](int i) { return std::array{RR[i] * ZR[i] + RI[i] * ZI[i]}; });
+}
 
 template <typename T>
 inline void CheckDot(T dot, const char *msg)
@@ -315,6 +378,14 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   z.UseDevice(true);
   p.UseDevice(true);
 
+  // A Jacobi preconditioner may be applied in the same pass as the residual update and the
+  // inner product (not a subclass, which may change the application).
+  const Vector *dinv = nullptr;
+  if (B && typeid(*B) == typeid(JacobiSmoother<OperType>))
+  {
+    dinv = static_cast<const JacobiSmoother<OperType> *>(B)->GetHostRealScaling();
+  }
+
   // Initialize.
   if (this->initial_guess)
   {
@@ -359,7 +430,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   eps = std::max(rel_tol * initial_res, abs_tol);
   converged = (res <= eps);
 
-  // Begin iterations.
+  // Begin iterations. x is updated with each search direction in the same pass as the next
+  // one is computed, and with the last one after the iterations.
   int it = 0;
   if (print_opts.iterations)
   {
@@ -379,7 +451,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
+      linalg::AXPYAndAYPX(alpha, p, x, beta / beta_prev, z);
     }
 
     A->Mult(p, z);
@@ -389,22 +461,34 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
                 "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
     alpha = beta / denom;
 
-    x.Add(alpha, p);
-    r.Add(-alpha, z);
-
     beta_prev = beta;
-    if (B)
+    if (dinv)
     {
-      ApplyB(B, r, z, this->use_timer);
+      // The fused loop costs no more than the residual update and inner product alone, so
+      // it is not timed as a preconditioner application.
+      beta = CgUpdateJacobi(alpha, r, z, *dinv);
+      Mpi::GlobalSum(1, &beta, comm);
     }
     else
     {
-      z = r;
+      r.Add(-alpha, z);
+      if (B)
+      {
+        ApplyB(B, r, z, this->use_timer);
+      }
+      else
+      {
+        z = r;
+      }
+      beta = linalg::Dot(comm, z, r);
     }
-    beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
+  }
+  if (it > 0)
+  {
+    x.Add(alpha, p);
   }
   if (print_opts.iterations)
   {
