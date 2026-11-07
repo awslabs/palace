@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <numeric>
+#include <random>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -23,6 +24,7 @@
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/hodlr.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
@@ -3345,6 +3347,71 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // partitions) with iterative solves, so the fields agree to ~solver tolerance, not to
   // machine precision.
   CHECK(d.Norml2() <= 1.0e-5 * (ref.Norml2() + 1.0e-30));
+}
+
+TEST_CASE("HODLR compression error follows the tolerance", "[substructure][Serial]")
+{
+  // A smooth kernel of points on a plane, as an interface operator: the compressed apply is
+  // accurate to the tolerance, down to the rounding of the factors.
+  const int n = 1000;
+  std::mt19937 gen(3);
+  std::uniform_real_distribution<double> uniform(0.0, 1.0);
+  std::normal_distribution<double> normal;
+  std::vector<double> coords(3 * n, 0.0), S(static_cast<std::size_t>(n) * n);
+  for (int i = 0; i < n; i++)
+  {
+    coords[3 * i] = uniform(gen);
+    coords[3 * i + 1] = uniform(gen);
+  }
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      S[static_cast<std::size_t>(i) * n + j] =
+          1.0 / (std::hypot(coords[3 * i] - coords[3 * j],
+                            coords[3 * i + 1] - coords[3 * j + 1]) +
+                 0.01);
+    }
+  }
+  std::vector<double> x(n), y(n, 0.0);
+  for (auto &v : x)
+  {
+    v = normal(gen);
+  }
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      y[i] += S[static_cast<std::size_t>(i) * n + j] * x[j];
+    }
+  }
+  long long storage = 0;
+  for (double tol : {1.0e-4, 1.0e-8, 1.0e-12})
+  {
+    CAPTURE(tol);
+    Hodlr h;
+    h.n = n;
+    h.perm.assign(n, 0);
+    std::vector<int> idx(n);
+    std::iota(idx.begin(), idx.end(), 0);
+    BuildHodlr(S, n, idx, 0, coords, tol, 32, h);
+    std::vector<double> xp(n), yp(n);
+    for (int k = 0; k < n; k++)
+    {
+      xp[k] = x[h.perm[k]];
+    }
+    h.Mult(xp.data(), yp.data());
+    double e = 0.0, s = 0.0;
+    for (int k = 0; k < n; k++)
+    {
+      e += (yp[k] - y[h.perm[k]]) * (yp[k] - y[h.perm[k]]);
+      s += y[h.perm[k]] * y[h.perm[k]];
+    }
+    CHECK(std::sqrt(e / s) <= 4.0 * tol);
+    CHECK(h.Storage() > storage);  // a tighter tolerance keeps more
+    CHECK(h.Storage() < static_cast<long long>(n) * n);
+    storage = h.Storage();
+  }
 }
 
 TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs tolerance",

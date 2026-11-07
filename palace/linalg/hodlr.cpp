@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
+#include <numbers>
+#include <random>
+#include <Eigen/Dense>
 
 namespace palace
 {
@@ -13,74 +17,63 @@ namespace palace
 namespace
 {
 
-// Symmetric eigendecomposition by cyclic Jacobi (no LAPACK dependency): A (n x n,
-// row-major, destroyed), eigenvectors -> V (row-major, columns are eigenvectors),
-// eigenvalues -> lam.
-void SymEig(std::vector<double> &A, int n, std::vector<double> &V, std::vector<double> &lam)
+// The low-rank factors B ~= U V^T of a block with the singular values of B above
+// tol * sigma_1(B) (U holding them, V orthonormal): an orthonormal basis Q of the range of
+// B, grown by blocks of Gaussian probes until the residual of the probes bounds that of B
+// below the truncation (with probability 1 - 10^-kProbes; Halko, Martinsson and Tropp,
+// SIAM Review 53, 2011) or reaches the rounding of the probes, past which they add nothing
+// to the range, and the truncated SVD of Q^T B.
+void LowRankFactors(const Eigen::MatrixXd &B, double tol, Eigen::MatrixXd &U,
+                    Eigen::MatrixXd &V)
 {
-  V.assign(static_cast<std::size_t>(n) * n, 0.0);
-  for (int i = 0; i < n; i++)
+  constexpr int kProbes = 16;
+  const Eigen::Index m1 = B.rows(), m2 = B.cols(), rmax = std::min(m1, m2);
+  std::mt19937 gen(1);  // the factors are computed once, on one process
+  std::normal_distribution<double> normal;
+  Eigen::MatrixXd Q(m1, 0);
+  double floor = -1.0;  // the residual of a probe below which Q is complete
+  while (Q.cols() < rmax)
   {
-    V[static_cast<std::size_t>(i) * n + i] = 1.0;
-  }
-  auto a = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
-  auto v = [&](int i, int j) -> double & { return V[static_cast<std::size_t>(i) * n + j]; };
-  double norm2 = 0.0;  // squared Frobenius norm, invariant under the rotations
-  for (double x : A)
-  {
-    norm2 += x * x;
-  }
-  for (int sweep = 0; sweep < 100; sweep++)
-  {
-    double off = 0.0;
-    for (int p = 0; p < n; p++)
+    const Eigen::Index k = std::min<Eigen::Index>(kProbes, rmax - Q.cols());
+    // The probes are drawn once each (an expression could be evaluated more than once).
+    const Eigen::MatrixXd W =
+        Eigen::MatrixXd::NullaryExpr(m2, k, [&normal, &gen]() { return normal(gen); });
+    Eigen::MatrixXd Y = B * W;
+    const double rounding =
+        100.0 * std::numeric_limits<double>::epsilon() * Y.colwise().norm().maxCoeff();
+    for (int pass = 0; pass < 2; pass++)  // twice is enough
     {
-      for (int q = p + 1; q < n; q++)
-      {
-        off += a(p, q) * a(p, q);
-      }
+      Y -= Q * (Q.transpose() * Y);
     }
-    if (off <= 1e-30 * norm2)
+    if (Y.colwise().norm().maxCoeff() <= std::max(floor, rounding))
     {
       break;
     }
-    for (int p = 0; p < n; p++)
+    Eigen::HouseholderQR<Eigen::MatrixXd> qr(Y);
+    Q.conservativeResize(Eigen::NoChange, Q.cols() + k);
+    Q.rightCols(k) = qr.householderQ() * Eigen::MatrixXd::Identity(m1, k);
+    if (floor < 0.0)
     {
-      for (int q = p + 1; q < n; q++)
-      {
-        const double apq = a(p, q);
-        if (std::abs(apq) < 1e-300)
-        {
-          continue;
-        }
-        const double phi = 0.5 * std::atan2(2.0 * apq, a(q, q) - a(p, p));
-        const double c = std::cos(phi), s = std::sin(phi);
-        for (int k = 0; k < n; k++)
-        {
-          const double kp = a(k, p), kq = a(k, q);
-          a(k, p) = c * kp - s * kq;
-          a(k, q) = s * kp + c * kq;
-        }
-        for (int k = 0; k < n; k++)
-        {
-          const double pk = a(p, k), qk = a(q, k);
-          a(p, k) = c * pk - s * qk;
-          a(q, k) = s * pk + c * qk;
-        }
-        for (int k = 0; k < n; k++)
-        {
-          const double kp = v(k, p), kq = v(k, q);
-          v(k, p) = c * kp - s * kq;
-          v(k, q) = s * kp + c * kq;
-        }
-      }
+      // ||(I - Q Q^T) B|| <= 10 sqrt(2/pi) max_i ||(I - Q Q^T) B w_i||, and
+      // sigma_1(Q^T B) <= sigma_1(B).
+      const double s1 =
+          Eigen::BDCSVD<Eigen::MatrixXd>(Q.transpose() * B).singularValues()(0);
+      floor = tol * s1 / (10.0 * std::sqrt(2.0 / std::numbers::pi));
     }
   }
-  lam.assign(n, 0.0);
-  for (int i = 0; i < n; i++)
+  // Q spans the range found, but its last columns may have lost orthogonality.
+  Q = Eigen::HouseholderQR<Eigen::MatrixXd>(Q).householderQ() *
+      Eigen::MatrixXd::Identity(m1, Q.cols());
+  Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(
+      Q.transpose() * B);
+  const Eigen::VectorXd &s = svd.singularValues();
+  Eigen::Index r = 0;
+  while (r < s.size() && s(r) > tol * s(0))
   {
-    lam[i] = a(i, i);
+    r++;
   }
+  U = Q * (svd.matrixU().leftCols(r) * s.head(r).asDiagonal());
+  V = svd.matrixV().leftCols(r);
 }
 
 }  // namespace
@@ -283,68 +276,27 @@ void BuildHodlr(const std::vector<double> &S, int n, const std::vector<int> &idx
   BuildHodlr(S, n, I2, base + m1, coords, tol, leaf, h);
   // Off-diagonal block B = S[rows, cols] with rows/cols the final permuted indices.
   const int *rows = &h.perm[base], *cols = &h.perm[base + m1];
-  // C = B^T B (m2 x m2); singular values of B are sqrt(eig(C)).
-  std::vector<double> C(static_cast<std::size_t>(m2) * m2, 0.0);
-  for (int a = 0; a < m2; a++)
+  Eigen::MatrixXd B(m1, m2), U, V;
+  for (int i = 0; i < m1; i++)
   {
-    for (int b = a; b < m2; b++)
+    for (int j = 0; j < m2; j++)
     {
-      double acc = 0.0;
-      for (int k = 0; k < m1; k++)
-      {
-        acc += S[static_cast<std::size_t>(rows[k]) * n + cols[a]] *
-               S[static_cast<std::size_t>(rows[k]) * n + cols[b]];
-      }
-      C[static_cast<std::size_t>(a) * m2 + b] = acc;
-      C[static_cast<std::size_t>(b) * m2 + a] = acc;
+      B(i, j) = S[static_cast<std::size_t>(rows[i]) * n + cols[j]];
     }
   }
-  std::vector<double> Vc, lam;
-  SymEig(C, m2, Vc, lam);
-  double lmax = 0.0;
-  for (double l : lam)
-  {
-    lmax = std::max(lmax, l);
-  }
-  std::vector<int> keep;
-  for (int k = 0; k < m2; k++)
-  {
-    if (lam[k] > tol * tol * lmax)
-    {
-      keep.push_back(k);
-    }
-  }
-  const int rB = static_cast<int>(keep.size());
-  // B ~= (B V_keep) V_keep^T; store U := B V_keep (m1 x rB), V := V_keep (m2 x rB).
+  LowRankFactors(B, tol, U, V);
   Hodlr::Block bl;
   bl.s1 = base;
   bl.m1 = m1;
   bl.s2 = base + m1;
   bl.m2 = m2;
-  bl.r = rB;
-  bl.U.assign(static_cast<std::size_t>(m1) * rB, 0.0);
-  bl.V.assign(static_cast<std::size_t>(m2) * rB, 0.0);
-  for (int i = 0; i < m1; i++)
-  {
-    for (int kk = 0; kk < rB; kk++)
-    {
-      double acc = 0.0;
-      for (int l = 0; l < m2; l++)
-      {
-        acc += S[static_cast<std::size_t>(rows[i]) * n + cols[l]] *
-               Vc[static_cast<std::size_t>(l) * m2 + keep[kk]];
-      }
-      bl.U[static_cast<std::size_t>(i) * rB + kk] = acc;
-    }
-  }
-  for (int j = 0; j < m2; j++)
-  {
-    for (int kk = 0; kk < rB; kk++)
-    {
-      bl.V[static_cast<std::size_t>(j) * rB + kk] =
-          Vc[static_cast<std::size_t>(j) * m2 + keep[kk]];
-    }
-  }
+  bl.r = static_cast<int>(U.cols());
+  bl.U.resize(static_cast<std::size_t>(m1) * bl.r);
+  bl.V.resize(static_cast<std::size_t>(m2) * bl.r);
+  Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
+      bl.U.data(), m1, bl.r) = U;
+  Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
+      bl.V.data(), m2, bl.r) = V;
   h.blocks.push_back(std::move(bl));
 }
 
