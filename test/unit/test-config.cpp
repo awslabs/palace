@@ -2107,6 +2107,35 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(eigen_gaps.empty());
   }
 
+  SECTION("Round-trip: Substructuring")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"SaveModel", "environment.model"}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.substructuring->direct_max_size ==
+          iodata1.solver.substructuring->direct_max_size);
+
+    auto sub_gaps = SchemaCoverageGaps("/properties/Solver/properties/Substructuring",
+                                       config["Solver"]["Substructuring"]);
+    INFO("Solver.Substructuring missing keys: " << json(sub_gaps).dump());
+    CHECK(sub_gaps.empty());
+  }
+
   SECTION("Round-trip: Transient DEFAULT scheme resolved concretely")
   {
     json config = {
