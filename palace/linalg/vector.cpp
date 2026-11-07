@@ -905,38 +905,111 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
   // X[j] is read once and y is written once. The terms are added in the same order as on
   // the device, which also skips the zero parts of the coefficients. The blocks are
   // smaller when needed to give every thread one.
+  //
+  // [Experiment] Terms are applied four at a time, and the real and imaginary parts are
+  // updated in the same loop when they have the same nonzero terms, so each block entry
+  // of y is loaded and stored once per four terms and each X[j] block is loaded once.
+  // Per entry, the sequence of operations is unchanged.
   const int nt = utils::GetMaxThreads();
   const int B = std::clamp((N + nt - 1) / nt, 64, 1024);
-  std::vector<const double *> XP(n);
+  std::vector<const double *> XR, XI;
+  std::vector<double> CR, CI;
+  XR.reserve(n);
+  XI.reserve(n);
+  CR.reserve(n);
+  CI.reserve(n);
   for (std::size_t j = 0; j < n; j++)
   {
-    XP[j] = X[j].HostRead();
+    const double *Xj = X[j].HostRead();
+    if (c[j].real() != 0.0)
+    {
+      XR.push_back(Xj);
+      CR.push_back(c[j].real());
+    }
+    if (c[j].imag() != 0.0)
+    {
+      XI.push_back(Xj);
+      CI.push_back(c[j].imag());
+    }
   }
+  const bool fused = (XR == XI);
   auto *YR = y.Real().HostWrite();
   auto *YI = y.Imag().HostWrite();
+  auto Single = [](const std::vector<const double *> &XS, const std::vector<double> &CS,
+                   double *__restrict Y, int b, int e)
+  {
+    const std::size_t m = XS.size();
+    std::size_t j = 0;
+    for (; j + 4 <= m; j += 4)
+    {
+      const double *__restrict X0 = XS[j], *__restrict X1 = XS[j + 1],
+                               *__restrict X2 = XS[j + 2], *__restrict X3 = XS[j + 3];
+      const double c0 = CS[j], c1 = CS[j + 1], c2 = CS[j + 2], c3 = CS[j + 3];
+      for (int i = b; i < e; i++)
+      {
+        double t = Y[i];
+        t += c0 * X0[i];
+        t += c1 * X1[i];
+        t += c2 * X2[i];
+        t += c3 * X3[i];
+        Y[i] = t;
+      }
+    }
+    for (; j < m; j++)
+    {
+      const double *__restrict Xj = XS[j];
+      const double cj = CS[j];
+      for (int i = b; i < e; i++)
+      {
+        Y[i] += cj * Xj[i];
+      }
+    }
+  };
   PalacePragmaOmp(parallel for schedule(static) if (N > B))
   for (int b = 0; b < N; b += B)
   {
     const int e = std::min(b + B, N);
     std::fill(YR + b, YR + e, 0.0);
     std::fill(YI + b, YI + e, 0.0);
-    for (std::size_t j = 0; j < n; j++)
+    if (!fused)
     {
-      const double cr = c[j].real(), ci = c[j].imag();
-      const double *Xj = XP[j];
-      if (cr != 0.0)
+      Single(XR, CR, YR, b, e);
+      Single(XI, CI, YI, b, e);
+      continue;
+    }
+    double *__restrict YRb = YR;
+    double *__restrict YIb = YI;
+    const std::size_t m = XR.size();
+    std::size_t j = 0;
+    for (; j + 4 <= m; j += 4)
+    {
+      const double *__restrict X0 = XR[j], *__restrict X1 = XR[j + 1],
+                               *__restrict X2 = XR[j + 2], *__restrict X3 = XR[j + 3];
+      const double r0 = CR[j], r1 = CR[j + 1], r2 = CR[j + 2], r3 = CR[j + 3];
+      const double i0 = CI[j], i1 = CI[j + 1], i2 = CI[j + 2], i3 = CI[j + 3];
+      for (int i = b; i < e; i++)
       {
-        for (int i = b; i < e; i++)
-        {
-          YR[i] += cr * Xj[i];
-        }
+        double tr = YRb[i], ti = YIb[i];
+        tr += r0 * X0[i];
+        ti += i0 * X0[i];
+        tr += r1 * X1[i];
+        ti += i1 * X1[i];
+        tr += r2 * X2[i];
+        ti += i2 * X2[i];
+        tr += r3 * X3[i];
+        ti += i3 * X3[i];
+        YRb[i] = tr;
+        YIb[i] = ti;
       }
-      if (ci != 0.0)
+    }
+    for (; j < m; j++)
+    {
+      const double *__restrict Xj = XR[j];
+      const double cr = CR[j], ci = CI[j];
+      for (int i = b; i < e; i++)
       {
-        for (int i = b; i < e; i++)
-        {
-          YI[i] += ci * Xj[i];
-        }
+        YRb[i] += cr * Xj[i];
+        YIb[i] += ci * Xj[i];
       }
     }
   }
