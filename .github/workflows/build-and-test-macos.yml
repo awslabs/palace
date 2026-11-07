@@ -252,7 +252,7 @@ jobs:
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 5
+        timeout-minutes: ${{ fromJSON(vars.PALACE_MACOS_UNIT_TEST_TIMEOUT || '5') }}
         run: |
           # Configure environment
           export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
