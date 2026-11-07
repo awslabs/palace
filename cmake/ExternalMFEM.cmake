@@ -519,6 +519,13 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/c79f309399361b2d6aadc207087ca6dc475513b4.diff"
   75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456
 )
+# https://github.com/mfem/mfem/pull/5731
+# SuperLUSolver setters for the relaxed and maximum supernode sizes.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5731.diff
+  "https://github.com/mfem/mfem/commit/67dd11d697fafba16d8826172343a42e7a0c5df1.diff"
+  17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
