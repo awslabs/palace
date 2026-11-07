@@ -37,6 +37,12 @@ private:
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
 
+  // The Maxwell, inverse and mutual capacitance matrices from C (of the given terminals),
+  // written to terminal-C.csv, terminal-Cinv.csv and terminal-Cm.csv with the terminal
+  // excitations.
+  void PostprocessCapacitance(const std::vector<int> &terminal_idx,
+                              const mfem::DenseMatrix &C) const;
+
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
