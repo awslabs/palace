@@ -41,6 +41,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -107,12 +108,17 @@ public:
 
 // Sparse direct solver for the environment and region factorizations: MUMPS, SuperLU_DIST
 // or STRUMPACK, in this order of preference (null without one).
-constexpr bool kHasDirectSolver =
-#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
-    true;
+constexpr const char *kDirectSolverName =
+#if defined(MFEM_USE_MUMPS)
+    "MUMPS";
+#elif defined(MFEM_USE_SUPERLU)
+    "SuperLU_DIST";
+#elif defined(MFEM_USE_STRUMPACK)
+    "STRUMPACK";
 #else
-    false;
+    "";
 #endif
+constexpr bool kHasDirectSolver = (kDirectSolverName[0] != '\0');
 
 #if defined(MFEM_USE_MUMPS)
 // MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
@@ -595,7 +601,10 @@ struct SubstructuringSolver::Impl
     double model_eps = 0.0;
     if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
     {
-      saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      {
+        BlockTimer bt(Timer::IO);
+        saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      }
       MFEM_VERIFY(saved.nG >= 0, "Cannot read the saved substructuring model \""
                                      << sub.save_model
                                      << "\" (run in \"Offline\" mode first)!");
@@ -1374,6 +1383,7 @@ struct SubstructuringSolver::Impl
 
   void AppendSourceModes(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     const int K = static_cast<int>(src_ids.size());
     const std::vector<double> G_full = GatherRows(SG_rows, K);
     const std::vector<double> H_full = GatherRows(SH_rows, K);
@@ -1490,6 +1500,7 @@ struct SubstructuringSolver::Impl
   // solver. Fills S_rows. Collective.
   void MaterializeMumps()
   {
+    BlockTimer bt(Timer::KSP_SETUP);
     mfem::Array<int> other;
     for (int i = 0; i < nt; i++)
     {
@@ -1707,6 +1718,7 @@ struct SubstructuringSolver::Impl
                 "full mesh!");
     if (!env_built)
     {
+      BlockTimer bt(Timer::KSP_SETUP);
       BuildEnvSubmeshSolver();
       env_built = true;
     }
@@ -2238,6 +2250,7 @@ struct SubstructuringSolver::Impl
 
   void AppendEnvFingerprint(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     const std::array<double, 5> fp = EnvironmentFingerprint();  // collective
     if (Mpi::Root(parent_fes.GetComm()))
     {
@@ -2407,6 +2420,7 @@ struct SubstructuringSolver::Impl
   // two-sided films of RegionFilmClosure. Collective.
   void WriteRegionMesh(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     std::vector<char> keep(parent_fes.GetTrueVSize(), 0);
     for (int t = 0; t < nt; t++)
     {
@@ -2472,6 +2486,7 @@ struct SubstructuringSolver::Impl
 
   void AppendSK(const std::string &path) const
   {
+    BlockTimer bt(Timer::IO);
     const std::vector<double> full = GatherRows(SK_rows, nG_global);
     if (Mpi::Root(parent_fes.GetComm()))
     {
@@ -2482,6 +2497,7 @@ struct SubstructuringSolver::Impl
   }
   void AppendModes(const std::string &path)
   {
+    BlockTimer bt(Timer::IO);
     const int K = static_cast<int>(mode_ids.size());
     const int has_gk = have_gk ? 1 : 0;
     const std::vector<double> G_full = GatherRows(G_rows, K);
@@ -2997,6 +3013,7 @@ struct SubstructuringSolver::Impl
     {
       return;
     }
+    BlockTimer bt(Timer::KSP_SETUP);
     // The exact factor solves each batch directly (one multi-RHS solve), the other one
     // preconditions CG per excitation. With London sheets, CG at their small regularization
     // leaves an error in the near-null space, so the exact factor is used when it fits.
@@ -3044,6 +3061,7 @@ struct SubstructuringSolver::Impl
   // Collective.
   void SolveRegion(std::vector<mfem::Vector> &x) const
   {
+    BlockTimer bt(Timer::KSP);
     const int n = static_cast<int>(x.size());
     if (region_exact)
     {
@@ -3132,6 +3150,7 @@ struct SubstructuringSolver::Impl
                         const std::vector<mfem::Vector *> &Y) const
   {
     MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
+    BlockTimer bt(Timer::KSP);
     MFEM_VERIFY(env_built, "Environment solver used before EnsureEnv()!");
     if (!env_parent_direct && !EnvMumps())
     {
@@ -3396,6 +3415,7 @@ void SubstructuringSolver::CondenseEnvironment()
   bool loaded = false;
   if (online && !model_path.empty())
   {
+    BlockTimer bt_io(Timer::IO);
     // The head of the model, read and checked by the constructor.
     const Impl::SavedHead &saved = impl->saved;
     MFEM_VERIFY(saved.nG == nG,
@@ -3630,6 +3650,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!model_path.empty())
     {
+      BlockTimer bt_io(Timer::IO);
       const int sig_type = impl->magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
       const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
       const std::vector<double> S_full = impl->GatherRows(impl->S_rows, nG);
@@ -3761,6 +3782,7 @@ void SubstructuringSolver::CondenseEnvironment()
   // Region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct factor,
   // region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact factor,
   // SolveRegion bypasses CG).
+  std::string region_solver;
   {
     std::unique_ptr<Solver<Operator>> pc;
     // Direct factorization when the region fits.
@@ -3789,15 +3811,18 @@ void SubstructuringSolver::CondenseEnvironment()
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->ApplyRegionFactor(r, z); });
+      region_solver = fmt::format("{} factorization", kDirectSolverName);
     }
     else if (impl->BuildRegionGmg())
     {
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->ApplyRegionGmgPc(r, z); });
+      region_solver = "conjugate gradients with geometric multigrid";
     }
     else if (impl->magnetostatic)
     {
+      region_solver = "conjugate gradients with AMS";
       auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
       ams->SetPrintLevel(0);
       pc = std::make_unique<MfemWrapperSolver<Operator>>(
@@ -3806,6 +3831,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else
     {
+      region_solver = "conjugate gradients with BoomerAMG";
       pc = std::make_unique<MfemWrapperSolver<Operator>>(
           std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
           /*complex_matrix=*/false, /*drop_small_entries=*/false);
@@ -3820,6 +3846,51 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
     impl->region_ksp->SetOperators(*impl->region_op, *impl->A_region_free);
   }
+
+  // Summary: the sizes, and how the environment was condensed and the region is solved.
+  std::string env_solver;
+  if (loaded)
+  {
+    env_solver = fmt::format("loaded from {}", model_path);
+  }
+  else
+  {
+    if (mumps_done)
+    {
+      env_solver = "MUMPS partial factorization";
+      if (subcfg.factorization_tol > 0.0)
+      {
+        env_solver +=
+            fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
+      }
+    }
+    else if (impl->env_parent_direct)
+    {
+      env_solver = fmt::format("{} factorization", kDirectSolverName);
+    }
+    else
+    {
+      env_solver = fmt::format("conjugate gradients with {}",
+                               impl->env_hierarchy   ? "geometric multigrid"
+                               : impl->magnetostatic ? "AMS"
+                                                     : "BoomerAMG");
+    }
+    if (!model_path.empty())
+    {
+      env_solver += fmt::format(", saved to {}", model_path);
+    }
+  }
+  long long counts[2] = {0, 0};  // region and environment interiors
+  for (int i = 0; i < impl->nt; i++)
+  {
+    counts[0] += impl->is_region_free[i] && !impl->is_gamma[i];
+    counts[1] += impl->is_env_int[i];
+  }
+  MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_LONG_LONG, MPI_SUM, comm);
+  Mpi::Print(comm,
+             "\nSubstructuring, number of global unknowns:\n Region: {:d}, environment: "
+             "{:d}, interface: {:d}\n Environment: {}\n Region: {}\n",
+             counts[0], counts[1], nG, env_solver, region_solver);
 }
 
 namespace
@@ -4627,6 +4698,7 @@ ErrorIndicator
 SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fields,
                                            const mfem::DenseMatrix &E) const
 {
+  BlockTimer bt(Timer::ESTIMATION);
   MFEM_VERIFY(E.Height() == static_cast<int>(region_fields.size()),
               "RegionErrorIndicator: one energy per field!");
   const auto &iodata = impl->iodata;
@@ -4778,6 +4850,7 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
                                          const std::vector<int> &ids,
                                          const std::vector<Vector> &fields) const
 {
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
   MFEM_VERIFY(ids.size() == fields.size(), "WriteParaView requires one field per id!");
   const int order = impl->iodata.solver.order;
   mfem::ParGridFunction phi(&impl->parent_fes);

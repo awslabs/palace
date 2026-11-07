@@ -221,6 +221,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                              "surface-current excitations!");
     SubstructuringSolver sub(iodata, mesh);
     sub.CondenseEnvironment();
+    BlockTimer bt1(Timer::POSTPRO);
     Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
                "loop excitation{}\n",
                nc, (nc != 1) ? "s" : "", nf, (nf != 1) ? "s" : "");
