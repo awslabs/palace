@@ -56,7 +56,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     process counts. Results change at the level of round-off. It uses a patch for
     [mfem/mfem#5731](https://github.com/mfem/mfem/pull/5731), which adds the setter of the
     relaxed supernode size to `mfem::SuperLUSolver`.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1166](https://github.com/awslabs/palace/pull/1166).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
