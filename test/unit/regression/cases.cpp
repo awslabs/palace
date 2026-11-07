@@ -1860,7 +1860,8 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regressi
 // An inactive wave port (without its modal terms, observed through its mode) in the
 // environment, with the active one in the region: the online sweep of a redesigned region
 // (permittivity 2.08 -> 2.3) against a saved model. The references are a regular
-// simulation, in the online run's columns.
+// simulation, in the online run's columns. The sweep starts above 3.1 GHz, where the mode
+// solve of the inactive port selects an evanescent mode on some platforms.
 TEST_CASE("substructuring_driven_wave_inactive_online",
           "[Serial][Parallel][GPU][Regression]")
 {
