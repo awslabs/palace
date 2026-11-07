@@ -1,0 +1,846 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/test-sensitivity.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit</a> - test-sensitivity.cpp<span style="font-size: 80%;"> (source / <a href="test-sensitivity.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">99.5&nbsp;%</td>
+            <td class="headerCovTableEntry">441</td>
+            <td class="headerCovTableEntry">439</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-11-06 23:44:14</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">31</td>
+            <td class="headerCovTableEntry">31</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;cmath&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;cstdint&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;fstream&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;functional&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;memory&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;random&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;set&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;vector&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &lt;nlohmann/json.hpp&gt;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &lt;catch2/generators/catch_generators_all.hpp&gt;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;fem/shapederivativeform.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;fixtures.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;linalg/divfree.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;linalg/ksp.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L23"><span class="lineNum">      23</span>              : #include &quot;linalg/rap.hpp&quot;</span>
+<span id="L24"><span class="lineNum">      24</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L25"><span class="lineNum">      25</span>              : #include &quot;models/curlcurloperator.hpp&quot;</span>
+<span id="L26"><span class="lineNum">      26</span>              : #include &quot;models/laplaceoperator.hpp&quot;</span>
+<span id="L27"><span class="lineNum">      27</span>              : #include &quot;models/sensitivityexport.hpp&quot;</span>
+<span id="L28"><span class="lineNum">      28</span>              : #include &quot;models/spaceoperator.hpp&quot;</span>
+<span id="L29"><span class="lineNum">      29</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L30"><span class="lineNum">      30</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L31"><span class="lineNum">      31</span>              : #include &quot;utils/units.hpp&quot;</span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span>              : namespace palace</span>
+<span id="L34"><span class="lineNum">      34</span>              : {</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span>              : namespace</span>
+<span id="L37"><span class="lineNum">      37</span>              : {</span>
+<span id="L38"><span class="lineNum">      38</span>              : </span>
+<span id="L39"><span class="lineNum">      39</span>              : // A unit cube of two halves, with attribute 1 below z = 0.5 and 2 above, and the boundary</span>
+<span id="L40"><span class="lineNum">      40</span>              : // attributes of mfem::Mesh::MakeCartesian3D. The nodes are moved by a smooth map which</span>
+<span id="L41"><span class="lineNum">      41</span>              : // keeps the faces planar, so the elements are curved. With amr, the mesh is refined</span>
+<span id="L42"><span class="lineNum">      42</span>              : // nonconformally, with hanging nodes.</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC tlaBgGNC">         387 : std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; CubeMesh(IoData &amp;iodata, mfem::Element::Type type,</span></span>
+<span id="L44"><span class="lineNum">      44</span>              :                                             bool amr)</span>
+<span id="L45"><span class="lineNum">      45</span>              : {</span>
+<span id="L46"><span class="lineNum">      46</span>              :   auto smesh = std::make_unique&lt;mfem::Mesh&gt;(</span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">         387 :       mfem::Mesh::MakeCartesian3D(4, 4, 4, type, 1.0, 1.0, 1.0));</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">       86595 :   for (int e = 0; e &lt; smesh-&gt;GetNE(); e++)</span></span>
+<span id="L49"><span class="lineNum">      49</span>              :   {</span>
+<span id="L50"><span class="lineNum">      50</span>              :     mfem::Vector center;</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">       86208 :     smesh-&gt;GetElementCenter(e, center);</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">      129312 :     smesh-&gt;SetAttribute(e, (center(2) &lt; 0.5) ? 1 : 2);</span></span>
+<span id="L53"><span class="lineNum">      53</span>              :   }</span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">         387 :   smesh-&gt;SetAttributes();</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">         387 :   smesh-&gt;SetCurvature(2);</span></span>
+<span id="L56"><span class="lineNum">      56</span>              :   auto &amp;nodes = *smesh-&gt;GetNodes();</span>
+<span id="L57"><span class="lineNum">      57</span>              :   const auto &amp;nodal_fespace = *nodes.FESpace();</span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">      282510 :   for (int i = 0; i &lt; nodal_fespace.GetNDofs(); i++)</span></span>
+<span id="L59"><span class="lineNum">      59</span>              :   {</span>
+<span id="L60"><span class="lineNum">      60</span>              :     double x[3];</span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">     1128492 :     for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :     {</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">      846369 :       x[d] = nodes(nodal_fespace.DofToVDof(i, d));</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :     }</span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">     1128492 :     for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :     {</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">      846369 :       nodes(nodal_fespace.DofToVDof(i, d)) +=</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">      846369 :           0.12 * x[d] * (1.0 - x[d]) * std::sin(2.0 * x[(d + 1) % 3] + x[(d + 2) % 3] + d);</span></span>
+<span id="L69"><span class="lineNum">      69</span>              :     }</span>
+<span id="L70"><span class="lineNum">      70</span>              :   }</span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">         387 :   iodata.NondimensionalizeInputs(smesh);</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">         387 :   iodata.CheckConfiguration();</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">         387 :   if (amr)</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :   {</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">          39 :     smesh-&gt;EnsureNCMesh(true);</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :   }</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">         387 :   if (Mpi::Size(Mpi::World()) &gt; smesh-&gt;GetNE())</span></span>
+<span id="L78"><span class="lineNum">      78</span>              :   {</span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaUNC tlaBgUNC">           0 :     SKIP(&quot;Mesh has fewer elements than processes&quot;);</span></span>
+<span id="L80"><span class="lineNum">      80</span>              :   }</span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC tlaBgGNC">         387 :   auto pmesh = std::make_unique&lt;mfem::ParMesh&gt;(Mpi::World(), *smesh);</span></span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">         387 :   if (amr)</span></span>
+<span id="L83"><span class="lineNum">      83</span>              :   {</span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">          39 :     pmesh-&gt;RandomRefinement(0.5);</span></span>
+<span id="L85"><span class="lineNum">      85</span>              :   }</span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">         387 :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">         774 :   mesh.push_back(std::make_unique&lt;Mesh&gt;(std::move(pmesh)));</span></span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">         387 :   return mesh;</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC tlaBgUNC">           0 : }</span></span>
+<span id="L90"><span class="lineNum">      90</span>              : </span>
+<span id="L91"><span class="lineNum">      91</span>              : // The cube with two dielectrics, the upper one anisotropic. Terminals 1 and 2 are the faces</span>
+<span id="L92"><span class="lineNum">      92</span>              : // z = 0 and z = 1, the faces y = 0 and y = 1 are grounded, and the others have zero charge.</span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC tlaBgGNC">          30 : struct Problem</span></span>
+<span id="L94"><span class="lineNum">      94</span>              : {</span>
+<span id="L95"><span class="lineNum">      95</span>              :   IoData iodata;</span>
+<span id="L96"><span class="lineNum">      96</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L97"><span class="lineNum">      97</span>              : </span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">          30 :   Problem(mfem::Element::Type type, int order, bool amr) : iodata(Units(1.0, 1.0))</span></span>
+<span id="L99"><span class="lineNum">      99</span>              :   {</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">          30 :     iodata.model.Lc = 1.0;</span></span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">          30 :     iodata.problem.type = ProblemType::ELECTROSTATIC;</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">          30 :     auto &amp;lower = iodata.domains.materials.emplace_back();</span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">          30 :     lower.attributes = {1};</span></span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">          30 :     auto &amp;upper = iodata.domains.materials.emplace_back();</span></span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">          30 :     upper.attributes = {2};</span></span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">          30 :     upper.epsilon_r.s = {2.0, 3.0, 4.0};</span></span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">          30 :     iodata.boundaries.pec.attributes = {2, 4};</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">          30 :     iodata.boundaries.terminal[1].attributes = {1};</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">          30 :     iodata.boundaries.terminal[2].attributes = {6};</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">          30 :     iodata.solver.order = order;</span></span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">          30 :     iodata.solver.linear.tol = 1.0e-13;</span></span>
+<span id="L112"><span class="lineNum">     112</span> <span class="tlaGNC">          30 :     iodata.solver.linear.max_it = 1000;</span></span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC">          30 :     mesh = CubeMesh(iodata, type, amr);</span></span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">          30 :   }</span></span>
+<span id="L115"><span class="lineNum">     115</span>              : };</span>
+<span id="L116"><span class="lineNum">     116</span>              : </span>
+<span id="L117"><span class="lineNum">     117</span>              : // The cube as an eigenmode problem with every kind of term of T(λ) = K + λ C + λ² M +</span>
+<span id="L118"><span class="lineNum">     118</span>              : // A2(λ): an anisotropic lossy dielectric below, an anisotropic magnetic conductor with a</span>
+<span id="L119"><span class="lineNum">     119</span>              : // London depth above, and PEC, impedance, lumped port, second-order farfield and finite</span>
+<span id="L120"><span class="lineNum">     120</span>              : // conductivity boundaries.</span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">         333 : struct EigenProblem</span></span>
+<span id="L122"><span class="lineNum">     122</span>              : {</span>
+<span id="L123"><span class="lineNum">     123</span>              :   IoData iodata;</span>
+<span id="L124"><span class="lineNum">     124</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L125"><span class="lineNum">     125</span>              : </span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaGNC">         333 :   EigenProblem(mfem::Element::Type type, int order, bool amr,</span></span>
+<span id="L127"><span class="lineNum">     127</span>              :                const std::function&lt;void(IoData &amp;)&gt; &amp;modify = {})</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">         333 :     : iodata(Units(1.0, 1.0))</span></span>
+<span id="L129"><span class="lineNum">     129</span>              :   {</span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaGNC">         333 :     iodata.model.L0 = 1.0;  // m, so that every term is of order one</span></span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">         333 :     iodata.model.Lc = 1.0;</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">         333 :     iodata.problem.type = ProblemType::EIGENMODE;</span></span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">         333 :     auto &amp;lower = iodata.domains.materials.emplace_back();</span></span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">         333 :     lower.attributes = {1};</span></span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">         333 :     lower.epsilon_r.s = {2.0, 3.0, 4.0};</span></span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">         333 :     lower.tandelta.s = {0.01, 0.02, 0.03};</span></span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">         333 :     auto &amp;upper = iodata.domains.materials.emplace_back();</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">         333 :     upper.attributes = {2};</span></span>
+<span id="L139"><span class="lineNum">     139</span> <span class="tlaGNC">         333 :     upper.mu_r.s = {1.5, 2.0, 2.5};</span></span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">         333 :     upper.sigma.s = {1.0e-3, 2.0e-3, 3.0e-3};</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">         333 :     upper.lambda_L = 0.3;</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">         333 :     iodata.boundaries.pec.attributes = {2};</span></span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">         333 :     auto &amp;impedance = iodata.boundaries.impedance.emplace_back();</span></span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">         333 :     impedance.attributes = {4};</span></span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">         333 :     impedance.Rs = 100.0;</span></span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">         333 :     impedance.Ls = 1.0e-6;</span></span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">         333 :     impedance.Cs = 1.0e-11;</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">         333 :     auto &amp;port = iodata.boundaries.lumpedport[1];</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">         333 :     port.R = 50.0;</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">         333 :     port.L = 1.0e-6;</span></span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">         333 :     port.C = 1.0e-11;</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">         333 :     auto &amp;element = port.elements.emplace_back();</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">         333 :     element.direction = {0.0, 1.0, 0.0};</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">         333 :     element.attributes = {3};</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">         333 :     iodata.boundaries.farfield.order = 2;</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">         333 :     iodata.boundaries.farfield.attributes = {6};</span></span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">         333 :     auto &amp;conductivity = iodata.boundaries.conductivity.emplace_back();</span></span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">         333 :     conductivity.attributes = {5};</span></span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">         333 :     conductivity.sigma = 1.0e3;</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">         333 :     iodata.solver.order = order;</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">         333 :     if (modify)</span></span>
+<span id="L162"><span class="lineNum">     162</span>              :     {</span>
+<span id="L163"><span class="lineNum">     163</span>              :       modify(iodata);</span>
+<span id="L164"><span class="lineNum">     164</span>              :     }</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">         333 :     mesh = CubeMesh(iodata, type, amr);</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">         333 :   }</span></span>
+<span id="L167"><span class="lineNum">     167</span>              : };</span>
+<span id="L168"><span class="lineNum">     168</span>              : </span>
+<span id="L169"><span class="lineNum">     169</span>              : // The cube as a magnetostatic problem with an anisotropic magnetic material above. The</span>
+<span id="L170"><span class="lineNum">     170</span>              : // faces x = 0, z = 0 and x = 1 are a connected PEC, and the faces z = 1 and y = 0 are</span>
+<span id="L171"><span class="lineNum">     171</span>              : // surface current sources 1 and 2 along x, which close current loops through it.</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">          24 : struct MagnetostaticProblem</span></span>
+<span id="L173"><span class="lineNum">     173</span>              : {</span>
+<span id="L174"><span class="lineNum">     174</span>              :   IoData iodata;</span>
+<span id="L175"><span class="lineNum">     175</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L176"><span class="lineNum">     176</span>              : </span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">          24 :   MagnetostaticProblem(mfem::Element::Type type, int order, bool amr)</span></span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">          24 :     : iodata(Units(1.0, 1.0))</span></span>
+<span id="L179"><span class="lineNum">     179</span>              :   {</span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">          24 :     iodata.model.Lc = 1.0;</span></span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">          24 :     iodata.problem.type = ProblemType::MAGNETOSTATIC;</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">          24 :     auto &amp;lower = iodata.domains.materials.emplace_back();</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">          24 :     lower.attributes = {1};</span></span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">          24 :     auto &amp;upper = iodata.domains.materials.emplace_back();</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">          24 :     upper.attributes = {2};</span></span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">          24 :     upper.mu_r.s = {1.5, 2.0, 2.5};</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">          24 :     iodata.boundaries.pec.attributes = {1, 3, 5};</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">          72 :     for (const auto &amp;[idx, attr] : {std::pair{1, 6}, std::pair{2, 2}})</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :     {</span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">          48 :       auto &amp;element = iodata.boundaries.current[idx].elements.emplace_back();</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">          48 :       element.direction = {1.0, 0.0, 0.0};</span></span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">          96 :       element.attributes = {attr};</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :     }</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">          24 :     iodata.solver.order = order;</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">          24 :     iodata.solver.linear.tol = 1.0e-13;</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">          24 :     iodata.solver.linear.max_it = 1000;</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">          24 :     mesh = CubeMesh(iodata, type, amr);</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">          24 :   }</span></span>
+<span id="L199"><span class="lineNum">     199</span>              : };</span>
+<span id="L200"><span class="lineNum">     200</span>              : </span>
+<span id="L201"><span class="lineNum">     201</span>              : // The terminal potentials, as in ElectrostaticSolver::Solve.</span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">         126 : std::vector&lt;Vector&gt; SolveTerminals(const IoData &amp;iodata, LaplaceOperator &amp;laplace_op)</span></span>
+<span id="L203"><span class="lineNum">     203</span>              : {</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">         126 :   auto K = laplace_op.GetStiffnessMatrix();</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">         126 :   KspSolver ksp(iodata, laplace_op.GetH1Spaces());</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">         126 :   ksp.SetOperators(*K, *K);</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">         126 :   std::vector&lt;Vector&gt; V;</span></span>
+<span id="L208"><span class="lineNum">     208</span>              :   Vector RHS;</span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">         378 :   for (const auto &amp;[idx, data] : laplace_op.GetSources())</span></span>
+<span id="L210"><span class="lineNum">     210</span>              :   {</span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">         252 :     auto &amp;v = V.emplace_back();</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">         252 :     laplace_op.GetExcitationVector(idx, *K, v, RHS);</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">         252 :     ksp.Mult(RHS, v);</span></span>
+<span id="L214"><span class="lineNum">     214</span>              :   }</span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">         126 :   return V;</span></span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">         126 : }</span></span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              : // The capacitance C_ij = V_jᵀ K V_i, as in ElectrostaticSolver::PostprocessTerminals.</span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">         300 : double Capacitance(const LaplaceOperator &amp;laplace_op, const std::vector&lt;int&gt; &amp;attributes,</span></span>
+<span id="L220"><span class="lineNum">     220</span>              :                    const Vector &amp;Vi, const Vector &amp;Vj)</span>
+<span id="L221"><span class="lineNum">     221</span>              : {</span>
+<span id="L222"><span class="lineNum">     222</span>              :   const auto &amp;h1_fespace = laplace_op.GetH1Space();</span>
+<span id="L223"><span class="lineNum">     223</span>              :   Vector u(h1_fespace.GetVSize()), w(h1_fespace.GetVSize()), y(h1_fespace.GetVSize());</span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">         300 :   h1_fespace.GetProlongationMatrix()-&gt;Mult(Vi, u);</span></span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaGNC">         300 :   h1_fespace.GetProlongationMatrix()-&gt;Mult(Vj, w);</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">         600 :   laplace_op.GetStiffness(attributes)-&gt;Mult(u, y);</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaGNC">         600 :   return linalg::Dot&lt;Vector&gt;(laplace_op.GetComm(), w, y);</span></span>
+<span id="L228"><span class="lineNum">     228</span>              : }</span>
+<span id="L229"><span class="lineNum">     229</span>              : </span>
+<span id="L230"><span class="lineNum">     230</span>              : // A random complex vector on the true DOFs of the H(curl) space, zero on its essential true</span>
+<span id="L231"><span class="lineNum">     231</span>              : // DOFs.</span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC">          33 : ComplexVector RandomComplexVector(const SpaceOperator &amp;space_op, std::mt19937 &amp;gen)</span></span>
+<span id="L233"><span class="lineNum">     233</span>              : {</span>
+<span id="L234"><span class="lineNum">     234</span>              :   std::uniform_real_distribution&lt;double&gt; dist(-1.0, 1.0);</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">          33 :   ComplexVector x(space_op.GetNDSpace().GetTrueVSize());</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">       56701 :   for (int i = 0; i &lt; x.Size(); i++)</span></span>
+<span id="L237"><span class="lineNum">     237</span>              :   {</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">       56668 :     x.Real()(i) = dist(gen);</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">       56668 :     x.Imag()(i) = dist(gen);</span></span>
+<span id="L240"><span class="lineNum">     240</span>              :   }</span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">        3164 :   for (const int i : space_op.GetNDDbcTDofLists().back())</span></span>
+<span id="L242"><span class="lineNum">     242</span>              :   {</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">        3131 :     x.Real()(i) = x.Imag()(i) = 0.0;</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :   }</span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">          33 :   return x;</span></span>
+<span id="L246"><span class="lineNum">     246</span>              : }</span>
+<span id="L247"><span class="lineNum">     247</span>              : </span>
+<span id="L248"><span class="lineNum">     248</span>              : // The unconjugated product xᵀ A x.</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">         480 : std::complex&lt;double&gt; TransposeProduct(const ComplexOperator &amp;A, const ComplexVector &amp;x)</span></span>
+<span id="L250"><span class="lineNum">     250</span>              : {</span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">         480 :   ComplexVector y(x.Size());</span></span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">         480 :   A.Mult(x, y);</span></span>
+<span id="L253"><span class="lineNum">     253</span>              :   std::complex&lt;double&gt; dot = {</span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">         480 :       linalg::LocalDot(x.Real(), y.Real()) - linalg::LocalDot(x.Imag(), y.Imag()),</span></span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">         480 :       linalg::LocalDot(x.Real(), y.Imag()) + linalg::LocalDot(x.Imag(), y.Real())};</span></span>
+<span id="L256"><span class="lineNum">     256</span>              :   Mpi::GlobalSum(1, &amp;dot, Mpi::World());</span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">         960 :   return dot;</span></span>
+<span id="L258"><span class="lineNum">     258</span>              : }</span>
+<span id="L259"><span class="lineNum">     259</span>              : </span>
+<span id="L260"><span class="lineNum">     260</span>              : // Move the mesh nodes by h W, for W on the true DOFs of the mesh nodal space.</span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">         480 : void MoveNodes(Mesh &amp;mesh, const mfem::ParFiniteElementSpace &amp;nodal_fespace,</span></span>
+<span id="L262"><span class="lineNum">     262</span>              :                const Vector &amp;W, double h)</span>
+<span id="L263"><span class="lineNum">     263</span>              : {</span>
+<span id="L264"><span class="lineNum">     264</span>              :   mfem::Vector W_l(nodal_fespace.GetVSize());</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">         480 :   nodal_fespace.GetProlongationMatrix()-&gt;Mult(W, W_l);</span></span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaGNC">         480 :   mesh.Get().GetNodes()-&gt;Add(h, W_l);</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">         480 :   mesh.Get().NodesUpdated();</span></span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">         480 :   mesh.ResetCeedObjects();</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">         480 : }</span></span>
+<span id="L270"><span class="lineNum">     270</span>              : </span>
+<span id="L271"><span class="lineNum">     271</span>              : }  // namespace</span>
+<span id="L272"><span class="lineNum">     272</span>              : </span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">          24 : TEST_CASE(&quot;Electrostatic capacitance sensitivities&quot;, &quot;[sensitivity][Serial][Parallel]&quot;)</span></span>
+<span id="L274"><span class="lineNum">     274</span>              : {</span>
+<span id="L275"><span class="lineNum">     275</span>              :   // The derivatives of the capacitances need no adjoint solve. Check them against finite</span>
+<span id="L276"><span class="lineNum">     276</span>              :   // differences of the solved capacitances on moved meshes.</span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">          27 :   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);</span></span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">          30 :   auto order = GENERATE(1, 2);</span></span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">          36 :   auto amr = GENERATE(false, true);</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">          48 :   INFO(&quot;Element type: &quot; &lt;&lt; type &lt;&lt; &quot;, order: &quot; &lt;&lt; order &lt;&lt; &quot;, AMR: &quot; &lt;&lt; amr);</span></span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">          24 :   Problem problem(type, order, amr);</span></span>
+<span id="L282"><span class="lineNum">     282</span>              :   auto &amp;mesh = *problem.mesh[0];</span>
+<span id="L283"><span class="lineNum">     283</span>              : </span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">          24 :   LaplaceOperator laplace_op(problem.iodata, problem.mesh);</span></span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaGNC">          24 :   const auto V = SolveTerminals(problem.iodata, laplace_op);</span></span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">          24 :   REQUIRE(V.size() == 2);</span></span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">          24 :   const auto dK = laplace_op.GetStiffnessShapeDerivative();</span></span>
+<span id="L288"><span class="lineNum">     288</span>              :   const auto &amp;nodal_fespace = dK-&gt;GetNodalSpace();</span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">          24 :   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));</span></span>
+<span id="L290"><span class="lineNum">     290</span>              :   std::uniform_real_distribution&lt;double&gt; dist(-1.0, 1.0);</span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">          24 :   Vector W(nodal_fespace.GetTrueVSize());</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">       69168 :   for (int i = 0; i &lt; W.Size(); i++)</span></span>
+<span id="L293"><span class="lineNum">     293</span>              :   {</span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">       69144 :     W(i) = dist(gen);</span></span>
+<span id="L295"><span class="lineNum">     295</span>              :   }</span>
+<span id="L296"><span class="lineNum">     296</span>              : </span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">          24 :   const std::vector&lt;std::pair&lt;int, int&gt;&gt; entries = {{0, 0}, {0, 1}, {1, 1}};</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">          24 :   std::vector&lt;double&gt; adjoint;</span></span>
+<span id="L299"><span class="lineNum">     299</span>              :   Vector g;</span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">          96 :   for (const auto &amp;[i, j] : entries)</span></span>
+<span id="L301"><span class="lineNum">     301</span>              :   {</span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">          72 :     dK-&gt;Mult(V[i], V[j], g);</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">          72 :     adjoint.push_back(linalg::Dot&lt;Vector&gt;(Mpi::World(), g, W));</span></span>
+<span id="L304"><span class="lineNum">     304</span>              :   }</span>
+<span id="L305"><span class="lineNum">     305</span>              : </span>
+<span id="L306"><span class="lineNum">     306</span> <span class="tlaGNC">          96 :   auto CapacitancesAt = [&amp;](double h)</span></span>
+<span id="L307"><span class="lineNum">     307</span>              :   {</span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">          96 :     MoveNodes(mesh, nodal_fespace, W, h);</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">          96 :     LaplaceOperator moved_op(problem.iodata, problem.mesh);</span></span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaGNC">          96 :     const auto Vh = SolveTerminals(problem.iodata, moved_op);</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">          96 :     std::vector&lt;double&gt; C;</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">         384 :     for (const auto &amp;[i, j] : entries)</span></span>
+<span id="L313"><span class="lineNum">     313</span>              :     {</span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">         576 :       C.push_back(Capacitance(moved_op, {1, 2}, Vh[i], Vh[j]));</span></span>
+<span id="L315"><span class="lineNum">     315</span>              :     }</span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaGNC">          96 :     MoveNodes(mesh, nodal_fespace, W, -h);</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">          96 :     return C;</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">          96 :   };</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">          48 :   auto CentralDifference = [&amp;](double h)</span></span>
+<span id="L320"><span class="lineNum">     320</span>              :   {</span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">          48 :     const auto Cp = CapacitancesAt(h), Cm = CapacitancesAt(-h);</span></span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">          48 :     std::vector&lt;double&gt; d;</span></span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaGNC">         192 :     for (std::size_t k = 0; k &lt; Cp.size(); k++)</span></span>
+<span id="L324"><span class="lineNum">     324</span>              :     {</span>
+<span id="L325"><span class="lineNum">     325</span> <span class="tlaGNC">         144 :       d.push_back((Cp[k] - Cm[k]) / (2.0 * h));</span></span>
+<span id="L326"><span class="lineNum">     326</span>              :     }</span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">          48 :     return d;</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">          24 :   };</span></span>
+<span id="L329"><span class="lineNum">     329</span>              :   const double h = 2.0e-4;</span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">          24 :   const auto d1 = CentralDifference(h), d2 = CentralDifference(0.5 * h);</span></span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">          96 :   for (std::size_t k = 0; k &lt; entries.size(); k++)</span></span>
+<span id="L332"><span class="lineNum">     332</span>              :   {</span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">          72 :     const double fd = (4.0 * d2[k] - d1[k]) / 3.0;</span></span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">         144 :     INFO(&quot;Entry (&quot; &lt;&lt; entries[k].first &lt;&lt; &quot;, &quot; &lt;&lt; entries[k].second</span></span>
+<span id="L335"><span class="lineNum">     335</span>              :                    &lt;&lt; &quot;): g ⋅ W = &quot; &lt;&lt; adjoint[k] &lt;&lt; &quot;, finite difference = &quot; &lt;&lt; fd);</span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaGNC">          72 :     CHECK(std::abs(adjoint[k] - fd) &lt;= 1.0e-7 * std::abs(fd));</span></span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaGNC">          72 :   }</span></span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC">          48 : }</span></span>
+<span id="L339"><span class="lineNum">     339</span>              : </span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">          24 : TEST_CASE(&quot;Eigenmode system shape derivatives&quot;, &quot;[sensitivity][Serial][Parallel]&quot;)</span></span>
+<span id="L341"><span class="lineNum">     341</span>              : {</span>
+<span id="L342"><span class="lineNum">     342</span>              :   // The gradient of xᵀ T(λ) x for a complex λ and vector x, against finite differences of</span>
+<span id="L343"><span class="lineNum">     343</span>              :   // the assembled form on moved meshes.</span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">          27 :   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);</span></span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">          30 :   auto order = GENERATE(1, 2);</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">          36 :   auto amr = GENERATE(false, true);</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">          72 :   INFO(&quot;Element type: &quot; &lt;&lt; type &lt;&lt; &quot;, order: &quot; &lt;&lt; order &lt;&lt; &quot;, AMR: &quot; &lt;&lt; amr);</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">          48 :   EigenProblem problem(type, order, amr);</span></span>
+<span id="L349"><span class="lineNum">     349</span>              :   auto &amp;mesh = *problem.mesh[0];</span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">          24 :   SpaceOperator space_op(problem.iodata, problem.mesh);</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">          24 :   const std::complex&lt;double&gt; lambda(0.05, 1.3),</span></span>
+<span id="L352"><span class="lineNum">     352</span> <span class="tlaGNC">          24 :       omega = lambda / std::complex&lt;double&gt;(0.0, 1.0);</span></span>
+<span id="L353"><span class="lineNum">     353</span>              : </span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaGNC">          24 :   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));</span></span>
+<span id="L355"><span class="lineNum">     355</span>              :   std::uniform_real_distribution&lt;double&gt; dist(-1.0, 1.0);</span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaGNC">          24 :   const auto x = RandomComplexVector(space_op, gen);</span></span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC">         120 :   auto Form = [&amp;]()</span></span>
+<span id="L358"><span class="lineNum">     358</span>              :   {</span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaGNC">         120 :     auto K = space_op.GetStiffnessMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaGNC">         120 :     auto C = space_op.GetDampingMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">         120 :     auto M = space_op.GetMassMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaGNC">         120 :     auto A2 = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">         240 :     REQUIRE((K &amp;&amp; C &amp;&amp; M &amp;&amp; A2));</span></span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">         240 :     return TransposeProduct(*space_op.GetSystemMatrix(std::complex&lt;double&gt;(1.0), lambda,</span></span>
+<span id="L365"><span class="lineNum">     365</span>              :                                                       lambda * lambda, K.get(), C.get(),</span>
+<span id="L366"><span class="lineNum">     366</span>              :                                                       M.get(), A2.get()),</span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">         120 :                             x);</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">          24 :   };</span></span>
+<span id="L369"><span class="lineNum">     369</span>              : </span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">          24 :   const auto dT = space_op.GetSystemShapeDerivative(1.0, lambda, lambda * lambda, omega);</span></span>
+<span id="L371"><span class="lineNum">     371</span>              :   Vector gr, gi;</span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">          24 :   GetComplexShapeGradient(*dT[0], *dT[1], x, gr, gi);</span></span>
+<span id="L373"><span class="lineNum">     373</span>              :   const auto &amp;nodal_fespace = dT[0]-&gt;GetNodalSpace();</span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">          24 :   auto Contract = [&amp;](const Vector &amp;W)</span></span>
+<span id="L375"><span class="lineNum">     375</span>              :   {</span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">          24 :     return std::complex&lt;double&gt;(linalg::Dot&lt;Vector&gt;(Mpi::World(), gr, W),</span></span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">          24 :                                 linalg::Dot&lt;Vector&gt;(Mpi::World(), gi, W));</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">          24 :   };</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">          24 :   Vector W(nodal_fespace.GetTrueVSize());</span></span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">       66114 :   for (int i = 0; i &lt; W.Size(); i++)</span></span>
+<span id="L381"><span class="lineNum">     381</span>              :   {</span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaGNC">       66090 :     W(i) = dist(gen);</span></span>
+<span id="L383"><span class="lineNum">     383</span>              :   }</span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC">          48 :   auto CentralDifference = [&amp;](double h)</span></span>
+<span id="L385"><span class="lineNum">     385</span>              :   {</span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaGNC">          48 :     MoveNodes(mesh, nodal_fespace, W, h);</span></span>
+<span id="L387"><span class="lineNum">     387</span> <span class="tlaGNC">          48 :     const auto Fp = Form();</span></span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaGNC">          48 :     MoveNodes(mesh, nodal_fespace, W, -2.0 * h);</span></span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaGNC">          48 :     const auto Fm = Form();</span></span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaGNC">          48 :     MoveNodes(mesh, nodal_fespace, W, h);</span></span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaGNC">          48 :     return (Fp - Fm) / (2.0 * h);</span></span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaGNC">          24 :   };</span></span>
+<span id="L393"><span class="lineNum">     393</span>              :   const double h = 2.0e-4;</span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaGNC">          24 :   const auto fd = (4.0 * CentralDifference(0.5 * h) - CentralDifference(h)) / 3.0;</span></span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaGNC">          24 :   const auto adjoint = Contract(W);</span></span>
+<span id="L396"><span class="lineNum">     396</span> <span class="tlaGNC">          72 :   INFO(&quot;xᵀ T x = &quot; &lt;&lt; Form() &lt;&lt; &quot;, g ⋅ W = &quot; &lt;&lt; adjoint &lt;&lt; &quot;, finite difference = &quot; &lt;&lt; fd);</span></span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaGNC">          24 :   CHECK(std::abs(adjoint - fd) &lt;= 1.0e-7 * std::abs(fd));</span></span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaGNC">          72 : }</span></span>
+<span id="L399"><span class="lineNum">     399</span>              : </span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaGNC">           6 : TEST_CASE(&quot;Eigenmode system material and lumped port derivatives&quot;,</span></span>
+<span id="L401"><span class="lineNum">     401</span>              :           &quot;[sensitivity][Serial][Parallel]&quot;)</span>
+<span id="L402"><span class="lineNum">     402</span>              : {</span>
+<span id="L403"><span class="lineNum">     403</span>              :   // The derivatives of xᵀ T(λ) x with respect to relative changes of the material</span>
+<span id="L404"><span class="lineNum">     404</span>              :   // properties and of the lumped port elements, against finite differences of the form with</span>
+<span id="L405"><span class="lineNum">     405</span>              :   // the property scaled in the configuration.</span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">           9 :   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);</span></span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaGNC">          12 :   INFO(&quot;Element type: &quot; &lt;&lt; type);</span></span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaGNC">           6 :   const std::complex&lt;double&gt; lambda(0.05, 1.3),</span></span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaGNC">           6 :       omega = lambda / std::complex&lt;double&gt;(0.0, 1.0);</span></span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaGNC">           6 :   EigenProblem problem(type, 1, false);</span></span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaGNC">           6 :   SpaceOperator space_op(problem.iodata, problem.mesh);</span></span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">           6 :   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));</span></span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaGNC">           6 :   const auto x = RandomComplexVector(space_op, gen);</span></span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaGNC">         360 :   auto Product = [&amp;x](const ComplexOperator &amp;A) { return TransposeProduct(A, x); };</span></span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaGNC">          60 :   auto CentralDifference = [&amp;](const std::function&lt;void(IoData &amp;, double)&gt; &amp;scale)</span></span>
+<span id="L416"><span class="lineNum">     416</span>              :   {</span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">         300 :     auto Form = [&amp;](double s)</span></span>
+<span id="L418"><span class="lineNum">     418</span>              :     {</span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">         600 :       EigenProblem scaled(type, 1, false, [&amp;](IoData &amp;iodata) { scale(iodata, s); });</span></span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaGNC">         300 :       SpaceOperator op(scaled.iodata, scaled.mesh);</span></span>
+<span id="L421"><span class="lineNum">     421</span> <span class="tlaGNC">         300 :       auto K = op.GetStiffnessMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaGNC">         300 :       auto C = op.GetDampingMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">         300 :       auto M = op.GetMassMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L424"><span class="lineNum">     424</span> <span class="tlaGNC">         300 :       auto A2 = op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);</span></span>
+<span id="L425"><span class="lineNum">     425</span> <span class="tlaGNC">         600 :       return Product(*op.GetSystemMatrix(std::complex&lt;double&gt;(1.0), lambda, lambda * lambda,</span></span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">         300 :                                          K.get(), C.get(), M.get(), A2.get()));</span></span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaGNC">         300 :     };</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">         120 :     auto Difference = [&amp;](double h) { return (Form(1.0 + h) - Form(1.0 - h)) / (2.0 * h); };</span></span>
+<span id="L429"><span class="lineNum">     429</span>              :     const double h = 1.0e-2;</span>
+<span id="L430"><span class="lineNum">     430</span> <span class="tlaGNC">          60 :     return std::pair{(4.0 * Difference(0.5 * h) - Difference(h)) / 3.0,</span></span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaGNC">          60 :                      std::abs(Form(1.0))};</span></span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC">           6 :   };</span></span>
+<span id="L433"><span class="lineNum">     433</span>              :   auto Check =</span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaGNC">          60 :       [](std::complex&lt;double&gt; derivative, const std::pair&lt;std::complex&lt;double&gt;, double&gt; &amp;fd)</span></span>
+<span id="L435"><span class="lineNum">     435</span>              :   {</span>
+<span id="L436"><span class="lineNum">     436</span>              :     // The finite differences of the form F have a rounding error of about ε |F| / h.</span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaGNC">         180 :     INFO(&quot;derivative = &quot; &lt;&lt; derivative &lt;&lt; &quot;, finite difference = &quot; &lt;&lt; fd.first</span></span>
+<span id="L438"><span class="lineNum">     438</span>              :                          &lt;&lt; &quot;, |xᵀ T x| = &quot; &lt;&lt; fd.second);</span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">          60 :     CHECK(std::abs(derivative - fd.first) &lt;=</span></span>
+<span id="L440"><span class="lineNum">     440</span>              :           1.0e-8 * std::abs(fd.first) + 1.0e-12 * fd.second);</span>
+<span id="L441"><span class="lineNum">     441</span> <span class="tlaGNC">          60 :   };</span></span>
+<span id="L442"><span class="lineNum">     442</span>              : </span>
+<span id="L443"><span class="lineNum">     443</span>              :   // Each material property, as a scaling of its configuration.</span>
+<span id="L444"><span class="lineNum">     444</span>              :   auto Scale = [](auto &amp;tensor, double s)</span>
+<span id="L445"><span class="lineNum">     445</span>              :   {</span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">         720 :     for (auto &amp;v : tensor.s)</span></span>
+<span id="L447"><span class="lineNum">     447</span>              :     {</span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaGNC">         540 :       v *= s;</span></span>
+<span id="L449"><span class="lineNum">     449</span>              :     }</span>
+<span id="L450"><span class="lineNum">     450</span>              :   };</span>
+<span id="L451"><span class="lineNum">     451</span>              :   const std::vector&lt;std::pair&lt;MaterialProperty, std::vector&lt;int&gt;&gt;&gt; properties = {</span>
+<span id="L452"><span class="lineNum">     452</span>              :       {MaterialProperty::PERMITTIVITY, {0, 1}},</span>
+<span id="L453"><span class="lineNum">     453</span>              :       {MaterialProperty::LOSS_TANGENT, {0}},</span>
+<span id="L454"><span class="lineNum">     454</span>              :       {MaterialProperty::CONDUCTIVITY, {1}},</span>
+<span id="L455"><span class="lineNum">     455</span>              :       {MaterialProperty::PERMEABILITY, {0, 1}},</span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaGNC">          96 :       {MaterialProperty::LONDON_DEPTH, {1}}};</span></span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaGNC">          36 :   for (const auto &amp;entry : properties)</span></span>
+<span id="L458"><span class="lineNum">     458</span>              :   {</span>
+<span id="L459"><span class="lineNum">     459</span>              :     // The lambda below captures the property, which may not be a structured binding with</span>
+<span id="L460"><span class="lineNum">     460</span>              :     // OpenMP.</span>
+<span id="L461"><span class="lineNum">     461</span> <span class="tlaGNC">          30 :     const MaterialProperty property = entry.first;</span></span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC">          72 :     for (const int k : entry.second)</span></span>
+<span id="L463"><span class="lineNum">     463</span>              :     {</span>
+<span id="L464"><span class="lineNum">     464</span> <span class="tlaGNC">         168 :       INFO(&quot;Property &quot; &lt;&lt; static_cast&lt;int&gt;(property) &lt;&lt; &quot; of material &quot; &lt;&lt; k);</span></span>
+<span id="L465"><span class="lineNum">     465</span>              :       const auto dT = space_op.GetSystemMaterialDerivative(</span>
+<span id="L466"><span class="lineNum">     466</span> <span class="tlaGNC">          42 :           property, problem.iodata.domains.materials[k].attributes, 1.0, lambda,</span></span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaGNC">          42 :           lambda * lambda, omega);</span></span>
+<span id="L468"><span class="lineNum">     468</span> <span class="tlaGNC">          84 :       REQUIRE(dT);</span></span>
+<span id="L469"><span class="lineNum">     469</span> <span class="tlaGNC">         126 :       Check(Product(*dT), CentralDifference(</span></span>
+<span id="L470"><span class="lineNum">     470</span> <span class="tlaGNC">         210 :                               [&amp;, property, k](IoData &amp;iodata, double s)</span></span>
+<span id="L471"><span class="lineNum">     471</span>              :                               {</span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaGNC">         210 :                                 auto &amp;material = iodata.domains.materials[k];</span></span>
+<span id="L473"><span class="lineNum">     473</span> <span class="tlaGNC">         210 :                                 switch (property)</span></span>
+<span id="L474"><span class="lineNum">     474</span>              :                                 {</span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaGNC">          60 :                                   case MaterialProperty::PERMITTIVITY:</span></span>
+<span id="L476"><span class="lineNum">     476</span>              :                                     Scale(material.epsilon_r, s);</span>
+<span id="L477"><span class="lineNum">     477</span>              :                                     break;</span>
+<span id="L478"><span class="lineNum">     478</span> <span class="tlaGNC">          30 :                                   case MaterialProperty::LOSS_TANGENT:</span></span>
+<span id="L479"><span class="lineNum">     479</span>              :                                     Scale(material.tandelta, s);</span>
+<span id="L480"><span class="lineNum">     480</span>              :                                     break;</span>
+<span id="L481"><span class="lineNum">     481</span> <span class="tlaGNC">          30 :                                   case MaterialProperty::CONDUCTIVITY:</span></span>
+<span id="L482"><span class="lineNum">     482</span>              :                                     Scale(material.sigma, s);</span>
+<span id="L483"><span class="lineNum">     483</span>              :                                     break;</span>
+<span id="L484"><span class="lineNum">     484</span> <span class="tlaGNC">          60 :                                   case MaterialProperty::PERMEABILITY:</span></span>
+<span id="L485"><span class="lineNum">     485</span>              :                                     Scale(material.mu_r, s);</span>
+<span id="L486"><span class="lineNum">     486</span>              :                                     break;</span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">          30 :                                   case MaterialProperty::LONDON_DEPTH:</span></span>
+<span id="L488"><span class="lineNum">     488</span> <span class="tlaGNC">          30 :                                     material.lambda_L *= s;</span></span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">          30 :                                     break;</span></span>
+<span id="L490"><span class="lineNum">     490</span>              :                                 }</span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaGNC">         210 :                               }));</span></span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaGNC">          42 :     }</span></span>
+<span id="L493"><span class="lineNum">     493</span>              :   }</span>
+<span id="L494"><span class="lineNum">     494</span>              : </span>
+<span id="L495"><span class="lineNum">     495</span>              :   // The resistance, inductance and capacitance of the lumped port.</span>
+<span id="L496"><span class="lineNum">     496</span> <span class="tlaGNC">           6 :   const auto dT = space_op.GetLumpedPortDerivatives(1, 1.0, lambda, lambda * lambda);</span></span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaGNC">          24 :   for (int e = 0; e &lt; 3; e++)</span></span>
+<span id="L498"><span class="lineNum">     498</span>              :   {</span>
+<span id="L499"><span class="lineNum">     499</span> <span class="tlaGNC">          36 :     INFO(&quot;Lumped port element &quot; &lt;&lt; e);</span></span>
+<span id="L500"><span class="lineNum">     500</span> <span class="tlaGNC">          36 :     REQUIRE(dT[e]);</span></span>
+<span id="L501"><span class="lineNum">     501</span> <span class="tlaGNC">          36 :     Check(Product(*dT[e]), CentralDifference(</span></span>
+<span id="L502"><span class="lineNum">     502</span> <span class="tlaGNC">          90 :                                [e](IoData &amp;iodata, double s)</span></span>
+<span id="L503"><span class="lineNum">     503</span>              :                                {</span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC">          90 :                                  auto &amp;port = iodata.boundaries.lumpedport.at(1);</span></span>
+<span id="L505"><span class="lineNum">     505</span> <span class="tlaGNC">          90 :                                  (e == 0 ? port.R : (e == 1 ? port.L : port.C)) *= s;</span></span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaGNC">          90 :                                }));</span></span>
+<span id="L507"><span class="lineNum">     507</span> <span class="tlaGNC">          18 :   }</span></span>
+<span id="L508"><span class="lineNum">     508</span> <span class="tlaGNC">          18 : }</span></span>
+<span id="L509"><span class="lineNum">     509</span>              : </span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">           3 : TEST_CASE(&quot;Divergence-free projection with losses&quot;, &quot;[sensitivity][Serial][Parallel]&quot;)</span></span>
+<span id="L511"><span class="lineNum">     511</span>              : {</span>
+<span id="L512"><span class="lineNum">     512</span>              :   // The projection of the eigenvalue solve is with respect to the permittivity. With</span>
+<span id="L513"><span class="lineNum">     513</span>              :   // losses, the correction for the sensitivities makes a vector divergence-free with</span>
+<span id="L514"><span class="lineNum">     514</span>              :   // respect to B = M + C / λ instead, changing it by a gradient.</span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">           3 :   EigenProblem problem(mfem::Element::TETRAHEDRON, 2, false);</span></span>
+<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">           3 :   SpaceOperator space_op(problem.iodata, problem.mesh);</span></span>
+<span id="L517"><span class="lineNum">     517</span>              :   DivFreeSolver&lt;ComplexVector&gt; divfree(space_op.GetMaterialOp(), space_op.GetNDSpace(),</span>
+<span id="L518"><span class="lineNum">     518</span>              :                                        space_op.GetH1Spaces(),</span>
+<span id="L519"><span class="lineNum">     519</span> <span class="tlaGNC">           3 :                                        space_op.GetAuxBdrTDofLists(), 1.0e-14, 1000, 0);</span></span>
+<span id="L520"><span class="lineNum">     520</span>              :   const std::complex&lt;double&gt; lambda(0.05, 1.3);</span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">           3 :   auto C = space_op.GetDampingMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">           3 :   auto M = space_op.GetMassMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L523"><span class="lineNum">     523</span>              :   const auto B =</span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">           6 :       BuildParSumOperator(std::vector&lt;std::complex&lt;double&gt;&gt;{1.0, 1.0 / lambda},</span></span>
+<span id="L525"><span class="lineNum">     525</span> <span class="tlaGNC">           9 :                           std::vector&lt;const ComplexOperator *&gt;{M.get(), C.get()});</span></span>
+<span id="L526"><span class="lineNum">     526</span>              : </span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaGNC">           3 :   std::mt19937 gen(1234 + Mpi::Rank(Mpi::World()));</span></span>
+<span id="L528"><span class="lineNum">     528</span> <span class="tlaGNC">           3 :   auto x = RandomComplexVector(space_op, gen);</span></span>
+<span id="L529"><span class="lineNum">     529</span>              :   const int size = x.Size();</span>
+<span id="L530"><span class="lineNum">     530</span> <span class="tlaGNC">           3 :   ComplexVector y(size), By(size);</span></span>
+<span id="L531"><span class="lineNum">     531</span> <span class="tlaGNC">           3 :   divfree.Mult(x);</span></span>
+<span id="L532"><span class="lineNum">     532</span>              :   y = x;</span>
+<span id="L533"><span class="lineNum">     533</span> <span class="tlaGNC">           3 :   divfree.Mult(*B, y);</span></span>
+<span id="L534"><span class="lineNum">     534</span>              : </span>
+<span id="L535"><span class="lineNum">     535</span>              :   // The divergence Gᵀ B y vanishes away from the essential boundaries of the potential.</span>
+<span id="L536"><span class="lineNum">     536</span>              :   const auto &amp;Grad = space_op.GetGradMatrix();</span>
+<span id="L537"><span class="lineNum">     537</span> <span class="tlaGNC">           6 :   auto Divergence = [&amp;](const ComplexVector &amp;v)</span></span>
+<span id="L538"><span class="lineNum">     538</span>              :   {</span>
+<span id="L539"><span class="lineNum">     539</span> <span class="tlaGNC">           6 :     B-&gt;Mult(v, By);</span></span>
+<span id="L540"><span class="lineNum">     540</span> <span class="tlaGNC">           6 :     ComplexVector div(Grad.Width());</span></span>
+<span id="L541"><span class="lineNum">     541</span> <span class="tlaGNC">           6 :     Grad.MultTranspose(By.Real(), div.Real());</span></span>
+<span id="L542"><span class="lineNum">     542</span> <span class="tlaGNC">           6 :     Grad.MultTranspose(By.Imag(), div.Imag());</span></span>
+<span id="L543"><span class="lineNum">     543</span> <span class="tlaGNC">           6 :     linalg::SetSubVector(div, space_op.GetAuxBdrTDofLists().back(), 0.0);</span></span>
+<span id="L544"><span class="lineNum">     544</span> <span class="tlaGNC">          12 :     return linalg::Norml2(Mpi::World(), div);</span></span>
+<span id="L545"><span class="lineNum">     545</span> <span class="tlaGNC">           3 :   };</span></span>
+<span id="L546"><span class="lineNum">     546</span> <span class="tlaGNC">           3 :   const double div_x = Divergence(x);</span></span>
+<span id="L547"><span class="lineNum">     547</span> <span class="tlaGNC">           3 :   CHECK(div_x &gt; 0.0);</span></span>
+<span id="L548"><span class="lineNum">     548</span> <span class="tlaGNC">           3 :   CHECK(Divergence(y) &lt;= 1.0e-10 * div_x);</span></span>
+<span id="L549"><span class="lineNum">     549</span>              : </span>
+<span id="L550"><span class="lineNum">     550</span>              :   // The correction is a gradient, so the curl is unchanged.</span>
+<span id="L551"><span class="lineNum">     551</span> <span class="tlaGNC">           3 :   const auto &amp;Curl = space_op.GetCurlMatrix();</span></span>
+<span id="L552"><span class="lineNum">     552</span> <span class="tlaGNC">           3 :   ComplexVector d(size), curl(Curl.Height()), curl_x(Curl.Height());</span></span>
+<span id="L553"><span class="lineNum">     553</span>              :   d = y;</span>
+<span id="L554"><span class="lineNum">     554</span>              :   d -= x;</span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaGNC">           3 :   Curl.Mult(d.Real(), curl.Real());</span></span>
+<span id="L556"><span class="lineNum">     556</span> <span class="tlaGNC">           3 :   Curl.Mult(d.Imag(), curl.Imag());</span></span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaGNC">           3 :   Curl.Mult(x.Real(), curl_x.Real());</span></span>
+<span id="L558"><span class="lineNum">     558</span> <span class="tlaGNC">           3 :   Curl.Mult(x.Imag(), curl_x.Imag());</span></span>
+<span id="L559"><span class="lineNum">     559</span> <span class="tlaGNC">           3 :   CHECK(linalg::Norml2(Mpi::World(), d) &gt; 0.0);</span></span>
+<span id="L560"><span class="lineNum">     560</span> <span class="tlaGNC">           3 :   CHECK(linalg::Norml2(Mpi::World(), curl) &lt;=</span></span>
+<span id="L561"><span class="lineNum">     561</span>              :         1.0e-12 * linalg::Norml2(Mpi::World(), curl_x));</span>
+<span id="L562"><span class="lineNum">     562</span> <span class="tlaGNC">           6 : }</span></span>
+<span id="L563"><span class="lineNum">     563</span>              : </span>
+<span id="L564"><span class="lineNum">     564</span> <span class="tlaGNC">          24 : TEST_CASE(&quot;Magnetostatic inductance sensitivities&quot;, &quot;[sensitivity][Serial][Parallel]&quot;)</span></span>
+<span id="L565"><span class="lineNum">     565</span>              : {</span>
+<span id="L566"><span class="lineNum">     566</span>              :   // The derivatives of the inductances need no adjoint solve. Check them against finite</span>
+<span id="L567"><span class="lineNum">     567</span>              :   // differences of the solved inductances on moved meshes, with the current densities of</span>
+<span id="L568"><span class="lineNum">     568</span>              :   // the sources fixed.</span>
+<span id="L569"><span class="lineNum">     569</span> <span class="tlaGNC">          27 :   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);</span></span>
+<span id="L570"><span class="lineNum">     570</span> <span class="tlaGNC">          30 :   auto order = GENERATE(1, 2);</span></span>
+<span id="L571"><span class="lineNum">     571</span> <span class="tlaGNC">          36 :   auto amr = GENERATE(false, true);</span></span>
+<span id="L572"><span class="lineNum">     572</span> <span class="tlaGNC">          48 :   INFO(&quot;Element type: &quot; &lt;&lt; type &lt;&lt; &quot;, order: &quot; &lt;&lt; order &lt;&lt; &quot;, AMR: &quot; &lt;&lt; amr);</span></span>
+<span id="L573"><span class="lineNum">     573</span> <span class="tlaGNC">          24 :   MagnetostaticProblem problem(type, order, amr);</span></span>
+<span id="L574"><span class="lineNum">     574</span>              :   auto &amp;mesh = *problem.mesh[0];</span>
+<span id="L575"><span class="lineNum">     575</span> <span class="tlaGNC">          24 :   CurlCurlOperator curlcurl_op(problem.iodata, problem.mesh);</span></span>
+<span id="L576"><span class="lineNum">     576</span>              : </span>
+<span id="L577"><span class="lineNum">     577</span>              :   // The vector potentials, and the inductances M_ij = A_jᵀ K A_i for unit currents, as in</span>
+<span id="L578"><span class="lineNum">     578</span>              :   // MagnetostaticSolver.</span>
+<span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">         120 :   auto Solve = [&amp;]()</span></span>
+<span id="L580"><span class="lineNum">     580</span>              :   {</span>
+<span id="L581"><span class="lineNum">     581</span> <span class="tlaGNC">         120 :     auto K = curlcurl_op.GetStiffnessMatrix();</span></span>
+<span id="L582"><span class="lineNum">     582</span> <span class="tlaGNC">         120 :     KspSolver ksp(problem.iodata, curlcurl_op.GetNDSpaces(), &amp;curlcurl_op.GetH1Spaces());</span></span>
+<span id="L583"><span class="lineNum">     583</span> <span class="tlaGNC">         120 :     ksp.SetOperators(*K, *K);</span></span>
+<span id="L584"><span class="lineNum">     584</span> <span class="tlaGNC">         120 :     std::vector&lt;Vector&gt; A;</span></span>
+<span id="L585"><span class="lineNum">     585</span>              :     Vector RHS;</span>
+<span id="L586"><span class="lineNum">     586</span> <span class="tlaGNC">         360 :     for (const auto &amp;[idx, data] : curlcurl_op.GetSurfaceCurrentOp())</span></span>
+<span id="L587"><span class="lineNum">     587</span>              :     {</span>
+<span id="L588"><span class="lineNum">     588</span> <span class="tlaGNC">         240 :       REQUIRE(data.GetExcitationCurrent() == 1.0);</span></span>
+<span id="L589"><span class="lineNum">     589</span> <span class="tlaGNC">         240 :       curlcurl_op.GetCurrentExcitationVector(idx, RHS);</span></span>
+<span id="L590"><span class="lineNum">     590</span> <span class="tlaGNC">         240 :       auto &amp;a = A.emplace_back(RHS.Size());</span></span>
+<span id="L591"><span class="lineNum">     591</span> <span class="tlaGNC">         240 :       a.UseDevice(true);</span></span>
+<span id="L592"><span class="lineNum">     592</span> <span class="tlaGNC">         240 :       a = 0.0;</span></span>
+<span id="L593"><span class="lineNum">     593</span> <span class="tlaGNC">         240 :       ksp.Mult(RHS, a);</span></span>
+<span id="L594"><span class="lineNum">     594</span>              :     }</span>
+<span id="L595"><span class="lineNum">     595</span> <span class="tlaGNC">         120 :     std::vector&lt;double&gt; M;</span></span>
+<span id="L596"><span class="lineNum">     596</span>              :     Vector y(RHS.Size());</span>
+<span id="L597"><span class="lineNum">     597</span>              :     y.UseDevice(true);</span>
+<span id="L598"><span class="lineNum">     598</span> <span class="tlaGNC">         480 :     for (const auto &amp;[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})</span></span>
+<span id="L599"><span class="lineNum">     599</span>              :     {</span>
+<span id="L600"><span class="lineNum">     600</span> <span class="tlaGNC">         360 :       K-&gt;Mult(A[i], y);</span></span>
+<span id="L601"><span class="lineNum">     601</span> <span class="tlaGNC">         360 :       M.push_back(linalg::Dot&lt;Vector&gt;(Mpi::World(), A[j], y));</span></span>
+<span id="L602"><span class="lineNum">     602</span>              :     }</span>
+<span id="L603"><span class="lineNum">     603</span> <span class="tlaGNC">         240 :     return std::pair{A, M};</span></span>
+<span id="L604"><span class="lineNum">     604</span> <span class="tlaGNC">         120 :   };</span></span>
+<span id="L605"><span class="lineNum">     605</span> <span class="tlaGNC">          24 :   const auto [A, M] = Solve();</span></span>
+<span id="L606"><span class="lineNum">     606</span> <span class="tlaGNC">          24 :   REQUIRE(A.size() == 2);</span></span>
+<span id="L607"><span class="lineNum">     607</span>              : </span>
+<span id="L608"><span class="lineNum">     608</span> <span class="tlaGNC">          24 :   const auto dK = curlcurl_op.GetStiffnessShapeDerivative();</span></span>
+<span id="L609"><span class="lineNum">     609</span> <span class="tlaGNC">          24 :   std::vector&lt;std::unique_ptr&lt;ShapeDerivativeOperator&gt;&gt; db;</span></span>
+<span id="L610"><span class="lineNum">     610</span> <span class="tlaGNC">          48 :   db.push_back(curlcurl_op.GetCurrentExcitationShapeDerivative(1));</span></span>
+<span id="L611"><span class="lineNum">     611</span> <span class="tlaGNC">          48 :   db.push_back(curlcurl_op.GetCurrentExcitationShapeDerivative(2));</span></span>
+<span id="L612"><span class="lineNum">     612</span>              :   // A smooth displacement which keeps the source faces planar and their edges off the PEC</span>
+<span id="L613"><span class="lineNum">     613</span>              :   // along x, as the sources must be for their excitations to be compatible.</span>
+<span id="L614"><span class="lineNum">     614</span>              :   const auto &amp;nodal_fespace = dK-&gt;GetNodalSpace();</span>
+<span id="L615"><span class="lineNum">     615</span>              :   const auto &amp;nodes = *mesh.Get().GetNodes();</span>
+<span id="L616"><span class="lineNum">     616</span>              :   mfem::Vector W_l(nodal_fespace.GetVSize());</span>
+<span id="L617"><span class="lineNum">     617</span> <span class="tlaGNC">       37464 :   for (int i = 0; i &lt; nodal_fespace.GetNDofs(); i++)</span></span>
+<span id="L618"><span class="lineNum">     618</span>              :   {</span>
+<span id="L619"><span class="lineNum">     619</span>              :     double x[3];</span>
+<span id="L620"><span class="lineNum">     620</span> <span class="tlaGNC">      149760 :     for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L621"><span class="lineNum">     621</span>              :     {</span>
+<span id="L622"><span class="lineNum">     622</span> <span class="tlaGNC">      112320 :       x[d] = nodes(nodal_fespace.DofToVDof(i, d));</span></span>
+<span id="L623"><span class="lineNum">     623</span>              :     }</span>
+<span id="L624"><span class="lineNum">     624</span> <span class="tlaGNC">       37440 :     const double w[3] = {std::sin(2.0 * x[1] + x[2]),</span></span>
+<span id="L625"><span class="lineNum">     625</span> <span class="tlaGNC">       37440 :                          x[1] * (1.0 - x[1]) * std::cos(x[0] + 2.0 * x[2]),</span></span>
+<span id="L626"><span class="lineNum">     626</span> <span class="tlaGNC">       37440 :                          (1.0 - x[2]) * std::sin(x[0] - x[1])};</span></span>
+<span id="L627"><span class="lineNum">     627</span> <span class="tlaGNC">      149760 :     for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L628"><span class="lineNum">     628</span>              :     {</span>
+<span id="L629"><span class="lineNum">     629</span> <span class="tlaGNC">      112320 :       W_l(nodal_fespace.DofToVDof(i, d)) = w[d];</span></span>
+<span id="L630"><span class="lineNum">     630</span>              :     }</span>
+<span id="L631"><span class="lineNum">     631</span>              :   }</span>
+<span id="L632"><span class="lineNum">     632</span> <span class="tlaGNC">          24 :   Vector W(nodal_fespace.GetTrueVSize());</span></span>
+<span id="L633"><span class="lineNum">     633</span> <span class="tlaGNC">          24 :   nodal_fespace.GetRestrictionMatrix()-&gt;Mult(W_l, W);</span></span>
+<span id="L634"><span class="lineNum">     634</span> <span class="tlaGNC">          24 :   std::vector&lt;double&gt; adjoint;</span></span>
+<span id="L635"><span class="lineNum">     635</span>              :   Vector g, t;</span>
+<span id="L636"><span class="lineNum">     636</span> <span class="tlaGNC">          96 :   for (const auto &amp;[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})</span></span>
+<span id="L637"><span class="lineNum">     637</span>              :   {</span>
+<span id="L638"><span class="lineNum">     638</span>              :     // dM_ij = b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j).</span>
+<span id="L639"><span class="lineNum">     639</span> <span class="tlaGNC">          72 :     dK-&gt;Mult(A[i], A[j], g);</span></span>
+<span id="L640"><span class="lineNum">     640</span> <span class="tlaGNC">          72 :     g *= -1.0;</span></span>
+<span id="L641"><span class="lineNum">     641</span> <span class="tlaGNC">          72 :     db[i]-&gt;Mult(A[j], A[j], t);</span></span>
+<span id="L642"><span class="lineNum">     642</span> <span class="tlaGNC">          72 :     g += t;</span></span>
+<span id="L643"><span class="lineNum">     643</span> <span class="tlaGNC">          72 :     db[j]-&gt;Mult(A[i], A[i], t);</span></span>
+<span id="L644"><span class="lineNum">     644</span> <span class="tlaGNC">          72 :     g += t;</span></span>
+<span id="L645"><span class="lineNum">     645</span> <span class="tlaGNC">          72 :     adjoint.push_back(linalg::Dot&lt;Vector&gt;(Mpi::World(), g, W));</span></span>
+<span id="L646"><span class="lineNum">     646</span>              :   }</span>
+<span id="L647"><span class="lineNum">     647</span>              : </span>
+<span id="L648"><span class="lineNum">     648</span> <span class="tlaGNC">          48 :   auto CentralDifference = [&amp;](double h)</span></span>
+<span id="L649"><span class="lineNum">     649</span>              :   {</span>
+<span id="L650"><span class="lineNum">     650</span> <span class="tlaGNC">          48 :     MoveNodes(mesh, nodal_fespace, W, h);</span></span>
+<span id="L651"><span class="lineNum">     651</span> <span class="tlaGNC">          48 :     const auto Mp = Solve().second;</span></span>
+<span id="L652"><span class="lineNum">     652</span> <span class="tlaGNC">          48 :     MoveNodes(mesh, nodal_fespace, W, -2.0 * h);</span></span>
+<span id="L653"><span class="lineNum">     653</span> <span class="tlaGNC">          48 :     const auto Mm = Solve().second;</span></span>
+<span id="L654"><span class="lineNum">     654</span> <span class="tlaGNC">          48 :     MoveNodes(mesh, nodal_fespace, W, h);</span></span>
+<span id="L655"><span class="lineNum">     655</span> <span class="tlaGNC">          48 :     std::vector&lt;double&gt; d;</span></span>
+<span id="L656"><span class="lineNum">     656</span> <span class="tlaGNC">         192 :     for (std::size_t k = 0; k &lt; Mp.size(); k++)</span></span>
+<span id="L657"><span class="lineNum">     657</span>              :     {</span>
+<span id="L658"><span class="lineNum">     658</span> <span class="tlaGNC">         144 :       d.push_back((Mp[k] - Mm[k]) / (2.0 * h));</span></span>
+<span id="L659"><span class="lineNum">     659</span>              :     }</span>
+<span id="L660"><span class="lineNum">     660</span> <span class="tlaGNC">          48 :     return d;</span></span>
+<span id="L661"><span class="lineNum">     661</span> <span class="tlaGNC">          24 :   };</span></span>
+<span id="L662"><span class="lineNum">     662</span>              :   const double h = 2.0e-4;</span>
+<span id="L663"><span class="lineNum">     663</span> <span class="tlaGNC">          24 :   const auto d1 = CentralDifference(h), d2 = CentralDifference(0.5 * h);</span></span>
+<span id="L664"><span class="lineNum">     664</span> <span class="tlaGNC">          96 :   for (std::size_t k = 0; k &lt; adjoint.size(); k++)</span></span>
+<span id="L665"><span class="lineNum">     665</span>              :   {</span>
+<span id="L666"><span class="lineNum">     666</span> <span class="tlaGNC">          72 :     const double fd = (4.0 * d2[k] - d1[k]) / 3.0;</span></span>
+<span id="L667"><span class="lineNum">     667</span> <span class="tlaGNC">         144 :     INFO(&quot;Entry &quot; &lt;&lt; k &lt;&lt; &quot;: M = &quot; &lt;&lt; M[k] &lt;&lt; &quot;, g ⋅ W = &quot; &lt;&lt; adjoint[k]</span></span>
+<span id="L668"><span class="lineNum">     668</span>              :                   &lt;&lt; &quot;, finite difference = &quot; &lt;&lt; fd);</span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">          72 :     CHECK(std::abs(adjoint[k] - fd) &lt;= 1.0e-7 * std::abs(fd));</span></span>
+<span id="L670"><span class="lineNum">     670</span> <span class="tlaGNC">          72 :   }</span></span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">          48 : }</span></span>
+<span id="L672"><span class="lineNum">     672</span>              : </span>
+<span id="L673"><span class="lineNum">     673</span> <span class="tlaGNC">          18 : TEST_CASE_METHOD(palace::test::SharedTempDir, &quot;Sensitivity export&quot;,</span></span>
+<span id="L674"><span class="lineNum">     674</span>              :                  &quot;[sensitivity][Serial][Parallel]&quot;)</span>
+<span id="L675"><span class="lineNum">     675</span>              : {</span>
+<span id="L676"><span class="lineNum">     676</span>              :   // The exported gradients of the capacitances satisfy the exact discrete identities: zero</span>
+<span id="L677"><span class="lineNum">     677</span>              :   // for translations, and C for a dilation, since C scales with length. So does the sum of</span>
+<span id="L678"><span class="lineNum">     678</span>              :   // the derivatives with respect to the permittivities.</span>
+<span id="L679"><span class="lineNum">     679</span> <span class="tlaGNC">           9 :   auto amr = GENERATE(false, true);</span></span>
+<span id="L680"><span class="lineNum">     680</span> <span class="tlaGNC">          12 :   INFO(&quot;AMR: &quot; &lt;&lt; amr);</span></span>
+<span id="L681"><span class="lineNum">     681</span> <span class="tlaGNC">           6 :   Problem problem(mfem::Element::HEXAHEDRON, 2, amr);</span></span>
+<span id="L682"><span class="lineNum">     682</span> <span class="tlaGNC">           6 :   problem.iodata.sensitivity.shape.emplace().boundary_tags = true;</span></span>
+<span id="L683"><span class="lineNum">     683</span> <span class="tlaGNC">           6 :   LaplaceOperator laplace_op(problem.iodata, problem.mesh);</span></span>
+<span id="L684"><span class="lineNum">     684</span> <span class="tlaGNC">           6 :   const auto V = SolveTerminals(problem.iodata, laplace_op);</span></span>
+<span id="L685"><span class="lineNum">     685</span> <span class="tlaGNC">           6 :   const auto dK = laplace_op.GetStiffnessShapeDerivative();</span></span>
+<span id="L686"><span class="lineNum">     686</span>              : </span>
+<span id="L687"><span class="lineNum">     687</span> <span class="tlaGNC">           6 :   SensitivityExport output(problem.iodata, *problem.mesh[0]);</span></span>
+<span id="L688"><span class="lineNum">     688</span> <span class="tlaGNC">          12 :   REQUIRE(output.HasShape());</span></span>
+<span id="L689"><span class="lineNum">     689</span> <span class="tlaGNC">           6 :   std::vector&lt;double&gt; C;</span></span>
+<span id="L690"><span class="lineNum">     690</span>              :   Vector g;</span>
+<span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC">          18 :   for (int i = 0; i &lt; 2; i++)</span></span>
+<span id="L692"><span class="lineNum">     692</span>              :   {</span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaGNC">          24 :     C.push_back(Capacitance(laplace_op, {1, 2}, V[i], V[1]));</span></span>
+<span id="L694"><span class="lineNum">     694</span> <span class="tlaGNC">          12 :     dK-&gt;Mult(V[i], V[1], g);</span></span>
+<span id="L695"><span class="lineNum">     695</span> <span class="tlaGNC">         240 :     output.AddObjective({{&quot;Index&quot;, i + 1},</span></span>
+<span id="L696"><span class="lineNum">     696</span>              :                          {&quot;Type&quot;, &quot;Capacitance&quot;},</span>
+<span id="L697"><span class="lineNum">     697</span>              :                          {&quot;Terminals&quot;, {i + 1, 2}},</span>
+<span id="L698"><span class="lineNum">     698</span>              :                          {&quot;Value&quot;, C.back()},</span>
+<span id="L699"><span class="lineNum">     699</span>              :                          {&quot;Unit&quot;, &quot;F&quot;}},</span>
+<span id="L700"><span class="lineNum">     700</span>              :                         &amp;g, 1.0);</span>
+<span id="L701"><span class="lineNum">     701</span>              :   }</span>
+<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC">           6 :   const auto dir = temp_dir / &quot;sensitivity&quot;;</span></span>
+<span id="L703"><span class="lineNum">     703</span> <span class="tlaGNC">           6 :   output.Write(dir);</span></span>
+<span id="L704"><span class="lineNum">     704</span> <span class="tlaGNC">           6 :   const auto num_nodes = dK-&gt;GetNodalSpace().GlobalTrueVSize() / 3;  // Collective</span></span>
+<span id="L705"><span class="lineNum">     705</span>              :   Mpi::Barrier(Mpi::World());</span>
+<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">           6 :   if (!Mpi::Root(Mpi::World()))</span></span>
+<span id="L707"><span class="lineNum">     707</span>              :   {</span>
+<span id="L708"><span class="lineNum">     708</span>              :     return;</span>
+<span id="L709"><span class="lineNum">     709</span>              :   }</span>
+<span id="L710"><span class="lineNum">     710</span>              : </span>
+<span id="L711"><span class="lineNum">     711</span> <span class="tlaGNC">           8 :   std::ifstream fj(dir / &quot;sensitivity.json&quot;);</span></span>
+<span id="L712"><span class="lineNum">     712</span> <span class="tlaGNC">           4 :   const auto meta = nlohmann::json::parse(fj);</span></span>
+<span id="L713"><span class="lineNum">     713</span> <span class="tlaGNC">           4 :   const std::size_t n = meta.at(&quot;NumPoints&quot;);</span></span>
+<span id="L714"><span class="lineNum">     714</span> <span class="tlaGNC">           4 :   CHECK(n == static_cast&lt;std::size_t&gt;(num_nodes));</span></span>
+<span id="L715"><span class="lineNum">     715</span> <span class="tlaGNC">          12 :   auto ReadBinary = [&amp;](const std::string &amp;file, auto value)</span></span>
+<span id="L716"><span class="lineNum">     716</span>              :   {</span>
+<span id="L717"><span class="lineNum">     717</span> <span class="tlaGNC">          24 :     std::ifstream fi(dir / file, std::ios::binary);</span></span>
+<span id="L718"><span class="lineNum">     718</span> <span class="tlaGNC">          12 :     std::vector&lt;decltype(value)&gt; data(std::filesystem::file_size(dir / file) /</span></span>
+<span id="L719"><span class="lineNum">     719</span>              :                                       sizeof(value));</span>
+<span id="L720"><span class="lineNum">     720</span> <span class="tlaGNC">          12 :     fi.read(reinterpret_cast&lt;char *&gt;(data.data()), data.size() * sizeof(value));</span></span>
+<span id="L721"><span class="lineNum">     721</span> <span class="tlaGNC">          12 :     return data;</span></span>
+<span id="L722"><span class="lineNum">     722</span> <span class="tlaGNC">          12 :   };</span></span>
+<span id="L723"><span class="lineNum">     723</span> <span class="tlaGNC">           8 :   const auto points = ReadBinary(meta.at(&quot;Points&quot;), 0.0);</span></span>
+<span id="L724"><span class="lineNum">     724</span> <span class="tlaGNC">           4 :   REQUIRE(points.size() == 3 * n);</span></span>
+<span id="L725"><span class="lineNum">     725</span> <span class="tlaGNC">          12 :   for (std::size_t k = 0; k &lt; 2; k++)</span></span>
+<span id="L726"><span class="lineNum">     726</span>              :   {</span>
+<span id="L727"><span class="lineNum">     727</span> <span class="tlaGNC">           8 :     const auto &amp;objective = meta.at(&quot;Objectives&quot;)[k];</span></span>
+<span id="L728"><span class="lineNum">     728</span> <span class="tlaGNC">          16 :     const auto gradient = ReadBinary(objective.at(&quot;Gradient&quot;), 0.0);</span></span>
+<span id="L729"><span class="lineNum">     729</span> <span class="tlaGNC">           8 :     REQUIRE(gradient.size() == 3 * n);</span></span>
+<span id="L730"><span class="lineNum">     730</span>              :     double dilation = 0.0, scale = 0.0;</span>
+<span id="L731"><span class="lineNum">     731</span> <span class="tlaGNC">           8 :     std::array&lt;double, 3&gt; translation = {0.0, 0.0, 0.0};</span></span>
+<span id="L732"><span class="lineNum">     732</span> <span class="tlaGNC">       38960 :     for (std::size_t p = 0; p &lt; 3 * n; p++)</span></span>
+<span id="L733"><span class="lineNum">     733</span>              :     {</span>
+<span id="L734"><span class="lineNum">     734</span> <span class="tlaGNC">       38952 :       dilation += gradient[p] * points[p];</span></span>
+<span id="L735"><span class="lineNum">     735</span> <span class="tlaGNC">       38952 :       translation[p % 3] += gradient[p];</span></span>
+<span id="L736"><span class="lineNum">     736</span> <span class="tlaGNC">       38952 :       scale += std::abs(gradient[p]);</span></span>
+<span id="L737"><span class="lineNum">     737</span>              :     }</span>
+<span id="L738"><span class="lineNum">     738</span> <span class="tlaGNC">           8 :     CHECK(std::abs(dilation - C[k]) &lt;= 1.0e-10 * std::abs(C[k]));</span></span>
+<span id="L739"><span class="lineNum">     739</span> <span class="tlaGNC">          32 :     for (auto t : translation)</span></span>
+<span id="L740"><span class="lineNum">     740</span>              :     {</span>
+<span id="L741"><span class="lineNum">     741</span> <span class="tlaGNC">          24 :       CHECK(std::abs(t) &lt;= 1.0e-12 * scale);</span></span>
+<span id="L742"><span class="lineNum">     742</span>              :     }</span>
+<span id="L743"><span class="lineNum">     743</span> <span class="tlaGNC">          16 :     CHECK(objective.at(&quot;Value&quot;) == C[k]);</span></span>
+<span id="L744"><span class="lineNum">     744</span>              :   }</span>
+<span id="L745"><span class="lineNum">     745</span>              : </span>
+<span id="L746"><span class="lineNum">     746</span>              :   // The nodes of every face of the cube are tagged with its boundary attribute.</span>
+<span id="L747"><span class="lineNum">     747</span> <span class="tlaGNC">           8 :   std::ifstream fb(dir / meta.at(&quot;Boundary&quot;).get&lt;std::string&gt;(), std::ios::binary);</span></span>
+<span id="L748"><span class="lineNum">     748</span> <span class="tlaGNC">           4 :   std::vector&lt;std::int64_t&gt; offsets(n + 1);</span></span>
+<span id="L749"><span class="lineNum">     749</span> <span class="tlaGNC">           4 :   fb.read(reinterpret_cast&lt;char *&gt;(offsets.data()), offsets.size() * sizeof(std::int64_t));</span></span>
+<span id="L750"><span class="lineNum">     750</span> <span class="tlaGNC">           8 :   REQUIRE(fb.good());</span></span>
+<span id="L751"><span class="lineNum">     751</span> <span class="tlaGNC">           4 :   CHECK(offsets.front() == 0);</span></span>
+<span id="L752"><span class="lineNum">     752</span> <span class="tlaGNC">           8 :   CHECK(std::is_sorted(offsets.begin(), offsets.end()));</span></span>
+<span id="L753"><span class="lineNum">     753</span> <span class="tlaGNC">           4 :   std::vector&lt;std::int32_t&gt; attributes(offsets.back());</span></span>
+<span id="L754"><span class="lineNum">     754</span> <span class="tlaGNC">           4 :   fb.read(reinterpret_cast&lt;char *&gt;(attributes.data()),</span></span>
+<span id="L755"><span class="lineNum">     755</span>              :           attributes.size() * sizeof(std::int32_t));</span>
+<span id="L756"><span class="lineNum">     756</span> <span class="tlaGNC">           8 :   CHECK(fb.good());</span></span>
+<span id="L757"><span class="lineNum">     757</span> <span class="tlaGNC">           4 :   CHECK(fb.peek() == std::char_traits&lt;char&gt;::eof());</span></span>
+<span id="L758"><span class="lineNum">     758</span> <span class="tlaGNC">           8 :   CHECK(std::set&lt;int&gt;(attributes.begin(), attributes.end()) ==</span></span>
+<span id="L759"><span class="lineNum">     759</span>              :         std::set&lt;int&gt;{1, 2, 3, 4, 5, 6});</span>
+<span id="L760"><span class="lineNum">     760</span> <span class="tlaGNC">         238 : }</span></span>
+<span id="L761"><span class="lineNum">     761</span>              : </span>
+<span id="L762"><span class="lineNum">     762</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

@@ -1,0 +1,283 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - utils/outputdir.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">utils</a> - outputdir.hpp<span style="font-size: 80%;"> (source / <a href="outputdir.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">39.0&nbsp;%</td>
+            <td class="headerCovTableEntry">77</td>
+            <td class="headerCovTableEntry">30</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-07-30 23:35:46</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">71.4&nbsp;%</td>
+            <td class="headerCovTableEntry">14</td>
+            <td class="headerCovTableEntry">10</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_UTILS_OUTPUTDIR_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_UTILS_OUTPUTDIR_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;exception&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;fstream&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;string&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;system_error&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;fmt/format.h&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;communication.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;filesystem.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;iodata.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;timer.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span>              : namespace palace</span>
+<span id="L18"><span class="lineNum">      18</span>              : {</span>
+<span id="L19"><span class="lineNum">      19</span>              : </span>
+<span id="L20"><span class="lineNum">      20</span>              : namespace internal</span>
+<span id="L21"><span class="lineNum">      21</span>              : {</span>
+<span id="L22"><span class="lineNum">      22</span>              : </span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC tlaBgGNC">          99 : inline void AbortOnNodeFilesystemError(MPI_Comm comm, const std::string &amp;operation,</span></span>
+<span id="L24"><span class="lineNum">      24</span>              :                                        const std::string &amp;local_error)</span>
+<span id="L25"><span class="lineNum">      25</span>              : {</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">         198 :   int error_rank = local_error.empty() ? Mpi::Size(comm) : Mpi::Rank(comm);</span></span>
+<span id="L27"><span class="lineNum">      27</span>              :   Mpi::GlobalMin(1, &amp;error_rank, comm);</span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">          99 :   if (error_rank == Mpi::Size(comm))</span></span>
+<span id="L29"><span class="lineNum">      29</span>              :   {</span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">          99 :     return;</span></span>
+<span id="L31"><span class="lineNum">      31</span>              :   }</span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaUNC tlaBgUNC">           0 :   std::string error = Mpi::Rank(comm) == error_rank ? local_error : std::string();</span></span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaUNC">           0 :   int error_size = static_cast&lt;int&gt;(error.size());</span></span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaUNC">           0 :   Mpi::Broadcast(1, &amp;error_size, error_rank, comm);</span></span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaUNC">           0 :   error.resize(error_size);</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaUNC">           0 :   if (error_size &gt; 0)</span></span>
+<span id="L38"><span class="lineNum">      38</span>              :   {</span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaUNC">           0 :     Mpi::Broadcast(error_size, error.data(), error_rank, comm);</span></span>
+<span id="L40"><span class="lineNum">      40</span>              :   }</span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaUNC">           0 :   MFEM_ABORT(operation &lt;&lt; &quot; failed on MPI rank &quot; &lt;&lt; error_rank &lt;&lt; &quot;: &quot; &lt;&lt; error);</span></span>
+<span id="L42"><span class="lineNum">      42</span>              : }</span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              : }  // namespace internal</span>
+<span id="L45"><span class="lineNum">      45</span>              : </span>
+<span id="L46"><span class="lineNum">      46</span>              : // Apply an operation once to each node's view of the filesystem. The global root runs</span>
+<span id="L47"><span class="lineNum">      47</span>              : // first so that shared filesystems are updated before the remaining node roots inspect</span>
+<span id="L48"><span class="lineNum">      48</span>              : // them. Filesystem exceptions are reported only after every rank has completed the same</span>
+<span id="L49"><span class="lineNum">      49</span>              : // MPI collectives, avoiding partial-rank failures and deadlocks.</span>
+<span id="L50"><span class="lineNum">      50</span>              : template &lt;typename Func&gt;</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC tlaBgGNC">          99 : inline void ApplyOnEachNodeFilesystem(MPI_Comm comm, const std::string &amp;operation,</span></span>
+<span id="L52"><span class="lineNum">      52</span>              :                                       Func &amp;&amp;func)</span>
+<span id="L53"><span class="lineNum">      53</span>              : {</span>
+<span id="L54"><span class="lineNum">      54</span>              :   std::string local_error;</span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">         172 :   auto apply_here = [&amp;]()</span></span>
+<span id="L56"><span class="lineNum">      56</span>              :   {</span>
+<span id="L57"><span class="lineNum">      57</span>              :     try</span>
+<span id="L58"><span class="lineNum">      58</span>              :     {</span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">          44 :       func();</span></span>
+<span id="L60"><span class="lineNum">      60</span>              :     }</span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC tlaBgUNC">           0 :     catch (const std::exception &amp;e)</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :     {</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaUNC">           0 :       local_error = e.what();</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :     }</span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaUNC">           0 :     catch (...)</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :     {</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC">           0 :       local_error = &quot;Unknown filesystem error&quot;;</span></span>
+<span id="L68"><span class="lineNum">      68</span>              :     }</span>
+<span id="L69"><span class="lineNum">      69</span>              :   };</span>
+<span id="L70"><span class="lineNum">      70</span>              : </span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC tlaBgGNC">          99 :   if (Mpi::Root(comm))</span></span>
+<span id="L72"><span class="lineNum">      72</span>              :   {</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">          73 :     apply_here();</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :   }</span>
+<span id="L75"><span class="lineNum">      75</span>              :   Mpi::Barrier(comm);</span>
+<span id="L76"><span class="lineNum">      76</span>              : </span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">          99 :   MPI_Comm node_comm = MPI_COMM_NULL;</span></span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">          99 :   MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,</span></span>
+<span id="L79"><span class="lineNum">      79</span>              :                       &amp;node_comm);</span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         172 :   if (Mpi::Root(node_comm) &amp;&amp; !Mpi::Root(comm))</span></span>
+<span id="L81"><span class="lineNum">      81</span>              :   {</span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaUNC tlaBgUNC">           0 :     apply_here();</span></span>
+<span id="L83"><span class="lineNum">      83</span>              :   }</span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC tlaBgGNC">          99 :   MPI_Comm_free(&amp;node_comm);</span></span>
+<span id="L85"><span class="lineNum">      85</span>              : </span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">          99 :   internal::AbortOnNodeFilesystemError(comm, operation, local_error);</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">          99 : }</span></span>
+<span id="L88"><span class="lineNum">      88</span>              : </span>
+<span id="L89"><span class="lineNum">      89</span>              : // Ensure an output directory exists on every node's filesystem. This is</span>
+<span id="L90"><span class="lineNum">      90</span>              : // node-local-filesystem aware: on a shared filesystem only the global root creates the</span>
+<span id="L91"><span class="lineNum">      91</span>              : // directory (all other creations hit an already-existing directory harmlessly), while on</span>
+<span id="L92"><span class="lineNum">      92</span>              : // a node-local filesystem each node's root process creates the node's own copy. The code</span>
+<span id="L93"><span class="lineNum">      93</span>              : // never classifies the filesystem topology; it only guarantees the invariant &quot;the</span>
+<span id="L94"><span class="lineNum">      94</span>              : // directory exists here.&quot;</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">          33 : inline void EnsureDirectory(const fs::path &amp;dir, MPI_Comm comm)</span></span>
+<span id="L96"><span class="lineNum">      96</span>              : {</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaGNC">          33 :   BlockTimer bt(Timer::IO);</span></span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">          33 :   ApplyOnEachNodeFilesystem(</span></span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">          33 :       comm, fmt::format(&quot;Creating output directory \&quot;{}\&quot;&quot;, dir.string()),</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">          33 :       [&amp;]()</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :       {</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">          22 :         fs::create_directories(dir);</span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">          22 :         if (!fs::is_directory(dir))</span></span>
+<span id="L104"><span class="lineNum">     104</span>              :         {</span>
+<span id="L105"><span class="lineNum">     105</span>              :           throw fs::filesystem_error(&quot;Path is not a directory&quot;, dir,</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaUNC tlaBgUNC">           0 :                                      std::make_error_code(std::errc::not_a_directory));</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :         }</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC tlaBgGNC">          22 :       });</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">          33 : }</span></span>
+<span id="L110"><span class="lineNum">     110</span>              : </span>
+<span id="L111"><span class="lineNum">     111</span>              : // Remove a previous run's output root (a directory, or a symlink standing in for one that</span>
+<span id="L112"><span class="lineNum">     112</span>              : // was left by an earlier save) on every node's filesystem, so fresh output does not mix</span>
+<span id="L113"><span class="lineNum">     113</span>              : // with stale artifacts. This is the cleanup counterpart of EnsureDirectory and mirrors</span>
+<span id="L114"><span class="lineNum">     114</span>              : // its node-local awareness: on a node-local (non-shared) filesystem each node holds its</span>
+<span id="L115"><span class="lineNum">     115</span>              : // own copy of the previous run's output, so removal runs once per node rather than only</span>
+<span id="L116"><span class="lineNum">     116</span>              : // on the global root.</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">          43 : inline void RemovePreviousOutput(const fs::path &amp;dir, MPI_Comm comm)</span></span>
+<span id="L118"><span class="lineNum">     118</span>              : {</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">          43 :   BlockTimer bt(Timer::IO);</span></span>
+<span id="L120"><span class="lineNum">     120</span>              :   // std::filesystem::remove_all removes a directory symlink itself without following it.</span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">          43 :   ApplyOnEachNodeFilesystem(comm,</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">          43 :                             fmt::format(&quot;Removing previous output \&quot;{}\&quot;&quot;, dir.string()),</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">          72 :                             [&amp;]() { fs::remove_all(dir); });</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">          43 : }</span></span>
+<span id="L125"><span class="lineNum">     125</span>              : </span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaUNC tlaBgUNC">           0 : inline void MakeOutputFolder(IoData &amp;iodata, MPI_Comm &amp;comm)</span></span>
+<span id="L127"><span class="lineNum">     127</span>              : {</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaUNC">           0 :   BlockTimer bt(Timer::IO);</span></span>
+<span id="L129"><span class="lineNum">     129</span>              :   // Validate output directory name and warn about overwrites on root.</span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaUNC">           0 :   auto root = Mpi::Root(comm);</span></span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaUNC">           0 :   auto &amp;output_str = iodata.problem.output;</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaUNC">           0 :   if (root)</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :   {</span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(!output_str.empty(),</span></span>
+<span id="L135"><span class="lineNum">     135</span>              :                 fmt::format(&quot;Invalid output directory, got empty string \&quot;\&quot;.&quot;))</span>
+<span id="L136"><span class="lineNum">     136</span>              :     // Remove any trailing &quot;/&quot; to get folder name.</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaUNC">           0 :     if (output_str.back() == '/')</span></span>
+<span id="L138"><span class="lineNum">     138</span>              :     {</span>
+<span id="L139"><span class="lineNum">     139</span>              :       output_str.erase(output_str.end() - 1);</span>
+<span id="L140"><span class="lineNum">     140</span>              :     }</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaUNC">           0 :     auto output_path = fs::path(output_str);</span></span>
+<span id="L142"><span class="lineNum">     142</span>              :     // Warn if the folder already exists and is not empty; content will be overwritten.</span>
+<span id="L143"><span class="lineNum">     143</span>              :     if (fs::exists(output_path))</span>
+<span id="L144"><span class="lineNum">     144</span>              :     {</span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaUNC">           0 :       MFEM_VERIFY(fs::is_directory(output_path),</span></span>
+<span id="L146"><span class="lineNum">     146</span>              :                   fmt::format(&quot;Output path already exists but is not a directory: {}&quot;,</span>
+<span id="L147"><span class="lineNum">     147</span>              :                               output_path.string()));</span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :       if (!fs::is_empty(output_path))</span></span>
+<span id="L149"><span class="lineNum">     149</span>              :       {</span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaUNC">           0 :         Mpi::Warning(&quot;Output folder is not empty; program will overwrite content! ({})&quot;,</span></span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaUNC">           0 :                      output_path.string());</span></span>
+<span id="L152"><span class="lineNum">     152</span>              :       }</span>
+<span id="L153"><span class="lineNum">     153</span>              :     }</span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaUNC">           0 :     output_str = output_path.string();</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L156"><span class="lineNum">     156</span>              : </span>
+<span id="L157"><span class="lineNum">     157</span>              :   // Broadcast new output_str to all ranks.</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaUNC">           0 :   if (Mpi::Size(comm) &gt; 1)</span></span>
+<span id="L159"><span class="lineNum">     159</span>              :   {</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaUNC">           0 :     int str_len = static_cast&lt;int&gt;(output_str.size());</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaUNC">           0 :     if (root)</span></span>
+<span id="L162"><span class="lineNum">     162</span>              :     {</span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :       MFEM_VERIFY(output_str.size() == std::size_t(str_len),</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :                   &quot;Overflow in stringbuffer size!&quot;);</span>
+<span id="L165"><span class="lineNum">     165</span>              :     }</span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaUNC">           0 :     Mpi::Broadcast(1, &amp;str_len, 0, comm);</span></span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaUNC">           0 :     output_str.resize(str_len);</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :     Mpi::Broadcast(str_len, output_str.data(), 0, comm);</span></span>
+<span id="L169"><span class="lineNum">     169</span>              :   }</span>
+<span id="L170"><span class="lineNum">     170</span>              : </span>
+<span id="L171"><span class="lineNum">     171</span>              :   // Create the output directory (node-local aware).</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaUNC">           0 :   auto output_path = fs::path(output_str);</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :   EnsureDirectory(output_path, comm);</span></span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span>              :   // Fail fast if the output directory is not writable, with a clear message at setup rather</span>
+<span id="L176"><span class="lineNum">     176</span>              :   // than an obscure failure deep in the solve. Checked on every node's filesystem, since a</span>
+<span id="L177"><span class="lineNum">     177</span>              :   // node-local (non-shared) filesystem may be writable on one node but not another. Each</span>
+<span id="L178"><span class="lineNum">     178</span>              :   // node root writes and removes a rank-unique probe file so concurrent checks on a shared</span>
+<span id="L179"><span class="lineNum">     179</span>              :   // filesystem do not race on the same path.</span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaUNC">           0 :   ApplyOnEachNodeFilesystem(</span></span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaUNC">           0 :       comm, fmt::format(&quot;Verifying output directory \&quot;{}\&quot; is writable&quot;, output_str),</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaUNC">           0 :       [&amp;]()</span></span>
+<span id="L183"><span class="lineNum">     183</span>              :       {</span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaUNC">           0 :         auto tmp = output_path / fmt::format(&quot;tmp_test_file_{}.txt&quot;, Mpi::Rank(comm));</span></span>
+<span id="L185"><span class="lineNum">     185</span>              :         {</span>
+<span id="L186"><span class="lineNum">     186</span>              :           std::ofstream f(tmp);</span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaUNC">           0 :           f &lt;&lt; &quot;Test Print&quot;;</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaUNC">           0 :         }</span></span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaUNC">           0 :         if (!fs::is_regular_file(tmp))</span></span>
+<span id="L190"><span class="lineNum">     190</span>              :         {</span>
+<span id="L191"><span class="lineNum">     191</span>              :           throw fs::filesystem_error(&quot;Could not create test file in output folder&quot;, tmp,</span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC">           0 :                                      std::make_error_code(std::errc::permission_denied));</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :         }</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaUNC">           0 :         fs::remove(tmp);</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaUNC">           0 :       });</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L197"><span class="lineNum">     197</span>              : </span>
+<span id="L198"><span class="lineNum">     198</span>              : }  // namespace palace</span>
+<span id="L199"><span class="lineNum">     199</span>              : #endif  // PALACE_UTILS_OUTPUTDIR_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
