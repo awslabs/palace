@@ -57,14 +57,17 @@ void LowRankFactors(const Eigen::MatrixXd &B, double tol, Eigen::MatrixXd &U,
       // ||(I - Q Q^T) B|| <= 10 sqrt(2/pi) max_i ||(I - Q Q^T) B w_i||, and
       // sigma_1(Q^T B) <= sigma_1(B).
       const double s1 =
-          Eigen::BDCSVD<Eigen::MatrixXd>(Q.transpose() * B).singularValues()(0);
+          Eigen::JacobiSVD<Eigen::MatrixXd>(Q.transpose() * B).singularValues()(0);
       floor = tol * s1 / (10.0 * std::sqrt(2.0 / std::numbers::pi));
     }
   }
   // Q spans the range found, but its last columns may have lost orthogonality.
   Q = Eigen::HouseholderQR<Eigen::MatrixXd>(Q).householderQ() *
       Eigen::MatrixXd::Identity(m1, Q.cols());
-  Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(
+  // The Jacobi SVD (of the small Q^T B, preconditioned by a QR decomposition): the
+  // divide-and-conquer one loses its accuracy with unsafe floating-point optimizations,
+  // which some compilers make by default.
+  Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(
       Q.transpose() * B);
   const Eigen::VectorXd &s = svd.singularValues();
   Eigen::Index r = 0;
