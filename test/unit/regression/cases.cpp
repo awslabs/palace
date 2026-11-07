@@ -281,6 +281,41 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
+// Floquet-port S-parameters as linear magnitudes |S| = 10^(dB/20), within atol + rtol |S|,
+// for adaptive sweeps: an absolute tolerance near 0 dB, where a relative tolerance on the
+// dB value is too tight for the reduced model, and none needed for negligible entries.
+// NaN entries (evanescent modes) count as matches.
+palace::test::CustomCheck CompareFloquetSMagnitudes(double rtol, double atol)
+{
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
+  {
+    const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
+    const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+    for (std::size_t c = 0; c < n_cols; ++c)
+    {
+      const std::string &hdr = reference[c].header_text;
+      if (hdr.find("|S[") == std::string::npos || hdr.find("(dB)") == std::string::npos)
+      {
+        continue;
+      }
+      for (std::size_t r = 0; r < n_rows; ++r)
+      {
+        const double v_new = actual[c].data[r];
+        const double v_ref = reference[c].data[r];
+        if (std::isnan(v_new) && std::isnan(v_ref))
+        {
+          continue;
+        }
+        const double s_new = std::pow(10.0, v_new / 20.0);
+        const double s_ref = std::pow(10.0, v_ref / 20.0);
+        INFO("row " << r + 1 << " column '" << hdr << "'");
+        CHECK(std::abs(s_new - s_ref) <= atol + rtol * std::max(s_new, s_ref));
+      }
+    }
+  };
+}
+
 // S-parameter check for a driven wave-port run on a lossless structure. Two guards:
 //   (1) Reference-free power conservation: for each excitation j, Sum_i |S_ij|^2 == 1
 //       within rtol. Insensitive to MPI partitioning; catches the wave-port n x H fix
@@ -1476,6 +1511,21 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_uniform.json",
                                   "uniform", opts);
+}
+
+// Adaptive (PROM) counterpart of dielectric_grating_uniform, which assembles the Floquet
+// DtN correction at every greedy sample. As in the other adaptive cases, the outputs other
+// than the S-parameters are structural smoke checks.
+TEST_CASE("dielectric_grating_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = std::numeric_limits<double>::infinity();
+  opts.atol = std::numeric_limits<double>::infinity();
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = CompareFloquetSMagnitudes(1.0e-3, 1.0e-4);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_adaptive.json",
+                                  "adaptive", opts);
 }
 
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power

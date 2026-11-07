@@ -273,6 +273,20 @@ catch_discover_tests(unit-tests
     ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
 )
 
+# Device code paths that MFEM's debug device runs on the host, so that CPU builds test them
+if(NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
+  catch_discover_tests(unit-tests
+    TEST_PREFIX "debug-"
+    TEST_SPEC "[lowrank][Parallel]"
+    TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+    EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --device debug --skip-benchmarks
+    PROPERTIES
+      PROCESSORS ${PALACE_TESTS_PROCESSORS}
+      SKIP_RETURN_CODE 4
+      ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+  )
+endif()
+
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under
 # PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
 # prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
