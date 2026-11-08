@@ -63,11 +63,12 @@ struct SignatureMap
   std::vector<std::vector<std::pair<int, double>>> rows;
 
   // X_cur = M^-T X_saved for dual vectors X (n x k, row-major), and
-  // S_cur = M^-T S_saved M^-1 for a symmetric dual matrix S (n x n).
+  // S_cur = M^-T S_saved M^-1 for a symmetric dual matrix S (n x n) from its saved rows in
+  // order, read_row(a, x) filling row a: one saved row is held at a time.
   template <typename T>
   std::vector<T> DualRows(const std::vector<T> &X, int k) const;
-  template <typename T>
-  std::vector<T> DualMatrix(const std::vector<T> &S) const;
+  template <typename T, typename ReadRow>
+  std::vector<T> DualMatrix(ReadRow &&read_row) const;
 };
 
 // Which of a set of DOFs (H1 or H(curl) signatures of the given width) lie at the point of
@@ -76,10 +77,11 @@ struct SignatureMap
 std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, int width,
                                        const std::vector<double> &saved, int saved_width);
 
-// The map from the saved to the current H(curl) signatures, aborting unless the current
-// signatures equal M times the saved ones within a relative tolerance. A 13th column (width
-// 13) tells the versions of a DOF of a broken space apart, which must match one to one: a
-// side moment, zero for the other DOFs, which flips with the orientation as the others.
+// The map from the saved to the current signatures, aborting unless the current signatures
+// equal M times the saved ones within a relative tolerance (H1: a permutation). A 13th
+// column (width 13) tells the versions of a DOF of a broken space apart, which must match
+// one to one: a side moment, zero for the other DOFs, which flips with the orientation as
+// the others.
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width);
 
@@ -100,25 +102,40 @@ std::vector<T> SignatureMap::DualRows(const std::vector<T> &X, int k) const
   return Y;
 }
 
-template <typename T>
-std::vector<T> SignatureMap::DualMatrix(const std::vector<T> &S) const
+template <typename T, typename ReadRow>
+std::vector<T> SignatureMap::DualMatrix(ReadRow &&read_row) const
 {
-  // (M^-T S M^-1)_ij = sum_ab (M^-T)_ia S_ab (M^-T)_jb, in one pass (S symmetric).
+  // (M^-T S M^-1)_gh = sum_a (M^-T)_ga z_h, z_h = sum_b (M^-T)_hb S_ab: each saved row a,
+  // mapped on its columns (z), adds to the current rows g with (M^-T)_ga != 0.
   const std::size_t n = rows.size();
-  std::vector<T> Y(n * n, T(0.0));
-  for (std::size_t j = 0; j < n; j++)
+  std::vector<std::vector<std::pair<std::size_t, double>>> to(n);
+  for (std::size_t g = 0; g < n; g++)
   {
-    for (std::size_t i = 0; i < n; i++)
+    for (const auto &[a, c] : rows[g])
+    {
+      to[a].emplace_back(g, c);
+    }
+  }
+  std::vector<T> Y(n * n, T(0.0)), x(n), z(n);
+  for (std::size_t a = 0; a < n; a++)
+  {
+    read_row(a, x.data());
+    for (std::size_t h = 0; h < n; h++)
     {
       T v(0.0);
-      for (const auto &[a, ca] : rows[i])
+      for (const auto &[b, c] : rows[h])
       {
-        for (const auto &[b, cb] : rows[j])
-        {
-          v += ca * cb * S[static_cast<std::size_t>(b) * n + a];
-        }
+        v += c * x[b];
       }
-      Y[j * n + i] = v;
+      z[h] = v;
+    }
+    for (const auto &[g, c] : to[a])
+    {
+      T *y = &Y[g * n];
+      for (std::size_t h = 0; h < n; h++)
+      {
+        y[h] += c * z[h];
+      }
     }
   }
   return Y;

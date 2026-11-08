@@ -14,6 +14,7 @@
 #include <dmumps_c.h>
 #include <zmumps_c.h>
 #include "linalg/vector.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -69,11 +70,14 @@ public:
   // ceil(size / procs)-th, rank 0 among them), the others sending them their entries: for a
   // small system, it avoids MUMPS's per-rank workspace on every rank (0: all ranks). With
   // refactor, the entries are kept so that Refactor can factor new values with the same
-  // pattern, reusing the analysis. spd: A is positive definite, so the BLR factorization
-  // skips numerical pivoting.
+  // pattern, reusing the analysis. spd: A is positive definite, so it is factored without
+  // numerical pivoting. ordering is the fill-reducing ordering ("Default": METIS); MUMPS
+  // computes a Schur complement only after a sequential analysis, so with Schur variables a
+  // parallel ordering is replaced by its sequential counterpart.
   MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    int procs = 0, bool refactor = false, bool spd = true);
+                    int procs = 0, bool refactor = false, bool spd = true,
+                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
 
   // From the local lower-triangle entries of A (n_loc local rows, in rank order). With
   // rows, the vectors of the solves are of a larger (parent) space: rows[i] is the local
@@ -82,7 +86,8 @@ public:
   MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     int procs = 0, bool refactor = false, bool spd = true,
-                    std::vector<int> rows = {});
+                    std::vector<int> rows = {},
+                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
 
   ~MumpsSchurSolverT();
 
@@ -141,6 +146,7 @@ private:
   MPI_Comm comm;
   int rank = 0, procs = 0;
   bool refactor = false, spd = true, factored = false;
+  SymbolicFactorization ordering = SymbolicFactorization::DEFAULT;
   bool active = true;  // this rank takes part in the factorization
   // With fewer ranks factoring: the ranks factoring, and the group of each (one factoring
   // rank and the ranks sending it their entries, with the counts and offsets of their

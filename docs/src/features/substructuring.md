@@ -93,10 +93,9 @@ attributes works: the interface follows the element faces between them and need 
 The cost of the condensation grows with the number of interface degrees of freedom, so a region
 boundary in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is
 cheaper than one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense,
-and one process holds it whole (``|\Gamma|^2`` values) while the model is saved (and, with MUMPS,
-while the environment is condensed), and twice while a model is read (14 GB at
-``|\Gamma| = 30{,}000``). That process also holds the whole mesh while it writes the mesh of the
-region. The
+and one process holds it whole (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``) while the
+model is saved or read (and, with MUMPS, while the environment is condensed). That process also
+holds the whole mesh while it writes the mesh of the region. The
 [transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
 the position of their centroids.
 
@@ -148,9 +147,13 @@ among those Palace is built with) when they have at most
 `config["Solver"]["Substructuring"]["DirectMaxSize"]` unknowns (2,000,000 by default), and otherwise
 solved by conjugate gradients preconditioned by geometric multigrid (electrostatics at order 2 and
 higher), BoomerAMG or AMS. Magnetostatic environments at order 2 and higher are always factored, and
-an environment with London sheets must be. With MUMPS, the Schur complement of an electrostatic
-environment comes from a single partial factorization. When running MUMPS with MPI, setting
-`OPENBLAS_NUM_THREADS=1` (or the equivalent for the BLAS in use) avoids oversubscribing cores.
+an environment with London sheets must be. With MUMPS, the Schur complement of the environment comes
+from a single partial factorization, except when a magnetostatic model is saved: its energy operator
+takes two environment solves per interface unknown. The MUMPS factorizations follow the
+[`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
+`config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
+are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
+equivalent for the BLAS in use) avoids oversubscribing cores.
 
 ## Magnetostatics
 

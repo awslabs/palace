@@ -229,9 +229,10 @@ typename MumpsSchurSolverT<T>::Coo LowerTriangle(const mfem::HypreParMatrix &A)
 template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
-                                        double blr_tol, int procs, bool refactor, bool spd)
+                                        double blr_tol, int procs, bool refactor, bool spd,
+                                        SymbolicFactorization ordering)
   : MumpsSchurSolverT(A.GetComm(), A.GetGlobalNumRows(), A.Height(), LowerTriangle<T>(A),
-                      schur_vars, blr_tol, procs, refactor, spd)
+                      schur_vars, blr_tol, procs, refactor, spd, {}, ordering)
 {
 }
 
@@ -240,10 +241,12 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int 
                                         Coo &&A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
                                         double blr_tol, int procs, bool refactor, bool spd,
-                                        std::vector<int> rows)
-  : comm(comm), procs(procs), refactor(refactor), spd(spd), n_glob(n_glob), n_loc(n_loc),
-    n_schur(static_cast<int>(schur_vars.size())), rows(std::move(rows)),
-    irn(std::move(A.irn)), jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
+                                        std::vector<int> rows,
+                                        SymbolicFactorization ordering)
+  : comm(comm), procs(procs), refactor(refactor), spd(spd), ordering(ordering),
+    n_glob(n_glob), n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())),
+    rows(std::move(rows)), irn(std::move(A.irn)), jcn(std::move(A.jcn)),
+    val(std::move(A.val)), blr_tol(blr_tol)
 {
   MFEM_VERIFY(this->rows.empty() || static_cast<int>(this->rows.size()) == n_loc,
               "MumpsSchurSolver: wrong number of parent rows!");
@@ -339,8 +342,8 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   auto icntl = [&](int i) -> MUMPS_INT & { return id.icntl[i - 1]; };
   if (active)
   {
-    id.sym = 2;  // symmetric (general)
-    id.par = 1;  // the host takes part in the factorization
+    id.sym = (spd && !kComplex) ? 1 : 2;  // positive definite (no pivoting), or symmetric
+    id.par = 1;                           // the host takes part in the factorization
     id.comm_fortran =
         static_cast<MUMPS_INT>(MPI_Comm_c2f(sub != MPI_COMM_NULL ? sub : comm));
     id.job = -1;
@@ -354,8 +357,36 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     // Complete Schur (if any Schur variables), 2D block cyclic on a 1 x 1 grid: centralized
     // on rank 0.
     icntl(19) = (n_schur > 0) ? 3 : 0;
-    icntl(28) = 1;   // sequential analysis (the Schur option excludes parallel analysis)
-    icntl(7) = 5;    // METIS ordering
+    // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
+    // and PT-SCOTCH if there are no Schur variables.
+    const bool parallel = n_schur == 0 && (ordering == SymbolicFactorization::PARMETIS ||
+                                           ordering == SymbolicFactorization::PTSCOTCH);
+    icntl(28) = parallel ? 2 : 1;
+    switch (ordering)
+    {
+      case SymbolicFactorization::PARMETIS:
+        icntl(7) = 5;  // METIS
+        icntl(29) = 2;
+        break;
+      case SymbolicFactorization::PTSCOTCH:
+        icntl(7) = 3;  // SCOTCH
+        icntl(29) = 1;
+        break;
+      case SymbolicFactorization::SCOTCH:
+        icntl(7) = 3;
+        break;
+      case SymbolicFactorization::PORD:
+        icntl(7) = 4;
+        break;
+      case SymbolicFactorization::AMD:
+      case SymbolicFactorization::RCM:
+        icntl(7) = 0;
+        break;
+      case SymbolicFactorization::METIS:
+      case SymbolicFactorization::DEFAULT:
+        icntl(7) = 5;
+        break;
+    }
     icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
     if (blr_tol > 0.0)
     {

@@ -299,35 +299,71 @@ std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, in
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width)
 {
-  MFEM_VERIFY(width == 12 || width == 13,
-              "MatchSignatureBasis expects Nédélec signatures!");
+  MFEM_VERIFY(width == 3 || width == 12 || width == 13,
+              "Unknown DOF signature width " << width << "!");
   MFEM_VERIFY(current.size() == saved.size(),
               "Saved and current DOF sets of different sizes cannot be matched!");
   const int n = static_cast<int>(current.size() / width);
+  const bool nedelec = (width != 3);
   const double tol = SignatureTolerance(saved);
-  auto row = [width](const std::vector<double> &sig, int g) { return &sig[g * width]; };
+  auto row = [width](const std::vector<double> &sig, int g)
+  { return &sig[static_cast<std::size_t>(g) * width]; };
 
-  // Signed one-to-one matches.
+  // One-to-one matches, signed for H(curl), among the saved DOFs whose key |w . s|
+  // (unchanged by a flip) is within |w| tol of the current one, as for any signature within
+  // tol of it: a fixed generic w makes the candidates few.
+  std::vector<double> w(width);
+  double wn = 0.0;
+  for (int q = 0; q < width; q++)
+  {
+    w[q] = std::sqrt(q + 2.0);
+    wn += w[q] * w[q];
+  }
+  const double window = std::sqrt(wn) * tol;
+  auto key = [&](const double *v)
+  {
+    double k = 0.0;
+    for (int q = 0; q < width; q++)
+    {
+      k += w[q] * v[q];
+    }
+    return std::abs(k);
+  };
+  std::vector<double> ks(n);
+  std::vector<int> order(n);
+  for (int s = 0; s < n; s++)
+  {
+    ks[s] = key(row(saved, s));
+    order[s] = s;
+  }
+  std::sort(order.begin(), order.end(), [&](int x, int y) { return ks[x] < ks[y]; });
   SignatureMap map;
   map.rows.assign(n, {});
   std::vector<char> used(n, 0), matched(n, 0);
   for (int g = 0; g < n; g++)
   {
     const double *c = row(current, g);
+    const double kc = key(c);
     int best = -1;
     double bd = tol * tol, bs = 1.0;
-    for (int s = 0; s < n; s++)
+    auto it = std::lower_bound(order.begin(), order.end(), kc - window,
+                               [&](int s, double x) { return ks[s] < x; });
+    for (; it != order.end() && ks[*it] <= kc + window; ++it)
     {
-      const double *v = row(saved, s);
+      const double *v = row(saved, *it);
       double dp = 0.0, dm = 0.0;
       for (int q = 0; q < width; q++)
       {
         dp += (c[q] - v[q]) * (c[q] - v[q]);
         dm += (c[q] + v[q]) * (c[q] + v[q]);
       }
-      if (!used[s] && std::min(dp, dm) <= bd)
+      if (!nedelec)
       {
-        best = s;
+        dm = dp;  // H1 DOFs are not flipped
+      }
+      if (!used[*it] && std::min(dp, dm) <= bd)
+      {
+        best = *it;
         bd = std::min(dp, dm);
         bs = (dp <= dm) ? 1.0 : -1.0;
       }
@@ -347,8 +383,34 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
   if (std::find(matched.begin(), matched.end(), 0) != matched.end())
   {
     const auto pc = SignaturePoints(current, width), ps = SignaturePoints(saved, width);
-    auto near = [tol](const std::array<double, 3> &p, const std::array<double, 3> &q)
-    { return std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= tol; };
+    // The DOFs at a point within the tolerance, searched by their first coordinate.
+    auto by_x = [n](const std::vector<std::array<double, 3>> &pts)
+    {
+      std::vector<int> o(n);
+      for (int g = 0; g < n; g++)
+      {
+        o[g] = g;
+      }
+      std::sort(o.begin(), o.end(), [&](int x, int y) { return pts[x][0] < pts[y][0]; });
+      return o;
+    };
+    const std::vector<int> oc = by_x(pc), os = by_x(ps);
+    auto at = [tol](const std::vector<std::array<double, 3>> &pts,
+                    const std::vector<int> &o, const std::array<double, 3> &q)
+    {
+      std::vector<int> found;
+      auto it = std::lower_bound(o.begin(), o.end(), q[0] - tol,
+                                 [&](int g, double x) { return pts[g][0] < x; });
+      for (; it != o.end() && pts[*it][0] <= q[0] + tol; ++it)
+      {
+        const auto &p = pts[*it];
+        if (std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= tol)
+        {
+          found.push_back(*it);
+        }
+      }
+      return found;
+    };
     std::vector<char> done(n, 0);
     for (int g0 = 0; g0 < n && ok; g0++)
     {
@@ -361,18 +423,7 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
         ok = false;  // a version of a split DOF matches one to one
         break;
       }
-      std::vector<int> C, Sv;
-      for (int g = 0; g < n; g++)
-      {
-        if (near(pc[g], pc[g0]))
-        {
-          C.push_back(g);
-        }
-        if (near(ps[g], pc[g0]))
-        {
-          Sv.push_back(g);
-        }
-      }
+      const std::vector<int> C = at(pc, oc, pc[g0]), Sv = at(ps, os, pc[g0]);
       const int k = static_cast<int>(C.size());
       if (k != static_cast<int>(Sv.size()))
       {
