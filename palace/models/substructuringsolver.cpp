@@ -3127,8 +3127,8 @@ struct SubstructuringSolver::Impl
     }
     BlockTimer bt(Timer::KSP_SETUP);
     // The exact factor solves each batch directly (one multi-RHS solve), the other one
-    // preconditions CG per excitation. With London sheets, CG at their small regularization
-    // leaves an error in the near-null space, so the exact factor is used when it fits.
+    // preconditions CG per excitation, which converges to its tolerance. With London
+    // sheets, the exact factor is used whenever it fits.
     region_exact = region_dense_eligible &&
                    (has_sheets ||
                     static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >=
