@@ -119,7 +119,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   auto icntl = [&](int i) -> MUMPS_INT & { return id.icntl[i - 1]; };
   if (active)
   {
-    id.sym = 2;  // symmetric (general)
+    id.sym = 1;  // symmetric positive definite (no pivoting)
     id.par = 1;  // the host takes part in the factorization
     id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(serial ? MPI_COMM_SELF : comm));
     id.job = -1;
@@ -170,9 +170,8 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
     if (blr_tol > 0.0)
     {
-      icntl(35) = 2;     // BLR in both factorization and solve (compressed factors)
-      icntl(36) = 1;     // UCFS variant: compress earlier, fewer operations
-      id.cntl[0] = 0.0;  // CNTL(1): no numerical pivoting (the environment operator is SPD)
+      icntl(35) = 2;         // BLR in both factorization and solve (compressed factors)
+      icntl(36) = 1;         // UCFS variant: compress earlier, fewer operations
       id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
     }
     id.n = static_cast<MUMPS_INT>(n_glob);
