@@ -127,14 +127,17 @@ constexpr bool kHasDirectSolver = (kDirectSolverName[0] != '\0');
 class MumpsDirectSolver : public mfem::Solver
 {
 public:
-  explicit MumpsDirectSolver(bool serial = false) : serial(serial) {}
+  MumpsDirectSolver(bool serial, SymbolicFactorization ordering)
+    : serial(serial), ordering(ordering)
+  {
+  }
   void SetOperator(const mfem::Operator &op) override
   {
     const auto *A = dynamic_cast<const mfem::HypreParMatrix *>(&op);
     MFEM_VERIFY(A, "MumpsDirectSolver requires a HypreParMatrix operator!");
     height = width = A->Height();
-    mumps =
-        std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, serial);
+    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, serial,
+                                               ordering);
   }
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
@@ -149,6 +152,7 @@ public:
 
 private:
   bool serial;
+  SymbolicFactorization ordering;
   std::unique_ptr<MumpsSchurSolver> mumps;
 };
 #endif
@@ -159,7 +163,8 @@ std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoData &io
                                                [[maybe_unused]] bool serial = false)
 {
 #if defined(MFEM_USE_MUMPS)
-  return std::make_unique<MumpsDirectSolver>(serial);
+  return std::make_unique<MumpsDirectSolver>(serial,
+                                             iodata.solver.linear.sym_factorization);
 #elif defined(MFEM_USE_SUPERLU)
   return std::make_unique<SuperLUSolver>(iodata, comm, 0);
 #elif defined(MFEM_USE_STRUMPACK)
@@ -1566,7 +1571,8 @@ struct SubstructuringSolver::Impl
     }
     env_mumps = std::make_unique<MumpsSchurSolver>(
         *EliminateToIdentity(Aenv(), other), InterfaceTrueDofs(),
-        iodata.solver.substructuring->factorization_tol);
+        iodata.solver.substructuring->factorization_tol, false,
+        iodata.solver.linear.sym_factorization);
     // The Schur is symmetric (column-major == row-major): scatter its rows to their owners.
     ScatterRows(env_mumps->Schur(), nG_global, S_rows);
     env_built = true;

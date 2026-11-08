@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <dmumps_c.h>
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -27,10 +28,13 @@ public:
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
   // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
-  // avoids MUMPS's per-rank workspace).
+  // avoids MUMPS's per-rank workspace). ordering is the fill-reducing ordering ("Default":
+  // METIS); MUMPS computes a Schur complement only after a sequential analysis, so with
+  // Schur variables a parallel ordering is replaced by its sequential counterpart.
   MumpsSchurSolver(const mfem::HypreParMatrix &A,
                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                   bool serial = false);
+                   bool serial = false,
+                   SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
 
   ~MumpsSchurSolver();
 

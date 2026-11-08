@@ -14,7 +14,8 @@ namespace palace
 
 MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
                                    const std::vector<HYPRE_BigInt> &schur_vars,
-                                   double blr_tol, bool serial)
+                                   double blr_tol, bool serial,
+                                   SymbolicFactorization ordering)
   : comm(A.GetComm()), serial(serial), n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
     n_schur(static_cast<int>(schur_vars.size()))
 {
@@ -125,8 +126,37 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     // Complete Schur (if any Schur variables), 2D block cyclic on a 1 x 1 grid: centralized
     // on rank 0.
     icntl(19) = (n_schur > 0) ? 3 : 0;
-    icntl(28) = 1;   // sequential analysis (the Schur option excludes parallel analysis)
-    icntl(7) = 5;    // METIS ordering
+    // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
+    // and PT-SCOTCH if there are no Schur variables.
+    const bool parallel = !serial && n_schur == 0 &&
+                          (ordering == SymbolicFactorization::PARMETIS ||
+                           ordering == SymbolicFactorization::PTSCOTCH);
+    icntl(28) = parallel ? 2 : 1;
+    switch (ordering)
+    {
+      case SymbolicFactorization::PARMETIS:
+        icntl(7) = 5;  // METIS
+        icntl(29) = 2;
+        break;
+      case SymbolicFactorization::PTSCOTCH:
+        icntl(7) = 3;  // SCOTCH
+        icntl(29) = 1;
+        break;
+      case SymbolicFactorization::SCOTCH:
+        icntl(7) = 3;
+        break;
+      case SymbolicFactorization::PORD:
+        icntl(7) = 4;
+        break;
+      case SymbolicFactorization::AMD:
+      case SymbolicFactorization::RCM:
+        icntl(7) = 0;
+        break;
+      case SymbolicFactorization::METIS:
+      case SymbolicFactorization::DEFAULT:
+        icntl(7) = 5;
+        break;
+    }
     icntl(20) = 0;   // dense, centralized right-hand sides
     icntl(21) = 0;   // centralized solution
     icntl(26) = 0;   // solve the internal problem (Schur variables held at 0)

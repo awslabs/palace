@@ -1385,6 +1385,65 @@ TEST_CASE("SubstructuringSolver block low-rank environment factorization",
   CHECK(d <= 1.0e-6 * m);
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column orderings",
+                 "[substructure][Serial][Parallel]")
+{
+  // Solver.Linear.ColumnOrdering orders the MUMPS factorizations: the environment factor of
+  // a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it in
+  // parallel. The energy of a closed current does not depend on the ordering.
+  const std::string model_path = (temp_dir / "substruct_ordering_model.bin").string();
+  mfem::VectorFunctionCoefficient jc(3,
+                                     [](const mfem::Vector &x, mfem::Vector &j)
+                                     {
+                                       const double a = x(0) * (1.0 - x(0)),
+                                                    b = x(1) * (1.0 - x(1)),
+                                                    c = x(2) * (1.0 - x(2));
+                                       j(0) = 2.0 * a * a * b * (1.0 - 2.0 * x(1)) * c * c;
+                                       j(1) = -2.0 * a * (1.0 - 2.0 * x(0)) * b * b * c * c;
+                                       j(2) = 0.0;
+                                     });
+  auto energy = [&](const std::string &ordering)
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
+                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+                   {"Boundaries", {}},
+                   {"Solver",
+                    {{"Order", 1},
+                     {"Linear", {{"ColumnOrdering", ordering}}},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", "Offline"},
+                       {"SaveModel", model_path}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
+    mfem::ND_FECollection fec(1, 3);
+    mfem::ParFiniteElementSpace pfes(&mesh.back()->Get(), &fec);
+    mfem::ParLinearForm lf(&pfes);
+    auto *lfi = new mfem::VectorFEDomainLFIntegrator(jc);
+    lfi->SetIntRule(&mfem::IntRules.Get(mfem::Geometry::TETRAHEDRON, 14));
+    lf.AddDomainIntegrator(lfi);
+    lf.Assemble();
+    Vector J(pfes.GetTrueVSize());
+    lf.ParallelAssemble(J);
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return CurrentEnergies(ss, {1}, {J})(0, 0);
+  };
+  const double E0 = energy("Default");
+  for (const std::string ordering : {"ParMETIS", "AMD"})
+  {
+    const double E = energy(ordering);
+    CAPTURE(ordering, E, E0);
+    CHECK(std::abs(E - E0) <= 1.0e-10 * std::abs(E0));
+  }
+}
+
 TEST_CASE("SubstructuringSolver iterative environment and region solves",
           "[substructure][Serial][Parallel]")
 {
