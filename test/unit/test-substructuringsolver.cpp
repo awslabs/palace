@@ -871,6 +871,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
                     Catch::Matchers::ContainsSubstring("written by another version"));
+  // Cut inside its last section (the terminal modes), and inside S_E.
+  condense(make_config("Electrostatic", "Offline", 1));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::resize_file(model_path, std::filesystem::file_size(model_path) - 8);
+  }
+  CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
+                    Catch::Matchers::ContainsSubstring("is incomplete"));
   condense(make_config("Electrostatic", "Offline", 1));
   if (Mpi::Root(Mpi::World()))
   {
@@ -891,6 +899,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
                     Catch::Matchers::ContainsSubstring("Cannot read the saved"));
+  // A model that cannot be written.
+  IoData unwritable = make_config("Electrostatic", "Offline", 1);
+  unwritable.solver.substructuring->save_model =
+      (temp_dir / "missing" / "model.bin").string();
+  CHECK_THROWS_WITH(condense(unwritable), Catch::Matchers::ContainsSubstring(
+                                              "Cannot write the substructuring model"));
 }
 #endif
 
