@@ -3476,84 +3476,49 @@ struct SubstructuringSolver::Impl
       }
     }
   }
-};
 
-SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
-                                           const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : impl(std::make_unique<Impl>(iodata, *mesh.back()))
-{
-}
-
-SubstructuringSolver::~SubstructuringSolver() = default;
-
-void SubstructuringSolver::CondenseEnvironment()
-{
-  // The environment interior solver is set up lazily (EnsureEnv).
-  Impl *pi = impl.get();
-
-  // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
-  mfem::Array<int> non_rfree;
-  for (int i = 0; i < impl->nt; i++)
+  // Number the interface true DOFs globally, in rank order, and size the rows of S_E.
+  // Collective.
+  void EnumerateInterface()
   {
-    if (!impl->is_region_free[i])
+    MPI_Comm comm = parent_fes.GetComm();
+    int nloc = 0;
+    for (int i = 0; i < nt; i++)
     {
-      non_rfree.Append(i);
-    }
-  }
-  impl->A_region_free = EliminateToIdentity(*impl->A_region, non_rfree);
-
-  // Global interface enumeration.
-  MPI_Comm comm = impl->parent_fes.GetComm();
-  int nloc = 0;
-  for (int i = 0; i < impl->nt; i++)
-  {
-    if (impl->is_gamma[i])
-    {
-      nloc++;
-    }
-  }
-  int off = 0;
-  MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
-  off = Mpi::Root(comm) ? 0 : off;
-  impl->nG_global = 0;
-  MPI_Allreduce(&nloc, &impl->nG_global, 1, MPI_INT, MPI_SUM, comm);
-  impl->gamma_global.assign(impl->nt, -1);
-  {
-    int c = off;
-    for (int i = 0; i < impl->nt; i++)
-    {
-      if (impl->is_gamma[i])
+      if (is_gamma[i])
       {
-        impl->gamma_global[i] = c++;
+        nloc++;
       }
     }
+    int off = 0;
+    MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+    off = Mpi::Root(comm) ? 0 : off;
+    nG_global = 0;
+    MPI_Allreduce(&nloc, &nG_global, 1, MPI_INT, MPI_SUM, comm);
+    gamma_global.assign(nt, -1);
+    {
+      int c = off;
+      for (int i = 0; i < nt; i++)
+      {
+        if (is_gamma[i])
+        {
+          gamma_global[i] = c++;
+        }
+      }
+    }
+
+    gamma_off = off;
+    gamma_nloc = nloc;
+    S_rows.assign(static_cast<std::size_t>(nloc) * nG_global, 0.0);
   }
 
-  const int nG = impl->nG_global;
-  impl->gamma_off = off;
-  impl->gamma_nloc = nloc;
-  impl->S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
-
-  // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
-  // current interface after re-meshing or re-partitioning the region (with the side moments
-  // of the versions of the DOFs split by two-sided films, see InterfaceSignatures).
-  MFEM_VERIFY(SignatureWidth(impl->parent_fes) == (impl->magnetostatic ? 12 : 3),
-              "Unexpected finite element space for the interface signatures!");
-  const int sig_w = impl->magnetostatic ? (impl->InterfaceSplit() ? 13 : 12) : 3;
-  auto gamma_sig = [&]() { return impl->InterfaceSignatures(sig_w); };
-
-  // Online with a saved model: load S_E (and the model's sections); otherwise materialize
-  // S_E, and save it when a path is set.
-  const auto &subcfg = *impl->iodata.solver.substructuring;
-  const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
-  const std::string &model_path = subcfg.save_model;
-  const int rank = Mpi::Rank(comm);
-  bool loaded = false;
-  if (online && !model_path.empty())
+  // Load S_E and the sections of the saved model onto this interface (the head was read
+  // and checked by the constructor). Collective.
+  void LoadModel(const std::string &model_path, int sig_w)
   {
+    const int nG = nG_global;
+    const int rank = Mpi::Rank(parent_fes.GetComm());
     BlockTimer bt_io(Timer::IO);
-    // The head of the model, read and checked by the constructor.
-    const Impl::SavedHead &saved = impl->saved;
     MFEM_VERIFY(saved.nG == nG,
                 "Saved substructuring model interface size ("
                     << saved.nG << ") does not match this run (" << nG
@@ -3569,7 +3534,8 @@ void SubstructuringSolver::CondenseEnvironment()
     // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: a
     // permutation. H(curl): signed matches, and blocks for the DOFs whose basis depends on
     // the face orientation (second-order face DOFs on tetrahedra).
-    const SignatureMap map = MatchSignatureBasis(gamma_sig(), saved.sig, saved.width);
+    const SignatureMap map =
+        MatchSignatureBasis(InterfaceSignatures(sig_w), saved.sig, saved.width);
     {
       // Rank 0 reads the saved S_E onto the current numbering and scatters its rows.
       std::vector<double> S_full;
@@ -3581,19 +3547,364 @@ void SubstructuringSolver::CondenseEnvironment()
             [&](std::size_t, double *x)
             { f.read(reinterpret_cast<char *>(x), sizeof(double) * nG); });
       }
-      impl->ScatterRows(S_full, nG, impl->S_rows);
+      ScatterRows(S_full, nG, S_rows);
     }
-    loaded = true;
     // Sections after S_E (fingerprint, S^K, modes).
-    impl->LoadSections(model_path, saved.sections_pos, map);
-    if (impl->region_only)
+    LoadSections(model_path, saved.sections_pos, map);
+    if (region_only)
     {
       Mpi::Print(" The mesh holds the region (the environment is that of the model)\n");
     }
     else
     {
-      impl->CheckEnvFingerprint();
+      CheckEnvFingerprint();
     }
+  }
+
+  // Materialize S_E e_c = (A_env e_c)|_Gamma - (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma by
+  // batched multi-RHS environment solves; with_sk also gives S^K = S_E - P^T D P (one more
+  // batched solve per column), for a magnetostatic model to save. Collective.
+  void MaterializeByBackSolves(bool with_sk)
+  {
+    const int nG = nG_global, nloc = gamma_nloc, off = gamma_off;
+    // Owned interface column -> local true DOF.
+    std::vector<int> col_to_dof(nloc, -1);
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        col_to_dof[gamma_global[i] - off] = i;
+      }
+    }
+    // The first solve of a direct factor fixes its block size at kMaterializeBlock; the
+    // thin couplings are G = A_env E_Gamma and R = E_Gamma^T A_env. Each rank stores its
+    // own rows.
+    std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_gamma);
+    std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get()));
+    std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
+    std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), &Aenv()));
+    E.reset();
+    Et.reset();
+    const int B = kMaterializeBlock;
+    std::vector<Vector> t(B, Vector(nt));
+    std::vector<const mfem::Vector *> X(B);
+    std::vector<mfem::Vector *> Y(B);
+    Vector ec(nloc), z(nloc);
+    std::vector<Vector> v(with_sk ? B : 0, Vector(nt));
+    if (with_sk)
+    {
+      SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
+      have_sk = true;
+    }
+    const mfem::HypreParMatrix &Dm = with_sk ? Denv() : Aenv();
+    std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
+    for (int c0 = 0; c0 < nG; c0 += B)
+    {
+      const int nb = std::min(B, nG - c0);
+      X.resize(nb);
+      Y.resize(nb);
+      for (int k = 0; k < nb; k++)
+      {
+        const int c = c0 + k;
+        ec = 0.0;
+        if (c >= off && c < off + nloc)
+        {
+          ec(c - off) = 1.0;
+        }
+        // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.
+        G->Mult(ec, t[k]);
+        const double *tk = t[k].HostRead();
+        for (int r = 0; r < nloc; r++)
+        {
+          agg[static_cast<std::size_t>(k) * nloc + r] = tk[col_to_dof[r]];
+        }
+        X[k] = &t[k];
+        Y[k] = &t[k];  // solve in place
+      }
+      ApplyAeeInvMulti(X, Y);
+      for (int k = 0; k < nb; k++)
+      {
+        R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
+        const double *zz = z.HostRead();
+        const int c = c0 + k;
+        for (int r = 0; r < nloc; r++)
+        {
+          S_rows[static_cast<std::size_t>(r) * nG + c] =
+              agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
+        }
+      }
+      if (with_sk)
+      {
+        // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]
+        // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).
+        for (int k = 0; k < nb; k++)
+        {
+          const int c = c0 + k;
+          t[k].Neg();
+          if (c >= off && c < off + nloc)
+          {
+            t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;
+          }
+          Dm.Mult(t[k], v[k]);
+          const double *vk = v[k].HostRead();
+          for (int r = 0; r < nloc; r++)
+          {
+            agg[static_cast<std::size_t>(k) * nloc + r] = vk[col_to_dof[r]];
+          }
+          X[k] = &v[k];
+          Y[k] = &v[k];
+        }
+        ApplyAeeInvMulti(X, Y);
+        for (int k = 0; k < nb; k++)
+        {
+          R->Mult(v[k], z);
+          const double *zz = z.HostRead();
+          const int c = c0 + k;
+          for (int r = 0; r < nloc; r++)
+          {
+            const std::size_t q = static_cast<std::size_t>(r) * nG + c;
+            SK_rows[q] = S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
+          }
+        }
+      }
+    }
+  }
+
+  // Save S_E, the region mesh and the sections to the model file. Collective.
+  void SaveModel(const std::string &model_path, int sig_w)
+  {
+    const int nG = nG_global;
+    BlockTimer bt_io(Timer::IO);
+    const int sig_type = magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
+    const std::vector<double> sig =
+        InterfaceSignatures(sig_w);  // collective: all ranks participate
+    const std::vector<double> S_full = GatherRows(S_rows, nG);
+    WriteModel(
+        model_path, false,
+        [&](std::ofstream &f)
+        {
+          const int head[kHeadInts] = {kModelMagic, kModelVersion, iodata.solver.order, nG,
+                                       sig_type};
+          f.write(reinterpret_cast<const char *>(head), sizeof(head));
+          f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
+          f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
+          f.write(reinterpret_cast<const char *>(&kLengthMagic), sizeof(int));
+          f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double));
+        });
+    AppendEnvFingerprint(model_path);  // collective
+    AppendEnvMoments(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
+    if (have_sk)
+    {
+      AppendSK(model_path);  // collective
+    }
+    if (modes_ready)
+    {
+      AppendModes(model_path);  // collective
+    }
+  }
+
+  // HODLR compression of S_E (and S^K): its well-separated interface blocks are low rank,
+  // although S_E is not. Built on rank 0 from the gathered rows, broadcast, and applied
+  // replicated. Collective.
+  void CompressInterface(double hodlr_tol)
+  {
+    const int nG = nG_global;
+    MPI_Comm comm = parent_fes.GetComm();
+    const int rank = Mpi::Rank(comm);
+    // Interface DOF coordinates (replicated) for the clustering: the DOF interpolation
+    // points (H1 nodes, Nedelec edge midpoints) of the parent DOFs.
+    std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
+        coords(static_cast<std::size_t>(nG) * 3, 0.0);
+    const int nt0 = parent_fes.GetTrueVSize();
+    std::vector<double> tdof_xyz(static_cast<std::size_t>(nt0) * 3, 0.0);
+    std::vector<char> have(nt0, 0);
+    mfem::Array<int> edofs;
+    mfem::Vector phys;
+    for (int e = 0; e < parent_fes.GetNE(); e++)
+    {
+      const mfem::FiniteElement *fe = parent_fes.GetFE(e);
+      mfem::ElementTransformation *T = parent.GetElementTransformation(e);
+      const mfem::IntegrationRule &nodes = fe->GetNodes();
+      parent_fes.GetElementDofs(e, edofs);
+      for (int j = 0; j < edofs.Size(); j++)
+      {
+        const int ldof = edofs[j] >= 0 ? edofs[j] : -1 - edofs[j];
+        const int t = parent_fes.GetLocalTDofNumber(ldof);
+        if (t < 0 || have[t])
+        {
+          continue;
+        }
+        T->Transform(nodes.IntPoint(j), phys);
+        for (int d = 0; d < phys.Size() && d < 3; d++)
+        {
+          tdof_xyz[static_cast<std::size_t>(t) * 3 + d] = phys(d);
+        }
+        have[t] = 1;
+      }
+    }
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          coords_loc[static_cast<std::size_t>(gamma_global[i]) * 3 + d] =
+              tdof_xyz[static_cast<std::size_t>(ParentTrueDof(i)) * 3 + d];
+        }
+      }
+    }
+    MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
+    // Compress a dense interface operator, replacing its row blocks.
+    auto compress = [&](std::vector<double> &rows, const char *name)
+    {
+      const std::vector<double> S_full = GatherRows(rows, nG);
+      std::vector<double> buf;
+      int buflen = 0;
+      if (rank == 0)
+      {
+        Hodlr h;
+        h.n = nG;
+        h.perm.assign(nG, 0);
+        std::vector<int> idx(nG);
+        std::iota(idx.begin(), idx.end(), 0);
+        BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);
+        buf = h.Serialize();
+        buflen = static_cast<int>(buf.size());
+      }
+      MPI_Bcast(&buflen, 1, MPI_INT, 0, comm);
+      buf.resize(buflen);
+      MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);
+      auto h = std::make_unique<Hodlr>(Hodlr::Deserialize(buf));
+      const long long ret = h->Storage();
+      rows.clear();
+      rows.shrink_to_fit();
+      Mpi::Print(
+          comm, " HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n", name,
+          hodlr_tol, 100.0 * static_cast<double>(ret) / (static_cast<double>(nG) * nG));
+      return h;
+    };
+    hodlr = compress(S_rows, "S_E");
+    if (have_sk)
+    {
+      hodlr_K = compress(SK_rows, "S^K");
+    }
+  }
+
+  // The region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct
+  // factor, region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact
+  // factor, SolveRegion bypasses CG). Returns its description. Collective.
+  std::string SetUpRegionSolver()
+  {
+    const int nG = nG_global;
+    MPI_Comm comm = parent_fes.GetComm();
+    const auto &subcfg = *iodata.solver.substructuring;
+    std::string region_solver;
+    std::unique_ptr<Solver<Operator>> pc;
+    // Direct factorization when the region fits.
+    long long reg_glob = 0;
+    if (kHasDirectSolver)
+    {
+      long long reg_loc = 0;
+      for (int i = 0; i < nt; i++)
+      {
+        reg_loc += is_region_free[i];
+      }
+      MPI_Allreduce(&reg_loc, &reg_glob, 1, MPI_LONG_LONG, MPI_SUM, comm);
+    }
+    MFEM_VERIFY(!broken || (kHasDirectSolver && reg_glob <= subcfg.direct_max_size),
+                "\"TwoSided\" superconductor films in substructuring need a direct region "
+                "factorization: a sparse direct solver and a region within "
+                "\"Solver.Substructuring.DirectMaxSize\"!");
+    if (kHasDirectSolver && reg_glob <= subcfg.direct_max_size)
+    {
+      // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
+      // S_E is a worse preconditioner than none) or A_region_free, chosen at the first
+      // solve batch (EnsureRegionFactor).
+      region_direct = true;
+      region_dense_eligible = !hodlr && nG > 0 && nG <= kDirectCondensedMaxInterface;
+      pc = std::make_unique<CallableSolver>(A_region_free->Height(),
+                                            [this](const mfem::Vector &r, mfem::Vector &z)
+                                            { ApplyRegionFactor(r, z); });
+      region_solver = fmt::format("{} factorization", kDirectSolverName);
+    }
+    else if (BuildRegionGmg())
+    {
+      pc = std::make_unique<CallableSolver>(A_region_free->Height(),
+                                            [this](const mfem::Vector &r, mfem::Vector &z)
+                                            { ApplyRegionGmgPc(r, z); });
+      region_solver = "conjugate gradients with geometric multigrid";
+    }
+    else if (magnetostatic)
+    {
+      region_solver = "conjugate gradients with AMS";
+      auto ams = std::make_unique<mfem::HypreAMS>(&parent_fes);
+      ams->SetPrintLevel(0);
+      pc = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
+          /*drop_small_entries=*/false);
+    }
+    else
+    {
+      region_solver = "conjugate gradients with BoomerAMG";
+      pc = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
+          /*complex_matrix=*/false, /*drop_small_entries=*/false);
+    }
+    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(kRegionCgTol);
+    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+    pcg->SetMaxIter(kRegionCgMaxIts);
+    region_op =
+        std::make_unique<RegionCondensedOperator>(*A_region_free, *mat_dtn, is_region_free);
+    region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+    region_ksp->SetOperators(*region_op, *A_region_free);
+    return region_solver;
+  }
+};
+
+SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
+                                           const std::vector<std::unique_ptr<Mesh>> &mesh)
+  : impl(std::make_unique<Impl>(iodata, *mesh.back()))
+{
+}
+
+SubstructuringSolver::~SubstructuringSolver() = default;
+
+void SubstructuringSolver::CondenseEnvironment()
+{
+  // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
+  mfem::Array<int> non_rfree;
+  for (int i = 0; i < impl->nt; i++)
+  {
+    if (!impl->is_region_free[i])
+    {
+      non_rfree.Append(i);
+    }
+  }
+  impl->A_region_free = EliminateToIdentity(*impl->A_region, non_rfree);
+
+  impl->EnumerateInterface();
+  MPI_Comm comm = impl->parent_fes.GetComm();
+  const int nG = impl->nG_global;
+
+  // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
+  // current interface after re-meshing or re-partitioning the region (with the side moments
+  // of the versions of the DOFs split by two-sided films, see InterfaceSignatures).
+  MFEM_VERIFY(SignatureWidth(impl->parent_fes) == (impl->magnetostatic ? 12 : 3),
+              "Unexpected finite element space for the interface signatures!");
+  const int sig_w = impl->magnetostatic ? (impl->InterfaceSplit() ? 13 : 12) : 3;
+
+  // Online with a saved model: load S_E (and the model's sections); otherwise materialize
+  // S_E, and save it when a path is set.
+  const auto &subcfg = *impl->iodata.solver.substructuring;
+  const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
+  const std::string &model_path = subcfg.save_model;
+  bool loaded = false;
+  if (online && !model_path.empty())
+  {
+    impl->LoadModel(model_path, sig_w);
+    loaded = true;
   }
   // MUMPS Schur materialization when available and the environment fits a direct
   // factorization; not when S^K is also materialized (its correction needs the lifted
@@ -3615,114 +3926,9 @@ void SubstructuringSolver::CondenseEnvironment()
   if (!loaded)
   {
     impl->EnsureEnv();  // no-op after the MUMPS materialization (it is the env solver)
-    // Owned interface column -> local true DOF.
-    std::vector<int> col_to_dof(nloc, -1);
-    for (int i = 0; i < impl->nt; i++)
-    {
-      if (impl->is_gamma[i])
-      {
-        col_to_dof[impl->gamma_global[i] - off] = i;
-      }
-    }
     if (!mumps_done)
     {
-      // S_E e_c = (A_env e_c)|_Gamma - (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma by batched
-      // multi-RHS environment solves (the first solve of a direct factor fixes its block
-      // size at kMaterializeBlock), with the thin couplings G = A_env E_Gamma and R =
-      // E_Gamma^T A_env. Each rank stores its own rows.
-      std::unique_ptr<mfem::HypreParMatrix> E = impl->AssembleSelection(impl->is_gamma);
-      std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&impl->Aenv(), E.get()));
-      std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
-      std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), &impl->Aenv()));
-      E.reset();
-      Et.reset();
-      const int B = Impl::kMaterializeBlock;
-      std::vector<Vector> t(B, Vector(impl->nt));
-      std::vector<const mfem::Vector *> X(B);
-      std::vector<mfem::Vector *> Y(B);
-      Vector ec(nloc), z(nloc);
-      // A magnetostatic model to save also gets S^K = S_E - P^T D P (one more batched solve
-      // per column).
-      const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
-      std::vector<Vector> v(with_sk ? B : 0, Vector(impl->nt));
-      if (with_sk)
-      {
-        impl->SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
-        impl->have_sk = true;
-      }
-      const mfem::HypreParMatrix &Dm = with_sk ? impl->Denv() : impl->Aenv();
-      std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
-      for (int c0 = 0; c0 < nG; c0 += B)
-      {
-        const int nb = std::min(B, nG - c0);
-        X.resize(nb);
-        Y.resize(nb);
-        for (int k = 0; k < nb; k++)
-        {
-          const int c = c0 + k;
-          ec = 0.0;
-          if (c >= off && c < off + nloc)
-          {
-            ec(c - off) = 1.0;
-          }
-          // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.
-          G->Mult(ec, t[k]);
-          const double *tk = t[k].HostRead();
-          for (int r = 0; r < nloc; r++)
-          {
-            agg[static_cast<std::size_t>(k) * nloc + r] = tk[col_to_dof[r]];
-          }
-          X[k] = &t[k];
-          Y[k] = &t[k];  // solve in place
-        }
-        impl->ApplyAeeInvMulti(X, Y);
-        for (int k = 0; k < nb; k++)
-        {
-          R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
-          const double *zz = z.HostRead();
-          const int c = c0 + k;
-          for (int r = 0; r < nloc; r++)
-          {
-            impl->S_rows[static_cast<std::size_t>(r) * nG + c] =
-                agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
-          }
-        }
-        if (with_sk)
-        {
-          // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]
-          // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).
-          for (int k = 0; k < nb; k++)
-          {
-            const int c = c0 + k;
-            t[k].Neg();
-            if (c >= off && c < off + nloc)
-            {
-              t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;
-            }
-            Dm.Mult(t[k], v[k]);
-            const double *vk = v[k].HostRead();
-            for (int r = 0; r < nloc; r++)
-            {
-              agg[static_cast<std::size_t>(k) * nloc + r] = vk[col_to_dof[r]];
-            }
-            X[k] = &v[k];
-            Y[k] = &v[k];
-          }
-          impl->ApplyAeeInvMulti(X, Y);
-          for (int k = 0; k < nb; k++)
-          {
-            R->Mult(v[k], z);
-            const double *zz = z.HostRead();
-            const int c = c0 + k;
-            for (int r = 0; r < nloc; r++)
-            {
-              const std::size_t q = static_cast<std::size_t>(r) * nG + c;
-              impl->SK_rows[q] =
-                  impl->S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
-            }
-          }
-        }
-      }
+      impl->MaterializeByBackSolves(impl->EnergyDiffers() && !model_path.empty());
     }
     if (!impl->magnetostatic)
     {
@@ -3738,122 +3944,13 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!model_path.empty())
     {
-      BlockTimer bt_io(Timer::IO);
-      const int sig_type = impl->magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
-      const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
-      const std::vector<double> S_full = impl->GatherRows(impl->S_rows, nG);
-      impl->WriteModel(
-          model_path, false,
-          [&](std::ofstream &f)
-          {
-            const int head[Impl::kHeadInts] = {Impl::kModelMagic, Impl::kModelVersion,
-                                               impl->iodata.solver.order, nG, sig_type};
-            f.write(reinterpret_cast<const char *>(head), sizeof(head));
-            f.write(reinterpret_cast<const char *>(sig.data()),
-                    sizeof(double) * nG * sig_w);
-            f.write(reinterpret_cast<const char *>(S_full.data()),
-                    sizeof(double) * nG * nG);
-            f.write(reinterpret_cast<const char *>(&Impl::kLengthMagic), sizeof(int));
-            f.write(reinterpret_cast<const char *>(&impl->iodata.model.Lc), sizeof(double));
-          });
-      impl->AppendEnvFingerprint(model_path);  // collective
-      impl->AppendEnvMoments(model_path, impl->WriteRegionMesh(RegionMeshPath(model_path)));
-      if (impl->have_sk)
-      {
-        impl->AppendSK(model_path);  // collective
-      }
-      if (impl->modes_ready)
-      {
-        impl->AppendModes(model_path);  // collective
-      }
+      impl->SaveModel(model_path, sig_w);
     }
   }
-  // Optional HODLR compression of S_E (its well-separated interface blocks are low rank,
-  // although S_E is not): built on rank 0 from the gathered S_E, broadcast, and applied
-  // replicated.
+  // Optional HODLR compression of the interface operators.
+  if (subcfg.interface_offdiag_tol > 0.0 && nG > 0)
   {
-    const double hodlr_tol = impl->iodata.solver.substructuring->interface_offdiag_tol;
-    if (hodlr_tol > 0.0 && nG > 0)
-    {
-      // Interface DOF coordinates (replicated) for the clustering: the DOF interpolation
-      // points (H1 nodes, Nedelec edge midpoints) of the parent DOFs.
-      std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
-          coords(static_cast<std::size_t>(nG) * 3, 0.0);
-      const int nt0 = impl->parent_fes.GetTrueVSize();
-      std::vector<double> tdof_xyz(static_cast<std::size_t>(nt0) * 3, 0.0);
-      std::vector<char> have(nt0, 0);
-      mfem::Array<int> edofs;
-      mfem::Vector phys;
-      for (int e = 0; e < impl->parent_fes.GetNE(); e++)
-      {
-        const mfem::FiniteElement *fe = impl->parent_fes.GetFE(e);
-        mfem::ElementTransformation *T = impl->parent.GetElementTransformation(e);
-        const mfem::IntegrationRule &nodes = fe->GetNodes();
-        impl->parent_fes.GetElementDofs(e, edofs);
-        for (int j = 0; j < edofs.Size(); j++)
-        {
-          const int ldof = edofs[j] >= 0 ? edofs[j] : -1 - edofs[j];
-          const int t = impl->parent_fes.GetLocalTDofNumber(ldof);
-          if (t < 0 || have[t])
-          {
-            continue;
-          }
-          T->Transform(nodes.IntPoint(j), phys);
-          for (int d = 0; d < phys.Size() && d < 3; d++)
-          {
-            tdof_xyz[static_cast<std::size_t>(t) * 3 + d] = phys(d);
-          }
-          have[t] = 1;
-        }
-      }
-      for (int i = 0; i < impl->nt; i++)
-      {
-        if (impl->is_gamma[i])
-        {
-          for (int d = 0; d < 3; d++)
-          {
-            coords_loc[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] =
-                tdof_xyz[static_cast<std::size_t>(impl->ParentTrueDof(i)) * 3 + d];
-          }
-        }
-      }
-      MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
-      // Compress a dense interface operator, replacing its row blocks.
-      auto compress = [&](std::vector<double> &rows, const char *name)
-      {
-        const std::vector<double> S_full = impl->GatherRows(rows, nG);
-        std::vector<double> buf;
-        int buflen = 0;
-        if (rank == 0)
-        {
-          Hodlr h;
-          h.n = nG;
-          h.perm.assign(nG, 0);
-          std::vector<int> idx(nG);
-          std::iota(idx.begin(), idx.end(), 0);
-          BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);
-          buf = h.Serialize();
-          buflen = static_cast<int>(buf.size());
-        }
-        MPI_Bcast(&buflen, 1, MPI_INT, 0, comm);
-        buf.resize(buflen);
-        MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);
-        auto h = std::make_unique<Hodlr>(Hodlr::Deserialize(buf));
-        const long long ret = h->Storage();
-        rows.clear();
-        rows.shrink_to_fit();
-        Mpi::Print(comm,
-                   " HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n",
-                   name, hodlr_tol,
-                   100.0 * static_cast<double>(ret) / (static_cast<double>(nG) * nG));
-        return h;
-      };
-      impl->hodlr = compress(impl->S_rows, "S_E");
-      if (impl->have_sk)
-      {
-        impl->hodlr_K = compress(impl->SK_rows, "S^K");
-      }
-    }
+    impl->CompressInterface(subcfg.interface_offdiag_tol);
   }
 
   impl->mat_dtn =
@@ -3866,73 +3963,7 @@ void SubstructuringSolver::CondenseEnvironment()
                                                         comm, impl->hodlr_K.get());
   }
 
-  // Region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct factor,
-  // region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact factor,
-  // SolveRegion bypasses CG).
-  std::string region_solver;
-  {
-    std::unique_ptr<Solver<Operator>> pc;
-    // Direct factorization when the region fits.
-    long long reg_glob = 0;
-    if (kHasDirectSolver)
-    {
-      long long reg_loc = 0;
-      for (int i = 0; i < impl->nt; i++)
-      {
-        reg_loc += impl->is_region_free[i];
-      }
-      MPI_Allreduce(&reg_loc, &reg_glob, 1, MPI_LONG_LONG, MPI_SUM, comm);
-    }
-    MFEM_VERIFY(!impl->broken || (kHasDirectSolver && reg_glob <= subcfg.direct_max_size),
-                "\"TwoSided\" superconductor films in substructuring need a direct region "
-                "factorization: a sparse direct solver and a region within "
-                "\"Solver.Substructuring.DirectMaxSize\"!");
-    if (kHasDirectSolver && reg_glob <= subcfg.direct_max_size)
-    {
-      // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
-      // S_E is a worse preconditioner than none) or A_region_free, chosen at the first
-      // solve batch (EnsureRegionFactor).
-      impl->region_direct = true;
-      impl->region_dense_eligible =
-          !impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface;
-      pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
-                                            [pi](const mfem::Vector &r, mfem::Vector &z)
-                                            { pi->ApplyRegionFactor(r, z); });
-      region_solver = fmt::format("{} factorization", kDirectSolverName);
-    }
-    else if (impl->BuildRegionGmg())
-    {
-      pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
-                                            [pi](const mfem::Vector &r, mfem::Vector &z)
-                                            { pi->ApplyRegionGmgPc(r, z); });
-      region_solver = "conjugate gradients with geometric multigrid";
-    }
-    else if (impl->magnetostatic)
-    {
-      region_solver = "conjugate gradients with AMS";
-      auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
-      ams->SetPrintLevel(0);
-      pc = std::make_unique<MfemWrapperSolver<Operator>>(
-          std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
-          /*drop_small_entries=*/false);
-    }
-    else
-    {
-      region_solver = "conjugate gradients with BoomerAMG";
-      pc = std::make_unique<MfemWrapperSolver<Operator>>(
-          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
-          /*complex_matrix=*/false, /*drop_small_entries=*/false);
-    }
-    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-    pcg->SetInitialGuess(false);
-    pcg->SetRelTol(Impl::kRegionCgTol);
-    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-    pcg->SetMaxIter(Impl::kRegionCgMaxIts);
-    impl->region_op = std::make_unique<RegionCondensedOperator>(
-        *impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
-    impl->region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-    impl->region_ksp->SetOperators(*impl->region_op, *impl->A_region_free);
-  }
+  const std::string region_solver = impl->SetUpRegionSolver();
 
   // Summary: the sizes, and how the environment was condensed and the region is solved.
   std::string env_solver;
