@@ -76,10 +76,11 @@ struct SignatureMap
 std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, int width,
                                        const std::vector<double> &saved, int saved_width);
 
-// The map from the saved to the current H(curl) signatures, aborting unless the current
-// signatures equal M times the saved ones within a relative tolerance. A 13th column (width
-// 13) tells the versions of a DOF of a broken space apart, which must match one to one: a
-// side moment, zero for the other DOFs, which flips with the orientation as the others.
+// The map from the saved to the current signatures, aborting unless the current signatures
+// equal M times the saved ones within a relative tolerance (H1: a permutation). A 13th
+// column (width 13) tells the versions of a DOF of a broken space apart, which must match
+// one to one: a side moment, zero for the other DOFs, which flips with the orientation as
+// the others.
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width);
 

@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <numeric>
+#include <random>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -180,6 +182,54 @@ TEST_CASE("H1 DOFs at the points of saved ones", "[substructure][Serial]")
   CHECK(match[0]);
   CHECK(match[1]);
   CHECK_FALSE(match[2]);
+}
+
+TEST_CASE("Saved DOFs are matched in large sets", "[substructure][Serial]")
+{
+  // Random signatures, permuted, perturbed below the matching tolerance and, for Nédélec
+  // DOFs, flipped: the map recovers the permutation and the flips. H1 DOFs (points) are
+  // never flipped: points mirrored through the origin do not match.
+  std::mt19937 gen(7);
+  std::uniform_real_distribution<double> u(-1.0, 1.0);
+  const int n = 20000;
+  for (const int width : {3, 12})
+  {
+    std::vector<double> saved(static_cast<std::size_t>(n) * width), current(saved.size());
+    for (auto &x : saved)
+    {
+      x = u(gen);
+    }
+    std::vector<int> perm(n);
+    std::iota(perm.begin(), perm.end(), 0);
+    std::shuffle(perm.begin(), perm.end(), gen);
+    std::vector<double> sign(n);
+    for (int g = 0; g < n; g++)
+    {
+      sign[g] = (width == 12 && g % 3 == 0) ? -1.0 : 1.0;
+      for (int q = 0; q < width; q++)
+      {
+        current[static_cast<std::size_t>(g) * width + q] =
+            sign[g] * saved[static_cast<std::size_t>(perm[g]) * width + q] +
+            1.0e-10 * u(gen);
+      }
+    }
+    const SignatureMap map = MatchSignatureBasis(current, saved, width);
+    int wrong = 0;
+    for (int g = 0; g < n; g++)
+    {
+      wrong += (map.rows[g] != std::vector<std::pair<int, double>>{{perm[g], sign[g]}});
+    }
+    CAPTURE(width);
+    CHECK(wrong == 0);
+    if (width == 3)
+    {
+      for (auto &x : current)
+      {
+        x = -x;
+      }
+      CHECK_THROWS(MatchSignatureBasis(current, saved, width));
+    }
+  }
 }
 
 TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",

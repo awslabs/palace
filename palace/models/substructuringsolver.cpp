@@ -3570,56 +3570,10 @@ void SubstructuringSolver::CondenseEnvironment()
       f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * S_full.size());
     }
     // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
-    // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: online
-    // interface index g is saved index perm[g]. H(curl): signed matches, and blocks for the
-    // DOFs whose basis depends on the face orientation (second-order face DOFs on
-    // tetrahedra).
-    SignatureMap map;
-    if (saved.sig_type == 1)
-    {
-      const std::vector<double> cur = gamma_sig();
-      const int w = saved.width;
-      map.rows.resize(nG);
-      std::vector<int> perm(nG);
-      double worst = 0.0;
-      for (int g = 0; g < nG; g++)
-      {
-        int best = 0;
-        double bd = 1e300;
-        for (int s = 0; s < nG; s++)
-        {
-          double dp = 0.0;
-          for (int d = 0; d < w; d++)
-          {
-            const double a = cur[static_cast<std::size_t>(g) * w + d];
-            const double b = saved.sig[static_cast<std::size_t>(s) * w + d];
-            dp += (a - b) * (a - b);
-          }
-          if (dp < bd)
-          {
-            bd = dp;
-            best = s;
-          }
-        }
-        perm[g] = best;
-        map.rows[g] = {{best, 1.0}};
-        worst = std::max(worst, bd);
-      }
-      std::vector<char> used(nG, 0);
-      bool bijective = true;
-      for (int g = 0; g < nG; g++)
-      {
-        bijective = bijective && !used[perm[g]];
-        used[perm[g]] = 1;
-      }
-      MFEM_VERIFY(bijective && std::sqrt(worst) < 1e-8,
-                  "Online interface DOFs do not match the saved model (max mismatch "
-                      << std::sqrt(worst) << "); the interface Gamma must be identical.");
-    }
-    else
-    {
-      map = MatchSignatureBasis(gamma_sig(), saved.sig, saved.width);
-    }
+    // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: a
+    // permutation. H(curl): signed matches, and blocks for the DOFs whose basis depends on
+    // the face orientation (second-order face DOFs on tetrahedra).
+    const SignatureMap map = MatchSignatureBasis(gamma_sig(), saved.sig, saved.width);
     if (rank == 0)
     {
       S_full = map.DualMatrix(S_full);
