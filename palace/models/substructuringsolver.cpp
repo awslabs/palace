@@ -291,27 +291,43 @@ public:
                   const Hodlr *hodlr = nullptr)
     : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
       row_off(row_off), gamma_global(gamma_global), nG_global(nG_global), comm(comm),
-      hodlr(hodlr)
+      hodlr(hodlr), xg(nG_global)
   {
+    // Each rank owns a contiguous block of the global interface order, in rank order.
+    const int nloc = static_cast<int>(std::count_if(
+        gamma_global.begin(), gamma_global.end(), [](int g) { return g >= 0; }));
+    cnt.resize(Mpi::Size(comm));
+    disp.assign(cnt.size(), 0);
+    MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (std::size_t r = 1; r < cnt.size(); r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    xo.resize(nloc);
+    if (hodlr)
+    {
+      xp.resize(nG_global);
+      yp.resize(nG_global);
+      yg.resize(nG_global);
+    }
   }
 
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
-    std::vector<double> xl(nG_global, 0.0), xg(nG_global, 0.0);
     const double *xx = x.HostRead();
     for (int i = 0; i < height; i++)
     {
       if (gamma_global[i] >= 0)
       {
-        xl[gamma_global[i]] = xx[i];
+        xo[gamma_global[i] - row_off] = xx[i];
       }
     }
-    MPI_Allreduce(xl.data(), xg.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
+    MPI_Allgatherv(xo.data(), static_cast<int>(xo.size()), MPI_DOUBLE, xg.data(),
+                   cnt.data(), disp.data(), MPI_DOUBLE, comm);
     double *yy = y.HostWrite();
     std::fill(yy, yy + height, 0.0);
     if (hodlr)
     {
-      std::vector<double> xp(nG_global), yp(nG_global), yg(nG_global);
       for (int k = 0; k < nG_global; k++)
       {
         xp[k] = xg[hodlr->perm[k]];
@@ -334,7 +350,7 @@ public:
     {
       if (gamma_global[i] >= 0)
       {
-        const int r = gamma_global[i] - row_off;  // owned row block is contiguous
+        const int r = gamma_global[i] - row_off;
         const double *row = &S_rows[static_cast<std::size_t>(r) * nG_global];
         double s = 0.0;
         for (int j = 0; j < nG_global; j++)
@@ -353,6 +369,8 @@ private:
   int nG_global;
   MPI_Comm comm;
   const Hodlr *hodlr;
+  std::vector<int> cnt, disp;
+  mutable std::vector<double> xo, xg, xp, yp, yg;
 };
 
 }  // namespace
