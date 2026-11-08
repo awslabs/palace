@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -331,7 +332,9 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
     CHECK(blocks > 0);  // face DOFs whose basis is not a signed permutation of the other's
   }
   const auto b = map.DualRows(b_s, 1);
-  const auto M = map.DualMatrix(M_s);
+  const std::size_t n = b_s.size();
+  const auto M = map.DualMatrix<double>([&](std::size_t a, double *x)
+                                        { std::copy_n(&M_s[a * n], n, x); });
   double db = 0.0, mb = 0.0, dM = 0.0, mM = 0.0;
   for (std::size_t i = 0; i < b.size(); i++)
   {

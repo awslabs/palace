@@ -2696,9 +2696,9 @@ struct SubstructuringSolver::Impl
         std::vector<double> full;
         if (root)
         {
-          std::vector<double> off(static_cast<std::size_t>(nG) * nG);
-          f.read(reinterpret_cast<char *>(off.data()), sizeof(double) * off.size());
-          full = map.DualMatrix(off);
+          full = map.DualMatrix<double>(
+              [&](std::size_t, double *x)
+              { f.read(reinterpret_cast<char *>(x), sizeof(double) * nG); });
         }
         ScatterRows(full, nG, SK_rows);
         have_sk = true;
@@ -3559,26 +3559,24 @@ void SubstructuringSolver::CondenseEnvironment()
                     << " split by \"TwoSided\" superconductor films, unlike in this run; "
                        "the interface (Gamma) must be identical between the offline and "
                        "online runs.");
-    // Rank 0 reads the saved S_E, re-orders it onto the current numbering and scatters the
-    // rows.
-    std::vector<double> S_full;
-    if (rank == 0)
-    {
-      S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
-      std::ifstream f(model_path, std::ios::binary);
-      f.seekg(saved.S_pos);
-      f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * S_full.size());
-    }
     // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
     // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: a
     // permutation. H(curl): signed matches, and blocks for the DOFs whose basis depends on
     // the face orientation (second-order face DOFs on tetrahedra).
     const SignatureMap map = MatchSignatureBasis(gamma_sig(), saved.sig, saved.width);
-    if (rank == 0)
     {
-      S_full = map.DualMatrix(S_full);
+      // Rank 0 reads the saved S_E onto the current numbering and scatters its rows.
+      std::vector<double> S_full;
+      if (rank == 0)
+      {
+        std::ifstream f(model_path, std::ios::binary);
+        f.seekg(saved.S_pos);
+        S_full = map.DualMatrix<double>(
+            [&](std::size_t, double *x)
+            { f.read(reinterpret_cast<char *>(x), sizeof(double) * nG); });
+      }
+      impl->ScatterRows(S_full, nG, impl->S_rows);
     }
-    impl->ScatterRows(S_full, nG, impl->S_rows);
     loaded = true;
     // Sections after S_E (fingerprint, S^K, modes).
     impl->LoadSections(model_path, saved.sections_pos, map);

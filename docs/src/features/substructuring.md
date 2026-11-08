@@ -91,10 +91,9 @@ attributes works: the interface follows the element faces between them and need 
 The cost of the condensation grows with the number of interface degrees of freedom, so a region
 boundary in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is
 cheaper than one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense,
-and one process holds it whole (``|\Gamma|^2`` values) while the model is saved (and, with MUMPS,
-while the environment is condensed), and twice while a model is read (14 GB at
-``|\Gamma| = 30{,}000``). That process also holds the whole mesh while it writes the mesh of the
-region. The
+and one process holds it whole (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``) while the
+model is saved or read (and, with MUMPS, while the environment is condensed). That process also
+holds the whole mesh while it writes the mesh of the region. The
 [transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
 the position of their centroids.
 
