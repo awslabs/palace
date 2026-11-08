@@ -49,14 +49,20 @@ public:
 private:
   void Check(const char *phase) const;
 
+  // The solution rows held by this rank (ISOL_loc), nb columns of SOL_loc, sent to the
+  // ranks owning them. Collective.
+  void Redistribute(int nb, const std::vector<mfem::Vector *> &Y, int c0);
+
   MPI_Comm comm;
   int rank = 0;
-  bool serial = false, active = true;  // active: this rank takes part in the factorization
-  HYPRE_BigInt n_glob;
-  int n_loc, n_schur;
-  std::vector<int> row_cnt, row_disp;
-  std::vector<MUMPS_INT> irn, jcn, listvar;
-  std::vector<double> val, schur, rhs;
+  // active: this rank takes part in the factorization; distributed: right-hand sides and
+  // solutions stay distributed (MUMPS >= 5.3), else they pass through rank 0.
+  bool serial = false, active = true, distributed = false;
+  HYPRE_BigInt n_glob, row0 = 0;
+  int n_loc, n_schur, nsol_loc = 0;
+  std::vector<int> row_cnt, row_disp, schur_rows;
+  std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;
+  std::vector<double> val, schur, rhs, sol_loc;
   double scale = 1.0;
   DMUMPS_STRUC_C id{};
 };

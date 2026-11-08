@@ -21,6 +21,9 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
 {
   MPI_Comm_rank(comm, &rank);
   active = !serial || rank == 0;
+#if MFEM_MUMPS_VERSION >= 530
+  distributed = !serial;
+#endif
   int nranks;
   MPI_Comm_size(comm, &nranks);
   row_cnt.assign(nranks, 0);
@@ -43,7 +46,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
 #else
   const HYPRE_Int *Jp = csr->j;
 #endif
-  const HYPRE_BigInt row0 = parcsr->first_row_index;
+  row0 = parcsr->first_row_index;
   for (int i = 0; i < n_loc; i++)
   {
     for (HYPRE_Int k = Ip[i]; k < Ip[i + 1]; k++)
@@ -107,6 +110,10 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   for (HYPRE_BigInt v : schur_vars)
   {
     listvar.push_back(static_cast<MUMPS_INT>(v + 1));
+    if (v >= row0 && v < row0 + n_loc)
+    {
+      schur_rows.push_back(static_cast<int>(v - row0));
+    }
   }
 
   auto icntl = [&](int i) -> MUMPS_INT & { return id.icntl[i - 1]; };
@@ -157,8 +164,8 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
         icntl(7) = 5;
         break;
     }
-    icntl(20) = 0;   // dense, centralized right-hand sides
-    icntl(21) = 0;   // centralized solution
+    icntl(20) = distributed ? 10 : 0;  // distributed or centralized right-hand sides
+    icntl(21) = distributed ? 1 : 0;   // distributed or centralized solution
     icntl(26) = 0;   // solve the internal problem (Schur variables held at 0)
     icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
     if (blr_tol > 0.0)
@@ -217,6 +224,19 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     break;
   }
   Check("factorization");
+#if MFEM_MUMPS_VERSION >= 530
+  if (distributed)
+  {
+    // INFO(23): the number of solution rows this rank holds.
+    nsol_loc = id.info[22];
+    isol_loc.resize(std::max(1, nsol_loc));
+    irhs_loc.resize(std::max(1, n_loc));
+    for (int i = 0; i < n_loc; i++)
+    {
+      irhs_loc[i] = static_cast<MUMPS_INT>(row0 + i + 1);
+    }
+  }
+#endif
   // The factors do not need the input entries (no iterative refinement).
   std::vector<MUMPS_INT>().swap(irn);
   std::vector<MUMPS_INT>().swap(jcn);
@@ -255,6 +275,31 @@ void MumpsSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,
   for (int c0 = 0; c0 < n; c0 += B)
   {
     const int nb = std::min(B, n - c0);
+#if MFEM_MUMPS_VERSION >= 530
+    if (distributed)
+    {
+      rhs.resize(static_cast<std::size_t>(std::max(1, n_loc)) * nb);
+      for (int k = 0; k < nb; k++)
+      {
+        const double *x = X[c0 + k]->HostRead();
+        std::copy_n(x, n_loc, rhs.data() + static_cast<std::size_t>(k) * n_loc);
+      }
+      sol_loc.resize(isol_loc.size() * nb);
+      id.nrhs = nb;
+      id.nloc_rhs = n_loc;
+      id.lrhs_loc = std::max(1, n_loc);
+      id.irhs_loc = irhs_loc.data();
+      id.rhs_loc = rhs.data();
+      id.lsol_loc = static_cast<MUMPS_INT>(isol_loc.size());
+      id.isol_loc = isol_loc.data();
+      id.sol_loc = sol_loc.data();
+      id.job = 3;
+      dmumps_c(&id);
+      Check("solve");
+      Redistribute(nb, Y, c0);
+      continue;
+    }
+#endif
     if (rank == 0)
     {
       rhs.assign(static_cast<std::size_t>(n_glob) * nb, 0.0);
@@ -293,6 +338,61 @@ void MumpsSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,
       MPI_Scatterv(rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
                    row_cnt.data(), row_disp.data(), MPI_DOUBLE, y.HostWrite(), n_loc,
                    MPI_DOUBLE, 0, comm);
+    }
+  }
+}
+
+void MumpsSchurSolver::Redistribute(int nb, const std::vector<mfem::Vector *> &Y, int c0)
+{
+  const int nranks = static_cast<int>(row_cnt.size());
+  std::vector<int> dest(nsol_loc), scnt(nranks, 0), rcnt(nranks), sdsp(nranks, 0),
+      rdsp(nranks, 0);
+  for (int i = 0; i < nsol_loc; i++)
+  {
+    const int j = isol_loc[i] - 1;
+    dest[i] = static_cast<int>(std::upper_bound(row_disp.begin(), row_disp.end(), j) -
+                               row_disp.begin()) -
+              1;
+    scnt[dest[i]]++;
+  }
+  MPI_Alltoall(scnt.data(), 1, MPI_INT, rcnt.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nranks; r++)
+  {
+    sdsp[r] = sdsp[r - 1] + scnt[r - 1];
+    rdsp[r] = rdsp[r - 1] + rcnt[r - 1];
+  }
+  const int ns = sdsp[nranks - 1] + scnt[nranks - 1],
+            nr = rdsp[nranks - 1] + rcnt[nranks - 1];
+  // The owner's local rows, then the values of each column in turn.
+  std::vector<int> sidx(ns), ridx(nr), slot(nsol_loc), pos(sdsp);
+  for (int i = 0; i < nsol_loc; i++)
+  {
+    slot[i] = pos[dest[i]]++;
+    sidx[slot[i]] = isol_loc[i] - 1 - row_disp[dest[i]];
+  }
+  MPI_Alltoallv(sidx.data(), scnt.data(), sdsp.data(), MPI_INT, ridx.data(), rcnt.data(),
+                rdsp.data(), MPI_INT, comm);
+  std::vector<double> sval(ns), rval(nr);
+  const std::size_t lsol = isol_loc.size();
+  for (int k = 0; k < nb; k++)
+  {
+    for (int i = 0; i < nsol_loc; i++)
+    {
+      sval[slot[i]] = sol_loc[k * lsol + i];
+    }
+    MPI_Alltoallv(sval.data(), scnt.data(), sdsp.data(), MPI_DOUBLE, rval.data(),
+                  rcnt.data(), rdsp.data(), MPI_DOUBLE, comm);
+    mfem::Vector &y = *Y[c0 + k];
+    y.SetSize(n_loc);
+    double *yy = y.HostWrite();
+    std::fill(yy, yy + n_loc, 0.0);
+    for (int q = 0; q < nr; q++)
+    {
+      yy[ridx[q]] = rval[q] / scale;  // (A / s)^-1 = s A^-1
+    }
+    for (int r : schur_rows)
+    {
+      yy[r] = 0.0;
     }
   }
 }
