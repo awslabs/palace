@@ -357,6 +357,38 @@ file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle)
 excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
 can only be part of one excitation.
 
+Each excited lumped port can be given a complex weight on its incident wave with the
+optional settings `"ExcitationAmplitude"` ``A`` (greater than 0, default 1) and
+`"ExcitationPhase"` ``\varphi`` (in degrees, default 0) of
+[`config["Boundaries"]["LumpedPort"][]`](../config/reference.md#config-boundaries-lumpedport).
+The incident field, voltage, and current of the port are those of the unit-power excitation
+multiplied by the weight ``a = A e^{i\varphi}``, so that the incident power is scaled by
+``A^2``. The weight is dimensionless and independent of frequency, and the phase follows the
+``e^{i\omega t}`` time convention of the frequency domain solver. This allows ports that
+share an excitation index to be driven together with different amplitudes and phases, for
+example to drive a pair of ports differentially. By linearity, the solution is the weighted
+sum of the solutions with each port excited alone. A phase of 180 degrees drives the port
+the same way as reversing its `"Direction"`, with identical fields, voltages, and currents.
+Reversing `"Direction"` also reverses the voltage reference of the port, so unlike the phase
+it changes the sign of the S-parameters between that port and the other ports. Both settings
+require a nonzero `"Excitation"` on the same port, and are an error otherwise. They are only
+available for lumped ports.
+
+  - *Scattering parameters*: When every excitation drives a single port, the S-parameters
+    are normalized by the weight of the driven port, so they do not depend on
+    `"ExcitationAmplitude"` or `"ExcitationPhase"`. As before, no S-parameters are written
+    when an excitation drives more than one port.
+  - *Incident voltage and current*: The incident voltage and current of an excited port
+    written to `port-V.csv` and `port-I.csv` include the weight. Without a phase, the
+    columns are the same as without a weight and hold the real weighted values. When any
+    excited lumped port has a nonzero phase, the incident columns of the simulation are
+    written as real and imaginary parts instead (`Re{V_inc[...]}`, `Im{V_inc[...]}`,
+    `Re{I_inc[...]}`, `Im{I_inc[...]}`), so the phase must not be changed between a
+    simulation and its restart.
+  - *Transient simulations*: The amplitude scales the excitation. The time domain
+    excitation is real, so a nonzero phase (other than a multiple of 360 degrees) is an
+    error, including 180 degrees. Reverse `"Direction"` for a sign change.
+
 !!! warning "Indexing"
 
     Any `"Index"` of [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport),
