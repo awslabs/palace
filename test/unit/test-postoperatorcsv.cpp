@@ -37,8 +37,27 @@ IoData load_iodata(std::string_view relative_path)
   return IoData{io_file.c_str(), false};
 }
 
-std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_)
+// Set the excitation phase [deg] of every excited lumped port.
+void set_excitation_phase(IoData &iodata_, double excitation_phase)
 {
+  for (auto &[idx, port] : iodata_.boundaries.lumpedport)
+  {
+    if (port.excitation != 0)
+    {
+      port.excitation_phase = excitation_phase;
+    }
+  }
+}
+
+// A nonzero excitation_phase is applied to the excited lumped ports before the operators
+// are built from iodata_.
+std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_,
+                                             double excitation_phase = 0.0)
+{
+  if (excitation_phase != 0.0)
+  {
+    set_excitation_phase(iodata_, excitation_phase);
+  }
   iodata_.model.mesh = TestMeshPath("fichera-tet.mesh");
 
   // Load Mesh — copy from main.cpp
@@ -69,10 +88,50 @@ public:
   std::vector<std::unique_ptr<Mesh>> mesh;
   SpaceOperator space_op;
 
-  PostOperatorCSVFixture(std::string_view relative_path)
+  PostOperatorCSVFixture(std::string_view relative_path, double excitation_phase = 0.0)
     : world_comm(Mpi::World()), iodata(load_iodata(relative_path)),
-      mesh(load_mesh(world_comm, iodata)), space_op(iodata, mesh)
+      mesh(load_mesh(world_comm, iodata, excitation_phase)), space_op(iodata, mesh)
   {
+  }
+
+  // The incident voltage and current columns are a single real value each, as without an
+  // excitation weight, unless an excited port has a nonzero phase, in which case they are
+  // real and imaginary parts.
+  void incident_columns(bool expect_complex)
+  {
+    iodata.problem.output =
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_test_tmp";
+    REQUIRE(iodata.solver.driven.restart == 1);  // Restart is 1 Indexed.
+    PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+    if (Mpi::Root(Mpi::World()))
+    {
+      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+      REQUIRE(post_op_csv.port_V.has_value());
+      REQUIRE(post_op_csv.port_I.has_value());
+      CHECK(post_op_csv.complex_incident_port_VI == expect_complex);
+      if (expect_complex)
+      {
+        // idx, Re/Im incident, and Re/Im of the 3 ports.
+        CHECK(post_op_csv.port_V->table.n_cols() == 9);
+        CHECK(post_op_csv.port_I->table.n_cols() == 9);
+        CHECK(post_op_csv.port_V->table[1].name == "reinc1_1");
+        CHECK(post_op_csv.port_V->table[2].name == "iminc1_1");
+        CHECK(post_op_csv.port_V->table[1].header_text == "Re{V_inc[1]} (V)");
+        CHECK(post_op_csv.port_V->table[2].header_text == "Im{V_inc[1]} (V)");
+        CHECK(post_op_csv.port_I->table[1].header_text == "Re{I_inc[1]} (A)");
+        CHECK(post_op_csv.port_I->table[2].header_text == "Im{I_inc[1]} (A)");
+        CHECK(!post_op_csv.port_V->table.has("inc1_1"));
+      }
+      else
+      {
+        CHECK(post_op_csv.port_V->table.n_cols() == 8);
+        CHECK(post_op_csv.port_I->table.n_cols() == 8);
+        CHECK(post_op_csv.port_V->table[1].name == "inc1_1");
+        CHECK(post_op_csv.port_V->table[1].header_text == "V_inc[1] (V)");
+        CHECK(post_op_csv.port_I->table[1].header_text == "I_inc[1] (A)");
+        CHECK(!post_op_csv.port_V->table.has("reinc1_1"));
+      }
+    }
   }
 
   void restart1_fresh_folder()
@@ -628,6 +687,21 @@ TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv][Serial]")
     reload_fixture.restart1_bad_col_alignment();
   }
 }
+
+TEST_CASE("PostOperatorCSV_IncidentColumns", "[postoperatorcsv][Serial]")
+{
+  SECTION("No excitation phase: single real incident columns")
+  {
+    PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+    fixture.incident_columns(false);
+  }
+  SECTION("Nonzero excitation phase: real and imaginary incident columns")
+  {
+    PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json", 30.0};
+    fixture.incident_columns(true);
+  }
+}
+
 TEST_CASE("PostOperatorCSV_AdaptiveOutputBuffering", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
