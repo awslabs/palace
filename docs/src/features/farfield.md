@@ -40,16 +40,16 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
     surface
 
      1. is closed and encloses all sources and scatterers
-     2. is an external boundary, or an interior surface in a homogeneous medium (no
-        material interface or surface source on it)
+     2. is an external boundary, or an interior surface in a homogeneous medium or on
+        the inner side of a perfectly matched layer (no surface source on it)
      3. does not cross anisotropic materials
 
-    An interior surface (for example a box around the radiating structure, inside the
-    physical region terminated by a PML) has no normal direction of its own: its normal
-    is oriented from `"Center"`, a point inside the surface (by default the centroid of
-    the bounding box of the surface, which must then lie inside it). The fields of the
-    two sides are averaged, so *Palace* stops with an error if the two sides do not have
-    the same isotropic material.
+    On an interior surface (for example a box around the radiating structure, inside the
+    physical region terminated by a PML), the fields of each face are taken from its
+    inner side, as on an external boundary: the isotropic side if the other side is
+    anisotropic (such as a PML), otherwise the side facing `"Center"`, a point inside the
+    surface (by default the center of the bounding box of the mesh, which must then lie
+    inside the surface). *Palace* stops with an error if both sides are anisotropic.
 
 ## Setup
 

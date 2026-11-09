@@ -57,10 +57,6 @@ using FaceConfigKey = std::vector<long long>;
 constexpr CeedSize FarFieldMaxBatchStorage = 64LL * 1024LL * 1024LL;
 constexpr int FarFieldMaxDirectionsPerBatch = 256;
 
-// Offset of the observation directions in the FARFIELD QFunction context (see
-// f_integ_surf_farfield_32).
-constexpr int FarFieldDirsOffset = 9;
-
 void AppendPointRuleSignature(FaceConfigKey &key,
                               const std::vector<mfem::IntegrationPoint> &pts)
 {
@@ -238,6 +234,7 @@ struct ElemPlan
   std::vector<mfem::IntegrationPoint> pts_a, pts_b;
   bool flip = false;  // Boundary element and face have the same orientation (o % 2 == 0),
                       // legacy coefficients invert the boundary element normal
+  bool trace_b = false;  // Far field on a two-sided boundary: trace elem_b, not elem_a
   // A side whose volume element is a face neighbor (ghost) on another process: its field
   // is not in the local vector, so it is pulled via FaceNbrFieldExchange and fed to the
   // operator at the mapped points (only Elem2 can be a ghost, so at most one side).
@@ -477,13 +474,12 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op,
                                      const std::vector<std::array<double, 3>> &r_naughts,
-                                     bool orient, const mfem::Vector &x0)
-  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), farfield_orient(orient),
-    farfield_x0(x0), nd_fespace(&nd_fespace), rt_fespace(&rt_fespace), mat_op(&mat_op),
-    comm(mesh.GetComm())
+                                     const mfem::Vector &x0)
+  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), farfield_x0(x0),
+    nd_fespace(&nd_fespace), rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
-  MFEM_VERIFY(!orient || x0.Size() == 3,
-              "Far-field normal orientation requires a 3D center point!");
+  MFEM_VERIFY(x0.Size() == 0 || x0.Size() == 3,
+              "Far-field side selection requires a 3D center point!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -682,22 +678,17 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
                     b_map_type == mfem::FiniteElement::H_DIV,
                 "Far-field postprocessing requires an H(curl) or H(div) magnetic field "
                 "space!");
-    base_ctx.resize(FarFieldDirsOffset + 3 * N);
-    base_ctx[0].second = 1.0;  // Normal sign and side weight, set per group
+    base_ctx.resize(5 + 3 * N);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
     base_ctx[1].second = farfield_omega.real();
     base_ctx[2].second = farfield_omega.imag();
     base_ctx[3].first = N;
     base_ctx[4].first = (b_map_type == mfem::FiniteElement::H_DIV) ? 1 : 0;
-    base_ctx[5].first = farfield_orient ? 1 : 0;
-    for (int c = 0; c < 3; c++)
-    {
-      base_ctx[6 + c].second = farfield_orient ? farfield_x0(c) : 0.0;
-    }
     for (int d = 0; d < N; d++)
     {
       for (int c = 0; c < 3; c++)
       {
-        base_ctx[FarFieldDirsOffset + 3 * d + c].second = farfield_dirs[d][c];
+        base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
       }
     }
     MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
@@ -1107,13 +1098,19 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (kind == KernelKind::FARFIELD && two_sided)
     {
-      // The Stratton-Chu integrand is linear in the traces: average the two (local) sides
-      // with two one-sided operators (normal scale 1/2 each, the sign is set in the kernel
-      // from the orientation center).
-      AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
-               false, mfem::Geometry::INVALID, {}, {}, 1.0, 0.5);
-      AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
-               false, mfem::Geometry::INVALID, {}, {}, 1.0, 0.5);
+      // Far fields trace the one side chosen in the plan, with the normal into it: the
+      // boundary element normal points into elem_a, so side B flips it (as for the
+      // two-sided surface flux).
+      if (plan.trace_b)
+      {
+        AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
+                 false, mfem::Geometry::INVALID, {}, {}, 1.0, -1.0);
+      }
+      else
+      {
+        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
+                 false, mfem::Geometry::INVALID, {}, {}, 1.0, 1.0);
+      }
     }
     else if (buffer_kind && two_sided)
     {
@@ -1235,20 +1232,40 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         plan.elem_a = FET.Elem1No;
         if (has_elem2)
         {
-          // Interior surface: the normal is oriented in the kernel (the boundary element
-          // normal has no outward meaning). Without an orientation center the result
-          // would depend on the arbitrary boundary element orientation: record local
-          // invalidity but keep participating in subsequent collectives.
-          if (!farfield_orient)
+          // Interior surface: trace the inside, as the only element of an external
+          // boundary. Next to an anisotropic material (such as a PML) it is the isotropic
+          // side (two anisotropic sides are rejected by SurfacePostOperator), otherwise
+          // the side facing the center x0: its outward normal at the face center points
+          // away from x0. The choice depends on attributes and geometry only, so it does
+          // not depend on the partitioning (each boundary element is held by a single
+          // process; Elem2 can be a face neighbor element). Without a center, record
+          // local invalidity but keep participating in subsequent collectives.
+          plan.elem_b = FET.Elem2No;
+          const bool iso_a = mat_op->IsIsotropic(FET.Elem1->Attribute),
+                     iso_b = mat_op->IsIsotropic(FET.Elem2->Attribute);
+          if (iso_a != iso_b)
+          {
+            plan.trace_b = iso_b;
+          }
+          else if (farfield_x0.Size() == sdim)
+          {
+            // The (flipped) boundary element normal points into Elem1, as in the kernel.
+            mfem::IsoparametricTransformation T;
+            pmesh.GetBdrElementTransformation(i, &T);
+            const auto &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
+            T.SetIntPoint(&ip);
+            double n_data[3], dx_data[3];
+            mfem::Vector n(n_data, sdim), dx(dx_data, sdim);
+            BdrGridFunctionCoefficient::GetNormal(T, n, flip);
+            T.Transform(ip, dx);
+            dx -= farfield_x0;
+            plan.trace_b = (n * dx > 0.0);
+          }
+          else
           {
             valid = false;
             continue;
           }
-          // Average the traces of both sides (the discrete tangential magnetic field is
-          // discontinuous across the surface). On a parallel interface, the other side is
-          // a face neighbor element, whose fields are imported below: the result does not
-          // depend on the partitioning.
-          plan.elem_b = FET.Elem2No;
         }
       }
       else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
@@ -2036,8 +2053,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (kind == KernelKind::FARFIELD)
     {
-      // Far-field groups are one-sided (the two sides of an interior surface are separate
-      // groups): side 1 is either local or a face neighbor element.
+      // Far-field groups are one-sided (the traced side of an interior surface): side 1
+      // is either local or a face neighbor element.
       const mfem::IntegrationRule &ir = *group.mapped_ir_a;
       for (int source = 0; source < 4; source++)
       {
@@ -2548,8 +2565,7 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   // Frequency and directions enter only the retained QFunction contexts. Reuse the
   // assembled bases, restrictions, and geometry inputs while processing bounded
   // direction batches. FARFIELD context layout is [0] normal sign, [1..2] omega,
-  // [3] batch size, [4] B Piola map, [5] orientation flag, [6..8] orientation center,
-  // [9..] batch directions, then material data.
+  // [3] batch size, [4] B Piola map, [5..] batch directions, then material data.
   const int N = static_cast<int>(farfield_dirs.size());
   MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
               "Invalid far-field batch output layout!");
@@ -2579,7 +2595,7 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
       {
         for (int c = 0; c < 3; c++)
         {
-          data[FarFieldDirsOffset + 3 * d + c].second =
+          data[5 + 3 * d + c].second =
               (d < batch_count) ? farfield_dirs[first + d][c] : 0.0;
         }
       }
