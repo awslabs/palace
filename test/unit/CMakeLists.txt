@@ -81,6 +81,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsesegmentindex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv-append.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-translationalmortarstrip.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp

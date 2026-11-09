@@ -316,4 +316,38 @@ void TableWithCSVFile::WriteFullTableTrunc()
   file_buffer.print("{}", table.format_table());
 }
 
+void TableWithCSVFile::AppendRowsAndClear()
+{
+  fmt::memory_buffer buf{};
+  if (!append_started_)
+  {
+    table.append_header(buf);
+  }
+  const std::size_t rows = table.n_rows();
+  for (std::size_t j = 0; j < rows; j++)
+  {
+    table.append_row(buf, j);
+  }
+  if (!append_started_)
+  {
+    // The first piece: like WriteFullTableTrunc (remove the previous file / symlink).
+    fs::remove(csv_file_fullpath_);
+    auto file_buffer = fmt::output_file(
+        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+    file_buffer.print("{}", std::string_view(buf.data(), buf.size()));
+    append_started_ = true;
+  }
+  else
+  {
+    auto file_buffer =
+        fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
+    file_buffer.print("{}", std::string_view(buf.data(), buf.size()));
+  }
+  appended_rows_ += rows;
+  for (auto &col : table)
+  {
+    col.data.clear();
+  }
+}
+
 }  // namespace palace

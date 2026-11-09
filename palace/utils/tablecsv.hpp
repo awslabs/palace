@@ -163,6 +163,10 @@ public:
 class TableWithCSVFile
 {
   std::string csv_file_fullpath_;
+  // AppendRowsAndClear's state: whether its first call (the truncating one, with the
+  // header) happened, and the rows written so far.
+  bool append_started_ = false;
+  std::size_t appended_rows_ = 0;
 
 public:
   Table table = {};
@@ -173,6 +177,16 @@ public:
   std::string_view get_csv_filepath() const { return {csv_file_fullpath_}; }
 
   void WriteFullTableTrunc();
+
+  // Write the table's rows to the file and clear them (the columns kept): the FIRST call
+  // truncates the file and writes the header, every later call appends. After n calls the
+  // file holds header + the rows of every call in order = WriteFullTableTrunc()'s bytes
+  // for the whole table (a column's width is data-independent: Column::col_width), so a
+  // table too large to hold is written in pieces. Not to be mixed with WriteFullTableTrunc
+  // on the same object.
+  void AppendRowsAndClear();
+
+  [[nodiscard]] std::size_t appended_rows() const { return appended_rows_; }
 };
 
 }  // namespace palace
