@@ -89,6 +89,11 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
   // solver.SetRowPermutation(mfem::superlu::NOROWPERM);
   solver.SetIterativeRefine(mfem::superlu::NOREFINE);
   solver.SetSymmetricPattern(true);  // Always symmetric sparsity pattern
+
+  // Relaxed supernodes of up to 200 columns instead of the SuperLU_DIST default of 30 give
+  // fewer, larger blocks, and many fewer messages in the distributed triangular solves,
+  // which are latency bound when SuperLU_DIST is the coarse solver.
+  solver.SetRelaxedSupernodeSize(200);
 }
 
 void SuperLUSolver::SetOperator(const Operator &op)

@@ -67,7 +67,16 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations.
+simulations. It neglects the term depending on the divergence of the tangential field (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
+improves on the first-order condition for TE fields, with the electric field tangential to
+the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
+fields whose tangential wavenumber on the boundary exceeds ``\sqrt{2}`` times the
+wavenumber in the material, like evanescent fields of guided modes below the light line or
+of Floquet periodic structures. *Palace* warns when the part of the
+[Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
+tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
+simulation.
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet

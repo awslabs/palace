@@ -431,8 +431,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
                 when="@4.10:",
             ),
-            # https://github.com/mfem/mfem/pull/5732 (narrow to @4.10.0 once
-            # merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
+            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
+                sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
+            # the layers of a 3D process grid (narrow to @4.10.0 once merged upstream and
+            # Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff",
