@@ -47,6 +47,11 @@ public:
   // Lumped port properties.
   double R, L, C;
   int excitation;
+
+  // Complex weight a = A exp(i φ) on the unit-power incident wave of this port, from the
+  // configured "ExcitationAmplitude" and "ExcitationPhase". It is dimensionless and
+  // frequency independent, and only meaningful for an excited port.
+  std::complex<double> excitation_weight = 1.0;
   bool active;
   bool include_in_synthesis;
 
@@ -119,8 +124,34 @@ public:
   std::complex<double> GetCharacteristicImpedance(double omega = 0.0,
                                                   Branch branch = Branch::TOTAL) const;
 
+  // Unit-normalized incident quantities of the excited port, which do not include the
+  // excitation weight: the incident power is 1 and the voltage and current are those of
+  // this unit-power wave.
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
+
+  // Complex weight a = A exp(i φ) applied to the incident wave of an excited port when the
+  // excitation is assembled and when incident quantities are reported; 0 for a port
+  // without excitation. The S-parameter normalization (GetSParameter) does not include it.
+  std::complex<double> GetExcitationWeight() const
+  {
+    return HasExcitation() ? excitation_weight : std::complex<double>(0.0, 0.0);
+  }
+
+  // Whether the excitation weight has a nonzero imaginary part, such that the excitation
+  // vector of the port is complex.
+  bool HasComplexExcitationWeight() const
+  {
+    return HasExcitation() && excitation_weight.imag() != 0.0;
+  }
+
+  // Weighted incident voltage a V_inc,0 and current a I_inc,0 = a P_inc,0 / V_inc,0 of an
+  // excited port, in internal units.
+  std::complex<double> GetIncidentVoltage() const
+  {
+    return GetExcitationWeight() * GetExcitationVoltage();
+  }
+  std::complex<double> GetIncidentCurrent() const;
 
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
@@ -194,8 +225,11 @@ public:
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
-  // the complex one).
-  void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
+  // the complex one). The incident field of each port includes its excitation weight, whose
+  // real part is added to fbr, usable in the time domain, and whose imaginary part is added
+  // to fbi, for the frequency domain only. Both are frequency independent.
+  void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fbr,
+                                    SumVectorCoefficient &fbi);
 };
 
 }  // namespace palace

@@ -1657,7 +1657,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz = AddExcitationVector1Internal(excitation_idx, RHS);
+  bool nnz = AddExcitationVector1Internal(excitation_idx, RHS, nullptr);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz;
 }
@@ -1669,7 +1669,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS.Real());
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS.Real(), &RHS.Imag());
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
@@ -1786,12 +1786,13 @@ void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_r
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
-  // (coefficient iω, see GetExcitationVector above, is accounted for later).
+  // (coefficient iω, see GetExcitationVector above, is accounted for later). RHS1 is
+  // complex when a lumped port has a nonzero excitation phase.
   RHS1.SetSize(GetNDSpace().GetTrueVSize());
   RHS1.UseDevice(true);
   RHS1 = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS1.Real());
-  linalg::SetSubVector(RHS1.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS1.Real(), &RHS1.Imag());
+  linalg::SetSubVector(RHS1, nd_dbc_tdof_lists.back(), 0.0);
   return nnz1;
 }
 
@@ -1806,48 +1807,78 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   return nnz2;
 }
 
-bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
+bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r,
+                                                 Vector *RHS1i)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
   // The g'(t) or iω factors are not accounted for here, they are accounted for in the time
-  // integration or frequency sweep later.
-  MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
+  // integration or frequency sweep later. The lumped port incident fields include the
+  // complex excitation weight of each port: the real part is added to RHS1r, and the
+  // imaginary part (nonzero only for a nonzero excitation phase) is added to RHS1i. The
+  // time domain excitation is real, so RHS1i is null in that case. Surface currents and
+  // current dipoles are real.
+  MFEM_VERIFY(RHS1r.Size() == GetNDSpace().GetTrueVSize(),
+              "Invalid T-vector size for AddExcitationVector1Internal!");
+  MFEM_VERIFY(RHS1i == nullptr || RHS1i->Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
 
   // Boundary sources
-  SumVectorCoefficient fb(GetMesh().SpaceDimension());
-  lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
+  SumVectorCoefficient fb(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
+  lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb, fbi);
   surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
 
   // Domain sources (current dipoles) - use integrator-based approach
   bool has_current_dipoles = !current_dipole_op.Empty();
 
-  int empty[2] = {(fb.empty()), (!has_current_dipoles)};
-  Mpi::GlobalMin(2, empty, GetComm());
-  if (empty[0] && empty[1])
+  // The emptiness flags must agree on all ranks, since the assembly and the multiplication
+  // by the prolongation matrix below are collective.
+  int empty[3] = {(fb.empty()), (!has_current_dipoles), (fbi.empty())};
+  Mpi::GlobalMin(3, empty, GetComm());
+  if (empty[0] && empty[1] && empty[2])
   {
     return false;
   }
 
-  mfem::ParLinearForm rhs1(&GetNDSpace().Get());
+  // A complex excitation is not defined for a real (time domain) vector. This is checked
+  // for the configuration, so it should not be reached.
+  MFEM_VERIFY(empty[2] || RHS1i != nullptr,
+              "A nonzero ExcitationPhase is not supported for real (time domain) "
+              "excitations!");
 
-  // Add boundary integrators
-  if (!empty[0])
+  if (!empty[0] || !empty[1])
   {
-    rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+    mfem::ParLinearForm rhs1(&GetNDSpace().Get());
+
+    // Add boundary integrators
+    if (!empty[0])
+    {
+      rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+    }
+
+    // Add domain integrators for current dipoles
+    if (!empty[1])
+    {
+      current_dipole_op.AddExcitationDomainIntegrators(rhs1);
+    }
+
+    rhs1.UseFastAssembly(false);
+    rhs1.UseDevice(false);
+    rhs1.Assemble();
+    rhs1.UseDevice(true);
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1r);
   }
 
-  // Add domain integrators for current dipoles
-  if (!empty[1])
+  // Imaginary part of the lumped port boundary sources.
+  if (!empty[2])
   {
-    current_dipole_op.AddExcitationDomainIntegrators(rhs1);
+    mfem::ParLinearForm rhs1i(&GetNDSpace().Get());
+    rhs1i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
+    rhs1i.UseFastAssembly(false);
+    rhs1i.UseDevice(false);
+    rhs1i.Assemble();
+    rhs1i.UseDevice(true);
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1i, *RHS1i);
   }
-
-  rhs1.UseFastAssembly(false);
-  rhs1.UseDevice(false);
-  rhs1.Assemble();
-  rhs1.UseDevice(true);
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
   return true;
 }
 
