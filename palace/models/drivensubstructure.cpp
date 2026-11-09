@@ -103,10 +103,9 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   // A mesh of the region (online): Γ also holds the region's boundary DOFs at the points
   // of the saved interface DOFs, where the environment was cut off.
   std::vector<char> cut(nt, 0);
-  if (saved && saved->version >= 5)
+  if (saved)
   {
-    // The mesh holds the environment of the model, or its part in the mesh of the region (a
-    // model of an older version is of the full mesh).
+    // The mesh holds the environment of the model, or its part in the mesh of the region.
     const auto moments = EnvironmentMoments();
     region_only = !MomentsMatch(moments, saved->env_moments, kEnvironmentTol);
     MFEM_VERIFY(
@@ -1249,7 +1248,7 @@ bool DrivenSubstructure::OnInterface(const ComplexVector &b) const
 namespace
 {
 
-constexpr int kDrivenModelMagic = 0x31565244;  // "DRV1" (and later versions)
+constexpr int kDrivenModelMagic = 0x31565244;  // "DRV1"
 
 template <typename T>
 void ReadVec(std::ifstream &f, std::vector<T> &v, std::size_t n)
@@ -1516,21 +1515,13 @@ std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record 
 
 std::size_t DrivenSubstructureModel::HeaderBytes() const
 {
-  // Version 1: 8 ints and the frequencies; version 2: 10 ints, and room for capacity
-  // frequencies and weights; version 3: and the reference length after the ints; version 4:
-  // 11 ints, and the region's boundary attributes after the ports; version 5: and the
-  // element moments after the reference length; version 6: and the ports' parameters after
-  // the region's boundary attributes.
-  const std::size_t common =
-      sizeof(double) * signatures.size() + sizeof(double) * env_fp.size() +
-      sizeof(int) * excitations.size() + sizeof(double) * exc_fp.size() +
-      sizeof(int) * ports.size() + sizeof(int) * region_bdr_attributes.size() +
-      sizeof(double) * port_data.size();
-  return (version == 1) ? sizeof(int) * 8 + common + sizeof(double) * omega.size()
-                        : sizeof(int) * ((version > 3) ? 11 : 10) +
-                              ((version > 2) ? sizeof(double) : 0) +
-                              ((version > 4) ? sizeof(double) * 12 : 0) + common +
-                              (sizeof(double) + sizeof(std::complex<double>)) * capacity;
+  // 11 ints, the reference length and the element moments, the arrays, and room for
+  // capacity frequencies and weights.
+  return sizeof(int) * 11 + sizeof(double) * 13 + sizeof(double) * signatures.size() +
+         sizeof(double) * env_fp.size() + sizeof(int) * excitations.size() +
+         sizeof(double) * exc_fp.size() + sizeof(int) * ports.size() +
+         sizeof(int) * region_bdr_attributes.size() + sizeof(double) * port_data.size() +
+         (sizeof(double) + sizeof(std::complex<double>)) * capacity;
 }
 
 std::size_t DrivenSubstructureModel::RecordBytes() const
@@ -1541,7 +1532,7 @@ std::size_t DrivenSubstructureModel::RecordBytes() const
 
 void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
 {
-  MFEM_VERIFY(version == 6 && capacity >= static_cast<int>(omega.size()) &&
+  MFEM_VERIFY(capacity >= static_cast<int>(omega.size()) &&
                   port_data.size() == kPortData * ports.size() &&
                   (weights.empty() || weights.size() == omega.size()),
               "Invalid substructuring model header!");
@@ -1549,7 +1540,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                               : (std::ios::binary | std::ios::in | std::ios::out));
   MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
   const int head[11] = {kDrivenModelMagic,
-                        6,
+                        kVersion,
                         nG,
                         sig_w,
                         static_cast<int>(env_fp.size()),
@@ -1611,7 +1602,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   const bool root = Mpi::Root(comm);
   std::ifstream f;
   std::streamoff size = 0;
-  int known = 0;  // a model of a known version
+  int known = 0;  // a model
   if (root)
   {
     f.open(path, std::ios::binary | std::ios::ate);
@@ -1620,28 +1611,25 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
       size = f.tellg();
       f.seekg(0);
       f.read(reinterpret_cast<char *>(head), sizeof(int) * 2);
-      known = f.good() && head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 6;
+      known = f.good() && head[0] == kDrivenModelMagic;
     }
-    if (known)
+    if (known && head[1] == kVersion)
     {
-      f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * ((head[1] == 1)  ? 6
-                                                                : (head[1] < 4) ? 8
-                                                                                : 9));
-      if (head[1] > 2)
-      {
-        f.read(reinterpret_cast<char *>(&length_scale), sizeof(double));
-      }
-      if (head[1] > 4)
-      {
-        f.read(reinterpret_cast<char *>(env_moments.data()), sizeof(double) * 6);
-        f.read(reinterpret_cast<char *>(region_moments.data()), sizeof(double) * 6);
-      }
+      f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * 9);
+      f.read(reinterpret_cast<char *>(&length_scale), sizeof(double));
+      f.read(reinterpret_cast<char *>(env_moments.data()), sizeof(double) * 6);
+      f.read(reinterpret_cast<char *>(region_moments.data()), sizeof(double) * 6);
     }
   }
   Mpi::Broadcast(1, &known, 0, comm);
   MFEM_VERIFY(known, "Cannot read the driven substructuring model \""
                          << path
                          << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
+  Mpi::Broadcast(2, head, 0, comm);
+  MFEM_VERIFY(head[1] == kVersion, "The saved substructuring model \""
+                                       << path
+                                       << "\" was written by another version of Palace: "
+                                          "rerun in \"Offline\" mode!");
   auto incomplete = [&](bool ok)
   {
     MFEM_VERIFY(ok, "The saved substructuring model \""
@@ -1651,7 +1639,6 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   Mpi::Broadcast(1, &length_scale, 0, comm);
   Mpi::Broadcast(6, env_moments.data(), 0, comm);
   Mpi::Broadcast(6, region_moments.data(), 0, comm);
-  version = head[1];
   nG = head[2];
   sig_w = head[3];
   // An array of n entries, read on rank 0 if the rest of the file holds it (n counted in
@@ -1682,17 +1669,13 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   read(exc_fp, static_cast<double>(kSourceFp) * head[5]);
   read(ports, head[6]);
   read(region_bdr_attributes, head[10]);
-  read(port_data, (version >= 6) ? static_cast<double>(kPortData) * head[6] : 0.0);
+  read(port_data, static_cast<double>(kPortData) * head[6]);
   capacity = head[7];
   read(omega, capacity);
-  weights.clear();
-  if (version >= 2)
-  {
-    read(weights, capacity);
-    incomplete(head[8] >= 0 && head[8] <= capacity);
-    omega.resize(head[8]);
-    weights.resize(head[9] ? head[8] : 0);
-  }
+  read(weights, capacity);
+  incomplete(head[8] >= 0 && head[8] <= capacity);
+  omega.resize(head[8]);
+  weights.resize(head[9] ? head[8] : 0);
 }
 
 int DrivenSubstructureModel::NumRecords(const std::string &path) const
@@ -1715,10 +1698,9 @@ void DrivenSubstructureModel::TruncateRecords(const std::string &path, int n) co
 bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
                                          double source_tol) const
 {
-  if (saved.version != version || saved.nG != nG || saved.sig_w != sig_w ||
-      saved.signatures != signatures || saved.excitations != excitations ||
-      saved.exc_fp.size() != exc_fp.size() || saved.ports != ports ||
-      saved.region_bdr_attributes != region_bdr_attributes ||
+  if (saved.nG != nG || saved.sig_w != sig_w || saved.signatures != signatures ||
+      saved.excitations != excitations || saved.exc_fp.size() != exc_fp.size() ||
+      saved.ports != ports || saved.region_bdr_attributes != region_bdr_attributes ||
       saved.port_data != port_data || saved.omega != omega || saved.weights != weights ||
       saved.capacity != capacity || saved.length_scale != length_scale ||
       !SameEnvironment(saved.env_fp, env_fp) ||

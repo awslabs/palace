@@ -283,17 +283,13 @@ void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh
   {
     DrivenSubstructureModel model;
     model.ReadHeader(sub->save_model, comm);
-    if (model.length_scale > 0.0)
-    {
-      MFEM_VERIFY(
-          !(iodata.model.Lc > 0.0) || std::abs(iodata.model.Lc - model.length_scale) <=
-                                          1.0e-12 * model.length_scale,
-          "\"Model\": \"Lc\" (" << iodata.model.Lc
-                                << ") differs from that of the saved substructuring "
-                                   "model ("
-                                << model.length_scale << ")!");
-      iodata.model.Lc = model.length_scale;
-    }
+    MFEM_VERIFY(
+        !(iodata.model.Lc > 0.0) ||
+            std::abs(iodata.model.Lc - model.length_scale) <= 1.0e-12 * model.length_scale,
+        "\"Model\": \"Lc\" (" << iodata.model.Lc
+                              << ") differs from that of the saved substructuring model ("
+                              << model.length_scale << ")!");
+    iodata.model.Lc = model.length_scale;
   }
   BaseSolver::Preprocess(iodata, smesh, comm);
 }
@@ -608,7 +604,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
                 "The environment's lumped ports differ from those of the saved "
                 "substructuring model!");
     MFEM_VERIFY(
-        model.version < 6 || EnvironmentPortData(iodata, env_ports) == model.port_data,
+        EnvironmentPortData(iodata, env_ports) == model.port_data,
         "The parameters of the environment's ports (the R, L and C of a lumped port, "
         "the mode of a wave port) differ from those of the saved substructuring "
         "model!");

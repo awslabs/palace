@@ -2907,7 +2907,8 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
 {
   // The header is read part by part, each only if the rest of the file holds it: a header
   // cut short, and one whose sizes exceed the file (also a negative one) or its room, are
-  // incomplete, and a file of another kind is not a model.
+  // incomplete; another format version is rejected, and a file of another kind is not a
+  // model.
   DrivenSubstructureModel m;
   m.nG = 2;
   m.sig_w = 1;
@@ -2939,6 +2940,15 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
     CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                       ContainsSubstring("is incomplete"));
   }
+  m.WriteHeader(path);
+  {
+    std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+    const int version = DrivenSubstructureModel::kVersion + 1;
+    f.seekp(sizeof(int));
+    f.write(reinterpret_cast<const char *>(&version), sizeof(int));
+  }
+  CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                    ContainsSubstring("written by another version"));
   std::ofstream(path, std::ios::binary) << "not a model";
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("Cannot read the driven substructuring model"));
