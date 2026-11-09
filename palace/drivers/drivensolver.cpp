@@ -343,6 +343,15 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     }
     return tol;
   };
+  // The sources of a model's excitations lie away from Γ (as the lumped ports do).
+  auto check_source = [&](int k)
+  {
+    MFEM_VERIFY(!ds->OnInterface(rhs[k]),
+                "Excitation " << ex_idx[k]
+                              << " has sources on the substructuring interface: a saved "
+                                 "driven model, or an adaptive sweep, needs the sources "
+                                 "(surface currents, current dipoles) away from it!");
+  };
   // A restart continues the sweep in its order, all excitations at a frequency before the
   // next one: "Restart" - 1 results are written.
   const std::size_t restart = iodata.solver.driven.restart - 1, first_freq = restart / n,
@@ -453,6 +462,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     for (int k = 0; k < n; k++)
     {
       space_op.GetExcitationVector(ex_idx[k], omega_sample[0], rhs[k]);
+      check_source(k);
       const auto fp = ds->SourceFingerprint(rhs[k]);
       ex_col.push_back(-1);
       if (fp[0] != 0.0)
@@ -612,6 +622,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     for (int k = 0; k < n; k++)
     {
       space_op.GetExcitationVector(ex_idx[k], model.omega[0], rhs[k]);
+      check_source(k);
       const auto fp = ds->SourceFingerprint(rhs[k]);
       const double tol = source_tol(ex_idx[k]);
       int col = -1;

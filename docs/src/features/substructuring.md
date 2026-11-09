@@ -240,8 +240,9 @@ frequency of the sweep with the outputs of an online sweep. Saved, such a model 
 sweeps at any frequency between its lowest and highest samples, reduced the same way with a
 nonzero `"AdaptiveTol"`, or solved frequency by frequency.
 
-A saved model needs the lumped ports away from the interface, since their excitation and
-voltage would then depend on both sides.
+A saved model, and an adaptive sweep, need the lumped ports and the other sources (surface
+currents, current dipoles) away from the interface: the excitation of a source on it, and the
+voltage of a lumped port, would depend on both sides.
 
 !!! note
 

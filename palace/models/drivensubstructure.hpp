@@ -270,6 +270,10 @@ public:
   // r_k^T b_E for the three fixed fields r_k (complex). Collective.
   std::vector<double> SourceFingerprint(const ComplexVector &b) const;
 
+  // Whether a right-hand side has entries on Γ, which a model cannot hold: they would come
+  // from the elements of both sides, and from the offline run. Collective.
+  bool OnInterface(const ComplexVector &b) const;
+
 private:
   SpaceOperator &space_op;
   bool online, region_only = false;

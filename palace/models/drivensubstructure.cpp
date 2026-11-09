@@ -1232,6 +1232,18 @@ std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b
   return {v, v + nfp};
 }
 
+bool DrivenSubstructure::OnInterface(const ComplexVector &b) const
+{
+  const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
+  int on = 0;
+  for (std::size_t i = 0; i < is_gamma.size() && !on; i++)
+  {
+    on = is_gamma[i] && (br[i] != 0.0 || bi[i] != 0.0);
+  }
+  Mpi::GlobalMax(1, &on, space_op.GetComm());
+  return on != 0;
+}
+
 namespace
 {
 

@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "driver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -38,6 +39,8 @@
 #include "models/surfacecurlsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/outputdir.hpp"
+#include "utils/timer.hpp"
 
 using json = nlohmann::json;
 
@@ -2964,6 +2967,80 @@ TEST_CASE("A saved driven model continues from its complete records",
 }
 
 #if defined(MFEM_USE_MUMPS)
+
+namespace
+{
+
+// A driven sweep of the substructuring_driven mesh (Γ the plane x = 0.5, the sheet 8 at
+// z = 0.5 crossing it, lumped port 1 in the region and 2 in the environment, each its own
+// excitation), run in process. Collective.
+void RunDrivenSheetSquare(const std::filesystem::path &dir, const std::string &mode,
+                          const std::function<void(json &)> &edit = {})
+{
+  const auto mesh = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
+                    "substructuring_magnetostatic" / "mesh" / "sheet_square.msh";
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", (dir / ("postpro_" + mode)).string()}}},
+      {"Model", {{"Mesh", mesh.string()}, {"L0", 1.0e-6}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 4.0}},
+          {{"Attributes", {2}}, {"Permittivity", 2.0}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 3, 4, 5, 6, 7}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"R", 50.0},
+           {"Attributes", {9}},
+           {"Direction", "+X"},
+           {"Excitation", 1}},
+          {{"Index", 2},
+           {"R", 50.0},
+           {"Attributes", {10}},
+           {"Direction", "+X"},
+           {"Excitation", 2}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Device", "CPU"},
+        {"Driven", {{"MinFreq", 1000.0}, {"MaxFreq", 2000.0}, {"FreqStep", 1000.0}}},
+        {"Linear", {{"Type", "MUMPS"}}},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"Mode", mode},
+          {"SaveModel", (dir / "driven_model.bin").string()}}}}}};
+  if (edit)
+  {
+    edit(config);
+  }
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  BlockTimer::Reset();
+  palace::Run(iodata, comm, 1);
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring needs the sources of a model away from Γ",
+                 "[substructure][Serial][Parallel]")
+{
+  // A surface current on the sheet crossing Γ, along Γ so that its Nédélec DOFs on Γ carry
+  // it, loads Γ, which a model cannot hold: an offline sweep saving a model and an online
+  // one from it reject it.
+  auto current = [](json &config)
+  {
+    config["Boundaries"]["SurfaceCurrent"] = {
+        {{"Index", 3}, {"Attributes", {8}}, {"Direction", "+Y"}}};
+  };
+  using Catch::Matchers::ContainsSubstring;
+  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Offline", current),
+                    ContainsSubstring("has sources on the substructuring interface"));
+  RunDrivenSheetSquare(temp_dir, "Offline");
+  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online", current),
+                    ContainsSubstring("has sources on the substructuring interface"));
+}
 TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
           "[substructure][Serial][Parallel]")
 {
