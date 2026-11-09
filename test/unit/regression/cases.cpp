@@ -1750,9 +1750,13 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
 }
 
 // The SLEPc NEP (SLP) shell receives device arrays on a GPU. SLP with and without damping
-// covers both of its SetOperators overloads.
+// covers both of its SetOperators overloads. Without SLEPc, Palace replaces SLP with
+// Hybrid, which the SLP references do not check.
 TEST_CASE("cylinder_cavity_conductivity_slp", "[Serial][Parallel][GPU][Regression]")
 {
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("SLP requires SLEPc");
+#endif
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
@@ -1766,6 +1770,9 @@ TEST_CASE("cylinder_cavity_conductivity_slp", "[Serial][Parallel][GPU][Regressio
 TEST_CASE("cylinder_cavity_impedance_conductivity_slp",
           "[Serial][Parallel][GPU][Regression]")
 {
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("SLP requires SLEPc");
+#endif
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
