@@ -26,14 +26,14 @@
     "Impedance":
     [
       {
-        "Attributes": [3, 4],
+        "Attributes": [3, 4],  // Bottom cap and side wall
         "Rs": 0.0184  // Ω/sq
       }
     ],
     "Conductivity":
     [
       {
-        "Attributes": [2],
+        "Attributes": [2],  // Top cap
         "Conductivity": 5.8e7  // S/m, copper
       }
     ]
@@ -43,11 +43,15 @@
     "Order": 2,
     "Eigenmode":
     {
-      "N": 2,
+      "N": 1,  // TM010 only, so the degenerate TE111 pair above it is not split
       "Tol": 1.0e-8,
       "Target": 2.8,
-      // Damping from the end caps and a nonlinear side wall, solved with SLP.
+      // Damping from the impedance boundaries and the nonlinear top cap, solved with SLP.
       "NonlinearType": "SLP"
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-10
     }
   }
 }

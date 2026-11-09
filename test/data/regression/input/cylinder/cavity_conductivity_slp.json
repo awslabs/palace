@@ -36,11 +36,15 @@
     "Order": 2,
     "Eigenmode":
     {
-      "N": 2,
+      "N": 1,  // TM010 only, so the degenerate TE111 pair above it is not split
       "Tol": 1.0e-8,
       "Target": 2.8,
       // The surface conductivity is nonlinear in frequency, solved with SLP.
       "NonlinearType": "SLP"
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-10
     }
   }
 }
