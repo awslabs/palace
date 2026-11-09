@@ -176,7 +176,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
   - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
     with Floquet periodic boundary conditions (`"FloquetWaveVector"`). Previously the
-    absorbing boundaryn reduced to first-order for an obliquely incident TE plane wave.
+    absorbing boundary reduced to first order for an obliquely incident TE plane wave.
     For TM plane waves, the second-order condition is still the first-order one.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
