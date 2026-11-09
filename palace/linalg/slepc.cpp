@@ -1822,6 +1822,8 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
 
 PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 {
+  // Apply the scaled operator A₀ = δ K, for the scaled polynomial δ P(γ μ) = A₀ + μ A₁ +
+  // μ² A₂ with λ = γ μ.
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
@@ -1829,6 +1831,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
+  ctx->y1 *= ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -1836,6 +1839,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
 PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
 {
+  // Apply the scaled operator A₁ = δ γ C.
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
@@ -1845,6 +1849,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   if (ctx->opC)
   {
     ctx->opC->Mult(ctx->x1, ctx->y1);
+    ctx->y1 *= ctx->delta * ctx->gamma;
   }
   else
   {
@@ -1857,6 +1862,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
 
 PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 {
+  // Apply the scaled operator A₂ = δ γ² M.
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
@@ -1864,6 +1870,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
+  ctx->y1 *= ctx->delta * ctx->gamma * ctx->gamma;
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
