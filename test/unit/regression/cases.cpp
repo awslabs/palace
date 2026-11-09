@@ -1749,24 +1749,9 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-// The SLEPc NEP (SLP) shell receives device arrays on a GPU. SLP with and without damping
-// covers both of its SetOperators overloads. Without SLEPc, Palace replaces SLP with
-// Hybrid, which the SLP references do not check.
-TEST_CASE("cylinder_cavity_conductivity_slp", "[Serial][Parallel][GPU][Regression]")
-{
-#if !defined(PALACE_WITH_SLEPC)
-  SKIP("SLP requires SLEPc");
-#endif
-  palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-4;
-  opts.atol = 1.0e-16;
-  opts.excluded_columns = eigen_excluded;
-  opts.skip_rowcount = true;
-  opts.paraview_fields = false;
-  palace::test::RunRegressionCase("cylinder", "cavity_conductivity_slp.json",
-                                  "cavity_conductivity_slp", opts);
-}
-
+// The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
+// damping, so this covers the full (K, C, M) path of the NEP solver. Without SLEPc,
+// Palace replaces SLP with Hybrid, which the SLP references do not check.
 TEST_CASE("cylinder_cavity_impedance_conductivity_slp",
           "[Serial][Parallel][GPU][Regression]")
 {
@@ -2570,7 +2555,7 @@ TEST_CASE("cavity2d_eigenmode", "[Serial][Parallel][GPU][Regression]")
 
 // NonlinearType: SLP with no nonlinear term must fall back to the linear eigensolver (not
 // abort on a null A2), giving the same eigenvalues as cavity2d_eigenmode.
-TEST_CASE("cavity2d_eigenmode_slp", "[Serial][Parallel][Regression]")
+TEST_CASE("cavity2d_eigenmode_slp_fallback", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
