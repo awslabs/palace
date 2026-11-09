@@ -42,7 +42,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     are uncracked sheets with the admittance of both faces, which lowers the conductor loss
     compared to previous versions: set `"Crack": true` to restore the previous results, or
     `"Crack": false` to silence the warning.
-    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+    [PR 1168](https://github.com/awslabs/palace/pull/1168).
 
 #### Performance Improvements
 
