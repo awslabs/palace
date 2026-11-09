@@ -528,6 +528,18 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Transient problem type does not support wave port boundary conditions!\n");
     }
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      // The excitation phase is frequency independent, so it can only be represented in the
+      // time domain when the weight is real. A nonzero multiple of 360 degrees is a zero
+      // phase.
+      MFEM_VERIFY(
+          std::fmod(data.excitation_phase, 360.0) == 0.0,
+          fmt::format("Transient simulations require a real excitation: "
+                      "\"ExcitationPhase\" must be 0 on lumped port index {:d} (use "
+                      "\"ExcitationAmplitude\" or flip \"Direction\")",
+                      idx));
+    }
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
     {
       Mpi::Warning("Transient problem type does not support absorbing boundary conditions "
