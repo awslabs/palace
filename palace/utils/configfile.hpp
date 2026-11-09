@@ -790,8 +790,8 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
-  // Coordinates of a point inside the integration surface, used to orient the surface
-  // normal on interior surfaces [m].
+  // Coordinates of a point inside the integration surface, used to choose the side of
+  // interior surfaces whose fields are used [m].
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
 
   // Flag which indicates whether or not the center point was specified.

@@ -20,16 +20,12 @@
 //
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
-#include <array>
 #include <complex>
-#include <memory>
 #include <numbers>
-#include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
-#include <catch2/matchers/catch_matchers_string.hpp>
 #include <mfem/fem/coefficient.hpp>
 #include <mfem/linalg/vector.hpp>
 #include "fem/fespace.hpp"
@@ -377,107 +373,6 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
 
   CHECK_THROWS(
       SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace));
-}
-
-// Unit cube of tetrahedra with the volume attributes 1 (x < 1/2) and 2 (x > 1/2), and the
-// interior boundary x = 1/2 with the attribute 7.
-std::unique_ptr<mfem::Mesh> MakeInteriorSurfaceMesh(int n)
-{
-  auto cube =
-      mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
-  mfem::Vector c;
-  for (int e = 0; e < cube.GetNE(); e++)
-  {
-    cube.GetElementCenter(e, c);
-    cube.SetAttribute(e, c(0) < 0.5 ? 1 : 2);
-  }
-  std::vector<std::array<int, 3>> interior;
-  mfem::Array<int> v;
-  for (int f = 0; f < cube.GetNumFaces(); f++)
-  {
-    int e1, e2;
-    cube.GetFaceElements(f, &e1, &e2);
-    cube.GetFaceVertices(f, v);
-    bool on_plane = (e2 >= 0);
-    for (int j : v)
-    {
-      on_plane = on_plane && std::abs(cube.GetVertex(j)[0] - 0.5) < 1.0e-12;
-    }
-    if (on_plane)
-    {
-      interior.push_back({v[0], v[1], v[2]});
-    }
-  }
-  auto mesh = std::make_unique<mfem::Mesh>(
-      3, cube.GetNV(), cube.GetNE(), cube.GetNBE() + static_cast<int>(interior.size()));
-  for (int j = 0; j < cube.GetNV(); j++)
-  {
-    mesh->AddVertex(cube.GetVertex(j));
-  }
-  for (int e = 0; e < cube.GetNE(); e++)
-  {
-    mesh->AddElement(cube.GetElement(e)->Duplicate(mesh.get()));
-  }
-  for (int b = 0; b < cube.GetNBE(); b++)
-  {
-    mesh->AddBdrElement(cube.GetBdrElement(b)->Duplicate(mesh.get()));
-  }
-  for (const auto &tri : interior)
-  {
-    mesh->AddBdrTriangle(tri.data(), 7);
-  }
-  mesh->FinalizeTopology();
-  mesh->Finalize();
-  return mesh;
-}
-
-TEST_CASE("FarField interior surface requires the same material on both sides",
-          "[strattonchu][Serial][Parallel]")
-{
-  // On an interior surface the far-field integrand averages the traces of both sides, so
-  // the check must see both of them (the second side is not the element adjacent to the
-  // boundary element, and may be on another process).
-  config::PeriodicBoundaryData periodic;
-  config::BoundaryPostData postpro;
-  postpro.farfield.attributes = {7};
-  postpro.farfield.thetaphis.emplace_back();
-
-  Mesh palace_mesh(
-      std::make_unique<mfem::ParMesh>(Mpi::World(), *MakeInteriorSurfaceMesh(4)));
-  mfem::ND_FECollection nd_fec(1, 3);
-  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
-
-  config::MaterialData material1, material2;
-  material1.attributes = {1};
-  material2.attributes = {2};
-  auto Make = [&]()
-  {
-    MaterialOperator mat_op({material1, material2}, periodic, ProblemType::DRIVEN,
-                            palace_mesh);
-    SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace);
-  };
-
-  SECTION("Separate but identical materials are accepted")
-  {
-    CHECK_NOTHROW(Make());
-  }
-
-  SECTION("Different speeds of light are rejected")
-  {
-    const auto side = GENERATE(1, 2);
-    auto &material = (side == 1) ? material1 : material2;
-    material.epsilon_r = 4.0;
-    CHECK_THROWS_WITH(Make(), ContainsSubstring("same material on both sides") &&
-                                  ContainsSubstring("attributes 1 and 2"));
-  }
-
-  SECTION("An anisotropic material on either side is rejected")
-  {
-    const auto side = GENERATE(1, 2);
-    auto &material = (side == 1) ? material1 : material2;
-    material.mu_r.s[0] = 2.0;
-    CHECK_THROWS_WITH(Make(), ContainsSubstring("isotropic materials"));
-  }
 }
 
 }  // namespace

@@ -13,6 +13,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/boundary_derived_field_bundle.hpp"
 #include "fem/boundary_physical_trace.hpp"
 #include "fem/coefficient.hpp"
@@ -30,6 +31,7 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/strattonchu.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -2625,9 +2627,7 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
   }
 
-  // Normal orientation from a center point: on the exterior boundary z = 0, a center
-  // inside the domain reproduces the outward normal, and a center on the other side of
-  // the boundary flips it.
+  // A center does not change an external boundary, which has one side.
   auto Center = [](double x, double y, double z)
   {
     mfem::Vector x0(3);
@@ -2654,46 +2654,86 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
   };
   {
-    SurfaceFunctional inside(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts, true,
-                             Center(0.5, 0.5, 0.5));
-    REQUIRE(inside.IsValid());
-    CheckScaled(inside.EvalFarField(E, B, {omega_re, omega_im}), result, 1.0);
     SurfaceFunctional outside(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts,
-                              true, Center(0.5, 0.5, -0.5));
+                              Center(0.5, 0.5, -0.5));
     REQUIRE(outside.IsValid());
-    CheckScaled(outside.EvalFarField(E, B, {omega_re, omega_im}), result, -1.0);
+    CheckScaled(outside.EvalFarField(E, B, {omega_re, omega_im}), result, 1.0);
   }
 
-  // Interior far-field surfaces are invalid without an orientation center. Construction
-  // must make that decision collectively even when only some ranks own elements of the
-  // marked interface.
+  // Interior far-field surfaces between isotropic materials are invalid without a center.
+  // Construction must make that decision collectively even when only some ranks own
+  // elements of the marked interface.
   marker = 0;
   marker[7 - 1] = 1;
   SurfaceFunctional interior_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
                                       r_naughts);
   REQUIRE_FALSE(interior_farfield.IsValid());
 
-  // With an orientation center, the interior surface z = 1/2 is valid (both sides
-  // averaged, or the local side on parallel interfaces), and the centers below and above
-  // the surface give opposite normals.
-  SurfaceFunctional below(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts, true,
-                          Center(0.5, 0.5, 0.25));
-  SurfaceFunctional above(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts, true,
-                          Center(0.5, 0.5, 0.75));
-  REQUIRE(below.IsValid());
-  REQUIRE(above.IsValid());
-  const auto result_below = below.EvalFarField(E, B, {omega_re, omega_im});
-  const auto result_above = above.EvalFarField(E, B, {omega_re, omega_im});
-  CheckScaled(result_above, result_below, -1.0);
-  double norm = 0.0;
-  for (const auto &v : result_below)
+  // The interior surface z = 1/2 is traced from one side, with the normal into it. The
+  // tangential E is continuous, so with B = 0 the centers below and above the surface
+  // give opposite far fields.
+  auto FarField = [&](const MaterialOperator &op, const mfem::Vector &x0,
+                      const GridFunction &E_, const GridFunction &B_)
   {
-    for (const auto &c : v)
+    SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, op, r_naughts, x0);
+    REQUIRE(farfield.IsValid());
+    return farfield.EvalFarField(E_, B_, {omega_re, omega_im});
+  };
+  GridFunction E0(nd_fespace, true), B0(rt_fespace, true), B1(rt_fespace, true);
+  E0 = 0.0;
+  B0 = 0.0;
+  const auto result_below = FarField(mat_op, Center(0.5, 0.5, 0.25), E, B0);
+  CheckScaled(FarField(mat_op, Center(0.5, 0.5, 0.75), E, B0), result_below, -1.0);
+
+  // With E = 0 and B = x_hat for z < 1/2 only (exact in the RT space, B . n = 0 on the
+  // surface), only the lower side (attribute 1) gives a nonzero far field. Between two
+  // isotropic materials the traced side faces the center; next to an anisotropic
+  // material (such as a PML) it is the isotropic side, whatever the center.
+  mfem::VectorFunctionCoefficient fb1(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v = 0.0;
+                                        v(0) = (x(2) < 0.5) ? 1.0 : 0.0;
+                                      });
+  B1.Real().ProjectCoefficient(fb1);
+  B1.Imag() = 0.0;
+  auto Norm = [](const std::vector<std::array<std::complex<double>, 3>> &v)
+  {
+    double norm2 = 0.0;
+    for (const auto &w : v)
     {
-      norm += std::norm(c);
+      for (const auto &c : w)
+      {
+        norm2 += std::norm(c);
+      }
     }
-  }
-  CHECK(norm > 0.0);
+    return std::sqrt(norm2);
+  };
+  const double lower = Norm(FarField(mat_op, Center(0.5, 0.5, 0.25), E0, B1));
+  CHECK(lower > 0.0);
+  CHECK(Norm(FarField(mat_op, Center(0.5, 0.5, 0.75), E0, B1)) <= 1.0e-12 * lower);
+  config::MaterialData anisotropic_vacuum = vacuum, anisotropic_dielectric = dielectric;
+  anisotropic_vacuum.mu_r.s[0] = 2.0;
+  anisotropic_dielectric.mu_r.s[0] = 2.0;
+  MaterialOperator upper_aniso_op({vacuum, anisotropic_dielectric}, periodic,
+                                  ProblemType::DRIVEN, *mesh);
+  MaterialOperator lower_aniso_op({anisotropic_vacuum, dielectric}, periodic,
+                                  ProblemType::DRIVEN, *mesh);
+  CHECK(Norm(FarField(upper_aniso_op, Center(0.5, 0.5, 0.75), E0, B1)) ==
+        Catch::Approx(lower).epsilon(1.0e-12));
+  CHECK(Norm(FarField(lower_aniso_op, Center(0.5, 0.5, 0.25), E0, B1)) <= 1.0e-12 * lower);
+
+  // The materials are checked at setup: an isotropic side is required.
+  config::BoundaryPostData postpro;
+  postpro.farfield.attributes = {7};
+  postpro.farfield.thetaphis.emplace_back();
+  CHECK_NOTHROW(SurfacePostOperator(postpro, ProblemType::DRIVEN, upper_aniso_op,
+                                    nd_fespace, nd_fespace));
+  MaterialOperator aniso_op({anisotropic_vacuum, anisotropic_dielectric}, periodic,
+                            ProblemType::DRIVEN, *mesh);
+  CHECK_THROWS_WITH(
+      SurfacePostOperator(postpro, ProblemType::DRIVEN, aniso_op, nd_fespace, nd_fespace),
+      Catch::Matchers::ContainsSubstring("attributes 1 and 2 are both anisotropic"));
 }
 
 TEST_CASE("FaceSamplingPlan retains unmatched boundary slots",

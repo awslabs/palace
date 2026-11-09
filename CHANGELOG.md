@@ -19,10 +19,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, with
-    the surface normal oriented from an optional `"Center"` inside the surface, so that far
-    fields can be computed when the outer boundary is not a valid integration surface (for
-    example behind a perfectly matched layer), or away from the truncation. SchemaVer 4-2-0.
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
+    that far fields can be computed when the outer boundary is not a valid integration
+    surface (for example behind a perfectly matched layer), or away from the truncation.
+    The fields of each face are taken from one side: the isotropic side next to an
+    anisotropic material, otherwise the side facing an optional `"Center"` inside the
+    surface (by default the center of the bounding box of the mesh). SchemaVer 4-2-0.
     [PR 1110](https://github.com/awslabs/palace/pull/1110).
 
 #### Performance Improvements

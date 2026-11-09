@@ -222,11 +222,10 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   }
 
   // An interior integration surface (for example around a radiator or scatterer inside a
-  // PML) has no normal direction of its own: orient it from a center point inside the
-  // surface, consistently with external boundaries, which keep their own normal unless a
-  // center is given.
+  // PML) is traced from one side of each face: the isotropic side next to an anisotropic
+  // material, or else the side facing a center point inside the surface. External
+  // boundaries have one side and ignore the center.
   const auto marker = mesh::AttrToMarker(bdr_attr_marker.Size(), attr_list);
-  bool interior = false;
   for (int i = 0; i < mesh.GetNBE() && !interior; i++)
   {
     if (!marker[mesh.GetBdrAttribute(i) - 1])
@@ -238,16 +237,16 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
     interior = !mesh.GetFaceInformation(f).IsBoundary();
   }
   Mpi::GlobalOr(1, &interior, mesh.GetComm());
-  orient = interior || !data.no_center;
-  if (orient)
+  if (interior)
   {
     MFEM_VERIFY(mesh.SpaceDimension() == 3,
                 "Far-field extraction on interior surfaces requires a 3D mesh!");
     center.SetSize(mesh.SpaceDimension());
     if (data.no_center)
     {
+      // Default to the center of the bounding box of the whole mesh.
       mfem::Vector bbmin, bbmax;
-      mesh::GetAxisAlignedBoundingBox(mesh, marker, true, bbmin, bbmax);
+      mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
       for (int d = 0; d < mesh.SpaceDimension(); d++)
       {
         center(d) = 0.5 * (bbmin(d) + bbmax(d));
@@ -313,10 +312,10 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
               "Far-field extraction is only available for driven and eigenmode problems!");
 
   // Check the materials on the far-field surface. The Stratton-Chu integrand assumes an
-  // isotropic medium, and on an interior surface it averages the traces of the two sides,
-  // which must then be the same medium (same speed of light). Both sides of each boundary
-  // element are checked, including face neighbor elements on parallel interfaces, and the
-  // result is combined across processes so that all of them fail consistently.
+  // isotropic medium on the traced side: the only side of an external boundary, and an
+  // isotropic side of an interior surface (see SurfaceFunctional), which needs at least
+  // one. Face neighbor elements on parallel interfaces are included, and the result is
+  // combined across processes so that all of them fail consistently.
   if (!postpro.farfield.empty())
   {
     const auto &mesh = *nd_fespace.GetParMesh();
@@ -326,7 +325,7 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
         mesh::AttrToMarker(bdr_attr_max, postpro.farfield.attributes);
     mfem::Array<int> domain_marker(attr_max);
     domain_marker = 0;
-    int mismatch[2] = {attr_max + 1, attr_max + 1};
+    int anisotropic[2] = {attr_max + 1, attr_max + 1};
     mfem::FaceElementTransformations FET;
     mfem::IsoparametricTransformation T1, T2;
     for (int i = 0; i < mesh.GetNBE(); i++)
@@ -338,21 +337,21 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1,
                                                                        T2);
       const int attr1 = FET.Elem1->Attribute;
-      domain_marker[attr1 - 1] = 1;
-      if (FET.Elem2)
+      if (!FET.Elem2)
+      {
+        domain_marker[attr1 - 1] = 1;
+      }
+      else
       {
         const int attr2 = FET.Elem2->Attribute;
-        domain_marker[attr2 - 1] = 1;
-        const double c1 = mat_op.GetLightSpeedMax(attr1),
-                     c2 = mat_op.GetLightSpeedMax(attr2);
-        if (std::abs(c1 - c2) > 1.0e-12 * std::max(c1, c2))
+        if (!mat_op.IsIsotropic(attr1) && !mat_op.IsIsotropic(attr2))
         {
           // Keep the pair with the smallest attributes, for a deterministic message.
           const auto [a, b] = std::minmax(attr1, attr2);
-          if (a < mismatch[0] || (a == mismatch[0] && b < mismatch[1]))
+          if (a < anisotropic[0] || (a == anisotropic[0] && b < anisotropic[1]))
           {
-            mismatch[0] = a;
-            mismatch[1] = b;
+            anisotropic[0] = a;
+            anisotropic[1] = b;
           }
         }
       }
@@ -361,13 +360,13 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
     {
       // Global pair with the smallest attributes: the smallest first attribute, then the
       // smallest second attribute among the processes which have it.
-      const int a_loc = mismatch[0];
-      Mpi::GlobalMin(1, &mismatch[0], mesh.GetComm());
-      if (a_loc != mismatch[0])
+      const int a_loc = anisotropic[0];
+      Mpi::GlobalMin(1, &anisotropic[0], mesh.GetComm());
+      if (a_loc != anisotropic[0])
       {
-        mismatch[1] = attr_max + 1;
+        anisotropic[1] = attr_max + 1;
       }
-      Mpi::GlobalMin(1, &mismatch[1], mesh.GetComm());
+      Mpi::GlobalMin(1, &anisotropic[1], mesh.GetComm());
     }
     for (int attr = 1; attr <= attr_max; attr++)
     {
@@ -375,11 +374,11 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
                   "FarField requires isotropic materials, but attribute " +
                       std::to_string(attr) + " is not.");
     }
-    MFEM_VERIFY(mismatch[0] > attr_max,
-                "FarField requires the same material on both sides of an interior surface, "
-                "but attributes " +
-                    std::to_string(mismatch[0]) + " and " + std::to_string(mismatch[1]) +
-                    " have a different speed of light.");
+    MFEM_VERIFY(anisotropic[0] > attr_max,
+                "FarField requires an isotropic material on one side of an interior "
+                "surface, but attributes " +
+                    std::to_string(anisotropic[0]) + " and " +
+                    std::to_string(anisotropic[1]) + " are both anisotropic.");
   }
 
   farfield = FarFieldData(postpro.farfield, *nd_fespace.GetParMesh(), bdr_attr_marker);
@@ -564,9 +563,9 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   const bool use_ceed = E.HasImag() && B.HasImag();
   if (use_ceed && (!farfield_func || farfield_func_dirs != r_naughts))
   {
-    farfield_func = std::make_unique<SurfaceFunctional>(
-        mat_op.GetMesh(), attr_marker, *E.ParFESpace(), *B.ParFESpace(), mat_op, r_naughts,
-        farfield.orient, farfield.center);
+    farfield_func = std::make_unique<SurfaceFunctional>(mat_op.GetMesh(), attr_marker,
+                                                        *E.ParFESpace(), *B.ParFESpace(),
+                                                        mat_op, r_naughts, farfield.center);
     farfield_func_dirs = r_naughts;
   }
   if (use_ceed && farfield_func && farfield_func->IsValid())
@@ -578,9 +577,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     RequireCeedSurfaceFunctional(farfield_func.get(), "3D far-field postprocessing");
   }
 
-  MFEM_VERIFY(!farfield.orient,
-              "Far-field extraction on interior surfaces or with a \"Center\" requires "
-              "complex-valued fields (libCEED path)!");
+  MFEM_VERIFY(!farfield.interior, "Far-field extraction on interior surfaces requires "
+                                  "complex-valued fields (libCEED path)!");
 
   // Integrate. Each MPI process computes its contribution and we will reduce
   // everything at the end. We make them std::vector<std::array<double, 3>>
