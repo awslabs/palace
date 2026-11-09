@@ -452,6 +452,17 @@ void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_siz
   ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
 }
 
+std::complex<double> PropagationConstant(std::complex<double> kn2,
+                                         std::complex<double> omega)
+{
+  // Real kₙ² at the real frequency Re{ω}, for kₙ² = n²ω² − k_c² with real n² and k_c².
+  const double kn2_real = (omega.imag() != 0.0 && omega.real() != 0.0)
+                              ? kn2.real() + 0.5 * kn2.imag() * omega.imag() / omega.real()
+                              : kn2.real();
+  return (kn2_real < 0.0) ? std::complex<double>(0.0, -1.0) * std::sqrt(-kn2)
+                          : std::sqrt(kn2);
+}
+
 double TargetDistance(std::complex<double> kn, double kn_target)
 {
   const double distance = std::abs(kn - kn_target);
