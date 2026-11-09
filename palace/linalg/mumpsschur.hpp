@@ -123,6 +123,9 @@ private:
   void Factor();
   void Check(const char *phase) const;
   void GatherEntries();
+  // The largest diagonal entry of the local values (diag_pos), over the ranks: the scale of
+  // the BLR tolerance.
+  double DiagonalScale() const;
   void Call();
   // The right-hand sides distributed by rows, room for the distributed solution, and the
   // solution on the local rows.
@@ -160,6 +163,7 @@ private:
   std::vector<T> val, grp_val, schur, redrhs, rhs_loc, sol_loc;
   int reduced = 0;  // right-hand sides of the last Reduce, pending Expand
   double blr_tol = 0.0, scale = 1.0;
+  std::vector<std::size_t> diag_pos;  // the diagonal entries of the local values (BLR)
   Struc id{};
 };
 

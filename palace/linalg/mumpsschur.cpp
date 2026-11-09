@@ -275,17 +275,15 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     // The BLR dropping parameter CNTL(7) is absolute, and the Schur option excludes
     // MUMPS's own scaling: scale the matrix by its largest diagonal entry so the
     // tolerance acts as a relative one (the Schur and the solves are rescaled exactly
-    // below).
-    double dmax = 0.0;
+    // below), at each factorization.
     for (std::size_t q = 0; q < irn.size(); q++)
     {
       if (irn[q] == jcn[q])
       {
-        dmax = std::max(dmax, static_cast<double>(std::abs(val[q])));
+        diag_pos.push_back(q);
       }
     }
-    MPI_Allreduce(MPI_IN_PLACE, &dmax, 1, MPI_DOUBLE, MPI_MAX, comm);
-    scale = (dmax > 0.0) ? dmax : 1.0;
+    scale = DiagonalScale();
     for (auto &v : val)
     {
       v /= scale;
@@ -514,9 +512,25 @@ void MumpsSchurSolverT<T>::Factor()
 }
 
 template <typename T>
+double MumpsSchurSolverT<T>::DiagonalScale() const
+{
+  double dmax = 0.0;
+  for (std::size_t q : diag_pos)
+  {
+    dmax = std::max(dmax, static_cast<double>(std::abs(val[q])));
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &dmax, 1, MPI_DOUBLE, MPI_MAX, comm);
+  return (dmax > 0.0) ? dmax : 1.0;
+}
+
+template <typename T>
 void MumpsSchurSolverT<T>::Refactor()
 {
   MFEM_VERIFY(refactor, "MumpsSchurSolver was not set up for refactorization!");
+  if (blr_tol > 0.0)
+  {
+    scale = DiagonalScale();
+  }
   for (auto &v : val)
   {
     v /= scale;
