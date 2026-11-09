@@ -333,6 +333,10 @@ private:
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
 
+  // The fixed fields r_k of the fingerprints (true DOFs), projected on first use.
+  mutable std::array<Vector, 3> fp_fields;
+  const Vector &FingerprintField(int k) const;
+
   // The reduced region: its operator parts (Kr, Ki, Cr, Ci, Mr, Mi on the region, with the
   // pinned DOFs eliminated), the basis V, the parts' projections V^T P V (r x r,
   // column-major), and the interface rows of V on rank 0.

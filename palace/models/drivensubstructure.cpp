@@ -1122,7 +1122,7 @@ namespace
 {
 
 // Fixed polynomial fields of the fingerprints (true DOFs).
-Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
+Vector ProjectFingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
 {
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
   mfem::ParGridFunction gf(&fes);
@@ -1145,6 +1145,15 @@ Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
 }
 
 }  // namespace
+
+const Vector &DrivenSubstructure::FingerprintField(int k) const
+{
+  if (fp_fields[k].Size() == 0)
+  {
+    fp_fields[k] = ProjectFingerprintField(space_op.GetNDSpace().Get(), k);
+  }
+  return fp_fields[k];
+}
 
 std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) const
 {
@@ -1173,7 +1182,7 @@ std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) con
   y.UseDevice(true);
   for (int k = 0; k < 3; k++)
   {
-    r.Real() = FingerprintField(fes, k);
+    r.Real() = FingerprintField(k);
     r.Imag() = 0.0;
     y = 0.0;
     K->AddMult(r, y, 1.0);
@@ -1210,8 +1219,7 @@ std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b
   }
   for (int k = 0; k < 3; k++)
   {
-    const Vector r = FingerprintField(fes, k);
-    const double *rr = r.HostRead();
+    const double *rr = FingerprintField(k).HostRead();
     for (int i = 0; i < fes.GetTrueVSize(); i++)
     {
       if (is_env_int[i])
