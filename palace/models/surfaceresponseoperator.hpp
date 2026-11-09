@@ -1504,12 +1504,40 @@ public:
     return GatherPatchTraces(x, false, true);
   }
 
+  // Lane fix-response-memory (decisions 1439 / 1446 / 1447; DESIGN s2.2-s2.3, A1.3): where
+  // the gathered PER-PATCH records (the electrostatic / Maxwell patch contributions, the
+  // patch traces, the loop shares and path residuals, the within-R volume energies) live
+  // after a response evaluation. REPLICATED = every rank holds the full O(global patches)
+  // list (the former form; the default, which the unit cases of record read on every
+  // rank); ROOT_ONLY = the root holds the identical list (Mpi::GatherLarge: the same
+  // rank-order concatenation, the same decode and sort), the other ranks an empty one.
+  // Their only production consumers are the root's tables; the drivers set ROOT_ONLY right
+  // after construction. The energies and every other reduced scalar are unchanged in both
+  // modes (Mpi::GlobalSum on every rank). OI-RESIDENCY-DEFAULT-REPLICATED (decision 1447):
+  // a new caller keeps the replicated law unless it sets ROOT_ONLY.
+  enum class PatchRecordResidency : char
+  {
+    REPLICATED,
+    ROOT_ONLY
+  };
+  void SetPatchRecordResidency(PatchRecordResidency residency)
+  {
+    patch_record_residency = residency;
+  }
+  PatchRecordResidency GetPatchRecordResidency() const { return patch_record_residency; }
+
 private:
+  PatchRecordResidency patch_record_residency = PatchRecordResidency::REPLICATED;
+  // Whether this rank holds the gathered per-patch records (the root always does).
+  bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,
                                             bool magnetic = false) const;
   // Every rank's local records concatenated in rank order (Allgatherv), the per-patch
   // record gathers' shared step.
   std::vector<double> AllgatherRecords(const std::vector<double> &local_records) const;
+  // The per-patch records by the residency: AllgatherRecords under REPLICATED; under
+  // ROOT_ONLY the same concatenation on the root (Mpi::GatherLarge) and empty elsewhere.
+  std::vector<double> GatherPatchRecords(const std::vector<double> &local_records) const;
 
 public:
   // Conductor-consistency gate (decision 277 (A); the identification fix round R0-a, idfix

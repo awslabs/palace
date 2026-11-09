@@ -916,6 +916,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     response_correction =
         std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
+    // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records live
+    // on the root only (their consumers are the root's tables below).
+    response_correction->SetPatchRecordResidency(
+        SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
     if (response_correction->IsRawFallback())
     {
       SaveMetadata(*response_correction);
@@ -1386,8 +1390,147 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The corrected capacitance's self-consistent column (PostprocessCorrectedTerminals) is
   // written only when every source's corrected solve was accepted (fail closed).
   bool self_consistent_accepted = self_consistent_response;
-  std::vector<std::pair<int, std::vector<SurfaceResponseOperator::PatchTrace>>>
-      spatial_patch_traces;
+  // The spatial coupons' traces and the per-patch energies (PatchEnergy) are written per
+  // source as they are gathered (lane fix-response-memory C4, decisions 1439 / 1446: the
+  // gathered O(global patches) vectors are not retained across the sources; the files'
+  // bytes are the former end-of-run whole-table writes',
+  // TableWithCSVFile::AppendRowsAndClear). Root only: the records are gathered to the root
+  // (PatchRecordResidency::ROOT_ONLY).
+  std::unique_ptr<TableWithCSVFile> traces_output;
+  auto WriteSpatialPatchTraces =
+      [&](int source, const std::vector<SurfaceResponseOperator::PatchTrace> &entries)
+  {
+    if (!root || entries.empty())
+    {
+      return;
+    }
+    using VT = Units::ValueType;
+    if (!traces_output)
+    {
+      traces_output =
+          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
+      traces_output->table.insert(Column::Integer("source", "i"));
+      traces_output->table.insert(Column::Integer("patch", "patch"));
+      traces_output->table.insert(Column::Integer("model", "model"));
+      traces_output->table.insert(Column::Integer("coefficient", "coefficient"));
+      traces_output->table.insert(Column::Integer("conductor_state", "conductor state"));
+      traces_output->table.insert("value", "value (V)");
+    }
+    auto &traces = *traces_output;
+    for (const auto &entry : entries)
+    {
+      for (std::size_t i = 0; i < entry.coefficients.size(); i++)
+      {
+        traces.table["source"] << source;
+        traces.table["patch"] << entry.patch + 1;
+        traces.table["model"] << entry.model;
+        traces.table["coefficient"] << static_cast<int>(i) + 1;
+        traces.table["conductor_state"]
+            << (static_cast<int>(i) >= entry.contour_size ? 1 : 0);
+        traces.table["value"] << iodata.units.Dimensionalize<VT::VOLTAGE>(
+            entry.coefficients[i]);
+      }
+    }
+    traces.AppendRowsAndClear();
+  };
+  std::unique_ptr<TableWithCSVFile> patch_output;
+  std::vector<int> patch_output_interfaces;
+  std::map<int, const SurfaceResponseOperator::PatchAssignment *> patch_assignments;
+  auto WritePatchEnergyRows = [&](CorrectedResult &result)
+  {
+    // Decision 352 follow-up (1): one row per applied patch, source and evaluation (the
+    // codes of surface-response-model-energy.csv); the rows of one (source, evaluation,
+    // model) sum to that model's row. `patch` is the 1-based placed patch index of
+    // surface-response-traces.csv (the preflight dry run's 0-based `Patch` + 1); the
+    // origin and the longitudinal cell (offsets along the patch's AxisW) locate it. The
+    // interface columns are the first source's.
+    if (!root || !patch_energy_response)
+    {
+      return;
+    }
+    using VT = Units::ValueType;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    if (!patch_output)
+    {
+      for (const auto &assignment : response_correction->GetPatchAssignments())
+      {
+        patch_assignments.emplace(assignment.global_index, &assignment);
+      }
+      patch_output = std::make_unique<TableWithCSVFile>(
+          post_dir / "surface-response-patch-energy.csv");
+      patch_output->table.insert(Column::Integer("source", "source"));
+      patch_output->table.insert(Column::Integer("evaluation", "evaluation"));
+      patch_output->table.insert(Column::Integer("patch", "patch"));
+      patch_output->table.insert(Column::Integer("model", "model"));
+      patch_output->table.insert(Column::Integer("feature", "feature"));
+      patch_output->table.insert("weight", "weight");
+      patch_output->table.insert("cell_begin", "cell begin (m)");
+      patch_output->table.insert("cell_end", "cell end (m)");
+      for (const char *coordinate : {"x", "y", "z"})
+      {
+        patch_output->table.insert(fmt::format("origin_{}", coordinate),
+                                   fmt::format("origin {} (m)", coordinate));
+      }
+      patch_output->table.insert("domain_correction", "domain correction (J)");
+      for (const auto &[interface, data] : result.raw.interfaces)
+      {
+        (void)data;
+        patch_output_interfaces.push_back(interface);
+        patch_output->table.insert(
+            fmt::format("interface_{}", interface),
+            fmt::format("fabricated surface energy[{}] (J)", interface));
+      }
+    }
+    auto AppendPatch = [&](int source, int evaluation,
+                           const SurfaceResponseOperator::PatchContribution &data,
+                           bool available, bool fixed_flux)
+    {
+      const auto assignment = patch_assignments.find(data.patch);
+      MFEM_VERIFY(assignment != patch_assignments.end(),
+                  "Per-patch response energy of an unknown patch " << data.patch + 1
+                                                                   << "!");
+      patch_output->table["source"] << source;
+      patch_output->table["evaluation"] << evaluation;
+      patch_output->table["patch"] << data.patch + 1;
+      patch_output->table["model"] << data.model;
+      patch_output->table["feature"] << data.feature;
+      patch_output->table["weight"] << data.weight;
+      patch_output->table["cell_begin"]
+          << iodata.units.Dimensionalize<VT::LENGTH>(data.cell[0]);
+      patch_output->table["cell_end"]
+          << iodata.units.Dimensionalize<VT::LENGTH>(data.cell[1]);
+      for (int d = 0; d < 3; d++)
+      {
+        patch_output->table[fmt::format("origin_{}", "xyz"[d])]
+            << iodata.units.Dimensionalize<VT::LENGTH>(assignment->second->origin[d]);
+      }
+      patch_output->table["domain_correction"]
+          << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
+                              fixed_flux ? data.domain_correction_fixed_flux
+                                         : data.domain_correction)
+                        : nan);
+      for (const int interface : patch_output_interfaces)
+      {
+        const auto &energies = fixed_flux ? data.fabricated_surface_energy_fixed_flux
+                                          : data.fabricated_surface_energy;
+        const auto energy = energies.find(interface);
+        patch_output->table[fmt::format("interface_{}", interface)]
+            << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
+                                energy != energies.end() ? energy->second : 0.0)
+                          : nan);
+      }
+    };
+    for (const auto &contribution : result.raw_patch_contributions)
+    {
+      AppendPatch(result.source, 0, contribution, result.has_postprocessed, false);
+      AppendPatch(result.source, 1, contribution, result.has_postprocessed, true);
+    }
+    for (const auto &contribution : result.corrected_patch_contributions)
+    {
+      AppendPatch(result.source, 2, contribution, result.has_self_consistent, false);
+    }
+    patch_output->AppendRowsAndClear();
+  };
   long long int raw_linear_solves = 0;
   long long int raw_linear_iterations = 0;
   long long int corrected_linear_solves = 0;
@@ -1645,11 +1788,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         response = response_correction->GetElectrostaticResponse(V[step], true,
                                                                  patch_energy_response);
-        auto traces = response_correction->GetSpatialPatchTraces(V[step]);
-        if (!traces.empty())
-        {
-          spatial_patch_traces.emplace_back(idx, std::move(traces));
-        }
+        WriteSpatialPatchTraces(idx, response_correction->GetSpatialPatchTraces(V[step]));
       }
       auto ApplyResponse =
           [&](EnergyData energies, double domain_correction,
@@ -1903,6 +2042,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                             postprocess_response,
                             self_consistent_response,
                             response.confident});
+        // The per-patch rows of this source (root; PatchEnergy), then the gathered vectors
+        // released: the result keeps its O(interfaces + models) scalars.
+        WritePatchEnergyRows(corrected_results.back());
+        corrected_results.back().raw_patch_contributions.clear();
+        corrected_results.back().raw_patch_contributions.shrink_to_fit();
+        corrected_results.back().corrected_patch_contributions.clear();
+        corrected_results.back().corrected_patch_contributions.shrink_to_fit();
       }
     }
 
@@ -1939,36 +2085,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
   {
     PostprocessResponseMatrix(post_op, laplace_op, Grad, V, D_basis);
-  }
-
-  if (root && !spatial_patch_traces.empty())
-  {
-    using VT = Units::ValueType;
-    TableWithCSVFile traces(post_dir / "surface-response-traces.csv");
-    traces.table.insert(Column::Integer("source", "i"));
-    traces.table.insert(Column::Integer("patch", "patch"));
-    traces.table.insert(Column::Integer("model", "model"));
-    traces.table.insert(Column::Integer("coefficient", "coefficient"));
-    traces.table.insert(Column::Integer("conductor_state", "conductor state"));
-    traces.table.insert("value", "value (V)");
-    for (const auto &[source, entries] : spatial_patch_traces)
-    {
-      for (const auto &entry : entries)
-      {
-        for (std::size_t i = 0; i < entry.coefficients.size(); i++)
-        {
-          traces.table["source"] << source;
-          traces.table["patch"] << entry.patch + 1;
-          traces.table["model"] << entry.model;
-          traces.table["coefficient"] << static_cast<int>(i) + 1;
-          traces.table["conductor_state"]
-              << (static_cast<int>(i) >= entry.contour_size ? 1 : 0);
-          traces.table["value"]
-              << iodata.units.Dimensionalize<VT::VOLTAGE>(entry.coefficients[i]);
-        }
-      }
-    }
-    traces.WriteFullTableTrunc();
   }
 
   if (root && !corrected_results.empty())
@@ -2156,95 +2272,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
     }
     model_output.WriteFullTableTrunc();
-
-    if (patch_energy_response)
-    {
-      // Decision 352 follow-up (1): one row per applied patch, source and evaluation (the
-      // codes of surface-response-model-energy.csv); the rows of one (source, evaluation,
-      // model) sum to that model's row. `patch` is the 1-based placed patch index of
-      // surface-response-traces.csv (the preflight dry run's 0-based `Patch` + 1); the
-      // origin and the longitudinal cell (offsets along the patch's AxisW) locate it.
-      std::map<int, const SurfaceResponseOperator::PatchAssignment *> assignments;
-      for (const auto &assignment : response_correction->GetPatchAssignments())
-      {
-        assignments.emplace(assignment.global_index, &assignment);
-      }
-      TableWithCSVFile patch_output(post_dir / "surface-response-patch-energy.csv");
-      patch_output.table.insert(Column::Integer("source", "source"));
-      patch_output.table.insert(Column::Integer("evaluation", "evaluation"));
-      patch_output.table.insert(Column::Integer("patch", "patch"));
-      patch_output.table.insert(Column::Integer("model", "model"));
-      patch_output.table.insert(Column::Integer("feature", "feature"));
-      patch_output.table.insert("weight", "weight");
-      patch_output.table.insert("cell_begin", "cell begin (m)");
-      patch_output.table.insert("cell_end", "cell end (m)");
-      for (const char *coordinate : {"x", "y", "z"})
-      {
-        patch_output.table.insert(fmt::format("origin_{}", coordinate),
-                                  fmt::format("origin {} (m)", coordinate));
-      }
-      patch_output.table.insert("domain_correction", "domain correction (J)");
-      for (const auto &[interface, data] : interfaces)
-      {
-        (void)data;
-        patch_output.table.insert(
-            fmt::format("interface_{}", interface),
-            fmt::format("fabricated surface energy[{}] (J)", interface));
-      }
-      auto AppendPatch = [&](int source, int evaluation,
-                             const SurfaceResponseOperator::PatchContribution &data,
-                             bool available, bool fixed_flux)
-      {
-        const auto assignment = assignments.find(data.patch);
-        MFEM_VERIFY(assignment != assignments.end(),
-                    "Per-patch response energy of an unknown patch " << data.patch + 1
-                                                                     << "!");
-        patch_output.table["source"] << source;
-        patch_output.table["evaluation"] << evaluation;
-        patch_output.table["patch"] << data.patch + 1;
-        patch_output.table["model"] << data.model;
-        patch_output.table["feature"] << data.feature;
-        patch_output.table["weight"] << data.weight;
-        patch_output.table["cell_begin"]
-            << iodata.units.Dimensionalize<VT::LENGTH>(data.cell[0]);
-        patch_output.table["cell_end"]
-            << iodata.units.Dimensionalize<VT::LENGTH>(data.cell[1]);
-        for (int d = 0; d < 3; d++)
-        {
-          patch_output.table[fmt::format("origin_{}", "xyz"[d])]
-              << iodata.units.Dimensionalize<VT::LENGTH>(assignment->second->origin[d]);
-        }
-        patch_output.table["domain_correction"]
-            << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
-                                fixed_flux ? data.domain_correction_fixed_flux
-                                           : data.domain_correction)
-                          : nan);
-        for (const auto &[interface, interface_data] : interfaces)
-        {
-          (void)interface_data;
-          const auto &energies = fixed_flux ? data.fabricated_surface_energy_fixed_flux
-                                            : data.fabricated_surface_energy;
-          const auto energy = energies.find(interface);
-          patch_output.table[fmt::format("interface_{}", interface)]
-              << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
-                                  energy != energies.end() ? energy->second : 0.0)
-                            : nan);
-        }
-      };
-      for (const auto &result : corrected_results)
-      {
-        for (const auto &contribution : result.raw_patch_contributions)
-        {
-          AppendPatch(result.source, 0, contribution, result.has_postprocessed, false);
-          AppendPatch(result.source, 1, contribution, result.has_postprocessed, true);
-        }
-        for (const auto &contribution : result.corrected_patch_contributions)
-        {
-          AppendPatch(result.source, 2, contribution, result.has_self_consistent, false);
-        }
-      }
-      patch_output.WriteFullTableTrunc();
-    }
 
     // Decision 394 F2, F-DB-a (decisions 442 / 454) and S7diag R1 (decision 758): the raw
     // within-R energy kept in the corrected interface energies by the uncovered

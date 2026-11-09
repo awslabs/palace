@@ -60,6 +60,19 @@ using test::TextCsv;
 namespace
 {
 
+// Lane fix-response-memory (decisions 1446 / 1447): the drivers' PostOperator keeps the
+// gathered per-patch records on the root only; the cases below read them on EVERY rank (the
+// replicated form of record), so they ask for it explicitly.
+SurfaceResponseOperator *ReplicatedRecords(SurfaceResponseOperator *response)
+{
+  if (response)
+  {
+    response->SetPatchRecordResidency(
+        SurfaceResponseOperator::PatchRecordResidency::REPLICATED);
+  }
+  return response;
+}
+
 // A PEC lead (attribute 9) on the plane y = 0.5 of the unit cube meshed n x n x n (h = 1
 // / n): x in [x_min, x_max] from the bottom face z = 0 (where the lead is cut by the
 // domain) to its cap at z = z_cap (0.5 unless stated). With x_max < 1 the cap ends in two
@@ -2216,7 +2229,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
   SpaceOperator space_op(iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   REQUIRE(response->GetTargetInterfaces() == std::set<int>{4});
 
@@ -2531,7 +2544,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
   SpaceOperator space_op(iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   REQUIRE(response->GetPatchCount() == electrostatic_response.GetPatchCount());
 
@@ -2807,7 +2820,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
   SpaceOperator space_op(iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   REQUIRE(response->GetPatchCount() == electrostatic_response.GetPatchCount());
 
@@ -3243,7 +3256,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
     SpaceOperator space_op(iodata, meshes);
     PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-    auto *response = post_op.GetSurfaceResponseOperator();
+    auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
     REQUIRE(response);
     CHECK(response->GetModelRawClaimPortions().portions.empty() == !patch_energy);
     mfem::FunctionCoefficient potential_coefficient(
@@ -3491,7 +3504,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
   SpaceOperator space_op(iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   Vector e_real;
   const auto field = LoopFitLeadFixture::MakeField(space_op, 0.5, e_real);
@@ -3587,7 +3600,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
   SpaceOperator space_op(iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   const int patch_count = response->GetPatchCount();
   REQUIRE(patch_count > 0);
@@ -4038,7 +4051,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
   SpaceOperator space_op(iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   REQUIRE(response->GetPatchCount() > 0);
 
@@ -4705,7 +4718,7 @@ TEST_CASE_METHOD(
   MakeOutputFolder(inside_iodata, comm);
   SpaceOperator space_op(straddling_iodata, meshes);
   PostOperator<ProblemType::EIGENMODE> post_op(straddling_iodata, space_op);
-  auto *response = post_op.GetSurfaceResponseOperator();
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
   REQUIRE(response);
   const json statistics = response->GetStatistics();
   REQUIRE(statistics["Diagnostics"].contains("SpatialClusterPriority"));
@@ -4723,7 +4736,7 @@ TEST_CASE_METHOD(
   fixture_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
   SpaceOperator fixture_space_op(fixture_iodata, fixture_meshes);
   PostOperator<ProblemType::EIGENMODE> fixture_post_op(fixture_iodata, fixture_space_op);
-  auto *fixture_response = fixture_post_op.GetSurfaceResponseOperator();
+  auto *fixture_response = ReplicatedRecords(fixture_post_op.GetSurfaceResponseOperator());
   REQUIRE(fixture_response);
   const json fixture_statistics = fixture_response->GetStatistics();
   CHECK(!fixture_statistics["Diagnostics"].contains("SpatialClusterPriority"));
@@ -4786,7 +4799,7 @@ TEST_CASE_METHOD(
   inside_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
   SpaceOperator inside_space_op(inside_iodata, inside_meshes);
   PostOperator<ProblemType::EIGENMODE> inside_post_op(inside_iodata, inside_space_op);
-  auto *inside_response = inside_post_op.GetSurfaceResponseOperator();
+  auto *inside_response = ReplicatedRecords(inside_post_op.GetSurfaceResponseOperator());
   REQUIRE(inside_response);
   const json inside_statistics = inside_response->GetStatistics();
   REQUIRE(inside_statistics["Diagnostics"].contains("SpatialClusterPriority"));

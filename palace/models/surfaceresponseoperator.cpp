@@ -28638,6 +28638,12 @@ SurfaceResponseOperator::GetWithinRVolumeEnergies(const GridFunction &E,
     }
   }
   Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), comm);
+  if (!HoldsPatchRecords())
+  {
+    // ROOT_ONLY residency (A1.3 I-15): the sum is every rank's (an Allreduce: the root's
+    // bytes are what the table reads); the per-patch result is kept on the root only.
+    return {};
+  }
   for (std::size_t b = 0; b < box_count; b++)
   {
     result[b].electric = reduction[3 * b];
@@ -35660,11 +35666,29 @@ SurfaceResponseOperator::AllgatherRecords(const std::vector<double> &local_recor
   return Mpi::AllgatherLarge(local_records, fespace.GetComm());
 }
 
+bool SurfaceResponseOperator::HoldsPatchRecords() const
+{
+  return patch_record_residency == PatchRecordResidency::REPLICATED ||
+         Mpi::Root(fespace.GetComm());
+}
+
+std::vector<double>
+SurfaceResponseOperator::GatherPatchRecords(const std::vector<double> &local_records) const
+{
+  if (patch_record_residency == PatchRecordResidency::REPLICATED)
+  {
+    return AllgatherRecords(local_records);
+  }
+  // The same rank-order concatenation on the root only (the same rounds as AllgatherLarge,
+  // Gatherv in place of Allgatherv); empty on the other ranks.
+  return Mpi::GatherLarge(local_records, 0, fespace.GetComm());
+}
+
 std::vector<SurfaceResponseOperator::PatchContribution>
 SurfaceResponseOperator::GatherPatchContributions(
     const std::vector<double> &local_records) const
 {
-  const std::vector<double> records = AllgatherRecords(local_records);
+  const std::vector<double> records = GatherPatchRecords(local_records);
   std::vector<PatchContribution> contributions;
   std::size_t offset = 0;
   while (offset < records.size())
@@ -35832,7 +35856,7 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only,
   }
 
   // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
-  const std::vector<double> records = Mpi::AllgatherLarge(local_records, fespace.GetComm());
+  const std::vector<double> records = GatherPatchRecords(local_records);
 
   std::vector<PatchTrace> traces;
   std::size_t offset = 0;
@@ -36319,7 +36343,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   if (include_patches)
   {
     result.patch_contributions = GatherPatchContributions(local_patch_records);
-    const std::vector<double> shares = AllgatherRecords(local_share_records);
+    const std::vector<double> shares = GatherPatchRecords(local_share_records);
     MFEM_VERIFY(shares.size() % 4 == 0, "Truncated per-patch loop-share record!");
     for (std::size_t offset = 0; offset < shares.size(); offset += 4)
     {
@@ -36330,7 +36354,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     std::sort(result.patch_loop_shares.begin(), result.patch_loop_shares.end(),
               [](const auto &first, const auto &second)
               { return first.patch < second.patch; });
-    const std::vector<double> loops = AllgatherRecords(local_loop_records);
+    const std::vector<double> loops = GatherPatchRecords(local_loop_records);
     MFEM_VERIFY(loops.size() % 6 == 0, "Truncated per-path loop-residual record!");
     for (std::size_t offset = 0; offset < loops.size(); offset += 6)
     {
@@ -36347,7 +36371,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
                        return std::tie(first.patch, first.kind, first.path) <
                               std::tie(second.patch, second.kind, second.path);
                      });
-    const std::vector<double> traces = AllgatherRecords(local_trace_records);
+    const std::vector<double> traces = GatherPatchRecords(local_trace_records);
     std::size_t offset = 0;
     while (offset < traces.size())
     {

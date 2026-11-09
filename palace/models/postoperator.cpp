@@ -348,6 +348,10 @@ PostOperator<solver_t>::PostOperator(
       surface_response_patch_energy_enabled = response.patch_energy;
       surface_response_op =
           std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
+      // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records of
+      // every measurement live on the root only (their consumers are the root's prints).
+      surface_response_op->SetPatchRecordResidency(
+          SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
       if (surface_response_op->IsRawFallback())
       {
         // A whole-run geometry fallback (USER decision 1000 (b) / 1001): no model / patch
@@ -3112,8 +3116,10 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
   // index of the traces file; the origin from the patch table; then the Maxwell keys and
   // the patch's max contour-loop residual (decision 920; 0 without a path record). The
   // spatial traces (real part in the electrostatic column, the imaginary part after the
-  // prefix) and the per-path loop residuals follow the same key form. Rows accumulate
-  // over the prints.
+  // prefix) and the per-path loop residuals follow the same key form. The rows of each
+  // print are appended to the files and released (TableWithCSVFile::AppendRowsAndClear;
+  // lane fix-response-memory C4: the file after print m = header + the rows of prints 1..m,
+  // byte for byte the former whole-table rewrite per print).
   using VT = Units::ValueType;
   const auto &result = *surface_response_measurement;
   std::map<int, const SurfaceResponseOperator::PatchAssignment *> assignments;
@@ -3291,7 +3297,7 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
         Append(2, result.self_consistent_confidence, contribution, false);
       }
     }
-    surface_response_patch_energy->WriteFullTableTrunc();
+    surface_response_patch_energy->AppendRowsAndClear();
   }
   if (result.has_postprocessed && !result.confidence.spatial_traces.empty())
   {
@@ -3333,7 +3339,7 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
         table["excitation"] << excitation;
       }
     }
-    surface_response_traces->WriteFullTableTrunc();
+    surface_response_traces->AppendRowsAndClear();
   }
   if (result.has_postprocessed && !result.confidence.path_loop_residuals.empty())
   {
@@ -3371,7 +3377,7 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       table["idx"] << output_index;
       table["excitation"] << excitation;
     }
-    surface_response_patch_loops->WriteFullTableTrunc();
+    surface_response_patch_loops->AppendRowsAndClear();
   }
 }
 
