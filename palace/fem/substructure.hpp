@@ -180,6 +180,36 @@ std::array<double, 6> ElementMoments(mfem::ParMesh &mesh,
 bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
                   double tol);
 
+// The message of an environment that differs from that of a saved substructuring model.
+inline constexpr const char *kEnvironmentDiffers =
+    "The environment differs from the one the saved substructuring model was condensed "
+    "from (environment mesh, materials, boundary conditions, order or problem type "
+    "changed): rerun in \"Offline\" mode to condense it again!";
+
+// Online, whether the mesh holds the region only (its environment elements those written
+// with the model in the mesh of the region, region_moments) rather than the environment of
+// the model (env_moments), by the ElementMoments of its environment elements within the
+// relative tolerance; aborts with kEnvironmentDiffers if neither. Collective.
+bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
+                    const std::array<double, 6> &env_moments,
+                    const std::array<double, 6> &region_moments, double tol);
+
+// On a mesh of the region, the interface: the DOFs t of the region side (candidate[t])
+// whose parent true DOF (parent[t], or t if parent is empty, for a space broken across
+// interior boundaries) lies on the boundary of the mesh at the point of one of the saved
+// interface DOFs (signatures of saved_width), where the environment was cut off.
+// Collective.
+std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,
+                                      const std::vector<char> &candidate,
+                                      const std::vector<int> &parent,
+                                      const std::vector<double> &saved_signatures,
+                                      int saved_width);
+
+// The k-th (0, 1 or 2) of three fixed polynomial fields, vector fields for H(curl) and
+// scalar ones for H1, as true DOFs of the space: to fingerprint operators and sources
+// independently of the partition and of the DOF numbering.
+mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k);
+
 }  // namespace palace
 
 #endif  // PALACE_FEM_SUBSTRUCTURE_HPP

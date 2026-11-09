@@ -172,50 +172,25 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
                     << model << "\" has \"Order\": " << saved.order << ", unlike this run ("
                     << iodata.solver.order << ")!");
     // The mesh holds the environment of the model, or its part in the mesh of the region.
-    const auto moments = ElementMoments(parent, sub.environment_attributes);
-    region_only = !MomentsMatch(moments, saved.env_moments, kFingerprintTol);
-    MFEM_VERIFY(!region_only ||
-                    MomentsMatch(moments, saved.region_moments, kFingerprintTol),
-                kEnvironmentDiffers);
+    region_only = RegionOnlyMesh(parent, sub.environment_attributes, saved.env_moments,
+                                 saved.region_moments, kFingerprintTol);
     if (region_only)
     {
       model_eps = saved.regularization;
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                   "Adaptive refinement with substructuring needs the full mesh, not the "
                   "mesh of the region!");
-      std::vector<char> bdr =
-          BoundaryTrueDofs(parent_fes, std::vector<int>(parent.bdr_attributes.begin(),
-                                                        parent.bdr_attributes.end()));
-      // The parent DOFs on the boundary with a version on the region only, at the points
-      // of the saved interface DOFs: those versions are interface DOFs (both sides of a
-      // two-sided film crossing Gamma).
-      auto region_side = [&](int t) { return rm[t] && !em[t] && !dir_mark[t]; };
-      std::vector<int> index(parent_fes.GetTrueVSize(), -1);
-      int nc = 0;
+      // The versions on the region side only of the DOFs on the boundary, at the points of
+      // the saved interface DOFs, are interface DOFs (both sides of a two-sided film
+      // crossing Gamma).
+      std::vector<char> region_side(nt);
       for (int t = 0; t < nt; t++)
       {
-        const int t0 = ParentTrueDof(t);
-        if (bdr[t0] && region_side(t) && index[t0] < 0)
-        {
-          index[t0] = nc++;
-        }
+        region_side[t] = rm[t] && !em[t] && !dir_mark[t];
       }
-      int off = 0;
-      MPI_Exscan(&nc, &off, 1, MPI_INT, MPI_SUM, parent_fes.GetComm());
-      off = Mpi::Root(parent_fes.GetComm()) ? 0 : off;
-      Mpi::GlobalSum(1, &nc, parent_fes.GetComm());
-      for (auto &g : index)
-      {
-        g += (g >= 0) ? off : 0;
-      }
-      const auto match =
-          MatchSignaturePoints(TrueDofSignatures(parent_fes, index, nc),
-                               SignatureWidth(parent_fes), saved.sig, saved.width);
-      for (int t = 0; t < nt; t++)
-      {
-        const int t0 = ParentTrueDof(t);
-        cut[t] = region_side(t) && (index[t0] >= 0) && match[index[t0]];
-      }
+      cut = RegionMeshInterface(parent_fes, region_side,
+                                broken ? version_parent : std::vector<int>{}, saved.sig,
+                                saved.width);
     }
   }
 

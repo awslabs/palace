@@ -366,10 +366,6 @@ struct SubstructuringSolver::Impl
   // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
   // sums over elements, which the partition changes by rounding only.
   static constexpr double kFingerprintTol = 1.0e-9;
-  static constexpr const char *kEnvironmentDiffers =
-      "The environment differs from the one the saved substructuring model was condensed "
-      "from (environment mesh, materials, boundary conditions, order or problem type "
-      "changed): rerun in \"Offline\" mode to condense it again!";
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior

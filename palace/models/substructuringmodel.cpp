@@ -151,35 +151,7 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
 
 mfem::Vector SubstructuringSolver::Impl::FingerprintField(int k) const
 {
-  mfem::ParGridFunction gf(const_cast<mfem::ParFiniteElementSpace *>(&parent_fes));
-  if (magnetostatic)
-  {
-    mfem::VectorFunctionCoefficient c(
-        3,
-        [k](const mfem::Vector &x, mfem::Vector &v)
-        {
-          const double X = x(0), Y = x(1), Z = x(2);
-          const double f[3][3] = {{Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
-          v.SetSize(3);
-          for (int d = 0; d < 3; d++)
-          {
-            v(d) = f[k][d];
-          }
-        });
-    gf.ProjectCoefficient(c);
-  }
-  else
-  {
-    mfem::FunctionCoefficient c(
-        [k](const mfem::Vector &x)
-        {
-          const double X = x(0), Y = x(1), Z = x.Size() > 2 ? x(2) : 0.0;
-          return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
-        });
-    gf.ProjectCoefficient(c);
-  }
-  mfem::Vector r(parent_fes.GetTrueVSize());
-  gf.GetTrueDofs(r);
+  mfem::Vector r = palace::FingerprintField(parent_fes, k);
   if (!broken)
   {
     return r;
