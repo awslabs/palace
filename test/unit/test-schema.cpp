@@ -1002,6 +1002,49 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(!ValidateConfig(port, "LumpedPort").empty());
   }
 
+  SECTION("Excitation weight - LumpedPort")
+  {
+    json port = {{"Index", 1},
+                 {"Attributes", {1}},
+                 {"Excitation", true},
+                 {"ExcitationAmplitude", 2.5},
+                 {"ExcitationPhase", -45.0}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // The same keys on a multielement port.
+    json elements = {{"Index", 2},
+                     {"Elements",
+                      json::array({json{{"Attributes", {1}}, {"Direction", "+X"}}})},
+                     {"Excitation", 2},
+                     {"ExcitationAmplitude", 0.5},
+                     {"ExcitationPhase", 720}};
+    err = ValidateConfig(elements, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    json zero_amplitude = port;
+    zero_amplitude["ExcitationAmplitude"] = 0.0;
+    CHECK(!ValidateConfig(zero_amplitude, "LumpedPort").empty());
+
+    json negative_amplitude = port;
+    negative_amplitude["ExcitationAmplitude"] = -1.0;
+    CHECK(!ValidateConfig(negative_amplitude, "LumpedPort").empty());
+
+    json string_phase = port;
+    string_phase["ExcitationPhase"] = "30";
+    CHECK(!ValidateConfig(string_phase, "LumpedPort").empty());
+  }
+
+  SECTION("Excitation weight is not available on WavePort")
+  {
+    json port = {{"Index", 1}, {"Attributes", {1}}, {"ExcitationAmplitude", 2.0}};
+    CHECK(!ValidateConfig(port, "WavePort").empty());
+    json phase = {{"Index", 1}, {"Attributes", {1}}, {"ExcitationPhase", 30.0}};
+    CHECK(!ValidateConfig(phase, "WavePort").empty());
+  }
+
   SECTION("Log exclusiveMinimum - Driven Samples")
   {
     json driven = {

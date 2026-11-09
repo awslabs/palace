@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <string>
@@ -801,6 +802,166 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_data.waveport.at(2).complex_coarse_solve.value());
     REQUIRE(boundary_data.waveport.at(3).complex_coarse_solve.has_value());
     CHECK_FALSE(boundary_data.waveport.at(3).complex_coarse_solve.value());
+  }
+}
+
+TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+
+  auto MakePort = [](const json &extra)
+  {
+    json port = {{"Index", 3},
+                 {"Attributes", {5}},
+                 {"R", 50.0},
+                 {"Direction", "+Y"},
+                 {"Excitation", true}};
+    port.update(extra);
+    return port;
+  };
+
+  SECTION("Defaults are unit amplitude and zero phase")
+  {
+    config::LumpedPortData excited(MakePort(json::object()));
+    CHECK(excited.excitation_amplitude == 1.0);
+    CHECK(excited.excitation_phase == 0.0);
+
+    // A port without excitation also has the default weight.
+    json passive = MakePort(json::object());
+    passive.erase("Excitation");
+    config::LumpedPortData unexcited(passive);
+    CHECK(unexcited.excitation == 0);
+    CHECK(unexcited.excitation_amplitude == 1.0);
+    CHECK(unexcited.excitation_phase == 0.0);
+  }
+
+  SECTION("Parsed values")
+  {
+    config::LumpedPortData port(
+        MakePort({{"ExcitationAmplitude", 2.5}, {"ExcitationPhase", -45.0}}));
+    CHECK(port.excitation != 0);
+    CHECK(port.excitation_amplitude == 2.5);
+    CHECK(port.excitation_phase == -45.0);
+
+    // Integer values and a multielement port with an integer excitation index.
+    json elements = {
+        {"Index", 4},
+        {"R", 75.0},
+        {"Excitation", 2},
+        {"ExcitationAmplitude", 3},
+        {"ExcitationPhase", 90},
+        {"Elements",
+         {{{"Attributes", {2}}, {"Direction", "+X"}},
+          {{"Attributes", {9}}, {"Direction", "+Y"}}}}};
+    config::LumpedPortData multi(elements);
+    CHECK(multi.excitation == 2);
+    CHECK(multi.excitation_amplitude == 3.0);
+    CHECK(multi.excitation_phase == 90.0);
+  }
+
+  SECTION("Amplitude must be positive and finite")
+  {
+    CHECK_THROWS_WITH(config::LumpedPortData(MakePort({{"ExcitationAmplitude", 0.0}})),
+                      ContainsSubstring("ExcitationAmplitude"));
+    CHECK_THROWS(config::LumpedPortData(MakePort({{"ExcitationAmplitude", -1.0}})));
+    CHECK_THROWS(config::LumpedPortData(MakePort(
+        {{"ExcitationAmplitude", std::numeric_limits<double>::infinity()}})));
+    CHECK_THROWS(config::LumpedPortData(
+        MakePort({{"ExcitationAmplitude", std::numeric_limits<double>::quiet_NaN()}})));
+  }
+
+  SECTION("Phase must be finite")
+  {
+    CHECK_THROWS_WITH(config::LumpedPortData(MakePort(
+                          {{"ExcitationPhase", std::numeric_limits<double>::infinity()}})),
+                      ContainsSubstring("ExcitationPhase"));
+  }
+
+  SECTION("Weight keys require an excitation")
+  {
+    for (const auto &key : {"ExcitationAmplitude", "ExcitationPhase"})
+    {
+      CAPTURE(key);
+
+      // No "Excitation" key.
+      json missing = MakePort({{key, 1.0}});
+      missing.erase("Excitation");
+      CHECK_THROWS_WITH(config::LumpedPortData(missing),
+                        ContainsSubstring("require a nonzero \"Excitation\""));
+
+      // Explicitly not excited, as a boolean and as an index.
+      CHECK_THROWS(config::LumpedPortData(MakePort({{key, 1.0}, {"Excitation", false}})));
+      CHECK_THROWS(config::LumpedPortData(MakePort({{key, 1.0}, {"Excitation", 0}})));
+    }
+  }
+
+  SECTION("Transient simulations reject a nonzero phase")
+  {
+    auto MakeConfig = [&](const json &extra)
+    {
+      return json{
+          {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries", {{"LumpedPort", json::array({MakePort(extra)})}}},
+          {"Solver",
+           {{"Transient",
+             {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+    };
+
+    CHECK_NOTHROW(IoData(MakeConfig(json::object()), false));
+    CHECK_THROWS_WITH(IoData(MakeConfig({{"ExcitationPhase", 30.0}}), false),
+                      ContainsSubstring("ExcitationPhase"));
+    CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", 180.0}}), false));
+    CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", -90.0}}), false));
+
+    // A multiple of 360 degrees is a zero phase, and the amplitude is unrestricted.
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", 360.0}}), false));
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationAmplitude", 2.0}}), false));
+
+    // Driven simulations accept any phase.
+    json driven = MakeConfig({{"ExcitationPhase", 30.0}});
+    driven["Problem"]["Type"] = "Driven";
+    driven["Solver"] = {
+        {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}};
+    CHECK_NOTHROW(IoData(driven, false));
+  }
+
+  SECTION("Concretized configuration keeps the weight and re-parses")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"LumpedPort",
+           json::array(
+               {MakePort({{"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}}),
+                json{{"Index", 4},
+                     {"Attributes", {6}},
+                     {"R", 50.0},
+                     {"Direction", "-Y"}}})}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    // The weight is emitted for the excited port only, because the parser rejects it on a
+    // port without an excitation.
+    const auto &j_ports = config["Boundaries"]["LumpedPort"];
+    CHECK(j_ports[0]["ExcitationAmplitude"].get<double>() == 2.0);
+    CHECK(j_ports[0]["ExcitationPhase"].get<double>() == 30.0);
+    CHECK_FALSE(j_ports[1].contains("ExcitationAmplitude"));
+    CHECK_FALSE(j_ports[1].contains("ExcitationPhase"));
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.boundaries.lumpedport.at(3).excitation_amplitude == 2.0);
+    CHECK(iodata2.boundaries.lumpedport.at(3).excitation_phase == 30.0);
+    CHECK(iodata2.boundaries.lumpedport.at(4).excitation_amplitude == 1.0);
   }
 }
 

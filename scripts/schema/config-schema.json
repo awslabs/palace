@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-3",
+  "$id": "urn:palace:schema:4-2-4",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1142,6 +1142,12 @@
             }
           ]
         },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
+        },
         "Active": {
           "type": "boolean",
           "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
@@ -1233,6 +1239,12 @@
               "$ref": "#/$defs/ExcitationIndex"
             }
           ]
+        },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
         },
         "Active": {
           "type": "boolean",
@@ -1943,6 +1955,17 @@
     "ExcitationIndex": {
       "type": "integer",
       "minimum": 0
+    },
+    "ExcitationAmplitude": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "default": 1.0,
+      "description": "Amplitude ``A`` of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, so the incident power is scaled by ``A^2``. Dimensionless and frequency independent. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
+    },
+    "ExcitationPhase": {
+      "type": "number",
+      "default": 0.0,
+      "description": "Phase ``\u03c6`` in degrees of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, using the ``e^{i\u03c9t}`` time convention. A phase of 180 is the same as reversing `\"Direction\"` of the port. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. Must be 0 for transient simulations. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
     },
     "CoordinateSystem": {
       "type": "string",
