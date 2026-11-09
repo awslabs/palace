@@ -129,6 +129,13 @@ struct HybridBulkBoundaryOperator
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
 // as an error indicator and for selecting the next frequency sample points in PROM
 // construction. Each excitation gets a separate MRI, so sample frequencies are not shared.
+// The N points of the band of the samples z where the barycentric denominator
+// Q(z) = sum_i q_i / (z - z_i) of the weights q is least in magnitude, on a fine grid:
+// where the rational interpolant with these samples and weights is estimated to err most.
+std::vector<double> MinimizeBarycentricDenominator(const std::vector<double> &z,
+                                                   const std::complex<double> *q,
+                                                   std::size_t N);
+
 class MinimalRationalInterpolation
 {
 private:

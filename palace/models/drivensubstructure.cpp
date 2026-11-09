@@ -15,6 +15,7 @@
 #include "fem/substructure.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 
@@ -1300,7 +1301,10 @@ void BarycentricInterpolant::AddSample(double omega,
 {
   // Orthonormalize x against the previous samples (classical Gram-Schmidt, twice), for the
   // factor R of the samples. The snapshots {x_j, iω_j x_j} are [Q 0; 0 Q] [R; R iΩ], so
-  // their MRI weights are the right singular vector of [R; R iΩ] of least singular value.
+  // their MRI weights are the right singular vector of [R; R iΩ] of least singular value,
+  // also when it is rank deficient: weights that annihilate it reproduce the samples'
+  // rational function (the adaptive driven solver's indicator, which only places samples,
+  // takes the least singular value above its tolerance instead).
   const std::size_t m = z.size(), n = x.size();
   MFEM_VERIFY(m == 0 || Q[0].size() == n, "Samples of different sizes!");
   std::vector<std::complex<double>> v(x), r(m + 1, 0.0), d(m);
@@ -1467,25 +1471,7 @@ bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, 
 
 double BarycentricInterpolant::FindMaxError() const
 {
-  MFEM_VERIFY(z.size() >= 2, "The next sample needs two samples to bound the band!");
-  const auto [lo, hi] = std::ranges::minmax(z);
-  constexpr int n = 1000000;
-  double best = lo, dmin = std::numeric_limits<double>::infinity();
-  for (int i = 1; i < n; i++)
-  {
-    const double omega = lo + (hi - lo) * i / n;
-    std::complex<double> d = 0.0;
-    for (std::size_t j = 0; j < z.size(); j++)
-    {
-      d += w[j] / (omega - z[j]);
-    }
-    if (std::abs(d) < dmin)
-    {
-      dmin = std::abs(d);
-      best = omega;
-    }
-  }
-  return best;
+  return MinimizeBarycentricDenominator(z, w.data(), 1)[0];
 }
 
 std::array<std::size_t, 4> DrivenSubstructureModel::PartSizes() const
