@@ -31,6 +31,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
     modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
+    vector (`"FloquetWaveVector"`), as it already did Floquet ports, instead of synthesizing
+    L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
+    matrices Hermitian rather than complex symmetric. Such configurations must be updated.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Performance Improvements
 
@@ -169,6 +174,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     a strongly lossy coplanar-strip line at 1 GHz, and the power normalization of lossy
     modes wrong. Results are unchanged for lossless modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
+    with Floquet periodic boundary conditions (`"FloquetWaveVector"`). Previously the
+    absorbing boundary reduced to first order for an obliquely incident TE plane wave.
+    For TM plane waves, the second-order condition is still the first-order one.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
+    which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
+    the stiffness matrix as if it were symmetric.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
+
+#### Documentation
+
+  - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
+    listed frequency-dependent boundary conditions it supports as unsupported, and of the
+    absorbing boundary `"Order"`, and documented the limitations of the second-order
+    absorbing boundary condition: it only improves on the first-order one for TE fields, and
+    it is not passive for tangential wavenumbers above √2 times the wavenumber in the
+    material. SchemaVer 4-2-1
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Build system
 
