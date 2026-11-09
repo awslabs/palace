@@ -107,42 +107,18 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   if (saved)
   {
     // The mesh holds the environment of the model, or its part in the mesh of the region.
-    const auto moments = EnvironmentMoments();
-    region_only = !MomentsMatch(moments, saved->env_moments, kEnvironmentTol);
-    MFEM_VERIFY(
-        !region_only || MomentsMatch(moments, saved->region_moments, kEnvironmentTol),
-        "The environment differs from the one the saved substructuring model was "
-        "condensed from (environment mesh, materials, boundary conditions, order or "
-        "problem type changed): rerun in \"Offline\" mode to condense it again!");
+    region_only = RegionOnlyMesh(*fes.GetParMesh(), env.attrs, saved->env_moments,
+                                 saved->region_moments, kEnvironmentTol);
   }
   if (region_only)
   {
-    const auto bdr = BoundaryTrueDofs(
-        std::vector<int>(mesh.bdr_attributes.begin(), mesh.bdr_attributes.end()));
-    std::vector<int> index(nt, -1);
-    int nc = 0;
+    std::vector<char> region_side(nt);
     for (int i = 0; i < nt; i++)
     {
-      if (bdr[i] && rm[i] && !em[i] && !dbc[i])
-      {
-        index[i] = nc++;
-      }
+      region_side[i] = rm[i] && !em[i] && !dbc[i];
     }
-    int off = 0;
-    MPI_Exscan(&nc, &off, 1, MPI_INT, MPI_SUM, comm);
-    off = Mpi::Root(comm) ? 0 : off;
-    Mpi::GlobalSum(1, &nc, comm);
-    for (auto &g : index)
-    {
-      g += (g >= 0) ? off : 0;
-    }
-    const auto match =
-        MatchSignaturePoints(TrueDofSignatures(fes, index, nc), SignatureWidth(fes),
-                             saved->signatures, saved->sig_w);
-    for (int i = 0; i < nt; i++)
-    {
-      cut[i] = (index[i] >= 0) && match[index[i]];
-    }
+    cut = RegionMeshInterface(const_cast<mfem::ParFiniteElementSpace &>(fes), region_side,
+                              {}, saved->signatures, saved->sig_w);
   }
   is_env_int.assign(nt, 0);
   is_gamma.assign(nt, 0);
@@ -1118,39 +1094,11 @@ DrivenSubstructure::EnvironmentMoments(const std::vector<char> &mark) const
       env.attrs, mark);
 }
 
-namespace
-{
-
-// Fixed polynomial fields of the fingerprints (true DOFs).
-Vector ProjectFingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
-{
-  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
-  mfem::ParGridFunction gf(&fes);
-  mfem::VectorFunctionCoefficient c(
-      3,
-      [k](const mfem::Vector &x, mfem::Vector &v)
-      {
-        const double X = x(0), Y = x(1), Z = x(2);
-        const double f[3][3] = {{Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
-        v.SetSize(3);
-        for (int d = 0; d < 3; d++)
-        {
-          v(d) = f[k][d];
-        }
-      });
-  gf.ProjectCoefficient(c);
-  Vector r(fes.GetTrueVSize());
-  gf.GetTrueDofs(r);
-  return r;
-}
-
-}  // namespace
-
 const Vector &DrivenSubstructure::FingerprintField(int k) const
 {
   if (fp_fields[k].Size() == 0)
   {
-    fp_fields[k] = ProjectFingerprintField(space_op.GetNDSpace().Get(), k);
+    fp_fields[k] = palace::FingerprintField(space_op.GetNDSpace().Get(), k);
   }
   return fp_fields[k];
 }

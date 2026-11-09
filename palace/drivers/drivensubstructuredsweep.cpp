@@ -613,10 +613,7 @@ void DrivenSubstructuredSweep::OpenModel()
   {
     MFEM_VERIFY(DrivenSubstructureModel::SameEnvironment(
                     ds->EnvironmentFingerprint(model.omega[0]), model.env_fp),
-                "The environment differs from the one the saved substructuring model "
-                "was condensed from (environment mesh, materials, boundary conditions, "
-                "order or problem type changed): rerun in \"Offline\" mode to "
-                "condense it again!");
+                kEnvironmentDiffers);
   }
   MFEM_VERIFY(env_ports == model.ports,
               "The environment's lumped ports differ from those of the saved "
