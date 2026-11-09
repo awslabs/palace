@@ -89,7 +89,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [mfem/mfem#5732](https://github.com/mfem/mfem/pull/5732) frees the factors on all the
     process layers. ParMETIS ordering, which SuperLU_DIST does not support with a 3D process
     grid and with which it hung, now falls back to METIS with a warning.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1167](https://github.com/awslabs/palace/pull/1167).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
