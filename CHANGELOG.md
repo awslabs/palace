@@ -39,6 +39,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
+    the latency of the distributed triangular solves of the solve phase for a few
+    right-hand sides, such as the real and imaginary parts of a complex vector. This
+    speeds up STRUMPACK as the coarse solver at high process counts. Results are
+    unchanged. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
