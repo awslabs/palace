@@ -82,7 +82,8 @@ private:
 struct DrivenSubstructureModel
 {
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
-  int version = 5, nG = 0, sig_w = 0;
+  static constexpr int kPortData = 7;  // parameters per port (see port_data)
+  int version = 6, nG = 0, sig_w = 0;
   double length_scale = 0.0;  // model.Lc of the offline run (0: not saved, version < 3)
   // ElementMoments of the environment and of its elements in the mesh of the region (zero
   // before version 5).
@@ -92,7 +93,11 @@ struct DrivenSubstructureModel
   std::vector<int> excitations;    // excitations with environment sources
   std::vector<double> exc_fp;      // their source fingerprints (kSourceFp each)
   std::vector<int> ports;  // environment lumped ports (index) and wave ports (-index)
-  std::vector<int> region_bdr_attributes;     // see BoundaryAttributesInRegion (version 4)
+  std::vector<int> region_bdr_attributes;  // see BoundaryAttributesInRegion (version 4)
+  // The parameters of the ports that enter S_E (version 6), kPortData per port: R, L, C,
+  // Rs, Ls, Cs and the damping flag of a lumped port, the mode, offset and activity of a
+  // wave port (then zeros).
+  std::vector<double> port_data;
   std::vector<double> omega;                  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   int capacity = 0;  // records the header has room for (at least omega.size())

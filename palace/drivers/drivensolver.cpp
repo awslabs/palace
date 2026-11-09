@@ -125,6 +125,30 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
   return env_ports;
 }
 
+// The parameters of the environment's ports that enter S_E (see
+// DrivenSubstructureModel::port_data).
+std::vector<double> EnvironmentPortData(const IoData &iodata,
+                                        const std::vector<int> &env_ports)
+{
+  std::vector<double> data;
+  for (int p : env_ports)
+  {
+    if (p > 0)
+    {
+      const auto &lp = iodata.boundaries.lumpedport.at(p);
+      data.insert(data.end(),
+                  {lp.R, lp.L, lp.C, lp.Rs, lp.Ls, lp.Cs, lp.active ? 1.0 : 0.0});
+    }
+    else
+    {
+      const auto &wp = iodata.boundaries.waveport.at(-p);
+      data.insert(data.end(), {static_cast<double>(wp.mode_idx), wp.d_offset,
+                               wp.active ? 1.0 : 0.0, 0.0, 0.0, 0.0, 0.0});
+    }
+  }
+  return data;
+}
+
 // The functional of a wave port's overlap with its mode at ω as a true-DOF vector l (the
 // overlap is l^T E): -conj(s), with s the port's n×H mode vector.
 ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double omega)
@@ -473,6 +497,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
       }
     }
     model.ports = env_ports;
+    model.port_data = EnvironmentPortData(iodata, env_ports);
     model.region_bdr_attributes =
         BoundaryAttributesInRegion(space_op.GetMesh().Get(), sub.region_attributes);
     model.length_scale = iodata.model.Lc;
@@ -582,6 +607,11 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     MFEM_VERIFY(env_ports == model.ports,
                 "The environment's lumped ports differ from those of the saved "
                 "substructuring model!");
+    MFEM_VERIFY(
+        model.version < 6 || EnvironmentPortData(iodata, env_ports) == model.port_data,
+        "The parameters of the environment's ports (the R, L and C of a lumped port, "
+        "the mode of a wave port) differ from those of the saved substructuring "
+        "model!");
     int nrec = root ? model.NumRecords(model_path) : 0;
     Mpi::Broadcast(1, &nrec, 0, comm);
     MFEM_VERIFY(nrec >= static_cast<int>(model.omega.size()),

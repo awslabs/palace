@@ -2913,6 +2913,7 @@ TEST_CASE("A saved driven model continues from its complete records",
   m.excitations = {1};
   m.exc_fp = {1.0, 0.0, 0.5, 0.0, 0.25, 0.0, -0.125};
   m.ports = {1};
+  m.port_data = {50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
   m.region_bdr_attributes = {5, 7};
   m.omega = {1.0, 2.0, 3.0};
   m.capacity = 3;
@@ -2940,6 +2941,7 @@ TEST_CASE("A saved driven model continues from its complete records",
   Model saved;
   saved.ReadHeader(path, Mpi::World());
   CHECK(saved.region_bdr_attributes == m.region_bdr_attributes);
+  CHECK(saved.port_data == m.port_data);
   CHECK(m.SameHeader(saved, 1.0e-10));
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
@@ -2948,10 +2950,13 @@ TEST_CASE("A saved driven model continues from its complete records",
   CHECK(m.NumRecords(path) == 2);
   CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
 
-  // The model of another sweep does not continue: other frequencies, interface, boundaries
-  // or sources (beyond their tolerance).
+  // The model of another sweep does not continue: other frequencies, interface, boundaries,
+  // ports or sources (beyond their tolerance).
   auto other = m;
   other.region_bdr_attributes = {5};
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other = m;
+  other.port_data[0] = 60.0;
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
   other = m;
   other.omega[2] = 3.5;
@@ -3040,6 +3045,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   RunDrivenSheetSquare(temp_dir, "Offline");
   CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online", current),
                     ContainsSubstring("has sources on the substructuring interface"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring checks the environment's ports against the model",
+                 "[substructure][Serial][Parallel]")
+{
+  // On the mesh of the region, which holds no environment to fingerprint, an environment
+  // port whose resistance differs from the model's is rejected (its S_E is the model's).
+  RunDrivenSheetSquare(temp_dir, "Offline");
+  const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
+  auto on_region = [&](json &config) { config["Model"]["Mesh"] = region_mesh; };
+  RunDrivenSheetSquare(temp_dir, "Online", on_region);
+  using Catch::Matchers::ContainsSubstring;
+  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online",
+                                         [&](json &config)
+                                         {
+                                           on_region(config);
+                                           config["Boundaries"]["LumpedPort"][1]["R"] =
+                                               60.0;
+                                         }),
+                    ContainsSubstring("The parameters of the environment's ports"));
 }
 TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
           "[substructure][Serial][Parallel]")
