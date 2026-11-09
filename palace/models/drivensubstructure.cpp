@@ -20,9 +20,8 @@
 
 extern "C"
 {
-  void zsytrf_(const char *, const int *, std::complex<double> *, const int *, int *,
-               std::complex<double> *, const int *, int *);
-  void zsytrs_(const char *, const int *, const int *, const std::complex<double> *,
+  void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
+  void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
                const int *, const int *, std::complex<double> *, const int *, int *);
   void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
                const double *, const double *, const int *, const int *, const double *,
@@ -669,7 +668,8 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
 
 void DrivenSubstructure::FactorInterface()
 {
-  // The interface system S_R + S_E, factored on rank 0 (complex symmetric).
+  // The interface system S_R + S_E, factored on rank 0 (LU: the symmetric factorization of
+  // common LAPACKs is slower, despite its half of the operations).
 #if defined(MFEM_USE_MUMPS)
   if (Mpi::Root(space_op.GetComm()))
   {
@@ -680,12 +680,8 @@ void DrivenSubstructure::FactorInterface()
       T[k] += S[k];
     }
     T_piv.resize(nG);
-    int info = 0, lwork = -1;
-    std::complex<double> wq;
-    zsytrf_("L", &nG, T.data(), &nG, T_piv.data(), &wq, &lwork, &info);
-    lwork = std::max(1, static_cast<int>(wq.real()));
-    std::vector<std::complex<double>> work(lwork);
-    zsytrf_("L", &nG, T.data(), &nG, T_piv.data(), work.data(), &lwork, &info);
+    int info = 0;
+    zgetrf_(&nG, &nG, T.data(), &nG, T_piv.data(), &info);
     MFEM_VERIFY(info == 0, "Factorization of the interface system failed: info = " << info);
   }
 #endif
@@ -763,7 +759,7 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
     if (nG > 0)
     {
       int info = 0;
-      zsytrs_("L", &nG, &n, T.data(), &nG, T_piv.data(), u_last.data(), &nG, &info);
+      zgetrs_("N", &nG, &n, T.data(), &nG, T_piv.data(), u_last.data(), &nG, &info);
       MFEM_VERIFY(info == 0, "Solve of the interface system failed: info = " << info);
     }
   }
@@ -991,7 +987,7 @@ void DrivenSubstructure::SolveReduced(double omega,
   Mpi::GlobalSum(static_cast<int>(loc.size()), loc.data(), comm);
   Mpi::GlobalSum(static_cast<int>(b.size()), b.data(), comm);
 
-  // The reduced system with the environment's terms, on rank 0 (complex symmetric).
+  // The reduced system with the environment's terms, on rank 0.
   if (Mpi::Root(comm))
   {
     for (std::size_t q = 0; q < A.size(); q++)
@@ -1003,14 +999,10 @@ void DrivenSubstructure::SolveReduced(double omega,
       b[q] += b_env[q];
     }
     std::vector<int> piv(r);
-    int info = 0, lwork = -1;
-    std::complex<double> wq;
-    zsytrf_("L", &r, A.data(), &r, piv.data(), &wq, &lwork, &info);
-    lwork = std::max(1, static_cast<int>(wq.real()));
-    std::vector<std::complex<double>> work(lwork);
-    zsytrf_("L", &r, A.data(), &r, piv.data(), work.data(), &lwork, &info);
+    int info = 0;
+    zgetrf_(&r, &r, A.data(), &r, piv.data(), &info);
     MFEM_VERIFY(info == 0, "Factorization of the reduced system failed: info = " << info);
-    zsytrs_("L", &r, &n, A.data(), &r, piv.data(), b.data(), &r, &info);
+    zgetrs_("N", &r, &n, A.data(), &r, piv.data(), b.data(), &r, &info);
     MFEM_VERIFY(info == 0, "Solve of the reduced system failed: info = " << info);
   }
   Mpi::Broadcast(static_cast<int>(b.size()), b.data(), 0, comm);
