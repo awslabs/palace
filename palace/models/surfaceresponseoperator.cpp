@@ -27093,18 +27093,37 @@ void AppendExcludedPatchPortion(ExcludedPatchPortions &result, std::size_t patch
            (Norm(Subtract(a.p0, portion.p1)) <= tolerance &&
             Norm(Subtract(a.p1, portion.p0)) <= tolerance);
   };
-  for (std::size_t i = 0; i < result.portions.size(); i++)
+  // The feature index caught up to the portions appended since the last call (C2; the
+  // same candidates in the same insertion order as a scan over every portion); rebuilt
+  // from the start if the list shrank.
+  if (result.indexed_portions > result.portions.size())
   {
-    if (result.portions[i].feature == portion.feature && SameInterval(result.portions[i]))
+    result.feature_portions.clear();
+    result.indexed_portions = 0;
+  }
+  for (; result.indexed_portions < result.portions.size(); result.indexed_portions++)
+  {
+    result.feature_portions[result.portions[result.indexed_portions].feature].push_back(
+        result.indexed_portions);
+  }
+  const auto same_feature = result.feature_portions.find(portion.feature);
+  if (same_feature != result.feature_portions.end())
+  {
+    for (const std::size_t i : same_feature->second)
     {
-      // A co-located first-order split patch (isolated-edge + curvature blend) of the
-      // same cell: one interval, counted once.
-      result.patches[i].push_back(patch_idx);
-      result.duplicate_patches++;
-      return;
+      if (SameInterval(result.portions[i]))
+      {
+        // A co-located first-order split patch (isolated-edge + curvature blend) of the
+        // same cell: one interval, counted once.
+        result.patches[i].push_back(patch_idx);
+        result.duplicate_patches++;
+        return;
+      }
     }
   }
+  result.feature_portions[portion.feature].push_back(result.portions.size());
   result.portions.push_back(portion);
+  result.indexed_portions = result.portions.size();
   result.patches.push_back({patch_idx});
   result.translational.push_back(translational);
   result.length += length;
@@ -28915,6 +28934,20 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     bool setup_timing)
 {
   auto &response_mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
+  // Placement sub-stamps (lane fix-response-memory, DESIGN s2.6 / C2: the attribution of
+  // the replicated classification phase): printed only with PALACE_RESPONSE_SETUP_TIMING
+  // set, so the default log is byte-identical.
+  const auto placement_start = std::chrono::steady_clock::now();
+  auto PlacementStamp = [&](const char *phase)
+  {
+    if (setup_timing)
+    {
+      Mpi::Print(
+          fespace.GetComm(), "  placement phase: {} at {:.3f} s\n", phase,
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - placement_start)
+              .count());
+    }
+  };
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the placement passes record into
   // the operator's ledger (the members set by the constructor before this call).
   GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
@@ -29406,6 +29439,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
               DomainBoundaryContainmentCache{containment_signature, exclusions};
         }
       }
+      PlacementStamp("domain-boundary containment test");
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);
@@ -29466,6 +29500,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
+      PlacementStamp("domain-boundary portions");
       // S7diag R1 (decision 758): the raw claim of every applied patch the
       // conductor-consistency gate can probe, by the same rule, kept for the gate (which
       // runs per excitation, when `placed_patches` is gone) on every rank. R0-a (idfix
@@ -29491,6 +29526,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                  uncovered_spatial_support_clipping,
                                  conductor_consistency_claim_tolerance);
       }
+      PlacementStamp("conductor-consistency claims");
       // OI-MX-LOOPGATE (decision 955): on the Maxwell path every applied patch's raw claim
       // by the same rule, keyed by the placed index on every rank, for the circulating
       // remainder's raw energy (GetLoopRemainderPortions). The electrostatic path has no
@@ -29509,6 +29545,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                    uncovered_spatial_support_clipping,
                                    conductor_consistency_claim_tolerance);
         }
+        PlacementStamp("Maxwell patch raw claims");
       }
       // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
       // patch's raw claim by model set, for the per-model raw energy partition of
@@ -29527,6 +29564,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           model_raw_claim_portions.portions.push_back(portion);
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
+        PlacementStamp("model raw claim portions (PatchEnergy)");
       }
       if (!config.mirror_band.empty())
       {
@@ -31581,9 +31619,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // DomainBoundary exclusions (their raw claims kept, F-DB-a) and the uncovered-portion
   // record (decision 394 F2; clipped by the support boxes, decision 399 MAJOR-1). The
   // applied patches are the placed ones it does not own, keyed by their placed index.
-  const auto placement =
-      ApplyPlacementOwnership(config, model_indices, basis_points, coordinate_scale,
-                              dimension, cached_geometry, false);
+  // The placement sub-stamps under PALACE_RESPONSE_SETUP_TIMING (lane fix-response-memory
+  // C2; the electrostatic constructor's rule): the default log is byte-identical.
+  const auto placement = ApplyPlacementOwnership(
+      config, model_indices, basis_points, coordinate_scale, dimension, cached_geometry,
+      std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)

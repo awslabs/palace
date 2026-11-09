@@ -46,6 +46,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency-r0a.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-excludedpatchportions-index.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geometryfallback.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigensolver.cpp

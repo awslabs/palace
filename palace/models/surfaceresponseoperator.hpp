@@ -86,6 +86,13 @@ struct ExcludedPatchPortions
   int geometric_cells = 0;    // translational own-edge intervals, split patches once
   int duplicate_patches = 0;  // excluded patches folded into an existing interval
   double length = 0.0;        // mesh units, over all portions
+  // Lane fix-response-memory (decision 1446, C2 / DESIGN s2.6 I-9): the portions of each
+  // feature in insertion order, so that AppendExcludedPatchPortion's co-located-interval
+  // scan visits the same candidates in the same order as the former scan over EVERY
+  // portion (the same FIRST match) without the O(portions) pass per append. Caught up
+  // lazily to `portions.size()` at every append, so portions pushed directly stay found.
+  std::unordered_map<int, std::vector<std::size_t>> feature_portions;
+  std::size_t indexed_portions = 0;
 };
 
 // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): a Maxwell contour or
