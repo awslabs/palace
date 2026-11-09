@@ -1068,6 +1068,20 @@ void PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
   port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
   port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
 
+  // The incident voltages and currents are written as real and imaginary parts when any
+  // excited lumped port has a complex excitation weight, decided once for all excitations
+  // so that the columns of every excitation have the same layout. Otherwise the columns
+  // are unchanged from the unweighted case.
+  complex_incident_port_VI = false;
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
+  {
+    for (const auto &[idx, data] : lumped_port_op)
+    {
+      complex_incident_port_VI =
+          complex_incident_port_VI || data.HasComplexExcitationWeight();
+    }
+  }
+
   Table tV;  // Define table locally first due to potential reload.
   Table tI;
 
@@ -1087,10 +1101,24 @@ void PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
       auto ex_spec = fem_op.GetPortExcitations().excitations.at(ex_idx);
       for (const auto &idx : ex_spec.lumped_port)
       {
-        tV.insert(fmt::format("inc{}_{}", idx, ex_idx),
-                  fmt::format("V_inc[{}]{} (V)", idx, ex_label), ex_idx);
-        tI.insert(fmt::format("inc{}_{}", idx, ex_idx),
-                  fmt::format("I_inc[{}]{} (A)", idx, ex_label), ex_idx);
+        if (complex_incident_port_VI)
+        {
+          tV.insert(fmt::format("reinc{}_{}", idx, ex_idx),
+                    fmt::format("Re{{V_inc[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tV.insert(fmt::format("iminc{}_{}", idx, ex_idx),
+                    fmt::format("Im{{V_inc[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tI.insert(fmt::format("reinc{}_{}", idx, ex_idx),
+                    fmt::format("Re{{I_inc[{}]{}}} (A)", idx, ex_label), ex_idx);
+          tI.insert(fmt::format("iminc{}_{}", idx, ex_idx),
+                    fmt::format("Im{{I_inc[{}]{}}} (A)", idx, ex_label), ex_idx);
+        }
+        else
+        {
+          tV.insert(fmt::format("inc{}_{}", idx, ex_idx),
+                    fmt::format("V_inc[{}]{} (V)", idx, ex_label), ex_idx);
+          tI.insert(fmt::format("inc{}_{}", idx, ex_idx),
+                    fmt::format("I_inc[{}]{} (A)", idx, ex_label), ex_idx);
+        }
       }
     }
     for (const auto &[idx, data] : lumped_port_op)
@@ -1171,16 +1199,33 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
       // Cast to avoid compiler warnings about types.
       if (static_cast<std::size_t>(data.excitation) == m_ex_idx)
       {
+        // Incident voltage a V_inc,0 and current a I_inc,0 of the port, with the weight
+        // a = A exp(iφ) (a = 1 without weight) and the unit-power quantities V_inc,0 and
+        // I_inc,0 = P_inc,0 / V_inc,0.
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
-        double V_inc = data.GetExcitationVoltage() * Jcoeff;
-        double I_inc = (std::abs(V_inc) > 0.0)
-                           ? data.GetExcitationPower() * Jcoeff * Jcoeff / V_inc
-                           : 0.0;
+        const std::complex<double> V_inc = data.GetIncidentVoltage() * Jcoeff;
+        const std::complex<double> I_inc =
+            (std::abs(V_inc) > 0.0) ? data.GetIncidentCurrent() * Jcoeff : 0.0;
 
-        port_V->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
-            << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc);
-        port_I->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
-            << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc);
+        if (complex_incident_port_VI)
+        {
+          port_V->table[fmt::format("reinc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc.real());
+          port_V->table[fmt::format("iminc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc.imag());
+          port_I->table[fmt::format("reinc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc.real());
+          port_I->table[fmt::format("iminc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc.imag());
+        }
+        else
+        {
+          // Real excitation weight: the imaginary parts vanish.
+          port_V->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc.real());
+          port_I->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc.real());
+        }
       }
     }
   }
