@@ -141,8 +141,10 @@ struct Measurement
   // Stored nondimensional; dimensionalized in Measurement::Dimensionalize.
   struct ModeImpedanceResult
   {
-    double Z0 = 0.0;    // Nondimensional characteristic impedance [P-V]
-    double Z_VI = 0.0;  // Nondimensional V/I impedance
+    // Nondimensional complex characteristic impedances: power-voltage Z_PV = |V|² / 2P*
+    // and voltage-current Z_VI = V / I (oriented with the mode power).
+    std::complex<double> Z0 = 0.0;
+    std::complex<double> Z_VI = 0.0;
     bool has_impedance = false;
     bool has_vi_impedance = false;
   };

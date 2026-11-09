@@ -31,6 +31,10 @@ public:
     std::size_t offline_basis_rank = 0;
     std::size_t online_basis_cap = 0;
     double worst_residual = 0.0;
+    // Largest basis of a reduced model in use, or zero for no limit, and whether the
+    // reduced model is not used because its offline basis is larger.
+    std::size_t basis_limit = 0;
+    bool over_basis_limit = false;
   };
 
   WavePortReducedModel(int num_modes, double eig_tol, int nd_size, int h1_size,
@@ -39,7 +43,12 @@ public:
                        const ComplexOperator &opB);
 
   void ConfigureTraining(std::size_t max_basis_size);
-  void Enable(bool enable, double adaptive_tol, const ComplexOperator *truth_operator,
+
+  // Enable the reduced model, unless its basis of basis_size vectors (the same on all
+  // processes) is larger than a nonzero basis_limit, which then also caps its online
+  // enrichment.
+  void Enable(bool enable, std::size_t basis_size, std::size_t basis_limit,
+              double adaptive_tol, const ComplexOperator *truth_operator,
               std::complex<double> truth_omega, double truth_sigma);
   void ResetSolution() { has_solution = false; }
 
@@ -53,7 +62,7 @@ public:
 
   void ObserveExactEigenvectors(int num_converged, const EigenvalueSolver &eigen,
                                 const std::vector<int> &mode_perm);
-  void RecordExactSolve();
+  void RecordExactSolve() { stats.exact_solves++; }
   void RecordReducedSolve();
   void RecordFallback() { stats.fallbacks++; }
 
@@ -100,11 +109,13 @@ private:
   std::vector<ComplexVector> B_actions;
   Eigen::MatrixXcd B_projection;
   Eigen::MatrixXcd action_gram;
+  double action_gram_max = 0.0;
 
   void BuildAffineModel(const ComplexOperator *truth_operator,
                         std::complex<double> truth_omega, double truth_sigma);
   void UpdateProjection(std::size_t old_basis_size);
   void BuildActionGram();
+  const ComplexVector &Action(std::size_t col) const;
   double ValidateAffineModel(const ComplexOperator &truth_operator, double omega,
                              double sigma) const;
   std::optional<double>

@@ -147,6 +147,9 @@ public:
   bool HasWaveVector() const { return has_wave_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }
   const mfem::Vector &GetWaveVectorBZ() const { return wave_vector_bz; }
+  // Matrix [k x] of the cross product with the Floquet wave vector k of GetWaveVector (k
+  // divided by the reference angular frequency with FloquetReferenceFrequency).
+  const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
 

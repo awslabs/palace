@@ -141,8 +141,8 @@ near the conductor surfaces.
 
 ### Characteristic impedance
 
-The power-voltage characteristic impedance ``Z_\text{PV} = |V|^2 / (2P)`` is computed from
-the voltage line integral across the CPW gap and the mode power. For the thin metal case:
+The power-voltage characteristic impedance ``Z_\text{PV} = |V|^2 / (2P^*)`` is computed from
+the voltage line integral across the CPW gap and the (time-averaged) mode power ``P``. For the thin metal case:
 
 ```@example include_example
 include_example_file("cpw2d/thin", "mode-Z.csv") # hide
