@@ -519,6 +519,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/c79f309399361b2d6aadc207087ca6dc475513b4.diff"
   75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456
 )
+# https://github.com/mfem/mfem/pull/5732
+# SuperLUSolver frees the factors on all the process layers of a SuperLU_DIST 9 3D process
+# grid.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5732.diff
+  "https://github.com/mfem/mfem/commit/5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff"
+  7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
