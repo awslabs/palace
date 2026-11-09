@@ -28753,8 +28753,12 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                             static_cast<double>(snap.arc), snap.displacement});
     }
   }
-  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
-  const std::vector<double> values = Mpi::AllgatherLarge(local_records, fespace.GetComm());
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds. C5 (decisions
+  // 1446 / 1447; F5 = (A)): by the residency — REPLICATED on every rank (the former form),
+  // ROOT_ONLY on the root alone (the Records array of palace.json is the root's; the other
+  // ranks keep the summary leaves, broadcast below, and the excluded portions, exchanged
+  // owner-side below).
+  const std::vector<double> values = GatherPatchRecords(local_records);
   std::vector<ConductorConsistencyRecord> records;
   for (std::size_t offset = 0; offset < values.size();)
   {
@@ -28815,6 +28819,7 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   std::map<int, std::string> model_names = GetModelNames();
   auto &diagnostics = ConductorConsistencyDiagnostics();
   int excluded_count = 0, record_only_count = 0, floor_applied_count = 0;
+  int tested_records = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
   for (const auto &record : records)
@@ -28893,21 +28898,6 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
           assignment.weight = 0.0;
         }
       }
-      // S7diag R1 (decision 758): the excluded patch's raw claim (built at construction
-      // by the DomainBoundary rule; replicated like the records) is served raw from this
-      // excitation on: the electrostatic driver keeps its within-R energy in E_ft / E_ff /
-      // E_sc as the ConductorConsistency share, never dropped.
-      const auto claim = conductor_consistency_claims.find(record.patch);
-      MFEM_VERIFY(claim != conductor_consistency_claims.end(),
-                  "Conductor-consistency gate excluded patch "
-                      << record.patch << " (" << model_names.at(record.model)
-                      << ") without a raw claim record!");
-      for (std::size_t i = 0; i < claim->second.portions.size(); i++)
-      {
-        AppendExcludedPatchPortion(
-            conductor_consistency_portions, record.patch, claim->second.portions[i],
-            claim->second.translational[i], conductor_consistency_claim_tolerance);
-      }
     }
     if (record.max_ratio > max_ratio || max_patch < 0)
     {
@@ -28915,11 +28905,69 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
       max_patch = record.patch;
     }
   }
+  // S7diag R1 (decision 758): the excluded patches' raw claims (built at construction by
+  // the DomainBoundary rule) are served raw from this excitation on: the electrostatic
+  // driver keeps their within-R energy in E_ft / E_ff / E_sc as the ConductorConsistency
+  // share, never dropped. C5: each rank packs the claims of ITS excluded patches (the
+  // owner decided `excluded` before the gather; the claims are local), the items are
+  // allgathered and appended on EVERY rank in ascending patch order with the portions in
+  // claim order = the former loop's sequence over the sorted records (the same dedupe
+  // decisions, the same `length` sum), so the portions list is identical on every rank.
+  {
+    std::vector<std::pair<int, int>> excluded_local;
+    for (const auto &record : patch_records)
+    {
+      if (record.excluded && !record.record_only)
+      {
+        excluded_local.emplace_back(record.patch, record.patch);
+      }
+    }
+    for (const auto &item :
+         GatherOwnedClaimPortions(excluded_local, conductor_consistency_claims))
+    {
+      MFEM_VERIFY(item.present, "Conductor-consistency gate excluded patch "
+                                    << item.patch << " without a raw claim record!");
+      for (std::size_t i = 0; i < item.portions.size(); i++)
+      {
+        AppendExcludedPatchPortion(conductor_consistency_portions, item.patch,
+                                   item.portions[i], item.translational[i],
+                                   conductor_consistency_claim_tolerance);
+      }
+    }
+  }
+  // The totals of the pass: the root's values on every rank (under ROOT_ONLY the other
+  // ranks hold no record; under REPLICATED every rank computed the same values).
+  int spatial_records = 0, translational_records = 0;
+  for (const auto &record : records)
+  {
+    (record.probe_kind == 1 ? translational_records : spatial_records)++;
+  }
+  {
+    int counts[7] = {excluded_count,
+                     record_only_count,
+                     floor_applied_count,
+                     static_cast<int>(records.size()),
+                     spatial_records,
+                     translational_records,
+                     max_patch};
+    double totals[3] = {excluded_claims, excluded_cells, max_ratio};
+    Mpi::Broadcast(7, counts, 0, fespace.GetComm());
+    Mpi::Broadcast(3, totals, 0, fespace.GetComm());
+    excluded_count = counts[0];
+    record_only_count = counts[1];
+    floor_applied_count = counts[2];
+    spatial_records = counts[4];
+    translational_records = counts[5];
+    max_patch = counts[6];
+    excluded_claims = totals[0];
+    excluded_cells = totals[1];
+    max_ratio = totals[2];
+    tested_records = counts[3];
+  }
   diagnostics["Count"] = diagnostics["Count"].get<int>() + excluded_count;
   diagnostics["ClaimLength"] = diagnostics["ClaimLength"].get<double>() + excluded_claims;
   diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + excluded_cells;
-  diagnostics["TestedPatches"] =
-      diagnostics["TestedPatches"].get<int>() + static_cast<int>(records.size());
+  diagnostics["TestedPatches"] = diagnostics["TestedPatches"].get<int>() + tested_records;
   // B.3 (f) / SUPERVISOR AMENDMENT 3 C.4 (decision 1082 Q2): the count of tested patches
   // whose normalization is the floor (FloorApplied), totalled over the gate passes of the
   // operator like TestedPatches (per pass in the log line below): the G-5 reading of the
@@ -28950,11 +28998,6 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   }
   if (!records.empty())
   {
-    int spatial_records = 0, translational_records = 0;
-    for (const auto &record : records)
-    {
-      (record.probe_kind == 1 ? translational_records : spatial_records)++;
-    }
     const bool maxwell_records = records.front().maxwell;
     Mpi::Print(" Conductor-consistency gate (decision 277; idfix R0-a), {} {:d}{}: {:d} "
                "patch(es) probed ({:d} spatial, {:d} translational), max ratio {:.3e} "
@@ -28965,8 +29008,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                maxwell_records ? "source" : "excitation", source,
                maxwell_records ? fmt::format(" at {:.6e} GHz", records.front().frequency)
                                : std::string(),
-               static_cast<int>(records.size()), spatial_records, translational_records,
-               max_ratio, max_patch, excluded_count,
+               tested_records, spatial_records, translational_records, max_ratio, max_patch,
+               excluded_count,
                record_only_count > 0
                    ? fmt::format(" ({:d} verdict(s) RECORDED ONLY: RecordOnly, a "
                                  "DIAGNOSTIC run, not a run of record)",
@@ -29608,10 +29651,18 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       // never read).
       conductor_consistency_claim_tolerance =
           kSignatureParameterToleranceOverRadius * config.matching_radius;
+      // C5 (decision 1446; DESIGN s2.7 I-11): this rank's LOCAL patches only (the
+      // round-robin rule of `patches`); the gate and the loop remainders fetch an excluded
+      // / remainder patch's claim from its owner (GatherOwnedClaimPortions).
+      const int claim_rank = Mpi::Rank(fespace.GetComm());
+      const int claim_size = Mpi::Size(fespace.GetComm());
+      auto OwnsClaim = [&](std::size_t patch_idx)
+      { return static_cast<int>(patch_idx % claim_size) == claim_rank; };
       for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
       {
         const auto &patch_config = placed_patches[patch_idx];
-        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0)
+        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0 ||
+            !OwnsClaim(patch_idx))
         {
           continue;
         }
@@ -29635,7 +29686,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
         {
           if (spatially_owned_patches.count(patch_idx) ||
-              placed_patches[patch_idx].weight <= 0.0)
+              placed_patches[patch_idx].weight <= 0.0 || !OwnsClaim(patch_idx))
           {
             continue;
           }
@@ -32850,22 +32901,39 @@ void SurfaceResponseOperator::RecordUnprobedPatchClaims(
   // The raw claims (the DomainBoundary rule; replicated, keyed by the placed index) of the
   // applied patches the gate cannot probe, labelled UnprobedModels, each once; the count
   // and the claimed length beside the gate's UnprobedModels list.
-  int count = 0;
-  for (const int global_index : global_indices)
+  // C5 (decision 1446): the claims are local to their owners; fetched in the list's order
+  // (collective: every rank passes the same replicated list).
+  const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+  std::vector<std::pair<int, int>> owned;
+  for (std::size_t k = 0; k < global_indices.size(); k++)
   {
-    const auto claim = conductor_consistency_claims.find(global_index);
-    if (claim == conductor_consistency_claims.end())
+    if (global_indices[k] % size == rank)
+    {
+      owned.emplace_back(static_cast<int>(k), global_indices[k]);
+    }
+  }
+  const auto claims = GatherOwnedClaimPortions(owned, conductor_consistency_claims);
+  MFEM_VERIFY(claims.size() == global_indices.size(),
+              "The unprobed patches' owned claims do not match the list!");
+  int count = 0;
+  for (std::size_t k = 0; k < global_indices.size(); k++)
+  {
+    const int global_index = global_indices[k];
+    const auto &claim = claims[k];
+    MFEM_VERIFY(claim.key == static_cast<int>(k) && claim.patch == global_index,
+                "The unprobed patches' owned claims are out of order!");
+    if (!claim.present)
     {
       continue;  // a two-dimensional mesh: no raw claims
     }
     count++;
-    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    for (std::size_t i = 0; i < claim.portions.size(); i++)
     {
-      auto portion = claim->second.portions[i];
+      auto portion = claim.portions[i];
       portion.topology = "UnprobedModels";
       AppendExcludedPatchPortion(
           unprobed_model_portions, static_cast<std::size_t>(global_index), portion,
-          claim->second.translational[i], conductor_consistency_claim_tolerance);
+          claim.translational[i], conductor_consistency_claim_tolerance);
     }
   }
   if (count > 0)
@@ -33192,8 +33260,25 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
   std::sort(records.begin(), records.end(),
             [](const auto &a, const auto &b) { return a.patch < b.patch; });
   const std::map<int, std::string> model_names = GetModelNames();
-  for (const auto &record : records)
+  // C5 (decision 1446): the excluded patches' raw claims from their owners (the claims are
+  // local), keyed by the position in the sorted list (collective: the list is replicated).
+  std::vector<std::pair<int, int>> owned;
+  for (std::size_t k = 0; k < records.size(); k++)
   {
+    if (records[k].patch % Mpi::Size(fespace.GetComm()) == Mpi::Rank(fespace.GetComm()))
+    {
+      owned.emplace_back(static_cast<int>(k), records[k].patch);
+    }
+  }
+  const auto claims = GatherOwnedClaimPortions(owned, maxwell_patch_raw_claims);
+  MFEM_VERIFY(claims.size() == records.size(),
+              "The MaxwellPatchExcluded owned claims do not match the records!");
+  for (std::size_t k = 0; k < records.size(); k++)
+  {
+    const auto &record = records[k];
+    const auto &claim = claims[k];
+    MFEM_VERIFY(claim.key == static_cast<int>(k) && claim.patch == record.patch,
+                "The MaxwellPatchExcluded owned claims are out of order!");
     const auto model_it =
         std::find_if(models.begin(), models.end(),
                      [&](const ResponseModel &model) { return model.idx == record.model; });
@@ -33212,8 +33297,7 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
     // The raw claim (the DomainBoundary rule, built at the placement and replicated): the
     // length served raw = the record's length (RawShareByLength); a two-dimensional mesh
     // has no raw claims (nothing to serve raw): the placement's claimed length instead.
-    const auto claim = maxwell_patch_raw_claims.find(record.patch);
-    MFEM_VERIFY(claim != maxwell_patch_raw_claims.end() || !maxwell_loop_remainder_measured,
+    MFEM_VERIFY(claim.present || !maxwell_loop_remainder_measured,
                 "MaxwellPatchExcluded patch " << record.patch << " ("
                                               << model_names.at(record.model)
                                               << ") without a raw claim record!");
@@ -33221,8 +33305,7 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
     entry.patches = {record.patch};
     entry.models = {model_names.at(record.model)};
     entry.features = {record.feature};
-    entry.length =
-        claim != maxwell_patch_raw_claims.end() ? claim->second.length : record.length;
+    entry.length = claim.present ? claim.length : record.length;
     entry.example_origin = record.origin;
     entry.topology = model_it->topology;
     geometry_ledger.Record(std::move(entry));
@@ -33234,22 +33317,22 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
         assignment.weight = 0.0;
       }
     }
-    if (claim == maxwell_patch_raw_claims.end())
+    if (!claim.present)
     {
       continue;
     }
     // ONCE: into the DomainBoundary portions (kept raw in the corrected interface
     // energies), the geometry-fallback portions (the drivers' share measurement) and the
     // class-named copy.
-    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    for (std::size_t i = 0; i < claim.portions.size(); i++)
     {
-      auto portion = claim->second.portions[i];
+      auto portion = claim.portions[i];
       portion.topology = "MaxwellPatchExcluded";
       for (auto *portions : {&domain_boundary_portions, &geometry_fallback_portions,
                              &maxwell_patch_excluded_portions})
       {
         AppendExcludedPatchPortion(*portions, static_cast<std::size_t>(record.patch),
-                                   portion, claim->second.translational[i],
+                                   portion, claim.translational[i],
                                    conductor_consistency_claim_tolerance);
       }
     }
@@ -34833,22 +34916,97 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   line_values += maxwell_fit_line_adjoint;
 }
 
+std::vector<SurfaceResponseOperator::OwnedClaimPortions>
+SurfaceResponseOperator::GatherOwnedClaimPortions(
+    const std::vector<std::pair<int, int>> &local_items,
+    const std::map<int, ExcludedPatchPortions> &claims) const
+{
+  // Per item: [key, patch, present, length, topology length, topology chars..., portion
+  // count, per portion (feature, segment, p0 x 3, p1 x 3, translational)]; the topology is
+  // one string per patch (the claim rule's model topology).
+  std::vector<double> local;
+  for (const auto &[key, patch] : local_items)
+  {
+    const auto claim = claims.find(patch);
+    if (claim == claims.end())
+    {
+      local.insert(local.end(), {static_cast<double>(key), static_cast<double>(patch), 0.0,
+                                 0.0, 0.0, 0.0});
+      continue;
+    }
+    const std::string topology =
+        claim->second.portions.empty() ? std::string() : claim->second.portions[0].topology;
+    local.insert(local.end(), {static_cast<double>(key), static_cast<double>(patch), 1.0,
+                               claim->second.length, static_cast<double>(topology.size())});
+    for (const char c : topology)
+    {
+      local.push_back(static_cast<double>(static_cast<unsigned char>(c)));
+    }
+    local.push_back(static_cast<double>(claim->second.portions.size()));
+    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    {
+      const auto &portion = claim->second.portions[i];
+      local.insert(local.end(),
+                   {static_cast<double>(portion.feature),
+                    static_cast<double>(portion.segment), portion.p0[0], portion.p0[1],
+                    portion.p0[2], portion.p1[0], portion.p1[1], portion.p1[2],
+                    claim->second.translational[i] ? 1.0 : 0.0});
+    }
+  }
+  const std::vector<double> values = AllgatherRecords(local);
+  std::vector<OwnedClaimPortions> result;
+  std::size_t offset = 0;
+  while (offset < values.size())
+  {
+    MFEM_VERIFY(offset + 5 <= values.size(), "Truncated owned claim record!");
+    OwnedClaimPortions item;
+    item.key = static_cast<int>(std::llround(values[offset++]));
+    item.patch = static_cast<int>(std::llround(values[offset++]));
+    item.present = values[offset++] > 0.5;
+    item.length = values[offset++];
+    const auto topology_size = static_cast<std::size_t>(std::llround(values[offset++]));
+    MFEM_VERIFY(offset + topology_size + 1 <= values.size(),
+                "Truncated owned claim record!");
+    for (std::size_t c = 0; c < topology_size; c++)
+    {
+      item.topology.push_back(static_cast<char>(std::llround(values[offset++])));
+    }
+    const auto portion_count = static_cast<std::size_t>(std::llround(values[offset++]));
+    MFEM_VERIFY(offset + 9 * portion_count <= values.size(),
+                "Truncated owned claim record!");
+    for (std::size_t i = 0; i < portion_count; i++)
+    {
+      ResponseCorrectionData::UncoveredPortionData portion;
+      portion.feature = static_cast<int>(std::llround(values[offset]));
+      portion.topology = item.topology;
+      portion.segment = static_cast<int>(std::llround(values[offset + 1]));
+      portion.p0 = {values[offset + 2], values[offset + 3], values[offset + 4]};
+      portion.p1 = {values[offset + 5], values[offset + 6], values[offset + 7]};
+      item.translational.push_back(values[offset + 8] > 0.5);
+      item.portions.push_back(std::move(portion));
+      offset += 9;
+    }
+    result.push_back(std::move(item));
+  }
+  std::stable_sort(result.begin(), result.end(),
+                   [](const auto &a, const auto &b) { return a.key < b.key; });
+  return result;
+}
+
 SurfaceResponseOperator::LoopRemainderPortions
 SurfaceResponseOperator::GetLoopRemainderPortions(
     const std::vector<MaxwellResponse::LoopRemainder> &remainders) const
 {
   LoopRemainderPortions result;
+  // The remainders carry their owners' claim portions (GetMaxwellResponse, C5): no
+  // collective here (the prints call this on the root only).
   for (const auto &remainder : remainders)
   {
-    const auto claim = maxwell_patch_raw_claims.find(remainder.patch);
-    MFEM_VERIFY(claim != maxwell_patch_raw_claims.end(),
-                "Maxwell loop remainder of patch " << remainder.patch + 1
-                                                   << " has no recorded raw claim!");
     const double rho = remainder.fallback ? 1.0 : remainder.share;
     const std::string label = fmt::format("m{}", remainder.model);
     auto &row = result.rows[label];
     row.patches++;
-    for (auto portion : claim->second.portions)
+    for (auto portion : remainder.claim_portions)
     {
       portion.topology = label;
       row.weighted_length += rho * Norm(Subtract(portion.p1, portion.p0));
@@ -36339,6 +36497,32 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     std::sort(result.loop_remainders.begin(), result.loop_remainders.end(),
               [](const auto &first, const auto &second)
               { return first.patch < second.patch; });
+    // C5 (decision 1446): the remainder patches' raw claims from their owners (the claims
+    // are local), keyed by the position in the sorted list, carried by the remainders for
+    // GetLoopRemainderPortions (called root-only by the prints: no collective there).
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    std::vector<std::pair<int, int>> owned;
+    for (std::size_t k = 0; k < result.loop_remainders.size(); k++)
+    {
+      if (result.loop_remainders[k].patch % size == rank)
+      {
+        owned.emplace_back(static_cast<int>(k), result.loop_remainders[k].patch);
+      }
+    }
+    const auto claims = GatherOwnedClaimPortions(owned, maxwell_patch_raw_claims);
+    MFEM_VERIFY(claims.size() == result.loop_remainders.size(),
+                "The Maxwell loop remainders' owned claims ("
+                    << claims.size() << ") do not match the list ("
+                    << result.loop_remainders.size() << ")!");
+    for (std::size_t k = 0; k < claims.size(); k++)
+    {
+      MFEM_VERIFY(claims[k].key == static_cast<int>(k) &&
+                      claims[k].patch == result.loop_remainders[k].patch &&
+                      claims[k].present,
+                  "Maxwell loop remainder of patch " << result.loop_remainders[k].patch + 1
+                                                     << " has no recorded raw claim!");
+      result.loop_remainders[k].claim_portions = std::move(claims[k].portions);
+    }
   }
   if (include_patches)
   {

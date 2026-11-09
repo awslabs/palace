@@ -950,8 +950,33 @@ private:
   // which the electrostatic driver keeps raw in E_ft / E_ff / E_sc like the uncovered
   // requirements and the DomainBoundary claims. The list only grows (an exclusion is
   // sticky).
+  // Lane fix-response-memory (decision 1446, C5 / DESIGN s2.7 I-11): the claims are built
+  // for this rank's LOCAL patches only (the `patches` rule: patch index % size == rank);
+  // the consumers fetch an excluded / remainder patch's portions from its owner through
+  // GatherOwnedClaimPortions, in the former order.
   std::map<int, ExcludedPatchPortions> conductor_consistency_claims;
   ExcludedPatchPortions conductor_consistency_portions;
+  // One owned patch's claim portions as its owner packed them, keyed for the consumer's
+  // order (the gate: the patch index; the loop remainders: the position in the list).
+  struct OwnedClaimPortions
+  {
+    int key = 0;
+    int patch = 0;
+    bool present = false;  // the owner holds a claim for the patch (none on a 2D mesh)
+    double length = 0.0;   // the claim's length (mesh units)
+    std::string topology;  // the claim's model topology (one per patch)
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        portions;
+    std::vector<bool> translational;
+  };
+  // Every rank's (key, patch) items with the portions of `claims[patch]` (this rank's: an
+  // owner packs its own; `present` false when it holds none), allgathered (O(items)) and
+  // sorted by key on every rank: the replicated list the former replicated claims gave, in
+  // key order. Collective.
+  std::vector<OwnedClaimPortions>
+  GatherOwnedClaimPortions(const std::vector<std::pair<int, int>> &local_items,
+                           const std::map<int, ExcludedPatchPortions> &claims) const;
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims by model set; empty
   // unless the configuration requests PatchEnergy.
   ModelRawClaimPortions model_raw_claim_portions;
@@ -1252,6 +1277,12 @@ public:
       double circulation = 0.0;  // r^T G^-1 r, real + imaginary parts (V^2 / mesh unit)
       double total = 0.0;        // sum_j |L_j|^2 / l_j over the patch's equations
       int fallback = 0;
+      // C5 (decision 1446): the patch's raw claim portions as its owner holds them (the
+      // claims are local to the owner rank), fetched by GetMaxwellResponse so that
+      // GetLoopRemainderPortions reads them without a collective.
+      std::vector<
+          config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+          claim_portions;
     };
     std::vector<LoopRemainder> loop_remainders;
     double maximum_loop_fit_share = 0.0;

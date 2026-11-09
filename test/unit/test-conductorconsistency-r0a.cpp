@@ -2400,4 +2400,152 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Lane fix-response-memory (decisions 1439 / 1446 / 1447; DESIGN s2.1 / s3 (I-1 (ii)),
+// commit C5): the gate under the drivers' ROOT_ONLY residency, on the shorted CPW stub
+// whose every cell the strip excludes (16 patches round-robin over the ranks: excluded
+// patches owned by BOTH ranks): the excluded patches' raw-claim portions (fetched from
+// their owners: the claims are local) are IDENTICAL on every rank and equal the REPLICATED
+// reference to the bit (portions, patches, translational, counters, length); the summary
+// leaves (Count, ClaimLength, CellLength, TestedPatches, FloorAppliedPatches) identical on
+// every rank and equal to the reference; the Records array (F5 = (A)) on the root only,
+// equal to the reference's; the returned records the root's full list, empty elsewhere. The
+// Maxwell path of the gate (the driven / eigen drivers' form).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator conductor-consistency gate under ROOT_ONLY "
+                 "residency equals the replicated gate on every rank",
+                 "[surfaceresponseoperator][conductorconsistency][memfix][maxwell][3d]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "memfix");
+  json config = ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  auto Build = [&](std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+    return iodata;
+  };
+  auto Field = [](SpaceOperator &space, const StubField &stub)
+  {
+    GridFunction field(space.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient coefficient(
+        3, [&](const mfem::Vector &x, mfem::Vector &E) { stub(x, E); });
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    return E;
+  };
+  StubField stub;
+  stub.amplitude = 1.0;
+  stub.x0 = 0.5;
+  stub.x1 = 2.0;
+
+  // The replicated reference (the former form; the default residency).
+  std::vector<std::unique_ptr<Mesh>> reference_meshes;
+  IoData reference_iodata = Build(reference_meshes);
+  SpaceOperator reference_space(reference_iodata, reference_meshes);
+  SurfaceResponseOperator reference(reference_iodata, reference_space);
+  REQUIRE(reference.GetPatchCount() > 1);
+  REQUIRE(reference.HasConductorConsistencyProbes());
+  const auto reference_records =
+      reference.ApplyConductorConsistencyGate(Field(reference_space, stub), 0, 5.0, false);
+  const auto &reference_portions = reference.GetConductorConsistencyPortionRecord();
+  REQUIRE(!reference_portions.portions.empty());
+  const json reference_diagnostics =
+      reference.GetStatistics()["Diagnostics"]["ConductorConsistency"];
+  REQUIRE(reference_diagnostics["Count"].get<int>() > 0);
+  REQUIRE(reference_diagnostics["Records"].size() ==
+          static_cast<std::size_t>(reference.GetPatchCount()));
+
+  // The same configuration under ROOT_ONLY (the drivers' form).
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  IoData iodata = Build(meshes);
+  SpaceOperator space(iodata, meshes);
+  SurfaceResponseOperator response(iodata, space);
+  response.SetPatchRecordResidency(
+      SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+  REQUIRE(response.GetPatchCount() == reference.GetPatchCount());
+  const auto records =
+      response.ApplyConductorConsistencyGate(Field(space, stub), 0, 5.0, false);
+  const bool root = Mpi::Root(comm);
+  // (1) The returned records: the root's full list, empty elsewhere.
+  if (root)
+  {
+    REQUIRE(records.size() == reference_records.size());
+    for (std::size_t i = 0; i < records.size(); i++)
+    {
+      CHECK(records[i].patch == reference_records[i].patch);
+      CHECK(records[i].excluded == reference_records[i].excluded);
+      CHECK(records[i].max_ratio == reference_records[i].max_ratio);
+      CHECK(records[i].claim_length == reference_records[i].claim_length);
+    }
+  }
+  else
+  {
+    CHECK(records.empty());
+  }
+  // (2) The excluded portions on EVERY rank: the reference's, to the bit.
+  const auto &portions = response.GetConductorConsistencyPortionRecord();
+  REQUIRE(portions.portions.size() == reference_portions.portions.size());
+  for (std::size_t i = 0; i < portions.portions.size(); i++)
+  {
+    CHECK(portions.portions[i].feature == reference_portions.portions[i].feature);
+    CHECK(portions.portions[i].topology == reference_portions.portions[i].topology);
+    CHECK(portions.portions[i].segment == reference_portions.portions[i].segment);
+    CHECK(portions.portions[i].p0 == reference_portions.portions[i].p0);
+    CHECK(portions.portions[i].p1 == reference_portions.portions[i].p1);
+    CHECK(portions.patches[i] == reference_portions.patches[i]);
+    CHECK(portions.translational[i] == reference_portions.translational[i]);
+  }
+  CHECK(portions.geometric_cells == reference_portions.geometric_cells);
+  CHECK(portions.duplicate_patches == reference_portions.duplicate_patches);
+  CHECK(portions.length == reference_portions.length);
+  CHECK(response.GetPatchWeight() == reference.GetPatchWeight());
+  // (3) The summary leaves on every rank; the Records on the root only (F5 = (A)).
+  const json diagnostics = response.GetStatistics()["Diagnostics"]["ConductorConsistency"];
+  for (const char *leaf :
+       {"Count", "ClaimLength", "CellLength", "TestedPatches", "FloorAppliedPatches"})
+  {
+    CAPTURE(leaf);
+    CHECK(diagnostics.at(leaf) == reference_diagnostics.at(leaf));
+  }
+  CHECK(diagnostics.contains("RawPortions") ==
+        reference_diagnostics.contains("RawPortions"));
+  if (root)
+  {
+    CHECK(diagnostics.at("Records") == reference_diagnostics.at("Records"));
+    CHECK(diagnostics.at("ExcludedPatches") == reference_diagnostics.at("ExcludedPatches"));
+  }
+  else
+  {
+    // The arrays exist (the diagnostics' skeleton) and hold NO entry on a non-root rank.
+    CHECK(diagnostics.at("Records").empty());
+    CHECK(diagnostics.at("ExcludedPatches").empty());
+  }
+  // A second pass (sticky exclusions re-appended as duplicates): still identical.
+  response.ApplyConductorConsistencyGate(Field(space, stub), 1, 5.0, false);
+  reference.ApplyConductorConsistencyGate(Field(reference_space, stub), 1, 5.0, false);
+  CHECK(response.GetConductorConsistencyPortionRecord().duplicate_patches ==
+        reference.GetConductorConsistencyPortionRecord().duplicate_patches);
+  CHECK(response.GetConductorConsistencyPortionRecord().length ==
+        reference.GetConductorConsistencyPortionRecord().length);
+  CHECK(response.GetStatistics()["Diagnostics"]["ConductorConsistency"]["TestedPatches"] ==
+        reference.GetStatistics()["Diagnostics"]["ConductorConsistency"]["TestedPatches"]);
+#endif
+}
+
 }  // namespace palace
