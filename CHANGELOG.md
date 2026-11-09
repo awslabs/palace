@@ -44,7 +44,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     so that each of them acts on the real and imaginary parts in one application, as the
     matching pairs of terms already did. This speeds up the fine and H1 auxiliary operators
     of the multigrid preconditioner of driven and eigenmode simulations. Results change at
-    most at the level of round-off. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    most at the level of round-off. [PR 1173](https://github.com/awslabs/palace/pull/1173).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
