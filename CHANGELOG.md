@@ -311,6 +311,27 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     quantities referenced to the internal unit impedance, not physical incident waves.
     [PR 841](https://github.com/awslabs/palace/pull/841).
 
+#### Performance Improvements
+
+  - The surface-response correction's memory no longer grows on every rank with the GLOBAL
+    patch and point counts (lane fix-response-memory; USER decision 1439, decisions 1446 /
+    1447; results bitwise): the gathered per-patch records of every response evaluation
+    (patch contributions, traces, loop shares, path residuals, within-R volume energies)
+    and the conductor-consistency gate's `Records` live on the root only in the drivers
+    (`SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY`; the default stays
+    `REPLICATED` for a caller that reads them on every rank: OI-RESIDENCY-DEFAULT-REPLICATED);
+    the per-patch CSV tables are written per excitation (`TableWithCSVFile::
+    AppendRowsAndClear`, the former bytes); the raw-claim maps hold a rank's local patches
+    only and an excluded patch's claim is fetched from its owner; the placed-patch
+    configuration is kept local between AMR constructions and re-assembled exactly before
+    the next; the domain-boundary containment test runs in candidate blocks of at most
+    `PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS` points (default 2^23; results-neutral) and
+    the raw-claim partition's co-located-interval scan uses an insertion-ordered feature
+    index (the same first match). Still replicated by design: the model library, the
+    within-R box list of a measurement, the PatchEnergy model-raw-claim partition, the
+    containment cache's signature; the root keeps the `Records` array of `palace.json`
+    (OI-CONDUCTOR-CONSISTENCY-RECORDS-PALACE-JSON-SIZE stays open).
+
 #### Bug Fixes
 
   - Reject all-zero numerator or denominator polynomial coefficients in
