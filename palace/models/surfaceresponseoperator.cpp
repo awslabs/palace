@@ -8,6 +8,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -22931,7 +22934,14 @@ struct DomainBoundaryContainmentCache
 
 struct SurfaceResponseGeometry::Impl
 {
-  ResponseCorrectionData config;
+  // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): between two
+  // constructions `config.patches` holds this rank's LOCAL placed patches only (released
+  // by ReleaseReplicatedPatches at the end of a construction; the full list re-assembled
+  // by RestoreReplicatedPatches, an order-preserving gather, before the next); the content
+  // never changes, only its residence — hence `mutable` on a shared const geometry.
+  mutable ResponseCorrectionData config;
+  mutable std::size_t global_patch_count = 0;
+  mutable bool patches_local = false;
   std::optional<AutomaticResponseDiagnostics> diagnostics;
   nlohmann::json statistics;
   bool maxwell = false;
@@ -22940,6 +22950,293 @@ struct SurfaceResponseGeometry::Impl
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
 };
+
+// C6: a placed patch packed into doubles, EVERY field of ResponseCorrectionPatchData
+// (configfile.hpp) in declaration order, so that the unpacked patch equals the packed one
+// field for field (the unit case test-responsegeometry-residency.cpp populates every field
+// and asserts it). A field added to the struct must be added here and there.
+void SurfaceResponseGeometry::PackPatch(std::vector<double> &out, std::size_t global_index,
+                                        const ResponsePatchData &patch)
+{
+  auto Push = [&](double value) { out.push_back(value); };
+  auto PushArray = [&](const auto &values)
+  {
+    for (const double value : values)
+    {
+      Push(value);
+    }
+  };
+  auto PushCount = [&](std::size_t count) { Push(static_cast<double>(count)); };
+  Push(static_cast<double>(global_index));
+  Push(static_cast<double>(patch.model));
+  PushArray(patch.origin);
+  PushArray(patch.axis_u);
+  PushArray(patch.axis_v);
+  PushArray(patch.axis_w);
+  PushCount(patch.conductor_references.size());
+  for (const auto &reference : patch.conductor_references)
+  {
+    PushArray(reference);
+  }
+  PushCount(patch.conductor_probe_edges.size());
+  for (const auto &edge : patch.conductor_probe_edges)
+  {
+    Push(edge.offset);
+    Push(static_cast<double>(edge.gap_direction));
+    Push(static_cast<double>(edge.conductor));
+    Push(static_cast<double>(edge.piece));
+  }
+  PushCount(patch.conductor_probes.size());
+  for (const auto &probe : patch.conductor_probes)
+  {
+    PushArray(probe.point);
+    Push(static_cast<double>(probe.edge));
+    Push(static_cast<double>(probe.end_face));
+  }
+  Push(patch.weight);
+  Push(patch.domain_weight);
+  PushArray(patch.longitudinal_cell);
+  Push(static_cast<double>(patch.interpolation_group));
+  PushCount(patch.maxwell_conductor_anchors.size());
+  for (const auto &anchor : patch.maxwell_conductor_anchors)
+  {
+    PushArray(anchor);
+  }
+  Push(patch.maxwell_reference_is_pec ? 1.0 : 0.0);
+  const auto &provenance = patch.provenance;
+  Push(static_cast<double>(provenance.feature));
+  Push(static_cast<double>(provenance.segment));
+  Push(provenance.s0);
+  Push(provenance.s1);
+  Push(static_cast<double>(provenance.stretch));
+  Push(provenance.edge_offset);
+  PushArray(provenance.own_cell[0]);
+  PushArray(provenance.own_cell[1]);
+  Push(provenance.has_own_cell ? 1.0 : 0.0);
+  Push(provenance.quadrature_weight);
+  Push(provenance.model_weight);
+  Push(provenance.side_factor);
+  Push(provenance.coupon_depth);
+  for (const auto *claims : {&provenance.claims, &provenance.raw_claims})
+  {
+    PushCount(claims->size());
+    for (const auto &claim : *claims)
+    {
+      Push(static_cast<double>(claim.segment));
+      PushArray(claim.p0);
+      PushArray(claim.p1);
+    }
+  }
+  PushArray(provenance.support_box);
+  Push(provenance.has_support_box ? 1.0 : 0.0);
+  for (const auto *quads : {&provenance.chain, &provenance.foreign})
+  {
+    PushCount(quads->size());
+    for (const auto &quad : *quads)
+    {
+      PushArray(quad);
+    }
+  }
+  Push(static_cast<double>(provenance.mirror_formed_topology));
+  Push(provenance.mirror_reach);
+  PushCount(provenance.mirror_edge_weights.size());
+  PushArray(provenance.mirror_edge_weights);
+  PushCount(provenance.probe_snaps.size());
+  for (const auto &snap : provenance.probe_snaps)
+  {
+    Push(static_cast<double>(snap.vertex));
+    Push(static_cast<double>(snap.segment));
+    Push(static_cast<double>(snap.arc));
+    PushArray(snap.displacement);
+    Push(snap.distance);
+  }
+  Push(provenance.probe_snaps_computed ? 1.0 : 0.0);
+}
+
+// The inverse of PackPatch from `values[offset]`; returns the offset after the patch.
+std::size_t SurfaceResponseGeometry::UnpackPatch(const std::vector<double> &values,
+                                                 std::size_t offset,
+                                                 std::size_t &global_index,
+                                                 ResponsePatchData &patch)
+{
+  auto Next = [&]()
+  {
+    MFEM_VERIFY(offset < values.size(), "Truncated packed response patch!");
+    return values[offset++];
+  };
+  auto NextInt = [&]() { return static_cast<int>(std::llround(Next())); };
+  auto NextCount = [&]() { return static_cast<std::size_t>(std::llround(Next())); };
+  auto NextArray = [&](auto &values_out)
+  {
+    for (auto &value : values_out)
+    {
+      value = Next();
+    }
+  };
+  global_index = NextCount();
+  patch.model = NextInt();
+  NextArray(patch.origin);
+  NextArray(patch.axis_u);
+  NextArray(patch.axis_v);
+  NextArray(patch.axis_w);
+  patch.conductor_references.resize(NextCount());
+  for (auto &reference : patch.conductor_references)
+  {
+    NextArray(reference);
+  }
+  patch.conductor_probe_edges.resize(NextCount());
+  for (auto &edge : patch.conductor_probe_edges)
+  {
+    edge.offset = Next();
+    edge.gap_direction = NextInt();
+    edge.conductor = NextInt();
+    edge.piece = NextInt();
+  }
+  patch.conductor_probes.resize(NextCount());
+  for (auto &probe : patch.conductor_probes)
+  {
+    NextArray(probe.point);
+    probe.edge = NextInt();
+    probe.end_face = NextInt();
+  }
+  patch.weight = Next();
+  patch.domain_weight = Next();
+  NextArray(patch.longitudinal_cell);
+  patch.interpolation_group = NextInt();
+  patch.maxwell_conductor_anchors.resize(NextCount());
+  for (auto &anchor : patch.maxwell_conductor_anchors)
+  {
+    NextArray(anchor);
+  }
+  patch.maxwell_reference_is_pec = Next() > 0.5;
+  auto &provenance = patch.provenance;
+  provenance.feature = NextInt();
+  provenance.segment = NextInt();
+  provenance.s0 = Next();
+  provenance.s1 = Next();
+  provenance.stretch = NextInt();
+  provenance.edge_offset = Next();
+  NextArray(provenance.own_cell[0]);
+  NextArray(provenance.own_cell[1]);
+  provenance.has_own_cell = Next() > 0.5;
+  provenance.quadrature_weight = Next();
+  provenance.model_weight = Next();
+  provenance.side_factor = Next();
+  provenance.coupon_depth = Next();
+  for (auto *claims : {&provenance.claims, &provenance.raw_claims})
+  {
+    claims->resize(NextCount());
+    for (auto &claim : *claims)
+    {
+      claim.segment = NextInt();
+      NextArray(claim.p0);
+      NextArray(claim.p1);
+    }
+  }
+  NextArray(provenance.support_box);
+  provenance.has_support_box = Next() > 0.5;
+  for (auto *quads : {&provenance.chain, &provenance.foreign})
+  {
+    quads->resize(NextCount());
+    for (auto &quad : *quads)
+    {
+      NextArray(quad);
+    }
+  }
+  provenance.mirror_formed_topology = NextInt();
+  provenance.mirror_reach = Next();
+  provenance.mirror_edge_weights.resize(NextCount());
+  NextArray(provenance.mirror_edge_weights);
+  provenance.probe_snaps.resize(NextCount());
+  for (auto &snap : provenance.probe_snaps)
+  {
+    snap.vertex = NextInt();
+    snap.segment = NextInt();
+    snap.arc = NextInt();
+    NextArray(snap.displacement);
+    snap.distance = Next();
+  }
+  provenance.probe_snaps_computed = Next() > 0.5;
+  return offset;
+}
+
+bool SurfaceResponseGeometry::PatchesLocal() const
+{
+  return impl->patches_local;
+}
+
+std::size_t SurfaceResponseGeometry::RetainedPatchCount() const
+{
+  return impl->config.patches.size();
+}
+
+std::size_t SurfaceResponseGeometry::GlobalPatchCount() const
+{
+  return impl->patches_local ? impl->global_patch_count : impl->config.patches.size();
+}
+
+void SurfaceResponseGeometry::ReleaseReplicatedPatches(MPI_Comm comm) const
+{
+  const Impl &impl = *this->impl;
+  if (impl.patches_local)
+  {
+    return;
+  }
+  const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  impl.global_patch_count = impl.config.patches.size();
+  std::vector<ResponsePatchData> local;
+  for (std::size_t patch_idx = 0; patch_idx < impl.config.patches.size(); patch_idx++)
+  {
+    if (static_cast<int>(patch_idx % size) == rank)
+    {
+      local.push_back(std::move(impl.config.patches[patch_idx]));
+    }
+  }
+  impl.config.patches = std::move(local);
+  impl.config.patches.shrink_to_fit();
+  impl.patches_local = true;
+#if defined(__GLIBC__)
+  // A1.4 I-14 (glibc only; results-neutral): the freed pages back to the system.
+  malloc_trim(0);
+#endif
+}
+
+void SurfaceResponseGeometry::RestoreReplicatedPatches(MPI_Comm comm) const
+{
+  const Impl &impl = *this->impl;
+  if (!impl.patches_local)
+  {
+    return;
+  }
+  // The local subsets packed with their global indices and allgathered in rank order;
+  // placed by index: the list released by ReleaseReplicatedPatches, element for element.
+  std::vector<double> local;
+  const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  for (std::size_t k = 0; k < impl.config.patches.size(); k++)
+  {
+    PackPatch(local, static_cast<std::size_t>(rank) + k * size, impl.config.patches[k]);
+  }
+  const std::vector<double> values = Mpi::AllgatherLarge(local, comm);
+  std::vector<ResponsePatchData> patches(impl.global_patch_count);
+  std::vector<unsigned char> placed(impl.global_patch_count, 0);
+  std::size_t offset = 0, count = 0;
+  while (offset < values.size())
+  {
+    std::size_t global_index = 0;
+    ResponsePatchData patch;
+    offset = UnpackPatch(values, offset, global_index, patch);
+    MFEM_VERIFY(global_index < patches.size() && !placed[global_index],
+                "The re-assembled response-patch list has a misplaced patch!");
+    patches[global_index] = std::move(patch);
+    placed[global_index] = 1;
+    count++;
+  }
+  MFEM_VERIFY(count == impl.global_patch_count,
+              "The re-assembled response-patch list holds "
+                  << count << " of " << impl.global_patch_count << " patches!");
+  impl.config.patches = std::move(patches);
+  impl.patches_local = false;
+}
 
 namespace
 {
@@ -29858,6 +30155,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       MFEM_VERIFY(!cached_geometry->impl->maxwell &&
                       cached_geometry->impl->dimension == dimension,
                   "Cannot reuse Maxwell surface-response geometry for electrostatics!");
+      // C6: the full placed-patch list again (released after the previous construction).
+      cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
       config = &cached_geometry->impl->config;
       automatic_statistics = cached_geometry->impl->statistics;
     }
@@ -31294,6 +31593,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                global_diagnostic_patch_count, global_diagnostic_point_count);
   }
   geometry_ledger.Enforce("electrostatic surface-response configuration");
+  if (cached_geometry)
+  {
+    // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
+    // the next construction (an AMR iteration) re-assembles the list.
+    cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
+  }
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -31362,6 +31667,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                     cached_geometry->impl->diagnostics.has_value() &&
                     cached_geometry->impl->dimension == dimension,
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
+    // C6: the full placed-patch list again (released after the previous construction).
+    cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
     config_ptr = &cached_geometry->impl->config;
     diagnostics_ptr = &*cached_geometry->impl->diagnostics;
     automatic_statistics = cached_geometry->impl->statistics;
@@ -32890,6 +33197,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   geometry_ledger.Enforce("Maxwell surface-response configuration");
+  if (cached_geometry)
+  {
+    // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
+    // the next construction (an AMR iteration) re-assembles the list.
+    cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
+  }
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif

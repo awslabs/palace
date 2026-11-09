@@ -72,6 +72,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-responsegeometry-residency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsesetupcache.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp

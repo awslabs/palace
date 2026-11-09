@@ -181,6 +181,26 @@ private:
   }
 
   friend class SurfaceResponseOperator;
+
+public:
+  // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): the placed-patch
+  // list's RESIDENCE between two constructions. After a construction each rank keeps its
+  // LOCAL patches only (the operator's round-robin rule: global index % size == rank);
+  // before the next construction the full list is re-assembled by an order-preserving
+  // gather (the same elements, placed by global index). Content never changes.
+  bool PatchesLocal() const;
+  std::size_t RetainedPatchCount() const;
+  std::size_t GlobalPatchCount() const;
+  void ReleaseReplicatedPatches(MPI_Comm comm) const;
+  void RestoreReplicatedPatches(MPI_Comm comm) const;
+  // The exact pack / unpack of one placed patch (every field) the re-assembly uses.
+  static void
+  PackPatch(std::vector<double> &out, std::size_t global_index,
+            const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch);
+  static std::size_t
+  UnpackPatch(const std::vector<double> &values, std::size_t offset,
+              std::size_t &global_index,
+              config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch);
 };
 
 // R0-a (idfix DESIGN A.1 (c) / A.3 (b), decision 1062): the LOCAL METAL PIECES of a 2D
