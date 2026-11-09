@@ -114,18 +114,15 @@ set(SUPERLU_PATCH_FILES
 # https://github.com/xiaoyeli/superlu_dist/pull/250,
 # https://github.com/xiaoyeli/superlu_dist/pull/251,
 # https://github.com/xiaoyeli/superlu_dist/pull/252 and
-# https://github.com/xiaoyeli/superlu_dist/pull/253, made for v9.3.1
-if(EXTERN_SUPERLU_GIT_TAG STREQUAL "v9.3.1")
-  list(APPEND SUPERLU_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr250.diff"
-    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr251.diff"
-    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr252.diff"
-    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr253.diff"
-  )
-else()
-  message(WARNING "The SuperLU_DIST patches of xiaoyeli/superlu_dist#250-#253 are made "
-                  "for v9.3.1 and are not applied to ${EXTERN_SUPERLU_GIT_TAG}")
-endif()
+# https://github.com/xiaoyeli/superlu_dist/pull/253, made for v9.3.1. Like the patch above,
+# they are applied to any version, so that a version they do not apply to fails the build
+# instead of silently dropping the changes.
+list(APPEND SUPERLU_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr250.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr251.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr252.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr253.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(superlu_dist
