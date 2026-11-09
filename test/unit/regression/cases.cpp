@@ -249,12 +249,14 @@ const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
 constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceDefault;
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
-// (phase isn't reproducible). NaN entries (evanescent modes) and signals below
-// -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
-palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
+// (phase isn't reproducible). NaN entries (evanescent modes) count as matches. By default
+// the dB values are compared and signals below -200 dB (negligible) count as matches; with
+// linear, the magnitudes |S| = 10^(dB/20) are compared within atol + rtol |S|, which gives
+// adaptive sweeps an absolute tolerance near 0 dB. Ports the Julia test_floquet_sparams.
+palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference,
-                      const std::filesystem::path &)
+  return [rtol, atol, linear](palace::Table &actual, palace::Table &reference,
+                              const std::filesystem::path &)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -269,13 +271,22 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
       {
         const double v_new = actual[c].data[r];
         const double v_ref = reference[c].data[r];
-        if ((std::isnan(v_new) && std::isnan(v_ref)) || v_ref < -200.0)
+        if ((std::isnan(v_new) && std::isnan(v_ref)) || (!linear && v_ref < -200.0))
         {
           continue;
         }
         INFO("row " << r + 1 << " column '" << hdr << "'");
-        CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
-                              Catch::Matchers::WithinAbs(v_ref, atol));
+        if (linear)
+        {
+          const double s_new = std::pow(10.0, v_new / 20.0);
+          const double s_ref = std::pow(10.0, v_ref / 20.0);
+          CHECK(std::abs(s_new - s_ref) <= atol + rtol * std::max(s_new, s_ref));
+        }
+        else
+        {
+          CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
+                                Catch::Matchers::WithinAbs(v_ref, atol));
+        }
       }
     }
   };
@@ -1476,6 +1487,20 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_uniform.json",
                                   "uniform", opts);
+}
+
+// Adaptive (PROM) counterpart of dielectric_grating_uniform, which assembles the Floquet
+// DtN correction at every greedy sample. As in the other adaptive cases, the outputs other
+// than the S-parameters are structural smoke checks.
+TEST_CASE("dielectric_grating_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = std::numeric_limits<double>::infinity();
+  opts.atol = std::numeric_limits<double>::infinity();
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(1.0e-3, 1.0e-4, true);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_adaptive.json",
+                                  "adaptive", opts);
 }
 
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power

@@ -61,11 +61,9 @@ public:
   // The term vectors are copied, so they need not outlive the operator.
   WavePortModalCorrection(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &s,
                           const std::vector<std::complex<double>> &g)
-    : ComplexOperator(n), update(comm, s, g)
+    : ComplexOperator(n), update(comm, n, s, g)
   {
   }
-
-  bool Empty() const { return update.NumTerms() == 0; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override
   {
@@ -2074,9 +2072,9 @@ std::unique_ptr<ComplexVector> AssembleNxHVector(FiniteElementSpace &nd_fespace,
 }
 
 // Wrap the assembled rank-1 terms as the modal-correction operator, or nullptr if none.
-std::unique_ptr<ComplexOperator>
-BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> terms,
-                             FiniteElementSpace &nd_fespace)
+std::unique_ptr<ComplexOperator> BuildModalCorrectionOperator(
+    const std::vector<WavePortOperator::ModalCorrectionTerm> &terms,
+    FiniteElementSpace &nd_fespace)
 {
   if (terms.empty())
   {
@@ -2227,7 +2225,7 @@ WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &n
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
+  return BuildModalCorrectionOperator(terms, nd_fespace);
 }
 
 std::unique_ptr<ComplexOperator>
@@ -2236,7 +2234,7 @@ WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
+  return BuildModalCorrectionOperator(terms, nd_fespace);
 }
 
 std::vector<int>

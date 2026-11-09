@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cmath>
 #include <complex>
 #include <memory>
 #include <random>
@@ -8,51 +10,82 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "linalg/lowrank.hpp"
 #include "linalg/vector.hpp"
+#include "models/floquetportoperator.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
 {
-using namespace Catch::Matchers;
 
 namespace
 {
 
-void FillRandom(ComplexVector &v, std::mt19937 &gen, bool keep_zeros = false)
+void FillRandom(ComplexVector &v, std::mt19937 &gen)
 {
   std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  auto *VR = v.Real().HostReadWrite();
-  auto *VI = v.Imag().HostReadWrite();
+  auto *VR = v.Real().HostWrite();
+  auto *VI = v.Imag().HostWrite();
   for (int i = 0; i < v.Size(); i++)
   {
-    if (keep_zeros && VR[i] == 0.0 && VI[i] == 0.0)
-    {
-      continue;
-    }
     VR[i] = dist(gen);
     VI[i] = dist(gen);
   }
 }
 
+std::vector<std::complex<double>> Values(const ComplexVector &u)
+{
+  std::vector<std::complex<double>> w(u.Size());
+  const auto *UR = u.Real().HostRead();
+  const auto *UI = u.Imag().HostRead();
+  for (int i = 0; i < u.Size(); i++)
+  {
+    w[i] = {UR[i], UI[i]};
+  }
+  return w;
+}
+
+// Largest entrywise error, relative to the largest reference entry (at least 1).
+double MaxError(const ComplexVector &u, const std::vector<std::complex<double>> &ref)
+{
+  const auto w = Values(u);
+  double err = 0.0, scale = 1.0;
+  for (std::size_t i = 0; i < ref.size(); i++)
+  {
+    err = std::max({err, std::abs(w[i].real() - ref[i].real()),
+                    std::abs(w[i].imag() - ref[i].imag())});
+    scale = std::max({scale, std::abs(ref[i].real()), std::abs(ref[i].imag())});
+  }
+  return err / scale;
+}
+
 }  // namespace
 
-// Compare the batched, port-packed update against the per-term reference it replaces (one
-// global dot per real product, then full-length updates).
-TEMPLATE_TEST_CASE("LowRankComplexUpdate matches per-term reference",
+// Compare the port-packed update against a reference in complex arithmetic (one global
+// dot per term, then full-length updates).
+TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
                    "[lowrank][Serial][Parallel][GPU]", std::true_type, std::false_type)
 {
   constexpr bool conj = TestType::value;
   MPI_Comm comm = Mpi::World();
-  const int rank = Mpi::Rank(comm);
-  const int n = 23 + 3 * rank;
-  const int K = 7;
+  const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  // One device block per term, uncapped and capped blocks per term, and the cap of one
+  // block.
+  const auto [n0, K] =
+      GENERATE(table<int, int>({{23, 7}, {8200, 7}, {8200, 80}, {40, 1100}}));
+  const int n = n0 + 3 * rank;
 
-  // 0: sparse support on every rank, 1: support on rank 0 only, 2: full support.
-  const int support = GENERATE(0, 1, 2);
-  std::mt19937 gen(1234 + 17 * rank + 101 * support);
+  // 0: sparse support on every rank, 1: support on rank 0 only, 2: full support, 3: three
+  // disjoint ports of 1/6, 1/3 and 1/2 of the entries (term k on port k % 3, every other
+  // entry for odd k), 4: as 3, with the last term also on the first entry of the next
+  // port, which joins two of the ports, 5: term k only on rank k % size, on every third
+  // entry.
+  const int support = GENERATE(0, 1, 2, 3, 4, 5);
+  std::mt19937 gen(1234 + 17 * rank + 101 * support + n0 + K);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
+  auto port = [n](int i) { return (6 * i < n) ? 0 : (2 * i < n) ? 1 : 2; };
+  auto first = [n](int p) { return (p == 0) ? 0 : (p == 1) ? (n + 5) / 6 : (n + 1) / 2; };
   std::vector<std::unique_ptr<ComplexVector>> v;
   std::vector<const ComplexVector *> v_ptr;
   std::vector<std::complex<double>> g;
@@ -60,19 +93,21 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches per-term reference",
   {
     auto vk = std::make_unique<ComplexVector>(n);
     vk->UseDevice(true);
-    *vk = 0.0;
+    auto *VR = vk->Real().HostWrite();
+    auto *VI = vk->Imag().HostWrite();
+    for (int i = 0; i < n; i++)
     {
-      auto *VR = vk->Real().HostReadWrite();
-      for (int i = 0; i < n; i++)
-      {
-        const bool on = (support == 2) ||
-                        (support == 0 && (i % 4 == 0 || (i % 4 == 1 && k % 2 == 0))) ||
-                        (support == 1 && rank == 0 && i < 4 + k);
-        VR[i] = on ? 1.0 : 0.0;
-      }
+      const int b = k % 3;
+      const bool on =
+          (support == 2) || (support == 0 && (i % 4 == 0 || (i % 4 == 1 && k % 2 == 0))) ||
+          (support == 1 && rank == 0 && i < 4 + k) ||
+          ((support == 3 || support == 4) && port(i) == b && (k % 2 == 0 || i % 2 == 0)) ||
+          (support == 4 && k == K - 1 && i == first((b + 1) % 3)) ||
+          (support == 5 && rank == k % size && i % 3 == 0);
+      VR[i] = on ? dist(gen) : 0.0;
+      VI[i] = on ? dist(gen) : 0.0;
     }
-    FillRandom(*vk, gen, /*keep_zeros=*/true);
-    g.emplace_back(0.3 + 0.1 * k, -0.2 + 0.05 * k);
+    g.emplace_back(0.3 + 0.1 * (k % 7), -0.2 + 0.05 * (k % 7));
     v_ptr.push_back(vk.get());
     v.push_back(std::move(vk));
   }
@@ -84,32 +119,52 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches per-term reference",
   FillRandom(y0, gen);
   const std::complex<double> a(0.7, -0.4);
 
-  ComplexVector y_ref(y0);
+  // Reference results for y0 and, with x aliasing y, for x.
+  const auto xc = Values(x);
+  std::vector<std::vector<std::complex<double>>> vc(K);
+  std::vector<double> d(2 * K, 0.0);
   for (int k = 0; k < K; k++)
   {
-    const auto &vk = *v[k];
-    const double rr = linalg::Dot(comm, vk.Real(), x.Real());
-    const double ii = linalg::Dot(comm, vk.Imag(), x.Imag());
-    const double ri = linalg::Dot(comm, vk.Real(), x.Imag());
-    const double ir = linalg::Dot(comm, vk.Imag(), x.Real());
-    const auto dot = conj ? std::complex<double>(rr + ii, ri - ir)
-                          : std::complex<double>(rr - ii, ri + ir);
-    y_ref.Add(a * g[k] * dot, vk);
+    vc[k] = Values(*v[k]);
+    std::complex<double> dot = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      dot += (conj ? std::conj(vc[k][i]) : vc[k][i]) * xc[i];
+    }
+    d[2 * k] = dot.real();
+    d[2 * k + 1] = dot.imag();
+  }
+  Mpi::GlobalSum(2 * K, d.data(), comm);
+  auto y_ref = Values(y0), x_ref = xc;
+  for (int k = 0; k < K; k++)
+  {
+    const auto s = a * g[k] * std::complex<double>(d[2 * k], d[2 * k + 1]);
+    for (int i = 0; i < n; i++)
+    {
+      y_ref[i] += s * vc[k][i];
+      x_ref[i] += s * vc[k][i];
+    }
   }
 
-  LowRankComplexUpdate<conj> update(comm, v_ptr, g);
+  LowRankComplexUpdate<conj> update(comm, n, v_ptr, g);
+  const bool local = (support != 1 || rank == 0) && (support != 5 || rank < K);
+  const int nnz = !local           ? 0
+                  : (support == 0) ? (n + 3) / 4 + (n + 2) / 4
+                  : (support == 1) ? std::min(n, K + 3)
+                  : (support == 5) ? (n + 2) / 3
+                                   : n;
   CHECK(update.NumTerms() == K);
-  if (support == 2)
+  CHECK(update.NumGroups() == (!local ? 0 : (support == 3) ? 3 : (support == 4) ? 2 : 1));
+  CHECK(update.NumPackedEntries() == nnz);
+
+  // The entries outside every term's support must stay exactly as they were.
+  std::vector<bool> untouched(n, true);
+  for (int k = 0; k < K; k++)
   {
-    CHECK(update.NumPackedEntries() == n);
-  }
-  else if (support == 1 && rank > 0)
-  {
-    CHECK(update.NumPackedEntries() == 0);
-  }
-  else
-  {
-    CHECK(update.NumPackedEntries() < n);
+    for (int i = 0; i < n; i++)
+    {
+      untouched[i] = untouched[i] && vc[k][i] == 0.0;
+    }
   }
 
   // The copies must be independent of the source vectors.
@@ -120,33 +175,22 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches per-term reference",
 
   ComplexVector y(y0);
   update.AddMult(x, y, a);
-
-  const auto *YR = y.Real().HostRead();
-  const auto *YI = y.Imag().HostRead();
-  const auto *RR = y_ref.Real().HostRead();
-  const auto *RI = y_ref.Imag().HostRead();
+  CHECK(MaxError(y, y_ref) <= 1e-12);
+  const auto yc = Values(y), y0c = Values(y0);
+  int num_changed = 0;
   for (int i = 0; i < n; i++)
   {
-    CHECK_THAT(YR[i], WithinAbs(RR[i], 1e-12));
-    CHECK_THAT(YI[i], WithinAbs(RI[i], 1e-12));
+    num_changed += untouched[i] && yc[i] != y0c[i];
   }
+  CHECK(num_changed == 0);
 
-  // Entries outside every term's support are left untouched.
-  if (support == 1 && rank > 0)
-  {
-    const auto *Y0R = y0.Real().HostRead();
-    const auto *Y0I = y0.Imag().HostRead();
-    for (int i = 0; i < n; i++)
-    {
-      CHECK(YR[i] == Y0R[i]);
-      CHECK(YI[i] == Y0I[i]);
-    }
-  }
+  update.AddMult(x, x, a);
+  CHECK(MaxError(x, x_ref) <= 1e-12);
 }
 
 TEST_CASE("LowRankComplexUpdate with no terms", "[lowrank][Serial][Parallel][GPU]")
 {
-  LowRankComplexUpdate<true> update(Mpi::World(), {}, {});
+  LowRankComplexUpdate<true> update(Mpi::World(), 5, {}, {});
   ComplexVector x(5), y(5);
   x = 1.0;
   y = 2.0;
@@ -156,6 +200,29 @@ TEST_CASE("LowRankComplexUpdate with no terms", "[lowrank][Serial][Parallel][GPU
   {
     CHECK(YR[i] == 2.0);
   }
+}
+
+// The Floquet port operator uses the conjugated inner product: F v = g (vᴴ v) v = g ‖v‖² v.
+TEST_CASE("Floquet low-rank operator uses the conjugated inner product",
+          "[lowrank][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int n = 11 + Mpi::Rank(comm);
+  std::mt19937 gen(42 + Mpi::Rank(comm));
+  ComplexVector v(n), y(n);
+  v.UseDevice(true);
+  y.UseDevice(true);
+  FillRandom(v, gen);
+  const std::complex<double> g(0.3, -0.2);
+  LowRankComplexOperator op(comm, n, {&v}, {g});
+  op.Mult(v, y);
+  const double v_sq = std::pow(linalg::Norml2(comm, v), 2);
+  auto ref = Values(v);
+  for (auto &r : ref)
+  {
+    r *= g * v_sq;
+  }
+  CHECK(MaxError(y, ref) <= 1e-12);
 }
 
 }  // namespace palace

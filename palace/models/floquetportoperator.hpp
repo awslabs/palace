@@ -75,7 +75,7 @@ public:
   // The projection vectors are copied, so they need not outlive the operator.
   LowRankComplexOperator(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &v,
                          const std::vector<std::complex<double>> &g)
-    : ComplexOperator(n), update(comm, v, g)
+    : ComplexOperator(n), update(comm, n, v, g)
   {
   }
 
@@ -256,7 +256,7 @@ public:
   void Initialize(double omega);
 
   // Get the combined low-rank boundary operator F(omega) for all Floquet ports.
-  // Returns nullptr if no Floquet ports are configured.
+  // Returns nullptr if no Floquet ports are configured or no order needs a correction.
   std::unique_ptr<ComplexOperator> GetExtraSystemOperator(double omega);
 
   // Add Robin boundary mass coefficient (iγ₀/μ) for absorption on Floquet port faces.
