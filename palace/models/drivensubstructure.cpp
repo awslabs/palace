@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <type_traits>
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
@@ -1564,7 +1565,8 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
           static_cast<std::streamsize>(sizeof(double) * om.size()));
   f.write(reinterpret_cast<const char *>(wt.data()),
           static_cast<std::streamsize>(sizeof(std::complex<double>) * wt.size()));
-  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
+  f.close();
+  MFEM_VERIFY(!f.fail(), "Cannot write the substructuring model \"" << path << "\"!");
 }
 
 void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
@@ -1574,6 +1576,8 @@ void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record
   const auto x = Flatten(r);
   f.write(reinterpret_cast<const char *>(x.data()),
           static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));
+  f.close();
+  MFEM_VERIFY(!f.fail(), "Cannot write the substructuring model \"" << path << "\"!");
 }
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
@@ -1582,13 +1586,22 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   length_scale = 0.0;
   env_moments = {};
   region_moments = {};
+  const bool root = Mpi::Root(comm);
   std::ifstream f;
-  if (Mpi::Root(comm))
+  std::streamoff size = 0;
+  int known = 0;  // a model of a known version
+  if (root)
   {
-    f.open(path, std::ios::binary);
+    f.open(path, std::ios::binary | std::ios::ate);
     if (f.good())
     {
+      size = f.tellg();
+      f.seekg(0);
       f.read(reinterpret_cast<char *>(head), sizeof(int) * 2);
+      known = f.good() && head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 6;
+    }
+    if (known)
+    {
       f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * ((head[1] == 1)  ? 6
                                                                 : (head[1] < 4) ? 8
                                                                                 : 9));
@@ -1603,41 +1616,58 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
       }
     }
   }
+  Mpi::Broadcast(1, &known, 0, comm);
+  MFEM_VERIFY(known, "Cannot read the driven substructuring model \""
+                         << path
+                         << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
+  auto incomplete = [&](bool ok)
+  {
+    MFEM_VERIFY(ok, "The saved substructuring model \""
+                        << path << "\" is incomplete: rerun in \"Offline\" mode!");
+  };
   Mpi::Broadcast(11, head, 0, comm);
   Mpi::Broadcast(1, &length_scale, 0, comm);
   Mpi::Broadcast(6, env_moments.data(), 0, comm);
   Mpi::Broadcast(6, region_moments.data(), 0, comm);
-  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 6,
-              "Cannot read the driven substructuring model \""
-                  << path << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
   version = head[1];
   nG = head[2];
   sig_w = head[3];
-  auto read = [&](auto &v, std::size_t n)
+  // An array of n entries, read on rank 0 if the rest of the file holds it (n counted in
+  // floating point, so that any size read is checked before it is allocated; a header cut
+  // in its fixed part fails the first read). Collective.
+  auto read = [&](auto &v, double n)
   {
-    if (Mpi::Root(comm))
+    using T = typename std::decay_t<decltype(v)>::value_type;
+    int ok = 1;
+    if (root)
     {
-      ReadVec(f, v, n);
+      ok = n >= 0.0 && n * sizeof(T) <= static_cast<double>(
+                                            size - static_cast<std::streamoff>(f.tellg()));
+      if (ok)
+      {
+        ReadVec(f, v, static_cast<std::size_t>(n));
+        ok = f.good();
+      }
     }
-    else
-    {
-      v.resize(n);
-    }
+    Mpi::Broadcast(1, &ok, 0, comm);
+    incomplete(ok);
+    v.resize(static_cast<std::size_t>(n));
     Mpi::Broadcast(static_cast<int>(n), v.data(), 0, comm);
   };
-  read(signatures, static_cast<std::size_t>(nG) * sig_w);
+  read(signatures, static_cast<double>(nG) * sig_w);
   read(env_fp, head[4]);
   read(excitations, head[5]);
-  read(exc_fp, kSourceFp * static_cast<std::size_t>(head[5]));
+  read(exc_fp, static_cast<double>(kSourceFp) * head[5]);
   read(ports, head[6]);
   read(region_bdr_attributes, head[10]);
-  read(port_data, (version >= 6) ? kPortData * static_cast<std::size_t>(head[6]) : 0);
+  read(port_data, (version >= 6) ? static_cast<double>(kPortData) * head[6] : 0.0);
   capacity = head[7];
   read(omega, capacity);
   weights.clear();
   if (version >= 2)
   {
     read(weights, capacity);
+    incomplete(head[8] >= 0 && head[8] <= capacity);
     omega.resize(head[8]);
     weights.resize(head[9] ? head[8] : 0);
   }

@@ -2898,6 +2898,48 @@ TEST_CASE("Saved driven excitations match across partitions", "[substructure][Se
   CHECK_FALSE(Model::SameEnvironment(env, env2));
 }
 
+TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][Serial]")
+{
+  // The header is read part by part, each only if the rest of the file holds it: a header
+  // cut short, and one whose sizes exceed the file (also a negative one) or its room, are
+  // incomplete, and a file of another kind is not a model.
+  DrivenSubstructureModel m;
+  m.nG = 2;
+  m.sig_w = 1;
+  m.signatures = {0.25, 0.75};
+  m.env_fp = {100.0, 20.0, 3.0, 0.0};
+  m.omega = {1.0};
+  m.capacity = 1;
+  const auto path =
+      (std::filesystem::temp_directory_path() / "palace-driven-model-cut.bin").string();
+  m.WriteHeader(path);
+  DrivenSubstructureModel saved;
+  saved.ReadHeader(path, Mpi::World());
+  CHECK(saved.signatures == m.signatures);
+  using Catch::Matchers::ContainsSubstring;
+  std::filesystem::resize_file(path, std::filesystem::file_size(path) / 2);
+  CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                    ContainsSubstring("is incomplete"));
+  // The interface size (head entry 2) beyond the file or negative, and more frequencies
+  // (entry 8) than the header has room for.
+  for (const auto [entry, value] : {std::pair{2, 1000}, {2, -5}, {8, 7}})
+  {
+    m.WriteHeader(path);
+    {
+      std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+      f.seekp(entry * sizeof(int));
+      f.write(reinterpret_cast<const char *>(&value), sizeof(int));
+    }
+    CAPTURE(entry, value);
+    CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                      ContainsSubstring("is incomplete"));
+  }
+  std::ofstream(path, std::ios::binary) << "not a model";
+  CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                    ContainsSubstring("Cannot read the driven substructuring model"));
+  std::filesystem::remove(path);
+}
+
 TEST_CASE("A saved driven model continues from its complete records",
           "[substructure][Serial]")
 {
