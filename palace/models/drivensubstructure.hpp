@@ -144,6 +144,10 @@ struct DrivenSubstructureModel
   // relative to ‖S_E‖_F. A negative value is a violation.
   static double Passivity(const std::complex<double> *lower, int n);
 
+  // Whether S_E is passive to tol: Im S_E + tol ‖S_E‖_F I is positive definite, that is,
+  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization.
+  static bool Passive(const std::complex<double> *lower, int n, double tol);
+
 private:
   std::size_t HeaderBytes() const;
   std::size_t RecordBytes() const;

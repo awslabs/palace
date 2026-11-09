@@ -2818,7 +2818,8 @@ TEST_CASE("Barycentric interpolation of a rational vector function",
 TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
 {
   // S = Re + i Im with Im = Q diag(d) Q^T (Q a rotation): the least eigenvalue of Im,
-  // relative to ‖S‖_F, for any scaling of S.
+  // relative to ‖S‖_F, for any scaling of S, and the Cholesky test of passivity to a
+  // tolerance, about that eigenvalue.
   const double c = std::cos(0.3), s = std::sin(0.3);
   auto lower = [&](double d0, double d1, double scale)
   {
@@ -2838,6 +2839,10 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
           Catch::Approx(0.1 * scale / norm(passive)).epsilon(1.0e-12));
     CHECK(DrivenSubstructureModel::Passivity(active.data(), 2) ==
           Catch::Approx(-0.2 * scale / norm(active)).epsilon(1.0e-12));
+    const double violation = 0.2 * scale / norm(active);
+    CHECK(DrivenSubstructureModel::Passive(passive.data(), 2, 1.0e-12));
+    CHECK_FALSE(DrivenSubstructureModel::Passive(active.data(), 2, 0.5 * violation));
+    CHECK(DrivenSubstructureModel::Passive(active.data(), 2, 2.0 * violation));
   }
 }
 

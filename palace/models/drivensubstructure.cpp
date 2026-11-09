@@ -23,6 +23,7 @@ extern "C"
   void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
   void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
                const int *, const int *, std::complex<double> *, const int *, int *);
+  void dpotrf_(const char *, const int *, double *, const int *, int *);
   void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
                const double *, const double *, const int *, const int *, const double *,
                int *, double *, double *, const int *, int *, double *, const int *, int *,
@@ -1434,6 +1435,27 @@ double DrivenSubstructureModel::Passivity(const std::complex<double> *lower, int
           &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork, &info);
   MFEM_VERIFY(info == 0 && found == 1, "Eigenvalue of Im S_E failed: info = " << info);
   return (f > 0.0) ? w / std::sqrt(f) : 0.0;
+}
+
+bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, double tol)
+{
+  std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
+  double f = 0.0;
+  for (int j = 0, q = 0; j < n; j++)
+  {
+    for (int i = j; i < n; i++, q++)
+    {
+      A[static_cast<std::size_t>(j) * n + i] = lower[q].imag();
+      f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
+    }
+  }
+  for (int j = 0; j < n; j++)
+  {
+    A[static_cast<std::size_t>(j) * n + j] += tol * std::sqrt(f);
+  }
+  int info = 0;
+  dpotrf_("L", &n, A.data(), &n, &info);
+  return info == 0;
 }
 
 double BarycentricInterpolant::FindMaxError() const
