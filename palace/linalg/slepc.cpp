@@ -1487,74 +1487,26 @@ void SlepcNEPSolver::SetPreconditionerUpdate(
 void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
 {
-  // Construct shell matrices for the scaled operators which define the quadratic polynomial
-  // eigenvalue problem.
-  const bool first = (opK == nullptr);
-  opK = &K;
-  opM = &M;
-
-  if (first)
-  {
-    const PetscInt n = opK->Height();
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A));
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &J));
-    PalacePetscCall(MatShellSetOperation(A, MATOP_MULT, (void (*)(void))__mat_apply_NEP_A));
-    PalacePetscCall(MatShellSetOperation(J, MATOP_MULT, (void (*)(void))__mat_apply_NEP_J));
-    PalacePetscCall(MatShellSetVecType(A, PetscVecType()));
-    PalacePetscCall(MatShellSetVecType(J, PetscVecType()));
-    PalacePetscCall(NEPSetFunction(nep, A, A, __form_NEP_function, NULL));
-    PalacePetscCall(NEPSetJacobian(nep, J, __form_NEP_jacobian, NULL));
-  }
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for NEP scaling!");
-    if (normK > 0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / normK;
-    }
-  }
-
-  // Set up workspace.
-  if (!v0)
-  {
-    PalacePetscCall(MatCreateVecs(A, nullptr, &v0));
-  }
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-
-  // Configure linear solver.
-  if (first)
-  {
-    // SLP.
-    PC pc;
-    KSP ksp;
-    EPS eps;
-    PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
-    PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
-    PalacePetscCall(NEPSLPGetEPS(nep, &eps));
-    PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
-    PalacePetscCall(KSPGetPC(ksp, &pc));
-    PalacePetscCall(PCSetType(pc, PCSHELL));
-    PalacePetscCall(PCShellSetContext(pc, (void *)this));
-    PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
-  }
+  SetOperatorsImpl(K, nullptr, M, type);
 }
 
 void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                                   const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
 {
-  // Construct shell matrices for the scaled operators which define the quadratic polynomial
-  // eigenvalue problem.
+  SetOperatorsImpl(K, &C, M, type);
+}
+
+void SlepcNEPSolver::SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                                      const ComplexOperator &M,
+                                      EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled operators which define the nonlinear
+  // eigenvalue problem. Without C, opC is reset so that the function, Jacobian, and
+  // residual do not use a damping matrix from an earlier call.
   const bool first = (opK == nullptr);
   opK = &K;
-  opC = &C;
+  opC = C;
   opM = &M;
 
   if (first)
@@ -1575,7 +1527,7 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    normC = opC ? linalg::SpectralNorm(GetComm(), *opC, opC->IsReal()) : 0.0;
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for NEP scaling!");
