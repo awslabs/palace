@@ -800,4 +800,94 @@ bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b
   return match;
 }
 
+bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
+                    const std::array<double, 6> &env_moments,
+                    const std::array<double, 6> &region_moments, double tol)
+{
+  const auto moments = ElementMoments(mesh, environment_attributes);
+  const bool region_only = !MomentsMatch(moments, env_moments, tol);
+  MFEM_VERIFY(!region_only || MomentsMatch(moments, region_moments, tol),
+              kEnvironmentDiffers);
+  return region_only;
+}
+
+std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,
+                                      const std::vector<char> &candidate,
+                                      const std::vector<int> &parent,
+                                      const std::vector<double> &saved_signatures,
+                                      int saved_width)
+{
+  const auto &mesh = *parent_fespace.GetParMesh();
+  MPI_Comm comm = parent_fespace.GetComm();
+  const int nt = static_cast<int>(candidate.size());
+  auto parent_of = [&](int t) { return parent.empty() ? t : parent[t]; };
+  const std::vector<char> bdr =
+      BoundaryTrueDofs(parent_fespace, std::vector<int>(mesh.bdr_attributes.begin(),
+                                                        mesh.bdr_attributes.end()));
+  // The candidates' parent DOFs on the boundary, numbered over the processes.
+  std::vector<int> index(parent_fespace.GetTrueVSize(), -1);
+  int nc = 0;
+  for (int t = 0; t < nt; t++)
+  {
+    const int t0 = parent_of(t);
+    if (bdr[t0] && candidate[t] && index[t0] < 0)
+    {
+      index[t0] = nc++;
+    }
+  }
+  int off = 0;
+  MPI_Exscan(&nc, &off, 1, MPI_INT, MPI_SUM, comm);
+  off = Mpi::Root(comm) ? 0 : off;
+  Mpi::GlobalSum(1, &nc, comm);
+  for (auto &g : index)
+  {
+    g += (g >= 0) ? off : 0;
+  }
+  const auto match =
+      MatchSignaturePoints(TrueDofSignatures(parent_fespace, index, nc),
+                           SignatureWidth(parent_fespace), saved_signatures, saved_width);
+  std::vector<char> cut(nt, 0);
+  for (int t = 0; t < nt; t++)
+  {
+    const int t0 = parent_of(t);
+    cut[t] = candidate[t] && index[t0] >= 0 && match[index[t0]];
+  }
+  return cut;
+}
+
+mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
+{
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
+  mfem::ParGridFunction gf(&fes);
+  if (fes.FEColl()->GetRangeType(fes.GetMesh()->Dimension()) == mfem::FiniteElement::VECTOR)
+  {
+    mfem::VectorFunctionCoefficient c(
+        3,
+        [k](const mfem::Vector &x, mfem::Vector &v)
+        {
+          const double X = x(0), Y = x(1), Z = x(2);
+          const double f[3][3] = {{Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
+          v.SetSize(3);
+          for (int d = 0; d < 3; d++)
+          {
+            v(d) = f[k][d];
+          }
+        });
+    gf.ProjectCoefficient(c);
+  }
+  else
+  {
+    mfem::FunctionCoefficient c(
+        [k](const mfem::Vector &x)
+        {
+          const double X = x(0), Y = x(1), Z = x.Size() > 2 ? x(2) : 0.0;
+          return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
+        });
+    gf.ProjectCoefficient(c);
+  }
+  mfem::Vector r(fes.GetTrueVSize());
+  gf.GetTrueDofs(r);
+  return r;
+}
+
 }  // namespace palace
