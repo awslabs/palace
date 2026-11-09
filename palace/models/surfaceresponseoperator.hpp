@@ -2585,8 +2585,9 @@ struct DomainBoundaryExclusions
   long long int tested_points = 0;
   long long int reflected_points = 0;  // outside points reflected into the mesh
   double wall_time = 0.0;              // of the containment test, seconds
-  // Cumulative phase stamps of the test (seconds since its start: points, locator, find,
-  // reduce, reflect, distances), printed with PALACE_RESPONSE_SETUP_TIMING (decision 538).
+  // The phase durations of the test (seconds: points, locator, find, reduce, reflect,
+  // distances; summed over the candidate blocks), printed with PALACE_RESPONSE_SETUP_TIMING
+  // (decision 538).
   std::map<std::string, double> phase_times;
 };
 // `mirror_planes` (empty: no mirror, every cut-crossing patch is DomainBoundary) and the
@@ -2600,6 +2601,13 @@ struct DomainBoundaryExclusions
 // (`unmerged_portions`) is DomainBoundary whatever its points' containment (decision 481:
 // the configuration is read as a Missing feature); the coupon supports' reach into the
 // configurations (real or image portions) is recorded as information.
+// The containment test's block size in tested points (lane fix-response-memory, decision
+// 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^23 (0.3 GB of
+// per-point lists per rank). Results-neutral: the candidates are tested in blocks of at
+// most this many points with the same per-point arithmetic, the same elementwise
+// reductions and the same per-candidate decision; every block size gives the same
+// DomainBoundaryExclusions. No job of record sets it.
+std::size_t DomainBoundaryContainmentBlockPoints();
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -2615,7 +2623,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
         &unmerged_portions = {},
-    GeometryFallbackLedger *geometry_ledger = nullptr);
+    GeometryFallbackLedger *geometry_ledger = nullptr,
+    std::size_t block_points = DomainBoundaryContainmentBlockPoints());
 
 // The per-process cache of the DERIVED model response matrices (decision 734 F1; the
 // response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /

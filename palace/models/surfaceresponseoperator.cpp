@@ -26231,6 +26231,25 @@ int ReflectPointsIntoDomain(
   return reflected;
 }
 
+std::size_t DomainBoundaryContainmentBlockPoints()
+{
+  // Lane fix-response-memory (decision 1446, C3 / DESIGN s2.5 I-7): the containment
+  // test's per-point lists are built for a block of candidates at a time, at most this
+  // many points per block (35 B per point: 2^23 points = 0.3 GB per rank). Results-neutral:
+  // every block size gives the same exclusions (the per-point reductions are elementwise,
+  // the per-candidate decision reads its own points). No job of record sets the variable.
+  constexpr std::size_t default_block_points = std::size_t(1) << 23;
+  const char *environment = std::getenv("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
+  if (!environment || std::string_view(environment).empty())
+  {
+    return default_block_points;
+  }
+  const long long value = std::atoll(environment);
+  MFEM_VERIFY(value > 0, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS must be a positive "
+                         "point count (default 8388608)!");
+  return static_cast<std::size_t>(value);
+}
+
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh, std::vector<ResponsePatchData> &patches,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
@@ -26241,7 +26260,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
     double mirror_band,
     const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions,
-    GeometryFallbackLedger *geometry_ledger)
+    GeometryFallbackLedger *geometry_ledger, std::size_t block_points)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -26249,21 +26268,34 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
               "The domain-boundary exclusion applies to three-dimensional devices!");
   const auto comm = mesh.GetComm();
   DomainBoundaryExclusions result;
+  MFEM_VERIFY(block_points > 0,
+              "The containment test's block needs a positive point count!");
 
-  // The tested points of every candidate patch (the same list on every rank).
+  // The candidate patches and their tested-point counts (the same list on every rank). The
+  // points themselves are generated per BLOCK of candidates below (C3: at most
+  // `block_points` per block, the lists freed between blocks); the offsets are global.
   const double inset = kSignatureParameterToleranceOverRadius * matching_radius;
   constexpr std::size_t no_reference = std::numeric_limits<std::size_t>::max();
   std::vector<std::size_t> candidates;
   std::vector<std::size_t> point_offsets = {0};
-  // Per candidate, the index of its first conductor reference at the origin section (the
-  // metal-edge point, which lies on a mesh face for every correctly placed patch, a metal
-  // edge on a chip-outline face included): its absence is a misplaced or mis-scaled
+  // Per candidate, the GLOBAL index of its first conductor reference at the origin section
+  // (the metal-edge point, which lies on a mesh face for every correctly placed patch, a
+  // metal edge on a chip-outline face included): its absence is a misplaced or mis-scaled
   // coupon, never a domain cut, and fails closed below (decision 260).
   std::vector<std::size_t> origin_references;
-  std::vector<std::array<double, 3>> points;
-  // Per point, the band of its reflection: the global band, widened to the coupon's own
-  // reach for a mirror-formed configuration's coupon (decision 557 (4)).
-  std::vector<double> point_band;
+  // The cross-sections of a candidate: the origin and, for a longitudinal cell, both ends
+  // moved inward.
+  auto SectionsOf = [&](const ResponsePatchData &patch, bool spatial)
+  {
+    std::vector<double> sections = {0.0};
+    const auto &cell = patch.longitudinal_cell;
+    if (!spatial && cell[1] > cell[0])
+    {
+      sections.push_back(std::min(0.0, cell[0] + inset));
+      sections.push_back(std::max(0.0, cell[1] - inset));
+    }
+    return sections;
+  };
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
     const auto &patch = patches[patch_idx];
@@ -26272,20 +26304,29 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     {
       continue;
     }
-    const double patch_band = std::max(mirror_band, patch.provenance.mirror_reach);
+    const std::size_t point_count = point_offsets.back();
     origin_references.push_back(patch.conductor_references.empty()
                                     ? no_reference
-                                    : points.size() + local_points->size());
+                                    : point_count + local_points->size());
+    const std::size_t sections = SectionsOf(patch, spatial_basis(patch.model)).size();
+    candidates.push_back(patch_idx);
+    point_offsets.push_back(point_count + sections * (local_points->size() +
+                                                      patch.conductor_references.size()));
+  }
+  result.tested_patches = static_cast<long long int>(candidates.size());
+  result.tested_points = static_cast<long long int>(point_offsets.back());
+  // The tested points of candidate c appended to `points` (the former per-candidate loop,
+  // the same arithmetic) with the band of their reflection: the global band, widened to the
+  // coupon's own reach for a mirror-formed configuration's coupon (decision 557 (4)).
+  auto AppendCandidatePoints = [&](std::size_t c,
+                                   std::vector<std::array<double, 3>> &points,
+                                   std::vector<double> &point_band)
+  {
+    const auto &patch = patches[candidates[c]];
+    const auto *local_points = basis_points(patch.model);
+    const double patch_band = std::max(mirror_band, patch.provenance.mirror_reach);
     const bool spatial = spatial_basis(patch.model);
-    // The cross-sections: the origin and, for a longitudinal cell, both ends moved inward.
-    std::vector<double> sections = {0.0};
-    const auto &cell = patch.longitudinal_cell;
-    if (!spatial && cell[1] > cell[0])
-    {
-      sections.push_back(std::min(0.0, cell[0] + inset));
-      sections.push_back(std::max(0.0, cell[1] - inset));
-    }
-    for (const double section : sections)
+    for (const double section : SectionsOf(patch, spatial))
     {
       for (const auto &local : *local_points)
       {
@@ -26312,23 +26353,27 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         points.push_back(point);
       }
     }
-    candidates.push_back(patch_idx);
     point_band.resize(points.size(), patch_band);
-    point_offsets.push_back(points.size());
-  }
-  result.tested_patches = static_cast<long long int>(candidates.size());
-  result.tested_points = static_cast<long long int>(points.size());
+  };
 
   // Every rank locates every point in its local mesh with the operator's locator and its
   // tolerances; the found flags are OR-reduced, so the decision is the partition's union.
-  // Phase times (decision 538 diagnosis): recorded in the result, printed by the caller.
+  // Phase times (decision 538 diagnosis): the per-phase durations summed over the blocks,
+  // recorded in the result, printed by the caller.
   auto Elapsed = [&]()
   {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   };
-  result.phase_times["points"] = Elapsed();
+  double phase_mark = Elapsed();
+  auto Phase = [&](const char *name)
+  {
+    const double now = Elapsed();
+    result.phase_times[name] += now - phase_mark;
+    phase_mark = now;
+  };
+  Phase("points");
   ElementPointLocator locator(mesh, dimension);
-  result.phase_times["locator"] = Elapsed();
+  Phase("locator");
   double locator_scale = 0.0;
   for (int d = 0; d < dimension; d++)
   {
@@ -26340,38 +26385,15 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   const double box_tolerance =
       1.0e-11 * locator_scale +
       64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, locator_scale);
-  std::vector<unsigned char> found(points.size(), 0);
-  {
-    std::vector<int> element_candidates;
-    int element;
-    mfem::IntegrationPoint reference;
-    for (std::size_t i = 0; i < points.size(); i++)
-    {
-      if (locator.Find(points[i], box_tolerance, element, reference, element_candidates))
-      {
-        found[i] = 1;
-      }
-    }
-  }
-  result.phase_times["find"] = Elapsed();
-  if (!found.empty())
-  {
-    // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the reduction in chunks (64-bit
-    // sized).
-    Mpi::GlobalMaxLarge(found, comm);
-  }
-  result.phase_times["reduce"] = Elapsed();
   // Mirror (boundary-cut DESIGN 2.2.3): every outside point beyond a Natural plane within
   // the band is reflected into the domain (canonical plane order) and located again; its
   // found flag is OR-reduced like the original's (the same arithmetic on every rank).
-  std::vector<unsigned char> reflected(points.size(), 0);
+  const auto planes = MirrorPlanesOf(mirror_planes);
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
   // Per outside point, why it was not reflected (Diagnostics.DomainBoundary.Reasons; the
   // same arithmetic on every rank): 0 none / reflected, 1 beyond no truncation plane, 2
   // beyond an Unsupported / NonPlanar plane, 3 beyond a Natural plane by more than the
   // band, 4 reflected into the domain but not located.
-  std::vector<unsigned char> unreflected_reason(points.size(), 0);
-  const auto planes = MirrorPlanesOf(mirror_planes);
-  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
   auto ReasonOf = [&](const std::array<double, 3> &point, double band)
   {
     unsigned char reason = 1;
@@ -26413,432 +26435,503 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     }
     return on_plane && locator.Find(nudged, box_tolerance, element, reference, candidates);
   };
-  if (!mirror_planes.empty() && mirror_band > 0.0)
+  // The candidates in blocks of at most `block_points` tested points (a candidate larger
+  // than a block is a block of its own): the block boundaries are a function of the
+  // replicated offsets alone, so every rank forms the same blocks. Per block the SAME
+  // per-point computations and elementwise reductions as the former whole-list form, and
+  // the same per-candidate decision on its own points, appended in ascending candidate
+  // order; the misplaced-reference abort (fail closed, decision 260) fires at the
+  // offending block.
+  std::size_t c_begin = 0;
+  while (c_begin < candidates.size())
   {
-    std::vector<int> element_candidates;
-    int element;
-    mfem::IntegrationPoint reference;
-    for (std::size_t i = 0; i < points.size(); i++)
+    std::size_t c_end = c_begin + 1;
+    while (c_end < candidates.size() &&
+           point_offsets[c_end + 1] - point_offsets[c_begin] <= block_points)
     {
-      if (found[i])
-      {
-        continue;
-      }
-      const auto image = ReflectIntoDomain(points[i], planes, point_band[i], tolerance);
-      if (image && !image->planes.empty() &&
-          locator.Find(image->point, box_tolerance, element, reference, element_candidates))
-      {
-        reflected[i] = 1;
-      }
-      else if (point_band[i] > mirror_band && image && !image->planes.empty() &&
-               OnPlaneInside(image->point, element, reference, element_candidates))
-      {
-        // A point of a mirror-formed coupon ON one of its planes (the configuration's
-        // canonical origin, the centroid of a symmetric configuration, lies on the plane to
-        // roundoff): beyond it by ~1e-11 and reflected to ~1e-11 inside, where the element
-        // inversion's reference tolerance can still refuse it. Located at the plane
-        // (nudged inward by the on-plane tolerance along the planes' inward normals) it is
-        // a point of the closed domain: applied with its reflection like any other.
-        reflected[i] = 1;
-      }
-      else
-      {
-        unreflected_reason[i] = ReasonOf(points[i], point_band[i]);
-      }
+      c_end++;
     }
-    Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
-  }
-  // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
-  // on every rank after the reduction, so every rank aborts together); a reference whose
-  // reflection is located is a cut-adjacent coupon (decision 314's follow-up), judged
-  // below like any other point.
-  auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
-  {
-    const auto &patch = patches[candidates[c]];
-    return fmt::format(
-        "Surface-response patch {:d} (0-based, as in the record and the dry run; model {}) "
-        "is a misplaced or mis-scaled coupon: {} lies outside the device mesh (tested "
-        "point {:d} of {:d} at ({:.9e}, {:.9e}, {:.9e}) mesh units)!",
-        candidates[c], model_name(patch.model), reason, point - point_offsets[c],
-        point_offsets[c + 1] - point_offsets[c], points[point][0] * coordinate_scale,
-        points[point][1] * coordinate_scale, points[point][2] * coordinate_scale);
-  };
-  // F-6 (readiness hardening-2, decision 1018 Q4; the census QUO-019 strip islands whose
-  // lower edge lies ON the tile wall): a reference neither located nor reflected whose
-  // distance to the nearest element box is within the identification's own length
-  // tolerance (kSignatureParameterToleranceOverRadius x R, 1.9 nm at R = 1.9 um; the
-  // locator's box tolerance is ~1e-11 of the mesh scale) is a reference ON the mesh
-  // boundary to roundoff: read as located, the patch continues through the classification
-  // below (its other points decide: applied, Mirrored or DomainBoundary). Beyond the
-  // tolerance the reference is off the mesh: without a ledger the abort of record; under
-  // the ledger the patch is excluded (weight 0, reason MisplacedReference, its raw claims
-  // kept by the DomainBoundary portions) and UnlocatedPatch recorded. The distances are
-  // GlobalMin'd like the other outside points' below (the same decision on every rank).
-  std::vector<unsigned char> misplaced_reference(candidates.size(), 0);
-  {
-    std::vector<std::size_t> unlocated;
-    for (std::size_t c = 0; c < candidates.size(); c++)
+    const std::size_t block_base = point_offsets[c_begin];
+    std::vector<std::array<double, 3>> points;
+    std::vector<double> point_band;
+    points.reserve(point_offsets[c_end] - block_base);
+    for (std::size_t c = c_begin; c < c_end; c++)
     {
-      const std::size_t reference = origin_references[c];
-      if (reference != no_reference && !found[reference] && !reflected[reference])
+      AppendCandidatePoints(c, points, point_band);
+    }
+    MFEM_VERIFY(points.size() == point_offsets[c_end] - block_base,
+                "The containment test's block holds " << points.size() << " points, "
+                                                      << point_offsets[c_end] - block_base
+                                                      << " expected!");
+    // The block-local index of a global point.
+    auto BlockLocal = [&](std::size_t global) { return global - block_base; };
+    Phase("points");
+    std::vector<unsigned char> found(points.size(), 0);
+    {
+      std::vector<int> element_candidates;
+      int element;
+      mfem::IntegrationPoint reference;
+      for (std::size_t i = 0; i < points.size(); i++)
       {
-        unlocated.push_back(c);
-      }
-    }
-    std::vector<double> reference_distances(unlocated.size());
-    for (std::size_t k = 0; k < unlocated.size(); k++)
-    {
-      reference_distances[k] = locator.BoxDistance(points[origin_references[unlocated[k]]]);
-    }
-    if (!reference_distances.empty())
-    {
-      Mpi::GlobalMin(static_cast<int>(reference_distances.size()),
-                     reference_distances.data(), comm);
-    }
-    for (std::size_t k = 0; k < unlocated.size(); k++)
-    {
-      const std::size_t c = unlocated[k];
-      const std::size_t reference = origin_references[c];
-      if (reference_distances[k] <= tolerance)
-      {
-        found[reference] = 1;
-        continue;
-      }
-      if (!geometry_ledger)
-      {
-        MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
-      }
-      misplaced_reference[c] = 1;
-    }
-  }
-  // The UnlocatedPatch record of an excluded patch (the former misplaced-coupon abort's
-  // text with the point's distance): what "patch", its model and feature, the unlocated
-  // point, the patch's own length (its longitudinal cell, else its claims; mesh units).
-  auto RecordUnlocatedPatch = [&](std::size_t c, std::size_t point, const char *site,
-                                  const char *what_point, double distance)
-  {
-    const auto &patch = patches[candidates[c]];
-    GeometryFallbackData entry;
-    entry.cls = "UnlocatedPatch";
-    entry.site = site;
-    entry.reason =
-        DescribeMisplacedPatch(c, point, what_point) +
-        fmt::format(" (distance {:.6e} mesh units from the nearest element box; the "
-                    "boundary tolerance {:.6e})",
-                    distance, tolerance);
-    entry.what = "patch";
-    entry.patches = {static_cast<int>(candidates[c])};
-    entry.models = {model_name(patch.model)};
-    entry.features = {patch.provenance.feature};
-    entry.example_origin = points[point];
-    const auto &cell = patch.longitudinal_cell;
-    if (patch.provenance.coupon_depth > 0.0 && cell[1] > cell[0])
-    {
-      entry.length = cell[1] - cell[0];
-    }
-    else
-    {
-      for (const auto *claims : {&patch.provenance.claims, &patch.provenance.raw_claims})
-      {
-        for (const auto &claim : *claims)
+        if (locator.Find(points[i], box_tolerance, element, reference, element_candidates))
         {
-          entry.length += Norm(Subtract(claim.p1, claim.p0));
+          found[i] = 1;
         }
       }
     }
-    geometry_ledger->Record(std::move(entry));
-  };
-  result.phase_times["reflect"] = Elapsed();
-  // The distance of every outside point to the nearest element box, over the ranks.
-  std::vector<std::size_t> outside;
-  for (std::size_t i = 0; i < points.size(); i++)
-  {
-    if (!found[i])
+    Phase("find");
+    if (!found.empty())
     {
-      outside.push_back(i);
+      // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the reduction in chunks (64-bit
+      // sized).
+      Mpi::GlobalMaxLarge(found, comm);
     }
-  }
-  std::vector<double> distances(outside.size());
-  for (std::size_t k = 0; k < outside.size(); k++)
-  {
-    distances[k] = locator.BoxDistance(points[outside[k]]);
-  }
-  if (!distances.empty())
-  {
-    Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
-  }
-  result.phase_times["distances"] = Elapsed();
-
-  std::size_t k = 0;
-  for (std::size_t c = 0; c < candidates.size(); c++)
-  {
-    const std::size_t begin = point_offsets[c], end = point_offsets[c + 1];
-    DomainBoundaryExclusion exclusion;
-    exclusion.patch = candidates[c];
-    exclusion.tested_points = static_cast<int>(end - begin);
-    exclusion.nearest_distance = mfem::infinity();
-    while (k < outside.size() && outside[k] < end)
+    Phase("reduce");
+    std::vector<unsigned char> reflected(points.size(), 0);
+    std::vector<unsigned char> unreflected_reason(points.size(), 0);
+    if (!mirror_planes.empty() && mirror_band > 0.0)
     {
-      exclusion.outside_points++;
-      if (distances[k] < exclusion.nearest_distance)
+      std::vector<int> element_candidates;
+      int element;
+      mfem::IntegrationPoint reference;
+      for (std::size_t i = 0; i < points.size(); i++)
       {
-        exclusion.nearest_distance = distances[k];
-        exclusion.nearest_outside_point = points[outside[k]];
-      }
-      k++;
-    }
-    if (misplaced_reference[c])
-    {
-      // F-6 under the ledger: the reference off the mesh beyond the boundary tolerance.
-      const std::size_t reference = origin_references[c];
-      const auto position = std::lower_bound(outside.begin(), outside.end(), reference);
-      MFEM_VERIFY(position != outside.end() && *position == reference,
-                  "An unlocated metal-edge reference is missing from the outside points!");
-      RecordUnlocatedPatch(c, reference, "H9a/FindDomainBoundaryExclusions:reference",
-                           "its metal-edge reference",
-                           distances[static_cast<std::size_t>(position - outside.begin())]);
-      exclusion.reason = "MisplacedReference";
-      patches[exclusion.patch].weight = 0.0;
-      result.patches.push_back(exclusion);
-      continue;
-    }
-    // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
-    // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
-    // footprint (a translational cell's [s0, s1] on its segment; a vertex / cluster
-    // coupon's claims) overlaps one of its REAL portions whose identification DIFFERS
-    // between the unextended and the extended run (decision 512 (c): a portion identified
-    // identically keeps its model, so an unmerged chain never sends its far cells raw) -
-    // are DomainBoundary (raw kept, F-DB-a), never applied with a single-sided model; a
-    // neighbour's cells keep their
-    // Applied / Mirrored classification as next to any Missing feature. The coupon
-    // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
-    // for a spatial patch; slab clipping against every portion, real or image) is recorded
-    // as INFORMATION only (decision 481).
-    if (!unmerged_portions.empty())
-    {
-      const auto &patch = patches[exclusion.patch];
-      const double tol = kSignatureParameterToleranceOverRadius * matching_radius;
-      // (a) own-edge overlap with a real portion
-      auto OverlapAlong =
-          [&](const std::array<double, 3> &P0, const std::array<double, 3> &P1,
-              const std::array<double, 3> &q0, const std::array<double, 3> &q1)
-      {
-        // Both on the same segment: the overlap of their arc-length intervals.
-        double L = 0.0;
-        std::array<double, 3> d{};
-        for (int k = 0; k < 3; k++)
-        {
-          d[k] = P1[k] - P0[k];
-          L += d[k] * d[k];
-        }
-        L = std::sqrt(L);
-        if (L <= 0.0)
-        {
-          return 0.0;
-        }
-        double a = 0.0, b = 0.0;
-        for (int k = 0; k < 3; k++)
-        {
-          a += (q0[k] - P0[k]) * d[k] / L;
-          b += (q1[k] - P0[k]) * d[k] / L;
-        }
-        return std::min(std::max(a, b), L) - std::max(std::min(a, b), 0.0);
-      };
-      for (const auto &portion : unmerged_portions)
-      {
-        // Image portions are never own; a real portion the unextended run identifies
-        // exactly as the extended run does is not the configuration's own either
-        // (decision 512 (c)): its cells keep their models. The configuration's OWN coupon
-        // (placed by its contract, decision 557 (4): its claims ARE these real portions)
-        // is not a cell of the configuration.
-        if (portion.image || portion.identical ||
-            patch.provenance.mirror_formed_topology == portion.topology)
+        if (found[i])
         {
           continue;
         }
-        bool own = false;
-        if (patch.provenance.coupon_depth > 0.0 && patch.provenance.segment >= 0)
+        const auto image = ReflectIntoDomain(points[i], planes, point_band[i], tolerance);
+        if (image && !image->planes.empty() &&
+            locator.Find(image->point, box_tolerance, element, reference,
+                         element_candidates))
         {
-          // The CELL's own-edge extent (not the feature's whole portion on the segment,
-          // which provenance.s0 / s1 record): its longitudinal cell about the origin on
-          // the side's own edge (edge_offset along AxisU; mesh units like the origin).
-          if (patch.provenance.segment == static_cast<int>(portion.segment))
-          {
-            const auto &cell = patch.longitudinal_cell;
-            std::array<double, 3> q0{}, q1{};
-            for (int k = 0; k < 3; k++)
-            {
-              const double edge =
-                  patch.origin[k] + patch.provenance.edge_offset * patch.axis_u[k];
-              q0[k] = edge + cell[0] * patch.axis_w[k];
-              q1[k] = edge + cell[1] * patch.axis_w[k];
-            }
-            own = OverlapAlong(portion.p0, portion.p1, q0, q1) > tol;
-          }
+          reflected[i] = 1;
+        }
+        else if (point_band[i] > mirror_band && image && !image->planes.empty() &&
+                 OnPlaneInside(image->point, element, reference, element_candidates))
+        {
+          // A point of a mirror-formed coupon ON one of its planes (the configuration's
+          // canonical origin, the centroid of a symmetric configuration, lies on the plane
+          // to roundoff): beyond it by ~1e-11 and reflected to ~1e-11 inside, where the
+          // element inversion's reference tolerance can still refuse it. Located at the
+          // plane (nudged inward by the on-plane tolerance along the planes' inward
+          // normals) it is a point of the closed domain: applied with its reflection like
+          // any other.
+          reflected[i] = 1;
         }
         else
         {
-          for (const auto *claims :
-               {&patch.provenance.raw_claims, &patch.provenance.claims})
-          {
-            for (const auto &claim : *claims)
-            {
-              if (claim.segment != static_cast<int>(portion.segment))
-              {
-                continue;
-              }
-              // The claims' ends are segment points in mesh units (the identification's
-              // keys), like the portion's.
-              own = own || OverlapAlong(portion.p0, portion.p1, claim.p0, claim.p1) > tol;
-            }
-          }
-        }
-        if (own && (exclusion.unmerged_topology < 0 || !exclusion.unmerged_own))
-        {
-          exclusion.unmerged_topology = portion.topology;
-          exclusion.unmerged_p0 = portion.p0;
-          exclusion.unmerged_p1 = portion.p1;
-          exclusion.unmerged_image = false;
-          exclusion.unmerged_distance = 0.0;
-          exclusion.unmerged_own = true;
+          unreflected_reason[i] = ReasonOf(points[i], point_band[i]);
         }
       }
-      // (b) the support's reach (information)
-      const bool spatial = spatial_basis(patch.model);
-      const auto &cell = patch.longitudinal_cell;
-      const std::array<double, 3> lower = {
-          -matching_radius, -matching_radius,
-          (!spatial && cell[1] > cell[0]) ? cell[0] : -matching_radius};
-      const std::array<double, 3> upper = {
-          matching_radius, matching_radius,
-          (!spatial && cell[1] > cell[0]) ? cell[1] : matching_radius};
-      auto Local = [&](const std::array<double, 3> &p)
+      Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
+    }
+    // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
+    // on every rank after the reduction, so every rank aborts together); a reference whose
+    // reflection is located is a cut-adjacent coupon (decision 314's follow-up), judged
+    // below like any other point.
+    auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
+    {
+      const auto &patch = patches[candidates[c]];
+      return fmt::format(
+          "Surface-response patch {:d} (0-based, as in the record and the dry run; model "
+          "{}) is a misplaced or mis-scaled coupon: {} lies outside the device mesh "
+          "(tested "
+          "point {:d} of {:d} at ({:.9e}, {:.9e}, {:.9e}) mesh units)!",
+          candidates[c], model_name(patch.model), reason, point - point_offsets[c],
+          point_offsets[c + 1] - point_offsets[c],
+          points[BlockLocal(point)][0] * coordinate_scale,
+          points[BlockLocal(point)][1] * coordinate_scale,
+          points[BlockLocal(point)][2] * coordinate_scale);
+    };
+    // F-6 (readiness hardening-2, decision 1018 Q4; the census QUO-019 strip islands whose
+    // lower edge lies ON the tile wall): a reference neither located nor reflected whose
+    // distance to the nearest element box is within the identification's own length
+    // tolerance (kSignatureParameterToleranceOverRadius x R, 1.9 nm at R = 1.9 um; the
+    // locator's box tolerance is ~1e-11 of the mesh scale) is a reference ON the mesh
+    // boundary to roundoff: read as located, the patch continues through the
+    // classification below (its other points decide: applied, Mirrored or DomainBoundary).
+    // Beyond the tolerance the reference is off the mesh: without a ledger the abort of
+    // record; under the ledger the patch is excluded (weight 0, reason MisplacedReference,
+    // its raw claims kept by the DomainBoundary portions) and UnlocatedPatch recorded. The
+    // distances are GlobalMin'd like the other outside points' below (the same decision on
+    // every rank).
+    std::vector<unsigned char> misplaced_reference(c_end - c_begin, 0);
+    {
+      std::vector<std::size_t> unlocated;
+      for (std::size_t c = c_begin; c < c_end; c++)
       {
-        std::array<double, 3> local{};
-        for (int d = 0; d < 3; d++)
+        const std::size_t reference = origin_references[c];
+        if (reference != no_reference && !found[BlockLocal(reference)] &&
+            !reflected[BlockLocal(reference)])
         {
-          local[0] += (p[d] - patch.origin[d]) * patch.axis_u[d];
-          local[1] += (p[d] - patch.origin[d]) * patch.axis_v[d];
-          local[2] += (p[d] - patch.origin[d]) * patch.axis_w[d];
+          unlocated.push_back(c);
         }
-        return local;
-      };
-      DomainBoundaryUnmergedReach reach;
-      reach.patch = exclusion.patch;
-      for (const auto &portion : unmerged_portions)
+      }
+      std::vector<double> reference_distances(unlocated.size());
+      for (std::size_t k = 0; k < unlocated.size(); k++)
       {
-        const auto a = Local(portion.p0), b = Local(portion.p1);
-        double t0 = 0.0, t1 = 1.0;
-        bool hit = true;
-        for (int d = 0; d < 3 && hit; d++)
+        reference_distances[k] =
+            locator.BoxDistance(points[BlockLocal(origin_references[unlocated[k]])]);
+      }
+      if (!reference_distances.empty())
+      {
+        Mpi::GlobalMin(static_cast<int>(reference_distances.size()),
+                       reference_distances.data(), comm);
+      }
+      for (std::size_t k = 0; k < unlocated.size(); k++)
+      {
+        const std::size_t c = unlocated[k];
+        const std::size_t reference = origin_references[c];
+        if (reference_distances[k] <= tolerance)
         {
-          const double lo = lower[d] - tol, hi = upper[d] + tol;
-          const double delta = b[d] - a[d];
-          if (std::abs(delta) < 1.0e-300)
-          {
-            hit = a[d] >= lo && a[d] <= hi;
-            continue;
-          }
-          double ta = (lo - a[d]) / delta, tb = (hi - a[d]) / delta;
-          if (ta > tb)
-          {
-            std::swap(ta, tb);
-          }
-          t0 = std::max(t0, ta);
-          t1 = std::min(t1, tb);
-          hit = t0 <= t1;
-        }
-        if (!hit)
-        {
+          found[BlockLocal(reference)] = 1;
           continue;
         }
-        double ab = 0.0, aa = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          ab += (b[d] - a[d]) * (b[d] - a[d]);
-          aa += -a[d] * (b[d] - a[d]);
-        }
-        const double s = ab > 0.0 ? std::clamp(aa / ab, 0.0, 1.0) : 0.0;
-        double distance = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          const double q = a[d] + s * (b[d] - a[d]);
-          distance += q * q;
-        }
-        distance = std::sqrt(distance);
-        if (reach.topology < 0 || distance < reach.distance)
-        {
-          reach.topology = portion.topology;
-          reach.distance = distance;
-          reach.image = portion.image;
-        }
-      }
-      if (reach.topology >= 0)
-      {
-        result.unmerged_reach.push_back(reach);
-      }
-      if (exclusion.unmerged_topology >= 0)
-      {
-        exclusion.reason = "UnmergedTopology";
-        patches[exclusion.patch].weight = 0.0;
-        result.patches.push_back(exclusion);
-        continue;
-      }
-    }
-    if (exclusion.outside_points > 0)
-    {
-      // Every outside point reflected into the mesh: Mirrored (applied, its samples taken
-      // by even extension); else DomainBoundary.
-      int reflected_count = 0;
-      for (std::size_t i = begin; i < end; i++)
-      {
-        reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
-      }
-      if (reflected_count == exclusion.outside_points)
-      {
-        result.mirrored.push_back(
-            {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
-        result.reflected_points += reflected_count;
-        continue;
-      }
-      // No tested point inside: not a cut through the coupon but a coupon off the mesh.
-      if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
-      {
         if (!geometry_ledger)
         {
-          MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+          MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
         }
-        // F-6 under the ledger: excluded with the record (the nearest point's distance).
-        RecordUnlocatedPatch(c, begin, "H9a/FindDomainBoundaryExclusions:all-points",
-                             "every one of its tested points", exclusion.nearest_distance);
-        exclusion.reason = "AllPointsOutside";
-        patches[exclusion.patch].weight = 0.0;
-        result.patches.push_back(exclusion);
-        continue;
+        misplaced_reference[c - c_begin] = 1;
       }
-      if (mirror_planes.empty() || mirror_band <= 0.0)
+    }
+    // The UnlocatedPatch record of an excluded patch (the former misplaced-coupon abort's
+    // text with the point's distance): what "patch", its model and feature, the unlocated
+    // point, the patch's own length (its longitudinal cell, else its claims; mesh units).
+    auto RecordUnlocatedPatch = [&](std::size_t c, std::size_t point, const char *site,
+                                    const char *what_point, double distance)
+    {
+      const auto &patch = patches[candidates[c]];
+      GeometryFallbackData entry;
+      entry.cls = "UnlocatedPatch";
+      entry.site = site;
+      entry.reason =
+          DescribeMisplacedPatch(c, point, what_point) +
+          fmt::format(" (distance {:.6e} mesh units from the nearest element box; the "
+                      "boundary tolerance {:.6e})",
+                      distance, tolerance);
+      entry.what = "patch";
+      entry.patches = {static_cast<int>(candidates[c])};
+      entry.models = {model_name(patch.model)};
+      entry.features = {patch.provenance.feature};
+      entry.example_origin = points[BlockLocal(point)];
+      const auto &cell = patch.longitudinal_cell;
+      if (patch.provenance.coupon_depth > 0.0 && cell[1] > cell[0])
       {
-        exclusion.reason = "MirrorOff";
+        entry.length = cell[1] - cell[0];
       }
       else
       {
-        // The strongest reason over the unreflected outside points (the same order on
-        // every rank): a non-mirroring plane, beyond the band, not located, no plane.
-        unsigned char strongest = 0;
-        for (std::size_t i = begin; i < end; i++)
+        for (const auto *claims : {&patch.provenance.claims, &patch.provenance.raw_claims})
         {
-          if (!found[i] && !reflected[i])
+          for (const auto &claim : *claims)
           {
-            strongest = std::max(strongest, unreflected_reason[i]);
+            entry.length += Norm(Subtract(claim.p1, claim.p0));
           }
         }
-        const char *names[] = {"Unknown", "NoPlane", "NonMirroringPlane", "BeyondBand",
-                               "ReflectionNotLocated"};
-        exclusion.reason = names[std::min<unsigned char>(strongest, 4)];
       }
-      patches[exclusion.patch].weight = 0.0;
-      result.patches.push_back(exclusion);
+      geometry_ledger->Record(std::move(entry));
+    };
+    Phase("reflect");
+    // The distance of every outside point to the nearest element box, over the ranks
+    // (block-local point indices, ascending).
+    std::vector<std::size_t> outside;
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      if (!found[i])
+      {
+        outside.push_back(i);
+      }
     }
+    std::vector<double> distances(outside.size());
+    for (std::size_t k = 0; k < outside.size(); k++)
+    {
+      distances[k] = locator.BoxDistance(points[outside[k]]);
+    }
+    if (!distances.empty())
+    {
+      Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
+    }
+    Phase("distances");
+    std::size_t k = 0;
+    for (std::size_t c = c_begin; c < c_end; c++)
+    {
+      // Block-local point indices of the candidate.
+      const std::size_t begin = BlockLocal(point_offsets[c]),
+                        end = BlockLocal(point_offsets[c + 1]);
+      DomainBoundaryExclusion exclusion;
+      exclusion.patch = candidates[c];
+      exclusion.tested_points = static_cast<int>(end - begin);
+      exclusion.nearest_distance = mfem::infinity();
+      while (k < outside.size() && outside[k] < end)
+      {
+        exclusion.outside_points++;
+        if (distances[k] < exclusion.nearest_distance)
+        {
+          exclusion.nearest_distance = distances[k];
+          exclusion.nearest_outside_point = points[outside[k]];
+        }
+        k++;
+      }
+      if (misplaced_reference[c - c_begin])
+      {
+        // F-6 under the ledger: the reference off the mesh beyond the boundary tolerance.
+        const std::size_t reference = origin_references[c];
+        const auto position =
+            std::lower_bound(outside.begin(), outside.end(), BlockLocal(reference));
+        MFEM_VERIFY(
+            position != outside.end() && *position == BlockLocal(reference),
+            "An unlocated metal-edge reference is missing from the outside points!");
+        RecordUnlocatedPatch(
+            c, reference, "H9a/FindDomainBoundaryExclusions:reference",
+            "its metal-edge reference",
+            distances[static_cast<std::size_t>(position - outside.begin())]);
+        exclusion.reason = "MisplacedReference";
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+        continue;
+      }
+      // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
+      // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
+      // footprint (a translational cell's [s0, s1] on its segment; a vertex / cluster
+      // coupon's claims) overlaps one of its REAL portions whose identification DIFFERS
+      // between the unextended and the extended run (decision 512 (c): a portion identified
+      // identically keeps its model, so an unmerged chain never sends its far cells raw) -
+      // are DomainBoundary (raw kept, F-DB-a), never applied with a single-sided model; a
+      // neighbour's cells keep their
+      // Applied / Mirrored classification as next to any Missing feature. The coupon
+      // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
+      // for a spatial patch; slab clipping against every portion, real or image) is
+      // recorded as INFORMATION only (decision 481).
+      if (!unmerged_portions.empty())
+      {
+        const auto &patch = patches[exclusion.patch];
+        const double tol = kSignatureParameterToleranceOverRadius * matching_radius;
+        // (a) own-edge overlap with a real portion
+        auto OverlapAlong =
+            [&](const std::array<double, 3> &P0, const std::array<double, 3> &P1,
+                const std::array<double, 3> &q0, const std::array<double, 3> &q1)
+        {
+          // Both on the same segment: the overlap of their arc-length intervals.
+          double L = 0.0;
+          std::array<double, 3> d{};
+          for (int k = 0; k < 3; k++)
+          {
+            d[k] = P1[k] - P0[k];
+            L += d[k] * d[k];
+          }
+          L = std::sqrt(L);
+          if (L <= 0.0)
+          {
+            return 0.0;
+          }
+          double a = 0.0, b = 0.0;
+          for (int k = 0; k < 3; k++)
+          {
+            a += (q0[k] - P0[k]) * d[k] / L;
+            b += (q1[k] - P0[k]) * d[k] / L;
+          }
+          return std::min(std::max(a, b), L) - std::max(std::min(a, b), 0.0);
+        };
+        for (const auto &portion : unmerged_portions)
+        {
+          // Image portions are never own; a real portion the unextended run identifies
+          // exactly as the extended run does is not the configuration's own either
+          // (decision 512 (c)): its cells keep their models. The configuration's OWN coupon
+          // (placed by its contract, decision 557 (4): its claims ARE these real portions)
+          // is not a cell of the configuration.
+          if (portion.image || portion.identical ||
+              patch.provenance.mirror_formed_topology == portion.topology)
+          {
+            continue;
+          }
+          bool own = false;
+          if (patch.provenance.coupon_depth > 0.0 && patch.provenance.segment >= 0)
+          {
+            // The CELL's own-edge extent (not the feature's whole portion on the segment,
+            // which provenance.s0 / s1 record): its longitudinal cell about the origin on
+            // the side's own edge (edge_offset along AxisU; mesh units like the origin).
+            if (patch.provenance.segment == static_cast<int>(portion.segment))
+            {
+              const auto &cell = patch.longitudinal_cell;
+              std::array<double, 3> q0{}, q1{};
+              for (int k = 0; k < 3; k++)
+              {
+                const double edge =
+                    patch.origin[k] + patch.provenance.edge_offset * patch.axis_u[k];
+                q0[k] = edge + cell[0] * patch.axis_w[k];
+                q1[k] = edge + cell[1] * patch.axis_w[k];
+              }
+              own = OverlapAlong(portion.p0, portion.p1, q0, q1) > tol;
+            }
+          }
+          else
+          {
+            for (const auto *claims :
+                 {&patch.provenance.raw_claims, &patch.provenance.claims})
+            {
+              for (const auto &claim : *claims)
+              {
+                if (claim.segment != static_cast<int>(portion.segment))
+                {
+                  continue;
+                }
+                // The claims' ends are segment points in mesh units (the identification's
+                // keys), like the portion's.
+                own = own || OverlapAlong(portion.p0, portion.p1, claim.p0, claim.p1) > tol;
+              }
+            }
+          }
+          if (own && (exclusion.unmerged_topology < 0 || !exclusion.unmerged_own))
+          {
+            exclusion.unmerged_topology = portion.topology;
+            exclusion.unmerged_p0 = portion.p0;
+            exclusion.unmerged_p1 = portion.p1;
+            exclusion.unmerged_image = false;
+            exclusion.unmerged_distance = 0.0;
+            exclusion.unmerged_own = true;
+          }
+        }
+        // (b) the support's reach (information)
+        const bool spatial = spatial_basis(patch.model);
+        const auto &cell = patch.longitudinal_cell;
+        const std::array<double, 3> lower = {
+            -matching_radius, -matching_radius,
+            (!spatial && cell[1] > cell[0]) ? cell[0] : -matching_radius};
+        const std::array<double, 3> upper = {
+            matching_radius, matching_radius,
+            (!spatial && cell[1] > cell[0]) ? cell[1] : matching_radius};
+        auto Local = [&](const std::array<double, 3> &p)
+        {
+          std::array<double, 3> local{};
+          for (int d = 0; d < 3; d++)
+          {
+            local[0] += (p[d] - patch.origin[d]) * patch.axis_u[d];
+            local[1] += (p[d] - patch.origin[d]) * patch.axis_v[d];
+            local[2] += (p[d] - patch.origin[d]) * patch.axis_w[d];
+          }
+          return local;
+        };
+        DomainBoundaryUnmergedReach reach;
+        reach.patch = exclusion.patch;
+        for (const auto &portion : unmerged_portions)
+        {
+          const auto a = Local(portion.p0), b = Local(portion.p1);
+          double t0 = 0.0, t1 = 1.0;
+          bool hit = true;
+          for (int d = 0; d < 3 && hit; d++)
+          {
+            const double lo = lower[d] - tol, hi = upper[d] + tol;
+            const double delta = b[d] - a[d];
+            if (std::abs(delta) < 1.0e-300)
+            {
+              hit = a[d] >= lo && a[d] <= hi;
+              continue;
+            }
+            double ta = (lo - a[d]) / delta, tb = (hi - a[d]) / delta;
+            if (ta > tb)
+            {
+              std::swap(ta, tb);
+            }
+            t0 = std::max(t0, ta);
+            t1 = std::min(t1, tb);
+            hit = t0 <= t1;
+          }
+          if (!hit)
+          {
+            continue;
+          }
+          double ab = 0.0, aa = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            ab += (b[d] - a[d]) * (b[d] - a[d]);
+            aa += -a[d] * (b[d] - a[d]);
+          }
+          const double s = ab > 0.0 ? std::clamp(aa / ab, 0.0, 1.0) : 0.0;
+          double distance = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double q = a[d] + s * (b[d] - a[d]);
+            distance += q * q;
+          }
+          distance = std::sqrt(distance);
+          if (reach.topology < 0 || distance < reach.distance)
+          {
+            reach.topology = portion.topology;
+            reach.distance = distance;
+            reach.image = portion.image;
+          }
+        }
+        if (reach.topology >= 0)
+        {
+          result.unmerged_reach.push_back(reach);
+        }
+        if (exclusion.unmerged_topology >= 0)
+        {
+          exclusion.reason = "UnmergedTopology";
+          patches[exclusion.patch].weight = 0.0;
+          result.patches.push_back(exclusion);
+          continue;
+        }
+      }
+      if (exclusion.outside_points > 0)
+      {
+        // Every outside point reflected into the mesh: Mirrored (applied, its samples taken
+        // by even extension); else DomainBoundary.
+        int reflected_count = 0;
+        for (std::size_t i = begin; i < end; i++)
+        {
+          reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
+        }
+        if (reflected_count == exclusion.outside_points)
+        {
+          result.mirrored.push_back(
+              {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
+          result.reflected_points += reflected_count;
+          continue;
+        }
+        // No tested point inside: not a cut through the coupon but a coupon off the mesh.
+        if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
+        {
+          if (!geometry_ledger)
+          {
+            MFEM_ABORT(DescribeMisplacedPatch(c, point_offsets[c],
+                                              "every one of its tested points"));
+          }
+          // F-6 under the ledger: excluded with the record (the nearest point's distance).
+          RecordUnlocatedPatch(
+              c, point_offsets[c], "H9a/FindDomainBoundaryExclusions:all-points",
+              "every one of its tested points", exclusion.nearest_distance);
+          exclusion.reason = "AllPointsOutside";
+          patches[exclusion.patch].weight = 0.0;
+          result.patches.push_back(exclusion);
+          continue;
+        }
+        if (mirror_planes.empty() || mirror_band <= 0.0)
+        {
+          exclusion.reason = "MirrorOff";
+        }
+        else
+        {
+          // The strongest reason over the unreflected outside points (the same order on
+          // every rank): a non-mirroring plane, beyond the band, not located, no plane.
+          unsigned char strongest = 0;
+          for (std::size_t i = begin; i < end; i++)
+          {
+            if (!found[i] && !reflected[i])
+            {
+              strongest = std::max(strongest, unreflected_reason[i]);
+            }
+          }
+          const char *names[] = {"Unknown", "NoPlane", "NonMirroringPlane", "BeyondBand",
+                                 "ReflectionNotLocated"};
+          exclusion.reason = names[std::min<unsigned char>(strongest, 4)];
+        }
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+      }
+    }
+    c_begin = c_end;
   }
   if (geometry_ledger && !candidates.empty() && result.patches.size() >= candidates.size())
   {
