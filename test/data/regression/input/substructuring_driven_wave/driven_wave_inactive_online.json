@@ -7,9 +7,9 @@
   "Boundaries": {
     "PEC": { "Attributes": [4] },
     "WavePort": [
-      { "Index": 1, "Attributes": [2], "Mode": 3, "Excitation": true,
+      { "Index": 1, "Attributes": [2], "Mode": 1, "Target": 0.9, "Excitation": true,
         "KSPTol": 1e-8, "EigenTol": 1e-6 },
-      { "Index": 2, "Attributes": [3], "Mode": 3, "Active": false,
+      { "Index": 2, "Attributes": [3], "Mode": 1, "Target": 0.65, "Active": false,
         "KSPTol": 1e-8, "EigenTol": 1e-6 } ] },
   "Solver": { "Order": 3, "Device": "CPU",
     "Driven": { "MinFreq": 3.35, "MaxFreq": 3.6, "FreqStep": 0.25 },
