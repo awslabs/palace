@@ -36,6 +36,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Added a warning for interior `"Conductivity"` boundaries without `"Crack"` or
+    `"Thickness"` between non-conducting domains, such as the surface of a conductor meshed
+    as a dielectric volume. Since [PR 994](https://github.com/awslabs/palace/pull/994) these
+    are uncracked sheets with the admittance of both faces, which lowers the conductor loss
+    compared to previous versions: set `"Crack": true` to restore the previous results, or
+    `"Crack": false` to silence the warning.
+    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
 
 #### Performance Improvements
 
