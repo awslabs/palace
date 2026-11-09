@@ -62,6 +62,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     forward solve applied in one exchange. This speeds up the repeated solves of STRUMPACK
     as the coarse solver at high process counts, with unchanged results.
     [PR 1143](https://github.com/awslabs/palace/pull/1143).
+  - SuperLU_DIST now uses relaxed supernodes of up to 200 columns instead of 30. This gives
+    fewer, larger blocks and many fewer messages in its distributed triangular solves,
+    which speeds up the repeated solves of SuperLU_DIST as the coarse solver at high
+    process counts. Results change at the level of round-off. It uses a patch for
+    [mfem/mfem#5731](https://github.com/mfem/mfem/pull/5731), which adds the setter of the
+    relaxed supernode size to `mfem::SuperLUSolver`.
+    [PR 1166](https://github.com/awslabs/palace/pull/1166).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
