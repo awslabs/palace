@@ -2930,6 +2930,7 @@ TEST_CASE("libCEED packed complex input fallbacks",
     imag.reset();
     ref_imag.reset();
   }
+  auto *original_real = real.get(), *original_imag = imag.get();
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
   // Non-tensor H1 bases and real-only inputs are element assembled or packed;
   // tensor-product bases, dof multiplicity, and unassembled vector quadrature data keep the
@@ -2937,6 +2938,19 @@ TEST_CASE("libCEED packed complex input fallbacks",
   REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
+  if (qdata)
+  {
+    // Element matrices and packed terms follow in-place updates of the values of their
+    // passive inputs.
+    ScalePackedTestQData(*original_real, -1.13);
+    ScalePackedTestQData(*ref_real, -1.13);
+    if (original_imag)
+    {
+      ScalePackedTestQData(*original_imag, 0.79);
+      ScalePackedTestQData(*ref_imag, 0.79);
+    }
+    CheckPackedActions(*actual, reference);
+  }
 }
 
 TEST_CASE("libCEED packed complex empty local operators",
@@ -3077,6 +3091,15 @@ TEST_CASE("libCEED element assembly", "[libCEED][ElementAssembly][Serial][Parall
     INFO("diagonal assembly");
     reference->AssembleDiagonal(expected);
     actual->AssembleDiagonal(y);
+    CheckApplicationResult(y, expected);
+  }
+  {
+    // Element matrices follow in-place updates of the values of their passive inputs.
+    INFO("forward application after an in-place update of the quadrature data");
+    ScalePackedTestQData(*actual, -1.13);
+    ScalePackedTestQData(*reference, -1.13);
+    reference->Mult(x, expected);
+    actual->Mult(x, y);
     CheckApplicationResult(y, expected);
   }
   // ParOperator element assembles the libCEED operators it owns.

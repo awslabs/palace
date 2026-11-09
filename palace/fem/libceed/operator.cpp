@@ -753,6 +753,33 @@ struct ElementMatrices
   bool symmetric = false;
   std::vector<CeedInt> indices;
   std::vector<CeedScalar> values;
+
+  // The leaf and its passive inputs (QData) and QFunction context, with their states when
+  // the values were assembled. The values of passive inputs may be updated in place after
+  // construction, in which case the element matrices are reassembled before use.
+  CeedOperator leaf = nullptr;
+  std::vector<CeedVector> passive;
+  std::vector<uint64_t> states;
+  CeedQFunctionContext context = nullptr;
+  uint64_t context_state = 0;
+  // Copy of the context data the values were assembled with. A context can be shared by
+  // several leaves (the coarse operators of a p-multigrid hierarchy reuse the QFunction of
+  // the fine operator), and applying or assembling any of them advances the shared state
+  // without changing the data.
+  std::vector<char> context_data;
+
+  ElementMatrices() = default;
+  ElementMatrices(const ElementMatrices &) = delete;
+  ElementMatrices &operator=(const ElementMatrices &) = delete;
+  ~ElementMatrices()
+  {
+    for (auto &vec : passive)
+    {
+      PalaceCeedCallBackend(CeedVectorDestroy(&vec));
+    }
+    PalaceCeedCallBackend(CeedQFunctionContextDestroy(&context));
+    PalaceCeedCallBackend(CeedOperatorDestroy(&leaf));
+  }
 };
 
 // Element assembly replaces the streaming of passive QData and the basis contractions of
@@ -877,21 +904,19 @@ CeedOperator CopyLeaf(CeedOperator leaf)
   return std::exchange(copy.value, nullptr);
 }
 
-std::unique_ptr<ElementMatrices> AssembleElementMatrices(Ceed ceed, CeedOperator op,
-                                                         int size)
+// Assemble the element matrices of the leaf of em. Given the L-vector size, also extract
+// the element indices from the assembled sparsity, after checking that it is made of
+// element blocks; with size = 0 (reassemblies), keep them. Returns false if the entries do
+// not have the expected layout.
+bool FillElementMatrices(Ceed ceed, ElementMatrices &em, int size)
 {
-  ScopedRestriction in, out;
-  PalaceCeedCall(ceed, CeedOperatorGetActiveElemRestrictions(op, &in.value, &out.value));
-  auto em = std::make_unique<ElementMatrices>();
-  PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(in.value, &em->elements));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(in.value, &em->nodes));
-  const std::size_t P = em->nodes, ne = em->elements;
+  const std::size_t P = em.nodes, ne = em.elements;
   CeedSize nnz;
   CeedInt *rows, *cols;
   ScopedVector vals;
   {
     ScopedOperator leaf;
-    leaf.value = CopyLeaf(op);
+    leaf.value = CopyLeaf(em.leaf);
     PalaceCeedCall(ceed,
                    CeedOperatorLinearAssembleSymbolic(leaf.value, &nnz, &rows, &cols));
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, nnz, &vals.value));
@@ -900,24 +925,27 @@ std::unique_ptr<ElementMatrices> AssembleElementMatrices(Ceed ceed, CeedOperator
   // The entries come in element blocks, each with the element's row coefficients in order
   // and the same column coefficients, since the leaf uses one active restriction.
   bool valid = (static_cast<std::size_t>(nnz) == ne * P * P);
-  em->indices.resize(ne * P);
-  for (std::size_t e = 0; valid && e < ne; e++)
+  if (size > 0)
   {
-    const CeedInt *r = rows + e * P * P, *c = cols + e * P * P;
-    for (std::size_t i = 0; valid && i < P; i++)
+    em.indices.resize(ne * P);
+    for (std::size_t e = 0; valid && e < ne; e++)
     {
-      em->indices[e * P + i] = r[i * P];
-      if (r[i * P] < 0 || r[i * P] >= size)
+      const CeedInt *r = rows + e * P * P, *c = cols + e * P * P;
+      for (std::size_t i = 0; valid && i < P; i++)
       {
-        valid = false;
-        break;
-      }
-      for (std::size_t j = 0; j < P; j++)
-      {
-        if (r[i * P + j] != r[i * P] || c[i * P + j] != r[j * P])
+        em.indices[e * P + i] = r[i * P];
+        if (r[i * P] < 0 || r[i * P] >= size)
         {
           valid = false;
           break;
+        }
+        for (std::size_t j = 0; j < P; j++)
+        {
+          if (r[i * P + j] != r[i * P] || c[i * P + j] != r[j * P])
+          {
+            valid = false;
+            break;
+          }
         }
       }
     }
@@ -927,7 +955,7 @@ std::unique_ptr<ElementMatrices> AssembleElementMatrices(Ceed ceed, CeedOperator
   std::free(cols);
   if (!valid)
   {
-    return {};
+    return false;
   }
   const CeedScalar *v;
   PalaceCeedCall(ceed, CeedVectorGetArrayRead(vals.value, CEED_MEM_HOST, &v));
@@ -954,11 +982,11 @@ std::unique_ptr<ElementMatrices> AssembleElementMatrices(Ceed ceed, CeedOperator
       }
     }
   }
-  em->symmetric = symmetric;
+  em.symmetric = symmetric;
   if (symmetric)
   {
-    em->values.resize(ne * P * (P + 1) / 2);
-    CeedScalar *u = em->values.data();
+    em.values.resize(ne * P * (P + 1) / 2);
+    CeedScalar *u = em.values.data();
     for (std::size_t e = 0; e < ne; e++)
     {
       const CeedScalar *a = v + e * P * P;
@@ -974,10 +1002,101 @@ std::unique_ptr<ElementMatrices> AssembleElementMatrices(Ceed ceed, CeedOperator
   }
   else
   {
-    em->values.assign(v, v + nnz);
+    em.values.assign(v, v + nnz);
   }
   PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(vals.value, &v));
+  // Record the input states the values correspond to.
+  for (std::size_t k = 0; k < em.passive.size(); k++)
+  {
+    PalaceCeedCall(ceed, CeedVectorGetState(em.passive[k], &em.states[k]));
+  }
+  if (em.context)
+  {
+    PalaceCeedCall(ceed, CeedQFunctionContextGetState(em.context, &em.context_state));
+    std::size_t context_size;
+    PalaceCeedCall(ceed, CeedQFunctionContextGetContextSize(em.context, &context_size));
+    const void *data;
+    PalaceCeedCall(ceed, CeedQFunctionContextGetDataRead(em.context, CEED_MEM_HOST, &data));
+    em.context_data.assign(static_cast<const char *>(data),
+                           static_cast<const char *>(data) + context_size);
+    PalaceCeedCall(ceed, CeedQFunctionContextRestoreDataRead(em.context, &data));
+  }
+  return true;
+}
+
+std::unique_ptr<ElementMatrices> AssembleElementMatrices(Ceed ceed, CeedOperator op,
+                                                         int size)
+{
+  ScopedRestriction in, out;
+  PalaceCeedCall(ceed, CeedOperatorGetActiveElemRestrictions(op, &in.value, &out.value));
+  auto em = std::make_unique<ElementMatrices>();
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(in.value, &em->elements));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(in.value, &em->nodes));
+  PalaceCeedCall(ceed, CeedOperatorReferenceCopy(op, &em->leaf));
+  CeedInt num_in;
+  CeedOperatorField *inputs;
+  PalaceCeedCall(ceed, CeedOperatorGetFields(op, &num_in, &inputs, nullptr, nullptr));
+  for (CeedInt i = 0; i < num_in; i++)
+  {
+    CeedVector vec = nullptr;
+    PalaceCeedCall(ceed, CeedOperatorFieldGetVector(inputs[i], &vec));
+    if (vec && vec != CEED_VECTOR_ACTIVE && vec != CEED_VECTOR_NONE)
+    {
+      em->passive.push_back(vec);
+      em->states.push_back(0);
+    }
+    else
+    {
+      PalaceCeedCall(ceed, CeedVectorDestroy(&vec));
+    }
+  }
+  PalaceCeedCall(ceed, CeedOperatorGetContext(op, &em->context));
+  if (!FillElementMatrices(ceed, *em, size))
+  {
+    return {};
+  }
   return em;
+}
+
+// Reassemble the element matrices if any passive input or the context of the leaf changed.
+void RefreshElementMatrices(ElementMatrices &em)
+{
+  Ceed ceed = CeedOperatorReturnCeed(em.leaf);
+  bool current = true;
+  for (std::size_t k = 0; current && k < em.passive.size(); k++)
+  {
+    uint64_t state;
+    PalaceCeedCall(ceed, CeedVectorGetState(em.passive[k], &state));
+    current = (state == em.states[k]);
+  }
+  if (current && em.context)
+  {
+    uint64_t state;
+    PalaceCeedCall(ceed, CeedQFunctionContextGetState(em.context, &state));
+    if (state != em.context_state)
+    {
+      // Compare the data itself: the state of a shared context also advances when another
+      // leaf is applied or assembled. Reassembling here would then repeat at every switch
+      // between the levels of a multigrid hierarchy.
+      std::size_t context_size;
+      PalaceCeedCall(ceed, CeedQFunctionContextGetContextSize(em.context, &context_size));
+      const void *data;
+      PalaceCeedCall(ceed,
+                     CeedQFunctionContextGetDataRead(em.context, CEED_MEM_HOST, &data));
+      current = (context_size == em.context_data.size() &&
+                 std::memcmp(data, em.context_data.data(), context_size) == 0);
+      PalaceCeedCall(ceed, CeedQFunctionContextRestoreDataRead(em.context, &data));
+      if (current)
+      {
+        em.context_state = state;
+      }
+    }
+  }
+  if (!current)
+  {
+    MFEM_VERIFY(FillElementMatrices(ceed, em, 0),
+                "Failed to reassemble element matrices after an update of their inputs!");
+  }
 }
 
 // y += A x (real) or y += i A x (imaginary) for x = [xr | xi] and y = [yr | yi].
@@ -1114,11 +1233,11 @@ struct Operator::ElementAssembly
 {
   // Element-assembled children of the composite, and the composite of the others.
   std::vector<CeedInt> children;
-  std::vector<std::shared_ptr<const ElementMatrices>> leaves;
+  std::vector<std::shared_ptr<ElementMatrices>> leaves;
   CeedOperator remainder = nullptr;
   mutable Vector work;
 
-  const std::shared_ptr<const ElementMatrices> *Find(CeedInt child) const
+  const std::shared_ptr<ElementMatrices> *Find(CeedInt child) const
   {
     for (std::size_t k = 0; k < children.size(); k++)
     {
@@ -1137,7 +1256,7 @@ namespace
 // An element-assembled leaf of the real or imaginary part of a complex operator.
 struct ElementLeaf
 {
-  std::shared_ptr<const ElementMatrices> matrices;
+  std::shared_ptr<ElementMatrices> matrices;
   bool imag;
 };
 
@@ -1147,6 +1266,7 @@ void AddMultElementMatrices(const std::vector<ElementLeaf> &ea, const CeedScalar
 {
   for (const auto &[em, imag] : ea)
   {
+    RefreshElementMatrices(*em);
     if (work.Size() < 4 * em->nodes)
     {
       work.SetSize(4 * em->nodes);
@@ -1601,6 +1721,7 @@ void Operator::ElementAssemblyMult(const Vector &x, Vector &y, bool add) const
   CeedScalar *yd = y.HostReadWrite();
   for (const auto &em : ea->leaves)
   {
+    RefreshElementMatrices(*em);
     if (ea->work.Size() < 2 * em->nodes)
     {
       ea->work.SetSize(2 * em->nodes);
