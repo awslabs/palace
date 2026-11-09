@@ -111,16 +111,13 @@ set(SUPERLU_PATCH_FILES
 
 # Fix the solves with a 3D process grid: copies of
 # https://github.com/xiaoyeli/superlu_dist/pull/254 and
-# https://github.com/xiaoyeli/superlu_dist/pull/255, made for v9.3.1
-if(EXTERN_SUPERLU_GIT_TAG STREQUAL "v9.3.1")
-  list(APPEND SUPERLU_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr254.diff"
-    "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr255.diff"
-  )
-else()
-  message(WARNING "The SuperLU_DIST patches of xiaoyeli/superlu_dist#254 and #255 are made "
-                  "for v9.3.1 and are not applied to ${EXTERN_SUPERLU_GIT_TAG}")
-endif()
+# https://github.com/xiaoyeli/superlu_dist/pull/255, made for v9.3.1. Like the patch above,
+# they are applied to any version, so that a version they do not apply to fails the build
+# instead of silently dropping the fixes.
+list(APPEND SUPERLU_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr254.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr255.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(superlu_dist
