@@ -106,7 +106,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`discover_surface_response_requirements.py`) record the Missing requirements it can
     give no placeholder (`UnboxableRequirements`: an Unboxable key; `UnbuildableRequirements`:
     a key the coupon generator refuses by name) in the manifest and the closure history with
-    a `DISCOVERY FALLBACKS` listing instead of dying.
+    a `DISCOVERY FALLBACKS` listing instead of dying. The stage-F fail-safe adds the class
+    `LongitudinalAxisOutOfTolerance` (a pair / stack quadrature cell whose placed frame's
+    AxisW lies beyond |cos| 0.95 of the sample's own segment, the former fail-closed check of
+    `LongitudinalCellOffsets`: the cell is excluded from the correction and kept raw with
+    the DomainBoundary portions, one entry per affected feature; the tolerance unchanged).
   - New optional `config["Model"]["Refinement"]["MinElementSize"]`, an element-size floor
     for AMR marking (a length in mesh units; default `0` = off, bitwise the previous
     marking). With a floor, only elements whose volume-based size `h` (the `h` of the mesh

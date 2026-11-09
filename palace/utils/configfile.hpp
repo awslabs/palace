@@ -1909,6 +1909,15 @@ public:
     // carries their within-R raw energy under that label (carved out of `unclaimed`).
     // Carried by the geometry cache (version 23, a required leaf).
     std::vector<UncoveredPortionData> unpatched_pair_portions;
+    // LongitudinalAxisOutOfTolerance (decision 1419; the readiness-hardening form): the
+    // quadrature cells of a matched translational feature the placement EXCLUDED because
+    // the sample frame's AxisW lies beyond kLongitudinalAxisCosineTolerance of the sample's
+    // own segment (the partner side's chord turns > ~18 deg from it: a steep launcher flare
+    // admitted as a pair / cluster), `topology` = the class name, `feature` = the feature's
+    // id: kept RAW in every corrected interface energy (F-DB-a, with the DomainBoundary
+    // portions) and measured for the record's RawShareByEnergy (the geometry-fallback
+    // portions). Never cached: a configuration with geometry fallbacks writes no cache.
+    std::vector<UncoveredPortionData> geometry_fallback_cell_portions;
 
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.

@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -1913,5 +1915,291 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(flagged_gaps == gaps);
     CHECK(std::count(unframed_gaps.begin(), unframed_gaps.end(), 1) == 0);
   }
+#endif
+}
+
+// LongitudinalAxisOutOfTolerance (decision 1419; OI-LONGITUDINAL-AXIS-COSINE-FAILCLOSED;
+// decision 1422 (B1)): the CTX-002 production mesh's F-0 preflight aborted at
+// LongitudinalCellOffsets (|cos| 0.946 < kLongitudinalAxisCosineTolerance 0.95): a
+// two-sided sample whose placed frame's AxisW follows the PARTNER side's chord (or the
+// direction to the partner's clamped portion end) at 18.9 deg from the sample's own
+// segment. The conversion excludes the cell and records the class; its FIRING reproducer of
+// record is the CTX-002 F-0 preflight on the converted binary
+// (OI-LONGAXIS-UNIT-FIXTURE-FROM-CTX002: the offending feature's geometry becomes a unit
+// fixture by a test-only commit after it). THIS case is the in-tolerance REGRESSION GUARD
+// of the converted path: a coarsely chorded constant-width bend (the finding's regime; the
+// CTX-002 mesh carries 7,418 bends of exact radius and 2,002 arcs with chord sagitta >=
+// 0.05 R) whose joint samples' frames DEVIATE from their own chord (the closest foot clamps
+// at the partner's chord vertex: the tilt is atan(sin(turn / 2)) = 10 deg at 20 deg joints,
+// |cos| 0.985) yet stay within the bar: every cell placed, no fallback entry, no abort. The
+// fixture MakeBentStripMesh: the paired-aperture sheet (the left aperture [0.75, 1.25], the
+// strip [1.25, 1.625] = 1.875 R wide at R = 0.2, the right aperture to 2.25; metal
+// attribute 9 elsewhere on the plane y = 0.25 of a 6 x 0.5 x 6 box, 48 x 4 x 48 hexahedra)
+// over rows 4 .. 4 + 4 + 5 whose z rows are re-spaced (4 straight rows of 0.125, then 5
+// rows of one CHORD = radius x turn each, the rows above compressed into the top 0.1) and
+// BENT about the centre (x_c - radius, z_bend) for z above the straight part (x_c = the
+// strip's centre line; radius 2.19 = 11 R: a straight-like bend,
+// kStraightBendRadiusOverRadius 10): every bend row is one chord of a polyline arc of exact
+// radius, the two strip edges stay concentric at the width (an offset-polyline pair), the
+// joints turn by 20 deg. The box is 0.5 high so that the bent walls (off the bounding box)
+// do not outvote the sheet in the metal normal tensor (metaledge.cpp: the layer normal =
+// the area-weighted principal direction of the non-box metal normals). Solver Order 3 = 4
+// quadrature points per chord (the joint samples 0.069 x chord from the joints).
+namespace
+{
+
+std::unique_ptr<mfem::ParMesh> MakeBentStripMesh()
+{
+  constexpr double extent = 6.0, height = 0.5;
+  constexpr int rows = 48;
+  constexpr double h = extent / rows;
+  constexpr double width = 0.375, radius = 2.19, turn_degrees = 20.0;
+  constexpr int chords = 5, straight_rows = 4, first_row = 4;
+  constexpr int bend_row = first_row + straight_rows, top_row = bend_row + chords;
+  const double x0 = 1.25, x1 = x0 + width, x2 = x1 + 5.0 * h;
+  const double turn = turn_degrees * std::acos(-1.0) / 180.0;
+  const double chord = radius * turn;
+  const double z_bend = bend_row * h;
+  const double z_top = z_bend + chords * chord;
+  REQUIRE(z_top < extent - 0.1);
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(rows, 4, rows, mfem::Element::HEXAHEDRON,
+                                                  extent, height, extent);
+  // The apertures by ROW (before the re-spacing): rows first_row .. top_row.
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0;
+    double zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5 * height) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool in_rows = zmin >= first_row * h - 1.0e-12 && zmax <= top_row * h + 1.0e-12;
+    const bool left_aperture = in_rows && xmin >= 0.75 - 1.0e-12 && xmax <= x0 + 1.0e-12;
+    const bool right_aperture = in_rows && xmin >= x1 - 1.0e-12 && xmax <= x2 + 1.0e-12;
+    if (on_plane && !left_aperture && !right_aperture)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  // The z re-spacing, then the bend.
+  const double x_c = 0.5 * (x0 + x1);
+  for (int v = 0; v < serial.GetNV(); v++)
+  {
+    double *point = serial.GetVertex(v);
+    const int row = static_cast<int>(std::lround(point[2] / h));
+    double z;
+    if (row <= bend_row)
+    {
+      z = row * h;
+    }
+    else if (row <= top_row)
+    {
+      z = z_bend + (row - bend_row) * chord;
+    }
+    else
+    {
+      z = z_top + (extent - z_top) * (row - top_row) / (rows - top_row);
+    }
+    if (z > z_bend + 1.0e-12)
+    {
+      const double phi = (z - z_bend) / radius;
+      const double r = radius + (point[0] - x_c);
+      point[0] = (x_c - radius) + r * std::cos(phi);
+      point[2] = z_bend + r * std::sin(phi);
+    }
+    else
+    {
+      point[2] = z;
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Geometry fallback LongitudinalAxisOutOfTolerance regression guard: a "
+    "coarsely chorded bent pair's joint frames deviate within the AxisW cosine "
+    "bar and place without a fallback (decisions 1419 / 1422)",
+    "[surfaceresponseoperator][geometryfallback][3d][longaxis][Serial]"
+    "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  auto Config = [&](const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    config["Solver"]["Order"] = 3;
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["GeometryFailurePolicy"] = "RecordRaw";
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    return config;
+  };
+  struct Reading
+  {
+    json manifest;
+    int strip_patches = 0;
+    double min_axis_cosine = 1.0;  // |Dot(AxisW, own chord)| over the strip's patches
+  };
+  auto Preflight = [&](const std::string &tag, const fs::path &library_path)
+  {
+    IoData iodata(Config(library_path), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakeBentStripMesh());
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-longaxis-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    Reading reading;
+    reading.manifest = ReadJson(manifest_path);
+    // The dry run's strip patches: |Dot(AxisW, the own segment's chord)| per patch (the
+    // same quantity LongitudinalCellOffsets' callers test).
+    const auto &segments = reading.manifest["Identification"]["Segments"];
+    std::ifstream patches(patches_path);
+    REQUIRE(patches);
+    std::string line;
+    std::getline(patches, line);
+    while (std::getline(patches, line))
+    {
+      std::vector<std::string> fields;
+      std::stringstream stream(line);
+      std::string field;
+      while (std::getline(stream, field, ','))
+      {
+        fields.push_back(field);
+      }
+      REQUIRE(fields.size() >= 25);
+      if (fields[2] != "same-conductor strip")
+      {
+        continue;
+      }
+      reading.strip_patches++;
+      const auto &key = segments.at(std::stoul(fields[10]))["Key"];
+      std::array<double, 3> chord{}, axis_w{};
+      double norm = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        chord[d] = key[1][d].get<double>() - key[0][d].get<double>();
+        norm += chord[d] * chord[d];
+        axis_w[d] = std::stod(fields[22 + d]);
+      }
+      const double cosine =
+          std::abs(chord[0] * axis_w[0] + chord[1] * axis_w[1] + chord[2] * axis_w[2]) /
+          std::sqrt(norm);
+      reading.min_axis_cosine = std::min(reading.min_axis_cosine, cosine);
+    }
+    return reading;
+  };
+  // Pass 1: the 0.25 strip library (the 0.375 strip is Missing): the bend is absorbed into
+  // arcs and the BENT strip is ONE SameConductorStrip feature (both sides over the five
+  // chords, > 6 long) beside the short straight-part strip; the bent one's key is read.
+  const Reading first = Preflight("missing", strip_library_3d_path);
+  json strip_signature;
+  int bent_strips = 0;
+  for (const auto &feature : first.manifest["Identification"]["Features"])
+  {
+    UNSCOPED_INFO("feature " << feature["Id"] << " " << feature["Type"] << " length "
+                             << feature["Length"] << " status "
+                             << feature["Match"]["Status"]);
+    if (feature["Type"] == "SameConductorStrip" &&
+        feature["Signature"]["SeparationOverR"].get<double>() > 1.5)
+    {
+      CHECK(feature["Match"]["Status"] == "Missing");
+      if (feature["Length"].get<double>() > 6.0)
+      {
+        bent_strips++;
+        strip_signature = feature["Signature"];
+      }
+    }
+  }
+  REQUIRE(bent_strips == 1);
+  CHECK_THAT(strip_signature["SeparationOverR"].get<double>(), WithinAbs(1.875, 0.02));
+  int bends = 0;
+  for (const auto &arc : first.manifest["Identification"]["Arcs"])
+  {
+    bends += arc["Kind"] == "Bend";
+  }
+  CHECK(bends >= 2);  // the two strip edges' polyline arcs (the apertures' far edges too)
+  CHECK(first.strip_patches == 0);
+  CHECK_FALSE(
+      first.manifest["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+  // Pass 2: a Signature-keyed strip model at the bent strip's key: matched and PLACED on
+  // every chord; the joint samples' frames deviate (|cos| ~0.985 = cos 10 deg) but stay
+  // within kLongitudinalAxisCosineTolerance: no LongitudinalAxisOutOfTolerance entry, no
+  // GeometryFallbacks record, no abort.
+  const fs::path library = temp.temp_dir / "fabrication-process-longaxis-bent-strip.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    const double separation = strip_signature.at("SeparationOverR").get<double>() * R;
+    json models = json::array();
+    models.push_back({{"Name", "same-conductor-strip-bent"},
+                      {"Topology", "SameConductorStrip"},
+                      {"Signature", strip_signature},
+                      {"Separation", separation},
+                      {"SeparationTolerance", 1.0e-8},
+                      {"Reference", {0.0, 0.0, 0.0}},
+                      {"FabricatedMatrix", fabricated_path.string()},
+                      {"ThinMatrix", thin_path.string()},
+                      {"BasisPoints", points_path.string()}});
+    std::ofstream output(library);
+    output << json({{"Version", 2},
+                    {"Name", "unit-test-process-longaxis-bent-strip"},
+                    {"MatchingRadius", R},
+                    {"CouponDepth", R},
+                    {"Models", models}})
+                  .dump(2)
+           << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  const Reading placed = Preflight("placed", library);
+  int matched = 0;
+  for (const auto &feature : placed.manifest["Identification"]["Features"])
+  {
+    if (feature["Type"] == "SameConductorStrip" && feature["Length"].get<double>() > 6.0)
+    {
+      matched++;
+      CHECK(feature["Match"]["Status"] == "Matched");
+      CHECK(feature["Match"]["Model"] == "same-conductor-strip-bent");
+    }
+  }
+  CHECK(matched == 1);
+  // The bent strip: 2 sides x 5 chord portions x 4 points, less the end windows.
+  CHECK(placed.strip_patches >= 32);
+  INFO("min |Dot(AxisW, own chord)| over the strip's patches " << placed.min_axis_cosine);
+  CHECK(placed.min_axis_cosine >= 0.95);
+  CHECK(placed.min_axis_cosine < 0.99);
+  CHECK_FALSE(
+      placed.manifest["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+  CHECK_FALSE(placed.manifest["Summary"].contains("GeometryFallbacks"));
 #endif
 }
