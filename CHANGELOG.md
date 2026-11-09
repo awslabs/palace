@@ -41,6 +41,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+
 #### New Features
 
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -49,7 +50,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     S-parameters of single-port excitations are normalized by the weight; with a nonzero
     phase `port-V.csv` and `port-I.csv` report the real and imaginary parts of the
     incident voltage and current. A nonzero phase is an error for transient simulations.
-    SchemaVer 4-2-0 [PR NNN](https://github.com/awslabs/palace/pull/NNN).
+    SchemaVer 4-2-2 [PR 1169](https://github.com/awslabs/palace/pull/1169).
 
 #### New Features
 
