@@ -213,6 +213,11 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
   v0 = nullptr;
 
   cl_custom = false;
+
+  // SLEPc passes device arrays to the shell callbacks when the device is in use. SetSize
+  // keeps the device flag, so the derived classes only need to size the workspace.
+  x1.UseDevice(true);
+  y1.UseDevice(true);
 }
 
 SlepcEigenvalueSolver::~SlepcEigenvalueSolver()
@@ -671,8 +676,6 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
 
   // Configure linear solver for generalized problem or spectral transformation. This also
   // allows use of the divergence-free projector as a linear solve side-effect.
@@ -726,6 +729,8 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
+  x2.UseDevice(true);
+  y2.UseDevice(true);
 }
 
 void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
@@ -777,10 +782,6 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   x2.SetSize(opK->Height());
   y1.SetSize(opK->Height());
   y2.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -1162,8 +1163,6 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -1528,8 +1527,6 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -1596,8 +1593,6 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
 
   // Configure linear solver.
   if (first)
