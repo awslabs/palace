@@ -11823,8 +11823,24 @@ LongitudinalQuadratureCells(const mfem::IntegrationRule &quadrature)
 // sub-noise polyline bends as pairs (1 - |cos| of 1e-6..1e-3 there: a 6 um / 100 um taper
 // 4.5e-6, a 1.6 deg chord joint 3.9e-4). The tolerance is the pair regime's own facing
 // threshold (the paired-edge topology's Dot(axis_u, direction) > 0.95 in the 2D and legacy
-// 3D groupings, ~18 deg); anything below it is not a translational frame and fails closed.
+// 3D groupings, ~18 deg); anything below it is not a translational frame: the features
+// placement excludes the cell under GeometryFailurePolicy (LongitudinalAxisOutOfTolerance,
+// decision 1419: a 18.9 deg launcher flare admitted as a pair on the CTX-002 production
+// mesh), the Legacy comparison branch fails closed.
 constexpr double kLongitudinalAxisCosineTolerance = 0.95;
+
+bool LongitudinalAxisWithinTolerance(const Point3D &tangent, const Point3D &axis_w)
+{
+  return std::abs(Dot(tangent, axis_w)) >= kLongitudinalAxisCosineTolerance;
+}
+
+std::string LongitudinalAxisOutOfToleranceReason(const Point3D &tangent,
+                                                 const Point3D &axis_w)
+{
+  return fmt::format("A translational patch's AxisW must be within |cos| >= {} of its "
+                     "segment (found {})",
+                     kLongitudinalAxisCosineTolerance, std::abs(Dot(tangent, axis_w)));
+}
 
 // The longitudinal cell of one quadrature patch on a straight portion [a, b] of a segment
 // parametrised from p0 along `tangent`: offsets from the patch origin (at parameter t_q)
@@ -11833,16 +11849,15 @@ constexpr double kLongitudinalAxisCosineTolerance = 0.95;
 // magnitude shortens it): the cross-section perpendicular to AxisW at the projected offset
 // contains the segment point at that arc offset (the sample's foot lies in the plane
 // perpendicular to AxisW through the origin), so the slices sweep exactly the sample's
-// cell of its own segment whether or not AxisW is parallel to it.
+// cell of its own segment whether or not AxisW is parallel to it. The caller has checked
+// LongitudinalAxisWithinTolerance.
 std::array<double, 2> LongitudinalCellOffsets(const std::array<double, 2> &unit_cell,
                                               double a, double b, double t_q,
                                               const Point3D &tangent, const Point3D &axis_w)
 {
   const double projection = Dot(tangent, axis_w);
-  MFEM_VERIFY(std::abs(projection) >= kLongitudinalAxisCosineTolerance,
-              "A translational patch's AxisW must be within |cos| >= "
-                  << kLongitudinalAxisCosineTolerance << " of its segment (found "
-                  << std::abs(projection) << ")!");
+  MFEM_ASSERT(std::abs(projection) >= kLongitudinalAxisCosineTolerance,
+              "LongitudinalCellOffsets requires a frame within the axis tolerance!");
   const double begin = projection * (a + (b - a) * unit_cell[0] - t_q);
   const double end = projection * (a + (b - a) * unit_cell[1] - t_q);
   return {std::min(begin, end), std::max(begin, end)};
@@ -12377,6 +12392,25 @@ FeaturePatchSummary BuildFeaturePatches(
   // the local side separation deviates from the keyed offset by more than
   // kPairPatchSeparationTolerance; unset by the other placers.
   std::optional<bool> sample_local_deviation;
+  // LongitudinalAxisOutOfTolerance (decision 1419; readiness hardening form, USER 1000 (b)
+  // / 1001): the quadrature cells whose placed frame's AxisW lies beyond
+  // kLongitudinalAxisCosineTolerance of the sample's own segment (a pair / cluster sample
+  // whose partner chord turns > ~18 deg from its side: the CTX-002 launcher flares), per
+  // feature: the cells are NOT emitted (their own-edge pre-image joins
+  // result.geometry_fallback_cell_portions: kept raw, measured for the share) and one
+  // ledger entry per feature is recorded after the placement. Without a ledger the former
+  // abort.
+  struct LongitudinalAxisFallback
+  {
+    std::string model;
+    std::string type;
+    int cells = 0;
+    double min_cosine = 1.0;
+    double length = 0.0;
+    Point3D origin{};
+    std::vector<int> interfaces;
+  };
+  std::map<int, LongitudinalAxisFallback> longitudinal_axis_fallbacks;
   // R-9: the per-cell model terms of a pair placed at its local separation (the cell's
   // sample point -> (model, runtime, weight) terms and, for an interpolated selection, the
   // interpolation group its co-located patches share; an empty list = the cell stays
@@ -12443,6 +12477,46 @@ FeaturePatchSummary BuildFeaturePatches(
         ResponsePatchData patch;
         sample_local_deviation.reset();
         Place(point, patch);
+        if (first_term &&
+            !LongitudinalAxisWithinTolerance(fp.segment->tangent, patch.axis_w))
+        {
+          const std::string reason =
+              LongitudinalAxisOutOfToleranceReason(fp.segment->tangent, patch.axis_w);
+          if (!geometry_ledger)
+          {
+            MFEM_ABORT(reason << "!");
+          }
+          // The cell (every term of it) is excluded: its own-edge pre-image is kept raw
+          // (F-DB-a) under the class label; the feature's entry is recorded once below.
+          const double cell_length =
+              (fp.b - fp.a) * (quadrature_cells[q][1] - quadrature_cells[q][0]);
+          result.geometry_fallback_cell_portions.push_back(
+              {feature.id, "LongitudinalAxisOutOfTolerance",
+               static_cast<int>(fp.geometry_index),
+               Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][0]),
+               Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][1])});
+          auto &fallback = longitudinal_axis_fallbacks[feature.id];
+          if (fallback.cells == 0)
+          {
+            fallback.model = model.name;
+            fallback.type = feature.type;
+            fallback.origin = point;
+          }
+          fallback.cells++;
+          fallback.min_cosine = std::min(fallback.min_cosine,
+                                         std::abs(Dot(fp.segment->tangent, patch.axis_w)));
+          fallback.length += cell_length;
+          for (const auto &[target_type, target] : fp.segment->targets)
+          {
+            (void)target_type;
+            if (std::find(fallback.interfaces.begin(), fallback.interfaces.end(), target) ==
+                fallback.interfaces.end())
+            {
+              fallback.interfaces.push_back(target);
+            }
+          }
+          break;
+        }
         if (first_term && sample_local_deviation)
         {
           // OI-TAPER-MEAN-KEY (decision 1078, record-only): the pair / stack placers read
@@ -14331,6 +14405,29 @@ FeaturePatchSummary BuildFeaturePatches(
   for (const auto &place : deferred_placements)
   {
     place();
+  }
+  // LongitudinalAxisOutOfTolerance: one entry per affected feature (ascending id), after
+  // every placer (the deferred R-9 pairs and mean-keyed clusters included) has run.
+  for (const auto &[feature_id, fallback] : longitudinal_axis_fallbacks)
+  {
+    GeometryFallbackData record;
+    record.cls = "LongitudinalAxisOutOfTolerance";
+    record.site = "LA1/BuildFeaturePatches:longitudinal-axis-cosine";
+    record.reason = fmt::format(
+        "A translational patch's AxisW must be within |cos| >= {} of its segment (found "
+        "{} at the worst of {:d} quadrature cell(s) of feature {:d} ({}, model \"{}\"): "
+        "the sample frame follows the partner side's chord beyond the pair regime's "
+        "facing threshold); the cells are excluded from the correction (raw)",
+        kLongitudinalAxisCosineTolerance, fallback.min_cosine, fallback.cells, feature_id,
+        fallback.type, fallback.model);
+    record.what = "patch";
+    record.features = {feature_id};
+    record.models = {fallback.model};
+    record.length = fallback.length;
+    record.example_origin = fallback.origin;
+    record.interfaces = fallback.interfaces;
+    record.topology = fallback.type;
+    geometry_ledger->Record(std::move(record));
   }
 
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
@@ -18803,9 +18900,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             patch.maxwell_conductor_anchors = {first_point, *paired_point};
           }
           const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
-          patch.longitudinal_cell = LongitudinalCellOffsets(
-              quadrature_cells[q], interval_begin, interval_end, first_distance,
-              first.tangent, Normalize(Cross(patch.axis_u, patch.axis_v)));
+          {
+            // The Legacy comparison branch keeps the fail-closed form (decision 1419: the
+            // features placement records LongitudinalAxisOutOfTolerance instead).
+            const Point3D axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+            MFEM_VERIFY(LongitudinalAxisWithinTolerance(first.tangent, axis_w),
+                        LongitudinalAxisOutOfToleranceReason(first.tangent, axis_w) << "!");
+            patch.longitudinal_cell =
+                LongitudinalCellOffsets(quadrature_cells[q], interval_begin, interval_end,
+                                        first_distance, first.tangent, axis_w);
+          }
           if (model_selection.IsInterpolated())
           {
             patch.interpolation_group = next_interpolation_group++;
@@ -18902,9 +19006,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 segments[reference_edge], span.tangent, longitudinal_coordinate));
           }
           const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
-          patch.longitudinal_cell = LongitudinalCellOffsets(
-              quadrature_cells[q], interval_begin, interval_end, first_distance,
-              first.tangent, Normalize(Cross(patch.axis_u, patch.axis_v)));
+          {
+            // The Legacy comparison branch keeps the fail-closed form (decision 1419).
+            const Point3D axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+            MFEM_VERIFY(LongitudinalAxisWithinTolerance(first.tangent, axis_w),
+                        LongitudinalAxisOutOfToleranceReason(first.tangent, axis_w) << "!");
+            patch.longitudinal_cell =
+                LongitudinalCellOffsets(quadrature_cells[q], interval_begin, interval_end,
+                                        first_distance, first.tangent, axis_w);
+          }
           for (const auto &weighted_model : selection.response.models)
           {
             const auto &source = library.models[weighted_model.index];
@@ -29337,6 +29447,22 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
               geometry_fallback_portions.translational[i]);
         }
         domain_boundary_portions.length += geometry_fallback_portions.length;
+      }
+      for (const auto &portion : config.geometry_fallback_cell_portions)
+      {
+        // LongitudinalAxisOutOfTolerance (decision 1419): the excluded cells never became
+        // patches (no patch index); their own-edge pre-images are kept raw with the
+        // DomainBoundary portions (F-DB-a) and measured for the share by class (the H4a
+        // form above).
+        const double length = Norm(Subtract(portion.p1, portion.p0));
+        for (auto *portions : {&domain_boundary_portions, &geometry_fallback_portions})
+        {
+          portions->portions.push_back(portion);
+          portions->patches.push_back({});
+          portions->translational.push_back(true);
+          portions->geometric_cells++;
+          portions->length += length;
+        }
       }
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
