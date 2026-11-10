@@ -31,6 +31,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
+#include "utils/geodata.hpp"
 
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
@@ -473,13 +474,10 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &nd_fespace,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op,
-                                     const std::vector<std::array<double, 3>> &r_naughts,
-                                     const mfem::Vector &x0)
-  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), farfield_x0(x0),
-    nd_fespace(&nd_fespace), rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+                                     const std::vector<std::array<double, 3>> &r_naughts)
+  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), nd_fespace(&nd_fespace),
+    rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
-  MFEM_VERIFY(x0.Size() == 0 || x0.Size() == 3,
-              "Far-field side selection requires a 3D center point!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -884,6 +882,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
   const bool need_field = (kind != KernelKind::AREA);
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  // Far fields trace the interior faces from the side facing the center of the bounding
+  // box of the marked boundary elements (collective).
+  mfem::Vector farfield_x0;
+  if (kind == KernelKind::FARFIELD)
+  {
+    mfem::Vector bbmin, bbmax;
+    mesh::GetAxisAlignedBoundingBox(pmesh, bdr_attr_marker, true, bbmin, bbmax);
+    farfield_x0 = bbmin;
+    farfield_x0 += bbmax;
+    farfield_x0 *= 0.5;
+  }
   // Plan the evaluation for each marked boundary element and group it by its fixed
   // mapped face/subface transformation. The process-lifetime registry key also carries
   // the exact mapped point-rule signature, so equal canonical maps reuse tabulations
@@ -1233,39 +1242,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         if (has_elem2)
         {
           // Interior surface: trace the inside, as the only element of an external
-          // boundary. Next to an anisotropic material (such as a PML) it is the isotropic
-          // side (two anisotropic sides are rejected by SurfacePostOperator), otherwise
-          // the side facing the center x0: its outward normal at the face center points
-          // away from x0. The choice depends on attributes and geometry only, so it does
-          // not depend on the partitioning (each boundary element is held by a single
-          // process; Elem2 can be a face neighbor element). Without a center, record
-          // local invalidity but keep participating in subsequent collectives.
+          // boundary, the side facing the center x0: its outward normal at the face center
+          // points away from x0. The choice depends on geometry only, so it does not
+          // depend on the partitioning (each boundary element is held by a single process;
+          // Elem2 can be a face neighbor element). The (flipped) boundary element normal
+          // points into Elem1, as in the kernel.
           plan.elem_b = FET.Elem2No;
-          const bool iso_a = mat_op->IsIsotropic(FET.Elem1->Attribute),
-                     iso_b = mat_op->IsIsotropic(FET.Elem2->Attribute);
-          if (iso_a != iso_b)
-          {
-            plan.trace_b = iso_b;
-          }
-          else if (farfield_x0.Size() == sdim)
-          {
-            // The (flipped) boundary element normal points into Elem1, as in the kernel.
-            mfem::IsoparametricTransformation T;
-            pmesh.GetBdrElementTransformation(i, &T);
-            const auto &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
-            T.SetIntPoint(&ip);
-            double n_data[3], dx_data[3];
-            mfem::Vector n(n_data, sdim), dx(dx_data, sdim);
-            BdrGridFunctionCoefficient::GetNormal(T, n, flip);
-            T.Transform(ip, dx);
-            dx -= farfield_x0;
-            plan.trace_b = (n * dx > 0.0);
-          }
-          else
-          {
-            valid = false;
-            continue;
-          }
+          mfem::IsoparametricTransformation T;
+          pmesh.GetBdrElementTransformation(i, &T);
+          const auto &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
+          T.SetIntPoint(&ip);
+          double n_data[3], dx_data[3];
+          mfem::Vector n(n_data, sdim), dx(dx_data, sdim);
+          BdrGridFunctionCoefficient::GetNormal(T, n, flip);
+          T.Transform(ip, dx);
+          dx -= farfield_x0;
+          plan.trace_b = (n * dx > 0.0);
         }
       }
       else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||

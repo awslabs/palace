@@ -242,15 +242,22 @@ public:
 
 // Build a 3D mesh with two material regions (attribute 1: z < 0.5, vacuum; attribute
 // 2: z >= 0.5, dielectric) and interior boundary elements (attribute 7) added on the
-// material interface at z = 0.5.
-std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_type)
+// material interface at z = 0.5. When enclosed, the mesh has 5 x 5 x 5 elements and
+// attribute 2 is the middle one, so that the interface is closed.
+std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_type,
+                                        bool enclosed = false)
 {
-  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, elem_type);
+  const int n = enclosed ? 5 : 2;
+  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(n, n, n, elem_type);
   for (int e = 0; e < smesh.GetNE(); e++)
   {
     mfem::Vector center(3);
     smesh.GetElementCenter(e, center);
-    smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+    const bool inside =
+        enclosed ? (std::max({std::abs(center(0) - 0.5), std::abs(center(1) - 0.5),
+                              std::abs(center(2) - 0.5)}) < 0.1)
+                 : (center(2) >= 0.5);
+    smesh.SetAttribute(e, inside ? 2 : 1);
   }
   // Add interior boundary elements on the material interface.
   for (int f = 0; f < smesh.GetNumFaces(); f++)
@@ -2627,15 +2634,6 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
   }
 
-  // A center does not change an external boundary, which has one side.
-  auto Center = [](double x, double y, double z)
-  {
-    mfem::Vector x0(3);
-    x0(0) = x;
-    x0(1) = y;
-    x0(2) = z;
-    return x0;
-  };
   auto CheckScaled = [&](const std::vector<std::array<std::complex<double>, 3>> &a,
                          const std::vector<std::array<std::complex<double>, 3>> &b,
                          double scale)
@@ -2653,42 +2651,46 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
       }
     }
   };
-  {
-    SurfaceFunctional outside(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts,
-                              Center(0.5, 0.5, -0.5));
-    REQUIRE(outside.IsValid());
-    CheckScaled(outside.EvalFarField(E, B, {omega_re, omega_im}), result, 1.0);
-  }
 
-  // Interior far-field surfaces between isotropic materials are invalid without a center.
-  // Construction must make that decision collectively even when only some ranks own
-  // elements of the marked interface.
-  marker = 0;
-  marker[7 - 1] = 1;
-  SurfaceFunctional interior_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
-                                      r_naughts);
-  REQUIRE_FALSE(interior_farfield.IsValid());
-
-  // The interior surface z = 1/2 is traced from one side, with the normal into it. The
-  // tangential E is continuous, so with B = 0 the centers below and above the surface
-  // give opposite far fields.
-  auto FarField = [&](const MaterialOperator &op, const mfem::Vector &x0,
-                      const GridFunction &E_, const GridFunction &B_)
+  // The interior surface z = 1/2 is traced from the side facing the center of the bounding
+  // box of the marked boundary elements, with the normal into it: below the surface with
+  // the face z = 0 (attribute 1) also marked, above with the face z = 1 (attribute 6). The
+  // far fields of the faces add, so removing that of the external face alone leaves the
+  // interior surface. The tangential E is continuous, so with B = 0 the two sides give
+  // opposite far fields.
+  auto Interior = [&](int attr, const GridFunction &E_, const GridFunction &B_)
   {
-    SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, op, r_naughts, x0);
-    REQUIRE(farfield.IsValid());
-    return farfield.EvalFarField(E_, B_, {omega_re, omega_im});
+    auto FarField = [&](std::initializer_list<int> attrs)
+    {
+      marker = 0;
+      for (int a : attrs)
+      {
+        marker[a - 1] = 1;
+      }
+      SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+      REQUIRE(farfield.IsValid());
+      return farfield.EvalFarField(E_, B_, {omega_re, omega_im});
+    };
+    auto result = FarField({7, attr});
+    const auto external = FarField({attr});
+    for (std::size_t d = 0; d < result.size(); d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        result[d][c] -= external[d][c];
+      }
+    }
+    return result;
   };
   GridFunction E0(nd_fespace, true), B0(rt_fespace, true), B1(rt_fespace, true);
   E0 = 0.0;
   B0 = 0.0;
-  const auto result_below = FarField(mat_op, Center(0.5, 0.5, 0.25), E, B0);
-  CheckScaled(FarField(mat_op, Center(0.5, 0.5, 0.75), E, B0), result_below, -1.0);
+  const auto result_below = Interior(1, E, B0);
+  CheckScaled(Interior(6, E, B0), result_below, -1.0);
 
   // With E = 0 and B = x_hat for z < 1/2 only (exact in the RT space, B . n = 0 on the
-  // surface), only the lower side (attribute 1) gives a nonzero far field. Between two
-  // isotropic materials the traced side faces the center; next to an anisotropic
-  // material (such as a PML) it is the isotropic side, whatever the center.
+  // surface), only the lower side (attribute 1) gives a nonzero far field: the traced
+  // side faces the center.
   mfem::VectorFunctionCoefficient fb1(3,
                                       [](const mfem::Vector &x, mfem::Vector &v)
                                       {
@@ -2709,31 +2711,67 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
     return std::sqrt(norm2);
   };
-  const double lower = Norm(FarField(mat_op, Center(0.5, 0.5, 0.25), E0, B1));
+  const double lower = Norm(Interior(1, E0, B1));
   CHECK(lower > 0.0);
-  CHECK(Norm(FarField(mat_op, Center(0.5, 0.5, 0.75), E0, B1)) <= 1.0e-12 * lower);
-  config::MaterialData anisotropic_vacuum = vacuum, anisotropic_dielectric = dielectric;
-  anisotropic_vacuum.mu_r.s[0] = 2.0;
-  anisotropic_dielectric.mu_r.s[0] = 2.0;
-  MaterialOperator upper_aniso_op({vacuum, anisotropic_dielectric}, periodic,
-                                  ProblemType::DRIVEN, *mesh);
-  MaterialOperator lower_aniso_op({anisotropic_vacuum, dielectric}, periodic,
-                                  ProblemType::DRIVEN, *mesh);
-  CHECK(Norm(FarField(upper_aniso_op, Center(0.5, 0.5, 0.75), E0, B1)) ==
-        Catch::Approx(lower).epsilon(1.0e-12));
-  CHECK(Norm(FarField(lower_aniso_op, Center(0.5, 0.5, 0.25), E0, B1)) <= 1.0e-12 * lower);
+  CHECK(Norm(Interior(6, E0, B1)) <= 1.0e-12 * lower);
 
-  // The materials are checked at setup: an isotropic side is required.
+  // The materials are checked at setup: both sides need the same isotropic material, with
+  // the same speed of light.
   config::BoundaryPostData postpro;
   postpro.farfield.attributes = {7};
   postpro.farfield.thetaphis.emplace_back();
-  CHECK_NOTHROW(SurfacePostOperator(postpro, ProblemType::DRIVEN, upper_aniso_op,
-                                    nd_fespace, nd_fespace));
-  MaterialOperator aniso_op({anisotropic_vacuum, anisotropic_dielectric}, periodic,
-                            ProblemType::DRIVEN, *mesh);
-  CHECK_THROWS_WITH(
-      SurfacePostOperator(postpro, ProblemType::DRIVEN, aniso_op, nd_fespace, nd_fespace),
-      Catch::Matchers::ContainsSubstring("attributes 1 and 2 are both anisotropic"));
+  CHECK_NOTHROW(
+      SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace));
+  for (int side : {1, 2})
+  {
+    CAPTURE(side);
+    auto Check = [&](void (*modify)(config::MaterialData &))
+    {
+      std::vector<config::MaterialData> materials = {vacuum, dielectric};
+      modify(materials[side - 1]);
+      MaterialOperator op(materials, periodic, ProblemType::DRIVEN, *mesh);
+      SurfacePostOperator(postpro, ProblemType::DRIVEN, op, nd_fespace, nd_fespace);
+    };
+    CHECK_THROWS_WITH(Check([](config::MaterialData &m) { m.mu_r.s[0] = 2.0; }),
+                      Catch::Matchers::ContainsSubstring("attribute " +
+                                                         std::to_string(side) + " is not"));
+    CHECK_THROWS_WITH(Check([](config::MaterialData &m) { m.epsilon_r = 4.0; }),
+                      Catch::Matchers::ContainsSubstring(
+                          "attributes 1 and 2 have a different speed of light"));
+  }
+}
+
+TEST_CASE("SurfacePostOperator FarField materials on some processes",
+          "[surfacefunctional][Serial][Parallel]")
+{
+  // The interior surface bounds the middle element (attribute 2), which only some processes
+  // hold as an element or a face neighbor: all processes must agree on the material check.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  CAPTURE(elem_type);
+  auto mesh = MakeInterfaceMesh(comm, elem_type, true);
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  config::PeriodicBoundaryData periodic;
+  mfem::ND_FECollection nd_fec(1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  config::BoundaryPostData postpro;
+  postpro.farfield.attributes = {7};
+  postpro.farfield.thetaphis.emplace_back();
+  auto Check = [&](const config::MaterialData &inside)
+  {
+    MaterialOperator mat_op({vacuum, inside}, periodic, ProblemType::DRIVEN, *mesh);
+    SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace);
+  };
+  config::MaterialData anisotropic = dielectric, slow = dielectric;
+  anisotropic.mu_r.s[0] = 2.0;
+  slow.epsilon_r = 4.0;
+  CHECK_NOTHROW(Check(dielectric));
+  CHECK_THROWS_WITH(Check(anisotropic),
+                    Catch::Matchers::ContainsSubstring("attribute 2 is not"));
+  CHECK_THROWS_WITH(Check(slow), Catch::Matchers::ContainsSubstring(
+                                     "attributes 1 and 2 have a different speed of light"));
 }
 
 TEST_CASE("FaceSamplingPlan retains unmatched boundary slots",

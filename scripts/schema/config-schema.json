@@ -1925,10 +1925,6 @@
           "$ref": "#/$defs/Attributes",
           "description": "Integer array of mesh boundary attributes this object applies to."
         },
-        "Center": {
-          "$ref": "#/$defs/Vector3",
-          "description": "Point inside the integration surface (on the side of the sources and scatterers), in mesh length units. On an interior surface, the fields of a face between two isotropic materials are taken from the side facing this point. If not specified, the point is the center of the axis-aligned bounding box of the mesh. Not used for external boundaries."
-        },
         "NSample": {
           "type": "integer",
           "description": "Number of uniformly-spaced points used to discretize the far-field sphere.",

@@ -45,11 +45,10 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
      3. does not cross anisotropic materials
 
     On an interior surface (for example a box around the radiating structure, inside the
-    physical region terminated by a PML), the fields of each face are taken from its
-    inner side, as on an external boundary: the isotropic side if the other side is
-    anisotropic (such as a PML), otherwise the side facing `"Center"`, a point inside the
-    surface (by default the center of the bounding box of the mesh, which must then lie
-    inside the surface). *Palace* stops with an error if both sides are anisotropic.
+    physical region terminated by a PML), the fields of each face are taken from the side
+    facing the center of the bounding box of the surface, as on an external boundary. An
+    interior surface must be closed, every face must face that center, and both sides of
+    each face must have the same isotropic material.
 
 ## Setup
 
