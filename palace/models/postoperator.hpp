@@ -629,6 +629,13 @@ public:
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
 
+  // PatchEnergy: the applied patches' raw claims as the partition reads them (taken from
+  // the operator at the construction, round 2b B1).
+  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &
+  GetSurfaceResponseModelRawPortions() const
+  {
+    return surface_response_model_raw;
+  }
   SurfaceResponseOperator *GetSurfaceResponseOperator()
   {
     return surface_response_op.get();

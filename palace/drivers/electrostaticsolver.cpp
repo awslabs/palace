@@ -1297,7 +1297,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
-    for (const auto &portion : response_correction->GetModelRawClaimPortions().portions)
+    // Round 2b B1 (decision 1484): converted once and released from the operator (the same
+    // portions in the same order; the operator reads them nowhere after the construction).
+    for (const auto &portion : response_correction->ReleaseModelRawClaimPortionList())
     {
       model_raw_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});

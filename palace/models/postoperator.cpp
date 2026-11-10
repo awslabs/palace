@@ -385,7 +385,10 @@ PostOperator<solver_t>::PostOperator(
         surface_response_spatial_cluster_priority.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
       }
-      for (const auto &portion : surface_response_op->GetModelRawClaimPortions().portions)
+      // Round 2b B1 (decision 1484): converted once and released from the operator (the
+      // same portions in the same order; the operator reads them nowhere after the
+      // construction).
+      for (const auto &portion : surface_response_op->ReleaseModelRawClaimPortionList())
       {
         surface_response_model_raw.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});

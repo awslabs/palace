@@ -1796,6 +1796,15 @@ public:
   {
     return model_raw_claim_portions;
   }
+  // Round 2b B1 (decision 1484): the claims' only reader after the construction is the
+  // driver's (or PostOperator's) conversion into the partition's portion list, made once;
+  // it takes the list out of the operator (the members and the length stay) so that the
+  // claims are held once per rank, not twice.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+  ReleaseModelRawClaimPortionList()
+  {
+    return std::exchange(model_raw_claim_portions.portions, {});
+  }
   // Whether this construction reused the first construction's domain-boundary containment
   // result through the cached automatic geometry (decision 734 F2; false on the first
   // construction, on a curved mesh, under PALACE_RESPONSE_CONTAINMENT_RECHECK, or when the
