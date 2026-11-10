@@ -276,6 +276,7 @@ struct TimerResults
   std::vector<std::string> tally_names;
   std::vector<Timer::Index> tally_parents;
   std::vector<Stats> tally_time, tally_count, tally_wait, tally_work, tally_nested;
+  std::vector<Stats> tally_active;  // Sum: number of ranks with a nonzero count
 };
 
 struct Results

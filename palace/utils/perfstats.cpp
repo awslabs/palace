@@ -358,12 +358,12 @@ json CounterJson(Reduce reduce, const Stats &s)
   return nullptr;
 }
 
-// Max/avg over ranks (1 is balanced), when anything was measured.
-void SetImbalance(json &j, const Stats &s)
+// Max/avg over the ranks which ran the tally (1 is balanced), when anything was measured.
+void SetImbalance(json &j, const Stats &s, const Stats &active)
 {
-  if (s.avg > 0.0)
+  if (s.sum > 0.0 && active.sum > 0.0)
   {
-    j["Imbalance"] = s.max / s.avg;
+    j["Imbalance"] = s.max * active.sum / s.sum;
   }
 }
 
@@ -387,7 +387,7 @@ json ElapsedTimeJson(const TimerResults &r)
       auto t = StatsJson(r.tally_time[i]);
       t["Parent"] = Timer::names[r.tally_parents[i]];
       t["Count"] = Num(r.tally_count[i].max);
-      SetImbalance(t, r.tally_time[i]);
+      SetImbalance(t, r.tally_time[i], r.tally_active[i]);
       if (r.tally_nested[i].max > 0)
       {
         t["Nested"] = Num(r.tally_nested[i].max);
@@ -395,10 +395,11 @@ json ElapsedTimeJson(const TimerResults &r)
       if (r.tally_wait[i].max > 0.0)
       {
         t["Wait"] = StatsJson(r.tally_wait[i]);
-        if (r.tally_work[i].max > 0.0)  // Not for pure waits
+        if (r.tally_work[i].max >
+            1.0e-3 * r.tally_time[i].max)  // Not for (almost) pure waits
         {
           t["Work"] = StatsJson(r.tally_work[i]);
-          SetImbalance(t["Work"], r.tally_work[i]);
+          SetImbalance(t["Work"], r.tally_work[i], r.tally_active[i]);
         }
       }
       tallies[r.tally_names[i]] = std::move(t);
@@ -723,7 +724,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (7 * N + 10 * T + 2 * C + 9));
+  buf.reserve(STRIDE * (7 * N + 12 * T + 2 * C + 9));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -751,6 +752,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
     PushEntry(buf, t ? t->wait : 0.0, true, rank);
     PushEntry(buf, t ? t->time - t->wait : 0.0, true, rank);
     PushEntry(buf, t ? t->nested : 0.0, true, rank);
+    PushEntry(buf, (t && t->count > 0) ? 1.0 : 0.0, true, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -784,6 +786,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
     PushEntry(buf, wait, true, rank);
     PushEntry(buf, t ? t->cum_time + t->time - wait : 0.0, true, rank);
     PushEntry(buf, t ? t->cum_nested + t->nested : 0.0, true, rank);
+    PushEntry(buf, (t && t->cum_count + t->count > 0) ? 1.0 : 0.0, true, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -864,17 +867,18 @@ void BlockTimer::Finalize(MPI_Comm comm)
       s = Next();
     }
   };
-  auto NextTriples =
-      [&Next](std::vector<Stats> &a, std::vector<Stats> &b, std::vector<Stats> &c, int n)
+  auto NextTallyExtras = [&Next](TimerResults &t, int n)
   {
-    a.resize(n);
-    b.resize(n);
-    c.resize(n);
+    for (auto *v : {&t.tally_wait, &t.tally_work, &t.tally_nested, &t.tally_active})
+    {
+      v->resize(n);
+    }
     for (int i = 0; i < n; i++)
     {
-      a[i] = Next();
-      b[i] = Next();
-      c[i] = Next();
+      t.tally_wait[i] = Next();
+      t.tally_work[i] = Next();
+      t.tally_nested[i] = Next();
+      t.tally_active[i] = Next();
     }
   };
   NextN(r.iter.time, N);
@@ -882,7 +886,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.iter.rank_mem, N);
   NextN(r.iter.tally_time, T);
   NextN(r.iter.tally_count, T);
-  NextTriples(r.iter.tally_wait, r.iter.tally_work, r.iter.tally_nested, T);
+  NextTallyExtras(r.iter, T);
   NextN(r.counter, C);
   r.peak_mem = Next();
   r.cur_mem = Next();
@@ -890,7 +894,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.cum.count, N);
   NextN(r.cum.tally_time, T);
   NextN(r.cum.tally_count, T);
-  NextTriples(r.cum.tally_wait, r.cum.tally_work, r.cum.tally_nested, T);
+  NextTallyExtras(r.cum, T);
   NextN(r.cum_counter, C);
   r.cum_peak_mem = Next();
   r.mem_baseline = Next();

@@ -310,6 +310,11 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
   BlockTimer::Reset();
   const int imb = perf::RegisterTally("Test/Imbalance", Timer::KSP);
   perf::AddTally(imb, 1.0 + rank);
+  const int root_only = perf::RegisterTally("Test/RootOnly", Timer::IO);
+  if (rank == 0)
+  {
+    perf::AddTally(root_only, 1.0);
+  }
 
   // A reduction inside a scope is its wait.
   const int red = perf::RegisterTally("Test/Reduce", Timer::KSP);
@@ -384,6 +389,7 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
   CHECK_THAT(tallies["Test/Imbalance"]["Imbalance"].get<double>(),
              WithinRel(2.0 * np / (np + 1.0), 1e-12));
   CHECK(!tallies["Test/Imbalance"].contains("Wait"));
+  CHECK(tallies["Test/RootOnly"]["Imbalance"] == 1.0);  // Over the ranks which ran it
   CHECK(tallies["Test/Reduce"]["Wait"]["Max"].get<double>() > 0.0);
   CHECK(tallies["Test/Reduce"]["Work"].contains("Imbalance"));
   CHECK(meta["Communication"]["MPIWaitTally"] == perf::detail::MpiWaitTally());
