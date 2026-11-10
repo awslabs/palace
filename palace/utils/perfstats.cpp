@@ -352,6 +352,15 @@ json CounterJson(Reduce reduce, const Stats &s)
   return nullptr;
 }
 
+// Max/avg over ranks (1 is balanced), when anything was measured.
+void SetImbalance(json &j, const Stats &s)
+{
+  if (s.avg > 0.0)
+  {
+    j["Imbalance"] = s.max / s.avg;
+  }
+}
+
 json ElapsedTimeJson(const TimerResults &r)
 {
   json et;
@@ -372,6 +381,16 @@ json ElapsedTimeJson(const TimerResults &r)
       auto t = StatsJson(r.tally_time[i]);
       t["Parent"] = Timer::names[r.tally_parents[i]];
       t["Count"] = Num(r.tally_count[i].max);
+      SetImbalance(t, r.tally_time[i]);
+      if (r.tally_wait[i].max > 0.0)
+      {
+        t["Wait"] = StatsJson(r.tally_wait[i]);
+        if (r.tally_work[i].max > 0.0)  // Not for pure waits
+        {
+          t["Work"] = StatsJson(r.tally_work[i]);
+          SetImbalance(t["Work"], r.tally_work[i]);
+        }
+      }
       tallies[r.tally_names[i]] = std::move(t);
     }
   }
@@ -395,8 +414,9 @@ void Commit()
   for (auto &t : reg.tallies)
   {
     t.cum_time += t.time;
+    t.cum_wait += t.wait;
     t.cum_count += t.count;
-    t.time = 0.0;
+    t.time = t.wait = 0.0;
     t.count = 0;
   }
   for (auto &c : reg.counters)
@@ -425,13 +445,45 @@ int RegisterTally(std::string_view name, Timer::Index parent)
   return id;
 }
 
-int RegisterPhaseTally(std::string_view name)
+namespace
+{
+
+// Sub-tally id of a phase tally for a row, registered on first use.
+int PhaseSubTally(int id, int row)
+{
+  static std::unordered_map<int, std::array<int, Timer::NUM_TIMINGS>> subs;
+  auto [it, inserted] = subs.try_emplace(id);
+  if (inserted)
+  {
+    it->second.fill(-1);
+  }
+  int &sub = it->second[row];
+  if (sub < 0)
+  {
+    sub = RegisterTally(
+        fmt::format("{}/{}", detail::registry.tallies[id].name, Timer::names[row]),
+        static_cast<Timer::Index>(row));
+  }
+  return sub;
+}
+
+}  // namespace
+
+int PhaseTallyRow(int id, Timer::Index row)
+{
+  return PhaseSubTally(id, row);
+}
+
+int RegisterPhaseTally(std::string_view name, bool eager)
 {
   const int id = RegisterTally(name, Timer::TOTAL);
-  auto &t = detail::registry.tallies[id];
-  if (t.phase_base == -1)
+  if (detail::registry.tallies[id].phase_base == -1)
   {
-    t.phase_base = -2;  // Sub-tallies are registered on first use
+    detail::registry.tallies[id].phase_base = -2;
+    for (int row = 0; eager && row < Timer::NUM_TIMINGS; row++)
+    {
+      PhaseSubTally(id, row);
+    }
   }
   return id;
 }
@@ -439,24 +491,11 @@ int RegisterPhaseTally(std::string_view name)
 namespace detail
 {
 
-void AddPhaseTally(int id, double seconds, long count)
+void AddPhaseTally(int id, double seconds, long count, double wait)
 {
-  // Sub-tally ids per row, registered lazily so that only rows that occur are reported.
-  static std::unordered_map<int, std::array<int, Timer::NUM_TIMINGS>> subs;
-  auto [it, inserted] = subs.try_emplace(id);
-  if (inserted)
-  {
-    it->second.fill(-1);
-  }
-  const auto row = BlockTimer::Current();
-  int &sub = it->second[row];
-  if (sub < 0)
-  {
-    sub = RegisterTally(fmt::format("{}/{}", registry.tallies[id].name, Timer::names[row]),
-                        row);
-  }
-  auto &s = registry.tallies[sub];
+  auto &s = registry.tallies[PhaseSubTally(id, BlockTimer::Current())];
   s.time += seconds;
+  s.wait += wait;
   s.count += count;
 }
 
@@ -647,6 +686,11 @@ void BlockTimer::Finalize(MPI_Comm comm)
   Set(RegisterCounter("Memory/Heap/SkippedSamples", Reduce::MAX, Accumulate::SUM),
       static_cast<double>(timer.HeapSkipped()));
   SetInfo("Memory/HeapSource", memory_reporting::HeapMemorySource());
+  SetInfo("Communication/MPIWaitTally", detail::MpiWaitTally());
+  if (detail::MpiWaitTally())
+  {
+    SetInfo("Communication/MPIWaitTool", detail::mpi_wait_tool);
+  }
 
   const int rank = Mpi::Rank(comm);
   constexpr int N = Timer::NUM_TIMINGS;
@@ -668,7 +712,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (7 * N + 4 * T + 2 * C + 9));
+  buf.reserve(STRIDE * (7 * N + 8 * T + 2 * C + 9));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -689,6 +733,12 @@ void BlockTimer::Finalize(MPI_Comm comm)
   for (int i = 0; i < T; i++)
   {
     PushEntry(buf, (tidx[i] >= 0) ? reg.tallies[tidx[i]].count : 0.0, true, rank);
+  }
+  for (int i = 0; i < T; i++)
+  {
+    const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
+    PushEntry(buf, t ? t->wait : 0.0, true, rank);
+    PushEntry(buf, t ? t->time - t->wait : 0.0, true, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -714,6 +764,13 @@ void BlockTimer::Finalize(MPI_Comm comm)
   {
     const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
     PushEntry(buf, t ? t->cum_count + t->count : 0.0, true, rank);
+  }
+  for (int i = 0; i < T; i++)
+  {
+    const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
+    const double wait = t ? t->cum_wait + t->wait : 0.0;
+    PushEntry(buf, wait, true, rank);
+    PushEntry(buf, t ? t->cum_time + t->time - wait : 0.0, true, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -794,11 +851,22 @@ void BlockTimer::Finalize(MPI_Comm comm)
       s = Next();
     }
   };
+  auto NextPairs = [&Next](std::vector<Stats> &a, std::vector<Stats> &b, int n)
+  {
+    a.resize(n);
+    b.resize(n);
+    for (int i = 0; i < n; i++)
+    {
+      a[i] = Next();
+      b[i] = Next();
+    }
+  };
   NextN(r.iter.time, N);
   NextN(r.iter.count, N);
   NextN(r.iter.rank_mem, N);
   NextN(r.iter.tally_time, T);
   NextN(r.iter.tally_count, T);
+  NextPairs(r.iter.tally_wait, r.iter.tally_work, T);
   NextN(r.counter, C);
   r.peak_mem = Next();
   r.cur_mem = Next();
@@ -806,6 +874,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.cum.count, N);
   NextN(r.cum.tally_time, T);
   NextN(r.cum.tally_count, T);
+  NextPairs(r.cum.tally_wait, r.cum.tally_work, T);
   NextN(r.cum_counter, C);
   r.cum_peak_mem = Next();
   r.mem_baseline = Next();
@@ -873,7 +942,7 @@ void BlockTimer::Reset()
   // Registrations are kept (ids may be cached by callers); values are cleared.
   for (auto &t : detail::registry.tallies)
   {
-    t.time = t.cum_time = 0.0;
+    t.time = t.cum_time = t.wait = t.cum_wait = 0.0;
     t.count = t.cum_count = 0;
   }
   for (auto &c : detail::registry.counters)

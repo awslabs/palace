@@ -41,6 +41,7 @@ set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB for high-order field interpolation")
+set(PALACE_WITH_MPI_WAIT_TALLY ON CACHE BOOL "Time blocking MPI_Wait calls for the performance report through the MPI profiling interface (executables only)")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -362,6 +363,10 @@ target_sources(${LIB_TARGET_NAME}
 # Add executable target
 set(TARGET_NAME palace)
 add_executable(${TARGET_NAME} ${CMAKE_SOURCE_DIR}/main.cpp)
+if(PALACE_WITH_MPI_WAIT_TALLY)
+  target_sources(${TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiwait.cpp)
+  target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_DL_LIBS})
+endif()
 target_link_libraries(${TARGET_NAME}
   PRIVATE ${LIB_TARGET_NAME}
           $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>)

@@ -21,8 +21,37 @@ namespace palace
 namespace perf::detail
 {
 
-// Record a blocking reduction in the performance report (defined in commstats.cpp).
-void AddReduction(double seconds, std::size_t bytes);
+// Record a blocking collective in the performance report (defined in commstats.cpp).
+enum class Collective
+{
+  REDUCE,
+  BARRIER,
+  BROADCAST
+};
+void AddCollective(Collective kind, double seconds, std::size_t bytes);
+
+// Record a blocking MPI_Wait family call (from mpiwait.cpp, defined in commstats.cpp).
+void AddWait(double seconds);
+
+// Set by every call of the MPI_Wait wrappers (mpiwait.cpp), and whether another profiling
+// tool underneath them receives the calls.
+extern bool mpi_wait_seen, mpi_wait_tool;
+
+// Whether the MPI_Wait wrappers intercept the calls made from libpalace: they may not be
+// linked in, or the libraries may bind to the MPI library directly (macOS two-level
+// namespaces). Tested once, with a call on a null request (MPI must be initialized).
+bool MpiWaitTally();
+
+// Time a blocking collective call.
+template <typename F>
+void TimeCollective(Collective kind, std::size_t bytes, F &&f)
+{
+  const auto t0 = std::chrono::steady_clock::now();
+  f();
+  AddCollective(
+      kind, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(),
+      bytes);
+}
 
 }  // namespace perf::detail
 
@@ -232,7 +261,11 @@ public:
   static void Abort(int code, MPI_Comm comm = World()) { MPI_Abort(comm, code); }
 
   // Barrier on the communicator.
-  static void Barrier(MPI_Comm comm = World()) { MPI_Barrier(comm); }
+  static void Barrier(MPI_Comm comm = World())
+  {
+    perf::detail::TimeCollective(perf::detail::Collective::BARRIER, 0,
+                                 [&]() { MPI_Barrier(comm); });
+  }
 
   // Return processor's rank in the communicator.
   static int Rank(MPI_Comm comm)
@@ -257,11 +290,9 @@ public:
   template <typename T>
   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)
   {
-    const auto t0 = std::chrono::steady_clock::now();
-    MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm);
-    perf::detail::AddReduction(
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(),
-        len * sizeof(T));
+    perf::detail::TimeCollective(
+        perf::detail::Collective::REDUCE, len * sizeof(T),
+        [&]() { MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm); });
   }
 
   // Global minimum (in-place, result is broadcast to all processes).
@@ -337,7 +368,8 @@ public:
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
   {
-    MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm);
+    perf::detail::TimeCollective(perf::detail::Collective::BROADCAST, len * sizeof(T), [&]()
+                                 { MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm); });
   }
 
   // Global broadcast from root for buffers whose length may exceed INT_MAX (e.g. a
@@ -349,11 +381,16 @@ public:
                              std::int64_t max_chunk = std::numeric_limits<int>::max())
   {
     MFEM_ASSERT(len >= 0 && max_chunk > 0, "Invalid BroadcastLarge lengths!");
-    for (std::int64_t offset = 0; offset < len; offset += max_chunk)
-    {
-      const int n = static_cast<int>(std::min(max_chunk, len - offset));
-      MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
-    }
+    perf::detail::TimeCollective(
+        perf::detail::Collective::BROADCAST, len * sizeof(T),
+        [&]()
+        {
+          for (std::int64_t offset = 0; offset < len; offset += max_chunk)
+          {
+            const int n = static_cast<int>(std::min(max_chunk, len - offset));
+            MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
+          }
+        });
   }
 
   // Allgather a fixed count of items per rank; every rank ends up with the concatenated

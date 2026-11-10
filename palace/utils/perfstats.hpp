@@ -52,6 +52,7 @@ struct TallyData
   std::string name;
   Timer::Index parent;
   double time = 0.0, cum_time = 0.0;
+  double wait = 0.0, cum_wait = 0.0;  // Part of time blocked in communication
   long count = 0, cum_count = 0;
   int phase_base = -1;  // For phase tallies: first of NUM_TIMINGS sub-tally ids (lazy)
 };
@@ -74,50 +75,71 @@ struct Registry
   bool suspended = false;  // Set while BlockTimer::Finalize reduces (not tallied)
 };
 
-void AddPhaseTally(int id, double seconds, long count);
+void AddPhaseTally(int id, double seconds, long count, double wait);
 
 inline Registry registry;
+
+// Seconds this thread has spent blocked in communication: in the MPI_Wait family (requests
+// that had not completed yet, see commstats.cpp) and in Palace's blocking reductions.
+inline thread_local double comm_wait = 0.0;
 
 }  // namespace detail
 
 //
 // Inclusive tallies: stackless, they do not interrupt BlockTimer rows and may overlap each
 // other. Each carries the exclusive Timer row it is measured within (Parent). Reported in
-// palace.json under ElapsedTime/Tallies/<name>.
+// palace.json under ElapsedTime/Tallies/<name>, with the time imbalance over ranks and,
+// when nonzero, the time blocked in communication within the tally (Wait) and the rest
+// (Work = time - Wait), each reduced over ranks.
 //
 
 // Register (or look up) a tally. Ids are stable for the lifetime of the process.
 int RegisterTally(std::string_view name, Timer::Index parent);
 
 // A tally measured in any phase (Parent TOTAL), additionally split by the exclusive row
-// active at the time into "<name>/<ROW>" sub-tallies (Parent ROW).
-int RegisterPhaseTally(std::string_view name);
+// active at the time into "<name>/<ROW>" sub-tallies (Parent ROW). The sub-tallies are
+// registered on first use, or all at once if eager (for tallies whose rows depend on the
+// rank, to keep the registration order the same on all ranks).
+int RegisterPhaseTally(std::string_view name, bool eager = false);
 
-inline void AddTally(int id, double seconds, long count = 1)
+// Id of the sub-tally of a phase tally for an exclusive row (registered if needed).
+int PhaseTallyRow(int id, Timer::Index row);
+
+// Register the communication tallies and counters (Reduce, Barrier, Broadcast, Wait/MPI).
+// Call it where all ranks reach it in the same order, before any rank-dependent
+// registration; otherwise they are registered at the first communication.
+void RegisterCommunicationTallies();
+
+// Add to a tally: elapsed seconds, of which wait seconds were blocked in communication.
+inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
 {
   if (id >= 0)
   {
     auto &t = detail::registry.tallies[id];
     t.time += seconds;
+    t.wait += wait;
     t.count += count;
     if (t.phase_base != -1)
     {
-      detail::AddPhaseTally(id, seconds, count);
+      detail::AddPhaseTally(id, seconds, count, wait);
     }
   }
 }
 
-// Time a scope into a tally (two clock reads, no system calls). A negative id is a no-op.
+// Time a scope into a tally (two clock reads, no system calls), with the communication
+// wait inside it. A negative id is a no-op.
 class ScopedTally
 {
   int id;
   Timer::TimePoint t0;
+  double w0 = 0.0;
 
 public:
   explicit ScopedTally(int id) : id(id)
   {
     if (id >= 0)
     {
+      w0 = detail::comm_wait;
       t0 = Timer::Now();
     }
   }
@@ -125,7 +147,7 @@ public:
   {
     if (id >= 0)
     {
-      AddTally(id, Timer::Duration(Timer::Now() - t0).count());
+      AddTally(id, Timer::Duration(Timer::Now() - t0).count(), 1, detail::comm_wait - w0);
     }
   }
   ScopedTally(const ScopedTally &) = delete;
@@ -231,7 +253,7 @@ struct TimerResults
   std::vector<Stats> time, count, rank_mem, node_mem;  // Per Timer::Index
   std::vector<std::string> tally_names;
   std::vector<Timer::Index> tally_parents;
-  std::vector<Stats> tally_time, tally_count;
+  std::vector<Stats> tally_time, tally_count, tally_wait, tally_work;
 };
 
 struct Results

@@ -103,6 +103,12 @@ if(PALACE_WITH_ENZYME)
   target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
 endif()
 
+if(PALACE_WITH_MPI_WAIT_TALLY)
+  target_sources(unit-tests PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiwait.cpp)
+  target_link_libraries(unit-tests PRIVATE ${CMAKE_DL_LIBS})
+  target_compile_definitions(unit-tests PRIVATE PALACE_WITH_MPI_WAIT_TALLY)
+endif()
+
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
 

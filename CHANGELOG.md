@@ -134,10 +134,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     factorization, previously part of `Coarse Solve`, or of `Setup` for MUMPS) and `Adapted
     Mesh Output` (previously part of `Rebalancing`) appear in the log and in `palace.json`,
     together with inclusive tallies (multigrid levels, smoothers, Krylov operator and
-    orthogonalization, halo exchanges, reductions and waits), solver counters, resolved
+    orthogonalization, halo exchanges, reductions and waits, each split into communication
+    wait and work, with their imbalance across processes), solver counters, resolved
     solver choices and memory attribution (RSS and heap in use). The log tables keep their
     layout. An opt-in check of the coarse solve residual is enabled with
     `config["Problem"]["Verbose"] >= 2` or the `PALACE_PERF_VERIFY` environment variable.
+    The communication waits are the blocking reductions, barriers and broadcasts of
+    *Palace* and, with the new CMake option `PALACE_WITH_MPI_WAIT_TALLY` (default on), the
+    blocking `MPI_Wait` family calls of the code linked into the `palace` executable, timed
+    through the MPI profiling interface (not Fortran bindings such as MUMPS). The wrappers
+    pass the calls on to a profiling tool loaded at run time; turn the option off to link
+    such a tool into the executable.
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still

@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <thread>
+#include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -299,6 +300,103 @@ TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
   CHECK(r.iter.tally_time[all].max == 3.0);
   CHECK(r.iter.tally_time[io].max == 2.0);
   CHECK(r.iter.tally_time[none].max == 1.0);
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  BlockTimer::Reset();
+  const int imb = perf::RegisterTally("Test/Imbalance", Timer::KSP);
+  perf::AddTally(imb, 1.0 + rank);
+
+  // A reduction inside a scope is its wait.
+  const int red = perf::RegisterTally("Test/Reduce", Timer::KSP);
+  {
+    perf::ScopedTally t(red);
+    double v = 1.0;
+    Mpi::GlobalSum(1, &v, comm);
+  }
+  const auto &reg = perf::detail::registry;
+  const auto &tr = reg.tallies[red];
+  CHECK(tr.wait > 0.0);
+  CHECK(tr.wait <= tr.time);
+
+  // So is a barrier, behind a slow rank.
+  const int bar = perf::RegisterTally("Test/Barrier", Timer::KSP);
+  {
+    perf::ScopedTally t(bar);
+    if (rank == 0)
+    {
+      Sleep(20);
+    }
+    Mpi::Barrier(comm);
+  }
+  if (rank > 0)
+  {
+    CHECK(reg.tallies[bar].wait > 0.01);
+  }
+  CHECK(reg.tallies[reg.tally_ids.at("Barrier")].count >= 1);
+
+  // Rank 0 works while the others block in MPI_Wait for its message: the wait lands in
+  // their exchange, the work in rank 0's.
+  const int ex = perf::RegisterTally("Test/Exchange", Timer::KSP);
+  const auto it = reg.tally_ids.find("Wait/MPI");
+  const long waits0 = (it != reg.tally_ids.end()) ? reg.tallies[it->second].count : 0;
+  {
+    BlockTimer bt(Timer::KSP);
+    perf::ScopedTally t(ex);
+    int msg = 0;
+    if (rank == 0)
+    {
+      Sleep(50);
+      std::vector<MPI_Request> req(np - 1);
+      for (int p = 1; p < np; p++)
+      {
+        MPI_Isend(&msg, 1, MPI_INT, p, 0, comm, &req[p - 1]);
+      }
+      MPI_Waitall(np - 1, req.data(), MPI_STATUSES_IGNORE);
+    }
+    else
+    {
+      MPI_Request req;
+      MPI_Irecv(&msg, 1, MPI_INT, 0, 0, comm, &req);
+      MPI_Wait(&req, MPI_STATUS_IGNORE);
+    }
+  }
+  if (perf::detail::MpiWaitTally() && rank > 0)
+  {
+    const auto &te = reg.tallies[ex];
+    CHECK(te.wait > 0.04);
+    CHECK(te.time - te.wait < 0.04);
+    const auto &tw = reg.tallies[reg.tally_ids.at("Wait/MPI")];
+    CHECK(tw.count >= waits0 + 1);
+    CHECK(reg.tallies[reg.tally_ids.at("Wait/MPI/KSP")].time >= te.wait - 1.0e-12);
+  }
+#if defined(PALACE_WITH_MPI_WAIT_TALLY)
+  CHECK(perf::detail::MpiWaitTally());  // The test executable has the wrappers
+#endif
+  BlockTimer::Finalize(comm);
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  const auto &tallies = meta["ElapsedTime"]["Tallies"];
+  CHECK_THAT(tallies["Test/Imbalance"]["Imbalance"].get<double>(),
+             WithinRel(2.0 * np / (np + 1.0), 1e-12));
+  CHECK(!tallies["Test/Imbalance"].contains("Wait"));
+  CHECK(tallies["Test/Reduce"]["Wait"]["Max"].get<double>() > 0.0);
+  CHECK(tallies["Test/Reduce"]["Work"].contains("Imbalance"));
+  CHECK(meta["Communication"]["MPIWaitTally"] == perf::detail::MpiWaitTally());
+  CHECK(!tallies["Reduce"].contains("Work"));  // Pure wait
+  if (perf::detail::MpiWaitTally() && np > 1)
+  {
+    const auto &e = tallies["Test/Exchange"];
+    CHECK(e["Wait"]["Max"].get<double>() > 0.04);
+    CHECK(e["Work"]["Max"].get<double>() >= 0.049);
+    CHECK(e["Work"]["MaxRank"] == 0);
+    CHECK(e["Work"]["Imbalance"].get<double>() > 1.0);
+    CHECK(tallies["Wait/MPI/KSP"]["Parent"] == "KSP");
+  }
   BlockTimer::Reset();
 }
 

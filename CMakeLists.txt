@@ -36,6 +36,7 @@ set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
 set(PALACE_WITH_MAGMA ON CACHE BOOL "Build with MAGMA backend for libCEED")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
+set(PALACE_WITH_MPI_WAIT_TALLY ON CACHE BOOL "Time blocking MPI_Wait calls for the performance report through the MPI profiling interface (executables only)")
 
 set(PALACE_WITH_STRUMPACK_BUTTERFLYPACK OFF CACHE BOOL "Build with ButterflyPACK support for STRUMPACK solver")
 set(PALACE_WITH_STRUMPACK_ZFP OFF CACHE BOOL "Build with ZFP support for STRUMPACK solver")

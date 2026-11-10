@@ -448,7 +448,28 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     measurements which do not interrupt the timer rows and may overlap each other; each
     names the row it is measured within as `Parent`, and must never be added to the rows.
     Phase tallies (`perf::RegisterPhaseTally`), such as `Halo/P` or `Reduce`, are also
-    split by the active row into `<name>/<ROW>`.
+    split by the active row into `<name>/<ROW>`. Each tally has an `Imbalance` (maximum
+    over average across the processes which ran it) and, when it contains any, `Wait`, the
+    time blocked in communication inside it, and `Work`, the rest of its time (each `{Min,
+    Avg, Max, MaxRank}`, `Work` with its own `Imbalance`; tallies that (almost) only wait
+    have no `Work`). A rank that waits for slower neighbors shows the delay in `Wait`, so the
+    imbalance of `Work` is closer to the load imbalance than the imbalance of the time. The
+    waits counted are the blocking reductions, barriers and broadcasts of `Mpi` (tallied as
+    the phase tallies `Reduce`, `Barrier` and `Broadcast`) and, with the CMake option
+    `PALACE_WITH_MPI_WAIT_TALLY` (default on), the calls to `MPI_Wait`, `MPI_Waitall`,
+    `MPI_Waitany` and `MPI_Waitsome` that block, tallied as `Wait/MPI`. These wrappers use
+    the MPI profiling interface and are compiled into the executables only. They see the C
+    calls of the code linked into the executable, including the halo exchanges of statically
+    or directly linked MFEM and hypre and the sparse direct solvers, but not Fortran bindings
+    (MUMPS) or dependencies bound directly to the MPI library (macOS two-level namespaces).
+    `Communication/MPIWaitTally` says whether they intercept the calls made from `libpalace`
+    (tested at startup). Each wrapper calls the next definition of its function, so an MPI
+    profiling tool loaded after the executable (for example with `LD_PRELOAD`) still receives
+    every call; `Communication/MPIWaitTool` is then true, and every call, blocking or not, is
+    timed and counted in `Wait/MPI`. A tool linked into the executable itself conflicts with
+    the wrappers: build without the option. Not counted at all: `MPI_Recv`, `MPI_Probe` and
+    other blocking point-to-point calls, collectives inside other libraries, and waits on
+    other threads.
   - Counters (`perf::RegisterCounter`) are written at their path, for example
     `LinearSolver/<Role>/...`, reduced across processes as a sum, minimum, maximum or
     `{Min, Avg, Max, MaxRank}`.
