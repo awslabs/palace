@@ -14,8 +14,12 @@ merely contain a commit vs. head it, empty pull lists, missing refs).
 
 from __future__ import annotations
 
+import io
+import os
 import unittest
+from unittest import mock
 
+import authorize
 from authorize import Decision, Facts, decide, slugify
 
 SHA = "c45e4ab4f2356589ba40f4fde2403f5854282826"
@@ -26,9 +30,11 @@ REPO = "awslabs/palace"
 class FakeApi:
     """Stand-in for GitHubApi. All lookups come from constructor data."""
 
-    def __init__(self, *, refs=None, pr_for_head=None, labels=None):
+    def __init__(self, *, refs=None, on_main=None, pr_for_head=None, labels=None):
         # refs: {("heads"|"tags", name): commit_sha}
         self._refs = refs or {}
+        # on_main: set of commit shas reachable from main
+        self._on_main = on_main or set()
         # pr_for_head: {(head_sha, head_ref): (number, head_repo_full_name, state)}
         self._pr = pr_for_head or {}
         # labels: {pr_number: set(label names)}
@@ -36,6 +42,9 @@ class FakeApi:
 
     def ref_sha(self, kind, name):
         return self._refs.get((kind, name))
+
+    def is_on_main(self, sha):
+        return sha in self._on_main
 
     def pr_for_head(self, sha, ref):
         return self._pr.get((sha, ref))
@@ -80,10 +89,18 @@ class PushMain(unittest.TestCase):
 
 class ReleaseTag(unittest.TestCase):
     def test_release_tag_authorizes_and_strips_v(self):
-        api = FakeApi(refs={("tags", "v0.18.0"): SHA})
+        api = FakeApi(refs={("tags", "v0.18.0"): SHA}, on_main={SHA})
         d = decide(facts(head_branch="v0.18.0", head_sha=SHA), api)
         self.assertTrue(d.authorized)
         self.assertEqual(d.selector, "0.18.0")
+
+    def test_release_tag_off_main_rejected(self):
+        # A tag on an unmerged branch commit must not publish a release.
+        api = FakeApi(refs={("tags", "v0.18.0"): SHA}, on_main=set())
+        d = decide(facts(head_branch="v0.18.0", head_sha=SHA), api)
+        self.assertFalse(d.authorized)
+        self.assertEqual(d.selector, "")
+        self.assertIn("not on main", d.reason)
 
     def test_release_tag_wrong_sha_rejected(self):
         api = FakeApi(refs={("tags", "v0.18.0"): OTHER_SHA})
@@ -103,6 +120,32 @@ class ReleaseTag(unittest.TestCase):
     def test_feature_branch_push_rejected(self):
         d = decide(facts(head_branch="some-feature", head_sha=SHA), FakeApi())
         self.assertFalse(d.authorized)
+
+
+class MainExitStatus(unittest.TestCase):
+    """main() exit status, which is what turns the authorize job red."""
+
+    def _main(self, head_branch, api):
+        # Empty GITHUB_OUTPUT, and stderr captured, so that running these under
+        # Actions neither sets step outputs nor raises an error annotation.
+        env = dict(OWNER_REPO=REPO, SOURCE_EVENT="push", HEAD_SHA=SHA, HEAD_BRANCH=head_branch,
+                   HEAD_REPO=REPO, BASE_REPO=REPO, GITHUB_OUTPUT="")
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(authorize, "GitHubApi", lambda repo: api), \
+                mock.patch("sys.stdout", new_callable=io.StringIO), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            return authorize.main([]), err.getvalue()
+
+    def test_rejected_release_tag_fails(self):
+        # Tag at the built sha, but the sha is not on main.
+        status, err = self._main("v0.18.0", FakeApi(refs={("tags", "v0.18.0"): SHA}))
+        self.assertEqual(status, 1)
+        self.assertIn("::error::Release v0.18.0 not published", err)
+
+    def test_stale_main_stays_green(self):
+        status, err = self._main("main", FakeApi(refs={("heads", "main"): OTHER_SHA}))
+        self.assertEqual(status, 0)
+        self.assertEqual(err, "")
 
 
 class Dispatch(unittest.TestCase):

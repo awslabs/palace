@@ -18,17 +18,20 @@ concurrency:
 
 jobs:
   check-style:
-    runs-on: ubuntu-latest
+    # Pinned so that the distribution provides the clang-format version used for the check.
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Install clang-format-19 from LLVM (newer than the distro package)
       - name: Install clang-format
         run: |
-          wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
           sudo apt-get update -q
           sudo apt-get install -y clang-format-19
+
+      # scripts/format-source formats the Julia files with JuliaFormatter.
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        with:
+          version: '1'
 
       - name: Check style
         run: |
@@ -49,7 +52,12 @@ jobs:
   check-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # scripts/validate-config runs the schema validation in Julia.
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        with:
+          version: '1'
 
       - name: Check JSON Schema
         run: |
@@ -69,7 +77,7 @@ jobs:
     # Only meaningful for pull requests, where there is a base branch to diff against.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -81,7 +89,7 @@ jobs:
   check-changelog-schema-versions:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check changelog schema versions
         run: ./scripts/check-changelog-schema-versions
@@ -89,7 +97,7 @@ jobs:
   check-tests-tags:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check test tags
         run: ./scripts/check-test-tags test/unit
@@ -100,8 +108,8 @@ jobs:
   check-license:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: viperproject/check-license-header@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: viperproject/check-license-header@e06c65614fa9f32e099838df4dd25440c5344b32 # v2.0.3
         with:
           config: .github/license-check/config.json
           strict: false
@@ -112,6 +120,6 @@ jobs:
   check-publish-scripts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run publish script tests
         run: python3 -m unittest discover -s .github/publish_containers -p 'test_*.py' -v
