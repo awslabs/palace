@@ -223,6 +223,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     return spurious eigenvalues near the target, with large backward errors; the default
     `"PEPLinear": true` is not affected.
     [PR 1068](https://github.com/awslabs/palace/pull/1068).
+  - Fixed the preconditioners of the linear solves of `"BoundaryMode"` simulations with
+    p-multigrid (`"MGMaxLevels"` greater than 1) or with `"PCMatReal"`, which left out loss
+    terms of the system matrix, such as the conductivity of conductors meshed as volumes or
+    the resistance of `"Impedance"` boundaries. Where these terms dominate the system
+    matrix, the linear solves of the eigenvalue solver did not converge, and the modes were
+    wrong. SchemaVer 4-2-2
+    [Issue 1177](https://github.com/awslabs/palace/issues/1177).
 
 #### Documentation
 
