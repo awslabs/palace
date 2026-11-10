@@ -628,6 +628,10 @@ int QuasiNewtonSolver::Solve()
       c2(i) = std::complex<double>(dist_real(gen), dist_real(gen));
       v2(i) = std::complex<double>(dist_real(gen), dist_real(gen));
     }
+    // The start is the physical seed: with zero deflation coordinates, its physical vector
+    // v + X (λI − H)⁻¹ v2 (compute_residual) is v. The draws above are kept, so c2 and
+    // every later draw are unchanged.
+    v2.setZero();
 
     // Normalize random c vector.
     double norm_c = std::sqrt(std::abs(linalg::Dot(GetComm(), c, c)) + c2.squaredNorm());
@@ -658,12 +662,12 @@ int QuasiNewtonSolver::Solve()
     auto deflated_solve = [&](const ComplexVector &b1, const Eigen::VectorXcd &b2,
                               ComplexVector &x1, Eigen::VectorXcd &x2)
     {
-      // Solve the block linear system
-      // |T(σ) U(σ)| |x1| = |b1|
-      // |A(σ) B(σ)| |x2|   |b2|
-      // x1 = T^-1 b1
-      // x2 = SS^-1 (b2 - A x1) where SS = (B - A T^-1 U) = - X^* X S^-1
-      // x1 = x1 - X S x2
+      // Solve the block linear system of the extended operator (compute_residual)
+      // |T(σ)  T(σ) X S⁻¹| |x1| = |b1|,   S = σI − H,
+      // |Xᴴ    0         | |x2|   |b2|
+      // With y = T⁻¹ b1 and the Gram matrix G = XᴴX, G(i, j) = X_iᴴ X_j, the second row
+      // gives G S⁻¹ x2 = Xᴴ y − b2. So with g = G⁻¹ (b2 − Xᴴ y):
+      //   x2 = −S g,   x1 = y − X S⁻¹ x2 = y + X g   (S itself is not inverted).
       opInv->Mult(b1, x1);
       if (k == 0)  // no deflation
       {
@@ -672,21 +676,20 @@ int QuasiNewtonSolver::Solve()
       x2.conservativeResize(k);
       for (int j = 0; j < k; j++)
       {
-        x2(j) = b2(j) - linalg::Dot(GetComm(), x1, X[j]);
+        x2(j) = b2(j) - linalg::Dot(GetComm(), x1, X[j]);  // b2 − Xᴴ y (Dot(x, y) = yᴴ x)
       }
-      Eigen::MatrixXcd SS(k, k);
+      Eigen::MatrixXcd G(k, k);
       for (int i = 0; i < k; i++)
       {
         for (int j = 0; j < k; j++)
         {
-          SS(i, j) = linalg::Dot(GetComm(), X[i], X[j]);
+          G(i, j) = linalg::Dot(GetComm(), X[j], X[i]);
         }
       }
+      const Eigen::VectorXcd g = G.fullPivLu().solve(x2);
       const Eigen::MatrixXcd S = eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H;
-      SS = -S.fullPivLu().solve(SS);
-      x2 = SS.fullPivLu().solve(x2);
-      const ComplexVector XSx2 = MatVecMult(X, S.fullPivLu().solve(x2));
-      linalg::AXPY(-1.0, XSx2, x1);
+      x2 = -S * g;
+      linalg::AXPY(1.0, MatVecMult(X, g), x1);
     };
 
     // Compute w0 = T^-1 c and normalize it. The w0 vector is only used as a

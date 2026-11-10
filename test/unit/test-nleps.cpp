@@ -375,30 +375,14 @@ struct QuasiNewtonResult
   std::vector<double> backward_error;
 };
 
-// Quasi-Newton as the eigenmode driver configures it, from the seeds θ_j with the unit
-// eigenvectors of their dofs, at the target ω = target (σ = i target).
-QuasiNewtonResult
-SolveQuasiNewton(const DiagonalLorentzProblem &p,
-                 const std::vector<std::pair<std::complex<double>, int>> &seeds, int nev,
-                 double target, double pc_scale, double tol, double mix = 0.0,
-                 bool register_poles = true)
+// Quasi-Newton as the eigenmode driver configures it, from the seeds (θ_j, x_j), at the
+// target ω = target (σ = i target).
+QuasiNewtonResult SolveQuasiNewton(const DiagonalLorentzProblem &p,
+                                   std::vector<std::complex<double>> theta,
+                                   std::vector<ComplexVector> vecs, int nev, double target,
+                                   double pc_scale, double tol, bool register_poles = true)
 {
-  // Each seed vector is the unit vector of its dof plus mix times those of the others.
-  std::vector<std::complex<double>> theta;
-  std::vector<ComplexVector> vecs;
-  for (const auto &[t, j] : seeds)
-  {
-    theta.push_back(t);
-    auto &x = vecs.emplace_back(p.Unit(j));
-    for (std::size_t m = 0; m < p.k.size(); m++)
-    {
-      if (static_cast<int>(m) != j)
-      {
-        x.Add(mix, p.Unit(static_cast<long long>(m)));
-      }
-    }
-  }
-  const int num_seeds = static_cast<int>(seeds.size());
+  const int num_seeds = static_cast<int>(theta.size());
   QuasiNewtonSolver qn(Mpi::World(),
                        std::make_unique<SeedEigenpairs>(std::move(theta), std::move(vecs)),
                        num_seeds, 0, true);
@@ -436,6 +420,32 @@ SolveQuasiNewton(const DiagonalLorentzProblem &p,
     out.backward_error.push_back(qn.GetError(i, EigenvalueSolver::ErrorType::BACKWARD));
   }
   return out;
+}
+
+// The same from the seeds θ_j with the unit eigenvectors of their dofs, each plus mix times
+// those of the others.
+QuasiNewtonResult
+SolveQuasiNewton(const DiagonalLorentzProblem &p,
+                 const std::vector<std::pair<std::complex<double>, int>> &seeds, int nev,
+                 double target, double pc_scale, double tol, double mix = 0.0,
+                 bool register_poles = true)
+{
+  std::vector<std::complex<double>> theta;
+  std::vector<ComplexVector> vecs;
+  for (const auto &[t, j] : seeds)
+  {
+    theta.push_back(t);
+    auto &x = vecs.emplace_back(p.Unit(j));
+    for (std::size_t m = 0; m < p.k.size(); m++)
+    {
+      if (static_cast<int>(m) != j)
+      {
+        x.Add(mix, p.Unit(static_cast<long long>(m)));
+      }
+    }
+  }
+  return SolveQuasiNewton(p, std::move(theta), std::move(vecs), nev, target, pc_scale, tol,
+                          register_poles);
 }
 
 // The roots of every dof between the target and the pole, sorted by frequency.
@@ -670,6 +680,43 @@ TEST_CASE("Quasi-Newton eigenvectors of a Jordan block", "[nleps][Serial]")
     }
   }
   CHECK(found >= 1);
+}
+
+// The lowest roots on the target's side of the pole, with a degenerate pair (dofs 1, 2),
+// from approximate seeds: the first mode twice, once with a small part of the highest mode
+// (dof 3) in its vector. The second mode of the pair is attempted from a start at the root
+// just locked, where λI - H is singular, and on 22cbf365 its residual stalled until the
+// target-side cutoff (20 iterations) and the root of dof 3 took its place in N = 3. The
+// roots and backward errors are independent of the solver.
+TEST_CASE("Quasi-Newton refines the second mode of a pair from a start at the first",
+          "[nleps][Serial][Parallel]")
+{
+  const DiagonalLorentzProblem p({1.5 * 1.5, 1.8 * 1.8, 1.8 * 1.8, 2.1 * 2.1});
+  constexpr double target = 0.3, tol = 1.0e-10, mu = 0.1;
+  auto roots = TargetSideRoots(p, target);
+  REQUIRE(roots.size() == 4);
+  const std::vector<std::complex<double>> expected(roots.begin(), roots.begin() + 3);
+  REQUIRE(std::abs(expected[1] - expected[2]) <= 1.0e-12 * std::abs(expected[1]));
+  std::vector<std::complex<double>> theta;
+  std::vector<ComplexVector> vecs;
+  auto AddSeed = [&](int j, ComplexVector &&x)
+  {
+    theta.emplace_back(0.0, std::sqrt(p.k[j]));
+    vecs.push_back(std::move(x));
+  };
+  AddSeed(0, p.Unit(0));
+  ComplexVector mixed = p.Unit(0);
+  mixed.Add(mu, p.Unit(3));
+  AddSeed(0, std::move(mixed));
+  AddSeed(1, p.Unit(1));
+  AddSeed(2, p.Unit(2));
+  AddSeed(3, p.Unit(3));
+  const auto result =
+      SolveQuasiNewton(p, std::move(theta), std::move(vecs), 3, target, 1.0, tol);
+  // CheckEigenpairs captures each row.
+  CheckEigenpairs(p, result, expected, tol);
+  REQUIRE(result.x.size() == 3);
+  CHECK(Overlap(result.x[1], result.x[2]) < 1.0 - 1.0e-6);
 }
 
 // The seed solver of the Hybrid method, solved from a second start: its eigenpairs are
