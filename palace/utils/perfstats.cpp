@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/perfprobes.hpp"
 
 namespace palace
 {
@@ -135,7 +136,8 @@ std::string CounterKey(const detail::CounterData &c)
 }
 
 // For each canonical (rank-consistent) entry, the local index or -1, and the keys. Fast
-// path when all ranks registered the same entries in the same order.
+// path when all ranks registered the same entries in the same order (reported in
+// verification mode as Verification/ConsistentRegistration).
 std::tuple<std::vector<int>, std::vector<std::string>, std::vector<int>,
            std::vector<std::string>>
 CanonicalOrder(MPI_Comm comm)
@@ -172,6 +174,10 @@ CanonicalOrder(MPI_Comm comm)
     }
     return v;
   };
+  if (Verification())
+  {
+    SetInfo("Verification/ConsistentRegistration", consistent);
+  }
   if (consistent)
   {
     return {Identity(tkeys.size()), tkeys, Identity(ckeys.size()), ckeys};

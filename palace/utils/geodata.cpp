@@ -138,9 +138,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
     BlockTimer bt(Timer::IO);
+    // Registered on all ranks, so that the report's registrations match across ranks.
+    const int root_load = perf::RegisterTally("Startup/MeshLoad/Root", Timer::IO);
     if (Mpi::Root(comm))
     {
-      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/Root", Timer::IO));
+      perf::ScopedTally t(root_load);
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       use_mesh_partitioner &= smesh->Conforming();
     }
@@ -156,10 +158,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   }
   {
     BlockTimer bt1(Timer::IO);
+    const int node_root_load = perf::RegisterTally("Startup/MeshLoad/NodeRoot", Timer::IO);
     if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
-      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/NodeRoot", Timer::IO));
+      perf::ScopedTally t(node_root_load);
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");

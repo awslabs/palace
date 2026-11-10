@@ -174,6 +174,8 @@ int main(int argc, char *argv[])
 #endif
   const auto t_mpi = Timer::Now();
   Mpi::Init(argc, argv);
+  // Before any rank-dependent work, so that all ranks register the tallies in one order.
+  perf::RegisterCommunicationTallies();
   perf::AddTally(perf::RegisterTally("Startup/MPIInit", Timer::STARTUP),
                  Timer::Duration(Timer::Now() - t_mpi).count());
   MPI_Comm world_comm = Mpi::World();
