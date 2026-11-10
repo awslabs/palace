@@ -16,10 +16,9 @@ namespace
 // solver baseline and pointwise oracle for the generated backend.
 
 // A = (a(y)a(z), a(z)a(x), a(x)a(y)) with a(t) = t(1 - t), so each component vanishes on
-// the four faces where it is tangential. On hexahedra the order-2 Nédélec space contains
-// Q_{1,2,2} × Q_{2,1,2} × Q_{2,2,1}, so A is in the FE space, and its curl is in the
-// order-1 Raviart-Thomas space. On tetrahedra, A (total degree 4) lies in the Nédélec
-// space only for p ≥ 5, so the exactness test is hexahedral.
+// the four faces where it is tangential. Its curl B is reproduced exactly (see
+// CheckPolynomialExactness) at order 2 on hexahedra, where B_x ∈ Q_{2,1,1} lies in the
+// order-1 Raviart-Thomas space, and at order 4 on tetrahedra, where B has total degree 3.
 double Bubble(double t)
 {
   return t * (1.0 - t);
