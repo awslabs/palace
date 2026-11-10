@@ -229,7 +229,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the resistance of `"Impedance"` boundaries. Where these terms dominate the system
     matrix, the linear solves of the eigenvalue solver did not converge, and the modes were
     wrong. SchemaVer 4-2-2
-    [Issue 1177](https://github.com/awslabs/palace/issues/1177).
+    [PR 1178](https://github.com/awslabs/palace/pull/1178).
 
 #### Documentation
 
