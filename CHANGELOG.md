@@ -332,7 +332,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     placed-patch list (the identification's `config.patches` and the placement's copy of it,
     O(global patches) on every rank until the construction ends) and the placement's other
     setup transients, the model library (the metadata of every model and the matrices of
-    every model a rank's patches reference), the derived / file matrix caches, the
+    every model a rank's patches reference), the derived / file matrix caches (released
+    after the construction when no AMR construction follows), the
     within-R box list of a measurement and the PatchEnergy model-raw-claim partition
     (OI-CONDUCTOR-CONSISTENCY-RECORDS-PALACE-JSON-SIZE stays open: the file's size is
     unchanged).
@@ -345,8 +346,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`.palace-conductor-consistency-records.spill`, removed after the write) that is
     spliced into `palace.json` byte for byte; the domain-boundary containment cache's
     signature is kept on the root only; a rank frees the matrices of the models none of its
-    patches references; under glibc the allocator is trimmed after the identification
-    (lane fix-response-memory round 2a; decision 1475; results bitwise).
+    patches references; under glibc the allocator is trimmed after the identification and
+    after the construction; the PatchEnergy claims are held once per rank (the drivers take
+    them from the operator into the partition's list); without AMR (`Refinement.MaxIts` 0)
+    the per-process response-matrix caches are released after the construction (lane
+    fix-response-memory round 2; decisions 1475 / 1484; results bitwise).
 
 #### Bug Fixes
 
