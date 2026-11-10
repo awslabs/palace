@@ -30955,6 +30955,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         AutomaticResponseStatistics statistics;
         automatic_config =
             BuildAutomaticResponseData(iodata, laplace_op, *request, &statistics);
+#if defined(__GLIBC__)
+        // Round 2a F-D (decision 1475 (1); glibc only; a memory hint, no result path): the
+        // identification's freed transients go back to the system.
+        malloc_trim(0);
+#endif
         automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), statistics);
         PrintResponseMemoryCensusOfData(fespace.GetComm(), "after the identification",
                                         *automatic_config);
@@ -32463,6 +32468,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op, *request, true,
                                        &local_diagnostics, nullptr, &local_statistics);
     }
+#if defined(__GLIBC__)
+    // Round 2a F-D (decision 1475 (1); glibc only; a memory hint, no result path): the
+    // identification's freed transients go back to the system.
+    malloc_trim(0);
+#endif
     automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), local_statistics);
     if (automatic_geometry)
     {
