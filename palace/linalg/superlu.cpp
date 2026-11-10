@@ -63,7 +63,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
       break;
     case SymbolicFactorization::PARMETIS:
       // SuperLU_DIST does not support ParMETIS (parallel symbolic factorization) with a 3D
-      // process grid: process layer 0 returns early and the other layers hang.
+      // process grid and returns an error for it.
       if (solver.npdep_ > 1)
       {
         Mpi::Warning(comm, "SuperLU_DIST does not support ParMETIS ordering with a 3D "

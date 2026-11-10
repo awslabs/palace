@@ -120,7 +120,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the same sparsity pattern, on a 3D process grid. An MFEM patch for
     [mfem/mfem#5732](https://github.com/mfem/mfem/pull/5732) frees the factors on all the
     process layers. ParMETIS ordering, which SuperLU_DIST does not support with a 3D process
-    grid and with which it hung, now falls back to METIS with a warning.
+    grid and with which it hung, now falls back to METIS with a warning, and a patch for
+    [xiaoyeli/superlu_dist#256](https://github.com/xiaoyeli/superlu_dist/pull/256) makes
+    SuperLU_DIST return an error for it instead of hanging.
     [PR 1167](https://github.com/awslabs/palace/pull/1167).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level

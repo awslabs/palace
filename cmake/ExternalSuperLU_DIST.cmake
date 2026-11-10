@@ -109,14 +109,16 @@ set(SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
 )
 
-# Fix the solves with a 3D process grid: copies of
-# https://github.com/xiaoyeli/superlu_dist/pull/254 and
-# https://github.com/xiaoyeli/superlu_dist/pull/255, made for v9.3.1. Like the patch above,
+# Fix the solves with a 3D process grid, and return an error instead of hanging for options
+# it does not support: copies of https://github.com/xiaoyeli/superlu_dist/pull/254,
+# https://github.com/xiaoyeli/superlu_dist/pull/255 and
+# https://github.com/xiaoyeli/superlu_dist/pull/256, made for v9.3.1. Like the patch above,
 # they are applied to any version, so that a version they do not apply to fails the build
 # instead of silently dropping the fixes.
 list(APPEND SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr254.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr255.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr256.diff"
 )
 
 include(ExternalProject)
