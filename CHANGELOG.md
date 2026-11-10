@@ -313,10 +313,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - The surface-response correction's memory no longer grows on every rank with the GLOBAL
-    patch and point counts (lane fix-response-memory; USER decision 1439, decisions 1446 /
-    1447; results bitwise): the gathered per-patch records of every response evaluation
-    (patch contributions, traces, loop shares, path residuals, within-R volume energies)
+  - The surface-response correction's per-evaluation memory no longer grows on every rank
+    with the GLOBAL patch and point counts (lane fix-response-memory; USER decision 1439,
+    decisions 1446 / 1447; results bitwise): the gathered per-patch records of every
+    response evaluation (patch contributions, traces, loop shares, path residuals, within-R
+    volume energies)
     and the conductor-consistency gate's `Records` live on the root only in the drivers
     (`SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY`; the default stays
     `REPLICATED` for a caller that reads them on every rank: OI-RESIDENCY-DEFAULT-REPLICATED);
@@ -325,12 +326,27 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only and an excluded patch's claim is fetched from its owner; the placed-patch
     configuration is kept local between AMR constructions and re-assembled exactly before
     the next; the domain-boundary containment test runs in candidate blocks of at most
-    `PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS` points (default 2^23; results-neutral) and
+    `PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS` points (default 2^20; results-neutral) and
     the raw-claim partition's co-located-interval scan uses an insertion-ordered feature
-    index (the same first match). Still replicated by design: the model library, the
-    within-R box list of a measurement, the PatchEnergy model-raw-claim partition, the
-    containment cache's signature; the root keeps the `Records` array of `palace.json`
-    (OI-CONDUCTOR-CONSISTENCY-RECORDS-PALACE-JSON-SIZE stays open).
+    index (the same first match). Still replicated by design: the response SETUP's
+    placed-patch list (the identification's `config.patches` and the placement's copy of it,
+    O(global patches) on every rank until the construction ends) and the placement's other
+    setup transients, the model library (the metadata of every model and the matrices of
+    every model a rank's patches reference), the derived / file matrix caches, the
+    within-R box list of a measurement and the PatchEnergy model-raw-claim partition
+    (OI-CONDUCTOR-CONSISTENCY-RECORDS-PALACE-JSON-SIZE stays open: the file's size is
+    unchanged).
+  - `palace.json` is streamed to the file by the JSON serializer (no in-memory text of the
+    whole record) and every metadata write is checked: a short write (a full disk, an I/O
+    error) aborts instead of leaving an incomplete file (OI-METADATA-WRITE-UNCHECKED-ENOSPC).
+    In the drivers the response operator's final metadata write moves its diagnostics
+    record instead of copying it, and the root spills the conductor-consistency `Records`
+    of each excitation / mode to a scratch file in the output directory
+    (`.palace-conductor-consistency-records.spill`, removed after the write) that is
+    spliced into `palace.json` byte for byte; the domain-boundary containment cache's
+    signature is kept on the root only; a rank frees the matrices of the models none of its
+    patches references; under glibc the allocator is trimmed after the identification
+    (lane fix-response-memory round 2a; decision 1475; results bitwise).
 
 #### Bug Fixes
 
