@@ -69,6 +69,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [mfem/mfem#5731](https://github.com/mfem/mfem/pull/5731), which adds the setter of the
     relaxed supernode size to `mfem::SuperLUSolver`.
     [PR 1166](https://github.com/awslabs/palace/pull/1166).
+  - Added SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#250](https://github.com/xiaoyeli/superlu_dist/pull/250),
+    [xiaoyeli/superlu_dist#251](https://github.com/xiaoyeli/superlu_dist/pull/251),
+    [xiaoyeli/superlu_dist#252](https://github.com/xiaoyeli/superlu_dist/pull/252) and
+    [xiaoyeli/superlu_dist#253](https://github.com/xiaoyeli/superlu_dist/pull/253), which
+    lower the communication cost of SuperLU_DIST as the coarse solver at high process
+    counts: point-to-point exchanges of only the nonempty messages instead of dense
+    all-to-all collectives in the symbolic factorization and in the final permutation of
+    the solution, a static schedule reused by refactorizations with the same sparsity
+    pattern, cached row indices for the redistributions of the right-hand side, which on
+    several nodes go through one process per node, the matrix values for MC64 gathered on
+    one process only, and fewer barriers in the triangular solves. Results are unchanged.
+    [PR 1162](https://github.com/awslabs/palace/pull/1162).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
