@@ -198,7 +198,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # the Palace variants are not folded into the patch condition.
     depends_on(
         "superlu-dist@9.3.1",
-        when="@develop+superlu-dist",
+        when="@0.20:+superlu-dist",
         patches=[
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
