@@ -229,6 +229,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                           ContainsSubstring("metal-edge reference"));
   }
   // The default block size is the design's 2^23 unless the environment sets it.
-  CHECK(DomainBoundaryContainmentBlockPoints() >= 1);
+  CHECK(DomainBoundaryContainmentBlockPoints(Mpi::World()) >= 1);
 #endif
 }

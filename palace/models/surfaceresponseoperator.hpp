@@ -45,7 +45,9 @@ struct IdentificationResult;
 // member of SurfaceResponseOperator and SurfaceResponseGeometry::Impl, min / max / sum
 // over the ranks, beside the rank's current RSS. Reads only; no result changes.
 struct ResponseMemoryCensus;
-bool ResponseMemoryCensusEnabled();
+// Collective (C10, decision 1471 (2)): the ROOT's PALACE_RESPONSE_MEMORY_CENSUS on every
+// rank.
+bool ResponseMemoryCensusEnabled(MPI_Comm comm);
 
 // The placement's clip of the uncovered requirements (decision 394 F2) by the matched
 // spatial clusters' support boxes (decision 399 MAJOR-1): the part of an uncovered portion
@@ -2699,8 +2701,9 @@ struct DomainBoundaryExclusions
 // per-point lists per rank). Results-neutral: the candidates are tested in blocks of at
 // most this many points with the same per-point arithmetic, the same elementwise
 // reductions and the same per-candidate decision; every block size gives the same
-// DomainBoundaryExclusions. No job of record sets it.
-std::size_t DomainBoundaryContainmentBlockPoints();
+// DomainBoundaryExclusions. No job of record sets it. Collective (C10, decision 1471 (2)):
+// the ROOT's value on every rank, so that every rank walks the same blocks.
+std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm);
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -2717,7 +2720,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
         &unmerged_portions = {},
     GeometryFallbackLedger *geometry_ledger = nullptr,
-    std::size_t block_points = DomainBoundaryContainmentBlockPoints());
+    // 0 = DomainBoundaryContainmentBlockPoints(mesh.GetComm()) (the collective default).
+    std::size_t block_points = 0);
 
 // The per-process cache of the DERIVED model response matrices (decision 734 F1; the
 // response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /

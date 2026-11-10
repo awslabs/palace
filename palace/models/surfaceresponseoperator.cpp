@@ -41,6 +41,7 @@
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponsesegmentindex.hpp"
+#include "utils/collectiveenvironment.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/enum_string.hpp"
@@ -756,10 +757,10 @@ public:
 // Decision 1469 (1) (i): the census's RSS read around the FIRST all-pairs exchange of the
 // point locator (the per-peer MPI state); defined with ResponseMemoryCensus below.
 void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant);
-bool TakeFirstExchangeCensus()
+bool TakeFirstExchangeCensus(MPI_Comm comm)
 {
   static bool taken = false;
-  if (taken || !ResponseMemoryCensusEnabled())
+  if (taken || !ResponseMemoryCensusEnabled(comm))
   {
     return false;
   }
@@ -869,7 +870,7 @@ private:
       }
     }
     std::vector<int> receive_counts(size);
-    const bool census = TakeFirstExchangeCensus();
+    const bool census = TakeFirstExchangeCensus(comm);
     if (census)
     {
       PrintResponseMemoryCensusOfRss(comm, "before the first point-locator Alltoall");
@@ -21005,14 +21006,16 @@ bool PolygonsOverlap(const std::vector<Point2D> &a, const std::vector<Point2D> &
   return false;
 }
 
-std::optional<std::filesystem::path> ResponseGeometryCachePath()
+// Collective (C10, decision 1471 (2)): the root's path on every rank (the cache branch
+// selects the construction's collective path).
+std::optional<std::filesystem::path> ResponseGeometryCachePath(MPI_Comm comm)
 {
-  const char *value = std::getenv("PALACE_RESPONSE_GEOMETRY_CACHE");
-  if (!value || std::string_view(value).empty())
+  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_GEOMETRY_CACHE");
+  if (!value || value->empty())
   {
     return std::nullopt;
   }
-  return std::filesystem::absolute(value).lexically_normal();
+  return std::filesystem::absolute(*value).lexically_normal();
 }
 
 }  // namespace
@@ -22982,10 +22985,12 @@ struct SurfaceResponseGeometry::Impl
 // the ranks' current RSS (and, under glibc, the allocator's in-use and free-but-retained
 // bytes). It READS the members only: no state, no result and no output file changes; the
 // reductions are of the census values alone.
-bool ResponseMemoryCensusEnabled()
+bool ResponseMemoryCensusEnabled(MPI_Comm comm)
 {
-  const char *census = std::getenv("PALACE_RESPONSE_MEMORY_CENSUS");
-  return census && std::string_view(census) == "1";
+  // C10 (decision 1471 (2)): the census enters collectives, so its gate is the ROOT's value
+  // on every rank (PBS 104703: a per-rank read deadlocked when the variable reached only
+  // the head node's ranks).
+  return CollectiveEnvironmentFlag(comm, "PALACE_RESPONSE_MEMORY_CENSUS");
 }
 
 struct ResponseMemoryCensus
@@ -23428,7 +23433,7 @@ struct ResponseMemoryCensus
 void PrintResponseMemoryCensusOfData(MPI_Comm comm, const std::string &instant,
                                      const ResponseCorrectionData &data)
 {
-  if (!ResponseMemoryCensusEnabled())
+  if (!ResponseMemoryCensusEnabled(comm))
   {
     return;
   }
@@ -23448,7 +23453,7 @@ void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant)
 void SurfaceResponseOperator::PrintResponseMemoryCensus(
     const std::string &instant, const SurfaceResponseGeometry *geometry) const
 {
-  if (!ResponseMemoryCensusEnabled())
+  if (!ResponseMemoryCensusEnabled(fespace.GetComm()))
   {
     return;
   }
@@ -23790,10 +23795,12 @@ std::vector<double> DomainBoundaryContainmentSignature(
 // PALACE_RESPONSE_CONTAINMENT_RECHECK (set, non-empty, not "0"): every construction
 // recomputes the containment test and fails closed unless its classification equals the
 // cached one (the validation guard of decision 734 F2).
-bool DomainBoundaryContainmentRechecks()
+// Collective (C10, decision 1471 (2)): the recheck recomputes the containment test (its
+// collectives) or reuses the cache, so every rank must take the root's branch.
+bool DomainBoundaryContainmentRechecks(MPI_Comm comm)
 {
-  const char *value = std::getenv("PALACE_RESPONSE_CONTAINMENT_RECHECK");
-  return value && !std::string_view(value).empty() && std::string_view(value) != "0";
+  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_CONTAINMENT_RECHECK");
+  return value && !value->empty() && *value != "0";
 }
 
 // The first entry where a construction's containment signature differs from the cached
@@ -27039,7 +27046,7 @@ int ReflectPointsIntoDomain(
   return reflected;
 }
 
-std::size_t DomainBoundaryContainmentBlockPoints()
+std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm)
 {
   // Lane fix-response-memory (decision 1446, C3 / DESIGN s2.5 I-7): the containment
   // test's per-point lists are built for a block of candidates at a time, at most this
@@ -27047,12 +27054,13 @@ std::size_t DomainBoundaryContainmentBlockPoints()
   // every block size gives the same exclusions (the per-point reductions are elementwise,
   // the per-candidate decision reads its own points). No job of record sets the variable.
   constexpr std::size_t default_block_points = std::size_t(1) << 23;
-  const char *environment = std::getenv("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
-  if (!environment || std::string_view(environment).empty())
+  const auto environment =
+      CollectiveGetenv(comm, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
+  if (!environment || environment->empty())
   {
     return default_block_points;
   }
-  const long long value = std::atoll(environment);
+  const long long value = std::atoll(environment->c_str());
   MFEM_VERIFY(value > 0, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS must be a positive "
                          "point count (default 8388608)!");
   return static_cast<std::size_t>(value);
@@ -27076,6 +27084,10 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
               "The domain-boundary exclusion applies to three-dimensional devices!");
   const auto comm = mesh.GetComm();
   DomainBoundaryExclusions result;
+  if (block_points == 0)
+  {
+    block_points = DomainBoundaryContainmentBlockPoints(comm);
+  }
   MFEM_VERIFY(block_points > 0,
               "The containment test's block needs a positive point count!");
 
@@ -30313,7 +30325,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       const bool first_order_mesh =
           !response_mesh.GetNodes() ||
           response_mesh.GetNodes()->FESpace()->GetMaxElementOrder() <= 1;
-      const bool containment_recheck = DomainBoundaryContainmentRechecks();
+      const bool containment_recheck = DomainBoundaryContainmentRechecks(fespace.GetComm());
       std::optional<DomainBoundaryContainmentCache> *containment_cache =
           cached_geometry ? &cached_geometry->impl->containment : nullptr;
       const auto containment_signature = DomainBoundaryContainmentSignature(
@@ -30674,12 +30686,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     else
     {
       BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-      const auto geometry_cache = ResponseGeometryCachePath();
-      const char *write_cache_environment =
-          std::getenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      const auto geometry_cache = ResponseGeometryCachePath(fespace.GetComm());
+      const auto write_cache_environment =
+          CollectiveGetenv(fespace.GetComm(), "PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
       const bool write_geometry_cache = write_cache_environment &&
-                                        std::string_view(write_cache_environment) != "0" &&
-                                        !std::string_view(write_cache_environment).empty();
+                                        *write_cache_environment != "0" &&
+                                        !write_cache_environment->empty();
       if (geometry_cache && !write_geometry_cache)
       {
         MFEM_VERIFY(std::filesystem::is_regular_file(*geometry_cache),
