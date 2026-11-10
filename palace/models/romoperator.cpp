@@ -3597,8 +3597,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                eigs.size(), fmin_GHz, fmax_GHz);
     for (const auto &e : eigs)
     {
-      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {:.3e}\n",
-                 e.freq_re_GHz, e.freq_im_GHz, e.Q, e.error_bkwd);
+      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {}\n",
+                 e.freq_re_GHz, e.freq_im_GHz, e.Q,
+                 e.errors_available ? fmt::format("{:.3e}", e.error_bkwd) : "unavailable");
     }
   }
 }
@@ -3797,6 +3798,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   res.UseDevice(true);
   const double freq_to_omega_nd =
       2.0 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+  std::string unavailable;
   for (auto &est : estimates)
   {
     // Physical complex frequency f (GHz) → nondimensional complex angular frequency.
@@ -3804,6 +3806,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
     // Im{f} in eig.csv) has eigenfrequency ω = 2π(Re{f} + i·Im{f})·tc.
     const std::complex<double> omega(freq_to_omega_nd * est.freq_re_GHz,
                                      freq_to_omega_nd * est.freq_im_GHz);
+    est.errors_available = true;  // Unless a wave port mode does not converge, below
 
     // Prolongate the basis block: u = Σ_j (v_conc_j y_j) V[j] (V real, y complex; the
     // v_conc factor undoes the port-row scaling baked into the synthesized pencil).
@@ -3824,6 +3827,21 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
       continue;
     }
 
+    // The frequency-dependent boundary terms at complex ω (null when absent), including
+    // the wave-port modal correction W (GetExtraSystemOperator, not GetExtraSystemMatrix).
+    // Without a wave port mode at ω there is no residual: the errors are not evaluated.
+    auto A2_omega = space_op.TryGetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    if (!A2_omega.available)
+    {
+      est.errors_available = false;
+      est.error_abs = est.error_bkwd = std::numeric_limits<double>::quiet_NaN();
+      unavailable += fmt::format("\n f = {:+.6e} {:+.6e}i GHz: wave port {:d} has {:d} of "
+                                 "{:d} modes",
+                                 est.freq_re_GHz, est.freq_im_GHz, A2_omega.port_idx,
+                                 A2_omega.num_converged, A2_omega.requested);
+      continue;
+    }
+
     // res = (K + iωC − ω²M) u.
     K->Mult(u, res);
     if (C)
@@ -3831,17 +3849,21 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
       C->AddMult(u, res, 1i * omega);
     }
     M->AddMult(u, res, -omega * omega);
-    // The frequency-dependent boundary terms at complex ω (null when absent), including
-    // the wave-port modal correction W (GetExtraSystemOperator, not GetExtraSystemMatrix).
-    auto A2_omega = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-    if (A2_omega)
+    if (A2_omega.A2)
     {
-      A2_omega->AddMult(u, res, 1.0);
+      A2_omega.A2->AddMult(u, res, 1.0);
     }
 
     est.error_abs = linalg::Norml2(comm, res) / unorm;
     const double t = std::abs(omega);
     est.error_bkwd = est.error_abs / (normK + t * normC + t * t * normM);
+  }
+  if (!unavailable.empty())
+  {
+    Mpi::Warning(comm,
+                 "Errors of synthesized-system eigenvalue estimates not evaluated (NaN), "
+                 "as a wave port mode did not converge at the complex frequency:{}\n",
+                 unavailable);
   }
 }
 

@@ -120,7 +120,9 @@ of the driven solver as well as the following additional files:
   - (When synthesized eigenvalue estimates are found): `rom-eigenvalues.csv`,
     `rom-eigenvectors-re.csv`, and `rom-eigenvectors-im.csv`. These contain estimates of the
     synthesized system's eigenfrequencies, quality factors, and HDM errors, together with the real
-    and imaginary parts of the corresponding eigenvectors in the synthesized node space.
+    and imaginary parts of the corresponding eigenvectors in the synthesized node space. An
+    HDM error is NaN when a wave port mode does not converge at the complex frequency of the
+    estimate, so that the error is not evaluated; *Palace* warns which estimates these are.
 
 There are several constraints and considerations for using this feature:
 

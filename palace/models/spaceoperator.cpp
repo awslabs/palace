@@ -872,6 +872,21 @@ std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
                                     Operator::DiagonalPolicy diag_policy)
 {
+  auto ports =
+      wave_port_op.EvaluateComplex(omega, false, GetNDSpace(), nd_dbc_tdof_lists.back());
+  MFEM_VERIFY(ports.available,
+              "Wave port " << ports.port_idx
+                           << " eigensolver did not converge at complex ω = " << omega
+                           << " (" << ports.num_converged << " of " << ports.requested
+                           << " modes)!");
+  return BuildExtraSystemMatrix(omega, ports.kn, diag_policy);
+}
+
+std::unique_ptr<ComplexOperator> SpaceOperator::BuildExtraSystemMatrix(
+    std::complex<double> omega,
+    const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+    Operator::DiagonalPolicy diag_policy)
+{
   // Complex-ω A2(λ) for the eigenmode nonlinear solve: nonzero-pole volume and
   // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
   // impedance, numeric wave ports) are evaluated at the genuinely complex
@@ -881,7 +896,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
-  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  AddExtraSystemBdrCoefficients(omega, port_kn, dfbr, dfbi, fbr, fbi);
   std::unique_ptr<Operator> ar, ai;
   AssembleFrequencyDependentPermittivityA2Operators(omega, dfbr, dfbi, fbr, fbi, ar, ai);
   if (!ar && !ai)
@@ -1217,12 +1232,38 @@ std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemOperator(std::complex<double> omega,
                                       Operator::DiagonalPolicy diag_policy)
 {
-  // Complex-ω counterpart: sparse local wave-port mass i·k_n(ω)·M plus the matrix-free
-  // modal correction W recomputed at ω (the complex-ω GetModalCorrectionOperator re-solves
-  // the port mode per ω), summed via an owning SumComplexOperator.
-  auto A2 = GetExtraSystemMatrix(omega, diag_policy);
-  auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
-                                                   nd_dbc_tdof_lists.back());
+  auto ports =
+      wave_port_op.EvaluateComplex(omega, true, GetNDSpace(), nd_dbc_tdof_lists.back());
+  MFEM_VERIFY(ports.available,
+              "Wave port " << ports.port_idx
+                           << " eigensolver did not converge at complex ω = " << omega
+                           << " (" << ports.num_converged << " of " << ports.requested
+                           << " modes)!");
+  return BuildExtraSystemOperator(omega, std::move(ports), diag_policy);
+}
+
+SpaceOperator::ExtraSystemOperatorResult
+SpaceOperator::TryGetExtraSystemOperator(std::complex<double> omega,
+                                         Operator::DiagonalPolicy diag_policy)
+{
+  auto ports =
+      wave_port_op.EvaluateComplex(omega, true, GetNDSpace(), nd_dbc_tdof_lists.back());
+  if (!ports.available)
+  {
+    return {false, ports.port_idx, ports.num_converged, ports.requested, nullptr};
+  }
+  return {true, -1, 0, 0, BuildExtraSystemOperator(omega, std::move(ports), diag_policy)};
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::BuildExtraSystemOperator(std::complex<double> omega,
+                                        WavePortOperator::ComplexPortContribution &&ports,
+                                        Operator::DiagonalPolicy diag_policy)
+{
+  // The sparse local wave-port mass i·k_n(ω)·M and the matrix-free modal correction W from
+  // the same port modes, summed via an owning SumComplexOperator.
+  auto A2 = BuildExtraSystemMatrix(omega, ports.kn, diag_policy);
+  auto W = std::move(ports.W);
   if (!W)
   {
     return A2;
@@ -1701,6 +1742,18 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                                   MaterialPropertyCoefficient &fbr,
                                                   MaterialPropertyCoefficient &fbi)
 {
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+void SpaceOperator::AddExtraSystemBdrCoefficients(
+    std::complex<double> omega,
+    const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+    MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
+{
   // Complex-ω overload for the eigenmode nonlinear solve and its matching preconditioner:
   // all frequency-dependent boundary terms (2nd-order farfield ABC, surface conductivity,
   // rational surface impedance, numeric wave ports) are evaluated at the genuinely complex
@@ -1711,7 +1764,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
-  wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  wave_port_op.AddExtraSystemBdrCoefficients(port_kn, fbr, fbi);
 }
 
 void SpaceOperator::AddRealPreconditionerExtraSystemBdrCoefficients(

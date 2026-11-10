@@ -275,6 +275,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Solver.Linear.ReorderingReuse` no longer applies to SuperLU_DIST, which repeats the
     ordering and symbolic factorization for each operator.
     [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
+    `rom-*` files, when a wave port mode did not converge at the complex frequency of a
+    synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
+    NaN, with a warning, and the other outputs are written as before.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Fixed the cap of the Floquet port diffraction orders at the mesh resolution, which read
     past the 3 x 2 Jacobian of the port elements for their largest stretch, so the cap
     depended on unrelated memory.

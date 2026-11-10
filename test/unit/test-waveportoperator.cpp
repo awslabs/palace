@@ -304,7 +304,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
   mfem::Array<int> dbc;
   auto W_real = wp_op.GetModalCorrectionOperator(omega, nd_fespace, dbc);
   auto W_cplx =
-      wp_op.GetModalCorrectionOperator(std::complex<double>(omega, 0.0), nd_fespace, dbc);
+      wp_op.EvaluateComplex(std::complex<double>(omega, 0.0), true, nd_fespace, dbc).W;
   REQUIRE(W_real);
   REQUIRE(W_cplx);
 
@@ -341,6 +341,98 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
   // full-kₙ term, the upper bound guards against gross divergence.
   CHECK(rel_err > 0.005 * atten);
   CHECK(rel_err < 0.5 * atten);
+}
+
+// The complex-ω wave-port contribution comes from one owned evaluation per port. The full
+// operator is the same when built again (from the kept solve, or a new one after the
+// tolerance is set again through the public synthesis setter, which invalidates the kept
+// solves), the optional evaluation gives the strict operator, and once built an operator
+// does not change with later successful evaluations.
+TEST_CASE("WavePortOperator-ComplexPortContribution",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+  auto &nd_fespace = space_op.GetNDSpace();
+  const int n = nd_fespace.GetTrueVSize();
+  auto Omega = [&](double f_GHz)
+  {
+    return 2.0 * std::numbers::pi *
+           iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+  };
+  const std::complex<double> omega1(Omega(7.0), Omega(0.05)),
+      omega2(Omega(7.5), Omega(0.05));
+  // The tolerances of wave-port circuit synthesis (romoperator.cpp).
+  constexpr double eig_tol = 1.0e-11, ksp_tol = 1.0e-12;
+  wp_op.SetSynthesisEigTol(eig_tol, ksp_tol);
+
+  ComplexVector x(n);
+  x.UseDevice(true);
+  x.Real().Randomize(1);
+  x.Imag().Randomize(2);
+  auto Apply = [&](const ComplexOperator &A)
+  {
+    ComplexVector y(n);
+    y.UseDevice(true);
+    y = 0.0;
+    A.Mult(x, y);
+    return y;
+  };
+  auto RelDiff = [&](const ComplexVector &a, const ComplexVector &b)
+  {
+    ComplexVector d(a);
+    linalg::AXPY(std::complex<double>(-1.0, 0.0), b, d);
+    return linalg::Norml2(comm, d) / linalg::Norml2(comm, b);
+  };
+
+  auto A1 = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+  REQUIRE(A1);
+  const auto y1 = Apply(*A1);
+  REQUIRE(linalg::Norml2(comm, y1) > 0.0);
+  {
+    const auto contribution = wp_op.EvaluateComplex(omega1, true, nd_fespace,
+                                                    space_op.GetNDDbcTDofLists().back());
+    REQUIRE(contribution.available);
+    std::size_t active = 0;
+    for (const auto &[idx, data] : wp_op)
+    {
+      active += data.active;
+    }
+    CHECK(contribution.kn.size() == active);
+  }
+  // Built again from the kept solve, and from a new one.
+  {
+    auto A = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y1) <= 1.0e-12);
+  }
+  wp_op.SetSynthesisEigTol(eig_tol, ksp_tol);
+  {
+    auto A = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y1) <= 1.0e-8);
+  }
+
+  // The optional evaluation at another frequency.
+  auto result = space_op.TryGetExtraSystemOperator(omega2, Operator::DIAG_ZERO);
+  REQUIRE(result.available);
+  REQUIRE(result.A2);
+  const auto y2 = Apply(*result.A2);
+  {
+    auto A = space_op.GetExtraSystemOperator(omega2, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y2) <= 1.0e-12);
+  }
+  {
+    auto A = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y1) <= 1.0e-8);
+  }
+  CHECK(RelDiff(Apply(*A1), y1) == 0.0);
 }
 
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the

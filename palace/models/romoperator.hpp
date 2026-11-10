@@ -622,6 +622,9 @@ public:
     // operator at the complex eigenfrequency.
     double error_abs = -1.0;   // ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂
     double error_bkwd = -1.0;  // error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂)
+    // False when a wave port mode did not converge at ω: the errors are then NaN, not
+    // evaluated.
+    bool errors_available = true;
   };
   static std::vector<EigenvalueEstimate>
   ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv,

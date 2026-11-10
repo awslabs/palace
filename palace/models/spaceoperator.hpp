@@ -8,6 +8,7 @@
 #include <complex>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -114,13 +115,29 @@ private:
                                      MaterialPropertyCoefficient &fbi,
                                      bool include_wave_ports = true);
   // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
-  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
-  // matching preconditioner. Reduces to the double overload for real ω.
+  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve, the wave
+  // ports with the given k_n of each port. Reduces to the double overload for real ω.
+  void AddExtraSystemBdrCoefficients(
+      std::complex<double> omega,
+      const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+      MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+      MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi);
+  // As above, with each wave port's k_n from its own query, for the preconditioner.
   void AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+  // The complex-ω sparse operator of GetExtraSystemMatrix, with the given wave-port k_n,
+  // and the full operator of GetExtraSystemOperator from a computed port contribution.
+  std::unique_ptr<ComplexOperator>
+  BuildExtraSystemMatrix(std::complex<double> omega,
+                         const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+                         Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  BuildExtraSystemOperator(std::complex<double> omega,
+                           WavePortOperator::ComplexPortContribution &&ports,
+                           Operator::DiagonalPolicy diag_policy);
   // The same for a real-valued preconditioner, in one coefficient each: the sum of the
   // real and imaginary parts of each term, except next to frequency-dependent materials at
   // absorbing boundaries, which use the magnitudes of their terms (see
@@ -233,11 +250,23 @@ public:
   GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
 
   // Complex-ω overload for the eigenmode nonlinear solve: the sparse local wave-port mass
-  // i·k_n(ω)·M evaluated at the complex ω plus the matrix-free modal correction W frozen at
-  // the last WavePortOperator::Initialize (the caller must Initialize the wave ports at the
-  // real target once beforehand). No Floquet DtN term.
+  // i·k_n(ω)·M plus the matrix-free modal correction W, both from the port modes solved at
+  // ω (WavePortOperator::EvaluateComplex). An error on every rank if a port mode did not
+  // converge. No Floquet DtN term.
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+
+  // As above, for an optional evaluation where a wave port mode may not converge at ω: then
+  // available is false, with the port and its counts, and there is no operator. Otherwise
+  // A2 is the operator above (null if there are no terms).
+  struct ExtraSystemOperatorResult
+  {
+    bool available = true;
+    int port_idx = -1, num_converged = 0, requested = 0;
+    std::unique_ptr<ComplexOperator> A2;
+  };
+  ExtraSystemOperatorResult TryGetExtraSystemOperator(std::complex<double> omega,
+                                                      Operator::DiagonalPolicy diag_policy);
 
   // Get the rank-1 terms of the wave-port modal correction W = Σ_k g_k s_k s_kᵀ at ω, for
   // callers that project onto a reduced basis (the PROM / adaptive sweep) rather than
