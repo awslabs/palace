@@ -20,8 +20,12 @@
 #if defined(__linux__)
 #include <gnu/libc-version.h>
 #include <malloc.h>
+#include <sys/prctl.h>
 #endif
 extern char **environ;
+extern "C" __attribute__((weak)) int openblas_get_num_threads(void);  // PROBE
+extern "C" __attribute__((weak)) int openblas_get_parallel(void);     // PROBE
+extern "C" __attribute__((weak)) char *openblas_get_config(void);     // PROBE
 
 namespace palace
 {
@@ -443,8 +447,8 @@ namespace probe  // PROBE
 {
 
 // VmHWM, VmRSS, RssAnon, RssFile, RssShmem, AnonHugePages, heap arena, heap free, mmapped
-// (MB).
-constexpr int kN = 9;
+// (MB), threads.
+constexpr int kN = 10;
 
 inline void Read(double *v)
 {
@@ -472,6 +476,17 @@ inline void Read(double *v)
   static const char *const sk[] = {"VmHWM:", "VmRSS:", "RssAnon:", "RssFile:", "RssShmem:"};
   static const int si[] = {0, 1, 2, 3, 4};
   scan("/proc/self/status", sk, si, 5);
+  {
+    std::ifstream f("/proc/self/status");
+    std::string line;
+    while (std::getline(f, line))
+    {
+      if (line.compare(0, 8, "Threads:") == 0)
+      {
+        v[9] = std::atof(line.c_str() + 8);
+      }
+    }
+  }
   static const char *const rk[] = {"AnonHugePages:"};
   static const int ri[] = {5};
   scan("/proc/self/smaps_rollup", rk, ri, 1);
@@ -516,13 +531,20 @@ inline void PrintEnvOnce(MPI_Comm comm)
               first("/sys/kernel/mm/transparent_hugepage/enabled").c_str(),
               first("/sys/kernel/mm/transparent_hugepage/defrag").c_str(),
               first("/sys/kernel/mm/transparent_hugepage/khugepaged/defrag").c_str());
-  std::printf("PROBE kernel=[%s] glibc=%s overcommit=[%s]\n",
+  std::printf("PROBE kernel=[%s] glibc=%s overcommit=[%s] thp_disable=%d\n",
               first("/proc/sys/kernel/osrelease").c_str(), gnu_get_libc_version(),
-              first("/proc/sys/vm/overcommit_memory").c_str());
+              first("/proc/sys/vm/overcommit_memory").c_str(),
+              prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0));
 #endif
+  if (openblas_get_config)
+  {
+    std::printf("PROBE openblas config=[%s] threads=%d parallel=%d\n", openblas_get_config(),
+                openblas_get_num_threads ? openblas_get_num_threads() : -1,
+                openblas_get_parallel ? openblas_get_parallel() : -1);
+  }
   static const char *const pre[] = {"OMPI_MCA", "UCX_",     "MALLOC_", "GLIBC_",
                                     "OPENBLAS_", "OMP_",    "FI_",     "PMIX_MCA",
-                                    "HWLOC_",   "PRTE_MCA", "SLURM_CPU", "PBS_NUM"};
+                                    "HWLOC_",   "PRTE_MCA", "SLURM_CPU", "PBS_NUM", "PALACE_PROBE"};
   for (char **e = environ; *e; e++)
   {
     const std::string kv(*e);
@@ -570,11 +592,11 @@ inline void Report(MPI_Comm comm, const void *solver, const char *what, int job,
     std::printf("PROBE mumps %s solver=%p job=%d call=%d n=%lld nrhs=%d icntl14=%d "
                 "icntl20=%d icntl21=%d icntl26=%d icntl35=%d np=%d | hwm %.0f/%.0f "
                 "(d %+.1f/%+.1f) rss %.0f/%.0f (d %+.1f/%+.1f) anon %.0f shmem %.0f "
-                "file %.0f thp %.0f | heap %.0f free %.0f mmap %.0f MB avg/max\n",
+                "file %.0f thp %.0f | heap %.0f free %.0f mmap %.0f MB avg/max | threads %.0f/%.0f\n",
                 what, solver, job, c, n, nrhs, icntl[13], icntl[19], icntl[20],
                 icntl[25], icntl[34], p, sm[0] / p, mx[0], sm[kN] / p, mx[kN], sm[1] / p,
                 mx[1], sm[kN + 1] / p, mx[kN + 1], sm[2] / p, sm[4] / p, sm[3] / p,
-                sm[5] / p, sm[6] / p, sm[7] / p, sm[8] / p);
+                sm[5] / p, sm[6] / p, sm[7] / p, sm[8] / p, sm[9] / p, mx[9]);
     std::fflush(stdout);
   }
 }
