@@ -73,14 +73,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // contribution cancels at the target, so it alone selects the nonlinear solver path.
   bool has_A2 = (A2 != nullptr);
 
-  // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
-  // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
-  // solves).
-  if (space_op.GetWavePortOp().Size() > 0)
-  {
-    space_op.GetWavePortOp().InitializeModalReference(target);
-  }
-
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;

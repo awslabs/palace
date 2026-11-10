@@ -319,7 +319,7 @@ TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]
 // into A2, with scalars ω/r and 1/r. Compare the actual online matrix with a full A2
 // projection at several frequencies; one matching frequency cannot prove completeness.
 TEST_CASE("RomOperator factors dispersive absorbing boundaries with a Floquet wave vector",
-          "[romoperator][Serial][Parallel]")
+          "[romoperator][Serial][Parallel][GPU]")
 {
   const bool scaled = GENERATE(false, true);
   CAPTURE(scaled);

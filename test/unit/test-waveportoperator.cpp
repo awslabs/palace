@@ -734,7 +734,7 @@ TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]"
     const double omega =
         2.0 * std::numbers::pi *
         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
-    wp_op.InitializeModalReference(omega);
+    wp_op.PrepareFrequency(omega);
     const double k0 =
         2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
     const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);

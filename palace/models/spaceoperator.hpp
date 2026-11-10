@@ -410,7 +410,7 @@ public:
   // with the high-frequency permittivity. The returned matrices carry i: damping mass
   // on the imaginary slot, and i times the signed second-order form (Hermitian with an
   // unscaled Floquet wave vector). Their A2 scalars at ω are ω·r_k(ω) and
-  // (0.5/ω)/r_k(ω). Scaled Floquet trace terms are separate in GetFarfieldPoleTerms.
+  // (0.5/ω)/r_k(ω). The two additional getters below return the scaled Floquet trace forms.
   // Null if they contribute no DoFs on any rank, or, for the second-order form, if order
   // < 2.
   std::unique_ptr<ComplexOperator>
