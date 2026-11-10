@@ -211,6 +211,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
     the stiffness matrix as if it were symmetric.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Fixed SLP and TOAR (`PEPLinear: false`) eigenmode solves aborting on a GPU.
+    [PR 1068](https://github.com/awslabs/palace/pull/1068).
+  - Fixed TOAR (`PEPLinear: false`) missing the eigenmodes near the target with the
+    default `"Scaling": true`: the polynomial operators passed to SLEPc were not scaled,
+    while the target, the preconditioner, and the returned eigenvalues were. TOAR can still
+    return spurious eigenvalues near the target, with large backward errors; the default
+    `"PEPLinear": true` is not affected.
+    [PR 1068](https://github.com/awslabs/palace/pull/1068).
 
 #### Documentation
 
