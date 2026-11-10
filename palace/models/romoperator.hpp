@@ -193,10 +193,11 @@ protected:
   // One-time self-check state for the factored online A2_other path (SolvePROM). On the
   // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +
   // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r + ... + Σ_m f_m(ω)·Avol_m_r) reproduces the full
-  // HDM projection of A2_other(ω) to round-off. This guards against a future ω-dependent
-  // non-wave-port BC being added to GetExtraSystemMatrix without a matching factored
-  // operator (which would otherwise be silently dropped). On failure we set
-  // other_A2_factored_ok = false and permanently use the slow per-ω HDM fallback.
+  // HDM projection of A2_other(ω) to round-off. This is a legacy diagnostic, not proof
+  // of completeness over a band: every supported term family must have its factored
+  // representation. On failure the legacy path sets other_A2_factored_ok = false and
+  // uses the per-ω HDM fallback; no supported configuration selects it as its online
+  // implementation.
   mutable bool other_A2_self_checked = false;
   mutable bool other_A2_factored_ok = true;
 
@@ -250,11 +251,16 @@ protected:
   // susceptibility (EvaluateFrequencyDependentPermittivityA2). Closed form online.
   std::vector<std::unique_ptr<ComplexOperator>> Avol_m_;
   std::vector<Eigen::MatrixXcd> Avol_m_r;
-  // Absorbing boundaries next to each frequency-dependent material k of the farfield
-  // operator: first-order damping mass and second-order curl-curl matrix (imaginary slot),
-  // with online scalars ω·r_k(ω) and (0.5/ω)/r_k(ω).
-  std::vector<std::unique_ptr<ComplexOperator>> Aff_k_, Aff2_k_;
-  std::vector<Eigen::MatrixXcd> Aff_k_r, Aff2_k_r;
+  // The complete absorbing-boundary factorization for each dispersive material k.
+  // Matrices are assembled at construction and projected only as V grows. Online scalars
+  // are ω r_k, 0.5/(ω r_k), ω/r_k, and 1/r_k, respectively. The last two forms exist
+  // only with a frequency-scaled Floquet wave vector; the mixed curl is nonsymmetric.
+  struct DispersiveFarfieldMatrices
+  {
+    std::unique_ptr<ComplexOperator> damping, curlcurl, rotated_trace, mixed_curl;
+    Eigen::MatrixXcd damping_r, curlcurl_r, rotated_trace_r, mixed_curl_r;
+  };
+  std::vector<DispersiveFarfieldMatrices> Aff_k_;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the

@@ -661,20 +661,20 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
   }
 
-  // Absorbing boundaries next to frequency-dependent materials (imaginary slot). The online
-  // scalars are ω·r_k(ω) and (0.5/ω)/r_k(ω), with r_k = √(ε_w,k(iω)/ε∞,k) (with the user
-  // conductivity), in closed form.
+  // Absorbing boundaries next to frequency-dependent materials. With k = ω k₀, the
+  // rotated trace and mixed curl carry ω/r_k and 1/r_k in A2, not in the static C and K.
+  // The four matrices contain their signs and factors of i; all online scalars are exact.
   {
-    const auto &farfield_op = space_op.GetFarfieldOp();
-    const auto n = farfield_op.NumDispersiveMaterials();
-    Aff_k_.resize(n);
-    Aff2_k_.resize(n);
-    Aff_k_r.resize(n);
-    Aff2_k_r.resize(n);
-    for (std::size_t k = 0; k < n; k++)
+    Aff_k_.resize(space_op.GetFarfieldOp().NumDispersiveMaterials());
+    for (std::size_t k = 0; k < Aff_k_.size(); k++)
     {
-      Aff_k_[k] = space_op.GetFarfieldDispersiveDampingMatrix(k, Operator::DIAG_ZERO);
-      Aff2_k_[k] = space_op.GetFarfieldDispersiveCurlCurlMatrix(k, Operator::DIAG_ZERO);
+      auto &terms = Aff_k_[k];
+      terms.damping = space_op.GetFarfieldDispersiveDampingMatrix(k, Operator::DIAG_ZERO);
+      terms.curlcurl = space_op.GetFarfieldDispersiveCurlCurlMatrix(k, Operator::DIAG_ZERO);
+      terms.rotated_trace =
+          space_op.GetFarfieldDispersiveDampingFloquetMatrix(k, Operator::DIAG_ZERO);
+      terms.mixed_curl =
+          space_op.GetFarfieldDispersiveStiffnessFloquetMatrix(k, Operator::DIAG_ZERO);
     }
   }
 
@@ -1273,19 +1273,31 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       ProjectMatInternal(comm, V, *Avol_m_[m], Avol_m_r[m], r, dim_V_old, true);
     }
   }
-  for (std::size_t k = 0; k < Aff_k_.size(); k++)
+  for (auto &terms : Aff_k_)
   {
-    if (Aff_k_[k])
+    if (terms.damping)
     {
-      Aff_k_r[k].conservativeResize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Aff_k_[k], Aff_k_r[k], r, dim_V_old, true);
+      terms.damping_r.conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *terms.damping, terms.damping_r, r, dim_V_old, true);
     }
-    if (Aff2_k_[k])
+    if (terms.curlcurl)
     {
-      Aff2_k_r[k].conservativeResize(dim_V_new, dim_V_new);
+      terms.curlcurl_r.conservativeResize(dim_V_new, dim_V_new);
       const auto &mat_op = space_op.GetMaterialOp();
-      ProjectMatInternal(comm, V, *Aff2_k_[k], Aff2_k_r[k], r, dim_V_old,
+      ProjectMatInternal(comm, V, *terms.curlcurl, terms.curlcurl_r, r, dim_V_old,
                          !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
+    }
+    if (terms.rotated_trace)
+    {
+      terms.rotated_trace_r.conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *terms.rotated_trace, terms.rotated_trace_r, r, dim_V_old,
+                         true);
+    }
+    if (terms.mixed_curl)
+    {
+      terms.mixed_curl_r.conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *terms.mixed_curl, terms.mixed_curl_r, r, dim_V_old,
+                         false);
     }
   }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
@@ -1398,13 +1410,11 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // applied in factored form. Their ω-independent masses were projected once in
     // UpdatePROM, so online assembly is a scalar times an n×n matrix add.
     //
-    // Robustness: the structural check below requires every factored operator we hold to be
-    // sized to the current basis, but it cannot know whether the factored set is COMPLETE
-    // (an ω-dependent non-wave-port BC in GetExtraSystemMatrix without a factored operator
-    // — e.g. Floquet Robin terms — would be silently dropped). So on the first factored
-    // online solve we additionally verify the factored Aᵣ contribution against the full HDM
-    // projection; on any mismatch we latch other_A2_factored_ok = false and use the slow
-    // fallback for the rest of the sweep.
+    // Every supported term family has a factored representation; the structural check
+    // requires those projections to match the current basis. The legacy first-frequency
+    // comparison below is only a diagnostic for drift, not a completeness proof over the
+    // band or an online implementation for a supported combination. Adding a term family
+    // requires factoring it, not relying on this comparison and its legacy slow path.
     auto apply_factored_other_A2 = [&]()
     {
       // Factored 2nd-order farfield ABC: A2_ff(ω) = i·(0.5/ω)·M_ff. M_ff_r carries the
@@ -1473,19 +1483,29 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
           Ar += s * Avol_m_r[m];
         }
       }
-      // Factored absorbing boundaries next to frequency-dependent materials: iω·r_k·C_k and
-      // i·(0.5/ω)/r_k·M_k, with the i carried by the imaginary slot.
+      // Complete dispersive absorbing-boundary A2: first order, curl-curl, and (with
+      // k = ω k₀) rotated trace and mixed curl. All signs and factors of i are in the
+      // projected matrices. This is O(n_materials n_basis²), with no mesh-size work.
       const auto &farfield_op = space_op.GetFarfieldOp();
       for (std::size_t k = 0; k < Aff_k_.size(); k++)
       {
+        const auto &terms = Aff_k_[k];
         const auto r_k = farfield_op.GetDispersiveScale(k, omega);
-        if (Aff_k_[k] && Aff_k_r[k].rows() == static_cast<long>(V.size()))
+        if (terms.damping)
         {
-          Ar += (omega * r_k) * Aff_k_r[k];
+          Ar += (omega * r_k) * terms.damping_r;
         }
-        if (Aff2_k_[k] && Aff2_k_r[k].rows() == static_cast<long>(V.size()))
+        if (terms.curlcurl)
         {
-          Ar += (0.5 / (omega * r_k)) * Aff2_k_r[k];
+          Ar += (0.5 / (omega * r_k)) * terms.curlcurl_r;
+        }
+        if (terms.rotated_trace)
+        {
+          Ar += (omega / r_k) * terms.rotated_trace_r;
+        }
+        if (terms.mixed_curl)
+        {
+          Ar += (1.0 / r_k) * terms.mixed_curl_r;
         }
       }
     };
@@ -1527,24 +1547,27 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
           (Avol_m_r[m].rows() == n) ? (any_factored = true) : (all_present = false);
         }
       }
-      for (std::size_t k = 0; k < Aff_k_.size(); k++)
+      for (const auto &terms : Aff_k_)
       {
-        if (Aff_k_[k])
+        if (terms.damping)
         {
-          (Aff_k_r[k].rows() == n) ? (any_factored = true) : (all_present = false);
+          (terms.damping_r.rows() == n) ? (any_factored = true) : (all_present = false);
         }
-        if (Aff2_k_[k])
+        if (terms.curlcurl)
         {
-          (Aff2_k_r[k].rows() == n) ? (any_factored = true) : (all_present = false);
+          (terms.curlcurl_r.rows() == n) ? (any_factored = true) : (all_present = false);
+        }
+        if (terms.rotated_trace)
+        {
+          (terms.rotated_trace_r.rows() == n) ? (any_factored = true)
+                                              : (all_present = false);
+        }
+        if (terms.mixed_curl)
+        {
+          (terms.mixed_curl_r.rows() == n) ? (any_factored = true) : (all_present = false);
         }
       }
-      // The scaled Floquet rotated trace and mixed curl on dispersive absorbing faces
-      // also carry 1/r_k(ω). They are not in this factored set; use the existing full A2
-      // projection at every frequency, not a one-time agreement at a special frequency.
-      const auto &mat_op = space_op.GetMaterialOp();
-      const bool scaled_dispersive_farfield =
-          mat_op.HasWaveVector() && mat_op.HasFloquetFrequencyScaling() && !Aff_k_.empty();
-      other_A2_factored = any_factored && all_present && !scaled_dispersive_farfield;
+      other_A2_factored = any_factored && all_present;
     }
 
     Ar.setZero();
@@ -1562,7 +1585,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
                                                             /*include_wave_ports=*/false);
         if (A2)
         {
-          ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0, true);
+          ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0,
+                             !space_op.GetMaterialOp().HasWaveVector());
         }
         const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
         const double ref =
@@ -1593,12 +1617,15 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     }
     else if (has_other_A2)
     {
-      // Slow fallback: reassemble and reproject the full non-wave-port A2(ω) per ω.
+      // Legacy diagnostic fallback for an unrepresented term family, a stale projection,
+      // or a failed self-check. The supported dispersive Floquet ABC has a complete
+      // factored set above; it does not select this path by configuration.
       A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
                                                           /*include_wave_ports=*/false);
       if (A2)
       {
-        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
+        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0,
+                           !space_op.GetMaterialOp().HasWaveVector());
       }
     }
     Ar += Kr;
@@ -2862,17 +2889,18 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   {
     for (std::size_t k = 0; k < Aff_k_.size(); k++)
     {
-      if (Aff_k_[k] && Aff_k_r[k].rows() == Kr.rows())
+      const auto &terms = Aff_k_[k];
+      if (terms.damping && terms.damping_r.rows() == Kr.rows())
       {
         AddFarfieldFrequencyDependentPermittivitySynthesis(
-            fmt::format("farfield_permittivity_{:d}", k), Aff_k_r[k], k, false,
+            fmt::format("farfield_permittivity_{:d}", k), terms.damping_r, k, false,
             Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
       }
-      if (Aff2_k_[k] && Aff2_k_r[k].rows() == Kr.rows())
+      if (terms.curlcurl && terms.curlcurl_r.rows() == Kr.rows())
       {
         AddFarfieldFrequencyDependentPermittivitySynthesis(
-            fmt::format("farfield_permittivity_curlcurl_{:d}", k), Aff2_k_r[k], k, true,
-            Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
+            fmt::format("farfield_permittivity_curlcurl_{:d}", k), terms.curlcurl_r, k,
+            true, Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
       }
     }
   }

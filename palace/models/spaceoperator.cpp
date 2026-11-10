@@ -1157,6 +1157,44 @@ SpaceOperator::GetFarfieldDispersiveCurlCurlMatrix(std::size_t k,
   return M_op;
 }
 
+std::unique_ptr<ComplexOperator> SpaceOperator::GetFarfieldDispersiveDampingFloquetMatrix(
+    std::size_t k, Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fr(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddDispersiveDampingFloquetBdrCoefficients(k, 1.0, fr);
+  int empty = fr.IsExactlyZero();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr, &fr,
+                            nullptr, false);
+  auto M = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+  M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return M;
+}
+
+std::unique_ptr<ComplexOperator> SpaceOperator::GetFarfieldDispersiveStiffnessFloquetMatrix(
+    std::size_t k, Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fp(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddDispersiveStiffnessFloquetBdrCoefficients(k, 1.0, fp);
+  int empty = fp.IsExactlyZero();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
+                            nullptr, &fp, false);
+  auto M = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+  M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return M;
+}
+
 std::vector<SpaceOperator::FarfieldPoleTerm>
 SpaceOperator::GetFarfieldPoleTerms(Operator::DiagonalPolicy diag_policy)
 {
@@ -1179,35 +1217,14 @@ SpaceOperator::GetFarfieldPoleTerms(Operator::DiagonalPolicy diag_policy)
                          return 0.5 / (omega * farfield_op.GetDispersiveScale(k, omega));
                        }});
     }
-    if (mat_op.HasFloquetFrequencyScaling())
+    // The frequency-scaled rotated trace and mixed curl also carry 1/r_k(ω).
+    // Share their matrix owners with ROM and retain the distinct ω powers in the seed.
+    for (bool rotated : {true, false})
     {
-      // The frequency-scaled rotated trace and mixed curl also carry 1/r_k(ω).
-      // Keep their distinct ω powers when subtracting the seed interpolation.
-      for (bool rotated : {true, false})
+      auto M = rotated ? GetFarfieldDispersiveDampingFloquetMatrix(k, diag_policy)
+                       : GetFarfieldDispersiveStiffnessFloquetMatrix(k, diag_policy);
+      if (M)
       {
-        MaterialPropertyCoefficient fr(mat_op.MaxCeedBdrAttribute()),
-            fp(mat_op.MaxCeedBdrAttribute());
-        if (rotated)
-        {
-          farfield_op.AddDispersiveDampingFloquetBdrCoefficients(k, 1.0, fr);
-        }
-        else
-        {
-          farfield_op.AddDispersiveStiffnessFloquetBdrCoefficients(k, 1.0, fp);
-        }
-        int empty = AreExactlyZero(fr, fp);
-        Mpi::GlobalMin(1, &empty, GetComm());
-        if (empty)
-        {
-          continue;
-        }
-        auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
-                                  &fr, &fp, false);
-        auto M =
-            rotated
-                ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
-                : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
-        M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
         terms.push_back({std::move(M), [this, k, rotated](std::complex<double> lambda)
                          {
                            const auto omega = lambda / std::complex<double>(0.0, 1.0);

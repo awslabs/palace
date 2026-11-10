@@ -417,6 +417,15 @@ public:
   GetFarfieldDispersiveDampingMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
   std::unique_ptr<ComplexOperator>
   GetFarfieldDispersiveCurlCurlMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
+  // Additional ω-independent forms when k = ω k₀: i times the rotated trace and the
+  // real antisymmetric mixed curl. Their A2 scalars are ω/r_k(ω) and 1/r_k(ω). Null
+  // without frequency-scaled Floquet periodicity, second-order ABC, or global support.
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveDampingFloquetMatrix(std::size_t k,
+                                            Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveStiffnessFloquetMatrix(std::size_t k,
+                                              Operator::DiagonalPolicy diag_policy);
 
   // The terms g(λ)·M of A2(λ), λ = iω, of the second-order absorbing boundaries, which have
   // a pole at λ = 0: g(λ) = -0.5/λ on the real slot for the boundaries next to no

@@ -96,7 +96,20 @@ public:
   }
   auto &GetFarfieldDispersiveMatrixR(std::size_t k, bool curl_curl) const
   {
-    return curl_curl ? Aff2_k_r.at(k) : Aff_k_r.at(k);
+    const auto &terms = Aff_k_.at(k);
+    return curl_curl ? terms.curlcurl_r : terms.damping_r;
+  }
+  Eigen::MatrixXcd &GetFarfieldDispersiveFloquetMatrixR(std::size_t k, bool rotated)
+  {
+    auto &terms = Aff_k_.at(k);
+    return rotated ? terms.rotated_trace_r : terms.mixed_curl_r;
+  }
+  void SkipOtherA2SelfCheckForTest()
+  {
+    // Omission controls must not be hidden by the legacy full-assembly diagnostic.
+    other_A2_self_checked = true;
+    other_A2_factored_ok = true;
+    Ar_omega = std::numeric_limits<double>::quiet_NaN();
   }
   auto GetSweepBand() const { return std::make_pair(sweep_omega_min, sweep_omega_max); }
   double GetSynthesisTol() const { return waveport_synthesis_tol; }
@@ -300,6 +313,127 @@ TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]
   // The factored path ran its self-check and did not fall back to per-frequency assembly.
   CHECK(prom_op.OtherA2SelfChecked());
   CHECK(prom_op.OtherA2FactoredOk());
+}
+
+// A scaled Floquet wave vector moves the dispersive ABC rotated trace and mixed curl
+// into A2, with scalars ω/r and 1/r. Compare the actual online matrix with a full A2
+// projection at several frequencies; one matching frequency cannot prove completeness.
+TEST_CASE("RomOperator factors dispersive absorbing boundaries with a Floquet wave vector",
+          "[romoperator][Serial][Parallel]")
+{
+  const bool scaled = GENERATE(false, true);
+  CAPTURE(scaled);
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
+  setup_json["Model"] = {{"Mesh", "test.msh"}};
+  setup_json["Domains"]["Materials"] = {{{"Attributes", {1}}, {"Permittivity", 2.0}},
+                                        {{"Attributes", {2}}, {"Permittivity", 1.0}}};
+  setup_json["Boundaries"]["Absorbing"] = {{"Attributes", {3, 5}}, {"Order", 2}};
+  setup_json["Solver"] = {
+      {"Order", 2},
+      {"Driven",
+       {{"Samples", {{{"MinFreq", 0.8}, {"MaxFreq", 2.7}, {"FreqStep", 0.95}}}}}}};
+  IoData iodata(setup_json, false);
+  test::IntegrationSettingsGuard settings_guard(iodata.solver);
+  // Direct operator fixtures use normalized parameters, as in the material A2 tests.
+  iodata.domains.materials[0].permittivity_terms = {config::LorentzData{0.7, 3.0, 0.4}};
+  iodata.domains.materials[0].sigma.s = {0.2, 0.2, 0.2};
+  iodata.boundaries.periodic.wave_vector = {0.3, 0.4, 0.2};
+  iodata.boundaries.periodic.floquet_reference_freq = scaled ? 1.3 : 0.0;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::TETRAHEDRON, 2.0, 1.0, 1.0));
+  for (int e = 0; e < serial_mesh->GetNE(); e++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(e, center);
+    serial_mesh->SetAttribute(e, center(0) < 1.0 ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  SpaceOperator space_op(iodata.solver, iodata.domains, iodata.boundaries,
+                         iodata.problem.type, iodata.units, mesh);
+  REQUIRE(space_op.GetMaterialOp().HasFloquetFrequencyScaling() == scaled);
+  REQUIRE(space_op.GetFarfieldOp().NumDispersiveMaterials() == 1);
+  RomOperatorTest prom_op(iodata, space_op, 3);
+  prom_op.ReserveBasis(3);
+  const auto comm = space_op.GetComm();
+  ComplexVector v(space_op.GetNDSpace().GetTrueVSize());
+  v.UseDevice(true);
+  for (int j = 0; j < 3; j++)
+  {
+    v = 0.0;
+    linalg::SetRandom(comm, v.Real(), 1 + j + 3 * Mpi::Rank(comm));
+    prom_op.UpdatePROM(v, "test");
+  }
+  REQUIRE(prom_op.GetReducedDimension() == 3);
+  // This comparison and the omission controls run without the single-frequency guard.
+  prom_op.SkipOtherA2SelfCheckForTest();
+  ComplexVector x(v.Size()), y(v.Size()), u(v.Size());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  u.UseDevice(true);
+  constexpr double tol = 1.0e-10;  // Same full-projection tolerance as the volume A2 test.
+  for (double omega : {0.8, 1.6, 2.7})
+  {
+    CAPTURE(omega);
+    auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
+                                                             /*include_wave_ports=*/false);
+    REQUIRE(A2);
+    Eigen::MatrixXcd full = Eigen::MatrixXcd::Zero(3, 3);
+    for (int j = 0; j < 3; j++)
+    {
+      x = 0.0;
+      x.Real() = prom_op.GetVectors()[j];
+      A2->Mult(x, y);
+      for (int i = 0; i < 3; i++)
+      {
+        full(i, j) = {linalg::Dot(comm, prom_op.GetVectors()[i], y.Real()),
+                      linalg::Dot(comm, prom_op.GetVectors()[i], y.Imag())};
+      }
+    }
+    prom_op.SolvePROM(1, omega, u);
+    const Eigen::MatrixXcd complete = prom_op.GetAr();
+    Eigen::MatrixXcd recovered =
+        complete - prom_op.GetKr() + omega * omega * prom_op.GetMr();
+    if (prom_op.GetCr().size() > 0)
+    {
+      recovered -= std::complex<double>(0.0, omega) * prom_op.GetCr();
+    }
+    CHECK((recovered - full).norm() <= tol);
+    // Fixed k puts the mixed curl inside the full Hermitian ABC form; scaled k puts
+    // it in its own real antisymmetric factor. Neither may be mirrored as symmetric.
+    CHECK((full - full.transpose()).norm() > tol);
+    CHECK(prom_op.OtherA2FactoredOk());
+    for (bool rotated : {true, false})
+    {
+      CAPTURE(rotated);
+      auto &projected = prom_op.GetFarfieldDispersiveFloquetMatrixR(0, rotated);
+      if (!scaled)
+      {
+        CHECK(projected.size() == 0);
+        continue;
+      }
+      REQUIRE(projected.rows() == 3);
+      const Eigen::MatrixXcd saved = projected;
+      const auto r = space_op.GetFarfieldOp().GetDispersiveScale(0, omega);
+      const auto scalar = (rotated ? omega : 1.0) / r;
+      const Eigen::MatrixXcd omitted = scalar * saved;
+      REQUIRE(omitted.norm() > tol);
+      // If SolvePROM still used full-mesh assembly, zeroing a reduced factor would
+      // have no effect. Each missing term must instead change its online matrix by
+      // exactly that factor, proving both the route and its distinct ω power.
+      projected.setZero();
+      prom_op.SkipOtherA2SelfCheckForTest();
+      prom_op.SolvePROM(1, omega, u);
+      CHECK((prom_op.GetAr() - (complete - omitted)).norm() <= tol);
+      CHECK((prom_op.GetAr() - complete).norm() > tol);
+      projected = saved;
+      prom_op.SkipOtherA2SelfCheckForTest();
+    }
+  }
 }
 
 // Circuit synthesis must realize the factored dispersive volume term: the polynomial
