@@ -475,6 +475,23 @@ timed phases (e.g., during scope transitions or in code not wrapped by a `BlockT
 
 You should read each row as "this phase increases the peak memory by this amount".
 
+The RSS does not grow when an allocation is served from heap that was freed earlier but is
+still resident, so a phase that reuses memory shows zero growth however much it allocates.
+`HeapGrowthMegabytes` (in `palace.json`, with `Min`, `Max`, `Sum` and `MaxRank` per row, a
+`Baseline` and an `Unattributed` entry) holds instead the net growth of the heap in use per
+phase, from the allocator's statistics: glibc `mallinfo2` (glibc 2.33 or later) or the macOS
+malloc zones. Elsewhere, or when jemalloc, tcmalloc or mimalloc replaces glibc's malloc, it
+falls back to the RSS (see `Memory/HeapSource`). It can be negative, and baseline, rows and
+unattributed add up to the heap in use at the end of the iteration (`HeapMegabytes`). The
+heap is sampled at timer events while the time spent in these samples stays below 0.05% of
+the elapsed time plus 1 ms; the samples at iteration boundaries and for memory probes are
+always taken. `Memory/Heap/QuerySeconds` counts the time of all of them, next to `Samples`
+and `SkippedSamples`, except the first query, which also detects the allocator, and the
+`Memory/HeapSource` check. The growth since a skipped sample spans several phases and goes
+to the innermost row open throughout (to `Unattributed` if none); `Coverage` gives, per
+row, the smallest fraction over processes of its exclusive time whose growth was charged
+to it. Memory probes report `HeapPersistentMegabytes` next to the RSS-based values.
+
 ## Profiling *Palace* on CPUs
 
 A typical *Palace* simulation spends most of its time in libCEED kernels, which, in turn, executed `libsxmm` code on CPUs. Libsxmm generates code just-in-time to ensure it is the most performant on the given architecture and for the given problem. This code generation confuses most profilers. Luckily, [libsxmm](https://libxsmm.readthedocs.io/en/latest/libxsmm_prof/) can integrate with the VTune APIs to enable profiling of jitted functions as well.

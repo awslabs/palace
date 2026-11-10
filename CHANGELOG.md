@@ -135,9 +135,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Mesh Output` (previously part of `Rebalancing`) appear in the log and in `palace.json`,
     together with inclusive tallies (multigrid levels, smoothers, Krylov operator and
     orthogonalization, halo exchanges, reductions and waits), solver counters, resolved
-    solver choices and memory attribution. The log tables keep their layout. An opt-in check
-    of the coarse solve residual is enabled with `config["Problem"]["Verbose"] >= 2` or the
-    `PALACE_PERF_VERIFY` environment variable.
+    solver choices and memory attribution (RSS and heap in use). The log tables keep their
+    layout. An opt-in check of the coarse solve residual is enabled with
+    `config["Problem"]["Verbose"] >= 2` or the `PALACE_PERF_VERIFY` environment variable.
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still

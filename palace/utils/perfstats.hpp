@@ -246,6 +246,13 @@ struct Results
   // Peak memory attribution: peak = baseline (peak RSS at the iteration start) + sum of the
   // per-row growth + unattributed growth (outside any timer row).
   Stats mem_baseline, mem_unattributed, node_mem_baseline, node_mem_unattributed;
+  // Heap in use (allocator statistics, see memory_reporting::GetHeapMemory): growth per
+  // row, at the iteration start (baseline), outside any row (unattributed) and at the end
+  // of the iteration. Baseline + rows + unattributed = end, per rank.
+  // Unattributed also holds the growth across skipped samples; heap_coverage is the
+  // fraction of each row's samples charged to it.
+  std::vector<Stats> heap_growth, heap_coverage;
+  Stats heap_baseline, heap_unattributed, heap_mem;
   std::vector<std::string> counter_paths;
   std::vector<Reduce> counter_reduce;
   std::vector<Accumulate> counter_acc;

@@ -14,6 +14,17 @@ namespace palace::memory_reporting
 long GetCurrentMemory();
 long GetPeakMemory();
 
+// Heap in use (allocated and not yet freed) in bytes, from the allocator's statistics:
+// glibc mallinfo2 (glibc 2.33 or later) or the macOS malloc zones. Otherwise, including
+// when jemalloc, tcmalloc or mimalloc replaces glibc's malloc, the current RSS. Unlike the
+// RSS, it grows when an allocation reuses freed but still resident heap. The cost grows
+// with the number of free chunks: avoid it in hot paths.
+long GetHeapMemory();
+
+// Source of GetHeapMemory: "mallinfo2" (with a note if glibc's arenas hold much less than
+// the RSS), "malloc_zone_statistics" or "rss" (with the replacement allocator, if any).
+std::string HeapMemorySource();
+
 // Reset the peak RSS to the current RSS, where supported (Linux /proc/self/clear_refs).
 // Returns whether the reset succeeded.
 bool ResetPeakMemory();

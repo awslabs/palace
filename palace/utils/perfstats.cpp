@@ -521,9 +521,10 @@ void WriteJson(json &meta)
   constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
 
   // Remove everything written by a previous iteration.
-  for (const char *key : {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
-                          "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes",
-                          "PeakNodeMemoryMegabytes", "Cumulative"})
+  for (const char *key :
+       {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
+        "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes", "PeakNodeMemoryMegabytes",
+        "HeapGrowthMegabytes", "HeapMegabytes", "Cumulative"})
   {
     meta.erase(key);
   }
@@ -567,6 +568,28 @@ void WriteJson(json &meta)
   }
   meta["PeakMemoryMegabytes"] = PeakJson(r.peak_mem, false);
   meta["PeakNodeMemoryMegabytes"] = PeakJson(r.peak_node_mem, true);
+  auto &heap = meta["HeapGrowthMegabytes"];
+  auto HeapRow = [&heap](const std::string &key, const Stats &s)
+  {
+    heap["Min"][key] = s.min * to_mb;
+    heap["Max"][key] = s.max * to_mb;
+    heap["Sum"][key] = s.sum * to_mb;
+    heap["MaxRank"][key] = s.max_rank;
+  };
+  for (int i = 0; i < Timer::NUM_TIMINGS; i++)
+  {
+    HeapRow(std::string(Timer::names[i]), r.heap_growth[i]);
+  }
+  HeapRow("Baseline", r.heap_baseline);
+  HeapRow("Unattributed", r.heap_unattributed);
+  for (int i = 0; i < Timer::NUM_TIMINGS; i++)
+  {
+    if (r.heap_coverage[i].n > 0)
+    {
+      heap["Coverage"][std::string(Timer::names[i])] = r.heap_coverage[i].min;
+    }
+  }
+  meta["HeapMegabytes"] = PeakJson(r.heap_mem, false);
 
   json cum;
   cum["ElapsedTime"] = ElapsedTimeJson(r.cum);
@@ -607,12 +630,23 @@ void BlockTimer::Finalize(MPI_Comm comm)
   // Drain any open timers.
   while (!stack.empty())
   {
-    timer.MarkTime(stack.top());
-    timer.MarkMemory(stack.top());
-    stack.pop();
+    timer.MarkTime(stack.back());
+    timer.MarkMemory(stack.back());
+    timer.MarkHeap(stack.back(), HeapGapRow(), true);
+    stack.pop_back();
+    HeapEvent(true);
   }
   timer.MarkIterationEnd();
   timer.MarkMemory(Timer::TOTAL, timer.MemoryFromStart());
+  timer.MarkHeap(Timer::NUM_TIMINGS, HeapGapRow(), true);
+  HeapEvent(true);
+  Set(RegisterCounter("Memory/Heap/QuerySeconds", Reduce::STATS, Accumulate::SUM),
+      timer.HeapQueryTime());
+  Set(RegisterCounter("Memory/Heap/Samples", Reduce::MAX, Accumulate::SUM),
+      static_cast<double>(timer.HeapSamples()));
+  Set(RegisterCounter("Memory/Heap/SkippedSamples", Reduce::MAX, Accumulate::SUM),
+      static_cast<double>(timer.HeapSkipped()));
+  SetInfo("Memory/HeapSource", memory_reporting::HeapMemorySource());
 
   const int rank = Mpi::Rank(comm);
   constexpr int N = Timer::NUM_TIMINGS;
@@ -634,7 +668,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (5 * N + 4 * T + 2 * C + 3));
+  buf.reserve(STRIDE * (7 * N + 4 * T + 2 * C + 9));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -690,6 +724,22 @@ void BlockTimer::Finalize(MPI_Comm comm)
   PushEntry(buf, cum_peak, true, rank);
   PushEntry(buf, baseline_mem, true, rank);
   PushEntry(buf, unattr_mem, true, rank);
+  for (int i = 0; i < N; i++)
+  {
+    PushEntry(buf,
+              static_cast<double>((i == Timer::TOTAL)
+                                      ? timer.HeapAtLastSample() - timer.HeapAtStart()
+                                      : timer.HeapData(i)),
+              true, rank);
+  }
+  PushEntry(buf, static_cast<double>(timer.HeapAtStart()), true, rank);
+  PushEntry(buf, static_cast<double>(timer.HeapData(N)), true, rank);
+  PushEntry(buf, static_cast<double>(timer.HeapAtLastSample()), true, rank);
+  for (int i = 0; i < N; i++)
+  {
+    const double coverage = timer.HeapCoverage(i);
+    PushEntry(buf, coverage, coverage >= 0.0, rank);
+  }
   StatsAllreduce(buf, comm);
 
   // Node memory: sum over the ranks of each node, then statistics over nodes.
@@ -760,6 +810,11 @@ void BlockTimer::Finalize(MPI_Comm comm)
   r.cum_peak_mem = Next();
   r.mem_baseline = Next();
   r.mem_unattributed = Next();
+  NextN(r.heap_growth, N);
+  r.heap_baseline = Next();
+  r.heap_unattributed = Next();
+  r.heap_mem = Next();
+  NextN(r.heap_coverage, N);
   e = node_buf.data();
   NextN(r.iter.node_mem, N);
   r.peak_node_mem = Next();
@@ -803,6 +858,7 @@ void BlockTimer::StartIteration()
   state.peak_at_start = memory_reporting::GetPeakMemory();
   state.cur_at_start = memory_reporting::GetCurrentMemory();
   timer.StartIteration();
+  heap_open = stack.size();
   state.iteration++;
   state.finalized = false;
 }
@@ -811,10 +867,8 @@ void BlockTimer::Reset()
 {
   using namespace perf;
   timer = Timer();
-  while (!stack.empty())
-  {
-    stack.pop();
-  }
+  stack.clear();
+  heap_open = 0;
   started = false;
   // Registrations are kept (ids may be cached by callers); values are cleared.
   for (auto &t : detail::registry.tallies)

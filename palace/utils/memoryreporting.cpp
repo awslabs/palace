@@ -7,9 +7,18 @@
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
+#include <malloc/malloc.h>
 #elif defined(__linux__)
 #include <fstream>
 #include <string>
+#endif
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+#define PALACE_HAVE_MALLINFO2
+#include <utility>
+#include <dlfcn.h>
 #endif
 
 #include "utils/communication.hpp"
@@ -81,6 +90,74 @@ long GetPeakMemory()
 #endif
   }
   return 0;
+}
+
+#if defined(PALACE_HAVE_MALLINFO2)
+namespace
+{
+
+// An allocator replacing glibc's malloc (preloaded or linked in), whose memory mallinfo2
+// does not see, or nullptr.
+const char *ReplacementAllocator()
+{
+  static const char *name = []() -> const char *
+  {
+    constexpr std::pair<const char *, const char *> symbols[] = {
+        {"mallctl", "jemalloc"}, {"tc_malloc", "tcmalloc"}, {"mi_malloc", "mimalloc"}};
+    for (const auto &[symbol, allocator] : symbols)
+    {
+      if (dlsym(RTLD_DEFAULT, symbol))
+      {
+        return allocator;
+      }
+    }
+    return nullptr;
+  }();
+  return name;
+}
+
+}  // namespace
+#endif
+
+long GetHeapMemory()
+{
+#if defined(PALACE_HAVE_MALLINFO2)
+  if (!ReplacementAllocator())
+  {
+    // Allocated bytes in all arenas plus the mmap-ed chunks.
+    const struct mallinfo2 info = mallinfo2();
+    return static_cast<long>(info.uordblks + info.hblkhd);
+  }
+  return GetCurrentMemory();
+#elif defined(__APPLE__)
+  malloc_statistics_t stats;
+  malloc_zone_statistics(nullptr, &stats);
+  return static_cast<long>(stats.size_in_use);
+#else
+  return GetCurrentMemory();
+#endif
+}
+
+std::string HeapMemorySource()
+{
+#if defined(PALACE_HAVE_MALLINFO2)
+  if (const char *allocator = ReplacementAllocator())
+  {
+    return fmt::format("rss ({} in use)", allocator);
+  }
+  // Sanity check: glibc's arenas should hold most of a large RSS.
+  const struct mallinfo2 info = mallinfo2();
+  const long rss = GetCurrentMemory();
+  if (rss > (256l << 20) && static_cast<long>(info.arena + info.hblkhd) < rss / 20)
+  {
+    return "mallinfo2 (inconsistent with the RSS: another allocator may be in use)";
+  }
+  return "mallinfo2";
+#elif defined(__APPLE__)
+  return "malloc_zone_statistics";
+#else
+  return "rss";
+#endif
 }
 
 bool ResetPeakMemory()

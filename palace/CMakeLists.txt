@@ -467,6 +467,9 @@ if(NOT "${STD_FS_LIBRARIES_CACHE}" STREQUAL "")
   )
 endif()
 
+# dlsym (detection of a replacement malloc for the heap statistics)
+target_link_libraries(${LIB_TARGET_NAME} PRIVATE ${CMAKE_DL_LIBS})
+
 # Link with third-party dependencies
 if(PALACE_WITH_SLEPC)
   target_link_libraries(${LIB_TARGET_NAME}

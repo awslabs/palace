@@ -1,12 +1,18 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <thread>
 #include <vector>
-#include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <mfem.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/communication.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
@@ -68,6 +74,131 @@ TEST_CASE("PerfProbes Memory Attribution", "[perfprobes][perfstats][Serial][Para
   CHECK(r.counter[events].max == 1.0);
 #endif
   BlockTimer::Reset();
+}
+
+TEST_CASE("PerfProbes Heap Reuse", "[perfprobes][perfstats][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
+  BlockTimer::Reset();
+  BlockTimer::SetHeapBudget(1.0, 1.0);  // Many free chunks: each sample may take a while
+
+  // Leave 32 MB of freed but resident heap: small chunks (below any mmap threshold), every
+  // other one freed so that the freed chunks can neither coalesce nor shrink the heap. The
+  // allocator may still return their pages to the operating system; the RSS check below
+  // only applies if it did not.
+  constexpr std::size_t chunk = 4 << 10, n = 16384;
+  std::vector<std::unique_ptr<char[]>> chunks(n), reuse;
+  for (auto &c : chunks)
+  {
+    c.reset(new char[chunk]);
+    std::memset(c.get(), 1, chunk);
+  }
+  const long rss_before = memory_reporting::GetCurrentMemory();
+  for (std::size_t i = 0; i < n; i += 2)
+  {
+    chunks[i].reset();
+  }
+  const bool resident =
+      rss_before - memory_reporting::GetCurrentMemory() < static_cast<long>(8 << 20);
+  reuse.reserve(n / 2);
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    perf::ScopedMemoryProbe probe("Test/Reuse");
+    for (std::size_t i = 0; i < n / 2; i++)
+    {
+      reuse.emplace_back(new char[chunk]);
+      std::memset(reuse.back().get(), 2, chunk);
+    }
+  }
+  BlockTimer::Finalize(comm);
+  const auto &r = perf::GetResults();
+
+  // Baseline + rows + unattributed = heap in use at the end, per rank (sums over ranks).
+  double rows = 0.0;
+  for (int i = 0; i < Timer::NUM_TIMINGS; i++)
+  {
+    if (i != Timer::TOTAL)
+    {
+      rows += r.heap_growth[i].sum;
+    }
+  }
+  CHECK_THAT(r.heap_baseline.sum + rows + r.heap_unattributed.sum,
+             WithinAbs(r.heap_mem.sum, 1.0));
+  CHECK_THAT(rows + r.heap_unattributed.sum,
+             WithinAbs(r.heap_growth[Timer::TOTAL].sum, 1.0));
+  CHECK(r.counter[CounterIndex(r, "Memory/Heap/Samples")].max > 0);
+  if (!memory_reporting::HeapMemorySource().starts_with("rss"))
+  {
+    // The allocations of the phase show up in the heap, whatever memory serves them.
+    CHECK(r.heap_growth[Timer::CONSTRUCT].min * to_mb > 30.0);
+    const int heap = CounterIndex(r, "Memory/Test/Reuse/HeapPersistentMegabytes");
+    REQUIRE(heap >= 0);
+    CHECK(r.counter[heap].min > 30.0);
+  }
+#if defined(__GLIBC__)
+  // They were served from the freed heap: the RSS did not grow.
+  const int rss = CounterIndex(r, "Memory/Test/Reuse/PersistentMegabytes");
+  REQUIRE(rss >= 0);
+  if (resident)
+  {
+    CHECK(r.counter[rss].max < 8.0);
+  }
+  else
+  {
+    WARN("The freed heap was returned to the operating system: RSS check skipped");
+  }
+#else
+  static_cast<void>(resident);
+#endif
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  CHECK(meta["HeapGrowthMegabytes"]["Min"]["CONSTRUCT"].is_number());
+  CHECK(meta["HeapGrowthMegabytes"]["Sum"].contains("Baseline"));
+  CHECK(meta["HeapGrowthMegabytes"]["Coverage"]["CONSTRUCT"] == 1.0);
+  CHECK(meta["HeapMegabytes"]["Max"].get<double>() > 0.0);
+  CHECK(meta["Memory"]["HeapSource"] == memory_reporting::HeapMemorySource());
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfProbes Heap Skipped Samples", "[perfprobes][Serial]")
+{
+  auto Sleep = [](int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); };
+
+  // A sample taken, without a gap: the interval of the phase is covered.
+  Timer timer;
+  Sleep(2);
+  timer.MarkTime(Timer::IO);
+  CHECK(timer.MarkHeap(Timer::IO, Timer::NUM_TIMINGS, true));
+  CHECK(timer.HeapCoverage(Timer::IO) == 1.0);
+
+  // With no budget, the first sample which can be skipped is taken, the next ones not.
+  timer.SetHeapBudget(0.0, 0.0);
+  timer.MarkTime(Timer::KSP);
+  CHECK(timer.MarkHeap(Timer::KSP, Timer::NUM_TIMINGS));
+  timer.MarkTime(Timer::KSP);
+  CHECK(!timer.MarkHeap(Timer::KSP, Timer::NUM_TIMINGS));
+  CHECK(timer.HeapSkipped() == 1);
+  CHECK(timer.HeapQueryTime() > 0.0);
+
+  // After skipped samples, the growth goes to the phase open throughout the gap, here
+  // EPS, and the intervals of the other phases are not covered.
+  Sleep(2);
+  timer.MarkTime(Timer::IO);
+  CHECK(!timer.MarkHeap(Timer::IO, Timer::NUM_TIMINGS));
+  const long eps = timer.HeapData(Timer::EPS), io = timer.HeapData(Timer::IO);
+  std::vector<char> keep(4 << 20, 1);
+  Sleep(2);
+  timer.MarkTime(Timer::EPS);
+  CHECK(timer.MarkHeap(Timer::EPS, Timer::EPS, true));
+  CHECK(timer.HeapData(Timer::IO) == io);
+  if (!memory_reporting::HeapMemorySource().starts_with("rss"))
+  {
+    CHECK(timer.HeapData(Timer::EPS) - eps >= static_cast<long>(4 << 20));
+  }
+  CHECK(timer.HeapCoverage(Timer::IO) > 0.2);
+  CHECK(timer.HeapCoverage(Timer::IO) < 0.8);
+  CHECK(timer.HeapCoverage(Timer::EPS) == 1.0);
 }
 
 TEST_CASE("PerfProbes Assembly Tally", "[perfprobes][Serial]")
