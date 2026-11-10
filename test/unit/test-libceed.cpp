@@ -2359,29 +2359,37 @@ bool IsOriginalComplexWrapper(const ComplexOperator &op)
   return typeid(op) == typeid(ComplexWrapperOperator);
 }
 
-void CheckPackedResult(const ComplexVector &actual, const ComplexVector &expected)
+void CheckApplicationResult(const Vector &actual, const Vector &expected)
 {
   REQUIRE(actual.Size() == expected.Size());
   constexpr double tol = 5.0e-13;
+  const auto *a = actual.HostRead();
+  const auto *b = expected.HostRead();
+  double error2 = 0.0, norm2 = 0.0, error_max = 0.0, ref_max = 0.0;
+  bool finite = true;
+  for (int j = 0; j < actual.Size(); j++)
+  {
+    finite = finite && std::isfinite(a[j]) && std::isfinite(b[j]);
+    const double delta = a[j] - b[j];
+    error2 += delta * delta;
+    norm2 += b[j] * b[j];
+    error_max = std::max(error_max, std::abs(delta));
+    ref_max = std::max(ref_max, std::abs(b[j]));
+  }
+  CAPTURE(error2, norm2, error_max, ref_max);
+  REQUIRE(finite);
+  REQUIRE(error2 <= tol * tol * norm2);
+  REQUIRE(error_max <= tol * ref_max);
+}
+
+void CheckPackedResult(const ComplexVector &actual, const ComplexVector &expected)
+{
+  REQUIRE(actual.Size() == expected.Size());
   for (int part = 0; part < 2; part++)
   {
-    const auto *a = (part == 0 ? actual.Real() : actual.Imag()).HostRead();
-    const auto *b = (part == 0 ? expected.Real() : expected.Imag()).HostRead();
-    double error2 = 0.0, norm2 = 0.0, error_max = 0.0, ref_max = 0.0;
-    bool finite = true;
-    for (int j = 0; j < actual.Size(); j++)
-    {
-      finite = finite && std::isfinite(a[j]) && std::isfinite(b[j]);
-      const double delta = a[j] - b[j];
-      error2 += delta * delta;
-      norm2 += b[j] * b[j];
-      error_max = std::max(error_max, std::abs(delta));
-      ref_max = std::max(ref_max, std::abs(b[j]));
-    }
-    CAPTURE(part, error2, norm2, error_max, ref_max);
-    REQUIRE(finite);
-    REQUIRE(error2 <= tol * tol * norm2);
-    REQUIRE(error_max <= tol * ref_max);
+    CAPTURE(part);
+    CheckApplicationResult(part == 0 ? actual.Real() : actual.Imag(),
+                           part == 0 ? expected.Real() : expected.Imag());
   }
 }
 
@@ -2779,8 +2787,8 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
-  // Volume and boundary leaves without an imaginary partner are packed as well, so the
-  // fine and H1 auxiliary operators all use the fast path.
+  // Volume and boundary leaves without an imaginary partner are packed (or element
+  // assembled) as well, so the fine and H1 auxiliary operators all use the fast path.
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
   REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()));
@@ -2923,8 +2931,9 @@ TEST_CASE("libCEED packed complex input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  // Non-tensor H1 bases and real-only inputs are packed; tensor-product bases, dof
-  // multiplicity, and unassembled vector quadrature data keep the original action.
+  // Non-tensor H1 bases and real-only inputs are element assembled or packed;
+  // tensor-product bases, dof multiplicity, and unassembled vector quadrature data keep the
+  // original action.
   REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
@@ -2954,6 +2963,127 @@ TEST_CASE("libCEED packed complex empty local operators",
     actual->Mult(x, result);
     CheckPackedResult(result, expected);
   }
+}
+
+TEST_CASE("libCEED element assembly", "[libCEED][ElementAssembly][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Element assembly requires one CPU CEED context and one thread");
+  }
+  const auto [name, mesh_file, h1_space, order, curl, boundary, nonsymmetric, assembled] =
+      GENERATE(table<const char *, const char *, bool, int, bool, bool, bool, bool>(
+          {{"H1 p1 tetrahedra and boundary terms", "fichera-tet.mesh", true, 1, false, true,
+            false, true},
+           {"H1 p4 tetrahedra and a nonsymmetric coefficient", "fichera-tet.mesh", true, 4,
+            false, false, true, true},
+           {"H1 p2 tetrahedra, prisms and hexahedra", "fichera-mixed-p2.mesh", true, 2,
+            false, false, false, true},
+           {"H1 p5 tetrahedra", "fichera-tet.mesh", true, 5, false, false, false, false},
+           {"H1 p3 triangles and boundary terms", "star-tri.mesh", true, 3, false, true,
+            false, true},
+           {"H(curl) volume and boundary terms", "fichera-tet.mesh", false, 2, true, true,
+            false, true},
+           {"H(curl) curl-curl terms on triangles", "star-tri.mesh", false, 2, true, false,
+            false, false},
+           {"H(curl) mass terms on triangles", "star-tri.mesh", false, 2, false, false,
+            false, true}}));
+  CAPTURE(name);
+  PackedIntegrationSettings settings(order);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  std::unique_ptr<mfem::FiniteElementCollection> fec;
+  if (h1_space)
+  {
+    fec = std::make_unique<mfem::H1_FECollection>(order, dim);
+  }
+  else
+  {
+    fec = std::make_unique<mfem::ND_FECollection>(order, dim);
+  }
+  FiniteElementSpace fespace(mesh, fec.get());
+  auto matrix = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto scalar = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto bdr = BuildCoefficient(mesh, true, h1_space ? CoeffType::Scalar : CoeffType::Matrix);
+  if (nonsymmetric)
+  {
+    // Unequal off-diagonal entries give nonsymmetric element matrices.
+    mfem::DenseTensor values(matrix.GetMaterialProperties());
+    for (int k = 0; k < values.SizeK(); k++)
+    {
+      values(0, 1, k) = 0.7;
+      values(1, 0, k) = -0.4;
+      values(2, 1, k) = -0.8;
+    }
+    matrix = MaterialPropertyCoefficient(matrix.GetAttributeToMaterial(), values);
+  }
+  BilinearForm a(fespace);
+  if (h1_space)
+  {
+    a.AddDomainIntegrator<DiffusionIntegrator>(matrix);
+    a.AddDomainIntegrator<MassIntegrator>(scalar);
+    if (boundary)
+    {
+      a.AddBoundaryIntegrator<MassIntegrator>(bdr);
+    }
+  }
+  else
+  {
+    // Curl-curl terms, and all volume terms in 3D, keep partial assembly.
+    if (curl)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(dim == 2 ? scalar : matrix, matrix);
+    }
+    else
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(matrix);
+    }
+    if (boundary)
+    {
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(bdr);
+    }
+  }
+  a.AssembleQuadratureData();
+  auto actual = a.PartialAssemble(), reference = a.PartialAssemble();
+  // Processes without simplex volume or boundary elements have no element assembled leaf.
+  long long num_assembled = actual->UseElementAssembly();
+  Mpi::GlobalSum(1, &num_assembled, Mpi::World());
+  if (assembled)
+  {
+    REQUIRE(num_assembled > 0);
+  }
+  else
+  {
+    REQUIRE(num_assembled == 0);
+  }
+  Vector x(actual->Width()), y(actual->Height()), expected(actual->Height()),
+      initial(actual->Height());
+  x.Randomize(17);
+  initial.Randomize(29);
+  {
+    INFO("forward application");
+    reference->Mult(x, expected);
+    actual->Mult(x, y);
+    CheckApplicationResult(y, expected);
+  }
+  {
+    INFO("AddMult application");
+    y = initial;
+    expected += initial;
+    actual->AddMult(x, y);
+    CheckApplicationResult(y, expected);
+  }
+  {
+    INFO("diagonal assembly");
+    reference->AssembleDiagonal(expected);
+    actual->AssembleDiagonal(y);
+    CheckApplicationResult(y, expected);
+  }
+  // ParOperator element assembles the libCEED operators it owns.
+  ParOperator owner(a.PartialAssemble(), fespace);
+  const auto &local = dynamic_cast<const ceed::Operator &>(owner.LocalOperator());
+  REQUIRE((local.GetElementAssembly() != nullptr) ==
+          (actual->GetElementAssembly() != nullptr));
 }
 
 // Opt in with "[ComplexPreconditionerBenchmark]" or "[Benchmark]". Orders 2/3/4
