@@ -500,7 +500,8 @@ operator), and values which are not finite are written as `null` (maxima and min
 them). The verification checks, including the coarse solve residual check, are charged to
 the exclusive `Verification` row (`VERIFICATION`, zero when verification is off) and the
 two probes also to their own tallies, `Main/Verification/...`; they pause the other timers,
-tallies and counters (`perf::ScopedPause`).
+tallies and counters (`perf::ScopedPause`, which also leaves out their blocking waits from
+`Wait/MPI` and their nested scopes from `Nested`).
 
 Reports written at the end of an iteration have `"Complete": true`. If a process fails
 (an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the report
@@ -513,8 +514,8 @@ writes its own values under `RootProcess` instead of the usual keys (`Collective
 and a failure of other processes alone leaves `palace.json` as it was (they wait for about
 20 s more before aborting, all of it and at least 10 s once they know that the root failed,
 so that the root can write its report). The wait is part of the innermost timer row and is
-also reported as the tally `Wait/FailureReport`. Fatal signals, for example an out-of-memory
-kill, are not reported.
+also reported as the tally `Wait/FailureReport`, as communication wait. Fatal signals, for
+example an out-of-memory kill, are not reported.
 `MPI_Abort` is interposed by a weak definition in libpalace which calls `PMPI_Abort` (CMake
 option `PALACE_WITH_MPI_ABORT_HOOK`). The dynamic linker ignores weakness: with a static
 libpalace the definition is part of the executable and bypasses a tool's `MPI_Abort`

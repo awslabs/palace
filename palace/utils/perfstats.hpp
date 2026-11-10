@@ -156,7 +156,10 @@ public:
       }
       if (open[id])
       {
-        detail::registry.tallies[id].nested++;
+        if (detail::registry.paused == 0)
+        {
+          detail::registry.tallies[id].nested++;
+        }
         this->id = -1;
         return;
       }

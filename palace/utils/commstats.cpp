@@ -83,7 +83,7 @@ void AddWait(double seconds)
     PMPI_Is_thread_main(&flag);
     return flag != 0;
   }();
-  if (!main_thread || registry.suspended)
+  if (!main_thread || registry.suspended || registry.paused)
   {
     return;
   }

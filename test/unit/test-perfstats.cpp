@@ -632,6 +632,28 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
   BlockTimer::Reset();
 }
 
+TEST_CASE("PerfStats Pause Wait And Nesting", "[perfstats][Serial]")
+{
+  // Blocking waits and nested scopes in a paused scope are not counted either.
+  BlockTimer::Reset();
+  perf::detail::AddWait(0.0);  // Registers the communication tallies
+  const auto &reg = perf::detail::registry;
+  const int id = perf::RegisterTally("Test/PausedNesting", Timer::KSP);
+  const auto &wait = reg.tallies[reg.tally_ids.at("Wait/MPI")];
+  const long waits = wait.count;
+  {
+    perf::ScopedTally outer(id);
+    perf::ScopedPause pause;
+    perf::ScopedTally inner(id);
+    perf::detail::AddWait(0.5);
+  }
+  CHECK(wait.count == waits);
+  CHECK(reg.tallies[id].nested == 0);
+  CHECK(reg.tallies[id].count == 1);
+  CHECK(reg.tallies[id].wait >= 0.5 - 1.0e-12);  // The clock runs for the enclosing scope
+  BlockTimer::Reset();
+}
+
 TEST_CASE("PerfStats Numeric Path Tokens", "[perfstats][Serial]")
 {
   BlockTimer::Reset();
