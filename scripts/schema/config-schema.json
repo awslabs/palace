@@ -3247,7 +3247,7 @@
         },
         "ReorderingReuse": {
           "type": "boolean",
-          "description": "Reuse the matrix reordering from the previous solve. SuperLU_DIST does not reuse it: it orders and factors every operator from scratch.",
+          "description": "Reuse the matrix reordering from the previous solve.",
           "default": true,
           "x-palace-advanced": true
         },

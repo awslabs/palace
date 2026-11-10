@@ -514,13 +514,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     degenerate pair: starting each mode solve from the previous frequency's mode could miss
     one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
     [PR 877](https://github.com/awslabs/palace/pull/877).
-  - Fixed inaccurate and failing SuperLU_DIST factorizations of nonsingular coarse matrices
-    in nonlinear eigenmode solves, seen as an exactly zero pivot with a second-order
-    absorbing boundary next to a Debye medium on GPU. The solver now removes stored exact
-    zeros from the matrix it factors and factors every operator from scratch, so
-    `Solver.Linear.ReorderingReuse` no longer applies to SuperLU_DIST, which repeats the
-    ordering and symbolic factorization for each operator.
-    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
     `rom-*` files, when a wave port mode did not converge at the complex frequency of a
     synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
