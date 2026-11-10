@@ -25,6 +25,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/metadatafile.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
@@ -114,7 +115,18 @@ void WriteMetadata(const fs::path &post_dir, const json &meta)
   {
     MFEM_ABORT("Unable to open metadata file \"" << path << "\"!");
   }
-  fo << meta.dump(2) << '\n';
+  // Round 2a R1 (decision 1475 (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the
+  // bytes of dump(2) + '\n' without the whole text as a string) and checked: a short write
+  // (a full disk, an I/O error) aborts instead of leaving an incomplete palace.json behind.
+  const bool written = StreamJsonMetadata(fo, meta);
+  fo.close();
+  if (!written || fo.fail())
+  {
+    MFEM_ABORT("Writing the metadata file \""
+               << path
+               << "\" failed (a short write: the disk is full "
+                  "or an I/O error); the file is incomplete!");
+  }
 }
 
 // Returns an array of indices corresponding to marked elements.
@@ -561,10 +573,12 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   }
 }
 
-void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
+void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
 {
   // Statistics reduction is collective and must occur before the root-only file update.
-  auto statistics = response.GetStatistics();
+  // The final write (round 2a R1, decision 1475 (1)): the operator's diagnostics record is
+  // moved, not copied (ReleaseStatistics; the record is the same).
+  auto statistics = response.ReleaseStatistics();
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);

@@ -1817,6 +1817,10 @@ public:
   // Collect deterministic setup/work-distribution counters and runtime application
   // counts. This method is collective over the response operator communicator.
   nlohmann::json GetStatistics() const;
+  // The same record for the operator's FINAL metadata write (round 2a R1, decision 1475
+  // (1)): the diagnostics record (ownership_diagnostics: the gate's Records on the root) is
+  // MOVED into the result instead of deep-copied, and left empty. Collective.
+  nlohmann::json ReleaseStatistics();
 
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the entries of this configuration
   // (matching + placement), the record (null when none fired) and whether the whole run is
@@ -1835,6 +1839,9 @@ public:
   }
 
 private:
+  // GetStatistics / ReleaseStatistics: `release` (this operator's ownership_diagnostics) is
+  // moved from when given, else the record is copied.
+  nlohmann::json BuildStatistics(nlohmann::json *release) const;
   // Gather the local per-patch response records of GetElectrostaticResponse on every rank
   // and decode them, ordered by patch index.
   std::vector<PatchContribution>

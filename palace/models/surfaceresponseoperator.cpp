@@ -37814,6 +37814,16 @@ nlohmann::json SurfaceResponseOperator::GetGeometryFallbackRecord() const
 
 nlohmann::json SurfaceResponseOperator::GetStatistics() const
 {
+  return BuildStatistics(nullptr);
+}
+
+nlohmann::json SurfaceResponseOperator::ReleaseStatistics()
+{
+  return BuildStatistics(&ownership_diagnostics);
+}
+
+nlohmann::json SurfaceResponseOperator::BuildStatistics(nlohmann::json *release) const
+{
   const auto comm = fespace.GetComm();
   auto Replicated = [comm](long long int value, const char *name)
   {
@@ -37867,7 +37877,17 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                              {"PatchWeight", model_patch_weights[i]}});
   }
   result["ModelCatalog"] = std::move(model_catalog);
-  if (!ownership_diagnostics.is_null())
+  if (release && !release->is_null())
+  {
+    // Round 2a R1 (decision 1475 (1)): the final write moves the record (the root's
+    // Records: GBs at chip scale) instead of holding a second copy; the result is the same.
+    for (auto &[key, value] : release->items())
+    {
+      result["Diagnostics"][key] = std::move(value);
+    }
+    *release = nlohmann::json();
+  }
+  else if (!ownership_diagnostics.is_null())
   {
     for (const auto &[key, value] : ownership_diagnostics.items())
     {

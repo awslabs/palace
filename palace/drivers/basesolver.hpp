@@ -77,7 +77,10 @@ public:
   void SaveMetadata(const Timer &timer) const;
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
-  void SaveMetadata(const SurfaceResponseOperator &response) const;
+  // The response operator's FINAL metadata write (round 2a R1, decision 1475 (1)): its
+  // diagnostics record is moved into palace.json (SurfaceResponseOperator::
+  // ReleaseStatistics), so the operator is not read after it.
+  void SaveMetadata(SurfaceResponseOperator &response) const;
   // Root only: palace.json SurfaceResponse.Diagnostics.EdgeExclusion.<interface index> =
   // the EdgeExcludeSegments coverage record of every interface dielectric carrying the
   // list (decision 657 (b): ExcludeSegmentsLength, ExcludedPerimeterLength and their ratio

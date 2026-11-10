@@ -67,6 +67,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwellinplanelines.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwelllinecoverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-metadatafile.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
