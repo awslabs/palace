@@ -145,6 +145,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     through the MPI profiling interface (not Fortran bindings such as MUMPS). The wrappers
     pass the calls on to a profiling tool loaded at run time; turn the option off to link
     such a tool into the executable.
+    When a run fails, `palace.json` still gets the report collected so far, flagged with
+    `"Complete": false` and an `Error` block, so a report no longer means that the run
+    finished: check `Complete`.
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still

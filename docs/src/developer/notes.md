@@ -478,6 +478,26 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     `{Min, Avg, Max, MaxRank}`.
   - Information set with `perf::SetInfo` (resolved solver choices) is written as is.
 
+Reports written at the end of an iteration have `"Complete": true`. If a process fails
+(an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the report
+collected so far with `"Complete": false` and an `Error` block (`Message`, the innermost
+timer row as `Phase`, `Iteration` and `Collective`), see `utils/failurereport.hpp`. A report
+in `palace.json` therefore no longer means that the run finished: readers must check
+`Complete`. Failing processes wait up to 10 s for all processes to fail: if they do, the
+report is reduced as usual (`Collective` true); otherwise the root process, if it failed,
+writes its own values under `RootProcess` instead of the usual keys (`Collective` false),
+and a failure of other processes alone leaves `palace.json` as it was (they wait for about
+20 s more before aborting, all of it and at least 10 s once they know that the root failed,
+so that the root can write its report). The wait is part of the innermost timer row and is
+also reported as the tally `Wait/FailureReport`. Fatal signals, for example an out-of-memory
+kill, are not reported.
+`MPI_Abort` is interposed by a weak definition in libpalace which calls `PMPI_Abort` (CMake
+option `PALACE_WITH_MPI_ABORT_HOOK`). The dynamic linker ignores weakness: with a static
+libpalace the definition is part of the executable and bypasses a tool's `MPI_Abort`
+preloaded with `LD_PRELOAD`, and with a shared libpalace it applies through the library
+order. The hook does not see calls bound inside a shared MFEM library on macOS (two-level
+namespace) or those of the Fortran bindings of MPI (used by MUMPS and ARPACK).
+
 Solver roles (`perf::ScopedRole`, `BaseKspSolver` role) keep the statistics of nested
 solvers apart from the main linear solver. Tallies use host clocks, so on GPU builds they
 measure kernel launches unless the measured region synchronizes.

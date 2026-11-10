@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <fmt/os.h>
+#include <nlohmann/json_fwd.hpp>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
@@ -77,6 +78,10 @@ public:
   // Reduce the performance statistics of the current iteration (collective), print them,
   // and write them to palace.json.
   void ReportPerformance(MPI_Comm comm) const;
+  // Write the performance report collected so far, reduced over comm (all processes, or
+  // MPI_COMM_SELF on the root alone), flagged incomplete with the given error (see
+  // perf::FailureReport).
+  void ReportFailure(MPI_Comm comm, const nlohmann::json &error) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
   void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
 };

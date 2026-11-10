@@ -307,8 +307,11 @@ struct Results
 const Results &GetResults();
 
 // Write the performance report into the palace.json object (global root only). Removes
-// keys written by previous iterations first.
-void WriteJson(nlohmann::json &meta);
+// keys written by previous iterations first. "Complete" is true, unless an error (see
+// FailureReport) is given: then it is false and the error is written under "Error". If the
+// error is not "Collective", the report holds the root process's own values and is written
+// under "RootProcess" instead.
+void WriteJson(nlohmann::json &meta, const nlohmann::json *error = nullptr);
 
 }  // namespace palace::perf
 

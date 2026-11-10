@@ -141,6 +141,14 @@ void WriteMetadata(const fs::path &post_dir, const json &meta)
       MFEM_ABORT("Unable to open metadata file \"" << tmp_path << "\"!");
     }
     fo << meta.dump(2) << '\n';
+    fo.close();
+    if (fo.fail())
+    {
+      // Keep the previous file rather than replacing it by a truncated one (disk full).
+      std::error_code ec;
+      fs::remove(tmp_path, ec);
+      MFEM_ABORT("Unable to write metadata file \"" << tmp_path << "\"!");
+    }
   }
   fs::rename(tmp_path, path);
 }
@@ -479,6 +487,20 @@ void BaseSolver::ReportPerformance(MPI_Comm comm) const
   {
     json meta = LoadMetadata(post_dir);
     perf::WriteJson(meta);
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::ReportFailure(MPI_Comm comm, const json &error) const
+{
+  BlockTimer::Finalize(comm);
+  Mpi::Print(comm, "\nPerformance report before the failure ({}):\n",
+             error.value("Collective", false) ? "all processes" : "root process only");
+  BlockTimer::Print(comm);
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    perf::WriteJson(meta, &error);
     WriteMetadata(post_dir, meta);
   }
 }

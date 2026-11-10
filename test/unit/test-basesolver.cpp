@@ -1,17 +1,26 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <thread>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
+#include "utils/failurereport.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
+#include "utils/timer.hpp"
 
 using namespace palace;
 
@@ -920,4 +929,267 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SaveIteration is MPI collective",
   CHECK(fs::is_symlink(temp_dir / "gridfunction"));
   CHECK(fs::is_regular_file(temp_dir / "iteration1" / "gridfunction" / "electrostatic" /
                             "V.gf.000000"));
+}
+
+// Failure report: the performance report collected so far, flagged incomplete. The hooks
+// themselves abort the processes: see "Failure report on abort" below.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Failure report in palace.json",
+                 "[basesolver][perfstats][Serial][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  BlockTimer::Reset();
+  TestSolver solver(iodata, Mpi::Root(comm), np);
+  auto writer = [&solver](MPI_Comm c, const nlohmann::json &error)
+  { solver.ReportFailure(c, error); };
+  auto Metadata = [&]()
+  { return nlohmann::json::parse(ReadFile(temp_dir / "palace.json")); };
+  auto Seconds = [](Timer::TimePoint t0)
+  { return Timer::Duration(Timer::Now() - t0).count(); };
+  const int counter = perf::RegisterCounter("Test/Ranks", perf::Reduce::SUM);
+  constexpr double timeout = 0.2;
+
+  SECTION("All processes fail")
+  {
+    {
+      perf::FailureReport report(comm, writer);
+      BlockTimer bt(Timer::EPS);
+      perf::Add(counter, 1.0);
+      CHECK(perf::ReportFailure("Test failure on all processes"));
+      CHECK_FALSE(perf::ReportFailure("Second failure"));  // Reported once
+    }
+    if (Mpi::Root(comm))
+    {
+      const auto meta = Metadata();
+      CHECK(meta["Complete"] == false);
+      CHECK(meta["Error"]["Message"] == "Test failure on all processes");
+      CHECK(meta["Error"]["Phase"] == "EPS");
+      CHECK(meta["Error"]["Collective"] == true);
+      CHECK(meta["Error"]["Iteration"] == 1);
+      CHECK(meta["Test"]["Ranks"] == np);
+      CHECK(meta["ElapsedTime"]["Counts"]["EPS"] == 1);
+      CHECK(meta["ElapsedTime"]["Tallies"]["Wait/FailureReport"]["Parent"] == "EPS");
+      CHECK_FALSE(meta.contains("RootProcess"));
+    }
+  }
+
+  // The other processes wait in a barrier the failing processes enter after reporting,
+  // as when they wait for them in a collective.
+  SECTION("Only the root process fails")
+  {
+    {
+      perf::FailureReport report(comm, writer, timeout);
+      perf::Add(counter, 1.0);
+      if (Mpi::Root(comm))
+      {
+        CHECK(perf::ReportFailure("Test failure on the root") == (np == 1));
+      }
+      Mpi::Barrier(comm);
+    }
+    if (Mpi::Root(comm))
+    {
+      const auto meta = Metadata();
+      CHECK(meta["Complete"] == false);
+      CHECK(meta["Error"]["Collective"] == (np == 1));
+      if (np > 1)
+      {
+        // The root's own values, apart from the statistics over processes.
+        CHECK_FALSE(meta.contains("ElapsedTime"));
+        const auto &own = meta["RootProcess"];
+        CHECK(own["Test"]["Ranks"] == 1);
+        CHECK(own["ElapsedTime"]["Tallies"]["Wait/FailureReport"]["Max"] >= timeout);
+      }
+    }
+  }
+
+  SECTION("Only a non-root process fails")
+  {
+    solver.ReportPerformance(comm);
+    {
+      perf::FailureReport report(comm, writer, timeout);
+      if (rank == np - 1 && np > 1)
+      {
+        // Gives up after the timeout, then waits for twice as long for the root.
+        const auto t0 = Timer::Now();
+        CHECK_FALSE(perf::ReportFailure("Test failure on the last process"));
+        CHECK(Seconds(t0) >= 3 * timeout);
+      }
+      Mpi::Barrier(comm);
+    }
+    if (Mpi::Root(comm))
+    {
+      const auto meta = Metadata();
+      CHECK(meta["Complete"] == true);  // Unchanged: nothing is written
+      CHECK_FALSE(meta.contains("Error"));
+    }
+  }
+
+  SECTION("The root fails after another process")
+  {
+    // The root's report is written while the other failing process still waits (and would
+    // not yet abort).
+    if (np > 2)
+    {
+      double t_root = 0.0, t_last = 0.0;
+      {
+        perf::FailureReport report(comm, writer, timeout);
+        Mpi::Barrier(comm);
+        const auto t0 = Timer::Now();
+        if (rank == np - 1)
+        {
+          CHECK_FALSE(perf::ReportFailure("Test failure on the last process"));
+          t_last = Seconds(t0);
+        }
+        else if (Mpi::Root(comm))
+        {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          CHECK_FALSE(perf::ReportFailure("Test failure on the root"));
+          t_root = Seconds(t0);
+        }
+        Mpi::Barrier(comm);
+      }
+      Mpi::GlobalMax(1, &t_last, comm);
+      if (Mpi::Root(comm))
+      {
+        CHECK(Metadata()["Error"]["Message"] == "Test failure on the root");
+        CHECK(t_root < t_last);
+      }
+    }
+  }
+
+  SECTION("The root and another process fail, the others finish")
+  {
+    // The agreement completes at once, without all processes: the other failing process
+    // waits while the root writes.
+    if (np > 2)
+    {
+      double t_root = 0.0, t_last = 0.0;
+      std::optional<perf::FailureReport> report;
+      report.emplace(comm, writer, timeout);
+      Mpi::Barrier(comm);
+      const auto t0 = Timer::Now();
+      if (rank == np - 1)
+      {
+        CHECK_FALSE(perf::ReportFailure("Test failure on the last process"));
+        t_last = Seconds(t0);
+      }
+      else if (Mpi::Root(comm))
+      {
+        CHECK_FALSE(perf::ReportFailure("Test failure on the root"));
+        t_root = Seconds(t0);
+      }
+      report.reset();
+      Mpi::GlobalMax(1, &t_last, comm);
+      if (Mpi::Root(comm))
+      {
+        CHECK(Metadata()["Error"]["Message"] == "Test failure on the root");
+        CHECK(t_last >= 3 * timeout);
+        CHECK(t_root < t_last);
+      }
+    }
+  }
+
+  SECTION("Failure off the main thread")
+  {
+    {
+      perf::FailureReport report(comm, writer, timeout);
+      bool reported = true;
+      std::thread t([&reported]() { reported = perf::ReportFailure("Test failure"); });
+      t.join();
+      CHECK_FALSE(reported);  // No report: the hooks abort directly
+    }
+    if (Mpi::Root(comm))
+    {
+      CHECK_FALSE(Metadata().contains("Complete"));
+    }
+  }
+
+  SECTION("Message printed by MFEM")
+  {
+    std::stringstream sink;  // Silence the test message
+    auto *prev = mfem::err.rdbuf(sink.rdbuf());
+    {
+      perf::FailureReport report(comm, writer);
+      mfem::err << "\n\nVerification failed: (n > 0) is false:\n --> Test message\n"
+                << " ... in function: f\n ... in file: f.cpp:1\n";
+      CHECK(perf::ReportFailure(""));
+    }
+    mfem::err.rdbuf(prev);
+    CHECK(sink.str().find("Test message") != std::string::npos);  // Still forwarded
+    if (Mpi::Root(comm))
+    {
+      CHECK(Metadata()["Error"]["Message"] ==
+            "Verification failed: (n > 0) is false:\n --> Test message\n ... in function: "
+            "f\n ... in file: f.cpp:1");
+    }
+  }
+  BlockTimer::Reset();
+}
+
+namespace
+{
+
+void Throw()
+{
+  throw std::runtime_error("Test failure");
+}
+
+// The exception escapes a noexcept function: std::terminate.
+void ThrowUncaught() noexcept
+{
+  Throw();
+}
+
+}  // namespace
+
+// Aborts on purpose: run by the failure-report-* tests (failure_report_test.cmake), which
+// check the palace.json left in PALACE_TEST_FAILURE_DIR. PALACE_TEST_FAILURE selects the
+// failing processes (root, last, root-last or all), whether the others reach the
+// FailureReport destructor first (-dtor) instead of waiting in a barrier, and the hook
+// (abort: an MFEM error message and MPI_Abort, throw: an uncaught exception).
+TEST_CASE("Failure report on abort", "[.failure-report][Parallel]")
+{
+  const char *mode_env = std::getenv("PALACE_TEST_FAILURE");
+  const char *dir = std::getenv("PALACE_TEST_FAILURE_DIR");
+  if (!mode_env || !dir)
+  {
+    SKIP("PALACE_TEST_FAILURE and PALACE_TEST_FAILURE_DIR are not set");
+  }
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  const std::string mode(mode_env);
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = dir;
+  BlockTimer::Reset();
+  TestSolver solver(iodata, Mpi::Root(comm), np);
+  std::optional<perf::FailureReport> report;
+  report.emplace(
+      comm, [&solver](MPI_Comm c, const nlohmann::json &error)
+      { solver.ReportFailure(c, error); }, 1.0);
+  BlockTimer bt(Timer::EPS);
+  perf::Add(perf::RegisterCounter("Test/Ranks", perf::Reduce::SUM), 1.0);
+  const bool root = (rank == 0), last = (rank == np - 1);
+  const bool fail = mode.starts_with("all") ||
+                    (mode.starts_with("root-last") ? (root || last)
+                                                   : ((mode.starts_with("root") && root) ||
+                                                      (mode.starts_with("last") && last)));
+  if (fail && mode.ends_with("throw"))
+  {
+    ThrowUncaught();
+  }
+  if (fail)
+  {
+    mfem::err << "\n\nTest failure on rank " << rank << "\n";  // As MFEM errors do
+    MPI_Abort(comm, 2);
+  }
+  if (mode.find("-dtor") != std::string::npos)
+  {
+    report.reset();  // The others finish, posting to the agreement
+  }
+  Mpi::Barrier(comm);  // The others wait for the failing processes
+  FAIL("Not aborted");
 }

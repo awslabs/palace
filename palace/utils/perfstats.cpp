@@ -566,16 +566,16 @@ const Results &GetResults()
   return state.results;
 }
 
-void WriteJson(json &meta)
+void WriteJson(json &meta, const json *error)
 {
   const auto &r = GetResults();
   constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
 
   // Remove everything written by a previous iteration.
-  for (const char *key :
-       {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
-        "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes", "PeakNodeMemoryMegabytes",
-        "HeapGrowthMegabytes", "HeapMegabytes", "Cumulative"})
+  for (const char *key : {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
+                          "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes",
+                          "PeakNodeMemoryMegabytes", "HeapGrowthMegabytes", "HeapMegabytes",
+                          "Cumulative", "Complete", "Error", "RootProcess"})
   {
     meta.erase(key);
   }
@@ -589,37 +589,48 @@ void WriteJson(json &meta)
   }
 
   meta["SchemaVersion"] = SCHEMA_VERSION;
-  meta["ElapsedTime"] = ElapsedTimeJson(r.iter);
+  meta["Complete"] = (error == nullptr);
+  if (error)
+  {
+    meta["Error"] = *error;
+    meta["Error"]["Iteration"] = r.iteration;
+  }
+
+  // The values of the root process alone (failure report without a collective) are not
+  // statistics over processes: they go under RootProcess instead of the usual keys.
+  json root_only;
+  json &out = (error && !error->value("Collective", true)) ? root_only : meta;
+  out["ElapsedTime"] = ElapsedTimeJson(r.iter);
   for (int i = 0; i < Timer::NUM_TIMINGS; i++)
   {
     std::string key(Timer::names[i]);
     const auto &rm = r.iter.rank_mem[i];
     const auto &nm = r.iter.node_mem[i];
-    meta["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
-    meta["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
-    meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
-    meta["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
-    meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
-    meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
-    meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
-    meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
+    out["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
+    out["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
+    out["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
+    out["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
+    out["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
+    out["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
+    out["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
+    out["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
   }
   for (const auto &[key, rm, nm] :
        {std::tuple{"Baseline", r.mem_baseline, r.node_mem_baseline},
         std::tuple{"Unattributed", r.mem_unattributed, r.node_mem_unattributed}})
   {
-    meta["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
-    meta["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
-    meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
-    meta["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
-    meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
-    meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
-    meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
-    meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
+    out["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
+    out["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
+    out["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
+    out["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
+    out["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
+    out["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
+    out["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
+    out["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
   }
-  meta["PeakMemoryMegabytes"] = PeakJson(r.peak_mem, false);
-  meta["PeakNodeMemoryMegabytes"] = PeakJson(r.peak_node_mem, true);
-  auto &heap = meta["HeapGrowthMegabytes"];
+  out["PeakMemoryMegabytes"] = PeakJson(r.peak_mem, false);
+  out["PeakNodeMemoryMegabytes"] = PeakJson(r.peak_node_mem, true);
+  auto &heap = out["HeapGrowthMegabytes"];
   auto HeapRow = [&heap](const std::string &key, const Stats &s)
   {
     heap["Min"][key] = s.min * to_mb;
@@ -640,7 +651,7 @@ void WriteJson(json &meta)
       heap["Coverage"][std::string(Timer::names[i])] = r.heap_coverage[i].min;
     }
   }
-  meta["HeapMegabytes"] = PeakJson(r.heap_mem, false);
+  out["HeapMegabytes"] = PeakJson(r.heap_mem, false);
 
   json cum;
   cum["ElapsedTime"] = ElapsedTimeJson(r.cum);
@@ -650,7 +661,7 @@ void WriteJson(json &meta)
   {
     if (r.counter[i].n > 0)
     {
-      At(meta, r.counter_paths[i]) = CounterJson(r.counter_reduce[i], r.counter[i]);
+      At(out, r.counter_paths[i]) = CounterJson(r.counter_reduce[i], r.counter[i]);
     }
     if (r.counter_acc[i] != Accumulate::NONE && r.cum_counter[i].n > 0)
     {
@@ -659,9 +670,13 @@ void WriteJson(json &meta)
   }
   if (!state.info.empty())
   {
-    meta.merge_patch(state.info);
+    out.merge_patch(state.info);
   }
-  meta["Cumulative"] = std::move(cum);
+  out["Cumulative"] = std::move(cum);
+  if (&out == &root_only)
+  {
+    meta["RootProcess"] = std::move(root_only);
+  }
 }
 
 }  // namespace perf
@@ -815,8 +830,12 @@ void BlockTimer::Finalize(MPI_Comm comm)
   }
   StatsAllreduce(buf, comm);
 
-  // Node memory: sum over the ranks of each node, then statistics over nodes.
-  const auto &nc = memory_reporting::GetNodeComms(comm);
+  // Node memory: sum over the ranks of each node, then statistics over nodes. A process
+  // alone (failure report of the root) does not split (or replace the cached) node
+  // communicators.
+  static const memory_reporting::NodeComms self_comms{MPI_COMM_SELF, MPI_COMM_SELF, 0};
+  const auto &nc =
+      (comm == MPI_COMM_SELF) ? self_comms : memory_reporting::GetNodeComms(comm);
   std::vector<double> node_local(N + 4), node_sum(N + 4, 0.0);
   for (int i = 0; i < N; i++)
   {
