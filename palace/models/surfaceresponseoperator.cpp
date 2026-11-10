@@ -768,6 +768,62 @@ bool TakeFirstExchangeCensus(MPI_Comm comm)
   return true;
 }
 
+int LocatorExchangeBlockQueries(MPI_Comm comm)
+{
+  // Lane fix-response-memory round 3 M1 (decision 1501): the local points (lines) a rank
+  // sends per round of the point locator's candidate / fallback exchanges and of the
+  // Maxwell line exchange. With every rank sending at most 4,096 points to a destination
+  // per round, one rank of 1,536 receives at most 6.3 M queries per round (0.35 GB of
+  // coordinates + answers; 0.50 GB in the fallback form) however its routing boxes lie.
+  // Results-neutral (every query of a point travels in one round; the per-point answers
+  // and selection rules are unchanged). The test-only override is read collectively (C10).
+  constexpr int default_block_queries = 4096;
+  const auto environment = CollectiveGetenv(comm, "PALACE_RESPONSE_EXCHANGE_BLOCK_QUERIES");
+  if (!environment || environment->empty())
+  {
+    return default_block_queries;
+  }
+  const long long value = std::atoll(environment->c_str());
+  MFEM_VERIFY(value > 0 && value <= std::numeric_limits<int>::max(),
+              "PALACE_RESPONSE_EXCHANGE_BLOCK_QUERIES must be a positive point count "
+              "(default 4096)!");
+  return static_cast<int>(value);
+}
+
+long long int LocatorExchangeRounds(std::size_t local_count, int block_queries,
+                                    MPI_Comm comm)
+{
+  // At least one round (the unblocked form's one exchange), then the most any rank needs.
+  long long int rounds = std::max<long long int>(
+      1, static_cast<long long int>(
+             (local_count + static_cast<std::size_t>(block_queries) - 1) /
+             static_cast<std::size_t>(block_queries)));
+  Mpi::GlobalMax(1, &rounds, comm);
+  return rounds;
+}
+
+void VerifyIntCommunicationPlan(const std::vector<int> &counts, int scale, const char *what)
+{
+  // Round 3 M1: the int entry counts and prefix sums of an MPI plan, summed in 64 bit and
+  // checked at the plan's largest scale before the int plan is formed (never a wrap).
+  long long int total = 0;
+  for (const int count : counts)
+  {
+    MFEM_VERIFY(count >= 0, "Negative count in the " << what << " communication plan!");
+    total += count;
+  }
+  MFEM_VERIFY(total * scale <= std::numeric_limits<int>::max(),
+              "The " << what << " communication plan exceeds 32-bit MPI counts (" << total
+                     << " items x " << scale << ")!");
+}
+
+bool ResponseExchangeSummaryEnabled(MPI_Comm comm)
+{
+  // Round 3 M3 (decision 1501): the log-only receive-count summary of the point locator's
+  // candidate exchange; the root's value on every rank (C10: the summary is collective).
+  return CollectiveEnvironmentFlag(comm, "PALACE_RESPONSE_EXCHANGE_SUMMARY");
+}
+
 class DistributedPointLocator
 {
 public:
@@ -792,6 +848,8 @@ private:
   int dimension;
   MPI_Comm comm;
   int size;
+  // Round 3 M1: the local points a rank sends per exchange round.
+  int block_queries;
   ElementPointLocator local;
   std::vector<double> global_routing;
   double box_tolerance;
@@ -821,6 +879,74 @@ private:
     return false;
   }
 
+  // Round 3 M3 (decision 1501; PALACE_RESPONSE_EXCHANGE_SUMMARY, log only): per rank the
+  // candidate queries received and sent over the rounds and the local points, gathered
+  // once; the root prints the spread of the received count and the most-loaded ranks with
+  // their routing boxes (the union extent and the largest box extent): the hot ranks.
+  void PrintCandidateExchangeSummary(long long int rounds, long long int received,
+                                     long long int sent, long long int local_points) const
+  {
+    const std::array<long long int, 3> local_counts = {received, sent, local_points};
+    std::vector<long long int> counts(3 * static_cast<std::size_t>(size));
+    Mpi::Allgather(3, local_counts.data(), counts.data(), comm);
+    if (!Mpi::Root(comm))
+    {
+      return;
+    }
+    long long int total_received = 0, total_sent = 0, total_points = 0;
+    long long int min_received = std::numeric_limits<long long int>::max();
+    for (int rank = 0; rank < size; rank++)
+    {
+      total_received += counts[3 * rank];
+      total_sent += counts[3 * rank + 1];
+      total_points += counts[3 * rank + 2];
+      min_received = std::min(min_received, counts[3 * rank]);
+    }
+    std::vector<int> order(size);
+    std::iota(order.begin(), order.end(), 0);
+    const int top = std::min(size, 8);
+    std::partial_sort(
+        order.begin(), order.begin() + top, order.end(), [&](int a, int b)
+        { return counts[3 * a] != counts[3 * b] ? counts[3 * a] > counts[3 * b] : a < b; });
+    Mpi::Print(comm,
+               " Point-locator candidate exchange (round 3 M3): {:d} round(s) of <= {:d} "
+               "local points; {:d} local points, {:d} queries sent; received per rank "
+               "min / mean / max {:d} / {:.1f} / {:d}\n",
+               rounds, block_queries, total_points, total_sent, min_received,
+               static_cast<double>(total_received) / size, counts[3 * order.front()]);
+    for (int k = 0; k < top; k++)
+    {
+      const int rank = order[k];
+      std::array<double, 3> union_min, union_max;
+      union_min.fill(mfem::infinity());
+      union_max.fill(-mfem::infinity());
+      double largest_box = 0.0;
+      const int rank_offset = rank * routing_box_count * routing_box_values;
+      for (int box = 0; box < routing_box_count; box++)
+      {
+        const double *values =
+            global_routing.data() + rank_offset + routing_box_values * box;
+        if (!(values[0] <= values[3]))
+        {
+          continue;
+        }
+        for (int d = 0; d < 3; d++)
+        {
+          union_min[d] = std::min(union_min[d], values[d]);
+          union_max[d] = std::max(union_max[d], values[3 + d]);
+          largest_box = std::max(largest_box, values[3 + d] - values[d]);
+        }
+      }
+      Mpi::Print(comm,
+                 "  rank {:d}: received {:d}, sent {:d}, local points {:d}; routing boxes "
+                 "[{:.6e}, {:.6e}] x [{:.6e}, {:.6e}] x [{:.6e}, {:.6e}], the largest "
+                 "box extent {:.6e}\n",
+                 rank, counts[3 * rank], counts[3 * rank + 1], counts[3 * rank + 2],
+                 union_min[0], union_max[0], union_min[1], union_max[1], union_min[2],
+                 union_max[2], largest_box);
+    }
+  }
+
   static int SetOffsets(const std::vector<int> &counts, std::vector<int> &offsets)
   {
     offsets.resize(counts.size());
@@ -846,24 +972,26 @@ private:
   // The candidate exchange: every query point of the local list `points` (3 coordinates
   // each) is sent to the ranks whose routing boxes contain it within `tolerance`; the
   // candidate ranks answer with `answer_size` values per query (filled by `Answer` from
-  // the received coordinates), gathered here per (point, candidate rank).
+  // the received coordinates), gathered here per (point, candidate rank). One call = one
+  // round of the blocked exchange (round 3 M1): `points` is the round's slice.
   struct CandidateExchange
   {
     std::vector<int> send_counts, send_offsets;
-    std::vector<int> query_indices;  // the local point of each packed query
+    std::vector<int> query_indices;  // the slice's point of each packed query
     std::vector<double> answers;     // answer_size values per packed query
+    long long int received = 0;      // the queries this rank answered
   };
   template <typename Answer>
-  CandidateExchange Exchange(const std::vector<std::array<double, 3>> &points,
+  CandidateExchange Exchange(const std::array<double, 3> *points, std::size_t point_count,
                              double tolerance, int answer_size, Answer &&answer) const
   {
     CandidateExchange exchange;
     exchange.send_counts.assign(size, 0);
-    for (const auto &point : points)
+    for (std::size_t point = 0; point < point_count; point++)
     {
       for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
       {
-        if (RankContains(candidate_rank, point, tolerance))
+        if (RankContains(candidate_rank, points[point], tolerance))
         {
           exchange.send_counts[candidate_rank]++;
         }
@@ -876,14 +1004,18 @@ private:
       PrintResponseMemoryCensusOfRss(comm, "before the first point-locator Alltoall");
     }
     Mpi::Alltoall(1, exchange.send_counts.data(), receive_counts.data(), comm);
+    const int plan_scale = std::max(dimension, answer_size);
+    VerifyIntCommunicationPlan(exchange.send_counts, plan_scale, "point-locator send");
+    VerifyIntCommunicationPlan(receive_counts, plan_scale, "point-locator receive");
     std::vector<int> receive_offsets;
     const int send_total = SetOffsets(exchange.send_counts, exchange.send_offsets);
     const int receive_total = SetOffsets(receive_counts, receive_offsets);
+    exchange.received = receive_total;
 
     exchange.query_indices.resize(send_total);
     std::vector<double> send_coordinates(dimension * send_total);
     std::vector<int> cursor(exchange.send_offsets);
-    for (std::size_t point = 0; point < points.size(); point++)
+    for (std::size_t point = 0; point < point_count; point++)
     {
       for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
       {
@@ -935,8 +1067,10 @@ private:
   }
 
 public:
-  DistributedPointLocator(mfem::ParMesh &mesh_, int dimension_)
+  DistributedPointLocator(mfem::ParMesh &mesh_, int dimension_, int block_queries_ = 0)
     : mesh(mesh_), dimension(dimension_), comm(mesh.GetComm()), size(Mpi::Size(comm)),
+      block_queries(block_queries_ > 0 ? block_queries_
+                                       : LocatorExchangeBlockQueries(mesh_.GetComm())),
       local(mesh, dimension)
   {
     std::array<double, routing_box_count * routing_box_values> local_routing;
@@ -1004,59 +1138,79 @@ public:
     // The answer of a candidate rank: the local element (-1 when not found), the reference
     // coordinates and the optional element value.
     const int answer_size = 1 + dimension + value_size;
-    const auto exchange = Exchange(
-        points, box_tolerance, answer_size,
+    auto candidate_answer =
         [&](const std::vector<double> &coordinates, int count, std::vector<double> &answers)
-        {
-          std::vector<int> candidates;
-          for (int i = 0; i < count; i++)
-          {
-            std::array<double, 3> coordinate{};
-            for (int d = 0; d < dimension; d++)
-            {
-              coordinate[d] = coordinates[dimension * i + d];
-            }
-            int element = -1;
-            mfem::IntegrationPoint reference;
-            double *answer = answers.data() + answer_size * i;
-            if (local.Find(coordinate, box_tolerance, element, reference, candidates))
-            {
-              reference.Get(answer + 1, dimension);
-              if (element_value)
-              {
-                answer[1 + dimension] = (*element_value)(element);
-              }
-            }
-            answer[0] = element;
-          }
-        });
-    result.candidate_queries = static_cast<long long int>(exchange.query_indices.size());
-    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
     {
-      const int begin = exchange.send_offsets[candidate_rank];
-      const int end = begin + exchange.send_counts[candidate_rank];
-      for (int packed = begin; packed < end; packed++)
+      std::vector<int> candidates;
+      for (int i = 0; i < count; i++)
       {
-        const double *answer = exchange.answers.data() + answer_size * packed;
-        const int element = static_cast<int>(answer[0]);
-        if (element < 0)
+        std::array<double, 3> coordinate{};
+        for (int d = 0; d < dimension; d++)
         {
-          continue;
+          coordinate[d] = coordinates[dimension * i + d];
         }
-        const int point = exchange.query_indices[packed];
-        if (candidate_rank > result.owners[point] ||
-            (candidate_rank == result.owners[point] && element >= result.elements[point]))
+        int element = -1;
+        mfem::IntegrationPoint reference;
+        double *answer = answers.data() + answer_size * i;
+        if (local.Find(coordinate, box_tolerance, element, reference, candidates))
         {
-          continue;
+          reference.Get(answer + 1, dimension);
+          if (element_value)
+          {
+            answer[1 + dimension] = (*element_value)(element);
+          }
         }
-        result.owners[point] = candidate_rank;
-        result.elements[point] = element;
-        std::copy_n(answer + 1, dimension, result.references.data() + dimension * point);
-        if (element_value)
+        answer[0] = element;
+      }
+    };
+    // Round 3 M1 (decision 1501): the local points in rounds of at most block_queries (the
+    // round count collective); every query of a point travels in its round, so the
+    // selection below sees the same answers in the same candidate-rank order.
+    const long long int rounds = LocatorExchangeRounds(points.size(), block_queries, comm);
+    long long int received = 0;
+    for (long long int round = 0; round < rounds; round++)
+    {
+      const std::size_t round_begin =
+          std::min(points.size(), static_cast<std::size_t>(round) *
+                                      static_cast<std::size_t>(block_queries));
+      const std::size_t round_end =
+          std::min(points.size(), round_begin + static_cast<std::size_t>(block_queries));
+      const auto exchange = Exchange(points.data() + round_begin, round_end - round_begin,
+                                     box_tolerance, answer_size, candidate_answer);
+      result.candidate_queries += static_cast<long long int>(exchange.query_indices.size());
+      received += exchange.received;
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        const int begin = exchange.send_offsets[candidate_rank];
+        const int end = begin + exchange.send_counts[candidate_rank];
+        for (int packed = begin; packed < end; packed++)
         {
-          result.owner_values[point] = answer[1 + dimension];
+          const double *answer = exchange.answers.data() + answer_size * packed;
+          const int element = static_cast<int>(answer[0]);
+          if (element < 0)
+          {
+            continue;
+          }
+          const int point = static_cast<int>(round_begin) + exchange.query_indices[packed];
+          if (candidate_rank > result.owners[point] ||
+              (candidate_rank == result.owners[point] && element >= result.elements[point]))
+          {
+            continue;
+          }
+          result.owners[point] = candidate_rank;
+          result.elements[point] = element;
+          std::copy_n(answer + 1, dimension, result.references.data() + dimension * point);
+          if (element_value)
+          {
+            result.owner_values[point] = answer[1 + dimension];
+          }
         }
       }
+    }
+    if (ResponseExchangeSummaryEnabled(comm))
+    {
+      PrintCandidateExchangeSummary(rounds, received, result.candidate_queries,
+                                    static_cast<long long int>(points.size()));
     }
 
     std::vector<int> fallback_indices;
@@ -1092,92 +1246,123 @@ public:
       fallback_points[i] = points[fallback_indices[i]];
     }
     const int fallback_answer_size = 3 + dimension + value_size;
-    const auto fallback = Exchange(
-        fallback_points, box_tolerance + fallback_margin, fallback_answer_size,
+    auto fallback_answer =
         [&](const std::vector<double> &coordinates, int count, std::vector<double> &answers)
-        {
-          for (int i = 0; i < count; i++)
-          {
-            double *answer = answers.data() + fallback_answer_size * i;
-            answer[0] = 2.0;
-            answer[1] = -1.0;
-            answer[2] = mfem::infinity();
-          }
-          if (count == 0)
-          {
-            return;
-          }
-#if defined(MFEM_USE_GSLIB)
-          mfem::Vector fallback_xyz(dimension * count);
-          for (int i = 0; i < count; i++)
-          {
-            for (int d = 0; d < dimension; d++)
-            {
-              fallback_xyz(d * count + i) = coordinates[dimension * i + d];
-            }
-          }
-          mfem::FindPointsGSLIB finder(MPI_COMM_SELF);
-          finder.Setup(mesh, 0.01, 1.0e-12, 256);
-          finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
-          const auto &reference = finder.GetReferencePosition();
-          for (int i = 0; i < count; i++)
-          {
-            if (finder.GetCode()[i] == 2)
-            {
-              continue;
-            }
-            double *answer = answers.data() + fallback_answer_size * i;
-            const int element = static_cast<int>(finder.GetElem()[i]);
-            answer[0] = finder.GetCode()[i];
-            answer[1] = element;
-            answer[2] = finder.GetDist()(i);
-            for (int d = 0; d < dimension; d++)
-            {
-              answer[3 + d] = reference(dimension * i + d);
-            }
-            if (element_value)
-            {
-              answer[3 + dimension] = (*element_value)(element);
-            }
-          }
-#else
-          MFEM_ABORT("Rank-local point location fallback requires MFEM_USE_GSLIB!");
-#endif
-        });
-    std::vector<double> best_code(fallback_indices.size(), 2.0);
-    std::vector<double> best_distance(fallback_indices.size(), mfem::infinity());
-    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
     {
-      const int begin = fallback.send_offsets[candidate_rank];
-      const int end = begin + fallback.send_counts[candidate_rank];
-      for (int packed = begin; packed < end; packed++)
+      for (int i = 0; i < count; i++)
       {
-        const double *answer = fallback.answers.data() + fallback_answer_size * packed;
-        if (answer[0] == 2.0)
+        double *answer = answers.data() + fallback_answer_size * i;
+        answer[0] = 2.0;
+        answer[1] = -1.0;
+        answer[2] = mfem::infinity();
+      }
+      if (count == 0)
+      {
+        return;
+      }
+#if defined(MFEM_USE_GSLIB)
+      mfem::Vector fallback_xyz(dimension * count);
+      for (int i = 0; i < count; i++)
+      {
+        for (int d = 0; d < dimension; d++)
+        {
+          fallback_xyz(d * count + i) = coordinates[dimension * i + d];
+        }
+      }
+      mfem::FindPointsGSLIB finder(MPI_COMM_SELF);
+      finder.Setup(mesh, 0.01, 1.0e-12, 256);
+      finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
+      const auto &reference = finder.GetReferencePosition();
+      for (int i = 0; i < count; i++)
+      {
+        if (finder.GetCode()[i] == 2)
         {
           continue;
         }
-        const int i = fallback.query_indices[packed];
-        if (answer[0] > best_code[i] ||
-            (answer[0] == best_code[i] && answer[2] >= best_distance[i]))
+        double *answer = answers.data() + fallback_answer_size * i;
+        const int element = static_cast<int>(finder.GetElem()[i]);
+        answer[0] = finder.GetCode()[i];
+        answer[1] = element;
+        answer[2] = finder.GetDist()(i);
+        for (int d = 0; d < dimension; d++)
         {
-          continue;
+          answer[3 + d] = reference(dimension * i + d);
         }
-        best_code[i] = answer[0];
-        best_distance[i] = answer[2];
-        const int point = fallback_indices[i];
-        result.owners[point] = candidate_rank;
-        result.elements[point] = static_cast<int>(answer[1]);
-        std::copy_n(answer + 3, dimension, result.references.data() + dimension * point);
         if (element_value)
         {
-          result.owner_values[point] = answer[3 + dimension];
+          answer[3 + dimension] = (*element_value)(element);
+        }
+      }
+#else
+      MFEM_ABORT("Rank-local point location fallback requires MFEM_USE_GSLIB!");
+#endif
+    };
+    std::vector<double> best_code(fallback_indices.size(), 2.0);
+    std::vector<double> best_distance(fallback_indices.size(), mfem::infinity());
+    // Round 3 M1: the unresolved points in rounds as above (gslib locates each point of a
+    // round independently with the same Setup, so every answer is the unblocked one).
+    const long long int fallback_rounds =
+        LocatorExchangeRounds(fallback_points.size(), block_queries, comm);
+    for (long long int round = 0; round < fallback_rounds; round++)
+    {
+      const std::size_t round_begin =
+          std::min(fallback_points.size(), static_cast<std::size_t>(round) *
+                                               static_cast<std::size_t>(block_queries));
+      const std::size_t round_end = std::min(
+          fallback_points.size(), round_begin + static_cast<std::size_t>(block_queries));
+      const auto fallback =
+          Exchange(fallback_points.data() + round_begin, round_end - round_begin,
+                   box_tolerance + fallback_margin, fallback_answer_size, fallback_answer);
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        const int begin = fallback.send_offsets[candidate_rank];
+        const int end = begin + fallback.send_counts[candidate_rank];
+        for (int packed = begin; packed < end; packed++)
+        {
+          const double *answer = fallback.answers.data() + fallback_answer_size * packed;
+          if (answer[0] == 2.0)
+          {
+            continue;
+          }
+          const int i = static_cast<int>(round_begin) + fallback.query_indices[packed];
+          if (answer[0] > best_code[i] ||
+              (answer[0] == best_code[i] && answer[2] >= best_distance[i]))
+          {
+            continue;
+          }
+          best_code[i] = answer[0];
+          best_distance[i] = answer[2];
+          const int point = fallback_indices[i];
+          result.owners[point] = candidate_rank;
+          result.elements[point] = static_cast<int>(answer[1]);
+          std::copy_n(answer + 3, dimension, result.references.data() + dimension * point);
+          if (element_value)
+          {
+            result.owner_values[point] = answer[3 + dimension];
+          }
         }
       }
     }
     return result;
   }
 };
+
+DistributedPointLocation
+LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &xyz,
+                        int block_queries,
+                        const std::function<double(int element)> *element_value)
+{
+  DistributedPointLocator locator(mesh, dimension, block_queries);
+  auto located = locator.Locate(xyz, element_value);
+  DistributedPointLocation location;
+  location.owners = std::move(located.owners);
+  location.elements = std::move(located.elements);
+  location.references = std::move(located.references);
+  location.owner_values = std::move(located.owner_values);
+  location.candidate_queries = located.candidate_queries;
+  location.fallback_queries = located.fallback_queries;
+  return location;
+}
 
 namespace
 {
@@ -34609,157 +34794,182 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       return false;
     };
 
-    std::vector<int> query_send_counts(size, 0);
-    for (const auto &line : line_geometry)
+    // Round 3 M1 (decision 1501): the local lines in rounds of at most block_lines (the
+    // round count collective); every query of a line travels in its round and its
+    // intervals are appended in the same answering-rank order as unblocked.
+    const int block_lines = LocatorExchangeBlockQueries(comm);
+    const long long int line_rounds =
+        LocatorExchangeRounds(line_geometry.size(), block_lines, comm);
+    for (long long int line_round = 0; line_round < line_rounds; line_round++)
     {
-      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      const std::size_t line_begin =
+          std::min(line_geometry.size(), static_cast<std::size_t>(line_round) *
+                                             static_cast<std::size_t>(block_lines));
+      const std::size_t line_end = std::min(
+          line_geometry.size(), line_begin + static_cast<std::size_t>(block_lines));
+      std::vector<int> query_send_counts(size, 0);
+      for (std::size_t line_index = line_begin; line_index < line_end; line_index++)
       {
-        if (RankIntersects(candidate_rank, line))
+        const auto &line = line_geometry[line_index];
+        for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
         {
-          query_send_counts[candidate_rank]++;
+          if (RankIntersects(candidate_rank, line))
+          {
+            query_send_counts[candidate_rank]++;
+          }
         }
       }
-    }
-    std::vector<int> query_receive_counts(size);
-    Mpi::Alltoall(1, query_send_counts.data(), query_receive_counts.data(), comm);
-    std::vector<int> query_send_offsets, query_receive_offsets;
-    const int query_send_total = SetOffsets(query_send_counts, query_send_offsets);
-    const int query_receive_total = SetOffsets(query_receive_counts, query_receive_offsets);
-    std::vector<int> query_send_indices(query_send_total);
-    std::vector<double> query_send_coordinates(6 * query_send_total);
-    std::vector<int> query_cursor(query_send_offsets);
-    for (std::size_t line_index = 0; line_index < line_geometry.size(); line_index++)
-    {
-      const auto &line = line_geometry[line_index];
-      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      std::vector<int> query_receive_counts(size);
+      Mpi::Alltoall(1, query_send_counts.data(), query_receive_counts.data(), comm);
+      VerifyIntCommunicationPlan(query_send_counts, 6, "Maxwell line query send");
+      VerifyIntCommunicationPlan(query_receive_counts, 6, "Maxwell line query receive");
+      std::vector<int> query_send_offsets, query_receive_offsets;
+      const int query_send_total = SetOffsets(query_send_counts, query_send_offsets);
+      const int query_receive_total =
+          SetOffsets(query_receive_counts, query_receive_offsets);
+      std::vector<int> query_send_indices(query_send_total);
+      std::vector<double> query_send_coordinates(6 * query_send_total);
+      std::vector<int> query_cursor(query_send_offsets);
+      for (std::size_t line_index = line_begin; line_index < line_end; line_index++)
       {
-        if (!RankIntersects(candidate_rank, line))
+        const auto &line = line_geometry[line_index];
+        for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
         {
-          continue;
-        }
-        const int packed = query_cursor[candidate_rank]++;
-        query_send_indices[packed] = static_cast<int>(line_index);
-        for (int d = 0; d < 3; d++)
-        {
-          query_send_coordinates[6 * packed + d] = line.begin[d];
-          query_send_coordinates[6 * packed + 3 + d] = line.end[d];
+          if (!RankIntersects(candidate_rank, line))
+          {
+            continue;
+          }
+          const int packed = query_cursor[candidate_rank]++;
+          query_send_indices[packed] = static_cast<int>(line_index);
+          for (int d = 0; d < 3; d++)
+          {
+            query_send_coordinates[6 * packed + d] = line.begin[d];
+            query_send_coordinates[6 * packed + 3 + d] = line.end[d];
+          }
         }
       }
-    }
-    std::vector<int> query_receive_indices(query_receive_total);
-    Mpi::Alltoallv(query_send_indices.data(), query_send_counts.data(),
-                   query_send_offsets.data(), query_receive_indices.data(),
-                   query_receive_counts.data(), query_receive_offsets.data(), comm);
-    const auto query_send_coordinate_counts = ScaleCommunicationPlan(query_send_counts, 6);
-    const auto query_send_coordinate_offsets =
-        ScaleCommunicationPlan(query_send_offsets, 6);
-    const auto query_receive_coordinate_counts =
-        ScaleCommunicationPlan(query_receive_counts, 6);
-    const auto query_receive_coordinate_offsets =
-        ScaleCommunicationPlan(query_receive_offsets, 6);
-    std::vector<double> query_receive_coordinates(6 * query_receive_total);
-    Mpi::Alltoallv(query_send_coordinates.data(), query_send_coordinate_counts.data(),
-                   query_send_coordinate_offsets.data(), query_receive_coordinates.data(),
-                   query_receive_coordinate_counts.data(),
-                   query_receive_coordinate_offsets.data(), comm);
+      std::vector<int> query_receive_indices(query_receive_total);
+      Mpi::Alltoallv(query_send_indices.data(), query_send_counts.data(),
+                     query_send_offsets.data(), query_receive_indices.data(),
+                     query_receive_counts.data(), query_receive_offsets.data(), comm);
+      const auto query_send_coordinate_counts =
+          ScaleCommunicationPlan(query_send_counts, 6);
+      const auto query_send_coordinate_offsets =
+          ScaleCommunicationPlan(query_send_offsets, 6);
+      const auto query_receive_coordinate_counts =
+          ScaleCommunicationPlan(query_receive_counts, 6);
+      const auto query_receive_coordinate_offsets =
+          ScaleCommunicationPlan(query_receive_offsets, 6);
+      std::vector<double> query_receive_coordinates(6 * query_receive_total);
+      Mpi::Alltoallv(query_send_coordinates.data(), query_send_coordinate_counts.data(),
+                     query_send_coordinate_offsets.data(), query_receive_coordinates.data(),
+                     query_receive_coordinate_counts.data(),
+                     query_receive_coordinate_offsets.data(), comm);
 
-    // Per destination rank: the line index, 0 (exact) / 1 (in-face) and the bounds + the
-    // element diameter of every returned interval.
-    std::vector<std::vector<int>> returned_indices(size);
-    std::vector<std::vector<int>> returned_kinds(size);
-    std::vector<std::vector<double>> returned_bounds(size);
-    std::vector<std::pair<double, double>> intersections, in_face_intersections;
-    std::vector<double> intersection_diameters, in_face_intersection_diameters;
-    std::vector<int> candidates;
-    for (int source = 0; source < size; source++)
-    {
-      const int end = query_receive_offsets[source] + query_receive_counts[source];
-      for (int packed = query_receive_offsets[source]; packed < end; packed++)
+      // Per destination rank: the line index, 0 (exact) / 1 (in-face) and the bounds + the
+      // element diameter of every returned interval.
+      std::vector<std::vector<int>> returned_indices(size);
+      std::vector<std::vector<int>> returned_kinds(size);
+      std::vector<std::vector<double>> returned_bounds(size);
+      std::vector<std::pair<double, double>> intersections, in_face_intersections;
+      std::vector<double> intersection_diameters, in_face_intersection_diameters;
+      std::vector<int> candidates;
+      for (int source = 0; source < size; source++)
       {
-        std::array<double, 3> begin, finish;
-        for (int d = 0; d < 3; d++)
+        const int end = query_receive_offsets[source] + query_receive_counts[source];
+        for (int packed = query_receive_offsets[source]; packed < end; packed++)
         {
-          begin[d] = query_receive_coordinates[6 * packed + d];
-          finish[d] = query_receive_coordinates[6 * packed + 3 + d];
-        }
-        locator.FindSegmentIntersections(
-            begin, finish, box_tolerance, intersections, in_face_intersections, candidates,
-            &intersection_diameters, &in_face_intersection_diameters);
-        for (std::size_t k = 0; k < intersections.size(); k++)
-        {
-          returned_indices[source].push_back(query_receive_indices[packed]);
-          returned_kinds[source].push_back(0);
-          returned_bounds[source].push_back(intersections[k].first);
-          returned_bounds[source].push_back(intersections[k].second);
-          returned_bounds[source].push_back(intersection_diameters[k]);
-        }
-        for (std::size_t k = 0; k < in_face_intersections.size(); k++)
-        {
-          returned_indices[source].push_back(query_receive_indices[packed]);
-          returned_kinds[source].push_back(1);
-          returned_bounds[source].push_back(in_face_intersections[k].first);
-          returned_bounds[source].push_back(in_face_intersections[k].second);
-          returned_bounds[source].push_back(in_face_intersection_diameters[k]);
+          std::array<double, 3> begin, finish;
+          for (int d = 0; d < 3; d++)
+          {
+            begin[d] = query_receive_coordinates[6 * packed + d];
+            finish[d] = query_receive_coordinates[6 * packed + 3 + d];
+          }
+          locator.FindSegmentIntersections(
+              begin, finish, box_tolerance, intersections, in_face_intersections,
+              candidates, &intersection_diameters, &in_face_intersection_diameters);
+          for (std::size_t k = 0; k < intersections.size(); k++)
+          {
+            returned_indices[source].push_back(query_receive_indices[packed]);
+            returned_kinds[source].push_back(0);
+            returned_bounds[source].push_back(intersections[k].first);
+            returned_bounds[source].push_back(intersections[k].second);
+            returned_bounds[source].push_back(intersection_diameters[k]);
+          }
+          for (std::size_t k = 0; k < in_face_intersections.size(); k++)
+          {
+            returned_indices[source].push_back(query_receive_indices[packed]);
+            returned_kinds[source].push_back(1);
+            returned_bounds[source].push_back(in_face_intersections[k].first);
+            returned_bounds[source].push_back(in_face_intersections[k].second);
+            returned_bounds[source].push_back(in_face_intersection_diameters[k]);
+          }
         }
       }
-    }
 
-    std::vector<int> interval_send_counts(size);
-    for (int rank = 0; rank < size; rank++)
-    {
-      interval_send_counts[rank] = static_cast<int>(returned_indices[rank].size());
-    }
-    std::vector<int> interval_receive_counts(size);
-    Mpi::Alltoall(1, interval_send_counts.data(), interval_receive_counts.data(), comm);
-    std::vector<int> interval_send_offsets, interval_receive_offsets;
-    const int interval_send_total = SetOffsets(interval_send_counts, interval_send_offsets);
-    const int interval_receive_total =
-        SetOffsets(interval_receive_counts, interval_receive_offsets);
-    std::vector<int> interval_send_indices, interval_send_kinds;
-    std::vector<double> interval_send_bounds;
-    interval_send_indices.reserve(interval_send_total);
-    interval_send_kinds.reserve(interval_send_total);
-    interval_send_bounds.reserve(3 * interval_send_total);
-    for (int rank = 0; rank < size; rank++)
-    {
-      interval_send_indices.insert(interval_send_indices.end(),
-                                   returned_indices[rank].begin(),
-                                   returned_indices[rank].end());
-      interval_send_kinds.insert(interval_send_kinds.end(), returned_kinds[rank].begin(),
-                                 returned_kinds[rank].end());
-      interval_send_bounds.insert(interval_send_bounds.end(), returned_bounds[rank].begin(),
-                                  returned_bounds[rank].end());
-    }
-    std::vector<int> interval_receive_indices(interval_receive_total);
-    Mpi::Alltoallv(interval_send_indices.data(), interval_send_counts.data(),
-                   interval_send_offsets.data(), interval_receive_indices.data(),
-                   interval_receive_counts.data(), interval_receive_offsets.data(), comm);
-    std::vector<int> interval_receive_kinds(interval_receive_total);
-    Mpi::Alltoallv(interval_send_kinds.data(), interval_send_counts.data(),
-                   interval_send_offsets.data(), interval_receive_kinds.data(),
-                   interval_receive_counts.data(), interval_receive_offsets.data(), comm);
-    const auto interval_send_bound_counts = ScaleCommunicationPlan(interval_send_counts, 3);
-    const auto interval_send_bound_offsets =
-        ScaleCommunicationPlan(interval_send_offsets, 3);
-    const auto interval_receive_bound_counts =
-        ScaleCommunicationPlan(interval_receive_counts, 3);
-    const auto interval_receive_bound_offsets =
-        ScaleCommunicationPlan(interval_receive_offsets, 3);
-    std::vector<double> interval_receive_bounds(3 * interval_receive_total);
-    Mpi::Alltoallv(interval_send_bounds.data(), interval_send_bound_counts.data(),
-                   interval_send_bound_offsets.data(), interval_receive_bounds.data(),
-                   interval_receive_bound_counts.data(),
-                   interval_receive_bound_offsets.data(), comm);
-    for (int i = 0; i < interval_receive_total; i++)
-    {
-      const int line = interval_receive_indices[i];
-      MFEM_ASSERT(line >= 0 && line < static_cast<int>(line_intervals.size()),
-                  "Invalid returned Maxwell line index!");
-      const bool exact = interval_receive_kinds[i] == 0;
-      (exact ? line_intervals : line_in_face_intervals)[line].emplace_back(
-          interval_receive_bounds[3 * i], interval_receive_bounds[3 * i + 1]);
-      (exact ? line_interval_diameters : line_in_face_diameters)[line].push_back(
-          interval_receive_bounds[3 * i + 2]);
+      std::vector<int> interval_send_counts(size);
+      for (int rank = 0; rank < size; rank++)
+      {
+        interval_send_counts[rank] = static_cast<int>(returned_indices[rank].size());
+      }
+      std::vector<int> interval_receive_counts(size);
+      Mpi::Alltoall(1, interval_send_counts.data(), interval_receive_counts.data(), comm);
+      VerifyIntCommunicationPlan(interval_send_counts, 3, "Maxwell line interval send");
+      VerifyIntCommunicationPlan(interval_receive_counts, 3,
+                                 "Maxwell line interval receive");
+      std::vector<int> interval_send_offsets, interval_receive_offsets;
+      const int interval_send_total =
+          SetOffsets(interval_send_counts, interval_send_offsets);
+      const int interval_receive_total =
+          SetOffsets(interval_receive_counts, interval_receive_offsets);
+      std::vector<int> interval_send_indices, interval_send_kinds;
+      std::vector<double> interval_send_bounds;
+      interval_send_indices.reserve(interval_send_total);
+      interval_send_kinds.reserve(interval_send_total);
+      interval_send_bounds.reserve(3 * interval_send_total);
+      for (int rank = 0; rank < size; rank++)
+      {
+        interval_send_indices.insert(interval_send_indices.end(),
+                                     returned_indices[rank].begin(),
+                                     returned_indices[rank].end());
+        interval_send_kinds.insert(interval_send_kinds.end(), returned_kinds[rank].begin(),
+                                   returned_kinds[rank].end());
+        interval_send_bounds.insert(interval_send_bounds.end(),
+                                    returned_bounds[rank].begin(),
+                                    returned_bounds[rank].end());
+      }
+      std::vector<int> interval_receive_indices(interval_receive_total);
+      Mpi::Alltoallv(interval_send_indices.data(), interval_send_counts.data(),
+                     interval_send_offsets.data(), interval_receive_indices.data(),
+                     interval_receive_counts.data(), interval_receive_offsets.data(), comm);
+      std::vector<int> interval_receive_kinds(interval_receive_total);
+      Mpi::Alltoallv(interval_send_kinds.data(), interval_send_counts.data(),
+                     interval_send_offsets.data(), interval_receive_kinds.data(),
+                     interval_receive_counts.data(), interval_receive_offsets.data(), comm);
+      const auto interval_send_bound_counts =
+          ScaleCommunicationPlan(interval_send_counts, 3);
+      const auto interval_send_bound_offsets =
+          ScaleCommunicationPlan(interval_send_offsets, 3);
+      const auto interval_receive_bound_counts =
+          ScaleCommunicationPlan(interval_receive_counts, 3);
+      const auto interval_receive_bound_offsets =
+          ScaleCommunicationPlan(interval_receive_offsets, 3);
+      std::vector<double> interval_receive_bounds(3 * interval_receive_total);
+      Mpi::Alltoallv(interval_send_bounds.data(), interval_send_bound_counts.data(),
+                     interval_send_bound_offsets.data(), interval_receive_bounds.data(),
+                     interval_receive_bound_counts.data(),
+                     interval_receive_bound_offsets.data(), comm);
+      for (int i = 0; i < interval_receive_total; i++)
+      {
+        const int line = interval_receive_indices[i];
+        MFEM_ASSERT(line >= 0 && line < static_cast<int>(line_intervals.size()),
+                    "Invalid returned Maxwell line index!");
+        const bool exact = interval_receive_kinds[i] == 0;
+        (exact ? line_intervals : line_in_face_intervals)[line].emplace_back(
+            interval_receive_bounds[3 * i], interval_receive_bounds[3 * i + 1]);
+        (exact ? line_interval_diameters : line_in_face_diameters)[line].push_back(
+            interval_receive_bounds[3 * i + 2]);
+      }
     }
   }
   else
@@ -35066,6 +35276,10 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   point_receive_counts.resize(size);
   Mpi::Alltoall(1, point_send_counts.data(), point_receive_counts.data(),
                 fespace.GetComm());
+  // Round 3 M1 (decision 1501): the owner plan's int counts / prefix sums at their largest
+  // scale (the tangents and normals, 3) verified in 64 bit (fail closed, never a wrap).
+  VerifyIntCommunicationPlan(point_send_counts, 3, "surface-response owner send");
+  VerifyIntCommunicationPlan(point_receive_counts, 3, "surface-response owner receive");
 
   const int send_total = SetOffsets(point_send_counts, point_send_offsets);
   const int receive_total = SetOffsets(point_receive_counts, point_receive_offsets);
