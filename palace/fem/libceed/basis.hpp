@@ -41,6 +41,14 @@ void InitBasisFromRule(const mfem::FiniteElement &fe, const mfem::IntegrationRul
 void InitCachedBasisFromRule(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                              int num_comp, Ceed ceed, CeedBasis *basis);
 
+// Initialize a libCEED basis for the elements of an affine simplex mesh which represents
+// the basis function values (if values = true) and derivatives exactly by their
+// coefficients in an orthonormal basis of polynomials, as an equivalent of an exact
+// quadrature rule with unit weights and fewer points. The geometry factors and
+// coefficients must be constant on each element. Returns false if no such basis exists.
+bool InitReducedBasis(const mfem::FiniteElement &fe, bool values, int num_comp, Ceed ceed,
+                      CeedBasis *basis);
+
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                            const mfem::FiniteElement &test_fe, int trial_num_comp,
                            int test_num_comp, Ceed ceed, CeedBasis *basis);

@@ -52,6 +52,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     terms. Curl-curl and div-div terms, and the volume H(curl) and H(div) terms of 3D
     meshes, keep partial assembly. Results change at most at the level of round-off.
     [PR 1174](https://github.com/awslabs/palace/pull/1174).
+  - On CPUs, libCEED operators now integrate the H(curl) and H(div) volume terms of affine
+    simplices with an exact reduced quadrature, with fewer points per element than the
+    default rule: for example 20 instead of 24 at order 3, and 10 for curl-curl terms. This
+    lowers the cost of these terms and of their quadrature data, also on the coarser levels
+    of the multigrid preconditioners. Results change at most at the level of round-off.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and

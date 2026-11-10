@@ -2198,6 +2198,95 @@ TEMPLATE_TEST_CASE_SIG("3D libCEED Boundary Normal Operators",
   }
 }
 
+TEST_CASE("libCEED Reduced Bases", "[libCEED][Serial][Parallel]")
+{
+  // Domain integrators of H(curl) and H(div) spaces on affine simplices use bases with
+  // fewer points than the default quadrature (also on the affine elements of a curved
+  // mesh). The partially assembled operators agree with the fully assembled ones, which use
+  // the default quadrature, to rounding.
+  auto mesh_file = GENERATE("fichera-tet.mesh", "fichera-mixed-p2.mesh", "star-tri.mesh",
+                            "star-mixed-p2.mesh");
+  auto order = GENERATE(1, 2, 3, 4);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  const bool affine = (std::string(mesh_file) == "fichera-tet.mesh" ||
+                       std::string(mesh_file) == "star-tri.mesh");
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = false;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  INFO("Mesh: " << mesh_file << ", order: " << order);
+
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  // The curl of a 2D field is a scalar.
+  const auto &CQ = (dim == 2) ? Q : MQ;
+  auto TestReducedBases = [&](BilinearForm &a, bool values)
+  {
+    a.AssembleQuadratureData();
+    auto op = a.PartialAssemble();
+    auto mat = a.FullAssemble(false);
+    Vector x(op->Width()), y(op->Height()), y_ref(op->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    linalg::SetRandom(comm, x);
+    op->Mult(x, y);
+    mat->Mult(x, y_ref);
+    y -= y_ref;
+    REQUIRE(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, y_ref));
+    // From order 3 on (for curl-only terms in 2D, 4), the elements of an affine mesh have
+    // fewer points than with the default rule.
+    if (affine && (order >= 4 || (order == 3 && (values || dim == 3))))
+    {
+      Ceed ceed = ceed::internal::GetCeedObjects()[0];
+      const auto geom = (dim == 3) ? mfem::Geometry::TETRAHEDRON : mfem::Geometry::TRIANGLE;
+      CeedInt default_qpts, count;
+      CeedOperator *leaves;
+      REQUIRE(CeedBasisGetNumQuadraturePoints(a.GetTrialSpace().GetCeedBasis(ceed, geom),
+                                              &default_qpts) == 0);
+      REQUIRE(CeedOperatorCompositeGetNumSub((*op)[0], &count) == 0);
+      REQUIRE(CeedOperatorCompositeGetSubList((*op)[0], &leaves) == 0);
+      REQUIRE(count > 0);
+      for (CeedInt j = 0; j < count; j++)
+      {
+        CeedInt qpts;
+        REQUIRE(CeedOperatorGetNumQuadraturePoints(leaves[j], &qpts) == 0);
+        CAPTURE(qpts, default_qpts);
+        CHECK(qpts < default_qpts);
+      }
+    }
+  };
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), rt_fespace(mesh, &rt_fec);
+  SECTION("Curl-Curl + Mass Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(CQ, Q);
+    TestReducedBases(a, true);
+  }
+  SECTION("Curl-Curl Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlIntegrator>(CQ);
+    TestReducedBases(a, false);
+  }
+  SECTION("H(div) Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
+    TestReducedBases(a, true);
+  }
+  SECTION("Div-Div + Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<DivDivMassIntegrator>(Q, MQ);
+    TestReducedBases(a, true);
+  }
+}
+
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
 // configures when running on CPU, including the boundary terms contributed by absorbing and
 // impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
@@ -2951,6 +3040,45 @@ TEST_CASE("libCEED packed complex input fallbacks",
     }
     CheckPackedActions(*actual, reference);
   }
+}
+
+TEST_CASE("libCEED packed complex curl-curl terms",
+          "[libCEED][ComplexPacked][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
+  // Curl-curl terms without a mass term act on the curls only: paired with an imaginary
+  // curl-curl term, or packed on their own next to an imaginary mass term.
+  const auto [name, imag_curl] = GENERATE(table<const char *, bool>(
+      {{"Curl-curl pair", true}, {"Curl-curl and unmatched mass terms", false}}));
+  CAPTURE(name);
+  PackedIntegrationSettings settings(3);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath("fichera-tet.mesh"), 0, false);
+  mfem::ND_FECollection fec(3, 3);
+  FiniteElementSpace fespace(mesh, &fec);
+  auto real_coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto imag_coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  imag_coeff *= 0.37;
+  BilinearForm ar(fespace), ai(fespace);
+  ar.AddDomainIntegrator<CurlCurlIntegrator>(real_coeff);
+  if (imag_curl)
+  {
+    ai.AddDomainIntegrator<CurlCurlIntegrator>(imag_coeff);
+  }
+  else
+  {
+    ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_coeff);
+  }
+  ar.AssembleQuadratureData();
+  ai.AssembleQuadratureData();
+  auto real = ar.PartialAssemble(), imag = ai.PartialAssemble();
+  auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
+  REQUIRE(!IsOriginalComplexWrapper(*actual));
+  ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
+  CheckPackedActions(*actual, reference, true);
 }
 
 TEST_CASE("libCEED packed complex empty local operators",
