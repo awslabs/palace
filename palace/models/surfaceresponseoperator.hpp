@@ -24,6 +24,7 @@
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
 #include "utils/configfile.hpp"
+#include "utils/metadatafile.hpp"
 
 namespace palace
 {
@@ -1585,6 +1586,14 @@ public:
     patch_record_residency = residency;
   }
   PatchRecordResidency GetPatchRecordResidency() const { return patch_record_residency; }
+  // Round 2a R2 (decision 1475 (1)): under ROOT_ONLY, the root appends each gate pass's
+  // ConductorConsistency Records entries (per source / mode) to a scratch file in
+  // `directory` (the output directory) in their palace.json text instead of holding them;
+  // the final metadata write (BaseSolver::SaveMetadata) splices the file in place of the
+  // empty in-memory array (the same bytes) and removes it. Set by the drivers right after
+  // the residency; null (the in-memory form) otherwise and on the other ranks.
+  void SpillConductorConsistencyRecords(const std::string &directory);
+  JsonArraySpill *GetConductorConsistencyRecordsSpill() { return records_spill.get(); }
 
   // Decision 1469 (1) (i): under PALACE_RESPONSE_MEMORY_CENSUS=1 print (root) the census
   // of this operator's members (and of its geometry's, if any) at `instant`; collective;
@@ -1595,6 +1604,7 @@ public:
 private:
   friend struct ResponseMemoryCensus;
   PatchRecordResidency patch_record_residency = PatchRecordResidency::REPLICATED;
+  std::unique_ptr<JsonArraySpill> records_spill;
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,

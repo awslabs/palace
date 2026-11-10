@@ -31,6 +31,7 @@
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/metadatafile.hpp"
 
 namespace palace
 {
@@ -2545,6 +2546,151 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         reference.GetConductorConsistencyPortionRecord().length);
   CHECK(response.GetStatistics()["Diagnostics"]["ConductorConsistency"]["TestedPatches"] ==
         reference.GetStatistics()["Diagnostics"]["ConductorConsistency"]["TestedPatches"]);
+#endif
+}
+
+// Lane fix-response-memory round 2a R2 (decision 1475 (1)): the drivers' ROOT_ONLY form
+// spills the root's Records to a scratch file; the root's palace.json (the SaveMetadata
+// merge of the operator's statistics, written through the spill) must be BYTE-IDENTICAL to
+// the in-memory REPLICATED form's, over several gate passes (excitations / modes, a
+// self-consistent pre-gate pass, sticky re-appended exclusions), for an operator whose
+// gate never ran (an EMPTY record set) and for a second operator writing to the same
+// directory after the first (an AMR iteration); the scratch file is removed after.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator spilled conductor-consistency Records write the "
+                 "in-memory palace.json bytes",
+                 "[surfaceresponseoperator][conductorconsistency][memfix][metadatafile]"
+                 "[maxwell][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const bool root = Mpi::Root(comm);
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "memfix-spill");
+  json config = ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  auto Build = [&](std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+    return iodata;
+  };
+  auto Field = [](SpaceOperator &space, double amplitude)
+  {
+    StubField stub;
+    stub.amplitude = amplitude;
+    stub.x0 = 0.5;
+    stub.x1 = 2.0;
+    GridFunction field(space.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient coefficient(
+        3, [&](const mfem::Vector &x, mfem::Vector &E) { stub(x, E); });
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    return E;
+  };
+  // The SaveMetadata form of palace.json (BaseSolver::SaveMetadata(SurfaceResponseOperator
+  // &): the statistics merged under SurfaceResponse, Diagnostics entry by entry), written
+  // through StreamJsonMetadata.
+  auto Write = [](json statistics, const JsonArraySpill *spill)
+  {
+    json meta = {{"Problem", {{"MPISize", 2}}}, {"GitTag", "memfix-r2"}};
+    for (auto &[key, value] : statistics.items())
+    {
+      if (key == "Diagnostics" && value.is_object())
+      {
+        for (auto &[name, entry] : value.items())
+        {
+          meta["SurfaceResponse"][key][name] = std::move(entry);
+        }
+        continue;
+      }
+      meta["SurfaceResponse"][key] = std::move(value);
+    }
+    if (spill)
+    {
+      REQUIRE((spill->Size() == 0 || HoldsSpillPlace(meta, *spill)));
+    }
+    std::ostringstream os;
+    REQUIRE(StreamJsonMetadata(os, meta, spill));
+    return os.str();
+  };
+  // Each rank its own directory (the spill is the root's).
+  const auto directory = temp.temp_dir / fmt::format("spill-{:d}", Mpi::Rank(comm));
+  fs::create_directories(directory);
+  const auto spill_path = directory / ".palace-conductor-consistency-records.spill";
+
+  for (int iteration = 0; iteration < 2; iteration++)
+  {
+    CAPTURE(iteration);
+    std::vector<std::unique_ptr<Mesh>> reference_meshes;
+    IoData reference_iodata = Build(reference_meshes);
+    SpaceOperator reference_space(reference_iodata, reference_meshes);
+    SurfaceResponseOperator reference(reference_iodata, reference_space);
+    REQUIRE(reference.HasConductorConsistencyProbes());
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    response.SetPatchRecordResidency(
+        SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+    response.SpillConductorConsistencyRecords(directory.string());
+    REQUIRE((response.GetConductorConsistencyRecordsSpill() != nullptr) == root);
+    if (iteration == 0)
+    {
+      // The EMPTY record set: no gate pass yet (the same operator's statistics, spliced and
+      // in memory; two operators differ by their setup wall times).
+      const json statistics = response.GetStatistics();
+      CHECK(Write(statistics, response.GetConductorConsistencyRecordsSpill()) ==
+            Write(statistics, nullptr));
+      CHECK(!fs::exists(spill_path));
+    }
+    // The passes: three excitations (or modes, with their frequencies), the second a
+    // self-consistent pre-gate pass; the amplitudes differ per pass.
+    for (int pass = 0; pass < 3; pass++)
+    {
+      const double frequency = 5.0 + pass;
+      const bool pre_gate = pass == 1;
+      reference.ApplyConductorConsistencyGate(Field(reference_space, 1.0 + pass), pass,
+                                              frequency, pre_gate);
+      response.ApplyConductorConsistencyGate(Field(space, 1.0 + pass), pass, frequency,
+                                             pre_gate);
+    }
+    auto *spill = response.GetConductorConsistencyRecordsSpill();
+    // The in-memory form: this operator's statistics holding the REPLICATED reference's
+    // Records (the root's, entry for entry: the ROOT_ONLY case above).
+    const json reference_records =
+        reference.GetStatistics()["Diagnostics"]["ConductorConsistency"]["Records"];
+    REQUIRE(reference_records.size() > 0);
+    // Collective: every rank reads the statistics (the root's Records array is the empty
+    // placeholder of the spill; the other ranks hold none under ROOT_ONLY).
+    json in_memory = response.GetStatistics();
+    CHECK(in_memory["Diagnostics"]["ConductorConsistency"]["Records"].empty());
+    json released = response.ReleaseStatistics();
+    CHECK(released == in_memory);
+    in_memory["Diagnostics"]["ConductorConsistency"]["Records"] = reference_records;
+    const std::string expected = Write(in_memory, nullptr);
+    if (root)
+    {
+      REQUIRE(spill->Size() == reference_records.size());
+      CHECK(fs::exists(spill_path));
+      CHECK(Write(std::move(released), spill) == expected);
+      CHECK(spill->Remove());
+      CHECK(!fs::exists(spill_path));
+    }
+  }
+  fs::remove_all(directory);
 #endif
 }
 

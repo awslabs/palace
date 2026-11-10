@@ -930,6 +930,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // on the root only (their consumers are the root's tables below).
     response_correction->SetPatchRecordResidency(
         SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+    // Round 2a R2 (decision 1475 (1)): the root's Records spilled to the output directory.
+    response_correction->SpillConductorConsistencyRecords(iodata.problem.output);
     if (response_correction->IsRawFallback())
     {
       SaveMetadata(*response_correction);

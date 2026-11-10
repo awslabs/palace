@@ -207,3 +207,107 @@ TEST_CASE("Streamed metadata file is byte-identical to dump(2)",
   }
   std::filesystem::remove_all(dir);
 }
+
+namespace
+{
+
+// The form of a spilled palace.json: the Records entries moved from `meta` to a spill (one
+// Flush per source / mode, as the gate passes do); `meta` keeps the empty placeholder.
+json SpillRecords(json meta, JsonArraySpill &spill)
+{
+  auto &records = meta["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["Records"];
+  int source = records.empty() ? 0 : records.front()["Source"].get<int>();
+  for (const auto &entry : records)
+  {
+    if (entry["Source"].get<int>() != source)
+    {
+      REQUIRE(spill.Flush());
+      source = entry["Source"].get<int>();
+    }
+    REQUIRE(spill.Append(entry));
+  }
+  REQUIRE(spill.Flush());
+  records = json::array();
+  return meta;
+}
+
+std::string Streamed(const json &meta, const JsonArraySpill *spill)
+{
+  std::ostringstream os;
+  REQUIRE(StreamJsonMetadata(os, meta, spill));
+  return os.str();
+}
+
+}  // namespace
+
+// Lane fix-response-memory round 2a R2 (decision 1475 (1)): the root's
+// conductor-consistency Records are spilled to a scratch file in their palace.json text and
+// spliced at the metadata write; the file must be byte-identical to the in-memory form:
+// multi-source ES, multi-mode eigen, driven, probe snaps, the self-consistent pre-gate
+// records, an EMPTY record set, no record place at all, and successive AMR iterations in
+// one directory (each written, re-read and re-written as the later SaveMetadata calls do).
+TEST_CASE("Spilled metadata Records are spliced byte-identically",
+          "[metadatafile][memfix][Serial]")
+{
+  const auto dir = std::filesystem::temp_directory_path() / "palace-metadatafile-spill";
+  std::filesystem::create_directories(dir);
+  const std::string path = (dir / ".records.spill").string();
+  const std::vector<std::string> keys = {"SurfaceResponse", "Diagnostics",
+                                         "ConductorConsistency", "Records"};
+  json empty = ElectrostaticMetadata();
+  empty["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["Records"] =
+      json::array();
+  json no_place = CommonMetadata();
+  for (const auto &[form, meta] :
+       {std::pair<const char *, json>{"electrostatic", ElectrostaticMetadata()},
+        {"eigenmode", EigenmodeMetadata()},
+        {"driven", DrivenMetadata()},
+        {"empty", empty},
+        {"no-place", no_place}})
+  {
+    INFO(form);
+    const std::string expected = meta.dump(2) + "\n";
+    JsonArraySpill spill(path, keys);
+    CHECK(spill.EntryIndent() == 10);
+    const json placeholder =
+        meta.contains("SurfaceResponse") ? SpillRecords(meta, spill) : meta;
+    CHECK(std::filesystem::exists(path) == (spill.Size() > 0));
+    CHECK(Streamed(placeholder, &spill) == expected);
+    // Without the spill the placeholder writes the empty array (the records are the
+    // file's).
+    if (spill.Size() > 0)
+    {
+      CHECK(Streamed(placeholder, nullptr) != expected);
+    }
+    CHECK(spill.Remove());
+    CHECK(!std::filesystem::exists(path));
+  }
+
+  // AMR: two iterations, each operator's spill at the same path; each palace.json is then
+  // re-read and re-written (the timer / memory SaveMetadata calls) and copied aside.
+  for (int iteration = 0; iteration < 2; iteration++)
+  {
+    INFO(iteration);
+    json meta = iteration == 0 ? ElectrostaticMetadata() : EigenmodeMetadata();
+    meta["AdaptiveMeshRefinement"]["Iteration"] = iteration;
+    JsonArraySpill spill(path, keys);
+    const json placeholder = SpillRecords(meta, spill);
+    const auto file = dir / "palace.json";
+    {
+      std::ofstream fo(file);
+      REQUIRE(StreamJsonMetadata(fo, placeholder, &spill));
+    }
+    CHECK(spill.Remove());
+    std::ifstream fi(file);
+    json reread = json::parse(fi);
+    CHECK(reread == meta);
+    reread["PeakMemoryMegabytes"]["Max"] = 1.0 + iteration;
+    meta["PeakMemoryMegabytes"]["Max"] = 1.0 + iteration;
+    CHECK(Streamed(reread, nullptr) == meta.dump(2) + "\n");
+  }
+
+  // A scratch file that cannot be created reports the failed write.
+  JsonArraySpill unwritable((dir / "missing" / "x.spill").string(), keys);
+  CHECK_FALSE(unwritable.Append(json::object()));
+  std::filesystem::remove_all(dir);
+}

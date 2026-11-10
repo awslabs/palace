@@ -352,6 +352,9 @@ PostOperator<solver_t>::PostOperator(
       // every measurement live on the root only (their consumers are the root's prints).
       surface_response_op->SetPatchRecordResidency(
           SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+      // Round 2a R2 (decision 1475 (1)): the root's Records spilled to the output
+      // directory.
+      surface_response_op->SpillConductorConsistencyRecords(iodata.problem.output);
       if (surface_response_op->IsRawFallback())
       {
         // A whole-run geometry fallback (USER decision 1000 (b) / 1001): no model / patch

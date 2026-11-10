@@ -107,7 +107,8 @@ json LoadMetadata(const fs::path &post_dir)
   return json::parse(fi);
 }
 
-void WriteMetadata(const fs::path &post_dir, const json &meta)
+void WriteMetadata(const fs::path &post_dir, const json &meta,
+                   const JsonArraySpill *spill = nullptr)
 {
   std::string path = post_dir / "palace.json";
   std::ofstream fo(path);
@@ -118,7 +119,7 @@ void WriteMetadata(const fs::path &post_dir, const json &meta)
   // Round 2a R1 (decision 1475 (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the
   // bytes of dump(2) + '\n' without the whole text as a string) and checked: a short write
   // (a full disk, an I/O error) aborts instead of leaving an incomplete palace.json behind.
-  const bool written = StreamJsonMetadata(fo, meta);
+  const bool written = StreamJsonMetadata(fo, meta, spill);
   fo.close();
   if (!written || fo.fail())
   {
@@ -596,7 +597,27 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       }
       meta["SurfaceResponse"][key] = std::move(value);
     }
-    WriteMetadata(post_dir, meta);
+    // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
+    // of the empty in-memory array (the same bytes), then the scratch file is removed.
+    auto *spill = response.GetConductorConsistencyRecordsSpill();
+    if (spill)
+    {
+      MFEM_VERIFY(spill->Flush(),
+                  "Writing the conductor-consistency records to the scratch "
+                  "file \""
+                      << spill->Path() << "\" failed (a short write)!");
+      MFEM_VERIFY(spill->Size() == 0 || HoldsSpillPlace(meta, *spill),
+                  "The metadata holds no empty SurfaceResponse.Diagnostics."
+                  "ConductorConsistency.Records array for the "
+                      << spill->Size() << " spilled conductor-consistency record(s)!");
+    }
+    WriteMetadata(post_dir, meta, spill);
+    if (spill)
+    {
+      MFEM_VERIFY(spill->Remove(), "Removing the conductor-consistency records scratch "
+                                   "file \""
+                                       << spill->Path() << "\" failed!");
+    }
   }
   // The conductor-consistency gate (idfix R0-a, DESIGN A.1 (c) / B.3 (e); USER decision
   // 1000 (b)): the LOW-confidence banner whenever the gate excluded a patch on either path

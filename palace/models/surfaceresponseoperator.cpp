@@ -28811,6 +28811,20 @@ bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
   return local > 0;
 }
 
+void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
+{
+  MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
+              "The conductor-consistency Records spill requires the ROOT_ONLY residency!");
+  if (Mpi::Root(fespace.GetComm()))
+  {
+    records_spill = std::make_unique<JsonArraySpill>(
+        (std::filesystem::path(directory) / ".palace-conductor-consistency-records.spill")
+            .string(),
+        std::vector<std::string>{"SurfaceResponse", "Diagnostics", "ConductorConsistency",
+                                 "Records"});
+  }
+}
+
 nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
 {
   auto &diagnostics = ownership_diagnostics["ConductorConsistency"];
@@ -29777,7 +29791,19 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
         {"Count", static_cast<int>(record.probe_snaps.size())},
         {"MaxDisplacement", record.max_probe_snap * mesh_coordinate_scale},
         {"Knots", std::move(snaps)}};
-    diagnostics["Records"].push_back(entry);
+    if (records_spill)
+    {
+      // Round 2a R2 (decision 1475 (1)): the root's Records entry goes to the scratch file
+      // in its palace.json text (spliced at the final metadata write), not to memory.
+      MFEM_VERIFY(records_spill->Append(entry),
+                  "Writing the conductor-consistency record to the scratch file \""
+                      << records_spill->Path()
+                      << "\" failed (a short write: the disk is full or an I/O error)!");
+    }
+    else
+    {
+      diagnostics["Records"].push_back(entry);
+    }
     if (record.excluded && record.record_only)
     {
       // RecordOnly (the diagnostic opt-out, idfix B.4 (F)): the verdict stands in the
@@ -29835,6 +29861,13 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                                    conductor_consistency_claim_tolerance);
       }
     }
+  }
+  if (records_spill)
+  {
+    MFEM_VERIFY(records_spill->Flush(),
+                "Writing the conductor-consistency records to the scratch file \""
+                    << records_spill->Path()
+                    << "\" failed (a short write: the disk is full or an I/O error)!");
   }
   // The totals of the pass: the root's values on every rank (under ROOT_ONLY the other
   // ranks hold no record; under REPLICATED every rank computed the same values).
