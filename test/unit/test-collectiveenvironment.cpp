@@ -55,7 +55,7 @@ TEST_CASE("Collective environment gates read the root's value on every rank",
   SetLocal("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS", root ? "65536" : "7");
   CHECK(DomainBoundaryContainmentBlockPoints(comm) == 65536);
   SetLocal("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS", root ? nullptr : "7");
-  CHECK(DomainBoundaryContainmentBlockPoints(comm) == (std::size_t(1) << 23));
+  CHECK(DomainBoundaryContainmentBlockPoints(comm) == (std::size_t(1) << 20));
   SetLocal("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS", nullptr);
 
   // The raw read: the root's bytes (incl. an empty value) or nothing, on every rank.

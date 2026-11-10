@@ -2714,12 +2714,13 @@ struct DomainBoundaryExclusions
 // the configuration is read as a Missing feature); the coupon supports' reach into the
 // configurations (real or image portions) is recorded as information.
 // The containment test's block size in tested points (lane fix-response-memory, decision
-// 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^23 (0.3 GB of
-// per-point lists per rank). Results-neutral: the candidates are tested in blocks of at
-// most this many points with the same per-point arithmetic, the same elementwise
-// reductions and the same per-candidate decision; every block size gives the same
-// DomainBoundaryExclusions. No job of record sets it. Collective (C10, decision 1471 (2)):
-// the ROOT's value on every rank, so that every rank walks the same blocks.
+// 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^20 (~0.04 GB
+// of per-point lists per rank; 2^23 before round 2a T1, decision 1475). Results-neutral:
+// the candidates are tested in blocks of at most this many points with the same per-point
+// arithmetic, the same elementwise reductions and the same per-candidate decision; every
+// block size gives the same DomainBoundaryExclusions. No job of record sets it. Collective
+// (C10, decision 1471 (2)): the ROOT's value on every rank, so that every rank walks the
+// same blocks.
 std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm);
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,

@@ -27113,10 +27113,12 @@ std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm)
 {
   // Lane fix-response-memory (decision 1446, C3 / DESIGN s2.5 I-7): the containment
   // test's per-point lists are built for a block of candidates at a time, at most this
-  // many points per block (35 B per point: 2^23 points = 0.3 GB per rank). Results-neutral:
-  // every block size gives the same exclusions (the per-point reductions are elementwise,
-  // the per-candidate decision reads its own points). No job of record sets the variable.
-  constexpr std::size_t default_block_points = std::size_t(1) << 23;
+  // many points per block (~38 B per point: the 2^23-point block measured 0.32 GB per rank
+  // at QUO-023, PBS 104964). Results-neutral: every block size gives the same exclusions
+  // (the per-point reductions are elementwise, the per-candidate decision reads its own
+  // points). No job of record sets the variable. Round 2a T1 (decision 1475 (1)): the
+  // default 2^23 -> 2^20 points (~0.04 GB per rank).
+  constexpr std::size_t default_block_points = std::size_t(1) << 20;
   const auto environment =
       CollectiveGetenv(comm, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
   if (!environment || environment->empty())
@@ -27125,7 +27127,7 @@ std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm)
   }
   const long long value = std::atoll(environment->c_str());
   MFEM_VERIFY(value > 0, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS must be a positive "
-                         "point count (default 8388608)!");
+                         "point count (default 1048576)!");
   return static_cast<std::size_t>(value);
 }
 
