@@ -447,6 +447,9 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     over processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
     measurements which do not interrupt the timer rows and may overlap each other; each
     names the row it is measured within as `Parent`, and must never be added to the rows.
+    As a safeguard, a `perf::ScopedTally` opened while a scope of the same tally is open on
+    the same thread is not counted: the outermost scope counts the time once, and the tally
+    reports such scopes as `Nested`.
     Phase tallies (`perf::RegisterPhaseTally`), such as `Halo/P` or `Reduce`, are also
     split by the active row into `<name>/<ROW>`. Each tally has an `Imbalance` (maximum
     over average across the processes which ran it) and, when it contains any, `Wait`, the

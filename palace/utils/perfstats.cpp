@@ -382,6 +382,10 @@ json ElapsedTimeJson(const TimerResults &r)
       t["Parent"] = Timer::names[r.tally_parents[i]];
       t["Count"] = Num(r.tally_count[i].max);
       SetImbalance(t, r.tally_time[i]);
+      if (r.tally_nested[i].max > 0)
+      {
+        t["Nested"] = Num(r.tally_nested[i].max);
+      }
       if (r.tally_wait[i].max > 0.0)
       {
         t["Wait"] = StatsJson(r.tally_wait[i]);
@@ -416,8 +420,9 @@ void Commit()
     t.cum_time += t.time;
     t.cum_wait += t.wait;
     t.cum_count += t.count;
+    t.cum_nested += t.nested;
     t.time = t.wait = 0.0;
-    t.count = 0;
+    t.count = t.nested = 0;
   }
   for (auto &c : reg.counters)
   {
@@ -712,7 +717,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (7 * N + 8 * T + 2 * C + 9));
+  buf.reserve(STRIDE * (7 * N + 10 * T + 2 * C + 9));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -739,6 +744,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
     const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
     PushEntry(buf, t ? t->wait : 0.0, true, rank);
     PushEntry(buf, t ? t->time - t->wait : 0.0, true, rank);
+    PushEntry(buf, t ? t->nested : 0.0, true, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -771,6 +777,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
     const double wait = t ? t->cum_wait + t->wait : 0.0;
     PushEntry(buf, wait, true, rank);
     PushEntry(buf, t ? t->cum_time + t->time - wait : 0.0, true, rank);
+    PushEntry(buf, t ? t->cum_nested + t->nested : 0.0, true, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -851,14 +858,17 @@ void BlockTimer::Finalize(MPI_Comm comm)
       s = Next();
     }
   };
-  auto NextPairs = [&Next](std::vector<Stats> &a, std::vector<Stats> &b, int n)
+  auto NextTriples =
+      [&Next](std::vector<Stats> &a, std::vector<Stats> &b, std::vector<Stats> &c, int n)
   {
     a.resize(n);
     b.resize(n);
+    c.resize(n);
     for (int i = 0; i < n; i++)
     {
       a[i] = Next();
       b[i] = Next();
+      c[i] = Next();
     }
   };
   NextN(r.iter.time, N);
@@ -866,7 +876,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.iter.rank_mem, N);
   NextN(r.iter.tally_time, T);
   NextN(r.iter.tally_count, T);
-  NextPairs(r.iter.tally_wait, r.iter.tally_work, T);
+  NextTriples(r.iter.tally_wait, r.iter.tally_work, r.iter.tally_nested, T);
   NextN(r.counter, C);
   r.peak_mem = Next();
   r.cur_mem = Next();
@@ -874,7 +884,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.cum.count, N);
   NextN(r.cum.tally_time, T);
   NextN(r.cum.tally_count, T);
-  NextPairs(r.cum.tally_wait, r.cum.tally_work, T);
+  NextTriples(r.cum.tally_wait, r.cum.tally_work, r.cum.tally_nested, T);
   NextN(r.cum_counter, C);
   r.cum_peak_mem = Next();
   r.mem_baseline = Next();
@@ -943,7 +953,7 @@ void BlockTimer::Reset()
   for (auto &t : detail::registry.tallies)
   {
     t.time = t.cum_time = t.wait = t.cum_wait = 0.0;
-    t.count = t.cum_count = 0;
+    t.count = t.cum_count = t.nested = t.cum_nested = 0;
   }
   for (auto &c : detail::registry.counters)
   {

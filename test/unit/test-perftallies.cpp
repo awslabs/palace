@@ -1,10 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <chrono>
+#include <thread>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/solverstats.hpp"
 #include "utils/communication.hpp"
 #include "utils/perfstats.hpp"
 
@@ -40,6 +44,21 @@ const perf::detail::TallyData &Tally(const std::string &name)
 {
   const auto &reg = perf::detail::registry;
   return reg.tallies[reg.tally_ids.at(name)];
+}
+
+// A tallied estimate, and a second entry point with the same tally which calls it twice
+// (as a complex-valued eigenvalue estimate built on the real-valued one).
+void RealEstimate(int id)
+{
+  perf::ScopedTally t(id);
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+}
+
+void ComplexEstimate(int id)
+{
+  perf::ScopedTally t(id);
+  RealEstimate(id);
+  RealEstimate(id);
 }
 
 }  // namespace
@@ -89,6 +108,37 @@ TEST_CASE("PerfTallies Krylov", "[perfstats][Serial][Parallel]")
   CHECK(apply.count == gmres.GetNumIterations());
   CHECK(orth.count == apply.count);
   CHECK(orth.time >= 0.0);
+}
+
+TEST_CASE("PerfTallies Nested Same Tally", "[perfstats][Serial]")
+{
+  BlockTimer::Reset();
+  const int id = perf::LambdaMaxTally();
+  const int outer = perf::RegisterTally("Test/Outer", Timer::KSP_SETUP);
+  const auto &t = perf::detail::registry.tallies[id];
+  const auto t0 = Timer::Now();
+  RealEstimate(id);
+  ComplexEstimate(id);
+  const double elapsed = Timer::Duration(Timer::Now() - t0).count();
+  CHECK(t.name == "Main/LambdaMax");
+  CHECK(t.count == 2);
+  CHECK(t.nested == 2);      // Visible, not counted
+  CHECK(t.time <= elapsed);  // Counting the nested scopes would add >= 20 ms
+  CHECK(t.time >= 0.03);
+
+  // Scopes of other tallies nest as usual, and the tally counts again once closed.
+  {
+    perf::ScopedTally a(outer);
+    RealEstimate(id);
+  }
+  CHECK(Tally("Test/Outer").count == 1);
+  CHECK(t.count == 3);
+  BlockTimer::Finalize(Mpi::World());
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  CHECK(meta["ElapsedTime"]["Tallies"]["Main/LambdaMax"]["Nested"] == 2);
+  CHECK(!meta["ElapsedTime"]["Tallies"]["Test/Outer"].contains("Nested"));
+  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfTallies Chebyshev", "[perfstats][Serial][Parallel]")

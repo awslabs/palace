@@ -54,6 +54,7 @@ struct TallyData
   double time = 0.0, cum_time = 0.0;
   double wait = 0.0, cum_wait = 0.0;  // Part of time blocked in communication
   long count = 0, cum_count = 0;
+  long nested = 0, cum_nested = 0;  // Scopes opened inside a scope of the same tally
   int phase_base = -1;  // For phase tallies: first of NUM_TIMINGS sub-tally ids (lazy)
 };
 
@@ -82,6 +83,9 @@ inline Registry registry;
 // Seconds this thread has spent blocked in communication: in the MPI_Wait family (requests
 // that had not completed yet, see commstats.cpp) and in Palace's blocking reductions.
 inline thread_local double comm_wait = 0.0;
+
+// Whether a ScopedTally of each tally id is open on this thread.
+inline thread_local std::vector<char> open_tallies;
 
 }  // namespace detail
 
@@ -127,7 +131,10 @@ inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
 }
 
 // Time a scope into a tally (two clock reads, no system calls), with the communication
-// wait inside it. A negative id is a no-op.
+// wait inside it. A negative id is a no-op. As a safeguard, so is a scope nested in an open
+// scope of the same tally on the same thread (for example a tallied helper which a tallied
+// entry point also calls): the outermost scope counts the time once, and the nested scope
+// is counted as Nested in the report.
 class ScopedTally
 {
   int id;
@@ -139,6 +146,19 @@ public:
   {
     if (id >= 0)
     {
+      auto &open = detail::open_tallies;
+      if (static_cast<std::size_t>(id) >= open.size())
+      {
+        open.resize(
+            std::max(static_cast<std::size_t>(id) + 1, detail::registry.tallies.size()), 0);
+      }
+      if (open[id])
+      {
+        detail::registry.tallies[id].nested++;
+        this->id = -1;
+        return;
+      }
+      open[id] = 1;
       w0 = detail::comm_wait;
       t0 = Timer::Now();
     }
@@ -147,7 +167,9 @@ public:
   {
     if (id >= 0)
     {
-      AddTally(id, Timer::Duration(Timer::Now() - t0).count(), 1, detail::comm_wait - w0);
+      const double seconds = Timer::Duration(Timer::Now() - t0).count();
+      detail::open_tallies[id] = 0;
+      AddTally(id, seconds, 1, detail::comm_wait - w0);
     }
   }
   ScopedTally(const ScopedTally &) = delete;
@@ -253,7 +275,7 @@ struct TimerResults
   std::vector<Stats> time, count, rank_mem, node_mem;  // Per Timer::Index
   std::vector<std::string> tally_names;
   std::vector<Timer::Index> tally_parents;
-  std::vector<Stats> tally_time, tally_count, tally_wait, tally_work;
+  std::vector<Stats> tally_time, tally_count, tally_wait, tally_work, tally_nested;
 };
 
 struct Results
