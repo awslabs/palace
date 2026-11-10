@@ -30442,21 +30442,50 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       const bool containment_recheck = DomainBoundaryContainmentRechecks(fespace.GetComm());
       std::optional<DomainBoundaryContainmentCache> *containment_cache =
           cached_geometry ? &cached_geometry->impl->containment : nullptr;
-      const auto containment_signature = DomainBoundaryContainmentSignature(
-          placed_patches, spatially_owned_patches, BasisPointsOf, coordinate_scale,
-          config.matching_radius, containment_mirror_band);
-      const bool containment_hit = containment_cache && *containment_cache &&
-                                   (*containment_cache)->signature == containment_signature;
-      const bool containment_mismatch =
-          containment_cache && *containment_cache && !containment_hit;
+      // F-C (round 2a, decision 1475 (1)): the tested-input signature is built and kept on
+      // the ROOT only (the placed patches are identical on every rank, so is the verdict);
+      // the root compares it with the cached one and broadcasts hit / miss and, on a miss,
+      // the named difference. The result (the exclusions) stays on every rank.
+      const bool containment_root = Mpi::Root(fespace.GetComm());
+      const auto containment_signature =
+          containment_root
+              ? DomainBoundaryContainmentSignature(
+                    placed_patches, spatially_owned_patches, BasisPointsOf,
+                    coordinate_scale, config.matching_radius, containment_mirror_band)
+              : std::vector<double>();
+      const bool containment_present = containment_cache && *containment_cache;
+      int containment_verdict = 0;  // 1 = the cached signature equals this construction's
+      std::string containment_difference;
+      if (containment_root && containment_present)
+      {
+        containment_verdict =
+            (*containment_cache)->signature == containment_signature ? 1 : 0;
+        if (!containment_verdict)
+        {
+          containment_difference = DescribeDomainBoundaryContainmentSignatureMismatch(
+              (*containment_cache)->signature, containment_signature);
+        }
+      }
+      if (containment_present)
+      {
+        Mpi::Broadcast(1, &containment_verdict, 0, fespace.GetComm());
+        int length = static_cast<int>(containment_difference.size());
+        Mpi::Broadcast(1, &length, 0, fespace.GetComm());
+        containment_difference.resize(static_cast<std::size_t>(length));
+        if (length > 0)
+        {
+          Mpi::Broadcast(length, containment_difference.data(), 0, fespace.GetComm());
+        }
+      }
+      const bool containment_hit = containment_present && containment_verdict == 1;
+      const bool containment_mismatch = containment_present && !containment_hit;
       // The guard fails closed on a changed tested input too (decision 740 MAJOR-1): a
       // present entry for a different signature is never replaced silently under RECHECK.
       if (containment_mismatch && containment_recheck)
       {
         MFEM_ABORT("The domain-boundary containment cache holds the first construction's "
                    "result for a different tested-patch signature ("
-                   << DescribeDomainBoundaryContainmentSignatureMismatch(
-                          (*containment_cache)->signature, containment_signature)
+                   << containment_difference
                    << "); PALACE_RESPONSE_CONTAINMENT_RECHECK refuses to replace it!");
       }
       if (cached_geometry && !first_order_mesh)
@@ -30508,8 +30537,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                        " Domain-boundary containment result recomputed: the tested-patch "
                        "signature differs from the first construction's ({}); the cached "
                        "result is replaced\n",
-                       DescribeDomainBoundaryContainmentSignatureMismatch(
-                           (*containment_cache)->signature, containment_signature));
+                       containment_difference);
           }
           *containment_cache =
               DomainBoundaryContainmentCache{containment_signature, exclusions};

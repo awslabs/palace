@@ -1124,6 +1124,40 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(DomainBoundaryRecordWithoutTiming(after) == first_record);
   }
 
+  // F-C (lane fix-response-memory round 2a, decision 1475 (1)): the tested-input signature
+  // is kept on the ROOT only; the root compares and broadcasts the verdict. On every rank
+  // the same verdict: a MISS without RECHECK (the scaled construction recomputes and
+  // REPLACES the entry), a MISS back at the first scale (the replaced entry differs), then
+  // a HIT; the record the first's throughout.
+  {
+    auto SameOnEveryRank = [](bool reused)
+    {
+      int low = reused ? 1 : 0, high = low;
+      Mpi::GlobalMin(1, &low, Mpi::World());
+      Mpi::GlobalMax(1, &high, Mpi::World());
+      return low == high;
+    };
+    IoData scaled(config, false);
+    scaled.boundaries.cracked_attributes.insert(9);
+    scaled.units = Units(1.0, 1.0 + 1.0e-9);
+    {
+      SurfaceResponseOperator miss(scaled, laplace, &geometry);
+      CHECK_FALSE(miss.DomainBoundaryContainmentReused());
+      CHECK(SameOnEveryRank(miss.DomainBoundaryContainmentReused()));
+      CHECK(DomainBoundaryRecordWithoutTiming(miss)["Count"].get<int>() == 4);
+    }
+    {
+      SurfaceResponseOperator back(iodata, laplace, &geometry);
+      CHECK_FALSE(back.DomainBoundaryContainmentReused());
+      CHECK(SameOnEveryRank(back.DomainBoundaryContainmentReused()));
+      CHECK(DomainBoundaryRecordWithoutTiming(back) == first_record);
+    }
+    SurfaceResponseOperator hit(iodata, laplace, &geometry);
+    CHECK(hit.DomainBoundaryContainmentReused());
+    CHECK(SameOnEveryRank(hit.DomainBoundaryContainmentReused()));
+    CHECK(DomainBoundaryRecordWithoutTiming(hit) == first_record);
+  }
+
   // The mirror fixture (boundary-cut DESIGN 4.1 S-45; the symmetry test below): the half
   // pad with the wall x = 1 + (z - 1) as a natural cut and the isolated / convex-90 /
   // concave-90 library, so the cut-crossing cells are Mirrored (applied with their
