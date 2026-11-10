@@ -10,6 +10,18 @@
 #include <memory>
 #include <utility>
 #include "utils/communication.hpp"
+// PROBE: per-rank memory around the MUMPS calls (memprobe branch only).
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include <string>
+#if defined(__linux__)
+#include <gnu/libc-version.h>
+#include <malloc.h>
+#endif
+extern char **environ;
 
 namespace palace
 {
@@ -427,9 +439,156 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchur()
   return S;
 }
 
+namespace probe  // PROBE
+{
+
+// VmHWM, VmRSS, RssAnon, RssFile, RssShmem, AnonHugePages, heap arena, heap free, mmapped
+// (MB).
+constexpr int kN = 9;
+
+inline void Read(double *v)
+{
+  for (int i = 0; i < kN; i++)
+  {
+    v[i] = 0.0;
+  }
+#if defined(__linux__)
+  auto scan = [&](const char *path, const char *const *keys, const int *idx, int nk)
+  {
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line))
+    {
+      for (int k = 0; k < nk; k++)
+      {
+        const std::size_t len = std::strlen(keys[k]);
+        if (line.compare(0, len, keys[k]) == 0)
+        {
+          v[idx[k]] = std::atof(line.c_str() + len) / 1024.0;
+        }
+      }
+    }
+  };
+  static const char *const sk[] = {"VmHWM:", "VmRSS:", "RssAnon:", "RssFile:", "RssShmem:"};
+  static const int si[] = {0, 1, 2, 3, 4};
+  scan("/proc/self/status", sk, si, 5);
+  static const char *const rk[] = {"AnonHugePages:"};
+  static const int ri[] = {5};
+  scan("/proc/self/smaps_rollup", rk, ri, 1);
+  const struct mallinfo2 mi = mallinfo2();
+  v[6] = static_cast<double>(mi.arena) / 1048576.0;
+  v[7] = static_cast<double>(mi.fordblks) / 1048576.0;
+  v[8] = static_cast<double>(mi.hblkhd) / 1048576.0;
+#endif
+}
+
+inline void PrintEnvOnce(MPI_Comm comm)
+{
+  static bool done = false;
+  if (done)
+  {
+    return;
+  }
+  done = true;
+  int r = 0;
+  MPI_Comm_rank(comm, &r);
+  if (r != 0)
+  {
+    return;
+  }
+  char lib[MPI_MAX_LIBRARY_VERSION_STRING];
+  int len = 0;
+  MPI_Get_library_version(lib, &len);
+  for (int i = 0; i < len; i++)
+  {
+    lib[i] = (lib[i] == '\n') ? ' ' : lib[i];
+  }
+  std::printf("PROBE mpi [%s]\n", lib);
+#if defined(__linux__)
+  auto first = [](const char *path)
+  {
+    std::ifstream f(path);
+    std::string s;
+    std::getline(f, s);
+    return s;
+  };
+  std::printf("PROBE thp enabled=[%s] defrag=[%s] khugepaged_defrag=[%s]\n",
+              first("/sys/kernel/mm/transparent_hugepage/enabled").c_str(),
+              first("/sys/kernel/mm/transparent_hugepage/defrag").c_str(),
+              first("/sys/kernel/mm/transparent_hugepage/khugepaged/defrag").c_str());
+  std::printf("PROBE kernel=[%s] glibc=%s overcommit=[%s]\n",
+              first("/proc/sys/kernel/osrelease").c_str(), gnu_get_libc_version(),
+              first("/proc/sys/vm/overcommit_memory").c_str());
+#endif
+  static const char *const pre[] = {"OMPI_MCA", "UCX_",     "MALLOC_", "GLIBC_",
+                                    "OPENBLAS_", "OMP_",    "FI_",     "PMIX_MCA",
+                                    "HWLOC_",   "PRTE_MCA", "SLURM_CPU", "PBS_NUM"};
+  for (char **e = environ; *e; e++)
+  {
+    const std::string kv(*e);
+    const std::string key = kv.substr(0, kv.find('='));
+    if (key.find("TOKEN") != std::string::npos || key.find("SECRET") != std::string::npos ||
+        key.find("KEY") != std::string::npos || key.find("PASS") != std::string::npos ||
+        key.find("CRED") != std::string::npos)
+    {
+      continue;
+    }
+    for (const char *p : pre)
+    {
+      if (key.compare(0, std::strlen(p), p) == 0)
+      {
+        std::printf("PROBE env %s\n", kv.c_str());
+        break;
+      }
+    }
+  }
+  std::fflush(stdout);
+}
+
+// Prints the first calls of each job of a solver, and every call raising the peak.
+inline void Report(MPI_Comm comm, const void *solver, const char *what, int job,
+                   long long n, int nrhs, const int *icntl, const double *before,
+                   const double *after)
+{
+  double d[2 * kN], mx[2 * kN], sm[2 * kN];
+  for (int i = 0; i < kN; i++)
+  {
+    d[i] = after[i];
+    d[kN + i] = after[i] - before[i];
+  }
+  MPI_Allreduce(d, mx, 2 * kN, MPI_DOUBLE, MPI_MAX, comm);
+  MPI_Allreduce(d, sm, 2 * kN, MPI_DOUBLE, MPI_SUM, comm);
+  int r = 0, p = 1;
+  MPI_Comm_rank(comm, &r);
+  MPI_Comm_size(comm, &p);
+  static std::map<std::pair<const void *, int>, int> count;
+  const int c = ++count[{solver, job}];
+  const bool print = c <= 3 || mx[kN] > 16.0 || sm[kN] / p > 4.0 || job == -2 ||
+                     std::strcmp(what, "trim") == 0;
+  if (r == 0 && print)
+  {
+    std::printf("PROBE mumps %s solver=%p job=%d call=%d n=%lld nrhs=%d icntl14=%d "
+                "icntl20=%d icntl21=%d icntl26=%d icntl35=%d np=%d | hwm %.0f/%.0f "
+                "(d %+.1f/%+.1f) rss %.0f/%.0f (d %+.1f/%+.1f) anon %.0f shmem %.0f "
+                "file %.0f thp %.0f | heap %.0f free %.0f mmap %.0f MB avg/max\n",
+                what, solver, job, c, n, nrhs, icntl[13], icntl[19], icntl[20],
+                icntl[25], icntl[34], p, sm[0] / p, mx[0], sm[kN] / p, mx[kN], sm[1] / p,
+                mx[1], sm[kN + 1] / p, mx[kN + 1], sm[2] / p, sm[4] / p, sm[3] / p,
+                sm[5] / p, sm[6] / p, sm[7] / p, sm[8] / p);
+    std::fflush(stdout);
+  }
+}
+
+}  // namespace probe
+
 template <typename T>
 void MumpsSchurSolverT<T>::Call()
 {
+  MPI_Comm pc = MPI_Comm_f2c(id.comm_fortran);  // PROBE
+  probe::PrintEnvOnce(pc);                      // PROBE
+  double before[probe::kN], after[probe::kN];   // PROBE
+  probe::Read(before);                          // PROBE
+  const int job = id.job;                       // PROBE
   if constexpr (kComplex)
   {
     zmumps_c(&id);
@@ -437,6 +596,18 @@ void MumpsSchurSolverT<T>::Call()
   else
   {
     dmumps_c(&id);
+  }
+  probe::Read(after);                                                // PROBE
+  probe::Report(pc, this, kComplex ? "z" : "d", job, id.n, id.nrhs,  // PROBE
+                id.icntl, before, after);                            // PROBE
+  if (job == -2)                                                     // PROBE
+  {
+    probe::Read(before);  // PROBE
+#if defined(__linux__)
+    malloc_trim(0);  // PROBE
+#endif
+    probe::Read(after);                                                   // PROBE
+    probe::Report(pc, this, "trim", job, 0, 0, id.icntl, before, after);  // PROBE
   }
 }
 
