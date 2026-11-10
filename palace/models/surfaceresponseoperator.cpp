@@ -8,6 +8,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -22931,7 +22934,14 @@ struct DomainBoundaryContainmentCache
 
 struct SurfaceResponseGeometry::Impl
 {
-  ResponseCorrectionData config;
+  // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): between two
+  // constructions `config.patches` holds this rank's LOCAL placed patches only (released
+  // by ReleaseReplicatedPatches at the end of a construction; the full list re-assembled
+  // by RestoreReplicatedPatches, an order-preserving gather, before the next); the content
+  // never changes, only its residence — hence `mutable` on a shared const geometry.
+  mutable ResponseCorrectionData config;
+  mutable std::size_t global_patch_count = 0;
+  mutable bool patches_local = false;
   std::optional<AutomaticResponseDiagnostics> diagnostics;
   nlohmann::json statistics;
   bool maxwell = false;
@@ -22940,6 +22950,293 @@ struct SurfaceResponseGeometry::Impl
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
 };
+
+// C6: a placed patch packed into doubles, EVERY field of ResponseCorrectionPatchData
+// (configfile.hpp) in declaration order, so that the unpacked patch equals the packed one
+// field for field (the unit case test-responsegeometry-residency.cpp populates every field
+// and asserts it). A field added to the struct must be added here and there.
+void SurfaceResponseGeometry::PackPatch(std::vector<double> &out, std::size_t global_index,
+                                        const ResponsePatchData &patch)
+{
+  auto Push = [&](double value) { out.push_back(value); };
+  auto PushArray = [&](const auto &values)
+  {
+    for (const double value : values)
+    {
+      Push(value);
+    }
+  };
+  auto PushCount = [&](std::size_t count) { Push(static_cast<double>(count)); };
+  Push(static_cast<double>(global_index));
+  Push(static_cast<double>(patch.model));
+  PushArray(patch.origin);
+  PushArray(patch.axis_u);
+  PushArray(patch.axis_v);
+  PushArray(patch.axis_w);
+  PushCount(patch.conductor_references.size());
+  for (const auto &reference : patch.conductor_references)
+  {
+    PushArray(reference);
+  }
+  PushCount(patch.conductor_probe_edges.size());
+  for (const auto &edge : patch.conductor_probe_edges)
+  {
+    Push(edge.offset);
+    Push(static_cast<double>(edge.gap_direction));
+    Push(static_cast<double>(edge.conductor));
+    Push(static_cast<double>(edge.piece));
+  }
+  PushCount(patch.conductor_probes.size());
+  for (const auto &probe : patch.conductor_probes)
+  {
+    PushArray(probe.point);
+    Push(static_cast<double>(probe.edge));
+    Push(static_cast<double>(probe.end_face));
+  }
+  Push(patch.weight);
+  Push(patch.domain_weight);
+  PushArray(patch.longitudinal_cell);
+  Push(static_cast<double>(patch.interpolation_group));
+  PushCount(patch.maxwell_conductor_anchors.size());
+  for (const auto &anchor : patch.maxwell_conductor_anchors)
+  {
+    PushArray(anchor);
+  }
+  Push(patch.maxwell_reference_is_pec ? 1.0 : 0.0);
+  const auto &provenance = patch.provenance;
+  Push(static_cast<double>(provenance.feature));
+  Push(static_cast<double>(provenance.segment));
+  Push(provenance.s0);
+  Push(provenance.s1);
+  Push(static_cast<double>(provenance.stretch));
+  Push(provenance.edge_offset);
+  PushArray(provenance.own_cell[0]);
+  PushArray(provenance.own_cell[1]);
+  Push(provenance.has_own_cell ? 1.0 : 0.0);
+  Push(provenance.quadrature_weight);
+  Push(provenance.model_weight);
+  Push(provenance.side_factor);
+  Push(provenance.coupon_depth);
+  for (const auto *claims : {&provenance.claims, &provenance.raw_claims})
+  {
+    PushCount(claims->size());
+    for (const auto &claim : *claims)
+    {
+      Push(static_cast<double>(claim.segment));
+      PushArray(claim.p0);
+      PushArray(claim.p1);
+    }
+  }
+  PushArray(provenance.support_box);
+  Push(provenance.has_support_box ? 1.0 : 0.0);
+  for (const auto *quads : {&provenance.chain, &provenance.foreign})
+  {
+    PushCount(quads->size());
+    for (const auto &quad : *quads)
+    {
+      PushArray(quad);
+    }
+  }
+  Push(static_cast<double>(provenance.mirror_formed_topology));
+  Push(provenance.mirror_reach);
+  PushCount(provenance.mirror_edge_weights.size());
+  PushArray(provenance.mirror_edge_weights);
+  PushCount(provenance.probe_snaps.size());
+  for (const auto &snap : provenance.probe_snaps)
+  {
+    Push(static_cast<double>(snap.vertex));
+    Push(static_cast<double>(snap.segment));
+    Push(static_cast<double>(snap.arc));
+    PushArray(snap.displacement);
+    Push(snap.distance);
+  }
+  Push(provenance.probe_snaps_computed ? 1.0 : 0.0);
+}
+
+// The inverse of PackPatch from `values[offset]`; returns the offset after the patch.
+std::size_t SurfaceResponseGeometry::UnpackPatch(const std::vector<double> &values,
+                                                 std::size_t offset,
+                                                 std::size_t &global_index,
+                                                 ResponsePatchData &patch)
+{
+  auto Next = [&]()
+  {
+    MFEM_VERIFY(offset < values.size(), "Truncated packed response patch!");
+    return values[offset++];
+  };
+  auto NextInt = [&]() { return static_cast<int>(std::llround(Next())); };
+  auto NextCount = [&]() { return static_cast<std::size_t>(std::llround(Next())); };
+  auto NextArray = [&](auto &values_out)
+  {
+    for (auto &value : values_out)
+    {
+      value = Next();
+    }
+  };
+  global_index = NextCount();
+  patch.model = NextInt();
+  NextArray(patch.origin);
+  NextArray(patch.axis_u);
+  NextArray(patch.axis_v);
+  NextArray(patch.axis_w);
+  patch.conductor_references.resize(NextCount());
+  for (auto &reference : patch.conductor_references)
+  {
+    NextArray(reference);
+  }
+  patch.conductor_probe_edges.resize(NextCount());
+  for (auto &edge : patch.conductor_probe_edges)
+  {
+    edge.offset = Next();
+    edge.gap_direction = NextInt();
+    edge.conductor = NextInt();
+    edge.piece = NextInt();
+  }
+  patch.conductor_probes.resize(NextCount());
+  for (auto &probe : patch.conductor_probes)
+  {
+    NextArray(probe.point);
+    probe.edge = NextInt();
+    probe.end_face = NextInt();
+  }
+  patch.weight = Next();
+  patch.domain_weight = Next();
+  NextArray(patch.longitudinal_cell);
+  patch.interpolation_group = NextInt();
+  patch.maxwell_conductor_anchors.resize(NextCount());
+  for (auto &anchor : patch.maxwell_conductor_anchors)
+  {
+    NextArray(anchor);
+  }
+  patch.maxwell_reference_is_pec = Next() > 0.5;
+  auto &provenance = patch.provenance;
+  provenance.feature = NextInt();
+  provenance.segment = NextInt();
+  provenance.s0 = Next();
+  provenance.s1 = Next();
+  provenance.stretch = NextInt();
+  provenance.edge_offset = Next();
+  NextArray(provenance.own_cell[0]);
+  NextArray(provenance.own_cell[1]);
+  provenance.has_own_cell = Next() > 0.5;
+  provenance.quadrature_weight = Next();
+  provenance.model_weight = Next();
+  provenance.side_factor = Next();
+  provenance.coupon_depth = Next();
+  for (auto *claims : {&provenance.claims, &provenance.raw_claims})
+  {
+    claims->resize(NextCount());
+    for (auto &claim : *claims)
+    {
+      claim.segment = NextInt();
+      NextArray(claim.p0);
+      NextArray(claim.p1);
+    }
+  }
+  NextArray(provenance.support_box);
+  provenance.has_support_box = Next() > 0.5;
+  for (auto *quads : {&provenance.chain, &provenance.foreign})
+  {
+    quads->resize(NextCount());
+    for (auto &quad : *quads)
+    {
+      NextArray(quad);
+    }
+  }
+  provenance.mirror_formed_topology = NextInt();
+  provenance.mirror_reach = Next();
+  provenance.mirror_edge_weights.resize(NextCount());
+  NextArray(provenance.mirror_edge_weights);
+  provenance.probe_snaps.resize(NextCount());
+  for (auto &snap : provenance.probe_snaps)
+  {
+    snap.vertex = NextInt();
+    snap.segment = NextInt();
+    snap.arc = NextInt();
+    NextArray(snap.displacement);
+    snap.distance = Next();
+  }
+  provenance.probe_snaps_computed = Next() > 0.5;
+  return offset;
+}
+
+bool SurfaceResponseGeometry::PatchesLocal() const
+{
+  return impl->patches_local;
+}
+
+std::size_t SurfaceResponseGeometry::RetainedPatchCount() const
+{
+  return impl->config.patches.size();
+}
+
+std::size_t SurfaceResponseGeometry::GlobalPatchCount() const
+{
+  return impl->patches_local ? impl->global_patch_count : impl->config.patches.size();
+}
+
+void SurfaceResponseGeometry::ReleaseReplicatedPatches(MPI_Comm comm) const
+{
+  const Impl &impl = *this->impl;
+  if (impl.patches_local)
+  {
+    return;
+  }
+  const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  impl.global_patch_count = impl.config.patches.size();
+  std::vector<ResponsePatchData> local;
+  for (std::size_t patch_idx = 0; patch_idx < impl.config.patches.size(); patch_idx++)
+  {
+    if (static_cast<int>(patch_idx % size) == rank)
+    {
+      local.push_back(std::move(impl.config.patches[patch_idx]));
+    }
+  }
+  impl.config.patches = std::move(local);
+  impl.config.patches.shrink_to_fit();
+  impl.patches_local = true;
+#if defined(__GLIBC__)
+  // A1.4 I-14 (glibc only; results-neutral): the freed pages back to the system.
+  malloc_trim(0);
+#endif
+}
+
+void SurfaceResponseGeometry::RestoreReplicatedPatches(MPI_Comm comm) const
+{
+  const Impl &impl = *this->impl;
+  if (!impl.patches_local)
+  {
+    return;
+  }
+  // The local subsets packed with their global indices and allgathered in rank order;
+  // placed by index: the list released by ReleaseReplicatedPatches, element for element.
+  std::vector<double> local;
+  const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  for (std::size_t k = 0; k < impl.config.patches.size(); k++)
+  {
+    PackPatch(local, static_cast<std::size_t>(rank) + k * size, impl.config.patches[k]);
+  }
+  const std::vector<double> values = Mpi::AllgatherLarge(local, comm);
+  std::vector<ResponsePatchData> patches(impl.global_patch_count);
+  std::vector<unsigned char> placed(impl.global_patch_count, 0);
+  std::size_t offset = 0, count = 0;
+  while (offset < values.size())
+  {
+    std::size_t global_index = 0;
+    ResponsePatchData patch;
+    offset = UnpackPatch(values, offset, global_index, patch);
+    MFEM_VERIFY(global_index < patches.size() && !placed[global_index],
+                "The re-assembled response-patch list has a misplaced patch!");
+    patches[global_index] = std::move(patch);
+    placed[global_index] = 1;
+    count++;
+  }
+  MFEM_VERIFY(count == impl.global_patch_count,
+              "The re-assembled response-patch list holds "
+                  << count << " of " << impl.global_patch_count << " patches!");
+  impl.config.patches = std::move(patches);
+  impl.patches_local = false;
+}
 
 namespace
 {
@@ -26231,6 +26528,25 @@ int ReflectPointsIntoDomain(
   return reflected;
 }
 
+std::size_t DomainBoundaryContainmentBlockPoints()
+{
+  // Lane fix-response-memory (decision 1446, C3 / DESIGN s2.5 I-7): the containment
+  // test's per-point lists are built for a block of candidates at a time, at most this
+  // many points per block (35 B per point: 2^23 points = 0.3 GB per rank). Results-neutral:
+  // every block size gives the same exclusions (the per-point reductions are elementwise,
+  // the per-candidate decision reads its own points). No job of record sets the variable.
+  constexpr std::size_t default_block_points = std::size_t(1) << 23;
+  const char *environment = std::getenv("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
+  if (!environment || std::string_view(environment).empty())
+  {
+    return default_block_points;
+  }
+  const long long value = std::atoll(environment);
+  MFEM_VERIFY(value > 0, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS must be a positive "
+                         "point count (default 8388608)!");
+  return static_cast<std::size_t>(value);
+}
+
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh, std::vector<ResponsePatchData> &patches,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
@@ -26241,7 +26557,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
     double mirror_band,
     const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions,
-    GeometryFallbackLedger *geometry_ledger)
+    GeometryFallbackLedger *geometry_ledger, std::size_t block_points)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -26249,21 +26565,34 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
               "The domain-boundary exclusion applies to three-dimensional devices!");
   const auto comm = mesh.GetComm();
   DomainBoundaryExclusions result;
+  MFEM_VERIFY(block_points > 0,
+              "The containment test's block needs a positive point count!");
 
-  // The tested points of every candidate patch (the same list on every rank).
+  // The candidate patches and their tested-point counts (the same list on every rank). The
+  // points themselves are generated per BLOCK of candidates below (C3: at most
+  // `block_points` per block, the lists freed between blocks); the offsets are global.
   const double inset = kSignatureParameterToleranceOverRadius * matching_radius;
   constexpr std::size_t no_reference = std::numeric_limits<std::size_t>::max();
   std::vector<std::size_t> candidates;
   std::vector<std::size_t> point_offsets = {0};
-  // Per candidate, the index of its first conductor reference at the origin section (the
-  // metal-edge point, which lies on a mesh face for every correctly placed patch, a metal
-  // edge on a chip-outline face included): its absence is a misplaced or mis-scaled
+  // Per candidate, the GLOBAL index of its first conductor reference at the origin section
+  // (the metal-edge point, which lies on a mesh face for every correctly placed patch, a
+  // metal edge on a chip-outline face included): its absence is a misplaced or mis-scaled
   // coupon, never a domain cut, and fails closed below (decision 260).
   std::vector<std::size_t> origin_references;
-  std::vector<std::array<double, 3>> points;
-  // Per point, the band of its reflection: the global band, widened to the coupon's own
-  // reach for a mirror-formed configuration's coupon (decision 557 (4)).
-  std::vector<double> point_band;
+  // The cross-sections of a candidate: the origin and, for a longitudinal cell, both ends
+  // moved inward.
+  auto SectionsOf = [&](const ResponsePatchData &patch, bool spatial)
+  {
+    std::vector<double> sections = {0.0};
+    const auto &cell = patch.longitudinal_cell;
+    if (!spatial && cell[1] > cell[0])
+    {
+      sections.push_back(std::min(0.0, cell[0] + inset));
+      sections.push_back(std::max(0.0, cell[1] - inset));
+    }
+    return sections;
+  };
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
     const auto &patch = patches[patch_idx];
@@ -26272,20 +26601,29 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     {
       continue;
     }
-    const double patch_band = std::max(mirror_band, patch.provenance.mirror_reach);
+    const std::size_t point_count = point_offsets.back();
     origin_references.push_back(patch.conductor_references.empty()
                                     ? no_reference
-                                    : points.size() + local_points->size());
+                                    : point_count + local_points->size());
+    const std::size_t sections = SectionsOf(patch, spatial_basis(patch.model)).size();
+    candidates.push_back(patch_idx);
+    point_offsets.push_back(point_count + sections * (local_points->size() +
+                                                      patch.conductor_references.size()));
+  }
+  result.tested_patches = static_cast<long long int>(candidates.size());
+  result.tested_points = static_cast<long long int>(point_offsets.back());
+  // The tested points of candidate c appended to `points` (the former per-candidate loop,
+  // the same arithmetic) with the band of their reflection: the global band, widened to the
+  // coupon's own reach for a mirror-formed configuration's coupon (decision 557 (4)).
+  auto AppendCandidatePoints = [&](std::size_t c,
+                                   std::vector<std::array<double, 3>> &points,
+                                   std::vector<double> &point_band)
+  {
+    const auto &patch = patches[candidates[c]];
+    const auto *local_points = basis_points(patch.model);
+    const double patch_band = std::max(mirror_band, patch.provenance.mirror_reach);
     const bool spatial = spatial_basis(patch.model);
-    // The cross-sections: the origin and, for a longitudinal cell, both ends moved inward.
-    std::vector<double> sections = {0.0};
-    const auto &cell = patch.longitudinal_cell;
-    if (!spatial && cell[1] > cell[0])
-    {
-      sections.push_back(std::min(0.0, cell[0] + inset));
-      sections.push_back(std::max(0.0, cell[1] - inset));
-    }
-    for (const double section : sections)
+    for (const double section : SectionsOf(patch, spatial))
     {
       for (const auto &local : *local_points)
       {
@@ -26312,23 +26650,27 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         points.push_back(point);
       }
     }
-    candidates.push_back(patch_idx);
     point_band.resize(points.size(), patch_band);
-    point_offsets.push_back(points.size());
-  }
-  result.tested_patches = static_cast<long long int>(candidates.size());
-  result.tested_points = static_cast<long long int>(points.size());
+  };
 
   // Every rank locates every point in its local mesh with the operator's locator and its
   // tolerances; the found flags are OR-reduced, so the decision is the partition's union.
-  // Phase times (decision 538 diagnosis): recorded in the result, printed by the caller.
+  // Phase times (decision 538 diagnosis): the per-phase durations summed over the blocks,
+  // recorded in the result, printed by the caller.
   auto Elapsed = [&]()
   {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   };
-  result.phase_times["points"] = Elapsed();
+  double phase_mark = Elapsed();
+  auto Phase = [&](const char *name)
+  {
+    const double now = Elapsed();
+    result.phase_times[name] += now - phase_mark;
+    phase_mark = now;
+  };
+  Phase("points");
   ElementPointLocator locator(mesh, dimension);
-  result.phase_times["locator"] = Elapsed();
+  Phase("locator");
   double locator_scale = 0.0;
   for (int d = 0; d < dimension; d++)
   {
@@ -26340,38 +26682,15 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   const double box_tolerance =
       1.0e-11 * locator_scale +
       64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, locator_scale);
-  std::vector<unsigned char> found(points.size(), 0);
-  {
-    std::vector<int> element_candidates;
-    int element;
-    mfem::IntegrationPoint reference;
-    for (std::size_t i = 0; i < points.size(); i++)
-    {
-      if (locator.Find(points[i], box_tolerance, element, reference, element_candidates))
-      {
-        found[i] = 1;
-      }
-    }
-  }
-  result.phase_times["find"] = Elapsed();
-  if (!found.empty())
-  {
-    // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the reduction in chunks (64-bit
-    // sized).
-    Mpi::GlobalMaxLarge(found, comm);
-  }
-  result.phase_times["reduce"] = Elapsed();
   // Mirror (boundary-cut DESIGN 2.2.3): every outside point beyond a Natural plane within
   // the band is reflected into the domain (canonical plane order) and located again; its
   // found flag is OR-reduced like the original's (the same arithmetic on every rank).
-  std::vector<unsigned char> reflected(points.size(), 0);
+  const auto planes = MirrorPlanesOf(mirror_planes);
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
   // Per outside point, why it was not reflected (Diagnostics.DomainBoundary.Reasons; the
   // same arithmetic on every rank): 0 none / reflected, 1 beyond no truncation plane, 2
   // beyond an Unsupported / NonPlanar plane, 3 beyond a Natural plane by more than the
   // band, 4 reflected into the domain but not located.
-  std::vector<unsigned char> unreflected_reason(points.size(), 0);
-  const auto planes = MirrorPlanesOf(mirror_planes);
-  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
   auto ReasonOf = [&](const std::array<double, 3> &point, double band)
   {
     unsigned char reason = 1;
@@ -26413,432 +26732,503 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     }
     return on_plane && locator.Find(nudged, box_tolerance, element, reference, candidates);
   };
-  if (!mirror_planes.empty() && mirror_band > 0.0)
+  // The candidates in blocks of at most `block_points` tested points (a candidate larger
+  // than a block is a block of its own): the block boundaries are a function of the
+  // replicated offsets alone, so every rank forms the same blocks. Per block the SAME
+  // per-point computations and elementwise reductions as the former whole-list form, and
+  // the same per-candidate decision on its own points, appended in ascending candidate
+  // order; the misplaced-reference abort (fail closed, decision 260) fires at the
+  // offending block.
+  std::size_t c_begin = 0;
+  while (c_begin < candidates.size())
   {
-    std::vector<int> element_candidates;
-    int element;
-    mfem::IntegrationPoint reference;
-    for (std::size_t i = 0; i < points.size(); i++)
+    std::size_t c_end = c_begin + 1;
+    while (c_end < candidates.size() &&
+           point_offsets[c_end + 1] - point_offsets[c_begin] <= block_points)
     {
-      if (found[i])
-      {
-        continue;
-      }
-      const auto image = ReflectIntoDomain(points[i], planes, point_band[i], tolerance);
-      if (image && !image->planes.empty() &&
-          locator.Find(image->point, box_tolerance, element, reference, element_candidates))
-      {
-        reflected[i] = 1;
-      }
-      else if (point_band[i] > mirror_band && image && !image->planes.empty() &&
-               OnPlaneInside(image->point, element, reference, element_candidates))
-      {
-        // A point of a mirror-formed coupon ON one of its planes (the configuration's
-        // canonical origin, the centroid of a symmetric configuration, lies on the plane to
-        // roundoff): beyond it by ~1e-11 and reflected to ~1e-11 inside, where the element
-        // inversion's reference tolerance can still refuse it. Located at the plane
-        // (nudged inward by the on-plane tolerance along the planes' inward normals) it is
-        // a point of the closed domain: applied with its reflection like any other.
-        reflected[i] = 1;
-      }
-      else
-      {
-        unreflected_reason[i] = ReasonOf(points[i], point_band[i]);
-      }
+      c_end++;
     }
-    Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
-  }
-  // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
-  // on every rank after the reduction, so every rank aborts together); a reference whose
-  // reflection is located is a cut-adjacent coupon (decision 314's follow-up), judged
-  // below like any other point.
-  auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
-  {
-    const auto &patch = patches[candidates[c]];
-    return fmt::format(
-        "Surface-response patch {:d} (0-based, as in the record and the dry run; model {}) "
-        "is a misplaced or mis-scaled coupon: {} lies outside the device mesh (tested "
-        "point {:d} of {:d} at ({:.9e}, {:.9e}, {:.9e}) mesh units)!",
-        candidates[c], model_name(patch.model), reason, point - point_offsets[c],
-        point_offsets[c + 1] - point_offsets[c], points[point][0] * coordinate_scale,
-        points[point][1] * coordinate_scale, points[point][2] * coordinate_scale);
-  };
-  // F-6 (readiness hardening-2, decision 1018 Q4; the census QUO-019 strip islands whose
-  // lower edge lies ON the tile wall): a reference neither located nor reflected whose
-  // distance to the nearest element box is within the identification's own length
-  // tolerance (kSignatureParameterToleranceOverRadius x R, 1.9 nm at R = 1.9 um; the
-  // locator's box tolerance is ~1e-11 of the mesh scale) is a reference ON the mesh
-  // boundary to roundoff: read as located, the patch continues through the classification
-  // below (its other points decide: applied, Mirrored or DomainBoundary). Beyond the
-  // tolerance the reference is off the mesh: without a ledger the abort of record; under
-  // the ledger the patch is excluded (weight 0, reason MisplacedReference, its raw claims
-  // kept by the DomainBoundary portions) and UnlocatedPatch recorded. The distances are
-  // GlobalMin'd like the other outside points' below (the same decision on every rank).
-  std::vector<unsigned char> misplaced_reference(candidates.size(), 0);
-  {
-    std::vector<std::size_t> unlocated;
-    for (std::size_t c = 0; c < candidates.size(); c++)
+    const std::size_t block_base = point_offsets[c_begin];
+    std::vector<std::array<double, 3>> points;
+    std::vector<double> point_band;
+    points.reserve(point_offsets[c_end] - block_base);
+    for (std::size_t c = c_begin; c < c_end; c++)
     {
-      const std::size_t reference = origin_references[c];
-      if (reference != no_reference && !found[reference] && !reflected[reference])
+      AppendCandidatePoints(c, points, point_band);
+    }
+    MFEM_VERIFY(points.size() == point_offsets[c_end] - block_base,
+                "The containment test's block holds " << points.size() << " points, "
+                                                      << point_offsets[c_end] - block_base
+                                                      << " expected!");
+    // The block-local index of a global point.
+    auto BlockLocal = [&](std::size_t global) { return global - block_base; };
+    Phase("points");
+    std::vector<unsigned char> found(points.size(), 0);
+    {
+      std::vector<int> element_candidates;
+      int element;
+      mfem::IntegrationPoint reference;
+      for (std::size_t i = 0; i < points.size(); i++)
       {
-        unlocated.push_back(c);
-      }
-    }
-    std::vector<double> reference_distances(unlocated.size());
-    for (std::size_t k = 0; k < unlocated.size(); k++)
-    {
-      reference_distances[k] = locator.BoxDistance(points[origin_references[unlocated[k]]]);
-    }
-    if (!reference_distances.empty())
-    {
-      Mpi::GlobalMin(static_cast<int>(reference_distances.size()),
-                     reference_distances.data(), comm);
-    }
-    for (std::size_t k = 0; k < unlocated.size(); k++)
-    {
-      const std::size_t c = unlocated[k];
-      const std::size_t reference = origin_references[c];
-      if (reference_distances[k] <= tolerance)
-      {
-        found[reference] = 1;
-        continue;
-      }
-      if (!geometry_ledger)
-      {
-        MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
-      }
-      misplaced_reference[c] = 1;
-    }
-  }
-  // The UnlocatedPatch record of an excluded patch (the former misplaced-coupon abort's
-  // text with the point's distance): what "patch", its model and feature, the unlocated
-  // point, the patch's own length (its longitudinal cell, else its claims; mesh units).
-  auto RecordUnlocatedPatch = [&](std::size_t c, std::size_t point, const char *site,
-                                  const char *what_point, double distance)
-  {
-    const auto &patch = patches[candidates[c]];
-    GeometryFallbackData entry;
-    entry.cls = "UnlocatedPatch";
-    entry.site = site;
-    entry.reason =
-        DescribeMisplacedPatch(c, point, what_point) +
-        fmt::format(" (distance {:.6e} mesh units from the nearest element box; the "
-                    "boundary tolerance {:.6e})",
-                    distance, tolerance);
-    entry.what = "patch";
-    entry.patches = {static_cast<int>(candidates[c])};
-    entry.models = {model_name(patch.model)};
-    entry.features = {patch.provenance.feature};
-    entry.example_origin = points[point];
-    const auto &cell = patch.longitudinal_cell;
-    if (patch.provenance.coupon_depth > 0.0 && cell[1] > cell[0])
-    {
-      entry.length = cell[1] - cell[0];
-    }
-    else
-    {
-      for (const auto *claims : {&patch.provenance.claims, &patch.provenance.raw_claims})
-      {
-        for (const auto &claim : *claims)
+        if (locator.Find(points[i], box_tolerance, element, reference, element_candidates))
         {
-          entry.length += Norm(Subtract(claim.p1, claim.p0));
+          found[i] = 1;
         }
       }
     }
-    geometry_ledger->Record(std::move(entry));
-  };
-  result.phase_times["reflect"] = Elapsed();
-  // The distance of every outside point to the nearest element box, over the ranks.
-  std::vector<std::size_t> outside;
-  for (std::size_t i = 0; i < points.size(); i++)
-  {
-    if (!found[i])
+    Phase("find");
+    if (!found.empty())
     {
-      outside.push_back(i);
+      // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the reduction in chunks (64-bit
+      // sized).
+      Mpi::GlobalMaxLarge(found, comm);
     }
-  }
-  std::vector<double> distances(outside.size());
-  for (std::size_t k = 0; k < outside.size(); k++)
-  {
-    distances[k] = locator.BoxDistance(points[outside[k]]);
-  }
-  if (!distances.empty())
-  {
-    Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
-  }
-  result.phase_times["distances"] = Elapsed();
-
-  std::size_t k = 0;
-  for (std::size_t c = 0; c < candidates.size(); c++)
-  {
-    const std::size_t begin = point_offsets[c], end = point_offsets[c + 1];
-    DomainBoundaryExclusion exclusion;
-    exclusion.patch = candidates[c];
-    exclusion.tested_points = static_cast<int>(end - begin);
-    exclusion.nearest_distance = mfem::infinity();
-    while (k < outside.size() && outside[k] < end)
+    Phase("reduce");
+    std::vector<unsigned char> reflected(points.size(), 0);
+    std::vector<unsigned char> unreflected_reason(points.size(), 0);
+    if (!mirror_planes.empty() && mirror_band > 0.0)
     {
-      exclusion.outside_points++;
-      if (distances[k] < exclusion.nearest_distance)
+      std::vector<int> element_candidates;
+      int element;
+      mfem::IntegrationPoint reference;
+      for (std::size_t i = 0; i < points.size(); i++)
       {
-        exclusion.nearest_distance = distances[k];
-        exclusion.nearest_outside_point = points[outside[k]];
-      }
-      k++;
-    }
-    if (misplaced_reference[c])
-    {
-      // F-6 under the ledger: the reference off the mesh beyond the boundary tolerance.
-      const std::size_t reference = origin_references[c];
-      const auto position = std::lower_bound(outside.begin(), outside.end(), reference);
-      MFEM_VERIFY(position != outside.end() && *position == reference,
-                  "An unlocated metal-edge reference is missing from the outside points!");
-      RecordUnlocatedPatch(c, reference, "H9a/FindDomainBoundaryExclusions:reference",
-                           "its metal-edge reference",
-                           distances[static_cast<std::size_t>(position - outside.begin())]);
-      exclusion.reason = "MisplacedReference";
-      patches[exclusion.patch].weight = 0.0;
-      result.patches.push_back(exclusion);
-      continue;
-    }
-    // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
-    // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
-    // footprint (a translational cell's [s0, s1] on its segment; a vertex / cluster
-    // coupon's claims) overlaps one of its REAL portions whose identification DIFFERS
-    // between the unextended and the extended run (decision 512 (c): a portion identified
-    // identically keeps its model, so an unmerged chain never sends its far cells raw) -
-    // are DomainBoundary (raw kept, F-DB-a), never applied with a single-sided model; a
-    // neighbour's cells keep their
-    // Applied / Mirrored classification as next to any Missing feature. The coupon
-    // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
-    // for a spatial patch; slab clipping against every portion, real or image) is recorded
-    // as INFORMATION only (decision 481).
-    if (!unmerged_portions.empty())
-    {
-      const auto &patch = patches[exclusion.patch];
-      const double tol = kSignatureParameterToleranceOverRadius * matching_radius;
-      // (a) own-edge overlap with a real portion
-      auto OverlapAlong =
-          [&](const std::array<double, 3> &P0, const std::array<double, 3> &P1,
-              const std::array<double, 3> &q0, const std::array<double, 3> &q1)
-      {
-        // Both on the same segment: the overlap of their arc-length intervals.
-        double L = 0.0;
-        std::array<double, 3> d{};
-        for (int k = 0; k < 3; k++)
-        {
-          d[k] = P1[k] - P0[k];
-          L += d[k] * d[k];
-        }
-        L = std::sqrt(L);
-        if (L <= 0.0)
-        {
-          return 0.0;
-        }
-        double a = 0.0, b = 0.0;
-        for (int k = 0; k < 3; k++)
-        {
-          a += (q0[k] - P0[k]) * d[k] / L;
-          b += (q1[k] - P0[k]) * d[k] / L;
-        }
-        return std::min(std::max(a, b), L) - std::max(std::min(a, b), 0.0);
-      };
-      for (const auto &portion : unmerged_portions)
-      {
-        // Image portions are never own; a real portion the unextended run identifies
-        // exactly as the extended run does is not the configuration's own either
-        // (decision 512 (c)): its cells keep their models. The configuration's OWN coupon
-        // (placed by its contract, decision 557 (4): its claims ARE these real portions)
-        // is not a cell of the configuration.
-        if (portion.image || portion.identical ||
-            patch.provenance.mirror_formed_topology == portion.topology)
+        if (found[i])
         {
           continue;
         }
-        bool own = false;
-        if (patch.provenance.coupon_depth > 0.0 && patch.provenance.segment >= 0)
+        const auto image = ReflectIntoDomain(points[i], planes, point_band[i], tolerance);
+        if (image && !image->planes.empty() &&
+            locator.Find(image->point, box_tolerance, element, reference,
+                         element_candidates))
         {
-          // The CELL's own-edge extent (not the feature's whole portion on the segment,
-          // which provenance.s0 / s1 record): its longitudinal cell about the origin on
-          // the side's own edge (edge_offset along AxisU; mesh units like the origin).
-          if (patch.provenance.segment == static_cast<int>(portion.segment))
-          {
-            const auto &cell = patch.longitudinal_cell;
-            std::array<double, 3> q0{}, q1{};
-            for (int k = 0; k < 3; k++)
-            {
-              const double edge =
-                  patch.origin[k] + patch.provenance.edge_offset * patch.axis_u[k];
-              q0[k] = edge + cell[0] * patch.axis_w[k];
-              q1[k] = edge + cell[1] * patch.axis_w[k];
-            }
-            own = OverlapAlong(portion.p0, portion.p1, q0, q1) > tol;
-          }
+          reflected[i] = 1;
+        }
+        else if (point_band[i] > mirror_band && image && !image->planes.empty() &&
+                 OnPlaneInside(image->point, element, reference, element_candidates))
+        {
+          // A point of a mirror-formed coupon ON one of its planes (the configuration's
+          // canonical origin, the centroid of a symmetric configuration, lies on the plane
+          // to roundoff): beyond it by ~1e-11 and reflected to ~1e-11 inside, where the
+          // element inversion's reference tolerance can still refuse it. Located at the
+          // plane (nudged inward by the on-plane tolerance along the planes' inward
+          // normals) it is a point of the closed domain: applied with its reflection like
+          // any other.
+          reflected[i] = 1;
         }
         else
         {
-          for (const auto *claims :
-               {&patch.provenance.raw_claims, &patch.provenance.claims})
-          {
-            for (const auto &claim : *claims)
-            {
-              if (claim.segment != static_cast<int>(portion.segment))
-              {
-                continue;
-              }
-              // The claims' ends are segment points in mesh units (the identification's
-              // keys), like the portion's.
-              own = own || OverlapAlong(portion.p0, portion.p1, claim.p0, claim.p1) > tol;
-            }
-          }
-        }
-        if (own && (exclusion.unmerged_topology < 0 || !exclusion.unmerged_own))
-        {
-          exclusion.unmerged_topology = portion.topology;
-          exclusion.unmerged_p0 = portion.p0;
-          exclusion.unmerged_p1 = portion.p1;
-          exclusion.unmerged_image = false;
-          exclusion.unmerged_distance = 0.0;
-          exclusion.unmerged_own = true;
+          unreflected_reason[i] = ReasonOf(points[i], point_band[i]);
         }
       }
-      // (b) the support's reach (information)
-      const bool spatial = spatial_basis(patch.model);
-      const auto &cell = patch.longitudinal_cell;
-      const std::array<double, 3> lower = {
-          -matching_radius, -matching_radius,
-          (!spatial && cell[1] > cell[0]) ? cell[0] : -matching_radius};
-      const std::array<double, 3> upper = {
-          matching_radius, matching_radius,
-          (!spatial && cell[1] > cell[0]) ? cell[1] : matching_radius};
-      auto Local = [&](const std::array<double, 3> &p)
+      Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
+    }
+    // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
+    // on every rank after the reduction, so every rank aborts together); a reference whose
+    // reflection is located is a cut-adjacent coupon (decision 314's follow-up), judged
+    // below like any other point.
+    auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
+    {
+      const auto &patch = patches[candidates[c]];
+      return fmt::format(
+          "Surface-response patch {:d} (0-based, as in the record and the dry run; model "
+          "{}) is a misplaced or mis-scaled coupon: {} lies outside the device mesh "
+          "(tested "
+          "point {:d} of {:d} at ({:.9e}, {:.9e}, {:.9e}) mesh units)!",
+          candidates[c], model_name(patch.model), reason, point - point_offsets[c],
+          point_offsets[c + 1] - point_offsets[c],
+          points[BlockLocal(point)][0] * coordinate_scale,
+          points[BlockLocal(point)][1] * coordinate_scale,
+          points[BlockLocal(point)][2] * coordinate_scale);
+    };
+    // F-6 (readiness hardening-2, decision 1018 Q4; the census QUO-019 strip islands whose
+    // lower edge lies ON the tile wall): a reference neither located nor reflected whose
+    // distance to the nearest element box is within the identification's own length
+    // tolerance (kSignatureParameterToleranceOverRadius x R, 1.9 nm at R = 1.9 um; the
+    // locator's box tolerance is ~1e-11 of the mesh scale) is a reference ON the mesh
+    // boundary to roundoff: read as located, the patch continues through the
+    // classification below (its other points decide: applied, Mirrored or DomainBoundary).
+    // Beyond the tolerance the reference is off the mesh: without a ledger the abort of
+    // record; under the ledger the patch is excluded (weight 0, reason MisplacedReference,
+    // its raw claims kept by the DomainBoundary portions) and UnlocatedPatch recorded. The
+    // distances are GlobalMin'd like the other outside points' below (the same decision on
+    // every rank).
+    std::vector<unsigned char> misplaced_reference(c_end - c_begin, 0);
+    {
+      std::vector<std::size_t> unlocated;
+      for (std::size_t c = c_begin; c < c_end; c++)
       {
-        std::array<double, 3> local{};
-        for (int d = 0; d < 3; d++)
+        const std::size_t reference = origin_references[c];
+        if (reference != no_reference && !found[BlockLocal(reference)] &&
+            !reflected[BlockLocal(reference)])
         {
-          local[0] += (p[d] - patch.origin[d]) * patch.axis_u[d];
-          local[1] += (p[d] - patch.origin[d]) * patch.axis_v[d];
-          local[2] += (p[d] - patch.origin[d]) * patch.axis_w[d];
+          unlocated.push_back(c);
         }
-        return local;
-      };
-      DomainBoundaryUnmergedReach reach;
-      reach.patch = exclusion.patch;
-      for (const auto &portion : unmerged_portions)
+      }
+      std::vector<double> reference_distances(unlocated.size());
+      for (std::size_t k = 0; k < unlocated.size(); k++)
       {
-        const auto a = Local(portion.p0), b = Local(portion.p1);
-        double t0 = 0.0, t1 = 1.0;
-        bool hit = true;
-        for (int d = 0; d < 3 && hit; d++)
+        reference_distances[k] =
+            locator.BoxDistance(points[BlockLocal(origin_references[unlocated[k]])]);
+      }
+      if (!reference_distances.empty())
+      {
+        Mpi::GlobalMin(static_cast<int>(reference_distances.size()),
+                       reference_distances.data(), comm);
+      }
+      for (std::size_t k = 0; k < unlocated.size(); k++)
+      {
+        const std::size_t c = unlocated[k];
+        const std::size_t reference = origin_references[c];
+        if (reference_distances[k] <= tolerance)
         {
-          const double lo = lower[d] - tol, hi = upper[d] + tol;
-          const double delta = b[d] - a[d];
-          if (std::abs(delta) < 1.0e-300)
-          {
-            hit = a[d] >= lo && a[d] <= hi;
-            continue;
-          }
-          double ta = (lo - a[d]) / delta, tb = (hi - a[d]) / delta;
-          if (ta > tb)
-          {
-            std::swap(ta, tb);
-          }
-          t0 = std::max(t0, ta);
-          t1 = std::min(t1, tb);
-          hit = t0 <= t1;
-        }
-        if (!hit)
-        {
+          found[BlockLocal(reference)] = 1;
           continue;
         }
-        double ab = 0.0, aa = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          ab += (b[d] - a[d]) * (b[d] - a[d]);
-          aa += -a[d] * (b[d] - a[d]);
-        }
-        const double s = ab > 0.0 ? std::clamp(aa / ab, 0.0, 1.0) : 0.0;
-        double distance = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          const double q = a[d] + s * (b[d] - a[d]);
-          distance += q * q;
-        }
-        distance = std::sqrt(distance);
-        if (reach.topology < 0 || distance < reach.distance)
-        {
-          reach.topology = portion.topology;
-          reach.distance = distance;
-          reach.image = portion.image;
-        }
-      }
-      if (reach.topology >= 0)
-      {
-        result.unmerged_reach.push_back(reach);
-      }
-      if (exclusion.unmerged_topology >= 0)
-      {
-        exclusion.reason = "UnmergedTopology";
-        patches[exclusion.patch].weight = 0.0;
-        result.patches.push_back(exclusion);
-        continue;
-      }
-    }
-    if (exclusion.outside_points > 0)
-    {
-      // Every outside point reflected into the mesh: Mirrored (applied, its samples taken
-      // by even extension); else DomainBoundary.
-      int reflected_count = 0;
-      for (std::size_t i = begin; i < end; i++)
-      {
-        reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
-      }
-      if (reflected_count == exclusion.outside_points)
-      {
-        result.mirrored.push_back(
-            {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
-        result.reflected_points += reflected_count;
-        continue;
-      }
-      // No tested point inside: not a cut through the coupon but a coupon off the mesh.
-      if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
-      {
         if (!geometry_ledger)
         {
-          MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+          MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
         }
-        // F-6 under the ledger: excluded with the record (the nearest point's distance).
-        RecordUnlocatedPatch(c, begin, "H9a/FindDomainBoundaryExclusions:all-points",
-                             "every one of its tested points", exclusion.nearest_distance);
-        exclusion.reason = "AllPointsOutside";
-        patches[exclusion.patch].weight = 0.0;
-        result.patches.push_back(exclusion);
-        continue;
+        misplaced_reference[c - c_begin] = 1;
       }
-      if (mirror_planes.empty() || mirror_band <= 0.0)
+    }
+    // The UnlocatedPatch record of an excluded patch (the former misplaced-coupon abort's
+    // text with the point's distance): what "patch", its model and feature, the unlocated
+    // point, the patch's own length (its longitudinal cell, else its claims; mesh units).
+    auto RecordUnlocatedPatch = [&](std::size_t c, std::size_t point, const char *site,
+                                    const char *what_point, double distance)
+    {
+      const auto &patch = patches[candidates[c]];
+      GeometryFallbackData entry;
+      entry.cls = "UnlocatedPatch";
+      entry.site = site;
+      entry.reason =
+          DescribeMisplacedPatch(c, point, what_point) +
+          fmt::format(" (distance {:.6e} mesh units from the nearest element box; the "
+                      "boundary tolerance {:.6e})",
+                      distance, tolerance);
+      entry.what = "patch";
+      entry.patches = {static_cast<int>(candidates[c])};
+      entry.models = {model_name(patch.model)};
+      entry.features = {patch.provenance.feature};
+      entry.example_origin = points[BlockLocal(point)];
+      const auto &cell = patch.longitudinal_cell;
+      if (patch.provenance.coupon_depth > 0.0 && cell[1] > cell[0])
       {
-        exclusion.reason = "MirrorOff";
+        entry.length = cell[1] - cell[0];
       }
       else
       {
-        // The strongest reason over the unreflected outside points (the same order on
-        // every rank): a non-mirroring plane, beyond the band, not located, no plane.
-        unsigned char strongest = 0;
-        for (std::size_t i = begin; i < end; i++)
+        for (const auto *claims : {&patch.provenance.claims, &patch.provenance.raw_claims})
         {
-          if (!found[i] && !reflected[i])
+          for (const auto &claim : *claims)
           {
-            strongest = std::max(strongest, unreflected_reason[i]);
+            entry.length += Norm(Subtract(claim.p1, claim.p0));
           }
         }
-        const char *names[] = {"Unknown", "NoPlane", "NonMirroringPlane", "BeyondBand",
-                               "ReflectionNotLocated"};
-        exclusion.reason = names[std::min<unsigned char>(strongest, 4)];
       }
-      patches[exclusion.patch].weight = 0.0;
-      result.patches.push_back(exclusion);
+      geometry_ledger->Record(std::move(entry));
+    };
+    Phase("reflect");
+    // The distance of every outside point to the nearest element box, over the ranks
+    // (block-local point indices, ascending).
+    std::vector<std::size_t> outside;
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      if (!found[i])
+      {
+        outside.push_back(i);
+      }
     }
+    std::vector<double> distances(outside.size());
+    for (std::size_t k = 0; k < outside.size(); k++)
+    {
+      distances[k] = locator.BoxDistance(points[outside[k]]);
+    }
+    if (!distances.empty())
+    {
+      Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
+    }
+    Phase("distances");
+    std::size_t k = 0;
+    for (std::size_t c = c_begin; c < c_end; c++)
+    {
+      // Block-local point indices of the candidate.
+      const std::size_t begin = BlockLocal(point_offsets[c]),
+                        end = BlockLocal(point_offsets[c + 1]);
+      DomainBoundaryExclusion exclusion;
+      exclusion.patch = candidates[c];
+      exclusion.tested_points = static_cast<int>(end - begin);
+      exclusion.nearest_distance = mfem::infinity();
+      while (k < outside.size() && outside[k] < end)
+      {
+        exclusion.outside_points++;
+        if (distances[k] < exclusion.nearest_distance)
+        {
+          exclusion.nearest_distance = distances[k];
+          exclusion.nearest_outside_point = points[outside[k]];
+        }
+        k++;
+      }
+      if (misplaced_reference[c - c_begin])
+      {
+        // F-6 under the ledger: the reference off the mesh beyond the boundary tolerance.
+        const std::size_t reference = origin_references[c];
+        const auto position =
+            std::lower_bound(outside.begin(), outside.end(), BlockLocal(reference));
+        MFEM_VERIFY(
+            position != outside.end() && *position == BlockLocal(reference),
+            "An unlocated metal-edge reference is missing from the outside points!");
+        RecordUnlocatedPatch(
+            c, reference, "H9a/FindDomainBoundaryExclusions:reference",
+            "its metal-edge reference",
+            distances[static_cast<std::size_t>(position - outside.begin())]);
+        exclusion.reason = "MisplacedReference";
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+        continue;
+      }
+      // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
+      // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
+      // footprint (a translational cell's [s0, s1] on its segment; a vertex / cluster
+      // coupon's claims) overlaps one of its REAL portions whose identification DIFFERS
+      // between the unextended and the extended run (decision 512 (c): a portion identified
+      // identically keeps its model, so an unmerged chain never sends its far cells raw) -
+      // are DomainBoundary (raw kept, F-DB-a), never applied with a single-sided model; a
+      // neighbour's cells keep their
+      // Applied / Mirrored classification as next to any Missing feature. The coupon
+      // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
+      // for a spatial patch; slab clipping against every portion, real or image) is
+      // recorded as INFORMATION only (decision 481).
+      if (!unmerged_portions.empty())
+      {
+        const auto &patch = patches[exclusion.patch];
+        const double tol = kSignatureParameterToleranceOverRadius * matching_radius;
+        // (a) own-edge overlap with a real portion
+        auto OverlapAlong =
+            [&](const std::array<double, 3> &P0, const std::array<double, 3> &P1,
+                const std::array<double, 3> &q0, const std::array<double, 3> &q1)
+        {
+          // Both on the same segment: the overlap of their arc-length intervals.
+          double L = 0.0;
+          std::array<double, 3> d{};
+          for (int k = 0; k < 3; k++)
+          {
+            d[k] = P1[k] - P0[k];
+            L += d[k] * d[k];
+          }
+          L = std::sqrt(L);
+          if (L <= 0.0)
+          {
+            return 0.0;
+          }
+          double a = 0.0, b = 0.0;
+          for (int k = 0; k < 3; k++)
+          {
+            a += (q0[k] - P0[k]) * d[k] / L;
+            b += (q1[k] - P0[k]) * d[k] / L;
+          }
+          return std::min(std::max(a, b), L) - std::max(std::min(a, b), 0.0);
+        };
+        for (const auto &portion : unmerged_portions)
+        {
+          // Image portions are never own; a real portion the unextended run identifies
+          // exactly as the extended run does is not the configuration's own either
+          // (decision 512 (c)): its cells keep their models. The configuration's OWN coupon
+          // (placed by its contract, decision 557 (4): its claims ARE these real portions)
+          // is not a cell of the configuration.
+          if (portion.image || portion.identical ||
+              patch.provenance.mirror_formed_topology == portion.topology)
+          {
+            continue;
+          }
+          bool own = false;
+          if (patch.provenance.coupon_depth > 0.0 && patch.provenance.segment >= 0)
+          {
+            // The CELL's own-edge extent (not the feature's whole portion on the segment,
+            // which provenance.s0 / s1 record): its longitudinal cell about the origin on
+            // the side's own edge (edge_offset along AxisU; mesh units like the origin).
+            if (patch.provenance.segment == static_cast<int>(portion.segment))
+            {
+              const auto &cell = patch.longitudinal_cell;
+              std::array<double, 3> q0{}, q1{};
+              for (int k = 0; k < 3; k++)
+              {
+                const double edge =
+                    patch.origin[k] + patch.provenance.edge_offset * patch.axis_u[k];
+                q0[k] = edge + cell[0] * patch.axis_w[k];
+                q1[k] = edge + cell[1] * patch.axis_w[k];
+              }
+              own = OverlapAlong(portion.p0, portion.p1, q0, q1) > tol;
+            }
+          }
+          else
+          {
+            for (const auto *claims :
+                 {&patch.provenance.raw_claims, &patch.provenance.claims})
+            {
+              for (const auto &claim : *claims)
+              {
+                if (claim.segment != static_cast<int>(portion.segment))
+                {
+                  continue;
+                }
+                // The claims' ends are segment points in mesh units (the identification's
+                // keys), like the portion's.
+                own = own || OverlapAlong(portion.p0, portion.p1, claim.p0, claim.p1) > tol;
+              }
+            }
+          }
+          if (own && (exclusion.unmerged_topology < 0 || !exclusion.unmerged_own))
+          {
+            exclusion.unmerged_topology = portion.topology;
+            exclusion.unmerged_p0 = portion.p0;
+            exclusion.unmerged_p1 = portion.p1;
+            exclusion.unmerged_image = false;
+            exclusion.unmerged_distance = 0.0;
+            exclusion.unmerged_own = true;
+          }
+        }
+        // (b) the support's reach (information)
+        const bool spatial = spatial_basis(patch.model);
+        const auto &cell = patch.longitudinal_cell;
+        const std::array<double, 3> lower = {
+            -matching_radius, -matching_radius,
+            (!spatial && cell[1] > cell[0]) ? cell[0] : -matching_radius};
+        const std::array<double, 3> upper = {
+            matching_radius, matching_radius,
+            (!spatial && cell[1] > cell[0]) ? cell[1] : matching_radius};
+        auto Local = [&](const std::array<double, 3> &p)
+        {
+          std::array<double, 3> local{};
+          for (int d = 0; d < 3; d++)
+          {
+            local[0] += (p[d] - patch.origin[d]) * patch.axis_u[d];
+            local[1] += (p[d] - patch.origin[d]) * patch.axis_v[d];
+            local[2] += (p[d] - patch.origin[d]) * patch.axis_w[d];
+          }
+          return local;
+        };
+        DomainBoundaryUnmergedReach reach;
+        reach.patch = exclusion.patch;
+        for (const auto &portion : unmerged_portions)
+        {
+          const auto a = Local(portion.p0), b = Local(portion.p1);
+          double t0 = 0.0, t1 = 1.0;
+          bool hit = true;
+          for (int d = 0; d < 3 && hit; d++)
+          {
+            const double lo = lower[d] - tol, hi = upper[d] + tol;
+            const double delta = b[d] - a[d];
+            if (std::abs(delta) < 1.0e-300)
+            {
+              hit = a[d] >= lo && a[d] <= hi;
+              continue;
+            }
+            double ta = (lo - a[d]) / delta, tb = (hi - a[d]) / delta;
+            if (ta > tb)
+            {
+              std::swap(ta, tb);
+            }
+            t0 = std::max(t0, ta);
+            t1 = std::min(t1, tb);
+            hit = t0 <= t1;
+          }
+          if (!hit)
+          {
+            continue;
+          }
+          double ab = 0.0, aa = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            ab += (b[d] - a[d]) * (b[d] - a[d]);
+            aa += -a[d] * (b[d] - a[d]);
+          }
+          const double s = ab > 0.0 ? std::clamp(aa / ab, 0.0, 1.0) : 0.0;
+          double distance = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double q = a[d] + s * (b[d] - a[d]);
+            distance += q * q;
+          }
+          distance = std::sqrt(distance);
+          if (reach.topology < 0 || distance < reach.distance)
+          {
+            reach.topology = portion.topology;
+            reach.distance = distance;
+            reach.image = portion.image;
+          }
+        }
+        if (reach.topology >= 0)
+        {
+          result.unmerged_reach.push_back(reach);
+        }
+        if (exclusion.unmerged_topology >= 0)
+        {
+          exclusion.reason = "UnmergedTopology";
+          patches[exclusion.patch].weight = 0.0;
+          result.patches.push_back(exclusion);
+          continue;
+        }
+      }
+      if (exclusion.outside_points > 0)
+      {
+        // Every outside point reflected into the mesh: Mirrored (applied, its samples taken
+        // by even extension); else DomainBoundary.
+        int reflected_count = 0;
+        for (std::size_t i = begin; i < end; i++)
+        {
+          reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
+        }
+        if (reflected_count == exclusion.outside_points)
+        {
+          result.mirrored.push_back(
+              {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
+          result.reflected_points += reflected_count;
+          continue;
+        }
+        // No tested point inside: not a cut through the coupon but a coupon off the mesh.
+        if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
+        {
+          if (!geometry_ledger)
+          {
+            MFEM_ABORT(DescribeMisplacedPatch(c, point_offsets[c],
+                                              "every one of its tested points"));
+          }
+          // F-6 under the ledger: excluded with the record (the nearest point's distance).
+          RecordUnlocatedPatch(
+              c, point_offsets[c], "H9a/FindDomainBoundaryExclusions:all-points",
+              "every one of its tested points", exclusion.nearest_distance);
+          exclusion.reason = "AllPointsOutside";
+          patches[exclusion.patch].weight = 0.0;
+          result.patches.push_back(exclusion);
+          continue;
+        }
+        if (mirror_planes.empty() || mirror_band <= 0.0)
+        {
+          exclusion.reason = "MirrorOff";
+        }
+        else
+        {
+          // The strongest reason over the unreflected outside points (the same order on
+          // every rank): a non-mirroring plane, beyond the band, not located, no plane.
+          unsigned char strongest = 0;
+          for (std::size_t i = begin; i < end; i++)
+          {
+            if (!found[i] && !reflected[i])
+            {
+              strongest = std::max(strongest, unreflected_reason[i]);
+            }
+          }
+          const char *names[] = {"Unknown", "NoPlane", "NonMirroringPlane", "BeyondBand",
+                                 "ReflectionNotLocated"};
+          exclusion.reason = names[std::min<unsigned char>(strongest, 4)];
+        }
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+      }
+    }
+    c_begin = c_end;
   }
   if (geometry_ledger && !candidates.empty() && result.patches.size() >= candidates.size())
   {
@@ -27093,18 +27483,37 @@ void AppendExcludedPatchPortion(ExcludedPatchPortions &result, std::size_t patch
            (Norm(Subtract(a.p0, portion.p1)) <= tolerance &&
             Norm(Subtract(a.p1, portion.p0)) <= tolerance);
   };
-  for (std::size_t i = 0; i < result.portions.size(); i++)
+  // The feature index caught up to the portions appended since the last call (C2; the
+  // same candidates in the same insertion order as a scan over every portion); rebuilt
+  // from the start if the list shrank.
+  if (result.indexed_portions > result.portions.size())
   {
-    if (result.portions[i].feature == portion.feature && SameInterval(result.portions[i]))
+    result.feature_portions.clear();
+    result.indexed_portions = 0;
+  }
+  for (; result.indexed_portions < result.portions.size(); result.indexed_portions++)
+  {
+    result.feature_portions[result.portions[result.indexed_portions].feature].push_back(
+        result.indexed_portions);
+  }
+  const auto same_feature = result.feature_portions.find(portion.feature);
+  if (same_feature != result.feature_portions.end())
+  {
+    for (const std::size_t i : same_feature->second)
     {
-      // A co-located first-order split patch (isolated-edge + curvature blend) of the
-      // same cell: one interval, counted once.
-      result.patches[i].push_back(patch_idx);
-      result.duplicate_patches++;
-      return;
+      if (SameInterval(result.portions[i]))
+      {
+        // A co-located first-order split patch (isolated-edge + curvature blend) of the
+        // same cell: one interval, counted once.
+        result.patches[i].push_back(patch_idx);
+        result.duplicate_patches++;
+        return;
+      }
     }
   }
+  result.feature_portions[portion.feature].push_back(result.portions.size());
   result.portions.push_back(portion);
+  result.indexed_portions = result.portions.size();
   result.patches.push_back({patch_idx});
   result.translational.push_back(translational);
   result.length += length;
@@ -28526,6 +28935,12 @@ SurfaceResponseOperator::GetWithinRVolumeEnergies(const GridFunction &E,
     }
   }
   Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), comm);
+  if (!HoldsPatchRecords())
+  {
+    // ROOT_ONLY residency (A1.3 I-15): the sum is every rank's (an Allreduce: the root's
+    // bytes are what the table reads); the per-patch result is kept on the root only.
+    return {};
+  }
   for (std::size_t b = 0; b < box_count; b++)
   {
     result[b].electric = reduction[3 * b];
@@ -28635,8 +29050,12 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                             static_cast<double>(snap.arc), snap.displacement});
     }
   }
-  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
-  const std::vector<double> values = Mpi::AllgatherLarge(local_records, fespace.GetComm());
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds. C5 (decisions
+  // 1446 / 1447; F5 = (A)): by the residency — REPLICATED on every rank (the former form),
+  // ROOT_ONLY on the root alone (the Records array of palace.json is the root's; the other
+  // ranks keep the summary leaves, broadcast below, and the excluded portions, exchanged
+  // owner-side below).
+  const std::vector<double> values = GatherPatchRecords(local_records);
   std::vector<ConductorConsistencyRecord> records;
   for (std::size_t offset = 0; offset < values.size();)
   {
@@ -28697,6 +29116,7 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   std::map<int, std::string> model_names = GetModelNames();
   auto &diagnostics = ConductorConsistencyDiagnostics();
   int excluded_count = 0, record_only_count = 0, floor_applied_count = 0;
+  int tested_records = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
   for (const auto &record : records)
@@ -28775,21 +29195,6 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
           assignment.weight = 0.0;
         }
       }
-      // S7diag R1 (decision 758): the excluded patch's raw claim (built at construction
-      // by the DomainBoundary rule; replicated like the records) is served raw from this
-      // excitation on: the electrostatic driver keeps its within-R energy in E_ft / E_ff /
-      // E_sc as the ConductorConsistency share, never dropped.
-      const auto claim = conductor_consistency_claims.find(record.patch);
-      MFEM_VERIFY(claim != conductor_consistency_claims.end(),
-                  "Conductor-consistency gate excluded patch "
-                      << record.patch << " (" << model_names.at(record.model)
-                      << ") without a raw claim record!");
-      for (std::size_t i = 0; i < claim->second.portions.size(); i++)
-      {
-        AppendExcludedPatchPortion(
-            conductor_consistency_portions, record.patch, claim->second.portions[i],
-            claim->second.translational[i], conductor_consistency_claim_tolerance);
-      }
     }
     if (record.max_ratio > max_ratio || max_patch < 0)
     {
@@ -28797,11 +29202,69 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
       max_patch = record.patch;
     }
   }
+  // S7diag R1 (decision 758): the excluded patches' raw claims (built at construction by
+  // the DomainBoundary rule) are served raw from this excitation on: the electrostatic
+  // driver keeps their within-R energy in E_ft / E_ff / E_sc as the ConductorConsistency
+  // share, never dropped. C5: each rank packs the claims of ITS excluded patches (the
+  // owner decided `excluded` before the gather; the claims are local), the items are
+  // allgathered and appended on EVERY rank in ascending patch order with the portions in
+  // claim order = the former loop's sequence over the sorted records (the same dedupe
+  // decisions, the same `length` sum), so the portions list is identical on every rank.
+  {
+    std::vector<std::pair<int, int>> excluded_local;
+    for (const auto &record : patch_records)
+    {
+      if (record.excluded && !record.record_only)
+      {
+        excluded_local.emplace_back(record.patch, record.patch);
+      }
+    }
+    for (const auto &item :
+         GatherOwnedClaimPortions(excluded_local, conductor_consistency_claims))
+    {
+      MFEM_VERIFY(item.present, "Conductor-consistency gate excluded patch "
+                                    << item.patch << " without a raw claim record!");
+      for (std::size_t i = 0; i < item.portions.size(); i++)
+      {
+        AppendExcludedPatchPortion(conductor_consistency_portions, item.patch,
+                                   item.portions[i], item.translational[i],
+                                   conductor_consistency_claim_tolerance);
+      }
+    }
+  }
+  // The totals of the pass: the root's values on every rank (under ROOT_ONLY the other
+  // ranks hold no record; under REPLICATED every rank computed the same values).
+  int spatial_records = 0, translational_records = 0;
+  for (const auto &record : records)
+  {
+    (record.probe_kind == 1 ? translational_records : spatial_records)++;
+  }
+  {
+    int counts[7] = {excluded_count,
+                     record_only_count,
+                     floor_applied_count,
+                     static_cast<int>(records.size()),
+                     spatial_records,
+                     translational_records,
+                     max_patch};
+    double totals[3] = {excluded_claims, excluded_cells, max_ratio};
+    Mpi::Broadcast(7, counts, 0, fespace.GetComm());
+    Mpi::Broadcast(3, totals, 0, fespace.GetComm());
+    excluded_count = counts[0];
+    record_only_count = counts[1];
+    floor_applied_count = counts[2];
+    spatial_records = counts[4];
+    translational_records = counts[5];
+    max_patch = counts[6];
+    excluded_claims = totals[0];
+    excluded_cells = totals[1];
+    max_ratio = totals[2];
+    tested_records = counts[3];
+  }
   diagnostics["Count"] = diagnostics["Count"].get<int>() + excluded_count;
   diagnostics["ClaimLength"] = diagnostics["ClaimLength"].get<double>() + excluded_claims;
   diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + excluded_cells;
-  diagnostics["TestedPatches"] =
-      diagnostics["TestedPatches"].get<int>() + static_cast<int>(records.size());
+  diagnostics["TestedPatches"] = diagnostics["TestedPatches"].get<int>() + tested_records;
   // B.3 (f) / SUPERVISOR AMENDMENT 3 C.4 (decision 1082 Q2): the count of tested patches
   // whose normalization is the floor (FloorApplied), totalled over the gate passes of the
   // operator like TestedPatches (per pass in the log line below): the G-5 reading of the
@@ -28832,11 +29295,6 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   }
   if (!records.empty())
   {
-    int spatial_records = 0, translational_records = 0;
-    for (const auto &record : records)
-    {
-      (record.probe_kind == 1 ? translational_records : spatial_records)++;
-    }
     const bool maxwell_records = records.front().maxwell;
     Mpi::Print(" Conductor-consistency gate (decision 277; idfix R0-a), {} {:d}{}: {:d} "
                "patch(es) probed ({:d} spatial, {:d} translational), max ratio {:.3e} "
@@ -28847,8 +29305,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                maxwell_records ? "source" : "excitation", source,
                maxwell_records ? fmt::format(" at {:.6e} GHz", records.front().frequency)
                                : std::string(),
-               static_cast<int>(records.size()), spatial_records, translational_records,
-               max_ratio, max_patch, excluded_count,
+               tested_records, spatial_records, translational_records, max_ratio, max_patch,
+               excluded_count,
                record_only_count > 0
                    ? fmt::format(" ({:d} verdict(s) RECORDED ONLY: RecordOnly, a "
                                  "DIAGNOSTIC run, not a run of record)",
@@ -28915,6 +29373,20 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     bool setup_timing)
 {
   auto &response_mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
+  // Placement sub-stamps (lane fix-response-memory, DESIGN s2.6 / C2: the attribution of
+  // the replicated classification phase): printed only with PALACE_RESPONSE_SETUP_TIMING
+  // set, so the default log is byte-identical.
+  const auto placement_start = std::chrono::steady_clock::now();
+  auto PlacementStamp = [&](const char *phase)
+  {
+    if (setup_timing)
+    {
+      Mpi::Print(
+          fespace.GetComm(), "  placement phase: {} at {:.3f} s\n", phase,
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - placement_start)
+              .count());
+    }
+  };
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the placement passes record into
   // the operator's ledger (the members set by the constructor before this call).
   GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
@@ -29406,6 +29878,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
               DomainBoundaryContainmentCache{containment_signature, exclusions};
         }
       }
+      PlacementStamp("domain-boundary containment test");
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);
@@ -29466,6 +29939,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
+      PlacementStamp("domain-boundary portions");
       // S7diag R1 (decision 758): the raw claim of every applied patch the
       // conductor-consistency gate can probe, by the same rule, kept for the gate (which
       // runs per excitation, when `placed_patches` is gone) on every rank. R0-a (idfix
@@ -29474,10 +29948,18 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       // never read).
       conductor_consistency_claim_tolerance =
           kSignatureParameterToleranceOverRadius * config.matching_radius;
+      // C5 (decision 1446; DESIGN s2.7 I-11): this rank's LOCAL patches only (the
+      // round-robin rule of `patches`); the gate and the loop remainders fetch an excluded
+      // / remainder patch's claim from its owner (GatherOwnedClaimPortions).
+      const int claim_rank = Mpi::Rank(fespace.GetComm());
+      const int claim_size = Mpi::Size(fespace.GetComm());
+      auto OwnsClaim = [&](std::size_t patch_idx)
+      { return static_cast<int>(patch_idx % claim_size) == claim_rank; };
       for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
       {
         const auto &patch_config = placed_patches[patch_idx];
-        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0)
+        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0 ||
+            !OwnsClaim(patch_idx))
         {
           continue;
         }
@@ -29491,6 +29973,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                  uncovered_spatial_support_clipping,
                                  conductor_consistency_claim_tolerance);
       }
+      PlacementStamp("conductor-consistency claims");
       // OI-MX-LOOPGATE (decision 955): on the Maxwell path every applied patch's raw claim
       // by the same rule, keyed by the placed index on every rank, for the circulating
       // remainder's raw energy (GetLoopRemainderPortions). The electrostatic path has no
@@ -29500,7 +29983,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
         {
           if (spatially_owned_patches.count(patch_idx) ||
-              placed_patches[patch_idx].weight <= 0.0)
+              placed_patches[patch_idx].weight <= 0.0 || !OwnsClaim(patch_idx))
           {
             continue;
           }
@@ -29509,6 +29992,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                    uncovered_spatial_support_clipping,
                                    conductor_consistency_claim_tolerance);
         }
+        PlacementStamp("Maxwell patch raw claims");
       }
       // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
       // patch's raw claim by model set, for the per-model raw energy partition of
@@ -29527,6 +30011,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           model_raw_claim_portions.portions.push_back(portion);
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
+        PlacementStamp("model raw claim portions (PatchEnergy)");
       }
       if (!config.mirror_band.empty())
       {
@@ -29670,6 +30155,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       MFEM_VERIFY(!cached_geometry->impl->maxwell &&
                       cached_geometry->impl->dimension == dimension,
                   "Cannot reuse Maxwell surface-response geometry for electrostatics!");
+      // C6: the full placed-patch list again (released after the previous construction).
+      cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
       config = &cached_geometry->impl->config;
       automatic_statistics = cached_geometry->impl->statistics;
     }
@@ -31106,6 +31593,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                global_diagnostic_patch_count, global_diagnostic_point_count);
   }
   geometry_ledger.Enforce("electrostatic surface-response configuration");
+  if (cached_geometry)
+  {
+    // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
+    // the next construction (an AMR iteration) re-assembles the list.
+    cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
+  }
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -31174,6 +31667,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                     cached_geometry->impl->diagnostics.has_value() &&
                     cached_geometry->impl->dimension == dimension,
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
+    // C6: the full placed-patch list again (released after the previous construction).
+    cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
     config_ptr = &cached_geometry->impl->config;
     diagnostics_ptr = &*cached_geometry->impl->diagnostics;
     automatic_statistics = cached_geometry->impl->statistics;
@@ -31581,9 +32076,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // DomainBoundary exclusions (their raw claims kept, F-DB-a) and the uncovered-portion
   // record (decision 394 F2; clipped by the support boxes, decision 399 MAJOR-1). The
   // applied patches are the placed ones it does not own, keyed by their placed index.
-  const auto placement =
-      ApplyPlacementOwnership(config, model_indices, basis_points, coordinate_scale,
-                              dimension, cached_geometry, false);
+  // The placement sub-stamps under PALACE_RESPONSE_SETUP_TIMING (lane fix-response-memory
+  // C2; the electrostatic constructor's rule): the default log is byte-identical.
+  const auto placement = ApplyPlacementOwnership(
+      config, model_indices, basis_points, coordinate_scale, dimension, cached_geometry,
+      std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
@@ -32700,6 +33197,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   geometry_ledger.Enforce("Maxwell surface-response configuration");
+  if (cached_geometry)
+  {
+    // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
+    // the next construction (an AMR iteration) re-assembles the list.
+    cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
+  }
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -32711,22 +33214,39 @@ void SurfaceResponseOperator::RecordUnprobedPatchClaims(
   // The raw claims (the DomainBoundary rule; replicated, keyed by the placed index) of the
   // applied patches the gate cannot probe, labelled UnprobedModels, each once; the count
   // and the claimed length beside the gate's UnprobedModels list.
-  int count = 0;
-  for (const int global_index : global_indices)
+  // C5 (decision 1446): the claims are local to their owners; fetched in the list's order
+  // (collective: every rank passes the same replicated list).
+  const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+  std::vector<std::pair<int, int>> owned;
+  for (std::size_t k = 0; k < global_indices.size(); k++)
   {
-    const auto claim = conductor_consistency_claims.find(global_index);
-    if (claim == conductor_consistency_claims.end())
+    if (global_indices[k] % size == rank)
+    {
+      owned.emplace_back(static_cast<int>(k), global_indices[k]);
+    }
+  }
+  const auto claims = GatherOwnedClaimPortions(owned, conductor_consistency_claims);
+  MFEM_VERIFY(claims.size() == global_indices.size(),
+              "The unprobed patches' owned claims do not match the list!");
+  int count = 0;
+  for (std::size_t k = 0; k < global_indices.size(); k++)
+  {
+    const int global_index = global_indices[k];
+    const auto &claim = claims[k];
+    MFEM_VERIFY(claim.key == static_cast<int>(k) && claim.patch == global_index,
+                "The unprobed patches' owned claims are out of order!");
+    if (!claim.present)
     {
       continue;  // a two-dimensional mesh: no raw claims
     }
     count++;
-    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    for (std::size_t i = 0; i < claim.portions.size(); i++)
     {
-      auto portion = claim->second.portions[i];
+      auto portion = claim.portions[i];
       portion.topology = "UnprobedModels";
       AppendExcludedPatchPortion(
           unprobed_model_portions, static_cast<std::size_t>(global_index), portion,
-          claim->second.translational[i], conductor_consistency_claim_tolerance);
+          claim.translational[i], conductor_consistency_claim_tolerance);
     }
   }
   if (count > 0)
@@ -33053,8 +33573,25 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
   std::sort(records.begin(), records.end(),
             [](const auto &a, const auto &b) { return a.patch < b.patch; });
   const std::map<int, std::string> model_names = GetModelNames();
-  for (const auto &record : records)
+  // C5 (decision 1446): the excluded patches' raw claims from their owners (the claims are
+  // local), keyed by the position in the sorted list (collective: the list is replicated).
+  std::vector<std::pair<int, int>> owned;
+  for (std::size_t k = 0; k < records.size(); k++)
   {
+    if (records[k].patch % Mpi::Size(fespace.GetComm()) == Mpi::Rank(fespace.GetComm()))
+    {
+      owned.emplace_back(static_cast<int>(k), records[k].patch);
+    }
+  }
+  const auto claims = GatherOwnedClaimPortions(owned, maxwell_patch_raw_claims);
+  MFEM_VERIFY(claims.size() == records.size(),
+              "The MaxwellPatchExcluded owned claims do not match the records!");
+  for (std::size_t k = 0; k < records.size(); k++)
+  {
+    const auto &record = records[k];
+    const auto &claim = claims[k];
+    MFEM_VERIFY(claim.key == static_cast<int>(k) && claim.patch == record.patch,
+                "The MaxwellPatchExcluded owned claims are out of order!");
     const auto model_it =
         std::find_if(models.begin(), models.end(),
                      [&](const ResponseModel &model) { return model.idx == record.model; });
@@ -33073,8 +33610,7 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
     // The raw claim (the DomainBoundary rule, built at the placement and replicated): the
     // length served raw = the record's length (RawShareByLength); a two-dimensional mesh
     // has no raw claims (nothing to serve raw): the placement's claimed length instead.
-    const auto claim = maxwell_patch_raw_claims.find(record.patch);
-    MFEM_VERIFY(claim != maxwell_patch_raw_claims.end() || !maxwell_loop_remainder_measured,
+    MFEM_VERIFY(claim.present || !maxwell_loop_remainder_measured,
                 "MaxwellPatchExcluded patch " << record.patch << " ("
                                               << model_names.at(record.model)
                                               << ") without a raw claim record!");
@@ -33082,8 +33618,7 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
     entry.patches = {record.patch};
     entry.models = {model_names.at(record.model)};
     entry.features = {record.feature};
-    entry.length =
-        claim != maxwell_patch_raw_claims.end() ? claim->second.length : record.length;
+    entry.length = claim.present ? claim.length : record.length;
     entry.example_origin = record.origin;
     entry.topology = model_it->topology;
     geometry_ledger.Record(std::move(entry));
@@ -33095,22 +33630,22 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
         assignment.weight = 0.0;
       }
     }
-    if (claim == maxwell_patch_raw_claims.end())
+    if (!claim.present)
     {
       continue;
     }
     // ONCE: into the DomainBoundary portions (kept raw in the corrected interface
     // energies), the geometry-fallback portions (the drivers' share measurement) and the
     // class-named copy.
-    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    for (std::size_t i = 0; i < claim.portions.size(); i++)
     {
-      auto portion = claim->second.portions[i];
+      auto portion = claim.portions[i];
       portion.topology = "MaxwellPatchExcluded";
       for (auto *portions : {&domain_boundary_portions, &geometry_fallback_portions,
                              &maxwell_patch_excluded_portions})
       {
         AppendExcludedPatchPortion(*portions, static_cast<std::size_t>(record.patch),
-                                   portion, claim->second.translational[i],
+                                   portion, claim.translational[i],
                                    conductor_consistency_claim_tolerance);
       }
     }
@@ -34694,22 +35229,97 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   line_values += maxwell_fit_line_adjoint;
 }
 
+std::vector<SurfaceResponseOperator::OwnedClaimPortions>
+SurfaceResponseOperator::GatherOwnedClaimPortions(
+    const std::vector<std::pair<int, int>> &local_items,
+    const std::map<int, ExcludedPatchPortions> &claims) const
+{
+  // Per item: [key, patch, present, length, topology length, topology chars..., portion
+  // count, per portion (feature, segment, p0 x 3, p1 x 3, translational)]; the topology is
+  // one string per patch (the claim rule's model topology).
+  std::vector<double> local;
+  for (const auto &[key, patch] : local_items)
+  {
+    const auto claim = claims.find(patch);
+    if (claim == claims.end())
+    {
+      local.insert(local.end(), {static_cast<double>(key), static_cast<double>(patch), 0.0,
+                                 0.0, 0.0, 0.0});
+      continue;
+    }
+    const std::string topology =
+        claim->second.portions.empty() ? std::string() : claim->second.portions[0].topology;
+    local.insert(local.end(), {static_cast<double>(key), static_cast<double>(patch), 1.0,
+                               claim->second.length, static_cast<double>(topology.size())});
+    for (const char c : topology)
+    {
+      local.push_back(static_cast<double>(static_cast<unsigned char>(c)));
+    }
+    local.push_back(static_cast<double>(claim->second.portions.size()));
+    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    {
+      const auto &portion = claim->second.portions[i];
+      local.insert(local.end(),
+                   {static_cast<double>(portion.feature),
+                    static_cast<double>(portion.segment), portion.p0[0], portion.p0[1],
+                    portion.p0[2], portion.p1[0], portion.p1[1], portion.p1[2],
+                    claim->second.translational[i] ? 1.0 : 0.0});
+    }
+  }
+  const std::vector<double> values = AllgatherRecords(local);
+  std::vector<OwnedClaimPortions> result;
+  std::size_t offset = 0;
+  while (offset < values.size())
+  {
+    MFEM_VERIFY(offset + 5 <= values.size(), "Truncated owned claim record!");
+    OwnedClaimPortions item;
+    item.key = static_cast<int>(std::llround(values[offset++]));
+    item.patch = static_cast<int>(std::llround(values[offset++]));
+    item.present = values[offset++] > 0.5;
+    item.length = values[offset++];
+    const auto topology_size = static_cast<std::size_t>(std::llround(values[offset++]));
+    MFEM_VERIFY(offset + topology_size + 1 <= values.size(),
+                "Truncated owned claim record!");
+    for (std::size_t c = 0; c < topology_size; c++)
+    {
+      item.topology.push_back(static_cast<char>(std::llround(values[offset++])));
+    }
+    const auto portion_count = static_cast<std::size_t>(std::llround(values[offset++]));
+    MFEM_VERIFY(offset + 9 * portion_count <= values.size(),
+                "Truncated owned claim record!");
+    for (std::size_t i = 0; i < portion_count; i++)
+    {
+      ResponseCorrectionData::UncoveredPortionData portion;
+      portion.feature = static_cast<int>(std::llround(values[offset]));
+      portion.topology = item.topology;
+      portion.segment = static_cast<int>(std::llround(values[offset + 1]));
+      portion.p0 = {values[offset + 2], values[offset + 3], values[offset + 4]};
+      portion.p1 = {values[offset + 5], values[offset + 6], values[offset + 7]};
+      item.translational.push_back(values[offset + 8] > 0.5);
+      item.portions.push_back(std::move(portion));
+      offset += 9;
+    }
+    result.push_back(std::move(item));
+  }
+  std::stable_sort(result.begin(), result.end(),
+                   [](const auto &a, const auto &b) { return a.key < b.key; });
+  return result;
+}
+
 SurfaceResponseOperator::LoopRemainderPortions
 SurfaceResponseOperator::GetLoopRemainderPortions(
     const std::vector<MaxwellResponse::LoopRemainder> &remainders) const
 {
   LoopRemainderPortions result;
+  // The remainders carry their owners' claim portions (GetMaxwellResponse, C5): no
+  // collective here (the prints call this on the root only).
   for (const auto &remainder : remainders)
   {
-    const auto claim = maxwell_patch_raw_claims.find(remainder.patch);
-    MFEM_VERIFY(claim != maxwell_patch_raw_claims.end(),
-                "Maxwell loop remainder of patch " << remainder.patch + 1
-                                                   << " has no recorded raw claim!");
     const double rho = remainder.fallback ? 1.0 : remainder.share;
     const std::string label = fmt::format("m{}", remainder.model);
     auto &row = result.rows[label];
     row.patches++;
-    for (auto portion : claim->second.portions)
+    for (auto portion : remainder.claim_portions)
     {
       portion.topology = label;
       row.weighted_length += rho * Norm(Subtract(portion.p1, portion.p0));
@@ -35527,11 +36137,29 @@ SurfaceResponseOperator::AllgatherRecords(const std::vector<double> &local_recor
   return Mpi::AllgatherLarge(local_records, fespace.GetComm());
 }
 
+bool SurfaceResponseOperator::HoldsPatchRecords() const
+{
+  return patch_record_residency == PatchRecordResidency::REPLICATED ||
+         Mpi::Root(fespace.GetComm());
+}
+
+std::vector<double>
+SurfaceResponseOperator::GatherPatchRecords(const std::vector<double> &local_records) const
+{
+  if (patch_record_residency == PatchRecordResidency::REPLICATED)
+  {
+    return AllgatherRecords(local_records);
+  }
+  // The same rank-order concatenation on the root only (the same rounds as AllgatherLarge,
+  // Gatherv in place of Allgatherv); empty on the other ranks.
+  return Mpi::GatherLarge(local_records, 0, fespace.GetComm());
+}
+
 std::vector<SurfaceResponseOperator::PatchContribution>
 SurfaceResponseOperator::GatherPatchContributions(
     const std::vector<double> &local_records) const
 {
-  const std::vector<double> records = AllgatherRecords(local_records);
+  const std::vector<double> records = GatherPatchRecords(local_records);
   std::vector<PatchContribution> contributions;
   std::size_t offset = 0;
   while (offset < records.size())
@@ -35699,7 +36327,7 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only,
   }
 
   // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
-  const std::vector<double> records = Mpi::AllgatherLarge(local_records, fespace.GetComm());
+  const std::vector<double> records = GatherPatchRecords(local_records);
 
   std::vector<PatchTrace> traces;
   std::size_t offset = 0;
@@ -36182,11 +36810,37 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     std::sort(result.loop_remainders.begin(), result.loop_remainders.end(),
               [](const auto &first, const auto &second)
               { return first.patch < second.patch; });
+    // C5 (decision 1446): the remainder patches' raw claims from their owners (the claims
+    // are local), keyed by the position in the sorted list, carried by the remainders for
+    // GetLoopRemainderPortions (called root-only by the prints: no collective there).
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    std::vector<std::pair<int, int>> owned;
+    for (std::size_t k = 0; k < result.loop_remainders.size(); k++)
+    {
+      if (result.loop_remainders[k].patch % size == rank)
+      {
+        owned.emplace_back(static_cast<int>(k), result.loop_remainders[k].patch);
+      }
+    }
+    const auto claims = GatherOwnedClaimPortions(owned, maxwell_patch_raw_claims);
+    MFEM_VERIFY(claims.size() == result.loop_remainders.size(),
+                "The Maxwell loop remainders' owned claims ("
+                    << claims.size() << ") do not match the list ("
+                    << result.loop_remainders.size() << ")!");
+    for (std::size_t k = 0; k < claims.size(); k++)
+    {
+      MFEM_VERIFY(claims[k].key == static_cast<int>(k) &&
+                      claims[k].patch == result.loop_remainders[k].patch &&
+                      claims[k].present,
+                  "Maxwell loop remainder of patch " << result.loop_remainders[k].patch + 1
+                                                     << " has no recorded raw claim!");
+      result.loop_remainders[k].claim_portions = std::move(claims[k].portions);
+    }
   }
   if (include_patches)
   {
     result.patch_contributions = GatherPatchContributions(local_patch_records);
-    const std::vector<double> shares = AllgatherRecords(local_share_records);
+    const std::vector<double> shares = GatherPatchRecords(local_share_records);
     MFEM_VERIFY(shares.size() % 4 == 0, "Truncated per-patch loop-share record!");
     for (std::size_t offset = 0; offset < shares.size(); offset += 4)
     {
@@ -36197,7 +36851,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     std::sort(result.patch_loop_shares.begin(), result.patch_loop_shares.end(),
               [](const auto &first, const auto &second)
               { return first.patch < second.patch; });
-    const std::vector<double> loops = AllgatherRecords(local_loop_records);
+    const std::vector<double> loops = GatherPatchRecords(local_loop_records);
     MFEM_VERIFY(loops.size() % 6 == 0, "Truncated per-path loop-residual record!");
     for (std::size_t offset = 0; offset < loops.size(); offset += 6)
     {
@@ -36214,7 +36868,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
                        return std::tie(first.patch, first.kind, first.path) <
                               std::tie(second.patch, second.kind, second.path);
                      });
-    const std::vector<double> traces = AllgatherRecords(local_trace_records);
+    const std::vector<double> traces = GatherPatchRecords(local_trace_records);
     std::size_t offset = 0;
     while (offset < traces.size())
     {

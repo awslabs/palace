@@ -46,6 +46,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency-r0a.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary-blocked.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-excludedpatchportions-index.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geometryfallback.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigensolver.cpp
@@ -70,6 +72,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-responsegeometry-residency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsesetupcache.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
@@ -77,10 +80,12 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseidentification.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponse-rootgather.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsesegmentindex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv-append.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-translationalmortarstrip.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp

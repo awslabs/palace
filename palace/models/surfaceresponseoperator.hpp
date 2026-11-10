@@ -86,6 +86,13 @@ struct ExcludedPatchPortions
   int geometric_cells = 0;    // translational own-edge intervals, split patches once
   int duplicate_patches = 0;  // excluded patches folded into an existing interval
   double length = 0.0;        // mesh units, over all portions
+  // Lane fix-response-memory (decision 1446, C2 / DESIGN s2.6 I-9): the portions of each
+  // feature in insertion order, so that AppendExcludedPatchPortion's co-located-interval
+  // scan visits the same candidates in the same order as the former scan over EVERY
+  // portion (the same FIRST match) without the O(portions) pass per append. Caught up
+  // lazily to `portions.size()` at every append, so portions pushed directly stay found.
+  std::unordered_map<int, std::vector<std::size_t>> feature_portions;
+  std::size_t indexed_portions = 0;
 };
 
 // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): a Maxwell contour or
@@ -174,6 +181,26 @@ private:
   }
 
   friend class SurfaceResponseOperator;
+
+public:
+  // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): the placed-patch
+  // list's RESIDENCE between two constructions. After a construction each rank keeps its
+  // LOCAL patches only (the operator's round-robin rule: global index % size == rank);
+  // before the next construction the full list is re-assembled by an order-preserving
+  // gather (the same elements, placed by global index). Content never changes.
+  bool PatchesLocal() const;
+  std::size_t RetainedPatchCount() const;
+  std::size_t GlobalPatchCount() const;
+  void ReleaseReplicatedPatches(MPI_Comm comm) const;
+  void RestoreReplicatedPatches(MPI_Comm comm) const;
+  // The exact pack / unpack of one placed patch (every field) the re-assembly uses.
+  static void
+  PackPatch(std::vector<double> &out, std::size_t global_index,
+            const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch);
+  static std::size_t
+  UnpackPatch(const std::vector<double> &values, std::size_t offset,
+              std::size_t &global_index,
+              config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch);
 };
 
 // R0-a (idfix DESIGN A.1 (c) / A.3 (b), decision 1062): the LOCAL METAL PIECES of a 2D
@@ -943,8 +970,33 @@ private:
   // which the electrostatic driver keeps raw in E_ft / E_ff / E_sc like the uncovered
   // requirements and the DomainBoundary claims. The list only grows (an exclusion is
   // sticky).
+  // Lane fix-response-memory (decision 1446, C5 / DESIGN s2.7 I-11): the claims are built
+  // for this rank's LOCAL patches only (the `patches` rule: patch index % size == rank);
+  // the consumers fetch an excluded / remainder patch's portions from its owner through
+  // GatherOwnedClaimPortions, in the former order.
   std::map<int, ExcludedPatchPortions> conductor_consistency_claims;
   ExcludedPatchPortions conductor_consistency_portions;
+  // One owned patch's claim portions as its owner packed them, keyed for the consumer's
+  // order (the gate: the patch index; the loop remainders: the position in the list).
+  struct OwnedClaimPortions
+  {
+    int key = 0;
+    int patch = 0;
+    bool present = false;  // the owner holds a claim for the patch (none on a 2D mesh)
+    double length = 0.0;   // the claim's length (mesh units)
+    std::string topology;  // the claim's model topology (one per patch)
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        portions;
+    std::vector<bool> translational;
+  };
+  // Every rank's (key, patch) items with the portions of `claims[patch]` (this rank's: an
+  // owner packs its own; `present` false when it holds none), allgathered (O(items)) and
+  // sorted by key on every rank: the replicated list the former replicated claims gave, in
+  // key order. Collective.
+  std::vector<OwnedClaimPortions>
+  GatherOwnedClaimPortions(const std::vector<std::pair<int, int>> &local_items,
+                           const std::map<int, ExcludedPatchPortions> &claims) const;
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims by model set; empty
   // unless the configuration requests PatchEnergy.
   ModelRawClaimPortions model_raw_claim_portions;
@@ -1245,6 +1297,12 @@ public:
       double circulation = 0.0;  // r^T G^-1 r, real + imaginary parts (V^2 / mesh unit)
       double total = 0.0;        // sum_j |L_j|^2 / l_j over the patch's equations
       int fallback = 0;
+      // C5 (decision 1446): the patch's raw claim portions as its owner holds them (the
+      // claims are local to the owner rank), fetched by GetMaxwellResponse so that
+      // GetLoopRemainderPortions reads them without a collective.
+      std::vector<
+          config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+          claim_portions;
     };
     std::vector<LoopRemainder> loop_remainders;
     double maximum_loop_fit_share = 0.0;
@@ -1497,12 +1555,40 @@ public:
     return GatherPatchTraces(x, false, true);
   }
 
+  // Lane fix-response-memory (decisions 1439 / 1446 / 1447; DESIGN s2.2-s2.3, A1.3): where
+  // the gathered PER-PATCH records (the electrostatic / Maxwell patch contributions, the
+  // patch traces, the loop shares and path residuals, the within-R volume energies) live
+  // after a response evaluation. REPLICATED = every rank holds the full O(global patches)
+  // list (the former form; the default, which the unit cases of record read on every
+  // rank); ROOT_ONLY = the root holds the identical list (Mpi::GatherLarge: the same
+  // rank-order concatenation, the same decode and sort), the other ranks an empty one.
+  // Their only production consumers are the root's tables; the drivers set ROOT_ONLY right
+  // after construction. The energies and every other reduced scalar are unchanged in both
+  // modes (Mpi::GlobalSum on every rank). OI-RESIDENCY-DEFAULT-REPLICATED (decision 1447):
+  // a new caller keeps the replicated law unless it sets ROOT_ONLY.
+  enum class PatchRecordResidency : char
+  {
+    REPLICATED,
+    ROOT_ONLY
+  };
+  void SetPatchRecordResidency(PatchRecordResidency residency)
+  {
+    patch_record_residency = residency;
+  }
+  PatchRecordResidency GetPatchRecordResidency() const { return patch_record_residency; }
+
 private:
+  PatchRecordResidency patch_record_residency = PatchRecordResidency::REPLICATED;
+  // Whether this rank holds the gathered per-patch records (the root always does).
+  bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,
                                             bool magnetic = false) const;
   // Every rank's local records concatenated in rank order (Allgatherv), the per-patch
   // record gathers' shared step.
   std::vector<double> AllgatherRecords(const std::vector<double> &local_records) const;
+  // The per-patch records by the residency: AllgatherRecords under REPLICATED; under
+  // ROOT_ONLY the same concatenation on the root (Mpi::GatherLarge) and empty elsewhere.
+  std::vector<double> GatherPatchRecords(const std::vector<double> &local_records) const;
 
 public:
   // Conductor-consistency gate (decision 277 (A); the identification fix round R0-a, idfix
@@ -2578,8 +2664,9 @@ struct DomainBoundaryExclusions
   long long int tested_points = 0;
   long long int reflected_points = 0;  // outside points reflected into the mesh
   double wall_time = 0.0;              // of the containment test, seconds
-  // Cumulative phase stamps of the test (seconds since its start: points, locator, find,
-  // reduce, reflect, distances), printed with PALACE_RESPONSE_SETUP_TIMING (decision 538).
+  // The phase durations of the test (seconds: points, locator, find, reduce, reflect,
+  // distances; summed over the candidate blocks), printed with PALACE_RESPONSE_SETUP_TIMING
+  // (decision 538).
   std::map<std::string, double> phase_times;
 };
 // `mirror_planes` (empty: no mirror, every cut-crossing patch is DomainBoundary) and the
@@ -2593,6 +2680,13 @@ struct DomainBoundaryExclusions
 // (`unmerged_portions`) is DomainBoundary whatever its points' containment (decision 481:
 // the configuration is read as a Missing feature); the coupon supports' reach into the
 // configurations (real or image portions) is recorded as information.
+// The containment test's block size in tested points (lane fix-response-memory, decision
+// 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^23 (0.3 GB of
+// per-point lists per rank). Results-neutral: the candidates are tested in blocks of at
+// most this many points with the same per-point arithmetic, the same elementwise
+// reductions and the same per-candidate decision; every block size gives the same
+// DomainBoundaryExclusions. No job of record sets it.
+std::size_t DomainBoundaryContainmentBlockPoints();
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -2608,7 +2702,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
         &unmerged_portions = {},
-    GeometryFallbackLedger *geometry_ledger = nullptr);
+    GeometryFallbackLedger *geometry_ledger = nullptr,
+    std::size_t block_points = DomainBoundaryContainmentBlockPoints());
 
 // The per-process cache of the DERIVED model response matrices (decision 734 F1; the
 // response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /
