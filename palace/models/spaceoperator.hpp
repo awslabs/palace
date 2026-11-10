@@ -407,9 +407,12 @@ public:
 
   // The ω-independent first-order damping mass and second-order curl-curl matrix of the
   // absorbing boundaries next to frequency-dependent material k of the farfield operator,
-  // with the high-frequency permittivity, on the IMAGINARY slot. The full A2 contributions
-  // at ω are iω·r_k(ω) and i·(0.5/ω)/r_k(ω) times them. Null if they contribute no DoFs on
-  // any rank (or, for the curl-curl matrix, for a first-order boundary condition).
+  // with the high-frequency permittivity. The returned matrices carry i: damping mass
+  // on the imaginary slot, and i times the signed second-order form (Hermitian with an
+  // unscaled Floquet wave vector). Their A2 scalars at ω are ω·r_k(ω) and
+  // (0.5/ω)/r_k(ω). Scaled Floquet trace terms are separate in GetFarfieldPoleTerms.
+  // Null if they contribute no DoFs on any rank, or, for the second-order form, if order
+  // < 2.
   std::unique_ptr<ComplexOperator>
   GetFarfieldDispersiveDampingMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
   std::unique_ptr<ComplexOperator>
@@ -419,9 +422,10 @@ public:
   // a pole at λ = 0: g(λ) = -0.5/λ on the real slot for the boundaries next to no
   // frequency-dependent material, and g(λ) = 0.5i/(λ r_k(-iλ)) on the imaginary slot for
   // those next to frequency-dependent material k (see GetFarfieldDispersiveCurlCurlMatrix).
-  // Together they are the whole second-order term, and none for a first-order boundary
-  // condition. Used by the NLEPS HYBRID seed, whose polynomial pencil cannot represent the
-  // pole.
+  // With a frequency-scaled Floquet wave vector, the dispersive rotated trace and mixed
+  // curl are separate terms with scalars ω/r_k(ω) and 1/r_k(ω). Together these are the
+  // whole second-order A2 contribution, and none for a first-order boundary condition.
+  // Used by the NLEPS HYBRID seed, whose polynomial pencil cannot represent the pole.
   struct FarfieldPoleTerm
   {
     std::unique_ptr<ComplexOperator> M;

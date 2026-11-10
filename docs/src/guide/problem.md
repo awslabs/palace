@@ -18,6 +18,22 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
+With frequency-dependent permittivity, the existing nonlinear eigensolver can fail or omit
+lower modes near material poles, permittivity zeros, and port cutoffs. The HYBRID
+polynomial seed may miss modes that accumulate near a material resonance; a small residual
+for a returned eigenpair does not certify that the lowest requested modes were found.
+Changing `Target`, `TargetUpper`, or the requested mode count changes the starts, but does
+not guarantee a complete spectrum.
+
+Wave ports and absorbing or Floquet boundaries next to a dispersive material add
+square-root branch points to the nonlinear operator. A complex-frequency wave-port mode
+solve that does not converge remains fatal in the eigenmode path, including during
+refinement. The divergence-free projection is disabled for frequency-dependent
+permittivity: a fixed high-frequency projector does not impose the frequency-dependent
+interface condition, and longitudinal modes at a permittivity zero can be physical.
+These are solver limitations, not a restriction on the material response used by driven
+simulations.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the
@@ -32,8 +48,9 @@ and quality factor calculations based on input-output (I-O) line coupling loss: 
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
 computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
 rate ``\kappa_{ml}`` is the power dissipated in the resistive boundary of port ``l`` divided
-by the electric energy of mode ``m``, and its sign is the sign of the real part of the port
-current. The output file `port-Q.csv` will be created
+by the electric-side normalization ``U`` of mode ``m`` (see
+[Energy and postprocessing](model.md#Energy-and-postprocessing)), and its sign is the sign
+of the real part of the port current. The output file `port-Q.csv` will be created
 in the output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and

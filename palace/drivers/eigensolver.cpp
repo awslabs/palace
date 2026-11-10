@@ -355,6 +355,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
   }
+  else if (iodata.solver.linear.divfree_max_it > 0 &&
+           space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
+  {
+    Mpi::Print(" Skipping divergence-free projection for frequency-dependent permittivity: "
+               "the fixed ε∞ projector does not enforce ∇·(ε(ω)E) = 0 at material "
+               "interfaces.\n");
+  }
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
   std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;

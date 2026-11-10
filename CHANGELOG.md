@@ -124,6 +124,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed wave port frequency sweeps selecting the wrong port mode for `Mode` above a
+    degenerate pair: starting each mode solve from the previous frequency's mode could miss
+    one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
+    `rom-*` files, when a wave port mode did not converge at the complex frequency of a
+    synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
+    NaN, with a warning, and the other outputs are written as before.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
@@ -510,19 +519,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
     or a point search over the full 3D mesh.
     [PR 1049](https://github.com/awslabs/palace/pull/1049).
-  - Fixed wave port frequency sweeps selecting the wrong port mode for `Mode` above a
-    degenerate pair: starting each mode solve from the previous frequency's mode could miss
-    one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
-    [PR 877](https://github.com/awslabs/palace/pull/877).
-  - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
-    `rom-*` files, when a wave port mode did not converge at the complex frequency of a
-    synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
-    NaN, with a warning, and the other outputs are written as before.
-    [PR 877](https://github.com/awslabs/palace/pull/877).
-  - Fixed the cap of the Floquet port diffraction orders at the mesh resolution, which read
-    past the 3 x 2 Jacobian of the port elements for their largest stretch, so the cap
-    depended on unrelated memory.
-    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
     the port mode, causing too-small coupling-rate magnitudes and too-large external quality
     factors.

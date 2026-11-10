@@ -136,7 +136,11 @@ There are several constraints and considerations for using this feature:
     residual and warns if it cannot be met. The tolerance applies on the real frequency band of
     the sweep: at complex frequencies off the band, for example next to a damped material
     resonance, the synthesized circuit can differ from the reduced model by much more (a few
-    percent in S, where the reduced model itself still agrees with the full model).
+    percent in S, where the reduced model itself still agrees with the full model). Only
+    the rational volume-permittivity terms are realized exactly in the retained reduced
+    directions. Native `DjordjevicSarkar` terms and material-dependent port and absorbing
+    boundary responses are fits; real-band fit control does not certify complex-plane or
+    resonance accuracy.
   - All `LumpedPort` attributes must be orthogonal to each other, since these are separated out as
     individual rows and columns in the circuit matrix. For *Palace*'s Nédélec meshes, this means
     that lumped ports cannot share parallel edges, since the degree of freedom on the edge
@@ -387,9 +391,13 @@ dispersion differs per boundary type:
     lossy dielectric, ``k_n`` is complex and its imaginary part, the attenuation of the mode, is
     fit along with its real part (unless it is below the fit tolerance), so the synthesized port
     load carries the attenuation of the port line like the driven solver.
-  - **Second-order absorbing (farfield) boundary.** Here ``f(\omega) = 0.5/\omega``, which is exactly
+  - **Second-order absorbing (farfield) boundary.** For a constant adjacent material,
+    ``f(\omega) = 0.5/\omega``, which is exactly
     a single pole at ``\omega = 0`` with residue ``0.5``. This is injected analytically — no fit is
-    needed.
+    needed. The projected boundary form carries the negative sign of the second-order
+    coefficient. Next to a frequency-dependent material, the first- and second-order
+    scalars ``\omega r(\omega)`` and ``0.5/(\omega r(\omega))`` are fitted instead, with
+    ``r = \sqrt{\epsilon_\mathrm{wave}/\epsilon_\infty}``; this response is generally not rational.
   - **Surface conductivity.** The boundary term is ``(i\omega / Z(\omega))\,\bm{M}_b`` with the
     skin-depth surface impedance ``Z(\omega)`` (and an optional finite-thickness correction). The
     leading ``i`` is carried by the (purely imaginary) projected boundary mass, so the scalar that is

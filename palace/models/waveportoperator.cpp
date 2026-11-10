@@ -1937,7 +1937,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // solved at the genuinely complex eigenvalue (ω = -i·λ). For k_n = β + iα, expanding
   // i·(β + iα) = −α + iβ puts the line-attenuation term −α·M on the real slot (fbr) and
   // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is
-  // side-effect-free (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω
+  // independent of the cached real-ω state (omega0/kn0/port_E0t), so the real-ω
   // driven/postpro state is preserved. For real ω (imag = 0, α from cross-section loss)
   // this matches the double overload.
   for (auto &[idx, data] : ports)

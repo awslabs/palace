@@ -99,8 +99,8 @@ public:
 
   // Add the second-order absorbing BC term at the frequency ω (see
   // AddCurlCurlBdrCoefficients with a = β = 1/(2iω)) to the real and imaginary parts of the
-  // system matrix. Without a Floquet wave vector, only the boundary curl-curl coefficients
-  // dfbr, dfbi are modified.
+  // system matrix. The first-order term next to dispersive material also modifies
+  // fbr, fbi. Without a Floquet wave vector, frbr, frbi, fpbr, fpbi are unchanged.
   void AddExtraSystemBdrCoefficients(
       double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
       MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
@@ -124,10 +124,10 @@ public:
   std::size_t NumDispersiveMaterials() const { return ceed_attr_dispersive.size(); }
 
   // The extra system terms for a real-valued preconditioner, in one coefficient each: the
-  // second-order term next to constant materials as the sum of its real and imaginary
-  // parts, and the terms next to frequency-dependent materials by their magnitudes
-  // |iω r_k(ω)| and |0.5/(ω r_k(ω))|, which stay positive also where r_k is not real
-  // (lossy, or a Drude medium below its plasma frequency). The system operator is
+  // boundary curl-curl term next to constant materials as the negative sum of its real
+  // and imaginary parts, and the terms next to frequency-dependent materials by their
+  // magnitudes |iω r_k(ω)| and |0.5/(ω r_k(ω))|, which stay positive also where r_k is not
+  // real (lossy, or a Drude medium below its plasma frequency). The system operator is
   // unchanged.
   void AddPreconditionerBdrCoefficients(std::complex<double> omega,
                                         MaterialPropertyCoefficient &df,
@@ -167,7 +167,7 @@ public:
   void AddDampingFloquetBdrCoefficients(double coeff, MaterialPropertyCoefficient &frb);
   void AddStiffnessFloquetBdrCoefficients(double coeff, MaterialPropertyCoefficient &fpb);
 
-  // Add a·(μ⁻¹c₀ n·∇ₖ×u, n·∇₋ₖ×v) on the absorbing boundaries for the complex scalar a,
+  // Add a·(μ⁻¹c₀ n·∇ₖ×u, n·∇₋ₖ×v) on nondispersive absorbing boundaries for scalar a,
   // with μ⁻¹c₀ normal projected. For a = β = 1/(2iω), this is the second-order absorbing BC
   // term (see docs/src/reference.md). With the Floquet wave vector k, the surface curl of
   // the field u exp(-i k·x) is exp(-i k·x) n·∇ₖ×u, where n·∇ₖ×u = n·∇×u - i n·(k x u),

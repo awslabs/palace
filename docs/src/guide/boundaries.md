@@ -67,7 +67,8 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations; its boundary curl operator requires a 3D mesh. It neglects the term depending on the divergence of the tangential field (see
+simulations; its boundary curl operator requires a 3D mesh. It neglects the term depending
+on the divergence of the tangential field (see
 [Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
 improves on the first-order condition for TE fields, with the electric field tangential to
 the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
@@ -78,13 +79,14 @@ of Floquet periodic structures. *Palace* warns when the part of the
 tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
 simulation.
 
-Next to a frequency-dependent
-material, the wave impedance and both orders' coefficients use
+Next to a frequency-dependent material, the wave impedance and both orders' coefficients use
 ``\epsilon_{r,\mathrm{wave}}(s)=\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)``
 at the current frequency, where ``\epsilon_0`` is the vacuum permittivity.
 The additive user `Conductivity` must be isotropic on such a boundary; the analytic
 impedance does not model a tensor conductivity. Constant-material boundaries retain their
-existing lossless-material approximation.
+existing lossless-material approximation. In eigenmode simulations, this frequency
+dependence can make the existing nonlinear solver fail or omit lower modes near a material
+pole or permittivity zero; see [Eigenmode problems](problem.md#Eigenmode-problems).
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet

@@ -146,19 +146,25 @@ Transient problems are not supported with this material model. Electrostatic pro
 the static permittivity ``\epsilon(0)``, so they reject a `Drude` term, and magnetostatic
 problems do not use the permittivity. Numeric wave ports, boundary-mode problems, Floquet
 ports, and Absorbing boundaries next to the material use ``\epsilon(i\omega)`` at each
-frequency. The eigenmode divergence-free projection is disabled because
-longitudinal plasma modes can be physical. Eigenmodes of a region partially filled with a
-pole material accumulate at the material resonance, so choose the eigenmode `Target` away
-from material resonances; the eigensolver warns when it cannot resolve the requested modes.
+frequency. The eigenmode divergence-free projection is disabled: its fixed
+high-frequency weighting does not impose the frequency-dependent interface condition, and
+longitudinal modes at permittivity zeros can be physical. The existing eigensolver can fail
+or omit lower modes near material poles, permittivity zeros, and port cutoffs, including
+modes that accumulate near the resonance of a partially filled region. Convergence of the
+returned modes is not a completeness check. A failed complex wave-port mode solve remains
+fatal in eigenmode refinement; see [Eigenmode problems](problem.md#Eigenmode-problems).
 In adaptive circuit synthesis, the pole terms of the volume permittivity are realized
 exactly by auxiliary states, in the reduced-basis directions that the synthesis rank
 cutoff retains. `DjordjevicSarkar` terms are fit over the frequency sweep, and so are
-wave ports and `Absorbing` boundaries next to the material: the real part of the
+wave ports and `Absorbing` boundaries next to the material: the complete complex
 wave-port propagation constant, and the absorbing-boundary scalars of the wave
 permittivity (``\epsilon(i\omega)`` with the material `Conductivity` included). These
 responses are in general not rational, and near a material resonance the fits may not
 meet `AdaptiveTol`. *Palace* prints each fit residual and warns when it exceeds the
-effective synthesis fit tolerance.
+effective synthesis fit tolerance. Only the rational volume terms are realized exactly;
+the material-dependent port and absorbing-boundary responses and native
+`DjordjevicSarkar` response are fits. Their real-band fit control does not certify
+complex-plane or resonance accuracy.
 
 ### Energy and postprocessing
 
