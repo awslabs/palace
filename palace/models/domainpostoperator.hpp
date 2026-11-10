@@ -111,6 +111,11 @@ public:
                                       ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
 
+  // The magnetic field energies from a real L-vector of the space of construction, for
+  // spaces without MFEM grid functions (broken spaces).
+  double GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const;
+  double GetDomainMagneticFieldEnergy(int idx, const Vector &a_l, MPI_Comm comm) const;
+
   // The susceptibility weighting the unit mass form of material m: wₘ(ω) for STORED (which
   // requires MaterialOperator::HasStoredElectricEnergy(m)) and Re χₘ(iω) for MATERIAL.
   // Errors at a singularity of the material (an exact lossless resonance), as do the

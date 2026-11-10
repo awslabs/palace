@@ -441,6 +441,15 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5353.diff"
   c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f
 )
+# https://github.com/mfem/mfem/pull/5711
+# DofTransformation in LinearForm::AssembleDelta (current dipoles on Nedelec spaces of
+# order 2 and above on elements with triangular faces), rebased onto the PR 5353
+# snapshot above, so it must be applied after it.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5711.diff
+  "https://raw.githubusercontent.com/awslabs/palace/3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/mfem_pr5711.diff"
+  4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470
+)
 # https://github.com/mfem/mfem/pull/5494
 # NCMesh partition fixes; not yet in MFEM 4.10. Applied directly from the
 # upstream PR range, which uses FlipIndexSign (present as of 4.10).
@@ -479,6 +488,44 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff"
   eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f
 )
+# https://github.com/mfem/mfem/pull/5610
+# Host hypre matrix products no longer read hypre's device-resident row cache.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5610.diff
+  "https://github.com/mfem/mfem/commit/e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff"
+  917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964
+)
+# https://github.com/mfem/mfem/pull/5714
+# Gmsh meshes with boundary elements of a different order than the volume elements, which
+# the Gmsh reader of MFEM 4.10 rejects.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5714.diff
+  "https://github.com/mfem/mfem/commit/c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff"
+  3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5
+)
+# https://github.com/mfem/mfem/pull/5717
+# All processes take part in the exchange of the face neighbor orientations of
+# nonconforming meshes with triangular faces.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5717.diff
+  "https://github.com/mfem/mfem/commit/d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff"
+  f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3
+)
+# https://github.com/mfem/mfem/pull/5721
+# Nonconforming refinement, derefinement and rebalancing in parallel process their messages in
+# the order of the source ranks, so the mesh numbering does not depend on message timing.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5721.diff
+  "https://github.com/mfem/mfem/commit/c79f309399361b2d6aadc207087ca6dc475513b4.diff"
+  75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456
+)
+# https://github.com/mfem/mfem/pull/5731
+# SuperLUSolver setters for the relaxed and maximum supernode sizes.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5731.diff
+  "https://github.com/mfem/mfem/commit/67dd11d697fafba16d8826172343a42e7a0c5df1.diff"
+  17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
@@ -490,10 +537,11 @@ ExternalProject_Add(mfem
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/mfem-cmake
   UPDATE_COMMAND    ""
+  # Upstream commits can also edit MFEM's CHANGELOG, which differs from the release.
   PATCH_COMMAND
     git reset --hard &&
     git clean -fd &&
-    git apply "${MFEM_PATCH_FILES}"
+    git apply --exclude=CHANGELOG "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
   TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
 )

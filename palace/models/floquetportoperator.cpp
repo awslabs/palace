@@ -34,27 +34,8 @@ void LowRankComplexOperator::Mult(const ComplexVector &x, ComplexVector &y) cons
 void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
                                      const std::complex<double> a) const
 {
-  // The Floquet DtN operator: F = Σ g_k v_k v_k^H / |Γ| (with 1/|Γ| absorbed into g_k).
-  for (const auto &t : terms)
-  {
-    // Hermitian dot product: dot = v^H x = Σ conj(v_j) x_j
-    // = (v_r · x_r + v_i · x_i) + i(v_r · x_i - v_i · x_r)
-    double dot_r =
-        linalg::Dot(comm, t.v->Real(), x.Real()) + linalg::Dot(comm, t.v->Imag(), x.Imag());
-    double dot_i =
-        linalg::Dot(comm, t.v->Real(), x.Imag()) - linalg::Dot(comm, t.v->Imag(), x.Real());
-
-    // Compute s = a * g * dot (complex scalar)
-    std::complex<double> s = a * t.g * std::complex<double>(dot_r, dot_i);
-
-    // y += s * v = (s_r + i s_i)(v_r + i v_i)
-    //    Real part: s_r v_r - s_i v_i
-    //    Imag part: s_i v_r + s_r v_i
-    y.Real().Add(s.real(), t.v->Real());
-    y.Real().Add(-s.imag(), t.v->Imag());
-    y.Imag().Add(s.imag(), t.v->Real());
-    y.Imag().Add(s.real(), t.v->Imag());
-  }
+  // The Floquet DtN operator: F = Σ g_k v_k v_kᴴ / |Γ| (with 1/|Γ| absorbed into g_k).
+  update.AddMult(x, y, a);
 }
 
 namespace
@@ -274,6 +255,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // modes with |B|×h < p×π. Beyond this, projections alias to ~0 with default quadrature.
   {
     double h_max = 0.0;
+    mfem::DenseMatrix JtJ;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
       if (bdr_marker[mesh.GetBdrAttribute(be) - 1])
@@ -283,10 +265,15 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
         // eigenvalue of JᵀJ. DenseMatrix::CalcSingularvalue requires a square matrix.
         auto *T = mesh.GetBdrElementTransformation(be);
         T->SetIntPoint(&mfem::Geometries.GetCenter(T->GetGeometryType()));
+        // The boundary Jacobian is not square and CalcSingularvalue only checks that in
+        // debug builds, so take the largest singular value from J^T J instead.
         const auto &J = T->Jacobian();
-        mfem::DenseMatrix JtJ(J.Width());
+        if (JtJ.Height() != J.Width())
+        {
+          JtJ.SetSize(J.Width(), J.Width());
+        }
         mfem::MultAtB(J, J, JtJ);
-        h_max = std::max(h_max, std::sqrt(linalg::SingularValueMax(JtJ)));
+        h_max = std::max(h_max, std::sqrt(JtJ.CalcSingularvalue(0)));
       }
     }
     Mpi::GlobalMax(1, &h_max, nd_fespace.GetComm());
@@ -785,14 +772,12 @@ std::complex<double> FloquetPortData::DtNEigenvalue(bool is_te, std::complex<dou
   return is_te ? gamma : omega * omega * mu_eps / gamma;
 }
 
-std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
+void FloquetPortData::AddBoundaryTerms(std::vector<const ComplexVector *> &v,
+                                       std::vector<std::complex<double>> &g) const
 {
-  int n = orders.empty() ? 0 : static_cast<int>(orders[0].v[0].Size());
-
   // Robin+correction: the system matrix includes a Robin BC (iγ₀/μ × M_bdr) for the
   // (0,0) mode. This low-rank operator adds per-mode corrections g_k - g_uniform so
   // that each mode sees its correct DtN eigenvalue.
-  auto op = std::make_unique<LowRankComplexOperator>(comm, n);
   for (const auto &order : orders)
   {
     if (!HasFlag(order.use, FloquetModeUse::Dtn))
@@ -802,14 +787,14 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
     for (bool is_te : {true, false})
     {
       auto p = PolIndex(is_te);
-      auto g = ComputeDtNCorrectionCoeff(order, is_te);
-      if (g != 0.0)
+      auto g_k = ComputeDtNCorrectionCoeff(order, is_te);
+      if (g_k != 0.0)
       {
-        op->AddTerm(&order.v[p], g);
+        v.push_back(&order.v[p]);
+        g.push_back(g_k);
       }
     }
   }
-  return op;
 }
 
 FloquetPortData::IncidentNormalization
@@ -979,7 +964,7 @@ FloquetPortOperator::FloquetPortOperator(
     const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
     const Units &units, const MaterialOperator &mat_op_ref,
     mfem::ParFiniteElementSpace &nd_fespace)
-  : mat_op(mat_op_ref)
+  : mat_op(mat_op_ref), comm(nd_fespace.GetComm()), n(nd_fespace.GetTrueVSize())
 {
   if (floquetport.empty())
   {
@@ -1015,23 +1000,14 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
 
   Initialize(omega);
 
-  // Combine boundary operators from all ports.
-  // For a single port, return it directly. For multiple, chain with SumComplexOperator.
-  std::unique_ptr<ComplexOperator> combined;
-  for (auto &[idx, port] : ports)
+  // A single operator over all ports, so each product needs one reduction.
+  std::vector<const ComplexVector *> v;
+  std::vector<std::complex<double>> g;
+  for (const auto &[idx, port] : ports)
   {
-    auto F = port.GetBoundaryOperator();
-    if (!combined)
-    {
-      combined = std::move(F);
-    }
-    else
-    {
-      combined = std::make_unique<SumComplexOperator>(std::move(combined), std::move(F));
-    }
+    port.AddBoundaryTerms(v, g);
   }
-
-  return combined;
+  return std::make_unique<LowRankComplexOperator>(comm, n, v, g);
 }
 
 void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,

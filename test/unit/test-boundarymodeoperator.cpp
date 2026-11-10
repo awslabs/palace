@@ -73,7 +73,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  int reduced_evaluations = 1,
                                  std::size_t reduced_training_capacity = 16,
                                  std::vector<double> reduced_training_factors = {0.9, 1.1},
-                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8)
+                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8,
+                                 double reduced_basis_limit_factor = 0.0)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -160,7 +161,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     {
       solve_at(factor * omega);
     }
-    mode_solver.EnableReducedModel(adaptive_tol);
+    mode_solver.EnableReducedModel(adaptive_tol, reduced_basis_limit_factor);
   }
 
   auto result = solve_at(omega).first;
@@ -182,11 +183,14 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   {
     out.first_target_stats = mode_solver.GetReducedModelStats();
     out.first_target_basis_size = mode_solver.GetReducedBasisSize();
+    // The final evaluation may converge a different number of modes than the first one,
+    // for example a reduced solve after an exact fallback.
+    int final_converged = result.num_converged;
     for (int i = 1; i < reduced_evaluations; i++)
     {
-      solve_at(omega);
+      final_converged = solve_at(omega).first.num_converged;
     }
-    for (int i = 0; i < result.num_converged; i++)
+    for (int i = 0; i < final_converged; i++)
     {
       out.final_kn.push_back(mode_solver.GetPropagationConstant(i));
       out.final_reduced_backward_errors.push_back(
@@ -645,8 +649,15 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   CHECK(exact.reduced_stats.reduced_solves == 0);
   CHECK(exact.reduced_stats.exact_solves == 1);
 
+  // The mode shapes of the homogeneous waveguide do not depend on frequency, so the
+  // eigenvectors of the second training solve only differ from the basis by their errors,
+  // which are added to the basis if they exceed its orthogonalization tolerance. With the
+  // default eigenvalue tolerance, these errors are close to that tolerance, so whether they
+  // are added, which can make the first reduced solve fall back to an exact solve, depends
+  // on roundoff. Solve the eigenproblems accurately to keep the errors well below it.
   auto reduced = SolveRectangularModes(
-      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21);
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21, 16, {0.9, 1.1},
+      1.0e-3, 1.0e-12);
   REQUIRE(reduced.num_converged >= num_modes);
   REQUIRE(reduced.reduced_basis_size >= num_modes);
   CHECK(reduced.reduced_stats.reduced_solves == 21);
@@ -665,6 +676,57 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   {
     CHECK_THAT(reduced.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
     CHECK_THAT(reduced.kn[i].imag(), WithinAbs(exact.kn[i].imag(), 1.0e-8));
+  }
+}
+
+// With a basis size limit, the reduced model is only used while its basis is within the
+// limit, which also caps its online enrichment, and otherwise all solves are exact without
+// enriching the basis. The decision only depends on the sizes of the basis and of the
+// problem, so it is the same on all processes and in all runs.
+TEST_CASE("ModeEigenSolver reduced model basis size limit",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  constexpr int num_modes = 3, num_evaluations = 4;
+  auto exact =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {});
+  REQUIRE(exact.num_converged >= num_modes);
+
+  // The basis of the two training solves is within the limit for wave ports, of 2√N vectors
+  // (55 vectors for the N = 761 unknowns of this cross-section). The eigenproblems are
+  // solved accurately, as for the guarded reduced solve above.
+  auto within = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
+      {0.9, 1.1}, 1.0e-3, 1.0e-12, 2.0);
+  REQUIRE(within.num_converged >= num_modes);
+  const auto &within_stats = within.reduced_stats;
+  CHECK_FALSE(within_stats.over_basis_limit);
+  CHECK(within_stats.basis_limit == 55);
+  CHECK(within_stats.basis_limit >= within_stats.offline_basis_rank);
+  CHECK(within_stats.online_basis_cap <= within_stats.basis_limit);
+  CHECK(within_stats.reduced_solves == num_evaluations);
+  CHECK(within_stats.exact_solves == 2);
+
+  // The same basis is above a limit of a single vector.
+  auto over = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
+      {0.9, 1.1}, 1.0e-3, 1.0e-12, 1.0e-3);
+  REQUIRE(over.num_converged >= num_modes);
+  const auto &over_stats = over.reduced_stats;
+  CHECK(over_stats.over_basis_limit);
+  CHECK(over_stats.basis_limit == 1);
+  CHECK(over_stats.reduced_solves == 0);
+  CHECK(over_stats.exact_solves == 2 + num_evaluations);
+  CHECK(over.reduced_basis_size == over_stats.offline_basis_rank);
+
+  for (const auto *result : {&within, &over})
+  {
+    REQUIRE(result->kn.size() >= num_modes);
+    REQUIRE(result->final_kn.size() >= num_modes);
+    for (int i = 0; i < num_modes; i++)
+    {
+      CHECK_THAT(result->kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+      CHECK_THAT(result->final_kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+    }
   }
 }
 
@@ -1377,7 +1439,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(pmesh.Nonconforming());
   REQUIRE(pmesh.GetGlobalNE() == 4 * ne);
   CHECK(CountPEC(pmesh, nullptr) == std::array<int, 2>{2 * nbe_pec[0], 2 * nbe_pec[1]});
-  CHECK(mesh.back()->GetCrackSides(iodata.boundaries.GetSheetAttributes()).Any());
+  bool any_crack = mesh.back()->GetCrackSides(iodata.boundaries.GetSheetAttributes()).Any();
+  Mpi::GlobalOr(1, &any_crack, comm);
+  CHECK(any_crack);
   MaterialOperator mat_op(iodata, *mesh.back());
   BoundaryModeOperator mode_op(iodata, mesh, mat_op);
 
@@ -1506,8 +1570,8 @@ TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
   CHECK(TargetDistance(std::complex<double>(0.0, 1.0e-3 * kt), kt) <
         TargetDistance(std::complex<double>(0.0, 10.0 * kt), kt));
 
-  // Invariant under conjugation: a near-cutoff mode may land on either side of the branch
-  // cut of the principal square root.
+  // Invariant under conjugation, so the same for the two roots ±iα of a lossless mode below
+  // cutoff.
   for (const auto kn : {kn_cpw, kn_evanescent, std::complex<double>(0.3, -0.7)})
   {
     CHECK(TargetDistance(std::conj(kn), kn_target) == TargetDistance(kn, kn_target));
@@ -1521,6 +1585,93 @@ TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
   CHECK(TargetDistance(std::complex<double>(nan, inf), kt) == inf);
   CHECK(TargetDistance(std::complex<double>(inf, 0.0), kt) == inf);
   CHECK(TargetDistance(kn_evanescent, kt) < inf);
+}
+
+TEST_CASE("Mode propagation constant branch", "[boundarymodeoperator][Serial]")
+{
+  using mode_assembly::PropagationConstant;
+
+  // Lossless modes, with the roundoff of the mode solve in Im{kn^2} of either sign: the
+  // root which propagates in the +n direction above cutoff, and kn = -i alpha, which decays
+  // in the +n direction, below cutoff.
+  for (const double roundoff : {-1.0e-14, 0.0, 1.0e-14})
+  {
+    CAPTURE(roundoff);
+    const auto kn_above = PropagationConstant({4.0, roundoff});
+    const auto kn_below = PropagationConstant({-4.0, roundoff});
+    CHECK(std::abs(kn_above - 2.0) <= 1.0e-14);
+    CHECK(std::abs(kn_below - std::complex<double>(0.0, -2.0)) <= 1.0e-14);
+    CHECK(kn_below.imag() < 0.0);
+  }
+
+  // At a complex frequency, the analytic continuation of the root at the real frequency
+  // Re{omega}: kn = n omega for a TEM mode, with kn^2 = n^2 omega^2, also for |Im{omega}| >
+  // Re{omega}, where Re{kn^2} < 0, and, for a mode with kn^2 = n^2 omega^2 - kc^2, the
+  // continuation of the root decaying below cutoff, or of the propagating one above.
+  const double n = 1.5, kc = 3.0;
+  for (const auto omega : {std::complex<double>(1.0, 0.1), std::complex<double>(1.0, 2.0),
+                           std::complex<double>(1.0, 10.0)})
+  {
+    CAPTURE(omega);
+    CHECK(std::abs(PropagationConstant(n * n * omega * omega, omega) - n * omega) <=
+          1.0e-14 * std::abs(n * omega));
+  }
+  for (const double omega_r : {1.0, 1.9, 2.1, 3.0})
+  {
+    CAPTURE(omega_r);
+    auto kn2 = [&](std::complex<double> omega) { return n * n * omega * omega - kc * kc; };
+    const auto kn_real = PropagationConstant(kn2(omega_r), omega_r);
+    CHECK(((omega_r < kc / n) ? kn_real.imag() < 0.0 : kn_real.real() > 0.0));
+    for (const double omega_i : {1.0e-3, 1.0e-1, 1.0})
+    {
+      CAPTURE(omega_i);
+      // Continuous along omega_r + i t, for t from 0 to omega_i.
+      std::complex<double> kn_prev = kn_real;
+      for (int k = 1; k <= 1000; k++)
+      {
+        const std::complex<double> omega(omega_r, omega_i * k / 1000.0);
+        const auto kn = PropagationConstant(kn2(omega), omega);
+        CHECK(std::abs(kn - kn_prev) <= 0.1 * std::abs(kn_prev));
+        kn_prev = kn;
+      }
+    }
+  }
+
+  // Passive lossy modes, with Im{kn^2} < 0, above, at, and below cutoff: the principal
+  // root, with Re{kn} >= 0 and Im{kn} <= 0, continuous through cutoff.
+  for (const auto kn2 :
+       {std::complex<double>(1.0, -0.5), std::complex<double>(1.0e-20, -0.5),
+        std::complex<double>(0.0, -0.5), std::complex<double>(-1.0e-20, -0.5),
+        std::complex<double>(-1.0, -0.5)})
+  {
+    CAPTURE(kn2);
+    const auto kn = PropagationConstant(kn2);
+    CHECK(std::abs(kn - std::sqrt(kn2)) <= 1.0e-14 * std::abs(kn));
+    CHECK(kn.real() >= 0.0);
+    CHECK(kn.imag() <= 0.0);
+    CHECK(std::abs(kn * kn - kn2) <= 1.0e-14 * std::abs(kn2));
+  }
+}
+
+TEST_CASE("ModeEigenSolver takes the decaying root below cutoff",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Below the TE10 cutoff (75 GHz for this 1000 x 500 um guide with eps = 4) every mode of
+  // the lossless guide is evanescent, with kn^2 < 0 up to the roundoff of the mode solve,
+  // whose sign selected the root returned by the principal square root: kn = -i alpha,
+  // which decays in the +n direction, or the growing kn = +i alpha.
+  for (const double freq_ghz : {20.0, 35.0, 50.0, 65.0})
+  {
+    auto result =
+        SolveRectangularModes(1000.0, 500.0, freq_ghz, 4.0, 2, 3, [](IoData &) {});
+    REQUIRE(result.num_converged >= 3);
+    for (const auto &kn : result.kn)
+    {
+      CAPTURE(freq_ghz, kn);
+      CHECK(kn.imag() < 0.0);
+      CHECK(std::abs(kn.real()) <= 1.0e-6 * std::abs(kn));
+    }
+  }
 }
 
 TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
@@ -1541,6 +1692,7 @@ TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
   {
     CAPTURE(i, exact.kn[i]);
     REQUIRE(std::abs(exact.kn[i].real()) <= 1.0e-6 * std::abs(exact.kn[i].imag()));
+    CHECK(exact.kn[i].imag() < 0.0);
     if (i > 0)
     {
       CHECK(std::abs(exact.kn[i - 1].imag()) <=
@@ -1554,8 +1706,8 @@ TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
                    electromagnetics::c0_ * 1.0e-6;
   CHECK_THAT(std::abs(exact.kn[0].imag()), WithinRel(std::sqrt(kc * kc - k * k), 1.0e-3));
 
-  // Train the reduced model below cutoff as well (0.9 and 1.1 times the frequency). Compare
-  // kn^2, which does not depend on the sign of i|kn| returned for an evanescent mode.
+  // Train the reduced model below cutoff as well (0.9 and 1.1 times the frequency). The
+  // reduced solve takes the same decaying root as the exact one.
   auto reduced = SolveRectangularModes(
       1000.0, 500.0, freq_ghz, epsilon_r, 2, num_modes, [](IoData &) {}, true);
   REQUIRE(reduced.reduced_stats.reduced_solves == 1);
@@ -1563,8 +1715,7 @@ TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
   for (int i = 0; i < num_modes; i++)
   {
     CAPTURE(i, reduced.kn[i], exact.kn[i]);
-    CHECK(std::abs(reduced.kn[i] * reduced.kn[i] - exact.kn[i] * exact.kn[i]) <=
-          1.0e-6 * std::norm(exact.kn[i]));
+    CHECK(std::abs(reduced.kn[i] - exact.kn[i]) <= 1.0e-6 * std::abs(exact.kn[i]));
   }
 }
 

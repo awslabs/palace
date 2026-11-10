@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <regex>
@@ -523,10 +524,22 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
+    // The Floquet terms of a wave vector k make the system matrices Hermitian rather than
+    // complex symmetric (the transpose of the problem for k is the one for -k), so that the
+    // synthesized inverse inductance, inverse resistance, and capacitance matrices would
+    // not be symmetric. The wave vector is nonzero as for MaterialOperator::HasWaveVector.
+    const auto &k = boundaries.periodic.wave_vector;
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    std::hypot(k[0], k[1], k[2]) <= std::numeric_limits<double>::epsilon(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support a nonzero Floquet wave vector (FloquetWaveVector): its terms make "
+                "the system matrices Hermitian rather than complex symmetric, so the "
+                "synthesized circuit matrices would not be symmetric.\n");
     // Second-order absorbing (farfield), surface-conductivity, and rational surface
     // impedance boundaries are supported in circuit synthesis: their frequency-dependent
     // contributions are folded into the synthesised pencil via the same auxiliary-state
-    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface
+    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0, with the
+    // sign of β inside the boundary matrix; surface
     // conductivity's iω/Z(ω) and the rational impedance's Robin coefficient s·D(s)/N(s)
     // by a polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
     // Wave ports are supported via an automatic polynomial fit of the modal dispersion,
@@ -659,6 +672,16 @@ void IoData::CheckConfiguration()
         "conditions!\n");
   }
 
+  // A two-sided superconductor film is modeled on a solution space broken across its faces,
+  // which must stay interior faces: the deprecated global option would crack the mesh along
+  // the film.
+  MFEM_VERIFY(
+      !model.crack_bdr_elements.value_or(false) ||
+          std::none_of(boundaries.superconductor.begin(), boundaries.superconductor.end(),
+                       [](const auto &data) { return data.two_sided; }),
+      "Superconductor boundary \"TwoSided\" cannot be used with "
+      "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -674,10 +697,10 @@ void IoData::CheckConfiguration()
     else
     {
       // Prefer sparse direct solver for frequency domain problems if available.
-#if defined(MFEM_USE_SUPERLU)
-      solver.linear.type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+#if defined(MFEM_USE_STRUMPACK)
       solver.linear.type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
       solver.linear.type = LinearSolver::MUMPS;
 #else

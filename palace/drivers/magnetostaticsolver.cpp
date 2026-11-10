@@ -132,7 +132,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // whose essential DOFs match that step's shorted inactive ports (an empty set for a step
   // with no shorted ports reuses the base operator K). The base operator is bound lazily so
   // that an all-short configuration does not pay for an unused preconditioner setup.
-  KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
+  KspSolver ksp(iodata, curlcurl_op.GetSolutionNDSpaces(),
+                &curlcurl_op.GetSolutionH1Spaces());
   const Operator *bound_op = nullptr;
   auto set_operator = [&](const Operator &op, const Operator &pc)
   {
@@ -187,7 +188,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // In 2D, the curl is scalar: use the L2 curl space and H1 spaces for the estimator.
   CurlFluxErrorEstimator<Vector> estimator(
       curlcurl_op.GetMaterialOp(),
-      curlcurl_op.GetCurlSpace(),  // RT (3D) or L2 curl (2D)
+      curlcurl_op.GetSolutionCurlSpace(),  // RT (3D) or L2 curl (2D), broken like B
       (curlcurl_op.GetMesh().Dimension() < 3) ? curlcurl_op.GetH1Spaces()
                                               : curlcurl_op.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
@@ -431,8 +432,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       int flux_idx = step - n_current_steps;
       const auto &[idx, loops] = *std::next(flux_excitations.begin(), flux_idx);
+      // With two-sided films, the flux through the hole of the original DOFs (the hole is
+      // not on the films).
       auto &B_gf = post_op.GetBGridFunction().Real();
-      B_gf.SetFromTrueDofs(B);
+      Vector B0;
+      curlcurl_op.GetFirstVersion(curlcurl_op.GetSolutionCurlSpace(), B, B0);
+      B_gf.SetFromTrueDofs(B0);
 
       for (int loop_idx : loops)
       {
@@ -492,7 +497,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Record space/DOF and solver metadata here (not at construction) so an AMR
   // non-convergence early return leaves palace.json describing the last converged
   // iteration.
-  SaveMetadata(curlcurl_op.GetNDSpaces());
+  SaveMetadata(curlcurl_op.GetSolutionNDSpaces());
   SaveMetadata(ksp);
   if (surf_flux_op.HasSingleLoopExcitations())
   {
@@ -678,11 +683,11 @@ void MagnetostaticSolver::PostprocessTerminals(
 
   mfem::DenseMatrix cross_energy(n);
   cross_energy = nan;
+  Vector A_gf;  // L-vector of the solution space (broken across two-sided films)
   for (int i = 0; i < n; i++)
   {
-    auto &A_gf = post_op.GetAGridFunction().Real();
     auto &H_gf = post_op.GetDomainPostOp().H;
-    A_gf.SetFromTrueDofs(A[i]);
+    post_op.GetSolutionLVector(A[i], A_gf);
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
     cross_energy(i, i) += london_correction(i, i);
@@ -694,7 +699,7 @@ void MagnetostaticSolver::PostprocessTerminals(
       {
         continue;
       }
-      A_gf.SetFromTrueDofs(A[j]);
+      post_op.GetSolutionLVector(A[j], A_gf);
       cross_energy(i, j) = cross_energy(j, i) =
           linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) + london_correction(i, j);
     }

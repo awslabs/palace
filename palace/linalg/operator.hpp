@@ -519,12 +519,18 @@ std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const Operator &
 std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOperator &A,
                          const ComplexVector &y);
 
-// Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
-// not symmetric or Hermitian unless specified.
-double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false, double tol = 1.0e-4,
-                    int max_it = 1000);
+// Estimate the operator 2-norm (spectral norm) with the Lanczos method, applied to A if it
+// is symmetric or Hermitian (as specified, otherwise it is not assumed) and to Aᴴ A
+// otherwise. The iteration stops when the estimate changes by less than tol relative to
+// itself. If x0 is given, the iteration starts from it (with a small random component)
+// when it has the size of the operator, and x0 is set on return to the Ritz vector of the
+// estimate (the dominant eigenvector or right singular vector, summed with the one at the
+// other end of the spectrum of an indefinite operator whose two ends are comparable in
+// magnitude), so that the estimate for a nearby operator can start from it.
+double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false,
+                    Vector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                    double tol = 1.0e-4, int max_it = 1000);
+                    ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 
 }  // namespace linalg
 

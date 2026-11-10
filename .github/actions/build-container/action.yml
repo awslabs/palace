@@ -8,7 +8,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: 'ef05700808eb32fe932a76de9254a3c4a5f94f2c'
+    default: '41fb89176c50aa111aec1038f43c26e80d5bf083'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).

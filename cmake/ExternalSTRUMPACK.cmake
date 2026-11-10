@@ -279,6 +279,15 @@ set(STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_gpu_init.diff"
 )
 
+# Lower the communication cost of the distributed solve phase
+# (https://github.com/pghysels/STRUMPACK/pull/163)
+include(PatchHelpers)
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr163.diff
+  "https://github.com/pghysels/STRUMPACK/commit/4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff"
+  4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1
+)
+
 include(ExternalProject)
 ExternalProject_Add(strumpack
   DEPENDS           ${STRUMPACK_DEPENDENCIES}
@@ -289,7 +298,10 @@ ExternalProject_Add(strumpack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/STRUMPACK-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${STRUMPACK_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${STRUMPACK_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${STRUMPACK_OPTIONS}"
   TEST_COMMAND      ""
 )

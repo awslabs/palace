@@ -15,11 +15,13 @@ namespace palace
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
+class Units;
 
 namespace config
 {
 
 struct FarfieldBoundaryData;
+struct SolverData;
 
 }  // namespace config
 
@@ -49,15 +51,26 @@ private:
   mfem::Array<int> ceed_attr_other;
   std::vector<std::pair<std::size_t, mfem::Array<int>>> ceed_attr_dispersive;
 
+  // Coefficient μ⁻¹c₀ of the second-order absorbing BC on the farfield attributes, as a map
+  // from the libCEED boundary attributes to materials and the material properties, and with
+  // a Floquet wave vector k (or k₀ with frequency scaling), its products with k kᵀ and [k
+  // x]. Built once, when order >= 2.
+  mfem::Array<int> curlcurl_attr_mat;
+  mfem::DenseTensor curlcurl_mat, curlcurl_kkT_mat, curlcurl_kx_mat;
+
   mfem::Array<int> SetUpBoundaryProperties(const config::FarfieldBoundaryData &farfield,
                                            ProblemType problem_type,
                                            const mfem::ParMesh &mesh);
 
-  void AddDispersiveExtraSystemBdrCoefficients(std::complex<double> omega,
-                                               MaterialPropertyCoefficient &dfbr,
-                                               MaterialPropertyCoefficient &dfbi,
-                                               MaterialPropertyCoefficient &fbr,
-                                               MaterialPropertyCoefficient &fbi) const;
+  void SetUpCurlCurlCoefficients();
+  void AddCurlCurlBdrCoefficients(const mfem::Array<int> &attrs, std::complex<double> a,
+                                  std::complex<double> wave_vector_scale,
+                                  MaterialPropertyCoefficient &dfr,
+                                  MaterialPropertyCoefficient &dfi,
+                                  MaterialPropertyCoefficient &frr,
+                                  MaterialPropertyCoefficient &fri,
+                                  MaterialPropertyCoefficient *fpr,
+                                  MaterialPropertyCoefficient *fpi) const;
 
 public:
   FarfieldBoundaryOperator(const config::FarfieldBoundaryData &farfield,
@@ -72,24 +85,37 @@ public:
   // Returns order of absorbing BC approximation.
   int GetOrder() const { return order; }
 
+  // Warn when the tangential part k_t of the Floquet wave vector makes the second-order
+  // absorbing BC non-passive: for TE fields, it imposes the effective wavenumber
+  // k - k_t²/(2k), which is negative for k_t > √2 k, with k the wavenumber of the material
+  // at the boundary at the lowest frequency of the simulation.
+  void CheckFloquetPassivity(const config::SolverData &solver, ProblemType problem_type,
+                             const Units &units, const mfem::ParMesh &mesh) const;
+
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition. The damping and curl-curl coefficients cover the boundaries next to no
   // frequency-dependent material; the extra system coefficients include the rest.
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
-                                     MaterialPropertyCoefficient &dfbi,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+
+  // Add the second-order absorbing BC term at the frequency ω (see
+  // AddCurlCurlBdrCoefficients with a = β = 1/(2iω)) to the real and imaginary parts of the
+  // system matrix. Without a Floquet wave vector, only the boundary curl-curl coefficients
+  // dfbr, dfbi are modified.
+  void AddExtraSystemBdrCoefficients(
+      double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+      MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+      MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
+      MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi);
 
   // Complex-ω overload, used by the eigenmode nonlinear solve where the second-order
-  // absorbing-BC coefficient i·(0.5/ω) is evaluated at the genuinely complex eigenvalue
-  // (ω = -i·λ). For real ω (imag = 0) this produces the same (dfbr, dfbi) split as the
-  // double overload (the whole term on dfbi).
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
-                                     MaterialPropertyCoefficient &dfbr,
-                                     MaterialPropertyCoefficient &dfbi,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+  // absorbing-BC coefficient β = 1/(2iω) is evaluated at the genuinely complex eigenvalue
+  // (ω = -i·λ). For real ω (imag = 0) this produces the same split as the double overload.
+  void AddExtraSystemBdrCoefficients(
+      std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
+      MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
+      MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
+      MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
+      MaterialPropertyCoefficient *fpbi);
 
   // Absorbing boundaries next to frequency-dependent material k (of
   // NumDispersiveMaterials): the first-order term is iω·r_k(ω) times the damping
@@ -105,25 +131,62 @@ public:
   // unchanged.
   void AddPreconditionerBdrCoefficients(std::complex<double> omega,
                                         MaterialPropertyCoefficient &df,
-                                        MaterialPropertyCoefficient &f) const;
+                                        MaterialPropertyCoefficient &f,
+                                        MaterialPropertyCoefficient &fr) const;
   std::complex<double> GetDispersiveScale(std::size_t k, std::complex<double> omega) const;
   void AddDispersiveDampingBdrCoefficients(std::size_t k, double coeff,
                                            MaterialPropertyCoefficient &fb) const;
   void AddDispersiveCurlCurlBdrCoefficients(std::size_t k, double coeff,
                                             MaterialPropertyCoefficient &df) const;
+  // Full second-order form of material k, with a unit material scale. The curl-curl
+  // matrix includes the negative sign of β. Frequency-scaled Floquet terms are factored
+  // separately into damping and stiffness forms below.
+  void AddDispersiveCurlCurlBdrCoefficients(std::size_t k, std::complex<double> a,
+                                            MaterialPropertyCoefficient &dfr,
+                                            MaterialPropertyCoefficient &dfi,
+                                            MaterialPropertyCoefficient &frr,
+                                            MaterialPropertyCoefficient &fri,
+                                            MaterialPropertyCoefficient *fpr,
+                                            MaterialPropertyCoefficient *fpi) const;
+  void AddDispersiveDampingFloquetBdrCoefficients(std::size_t k, double coeff,
+                                                  MaterialPropertyCoefficient &fr) const;
+  void AddDispersiveStiffnessFloquetBdrCoefficients(std::size_t k, double coeff,
+                                                    MaterialPropertyCoefficient &fp) const;
   // The scalar version of the damping coefficient for the H1 block of the mode problem, on
   // each libCEED boundary attribute of material k.
   void AddDispersiveScalarDampingBdrCoefficients(std::size_t k, double coeff,
                                                  MaterialPropertyCoefficient &fb) const;
   const mfem::Array<int> &GetCeedAttrListOther() const { return ceed_attr_other; }
 
-  // Add the ω-independent boundary curl-curl coefficient of the second-order absorbing
-  // BC (the μ⁻¹·c₀ normal-projected term that the real-ω stamping scales by 0.5/ω),
-  // scaled by `coeff`. Pulled out so both the real-ω and complex-ω overloads share the
-  // material-coefficient construction. No-op when order < 2 or there are no farfield
-  // attributes.
-  void AddExtraSystemBoundaryCurlCurlBdrCoefficients(double coeff,
-                                                     MaterialPropertyCoefficient &df) const;
+  // With a Floquet wave vector k = ω k₀ which depends on frequency
+  // (FloquetReferenceFrequency), the Floquet terms of the second-order absorbing BC (see
+  // AddCurlCurlBdrCoefficients) scale as iω (rotated boundary mass) and 1 (mixed boundary
+  // curl), and are added with coefficient coeff to the damping and stiffness matrices
+  // instead of the extra system matrix. No-op without a frequency dependent Floquet wave
+  // vector.
+  void AddDampingFloquetBdrCoefficients(double coeff, MaterialPropertyCoefficient &frb);
+  void AddStiffnessFloquetBdrCoefficients(double coeff, MaterialPropertyCoefficient &fpb);
+
+  // Add a·(μ⁻¹c₀ n·∇ₖ×u, n·∇₋ₖ×v) on the absorbing boundaries for the complex scalar a,
+  // with μ⁻¹c₀ normal projected. For a = β = 1/(2iω), this is the second-order absorbing BC
+  // term (see docs/src/reference.md). With the Floquet wave vector k, the surface curl of
+  // the field u exp(-i k·x) is exp(-i k·x) n·∇ₖ×u, where n·∇ₖ×u = n·∇×u - i n·(k x u),
+  // which splits the Hermitian form into
+  //   (μ⁻¹c₀ n·∇ₖ×u, n·∇₋ₖ×v) = (μ⁻¹c₀ n·∇×u, n·∇×v) + (μ⁻¹c₀ k kᵀ n x u, n x v)
+  //       + i [(μ⁻¹c₀ [k x]ᵀ ∇×u, v) - (μ⁻¹c₀ [k x] u, ∇×v)],
+  // with the boundary curl ∇×u = (n·∇×u) n of the tangential trace. The boundary curl-curl
+  // term is added to dfr, dfi, the rotated boundary mass term
+  // (RotatedVectorFEMassIntegrator) to frr, fri, and the mixed boundary curl terms
+  // (transposed MixedVectorCurlIntegrator and MixedVectorWeakCurlIntegrator) to fpr, fpi,
+  // unless null. The Floquet terms are only included with a Floquet wave vector which does
+  // not depend on frequency (see AddDampingFloquetBdrCoefficients). No-op when order < 2 or
+  // there are no farfield attributes.
+  void AddCurlCurlBdrCoefficients(std::complex<double> a, MaterialPropertyCoefficient &dfr,
+                                  MaterialPropertyCoefficient &dfi,
+                                  MaterialPropertyCoefficient &frr,
+                                  MaterialPropertyCoefficient &fri,
+                                  MaterialPropertyCoefficient *fpr,
+                                  MaterialPropertyCoefficient *fpi) const;
 };
 
 }  // namespace palace

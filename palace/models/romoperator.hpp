@@ -223,7 +223,9 @@ protected:
   // Aᵣ(ω); project M_proj once, fit/inject the scalar f(ω)). Stored with the boundary mass
   // in the IMAGINARY slot (matching Mwp_p) so the synthesis path treats them uniformly.
   //   - Second-order farfield ABC: f(ω) = 0.5/ω, a single exact pole at ω=0 (residue 0.5),
-  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix.
+  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix, which
+  //     includes the negative sign of β (see
+  //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
   //   - Surface conductivity, one entry per attribute group g: f(ω) = ω/Z_g(ω) (the i is
   //     the implicit slot factor; surf_sigma_op.EvaluateScalar returns i·ω/Z, so the scalar
   //     used here is EvaluateScalar/i, generally complex), fit by poly+AAA.
@@ -369,19 +371,17 @@ protected:
     bool frequency_coupled = false;
   };
 
-  // Result of fitting k_n,p(omega) on the sweep band for a single port. Polynomial regime
-  // populates {alpha0, alpha1, alpha2}; Augmented regime additionally populates `aux`
-  // and folds the AAA constant `d` into `alpha0`.
+  // Result of fitting k_n,p(omega) (or the scalar dispersion f(ω) of another frequency-
+  // dependent BC) on the sweep band. Polynomial regime populates {alpha0c, alpha1c,
+  // alpha2c}; Augmented regime additionally populates `aux` and folds the AAA constant `d`
+  // into `alpha0c`.
   struct WavePortDispersionFit
   {
     int port_idx = 0;
     WavePortRegime regime = WavePortRegime::Polynomial;
-    double alpha0 = 0.0;
-    double alpha1 = 0.0;
-    double alpha2 = 0.0;
-    // Complex polynomial coefficients, used by the generalized scalar-dispersion path
-    // (FitScalarDispersion, for surface conductivity) where f(ω) is complex. The wave-port
-    // path leaves these zero and uses the real alpha0/1/2 above.
+    // Complex polynomial coefficients. For a wave port, k_n,p(ω) is complex for a lossy
+    // port mode (its imaginary part is the attenuation of the mode), and real up to
+    // roundoff for a lossless one.
     std::complex<double> alpha0c = 0.0;
     std::complex<double> alpha1c = 0.0;
     std::complex<double> alpha2c = 0.0;
@@ -434,24 +434,13 @@ protected:
   WavePortDispersionFit FitWavePortDispersion(int port_idx,
                                               const Eigen::MatrixXcd &Mp_r) const;
 
-  // Evaluate the fitted real wave-port dispersion model at frequency ω:
-  //   kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ Re(rₖ / (ω − pₖ))
-  // (the AAA pole–residue residual term is present only in the Augmented regime). This is
-  // the single source of truth for evaluating a WavePortDispersionFit on the real axis.
-  // Only valid for the real-coefficient wave-port fit (alpha0/1/2 + aux poles); the
-  // complex scalar-dispersion fit (alpha0c/1c/2c, surface conductivity) is evaluated
-  // separately.
-  static double EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega);
-
-  // Accumulate the polynomial-fit corrections from one port into the running Kr_corr,
-  // Cr_corr, Mr_corr buffers. With Mp_r = i·M_proj this folds (α₀+d)·M_proj into Im(Kr),
-  // +α₁·M_proj into Re(Cr), and -α₂·M_proj into Im(Mr), recovering the port term
-  // i·(α₀+d+α₁ω+α₂ω²)·M_proj in K + iωC - ω²M.
-  static void ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
-                                            const Eigen::MatrixXcd &Mp_r,
-                                            Eigen::MatrixXcd &Kr_corr,
-                                            Eigen::MatrixXcd &Cr_corr,
-                                            Eigen::MatrixXcd &Mr_corr);
+  // Evaluate the fitted wave-port dispersion model at frequency ω:
+  //   kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ rₖ / (ω − pₖ)
+  // (the AAA pole–residue residual term is present only in the Augmented regime), the same
+  // expression the synthesized pencil realizes. This is the single source of truth for
+  // evaluating a wave-port WavePortDispersionFit.
+  static std::complex<double> EvaluateWavePortKnFit(const WavePortDispersionFit &fit,
+                                                    std::complex<double> omega);
 
   // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface
   // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function
@@ -490,9 +479,11 @@ protected:
       Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
       std::vector<WavePortAuxBlock> &aux) const;
 
-  // Complex-coefficient variant of ApplyPolynomialFitCorrections for the other BCs: folds
-  // α₀·Mp_r into Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with COMPLEX α (the wave-port
-  // version assumes real α). With Mp_r = i·M_proj this reproduces i·(α₀+α₁ω+α₂ω²)·M_proj·v.
+  // Accumulate the polynomial-fit corrections of one frequency-dependent BC (a wave port,
+  // or another BC) into the running Kr_corr, Cr_corr, Mr_corr buffers: folds α₀·Mp_r into
+  // Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with complex α. With Mp_r = i·M_proj this
+  // reproduces i·(α₀+α₁ω+α₂ω²)·M_proj·v in K + iωC - ω²M. Real α (a lossless wave port)
+  // fold into Im(Kr), Re(Cr), and Im(Mr).
   static void ApplyComplexPolynomialFitCorrections(
       std::complex<double> alpha0, std::complex<double> alpha1, std::complex<double> alpha2,
       const Eigen::MatrixXcd &Mp_r, Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,

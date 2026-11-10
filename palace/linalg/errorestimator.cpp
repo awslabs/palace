@@ -78,9 +78,10 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   std::unique_ptr<Solver<OperType>> pc;
   if (!use_mg)
   {
-    // Use eigenvalue estimate to compute optimal Jacobi damping parameter.
+    // The CG iterates do not depend on a scaling of the preconditioner, so no damping (and
+    // no eigenvalue estimate for it) is needed.
     pc = std::make_unique<JacobiSmoother<OperType>>(fespaces.GetFinestFESpace().GetComm(),
-                                                    0.0);
+                                                    1.0);
   }
   else
   {

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -89,10 +90,18 @@ consteval bool HasBGridFunction()
   return solver_t != ProblemType::ELECTROSTATIC;
 }
 
-// Scale gridfunctions after redimensionalizing the mesh.
-void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
-                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
-                        std::unique_ptr<GridFunction> &A);
+// Scale a grid function after redimensionalizing its mesh by L, undoing the effect of the
+// mesh scaling on the field values mapped from the reference element through the element
+// Jacobians. The scaling is L^p, where p depends on the map type of the finite element
+// space: 0 for H1, 1 for H(curl), dim - 1 for H(div), and dim for L2 with INTEGRAL map
+// type, with dim the dimension of the mesh. Boundary output evaluates fields in the
+// neighboring domain elements, so the same scaling applies to the domain and boundary data
+// collections. Wave port fields need no rescaling, since their submesh remains
+// nondimensionalized.
+void ScaleGridFunction(double L, GridFunction &u);
+
+// Apply ScaleGridFunction to each of the given grid functions which is not null.
+void ScaleGridFunctions(double L, std::initializer_list<GridFunction *> fields);
 
 // Scale gridfunctions from non-dimensional to SI units.
 void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
@@ -195,7 +204,7 @@ protected:
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
-  const std::size_t pad_digits_default = 6;
+  static constexpr std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
@@ -292,7 +301,11 @@ protected:
 
   // Helper classes that actually do some measurements that will be saved to csv files.
 
-  DomainPostOperator dom_post_op;    // Energy in bulk
+  DomainPostOperator dom_post_op;  // Energy in bulk
+
+  // L-vector of a magnetostatic solution on a broken space (empty otherwise), for the
+  // domain energies.
+  Vector a_l;
   SurfacePostOperator surf_post_op;  // Dielectric Interface Energy, Flux, and FarField
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
@@ -558,11 +571,22 @@ public:
   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
 
   // Access to number of padding digits.
-  constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }
+  static constexpr auto GetPadDigitsDefault() { return pad_digits_default; }
 
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
+
+  // The L-vector of a magnetostatic solution, on the space of the domain energy operators
+  // (broken across two-sided superconductor films, if any).
+  void GetSolutionLVector(const Vector &a, Vector &a_l_out) const
+    requires(solver_t == ProblemType::MAGNETOSTATIC)
+  {
+    const auto &nd_fespace = fem_op->GetSolutionNDSpace();
+    a_l_out.SetSize(nd_fespace.GetVSize());
+    a_l_out.UseDevice(true);
+    nd_fespace.GetProlongationMatrix()->Mult(a, a_l_out);
+  }
 
   // Expose MPI communicator from fem_op for electrostatic & magnetostatic matrix processing
   // (see above).

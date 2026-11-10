@@ -35,7 +35,10 @@ auto LoadMesh(MPI_Comm comm, const std::string &input)
     smesh.SetAttribute(i, 1);
   }
   smesh.SetAttributes();
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   return Mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
 }
 
@@ -211,7 +214,10 @@ TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel][GP
     v[0] = v[0] * v[0];
     v[1] = 0.5 * v[1] * (1.0 + v[1]);
   }
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   Mesh mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
   constexpr int order = 2;
   fem::DefaultIntegrationOrder::p_trial = order;

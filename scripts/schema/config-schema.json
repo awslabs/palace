@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-1-0",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1157,6 +1157,11 @@
           "type": "number",
           "description": "Kinetic sheet inductance L_ksq, H/sq, specified directly as an alternative to (PenetrationDepth, Thickness). Mutually exclusive with those two.",
           "default": 0.0
+        },
+        "TwoSided": {
+          "type": "boolean",
+          "description": "Model the film as a two-port (transfer-matrix) sheet: two coupled coincident faces so the tangential field can jump across it, capturing two-sided screening for d >~ lambda. Requires (PenetrationDepth, Thickness), a 3D mesh, and an interior film. The magnetostatic solution is discontinuous across the film, which is not cracked.",
+          "default": false
         }
       }
     },
@@ -1209,7 +1214,7 @@
         },
         "Order": {
           "type": "integer",
-          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain driven simulations.",
+          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain simulations. It omits the term in the divergence of the tangential field, so that it only improves on first order for TE fields, and it is not passive for fields whose tangential wavenumber on the boundary exceeds \u221a2 times the wavenumber in the medium, see [Other boundary conditions](../reference.md#Other-boundary-conditions).",
           "minimum": 1,
           "maximum": 2,
           "default": 1,
@@ -2810,7 +2815,7 @@
         },
         "AdaptiveCircuitSynthesis": {
           "type": "boolean",
-          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, `RationalImpedance`, or second-order farfield BCs).",
+          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires an adaptive sweep ([AdaptiveTol](@ref config-solver-driven-adaptivetol) > 0) with at least two distinct frequency samples, and at least one [LumpedPort](@ref config-boundaries-lumpedport) or [WavePort](@ref config-boundaries-waveport). The fields of the lumped ports must not overlap, so lumped port attributes cannot share mesh edges. The frequency dependence of wave ports and of [Conductivity](@ref config-boundaries-conductivity), [RationalImpedance](@ref config-boundaries-rationalimpedance), and second-order [Absorbing](@ref config-boundaries-absorbing) boundaries is represented in the synthesized matrices, with auxiliary states where needed. Not available with [FloquetPort](@ref config-boundaries-floquetport) boundaries, or with a nonzero [FloquetWaveVector](@ref config-boundaries-periodic-floquetwavevector), whose terms make the system matrices Hermitian rather than complex symmetric.",
           "default": false
         },
         "AdaptiveCircuitSynthesisDomainOrthogonalization": {
@@ -3131,7 +3136,7 @@
       "properties": {
         "Type": {
           "$ref": "#/$defs/LinearSolverType",
-          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects the solver based on the problem type and available sparse direct solvers."
+          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects BoomerAMG for electrostatic problems, AMS for magnetostatic and transient problems, and otherwise the first available sparse direct solver among STRUMPACK, SuperLU_DIST, and MUMPS (AMS if none is available)."
         },
         "KSPType": {
           "$ref": "#/$defs/KrylovSolver",

@@ -1,0 +1,68 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/order1"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/waveguide_absorbing.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Mode": 1,  // TE10
+        "Excitation": true
+      }
+    ],
+    "Absorbing":
+    {
+      "Attributes": [4],
+      "Order": 1
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Point",
+          "Freq": [8.0, 10.0, 12.0, 14.0],  // GHz, TE10 only (cutoff 7.49 GHz)
+          "SaveStep": 0
+        }
+      ]
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}

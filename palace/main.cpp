@@ -29,14 +29,13 @@
 
 using namespace palace;
 
-static const char *GetPalaceGitTag()
+static consteval const char *GetPalaceGitTag()
 {
 #if defined(PALACE_GIT_COMMIT)
-  static const char *commit = PALACE_GIT_COMMIT_ID;
+  return PALACE_GIT_COMMIT_ID;
 #else
-  static const char *commit = "UNKNOWN";
+  return "UNKNOWN";
 #endif
-  return commit;
 }
 
 static void PrintPalaceVersion(MPI_Comm comm)
@@ -53,14 +52,13 @@ static void PrintPalaceVersion(MPI_Comm comm)
   }
 }
 
-static const char *GetPalaceCeedJitSourceDir()
+static consteval const char *GetPalaceCeedJitSourceDir()
 {
 #if defined(PALACE_LIBCEED_JIT_SOURCE)
-  static const char *path = PALACE_LIBCEED_JIT_SOURCE_DIR;
+  return PALACE_LIBCEED_JIT_SOURCE_DIR;
 #else
-  static const char *path = "";
+  return "";
 #endif
-  return path;
 }
 
 static std::string ConfigureDevice(Device device)
@@ -258,8 +256,10 @@ int main(int argc, char *argv[])
     BlockTimer bt(Timer::INIT);
     omp_threads = utils::ConfigureOmp();
     ngpu = utils::GetDeviceCount();
-    device.emplace(ConfigureDevice(iodata.solver.device),
-                   utils::GetDeviceId(world_comm, ngpu));
+    const std::string device_str = ConfigureDevice(iodata.solver.device);
+    const int device_id = utils::GetDeviceId(world_comm, ngpu);
+    utils::ConfigureMemory(device_str, device_id);
+    device.emplace(device_str, device_id);
     ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
     device->SetGPUAwareMPI(true);

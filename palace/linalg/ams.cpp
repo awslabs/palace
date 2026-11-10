@@ -57,12 +57,20 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
   // pattern of the parallel G^T A G matrix (computed by Hypre).
   const bool skip_zeros_interp = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   {
-    const auto *PtGP =
-        dynamic_cast<const ParOperator *>(&nd_fespace.GetDiscreteInterpolator(h1_fespace));
-    MFEM_VERIFY(
-        PtGP,
-        "HypreAmsSolver requires the discrete gradient matrix as a ParOperator operator!");
-    G = &PtGP->ParallelAssemble(skip_zeros_interp);
+    const auto &G_op = nd_fespace.GetDiscreteInterpolator(h1_fespace);
+    const auto *PtGP = dynamic_cast<const ParOperator *>(&G_op);
+    if (PtGP)
+    {
+      G = &PtGP->ParallelAssemble(skip_zeros_interp);
+    }
+    else
+    {
+      // The discrete gradient between broken spaces is an assembled matrix.
+      G = dynamic_cast<const mfem::HypreParMatrix *>(&G_op);
+      MFEM_VERIFY(G,
+                  "HypreAmsSolver requires the discrete gradient matrix as a ParOperator "
+                  "or an assembled HypreParMatrix!");
+    }
   }
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
@@ -88,21 +96,41 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
         z_coord(i) = mesh.GetVertex(i)[2];
       }
     }
-    x.reset(x_coord.ParallelProject());
-    x->HypreReadWrite();
+    // On a broken space, the copies of the vertex DOFs have the coordinates of their
+    // original.
+    std::unique_ptr<mfem::HypreParMatrix> Y;
+    if (h1_fespace.IsBroken())
+    {
+      Y = h1_fespace.BuildVersionMap(FiniteElementSpace::VersionMap::ALL);
+    }
+    auto Project = [&](mfem::ParGridFunction &coord)
+    {
+      std::unique_ptr<mfem::HypreParVector> xu(coord.ParallelProject());
+      if (Y)
+      {
+        auto xb = std::make_unique<mfem::HypreParVector>(h1_fespace.GetComm(),
+                                                         h1_fespace.GlobalTrueVSize(),
+                                                         h1_fespace.GetTrueDofOffsets());
+        Y->MultTranspose(*xu, *xb);
+        xu = std::move(xb);
+      }
+      xu->HypreReadWrite();
+      return xu;
+    };
+    x = Project(x_coord);
     if (space_dim > 1)
     {
-      y.reset(y_coord.ParallelProject());
-      y->HypreReadWrite();
+      y = Project(y_coord);
     }
     if (space_dim > 2)
     {
-      z.reset(z_coord.ParallelProject());
-      z->HypreReadWrite();
+      z = Project(z_coord);
     }
   }
   else
   {
+    MFEM_VERIFY(!h1_fespace.IsBroken(),
+                "AMS on broken spaces is only supported for the lowest order!");
     // Fall back to MFEM legacy assembly for identity interpolator.
     FiniteElementSpace h1d_fespace(h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), space_dim,
                                    mfem::Ordering::byVDIM);

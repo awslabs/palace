@@ -14,6 +14,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fixtures.hpp"
 #include "test-helpers.hpp"
 
 #include "utils/geodata.hpp"
@@ -437,6 +438,126 @@ TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
   CHECK(mesh->CheckBdrElementOrientation(false) == 0);
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Mesh loader removes boundary elements which are not faces of the mesh",
+                 "[geodata][Serial]")
+{
+  // Gmsh mesh of the unit square, with two triangles split along the diagonal from (0, 0)
+  // to (1, 1), and four boundary elements on its boundary. Three more boundary elements are
+  // not an edge of any triangle: the other diagonal of the square (attribute 2), the edge
+  // from (2, 0) to (2, 1) whose vertices are not vertices of any triangle (attribute 3),
+  // and the edge from (1, 0) to (2, 0) with the attribute 1 of the square boundary. A
+  // second order mesh has a curved edge from (0, 0) to (1, 0) through (0.5, -0.1), which
+  // adds 2/3 * 0.1 to the area of the square.
+  const int order = GENERATE(1, 2);
+  const bool clean_unused_elements = GENERATE(false, true);
+  CAPTURE(order, clean_unused_elements);
+  std::vector<std::array<double, 2>> nodes = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0},
+                                              {0.0, 1.0}, {2.0, 0.0}, {2.0, 1.0}};
+  std::vector<std::array<int, 3>> edge_nodes;  // Vertices and second order node of edges
+  auto EdgeNode = [&](int v0, int v1)
+  {
+    for (const auto &[w0, w1, node] : edge_nodes)
+    {
+      if ((w0 == v0 && w1 == v1) || (w0 == v1 && w1 == v0))
+      {
+        return node;
+      }
+    }
+    edge_nodes.push_back({v0, v1, static_cast<int>(nodes.size())});
+    nodes.push_back({0.5 * (nodes[v0][0] + nodes[v1][0]),
+                     0.5 * (nodes[v0][1] + nodes[v1][1]) - (v0 + v1 == 1 ? 0.1 : 0.0)});
+    return edge_nodes.back()[2];
+  };
+  struct GmshElement
+  {
+    int type, attr;
+    std::vector<int> nodes;
+  };
+  std::vector<GmshElement> elements;
+  for (auto [v0, v1, attr] : std::vector<std::array<int, 3>>{
+           {0, 1, 1}, {1, 2, 1}, {2, 3, 1}, {3, 0, 1}, {1, 3, 2}, {4, 5, 3}, {1, 4, 1}})
+  {
+    elements.push_back({order == 1 ? 1 : 8, attr,
+                        order == 1 ? std::vector<int>{v0, v1}
+                                   : std::vector<int>{v0, v1, EdgeNode(v0, v1)}});
+  }
+  for (auto [v0, v1, v2] : std::vector<std::array<int, 3>>{{0, 1, 2}, {0, 2, 3}})
+  {
+    elements.push_back({order == 1 ? 2 : 9, 1,
+                        order == 1 ? std::vector<int>{v0, v1, v2}
+                                   : std::vector<int>{v0, v1, v2, EdgeNode(v0, v1),
+                                                      EdgeNode(v1, v2), EdgeNode(v2, v0)}});
+  }
+  const auto mesh_file = temp_dir / "mesh.msh";
+  {
+    std::ofstream fo(mesh_file);
+    fo << "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n" << nodes.size() << "\n";
+    for (std::size_t i = 0; i < nodes.size(); i++)
+    {
+      fo << i + 1 << " " << nodes[i][0] << " " << nodes[i][1] << " 0\n";
+    }
+    fo << "$EndNodes\n$Elements\n" << elements.size() << "\n";
+    for (std::size_t i = 0; i < elements.size(); i++)
+    {
+      fo << i + 1 << " " << elements[i].type << " 2 " << elements[i].attr << " "
+         << elements[i].attr;
+      for (auto v : elements[i].nodes)
+      {
+        fo << " " << v + 1;
+      }
+      fo << "\n";
+    }
+    fo << "$EndElements\n";
+  }
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.mesh = mesh_file.string();
+  iodata.model.clean_unused_elements = clean_unused_elements;
+  iodata.domains.attributes = {1};
+  auto mesh = mesh::Load(iodata, Mpi::World());
+  REQUIRE(mesh);
+
+  // The boundary elements which are not edges of the mesh are removed, together with the
+  // vertices of only these boundary elements.
+  CHECK(mesh->GetNE() == 2);
+  CHECK(mesh->GetNV() == 4);
+  REQUIRE(mesh->GetNBE() == 4);
+  REQUIRE(mesh->bdr_attributes.Size() == 1);
+  CHECK(mesh->bdr_attributes[0] == 1);
+  double length = 0.0;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    CAPTURE(be);
+    int e1, e2;
+    REQUIRE(mesh->GetBdrElementFaceIndex(be) >= 0);
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &e1, &e2);
+    CHECK(e1 >= 0);
+    CHECK(e2 < 0);
+    auto *T = mesh->GetBdrElementTransformation(be);
+    const auto &ir = mfem::IntRules.Get(T->GetGeometryType(), 10);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      T->SetIntPoint(&ir.IntPoint(q));
+      length += ir.IntPoint(q).weight * T->Weight();
+    }
+  }
+  CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+
+  // The geometry of the mesh is unchanged.
+  REQUIRE(mesh->GetNodes());
+  CHECK(mesh->GetNodes()->FESpace()->GetMaxElementOrder() == order);
+  double area = 0.0;
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    area += mesh->GetElementVolume(e);
+  }
+  CHECK_THAT(area, WithinRel(order == 1 ? 1.0 : 1.0 + 0.2 / 3.0, 1.0e-12));
+  const double curved_length = 0.5 * std::sqrt(1.16) + std::asinh(0.4) / 0.8;
+  CHECK_THAT(length, WithinRel(order == 1 ? 4.0 : 3.0 + curved_length, 1.0e-8));
+}
+
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
   auto torus_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh" / "periodic-torus-sector.msh";
@@ -665,6 +786,97 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
         nv_nc_cut);
   fs::remove(nc_path);
   fs::remove(nc_cut_path);
+  fs::remove(mesh_path);
+}
+
+// MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
+// three vertices on the crack front (at a corner of the crack) merges with its twin and the
+// crack closes there, unless the front vertices are numbered last.
+TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
+{
+  // Hexahedral mesh with an interior boundary (attribute 7) made of the four quadrilaterals
+  // of z = 0.5 around the center of the domain: each has three vertices on the crack front
+  // and one (the center) in its interior.
+  auto base = mfem::Mesh::MakeCartesian3D(4, 4, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      const double *x = base.GetVertex(v);
+      on_sheet = on_sheet && std::abs(x[2] - 0.5) < 1.0e-12 && x[0] > 0.25 - 1.0e-12 &&
+                 x[0] < 0.75 + 1.0e-12 && x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-crack-quad-corners.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+
+  // Crack the mesh along the interior boundary. Only the center vertex is duplicated.
+  json config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Impedance", {{{"Attributes", {7}}, {"Ls", 1.0e-12}, {"Crack", true}}}}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  IoData iodata(config, false);
+  auto cracked = mesh::Load(iodata, Mpi::World());
+  REQUIRE(cracked);
+  CHECK(cracked->GetNV() == mesh.GetNV() + 1);
+
+  // Every boundary element of the crack must border a single element, on its own side.
+  // Without the renumbering, the quadrilateral whose center vertex has the largest number
+  // of its four merges with its twin, and its 2 boundary elements lie on the same face.
+  int n_crack = 0, n_merged = 0;
+  for (int be = 0; be < cracked->GetNBE(); be++)
+  {
+    if (cracked->GetBdrAttribute(be) != 7)
+    {
+      continue;
+    }
+    int e1, e2;
+    cracked->GetFaceElements(cracked->GetBdrElementFaceIndex(be), &e1, &e2);
+    n_crack++;
+    n_merged += (e2 >= 0);
+  }
+  CHECK(n_crack == 8);
+  CHECK(n_merged == 0);
   fs::remove(mesh_path);
 }
 

@@ -1,0 +1,78 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/wave_conductivity_synth"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    // Lossy conductors, so the quasi-TEM port modes at both ends of the uniform line are
+    // lossy, with |Im{kₙ}| / Re{kₙ} ≈ 0.04 to 0.065 in the band (see wave_conductivity.json).
+    "Conductivity":
+    [
+      {
+        "Attributes": [2],
+        "Conductivity": 1.0e3
+      }
+    ],
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Mode": 1,
+        "Excitation": 1,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      },
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Mode": 1,
+        "Excitation": 2,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 5.0,  // GHz
+      "MaxFreq": 15.0,  // GHz
+      "FreqStep": 0.5,  // GHz
+      "AdaptiveTol": 1.0e-6,
+      "AdaptiveCircuitSynthesis": true
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

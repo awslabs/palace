@@ -1,0 +1,76 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_cutoff"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        // TE11 (Mode 1) of the lossless PEC-shorted guide, cut off at about 2.23 GHz on this
+        // mesh. Below cutoff, the port mode is evanescent, with kₙ = −iα on the branch which
+        // decays away from the port, and |S11| = exp(−2αL) < 1 for the length L = 5.48 cm
+        // of the guide. Above cutoff, |S11| = 1.
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [3, 4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 1.6,  // GHz
+      "MaxFreq": 3.0,
+      "FreqStep": 0.2,
+      "SaveStep": 100
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}

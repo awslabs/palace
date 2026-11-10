@@ -166,6 +166,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
                                                     const ComplexVector *initial_space)
 {
   sigma_cached = sigma;
+  omega_cached = omega;
   reduced_model->ResetSolution();
 
   const bool real_frequency = (omega.imag() == 0.0);
@@ -186,13 +187,12 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     // not assemble the full finite-element operator.
     local_reduced_accepted = reduced_model->TrySolve(omega.real(), sigma);
   }
-  int reduced_rejected = (local_solver_rank && reduced_model->IsEnabled() &&
-                          !reduce_not_ready && !local_reduced_accepted)
-                             ? 1
-                             : 0;
+  const bool reduced_attempted = reduced_model->IsEnabled() && !reduce_not_ready;
+  int reduced_rejected =
+      (local_solver_rank && reduced_attempted && !local_reduced_accepted) ? 1 : 0;
   Mpi::GlobalMax(1, &reduced_rejected, nd_fespace.GetComm());
 
-  if (reduced_model->IsEnabled() && !reduce_not_ready && !reduced_rejected)
+  if (reduced_attempted && !reduced_rejected)
   {
     if (local_solver_rank)
     {
@@ -325,7 +325,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     for (int i = 0; i < n; i++)
     {
       distance[i] = mode_assembly::TargetDistance(
-          std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(i)), kn_target);
+          mode_assembly::PropagationConstant(-sigma - 1.0 / eigen->GetEigenvalue(i), omega),
+          kn_target);
     }
     mode_perm.resize(n);
     std::iota(mode_perm.begin(), mode_perm.end(), 0);
@@ -390,12 +391,25 @@ void ModeEigenSolver::ConfigureReducedModelTraining(std::size_t max_basis_size)
   reduced_model->ConfigureTraining(max_basis_size);
 }
 
-void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
+void ModeEigenSolver::EnableReducedModel(double adaptive_tol, double basis_limit_factor)
 {
-  int has_basis = reduced_model->HasBasis() ? 1 : 0;
-  Mpi::GlobalMax(1, &has_basis, nd_fespace.GetComm());
-  reduced_model->Enable(has_basis != 0, adaptive_tol, opA.get(), last_assembled_omega,
-                        last_assembled_sigma);
+  // The basis is only stored on the processes with port unknowns. A reduced solve costs
+  // O(n³) for n basis vectors, in the dense eigenvalue problem, and an exact solve of the
+  // sparse cross-section problem with N unknowns roughly O(N^{3/2}), so the reduced model
+  // is only used with a basis of at most basis_limit_factor·√N vectors.
+  unsigned long long basis_size = reduced_model->GetBasisSize();
+  Mpi::GlobalMax(1, &basis_size, nd_fespace.GetComm());
+  std::size_t basis_limit = 0;
+  if (basis_limit_factor > 0.0)
+  {
+    const auto num_unknowns =
+        static_cast<double>(nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize());
+    basis_limit =
+        std::max(static_cast<std::size_t>(basis_limit_factor * std::sqrt(num_unknowns)),
+                 std::size_t{1});
+  }
+  reduced_model->Enable(basis_size > 0, basis_size, basis_limit, adaptive_tol, opA.get(),
+                        last_assembled_omega, last_assembled_sigma);
 }
 
 std::complex<double> ModeEigenSolver::GetEigenvalue(int i) const
@@ -429,7 +443,8 @@ void ModeEigenSolver::GetEigenvector(int i, ComplexVector &x) const
 
 std::complex<double> ModeEigenSolver::GetPropagationConstant(int i) const
 {
-  return std::sqrt(-sigma_cached - 1.0 / GetEigenvalue(i));
+  return mode_assembly::PropagationConstant(-sigma_cached - 1.0 / GetEigenvalue(i),
+                                            omega_cached);
 }
 bool ModeEigenSolver::IsPropagating(std::complex<double> kn)
 {
@@ -488,16 +503,17 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
   if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||
       pc_type == LinearSolver::BOOMER_AMG)
   {
-#if defined(MFEM_USE_SUPERLU)
-    pc_type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+    // Same preference as for frequency domain problems (IoData::CheckConfiguration).
+#if defined(MFEM_USE_STRUMPACK)
     pc_type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+    pc_type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
     pc_type = LinearSolver::MUMPS;
 #elif defined(MFEM_USE_CUDSS)
     pc_type = LinearSolver::CUDSS;
 #else
-    MFEM_ABORT("ModeEigenSolver requires building with SuperLU_DIST, STRUMPACK, "
+    MFEM_ABORT("ModeEigenSolver requires building with STRUMPACK, SuperLU_DIST, "
                "MUMPS, or cuDSS!");
 #endif
   }

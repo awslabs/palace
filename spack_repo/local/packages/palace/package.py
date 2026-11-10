@@ -20,6 +20,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
+    version("0.19.0", tag="v0.19.0", commit="ca9a6a2d1e64a410229c3d7538507e5eae975cc6")
     version("0.18.1", tag="v0.18.1", commit="0dc74cdf8c36c58b69b21c4a06e816048ec0b83f")
     version("0.18.0", tag="v0.18.0", commit="b92aef83ecfe6d360c4b3d83e2122986297f6778")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
@@ -172,6 +173,47 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
+    # The STRUMPACK version of the superbuild, with
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
+    # off the `with` blocks so the Palace variants are not folded into the patch condition.
+    depends_on(
+        "strumpack@8.1.0",
+        when="@develop+strumpack",
+        patches=[
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
+                sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
+                when="@8.1.0",
+            )
+        ],
+    )
+
+    # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
+    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
+    # the implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination). Kept off the
+    # `with` blocks so the Palace variants are not folded into the patch conditions.
+    depends_on(
+        "hypre",
+        when="@develop",
+        patches=[
+            patch(
+                "https://github.com/hypre-space/hypre/commit/"
+                "2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1",
+                sha256="bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f",
+                when="@3.2.0:3.2.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/"
+                "hypre_multicomponent_relax.diff",
+                sha256="fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a",
+                when="@3.2.0:3.2.1",
+            ),
+        ],
+    )
+
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
     with when("+slepc"):
@@ -310,22 +352,29 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "mfem_pr5353.diff",
                 sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
             ),
-            # https://github.com/mfem/mfem/pull/5494 (from the PR range; narrow
-            # to @4.10.0 once merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5711 (rebased onto the PR 5353
+            # snapshot above, applied after it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/"
+                "mfem_pr5711.diff",
+                sha256="4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5494 (from the PR range)
             patch(
                 "https://github.com/mfem/mfem/compare/"
                 "10b0b596dbc26dca384b9f25f23026b1a6403592..."
                 "399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff",
                 sha256="771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c",
-                when="@4.10:",
+                when="@4.10.0",
             ),
-            # https://github.com/mfem/mfem/pull/5502 (narrow to @4.10.0 once
-            # merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5502
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "3091ba40b238c4008b67216314bb26da6738b833.diff",
                 sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5531
             patch(
@@ -348,6 +397,46 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "https://github.com/mfem/mfem/commit/"
                 "e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff",
                 sha256="eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5610 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff",
+                sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5714 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff",
+                sha256="3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5717 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff",
+                sha256="f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5721 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "c79f309399361b2d6aadc207087ca6dc475513b4.diff",
+                sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
+            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
+                sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
                 when="@4.10:",
             ),
         ],

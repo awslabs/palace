@@ -116,8 +116,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
           else if constexpr (solver_t == ProblemType::MAGNETOSTATIC)
           {
+            // The space of the solution: broken across two-sided superconductor films.
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace());
+                                      fem_op_.GetSolutionNDSpace());
           }
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
@@ -1199,32 +1200,52 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 }
 
-void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
-                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
-                        std::unique_ptr<GridFunction> &A)
+namespace
 {
-  // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
-  // the mesh which would carry into the fields during the mapping from reference to
-  // physical space through the element Jacobians. No transformation for V is needed (H1
-  // interpolation). Because the coefficients are always evaluating E, B in neighboring
-  // elements, the Jacobian scaling is the same for the domain and boundary data
-  // collections (instead of being different for B due to the dim - 1 evaluation). Wave
-  // port fields also do not require rescaling since their submesh object where they are
-  // evaluated remains nondimensionalized.
-  if (E)
+
+// Exponent p of the factor L^p which undoes the effect of scaling the mesh by L on the
+// values of a field mapped from the reference element. The mapping is set by the map type
+// of the finite element space: the identity for VALUE (H1, or L2 with VALUE map type),
+// J^-T for H(curl), J / |J| for H(div), and 1 / |J| for L2 with INTEGRAL map type, where
+// the Jacobian J scales as L and its determinant |J| as L^dim.
+int PiolaExponent(const mfem::ParFiniteElementSpace &fespace)
+{
+  const int dim = fespace.GetParMesh()->Dimension();
+  switch (fespace.FEColl()->GetMapType(dim))
   {
-    // Piola transform: J^-T
-    *E *= L;
+    case mfem::FiniteElement::VALUE:
+      return 0;
+    case mfem::FiniteElement::H_CURL:
+      return 1;
+    case mfem::FiniteElement::H_DIV:
+      return dim - 1;
+    case mfem::FiniteElement::INTEGRAL:
+      return dim;
+    default:
+      MFEM_ABORT("Unsupported finite element map type for mesh scaling!");
+      return 0;
   }
-  if (B)
+}
+
+}  // namespace
+
+void ScaleGridFunction(double L, GridFunction &u)
+{
+  const int p = PiolaExponent(*u.ParFESpace());
+  if (p != 0)
   {
-    // Piola transform: J / |J|
-    *B *= std::pow(L, dim - 1);
+    u *= std::pow(L, p);
   }
-  if (A)
+}
+
+void ScaleGridFunctions(double L, std::initializer_list<GridFunction *> fields)
+{
+  for (auto *u : fields)
   {
-    // Piola transform: J^-T
-    *A *= L;
+    if (u)
+    {
+      ScaleGridFunction(L, *u);
+    }
   }
 }
 
@@ -1287,19 +1308,15 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
-    // H1 scalar field: no Piola transform scaling (unlike ND vector Et which gets
-    // mesh_Lc0).
     units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
   }
-  // In-plane B projected onto the ND space (not its natural H(div) space), so the
-  // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
   if (Bt_inplane)
   {
-    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // libCEED-evaluated derived domain fields are registered as lazy point evaluators;
@@ -1328,7 +1345,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
@@ -1337,7 +1355,6 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -1430,7 +1447,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
@@ -1438,7 +1456,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
   if (Bt_inplane)
   {
-    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // Create grid function for vector coefficients.
@@ -1585,7 +1602,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0,
+                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
   if (En)
   {
@@ -1594,7 +1612,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -1706,13 +1723,18 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 
   if (HasBGridFunction<solver_t>())
   {
+    // A broken magnetostatic solution has no grid function, but its L-vector.
     auto &field = A ? *A : *B;
-    auto energy = dom_post_op.GetMagneticFieldEnergy(field);
+    const bool use_l = (a_l.Size() > 0);
+    auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
+                        : dom_post_op.GetMagneticFieldEnergy(field);
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      auto energy_i = dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
+      auto energy_i =
+          use_l ? dom_post_op.GetDomainMagneticFieldEnergy(idx, a_l, field.GetComm())
+                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
       auto participation_ratio = std::abs(energy) > 0.0 ? energy_i / energy : 0.0;
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, participation_ratio});
@@ -2006,7 +2028,10 @@ void PostOperator<solver_t>::MeasureSParameter() const
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
     //   - Lumped: ∫E·(E_inc/R_ref) dS = V/V_inc, where V_inc encodes R_ref
-    //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
+    //   - Wave:   ∫(E×H_mode)·n dS / ∫(E_mode×H_mode)·n dS, the modal reaction overlap,
+    //             which separates the incident and reflected modal amplitudes also for a
+    //             lossy port mode, and is the power overlap ∫(E×H_mode⋆)·n dS for a
+    //             lossless one
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 
     // Get information about excited port.
@@ -2606,8 +2631,22 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
   requires(solver_t == ProblemType::MAGNETOSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  SetAGridFunction(a);
-  SetBGridFunction(b);
+  if (fem_op->IsBroken())
+  {
+    // The output fields are those of the original DOFs (one side of each two-sided film),
+    // the energies are those of the broken solution.
+    Vector a0, b0;
+    fem_op->GetFirstVersion(fem_op->GetSolutionNDSpace(), a, a0);
+    fem_op->GetFirstVersion(fem_op->GetSolutionCurlSpace(), b, b0);
+    SetAGridFunction(a0);
+    SetBGridFunction(b0);
+    GetSolutionLVector(a, a_l);
+  }
+  else
+  {
+    SetAGridFunction(a);
+    SetBGridFunction(b);
+  }
 
   measurement_cache = {};
   MeasureAllImpl();
@@ -2949,22 +2988,29 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
       filled_voltage_postpro.insert(idx);
     }
 
-    // Power-voltage impedance: Z_PV = |V|^2 / (2P).
+    // Power-voltage impedance Z_PV = |V|² / 2P* with the complex (time-averaged) power P of
+    // the mode: for a TEM mode, P = V I* / 2 and Z_PV = V / I is the complex characteristic
+    // impedance of the line, real for a lossless mode.
     if (std::abs(P) > 1e-30)
     {
-      std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
-      result.Z0 = Z0_nondim.real();
+      result.Z0 = (V * std::conj(V)) / (2.0 * std::conj(P));
       result.has_impedance = true;
     }
 
-    // V/I impedance: Z_VI = |V| / |I|.
+    // Voltage-current impedance Z_VI = V / I, oriented with the mode power (Re{V I* / P} >
+    // 0, as P = V I* / 2 for a TEM mode), so that it does not depend on the directions of
+    // the voltage path and of the current loop. For a TEM mode, Z_VI = Z_PV.
     if (cfg.has_current)
     {
       auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
                               cfg.current_integrator.get(), *Bt_inplane);
       if (std::abs(I) > 1e-30)
       {
-        result.Z_VI = std::abs(V) / std::abs(I);
+        result.Z_VI = V / I;
+        if ((V * std::conj(I) * std::conj(P)).real() < 0.0)
+        {
+          result.Z_VI = -result.Z_VI;
+        }
         result.has_vi_impedance = true;
       }
     }

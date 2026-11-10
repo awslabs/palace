@@ -1436,6 +1436,8 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
       ncols += num_versions[t] - 1;
     }
   }
+  out.num_versions = num_versions;
+  out.copy_col = copy_col;
   const int nrows = vsize + static_cast<int>(copy_ldofs.size());
   {
     HYPRE_BigInt sizes[2] = {nrows, ncols};
