@@ -1156,6 +1156,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(hit.DomainBoundaryContainmentReused());
     CHECK(SameOnEveryRank(hit.DomainBoundaryContainmentReused()));
     CHECK(DomainBoundaryRecordWithoutTiming(hit) == first_record);
+    // F-M (round 2a, decision 1475 (1)): a model no local patch references holds no matrix
+    // entry; the action is the first construction's, bit for bit.
+    for (std::size_t model = 0; model < hit.GetModelCount(); model++)
+    {
+      CAPTURE(model);
+      CHECK((hit.ReferencesModelLocally(model) || hit.GetModelMatrixEntries(model) == 0));
+    }
+    const auto hit_probe = ProbeResponse(hit);
+    CHECK(hit_probe.size() == first_probe.size());
+    CHECK(std::memcmp(hit_probe.data(), first_probe.data(),
+                      first_probe.size() * sizeof(double)) == 0);
   }
 
   // The mirror fixture (boundary-cut DESIGN 4.1 S-45; the symmetry test below): the half

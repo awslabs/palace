@@ -1598,6 +1598,16 @@ public:
   // Decision 1469 (1) (i): under PALACE_RESPONSE_MEMORY_CENSUS=1 print (root) the census
   // of this operator's members (and of its geometry's, if any) at `instant`; collective;
   // a no-op otherwise.
+  // Round 2a F-M (decision 1475 (1); the code read: lane REPORT STEP R2a.12): a rank reads
+  // a model's matrix CONTENTS only through its local regular or diagnostic patches (every
+  // all-model reader reads the maps' keys / sizes), so at the end of the construction the
+  // matrices of a model no local patch references are freed; the maps' keys, the vector
+  // sizes and all metadata stay. Whether this rank references `model`, and the matrix
+  // entries it holds for it.
+  bool ReferencesModelLocally(std::size_t model) const;
+  std::size_t GetModelMatrixEntries(std::size_t model) const;
+  std::size_t GetModelCount() const { return models.size(); }
+
   void PrintResponseMemoryCensus(const std::string &instant,
                                  const SurfaceResponseGeometry *geometry = nullptr) const;
 
@@ -1605,6 +1615,9 @@ private:
   friend struct ResponseMemoryCensus;
   PatchRecordResidency patch_record_residency = PatchRecordResidency::REPLICATED;
   std::unique_ptr<JsonArraySpill> records_spill;
+  // F-M: frees the matrices of the models no local patch references (the construction's
+  // last step).
+  void ReleaseUnreferencedModelMatrices();
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,

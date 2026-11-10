@@ -28813,6 +28813,82 @@ bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
   return local > 0;
 }
 
+bool SurfaceResponseOperator::ReferencesModelLocally(std::size_t model) const
+{
+  auto References = [model](const auto &patch)
+  { return static_cast<std::size_t>(patch.model) == model; };
+  return std::any_of(patches.begin(), patches.end(), References) ||
+         std::any_of(diagnostic_patches.begin(), diagnostic_patches.end(), References);
+}
+
+std::size_t SurfaceResponseOperator::GetModelMatrixEntries(std::size_t model) const
+{
+  const auto &m = models[model];
+  std::size_t entries = 0;
+  for (const auto *matrix :
+       {&m.fabricated_domain, &m.thin_domain, &m.domain_defect, &m.fixed_flux_transform,
+        &m.fixed_flux_domain_defect, &m.mortar_mass_inverse, &m.magnetic_domain_defect,
+        &m.magnetic_thin_domain})
+  {
+    entries += static_cast<std::size_t>(matrix->Height()) * matrix->Width();
+  }
+  for (const auto *map : {&m.fabricated_surfaces, &m.surface_defects})
+  {
+    for (const auto &[interface, matrix] : *map)
+    {
+      (void)interface;
+      entries += static_cast<std::size_t>(matrix.Height()) * matrix.Width();
+    }
+  }
+  entries += static_cast<std::size_t>(m.mortar_constant_load.Size());
+  for (const auto &load : m.mortar_conductor_loads)
+  {
+    entries += static_cast<std::size_t>(load.Size());
+  }
+  return entries;
+}
+
+void SurfaceResponseOperator::ReleaseUnreferencedModelMatrices()
+{
+  std::vector<char> referenced(models.size(), 0);
+  for (const auto *list : {&patches, &diagnostic_patches})
+  {
+    for (const auto &patch : *list)
+    {
+      referenced[static_cast<std::size_t>(patch.model)] = 1;
+    }
+  }
+  for (std::size_t i = 0; i < models.size(); i++)
+  {
+    if (referenced[i])
+    {
+      continue;
+    }
+    auto &model = models[i];
+    for (auto *matrix : {&model.fabricated_domain, &model.thin_domain, &model.domain_defect,
+                         &model.fixed_flux_transform, &model.fixed_flux_domain_defect,
+                         &model.mortar_mass_inverse, &model.magnetic_domain_defect,
+                         &model.magnetic_thin_domain})
+    {
+      matrix->Clear();
+    }
+    // The keys stay (every all-model reader iterates them): only the storage goes.
+    for (auto *map : {&model.fabricated_surfaces, &model.surface_defects})
+    {
+      for (auto &[interface, matrix] : *map)
+      {
+        (void)interface;
+        matrix.Clear();
+      }
+    }
+    model.mortar_constant_load.Destroy();
+    for (auto &load : model.mortar_conductor_loads)
+    {
+      load.Destroy();
+    }
+  }
+}
+
 void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
 {
   MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
@@ -32296,6 +32372,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  ReleaseUnreferencedModelMatrices();
   PrintResponseMemoryCensus("after the construction", cached_geometry.get());
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
@@ -33901,6 +33978,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  ReleaseUnreferencedModelMatrices();
   PrintResponseMemoryCensus("after the construction (Maxwell)", cached_geometry.get());
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
