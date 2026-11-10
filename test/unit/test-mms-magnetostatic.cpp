@@ -6,7 +6,7 @@
 // Electromagnetics: Using the Method of Manufactured Solutions," IEEE Antennas Propag. Mag.
 // 58(2), 2016. The magnetostatic CurlCurlOperator assembles the curl-curl bilinear form
 // with no mass term. The paper's eq. 19 is the μ = 1 case; here the relative permeability
-// is anisotropic, and the mesh is hexahedral rather than tetrahedral:
+// is anisotropic, and the checks run on both hexahedral and tetrahedral meshes:
 //   ∫ μ⁻¹ (∇×A)·(∇×φ) dΩ = ∫ μ⁻¹ (∇×A_mms)·(∇×φ) dΩ,   n×A = n×A_mms = 0 on ∂Ω,
 // so the test checks the derivatives of the Nédélec basis functions in isolation.
 //
@@ -22,6 +22,7 @@
 #include "test-mms-magnetostatic.hpp"
 #include "test-mms-common.hpp"
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -190,44 +191,78 @@ constexpr double kBackendAgreementTol = 1.0e-10;
 
 void CheckPolynomialExactness(const MmsCase &polynomial)
 {
-  // With A_mms in the order-2 hexahedral Nédélec space, A_mms itself solves the discrete
-  // problem, so the flux density error is limited only by the iterative solver tolerance.
-  const auto error = SolveCartesianMmsError(polynomial, /*n=*/4, /*order=*/2,
-                                            /*linear_tol=*/1.0e-13);
-  ReportMmsData("affine-polynomial", "polynomial", "hexahedron", /*order=*/2, "N",
-                /*resolution=*/4, /*h=*/0.25, error);
-  CAPTURE(error.potential, error.magnetic);
-  CHECK(error.magnetic < 1.0e-10);
+  // The weak-curl Galerkin problem makes B_h = ∇×A_h the μ⁻¹-weighted L2 projection of
+  // B_mms onto ∇×ND_p (with n×A_h = 0). B_h is therefore exact, up to the iterative solver
+  // tolerance, whenever B_mms lies in ∇×ND_p, even if A_mms itself does not lie in ND_p:
+  // the gradient part of A is invisible to B. On a contractible domain the discrete de Rham
+  // sequence makes ∇×ND_p the divergence-free fields of RT_{p-1} with B·n = 0 on ∂Ω, which
+  // B_mms satisfies, so only the polynomial degree matters:
+  //  - hexahedra: B_x ∈ Q_{2,1,1} (similarly for y, z) ⊂ RT_1, so order 2 is exact;
+  //  - tetrahedra: B has total degree 3, and RT_{p-1} contains the full P_{p-1}, so order 4
+  //    is exact (order 3 gives an error of about 4e-3 on this mesh).
+  // Each element uses the lowest exact order, so a mismatch at that order is not hidden by
+  // spare polynomial degree. A coarse n = 2 tetrahedral mesh keeps order 4 cheap.
+  struct Element
+  {
+    const char *name;
+    mfem::Element::Type type;
+    int order, n;
+  };
+  const std::array<Element, 2> elements = {
+      Element{"hexahedron", mfem::Element::HEXAHEDRON, /*order=*/2, /*n=*/4},
+      Element{"tetrahedron", mfem::Element::TETRAHEDRON, /*order=*/4, /*n=*/2}};
+  for (const auto &[name, type, order, n] : elements)
+  {
+    DYNAMIC_SECTION(name)
+    {
+      const auto error = SolveCartesianMmsError(polynomial, n, order,
+                                                /*linear_tol=*/1.0e-13, type);
+      ReportMmsData("affine-polynomial", "polynomial", name, order, "N", n, 1.0 / n, error);
+      CAPTURE(error.potential, error.magnetic);
+      CHECK(error.magnetic < 1.0e-10);
+    }
+  }
 }
 
 void CheckOptimalConvergence(const MmsCase &smooth)
 {
   // For order-p Nédélec elements the curl lies in the order-(p - 1) Raviart-Thomas space,
   // so the L2 flux density error converges as O(h^p) (see, e.g., Monk, "Finite Element
-  // Methods for Maxwell's Equations," 2003).
-  for (const int order : kOrders)
+  // Methods for Maxwell's Equations," 2003). This holds for both element shapes: MFEM's
+  // ND_p space contains the full degree-(p - 1) polynomials on tetrahedra (first-kind
+  // Nédélec) and Q_{p-1,p,p} × ... on hexahedra, and in both cases ∇×ND_p = RT_{p-1}
+  // ∩ ker(div), which approximates the smooth B_mms to O(h^p). MakeCartesian3D splits each
+  // hexahedron into six tetrahedra, so h is the same cube edge length for both meshes.
+  const std::array<std::pair<const char *, mfem::Element::Type>, 2> elements = {
+      std::pair{"hexahedron", mfem::Element::HEXAHEDRON},
+      std::pair{"tetrahedron", mfem::Element::TETRAHEDRON}};
+  for (const auto &[name, type] : elements)
   {
-    DYNAMIC_SECTION("order " << order)
+    for (const int order : kOrders)
     {
-      std::vector<double> h(kResolutions.size());
-      std::vector<MmsError> error(kResolutions.size());
-      for (std::size_t i = 0; i < kResolutions.size(); i++)
+      DYNAMIC_SECTION(name << ", order " << order)
       {
-        h[i] = 1.0 / kResolutions[i];
-        error[i] = SolveCartesianMmsError(smooth, kResolutions[i], order);
-        ReportMmsData("cartesian-smooth", "trig", "hexahedron", order, "N", kResolutions[i],
-                      h[i], error[i]);
-      }
+        std::vector<double> h(kResolutions.size());
+        std::vector<MmsError> error(kResolutions.size());
+        for (std::size_t i = 0; i < kResolutions.size(); i++)
+        {
+          h[i] = 1.0 / kResolutions[i];
+          error[i] = SolveCartesianMmsError(smooth, kResolutions[i], order,
+                                            /*linear_tol=*/1.0e-9, type);
+          ReportMmsData("cartesian-smooth", "trig", name, order, "N", kResolutions[i], h[i],
+                        error[i]);
+        }
 
-      for (std::size_t i = 0; i + 1 < kResolutions.size(); i++)
-      {
-        CAPTURE(kResolutions[i], kResolutions[i + 1], error[i].magnetic,
-                error[i + 1].magnetic);
-        CHECK(error[i + 1].magnetic < error[i].magnetic);
-        const double magnetic_rate =
-            ConvergenceRate(h[i], error[i].magnetic, h[i + 1], error[i + 1].magnetic);
-        CAPTURE(magnetic_rate);
-        CHECK_THAT(magnetic_rate, WithinAbs(static_cast<double>(order), kRateTol));
+        for (std::size_t i = 0; i + 1 < kResolutions.size(); i++)
+        {
+          CAPTURE(kResolutions[i], kResolutions[i + 1], error[i].magnetic,
+                  error[i + 1].magnetic);
+          CHECK(error[i + 1].magnetic < error[i].magnetic);
+          const double magnetic_rate =
+              ConvergenceRate(h[i], error[i].magnetic, h[i + 1], error[i + 1].magnetic);
+          CAPTURE(magnetic_rate);
+          CHECK_THAT(magnetic_rate, WithinAbs(static_cast<double>(order), kRateTol));
+        }
       }
     }
   }
