@@ -51,7 +51,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     speeds up the H1 auxiliary operators of the multigrid preconditioners and the boundary
     terms. Curl-curl and div-div terms, and the volume H(curl) and H(div) terms of 3D
     meshes, keep partial assembly. Results change at most at the level of round-off.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1174](https://github.com/awslabs/palace/pull/1174).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
