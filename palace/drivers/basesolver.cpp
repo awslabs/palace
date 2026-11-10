@@ -25,6 +25,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/metadatafile.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
@@ -106,7 +107,8 @@ json LoadMetadata(const fs::path &post_dir)
   return json::parse(fi);
 }
 
-void WriteMetadata(const fs::path &post_dir, const json &meta)
+void WriteMetadata(const fs::path &post_dir, const json &meta,
+                   const JsonArraySpill *spill = nullptr)
 {
   std::string path = post_dir / "palace.json";
   std::ofstream fo(path);
@@ -114,7 +116,18 @@ void WriteMetadata(const fs::path &post_dir, const json &meta)
   {
     MFEM_ABORT("Unable to open metadata file \"" << path << "\"!");
   }
-  fo << meta.dump(2) << '\n';
+  // Round 2a R1 (decision 1475 (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the
+  // bytes of dump(2) + '\n' without the whole text as a string) and checked: a short write
+  // (a full disk, an I/O error) aborts instead of leaving an incomplete palace.json behind.
+  const bool written = StreamJsonMetadata(fo, meta, spill);
+  fo.close();
+  if (!written || fo.fail())
+  {
+    MFEM_ABORT("Writing the metadata file \""
+               << path
+               << "\" failed (a short write: the disk is full "
+                  "or an I/O error); the file is incomplete!");
+  }
 }
 
 // Returns an array of indices corresponding to marked elements.
@@ -561,10 +574,12 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   }
 }
 
-void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
+void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
 {
   // Statistics reduction is collective and must occur before the root-only file update.
-  auto statistics = response.GetStatistics();
+  // The final write (round 2a R1, decision 1475 (1)): the operator's diagnostics record is
+  // moved, not copied (ReleaseStatistics; the record is the same).
+  auto statistics = response.ReleaseStatistics();
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);
@@ -582,7 +597,27 @@ void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
       }
       meta["SurfaceResponse"][key] = std::move(value);
     }
-    WriteMetadata(post_dir, meta);
+    // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
+    // of the empty in-memory array (the same bytes), then the scratch file is removed.
+    auto *spill = response.GetConductorConsistencyRecordsSpill();
+    if (spill)
+    {
+      MFEM_VERIFY(spill->Flush(),
+                  "Writing the conductor-consistency records to the scratch "
+                  "file \""
+                      << spill->Path() << "\" failed (a short write)!");
+      MFEM_VERIFY(spill->Size() == 0 || HoldsSpillPlace(meta, *spill),
+                  "The metadata holds no empty SurfaceResponse.Diagnostics."
+                  "ConductorConsistency.Records array for the "
+                      << spill->Size() << " spilled conductor-consistency record(s)!");
+    }
+    WriteMetadata(post_dir, meta, spill);
+    if (spill)
+    {
+      MFEM_VERIFY(spill->Remove(), "Removing the conductor-consistency records scratch "
+                                   "file \""
+                                       << spill->Path() << "\" failed!");
+    }
   }
   // The conductor-consistency gate (idfix R0-a, DESIGN A.1 (c) / B.3 (e); USER decision
   // 1000 (b)): the LOW-confidence banner whenever the gate excluded a patch on either path

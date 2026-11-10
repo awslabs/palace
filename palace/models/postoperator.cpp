@@ -352,6 +352,9 @@ PostOperator<solver_t>::PostOperator(
       // every measurement live on the root only (their consumers are the root's prints).
       surface_response_op->SetPatchRecordResidency(
           SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+      // Round 2a R2 (decision 1475 (1)): the root's Records spilled to the output
+      // directory.
+      surface_response_op->SpillConductorConsistencyRecords(iodata.problem.output);
       if (surface_response_op->IsRawFallback())
       {
         // A whole-run geometry fallback (USER decision 1000 (b) / 1001): no model / patch
@@ -382,7 +385,10 @@ PostOperator<solver_t>::PostOperator(
         surface_response_spatial_cluster_priority.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
       }
-      for (const auto &portion : surface_response_op->GetModelRawClaimPortions().portions)
+      // Round 2b B1 (decision 1484): converted once and released from the operator (the
+      // same portions in the same order; the operator reads them nowhere after the
+      // construction).
+      for (const auto &portion : surface_response_op->ReleaseModelRawClaimPortionList())
       {
         surface_response_model_raw.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});

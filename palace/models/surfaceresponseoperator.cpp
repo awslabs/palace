@@ -41,11 +41,13 @@
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponsesegmentindex.hpp"
+#include "utils/collectiveenvironment.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/metaledge.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -752,6 +754,20 @@ public:
 // lowest rank / lowest element containing it. A point no candidate rank finds this way is
 // searched by the candidate ranks with a rank-local FindPointsGSLIB (MPI_COMM_SELF: the
 // hash of the local mesh only, no router across ranks) with gslib's border tolerance.
+// Decision 1469 (1) (i): the census's RSS read around the FIRST all-pairs exchange of the
+// point locator (the per-peer MPI state); defined with ResponseMemoryCensus below.
+void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant);
+bool TakeFirstExchangeCensus(MPI_Comm comm)
+{
+  static bool taken = false;
+  if (taken || !ResponseMemoryCensusEnabled(comm))
+  {
+    return false;
+  }
+  taken = true;
+  return true;
+}
+
 class DistributedPointLocator
 {
 public:
@@ -854,6 +870,11 @@ private:
       }
     }
     std::vector<int> receive_counts(size);
+    const bool census = TakeFirstExchangeCensus(comm);
+    if (census)
+    {
+      PrintResponseMemoryCensusOfRss(comm, "before the first point-locator Alltoall");
+    }
     Mpi::Alltoall(1, exchange.send_counts.data(), receive_counts.data(), comm);
     std::vector<int> receive_offsets;
     const int send_total = SetOffsets(exchange.send_counts, exchange.send_offsets);
@@ -906,6 +927,10 @@ private:
     Mpi::Alltoallv(receive_answers.data(), receive_answer_counts.data(),
                    receive_answer_offsets.data(), exchange.answers.data(),
                    send_answer_counts.data(), send_answer_offsets.data(), comm);
+    if (census)
+    {
+      PrintResponseMemoryCensusOfRss(comm, "after the first point-locator Alltoallv");
+    }
     return exchange;
   }
 
@@ -19930,9 +19955,17 @@ ResponseMatrixFileKey MakeResponseMatrixFileKey(const std::string &path, int exp
 }
 
 // Read one domain response matrix file as a dense matrix of the expected size.
-mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
+// The per-process response-matrix caches, each behind an accessor so that the memory
+// census (decision 1475 (2)) can read their size; the caching itself is unchanged.
+std::map<ResponseMatrixFileKey, mfem::DenseMatrix> &DomainResponseMatrixFileCache()
 {
   static std::map<ResponseMatrixFileKey, mfem::DenseMatrix> cache;
+  return cache;
+}
+
+mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
+{
+  auto &cache = DomainResponseMatrixFileCache();
   const auto key = MakeResponseMatrixFileKey(path, expected_size, std::nullopt);
   if (const auto it = cache.find(key); it != cache.end())
   {
@@ -20134,11 +20167,18 @@ void AddDomainFileKeys(
   }
 }
 
+std::map<DerivedResponseMatrixKey, DomainResponseMatrices> &
+DerivedDomainResponseMatrixCache()
+{
+  static std::map<DerivedResponseMatrixKey, DomainResponseMatrices> cache;
+  return cache;
+}
+
 DomainResponseMatrices BuildDomainResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const std::vector<int> &zero_trace_indices, const Units &units)
 {
-  static std::map<DerivedResponseMatrixKey, DomainResponseMatrices> cache;
+  auto &cache = DerivedDomainResponseMatrixCache();
   DerivedResponseMatrixKey key;
   AddDomainFileKeys(config, expected_size, key);
   key.zero_trace_indices = zero_trace_indices;
@@ -20496,11 +20536,18 @@ ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
 }
 
 // The cached reading (ResponseMatrixFileKey: the same file, size, time and parameters).
+std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> &
+SurfaceResponseMatrixFileCache()
+{
+  static std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> cache;
+  return cache;
+}
+
 const std::map<int, mfem::DenseMatrix> &
 ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
                             std::optional<double> within_radius = std::nullopt)
 {
-  static std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> cache;
+  auto &cache = SurfaceResponseMatrixFileCache();
   const auto key = MakeResponseMatrixFileKey(path, expected_size, within_radius);
   if (const auto it = cache.find(key); it != cache.end())
   {
@@ -20812,11 +20859,18 @@ SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
 // The cached derivation (decision 734 F1): a model without surface matrices computes its
 // (empty) result directly; the key adds the within-R selection (in the file keys), the
 // interface mappings and the unit scale factors to the domain cache's inputs.
+std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices> &
+DerivedSurfaceResponseMatrixCache()
+{
+  static std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices> cache;
+  return cache;
+}
+
 SurfaceResponseMatrices BuildSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
 {
-  static std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices> cache;
+  auto &cache = DerivedSurfaceResponseMatrixCache();
   if (config.fabricated_surface_matrix.empty() && config.thin_surface_matrix.empty())
   {
     return ComputeSurfaceResponseMatrices(config, expected_size, units, matching_radius);
@@ -20981,14 +21035,16 @@ bool PolygonsOverlap(const std::vector<Point2D> &a, const std::vector<Point2D> &
   return false;
 }
 
-std::optional<std::filesystem::path> ResponseGeometryCachePath()
+// Collective (C10, decision 1471 (2)): the root's path on every rank (the cache branch
+// selects the construction's collective path).
+std::optional<std::filesystem::path> ResponseGeometryCachePath(MPI_Comm comm)
 {
-  const char *value = std::getenv("PALACE_RESPONSE_GEOMETRY_CACHE");
-  if (!value || std::string_view(value).empty())
+  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_GEOMETRY_CACHE");
+  if (!value || value->empty())
   {
     return std::nullopt;
   }
-  return std::filesystem::absolute(value).lexically_normal();
+  return std::filesystem::absolute(*value).lexically_normal();
 }
 
 }  // namespace
@@ -20996,6 +21052,24 @@ std::optional<std::filesystem::path> ResponseGeometryCachePath()
 DerivedResponseMatrixCacheCounters GetDerivedResponseMatrixCacheCounters()
 {
   return derived_response_matrix_cache_counters;
+}
+
+void ReleaseResponseMatrixCaches()
+{
+  // Round 2b B3 (decision 1484): the four per-process response-matrix caches (the file and
+  // the derived matrices, domain and surface) emptied and their storage freed; the hit /
+  // miss counters untouched. Only when no further construction can follow in the process.
+  std::map<ResponseMatrixFileKey, mfem::DenseMatrix>().swap(
+      DomainResponseMatrixFileCache());
+  std::map<DerivedResponseMatrixKey, DomainResponseMatrices>().swap(
+      DerivedDomainResponseMatrixCache());
+  std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>>().swap(
+      SurfaceResponseMatrixFileCache());
+  std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices>().swap(
+      DerivedSurfaceResponseMatrixCache());
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#endif
 }
 
 void WriteResponseGeometryCache(const std::filesystem::path &path,
@@ -22951,6 +23025,561 @@ struct SurfaceResponseGeometry::Impl
   mutable std::optional<DomainBoundaryContainmentCache> containment;
 };
 
+// Lane fix-response-memory round 2 (decision 1469 (1) (i)): THE MEMORY CENSUS. Under
+// PALACE_RESPONSE_MEMORY_CENSUS=1 the heap bytes of every member of the response
+// machinery (SurfaceResponseOperator, SurfaceResponseGeometry::Impl, the identification's
+// ResponseCorrectionData) are printed on the root, min / max / sum over the ranks, beside
+// the ranks' current RSS (and, under glibc, the allocator's in-use and free-but-retained
+// bytes). It READS the members only: no state, no result and no output file changes; the
+// reductions are of the census values alone.
+bool ResponseMemoryCensusEnabled(MPI_Comm comm)
+{
+  // C10 (decision 1471 (2)): the census enters collectives, so its gate is the ROOT's value
+  // on every rank (PBS 104703: a per-rank read deadlocked when the variable reached only
+  // the head node's ranks).
+  return CollectiveEnvironmentFlag(comm, "PALACE_RESPONSE_MEMORY_CENSUS");
+}
+
+struct ResponseMemoryCensus
+{
+  using Entries = std::vector<std::pair<std::string, double>>;
+  using Operator = SurfaceResponseOperator;
+
+  // Heap bytes owned by a value beyond its own sizeof (containers: their buffers and their
+  // elements' heap bytes; map / set nodes at the element size + a 32-byte node header;
+  // unordered nodes + 16 bytes and 8 bytes per bucket). A type with heap storage and no
+  // overload below fails to compile (no silent undercount).
+  template <typename T>
+  static double Heap(const T &)
+  {
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "ResponseMemoryCensus::Heap: this member type owns heap storage and "
+                  "needs its own overload");
+    return 0.0;
+  }
+  static double Heap(const std::string &s)
+  {
+    const char *data = s.data();
+    const char *self = reinterpret_cast<const char *>(&s);
+    return (data >= self && data < self + sizeof(s)) ? 0.0 : double(s.capacity() + 1);
+  }
+  template <typename T, typename A>
+  static double Heap(const std::vector<T, A> &v)
+  {
+    double bytes = double(v.capacity()) * double(sizeof(T));
+    if constexpr (!std::is_trivially_copyable_v<T>)
+    {
+      for (const auto &e : v)
+      {
+        bytes += Heap(e);
+      }
+    }
+    return bytes;
+  }
+  template <typename A>
+  static double Heap(const std::vector<bool, A> &v)
+  {
+    return double(v.capacity()) / 8.0;
+  }
+  template <typename T, std::size_t N>
+  static double Heap(const std::array<T, N> &a)
+  {
+    double bytes = 0.0;
+    if constexpr (!std::is_trivially_copyable_v<T>)
+    {
+      for (const auto &e : a)
+      {
+        bytes += Heap(e);
+      }
+    }
+    return bytes;
+  }
+  template <typename A, typename B>
+  static double Heap(const std::pair<A, B> &p)
+  {
+    return Heap(p.first) + Heap(p.second);
+  }
+  template <typename T>
+  static double Heap(const std::optional<T> &o)
+  {
+    return o ? Heap(*o) : 0.0;
+  }
+  template <typename K, typename V, typename C, typename A>
+  static double Heap(const std::map<K, V, C, A> &m)
+  {
+    double bytes = double(m.size()) * double(sizeof(std::pair<const K, V>) + 32);
+    for (const auto &[k, v] : m)
+    {
+      bytes += Heap(k) + Heap(v);
+    }
+    return bytes;
+  }
+  template <typename K, typename V, typename H, typename E, typename A>
+  static double Heap(const std::unordered_map<K, V, H, E, A> &m)
+  {
+    double bytes = double(m.size()) * double(sizeof(std::pair<const K, V>) + 16) +
+                   double(m.bucket_count()) * 8.0;
+    for (const auto &[k, v] : m)
+    {
+      bytes += Heap(k) + Heap(v);
+    }
+    return bytes;
+  }
+  template <typename T, typename C, typename A>
+  static double Heap(const std::set<T, C, A> &s)
+  {
+    double bytes = double(s.size()) * double(sizeof(T) + 32);
+    for (const auto &e : s)
+    {
+      bytes += Heap(e);
+    }
+    return bytes;
+  }
+  static double Heap(const mfem::Vector &v)
+  {
+    return v.OwnsData() ? double(v.Capacity()) * double(sizeof(double)) : 0.0;
+  }
+  static double Heap(const mfem::DenseMatrix &m)
+  {
+    return double(m.Height()) * double(m.Width()) * double(sizeof(double));
+  }
+  template <typename T>
+  static double Heap(const mfem::Array<T> &a)
+  {
+    return double(a.Capacity()) * double(sizeof(T));
+  }
+  static double Heap(const nlohmann::json &j)
+  {
+    double bytes = 0.0;
+    if (j.is_object())
+    {
+      for (auto it = j.begin(); it != j.end(); ++it)
+      {
+        bytes += double(sizeof(std::string) + sizeof(nlohmann::json) + 32) +
+                 Heap(it.key()) + Heap(it.value());
+      }
+    }
+    else if (j.is_array())
+    {
+      bytes += double(j.size()) * double(sizeof(nlohmann::json));
+      for (const auto &e : j)
+      {
+        bytes += Heap(e);
+      }
+    }
+    else if (j.is_string())
+    {
+      bytes += double(sizeof(std::string)) + Heap(j.get_ref<const std::string &>());
+    }
+    return bytes;
+  }
+
+  // The configuration (the identification's output; configfile.hpp).
+  static double Heap(const ResponseCorrectionData::ControlFlipProbePieceData &d)
+  {
+    return Heap(d.model);
+  }
+  static double Heap(const ResponseCorrectionData::MagneticRulesData &d)
+  {
+    return Heap(d.conductor_consistency_tolerance_by_order);
+  }
+  static double Heap(const ResponseCorrectionData::LegacyContractAliasData &d)
+  {
+    return Heap(d.model) + Heap(d.key) + Heap(d.context_digest) + Heap(d.reason) +
+           Heap(d.features);
+  }
+  static double Heap(const ResponseCorrectionData::SpanCapAllowanceData &d)
+  {
+    return Heap(d.claims_signature) + Heap(d.label) + Heap(d.reason) + Heap(d.approval);
+  }
+  static double Heap(const ResponseCorrectionData::QuantumNearMatchData &d)
+  {
+    return Heap(d.model) + Heap(d.model_key) + Heap(d.feature_key) + Heap(d.features);
+  }
+  static double Heap(const ResponseCorrectionData::MirrorPlaneData &d)
+  {
+    return Heap(d.status);
+  }
+  static double Heap(const ResponseCorrectionData::MirrorArmTrimData &d)
+  {
+    return Heap(d.topology) + Heap(d.cells);
+  }
+  static double Heap(const ResponseCorrectionData::CornerArmTrimData &d)
+  {
+    return Heap(d.topology) + Heap(d.cells);
+  }
+  static double Heap(const ResponseCorrectionData::GeometryFallbackData &d)
+  {
+    return Heap(d.cls) + Heap(d.site) + Heap(d.reason) + Heap(d.what) + Heap(d.features) +
+           Heap(d.patches) + Heap(d.models) + Heap(d.interfaces) + Heap(d.topology);
+  }
+  static double Heap(const ResponseCorrectionData::CornerArmExtensionData &d)
+  {
+    return Heap(d.topology) + Heap(d.arms) + Heap(d.cells);
+  }
+  static double Heap(const ResponseCorrectionData::UncoveredPortionData &d)
+  {
+    return Heap(d.topology);
+  }
+  static double Heap(const ResponseModelData::OpenContourPathData &d)
+  {
+    return Heap(d.indices);
+  }
+  static double Heap(const ResponseModelData::BlendSourceData &d)
+  {
+    return Heap(d.fabricated_matrix) + Heap(d.thin_matrix) +
+           Heap(d.fabricated_surface_matrix) + Heap(d.thin_surface_matrix) +
+           Heap(d.magnetic_fabricated_matrix) + Heap(d.magnetic_thin_matrix);
+  }
+  static double Heap(const ResponseModelData::MagneticLeafData &d)
+  {
+    return Heap(d.fabricated_matrix) + Heap(d.thin_matrix) + Heap(d.catalog_refusal);
+  }
+  static double Heap(const ResponseModelData &d)
+  {
+    return Heap(d.name) + Heap(d.topology) + Heap(d.fabricated_matrix) +
+           Heap(d.thin_matrix) + Heap(d.fabricated_surface_matrix) +
+           Heap(d.thin_surface_matrix) + Heap(d.basis_points) + Heap(d.trace_vertices) +
+           Heap(d.trace_triangles) + Heap(d.constructed_basis_points) +
+           Heap(d.constructed_trace_vertices) + Heap(d.constructed_trace_triangles) +
+           Heap(d.contour_groups) + Heap(d.zero_trace_indices) +
+           Heap(d.consistent_mortar_vertices) + Heap(d.consistent_mortar_rule) +
+           Heap(d.open_contour_paths) + Heap(d.interfaces) + Heap(d.blend) +
+           Heap(d.magnetic);
+  }
+  static double Heap(const ResponsePatchData::Provenance &d)
+  {
+    return Heap(d.claims) + Heap(d.chain) + Heap(d.foreign) + Heap(d.raw_claims) +
+           Heap(d.mirror_edge_weights) + Heap(d.probe_snaps);
+  }
+  static double Heap(const ResponsePatchData &d)
+  {
+    return Heap(d.conductor_references) + Heap(d.conductor_probe_edges) +
+           Heap(d.conductor_probes) + Heap(d.maxwell_conductor_anchors) +
+           Heap(d.provenance);
+  }
+  static void Add(Entries &entries, const std::string &prefix,
+                  const ResponseCorrectionData &d)
+  {
+    auto add = [&](const char *name, double bytes)
+    { entries.emplace_back(prefix + name, bytes); };
+    add("library", Heap(d.library));
+    add("target_interfaces", Heap(d.target_interfaces));
+    add("control_flip_probe_pieces", Heap(d.control_flip_probe_pieces));
+    add("magnetic_rules", Heap(d.magnetic_rules));
+    add("legacy_contract", Heap(d.legacy_contract));
+    add("span_cap_allowances", Heap(d.span_cap_allowances));
+    add("quantum_near_match", Heap(d.quantum_near_match));
+    add("mirror_planes", Heap(d.mirror_planes));
+    add("mirror_band", Heap(d.mirror_band));
+    add("mirror_unmerged_portions", Heap(d.mirror_unmerged_portions));
+    add("mirror_arm_trims", Heap(d.mirror_arm_trims));
+    add("corner_arm_trims", Heap(d.corner_arm_trims));
+    add("geometry_fallbacks", Heap(d.geometry_fallbacks));
+    add("geometry_fallback_interface_lengths", Heap(d.geometry_fallback_interface_lengths));
+    add("geometry_fallback_interface_types", Heap(d.geometry_fallback_interface_types));
+    add("corner_arm_extensions", Heap(d.corner_arm_extensions));
+    add("uncovered_portions", Heap(d.uncovered_portions));
+    add("exclusion_portions", Heap(d.exclusion_portions));
+    add("unpatched_pair_portions", Heap(d.unpatched_pair_portions));
+    add("geometry_fallback_cell_portions", Heap(d.geometry_fallback_cell_portions));
+    add("models (library model data: the configuration's model records)", Heap(d.models));
+    add("patches (I-10)", Heap(d.patches));
+    entries.emplace_back(prefix + "patches count", double(d.patches.size()));
+  }
+
+  // The geometry's residence (Impl) and its derived records.
+  static double Heap(const AutomaticResponseDiagnostics &d)
+  {
+    return Heap(d.selected_length_by_interface) + Heap(d.matched_length_by_interface) +
+           Heap(d.matched_corner_neighborhood_length_by_interface);
+  }
+  static double Heap(const DomainBoundaryExclusion &d) { return Heap(d.reason); }
+  static double Heap(const DomainBoundaryExclusions &d)
+  {
+    return Heap(d.patches) + Heap(d.mirrored) + Heap(d.unmerged_reach) +
+           Heap(d.phase_times);
+  }
+  static double Heap(const DomainBoundaryContainmentCache &d)
+  {
+    return Heap(d.signature) + Heap(d.exclusions);
+  }
+  static double Heap(const ContinuationOwnership::Cell &d)
+  {
+    return Heap(d.owners) + Heap(d.attributed) + Heap(d.attributed_intervals);
+  }
+  static double Heap(const ContinuationOwnership::ForeignExcludedCell &d)
+  {
+    return Heap(d.owners);
+  }
+  static void Add(Entries &entries, const SurfaceResponseGeometry &geometry)
+  {
+    const auto &impl = *geometry.impl;
+    Add(entries, "geometry.config.", impl.config);
+    entries.emplace_back("geometry.diagnostics", Heap(impl.diagnostics));
+    entries.emplace_back("geometry.statistics (json)", Heap(impl.statistics));
+    entries.emplace_back("geometry.containment (I-10e: signature + ledger)",
+                         Heap(impl.containment));
+  }
+
+  // The operator's members (surfaceresponseoperator.hpp).
+  static double Heap(const Operator::MagneticLeafStatus &d)
+  {
+    return Heap(d.status) + Heap(d.rule) + Heap(d.reason);
+  }
+  static double Heap(const Operator::OpenContourPath &d) { return Heap(d.indices); }
+  static double Heap(const Operator::ResponseModel &d)
+  {
+    return Heap(d.name) + Heap(d.topology) + Heap(d.fabricated_domain) +
+           Heap(d.thin_domain) + Heap(d.domain_defect) + Heap(d.fixed_flux_transform) +
+           Heap(d.fixed_flux_domain_defect) + Heap(d.fabricated_surfaces) +
+           Heap(d.surface_defects) + Heap(d.contour_groups) + Heap(d.zero_trace_indices) +
+           Heap(d.open_contour_paths) + Heap(d.hat_rim_knots) +
+           Heap(d.ring_slave_vertices) + Heap(d.mortar_segments) +
+           Heap(d.consistent_mortar_vertices) + Heap(d.consistent_mortar_rule) +
+           Heap(d.mortar_vertices) + Heap(d.mortar_triangles) +
+           Heap(d.mortar_mass_inverse) + Heap(d.mortar_constant_load) +
+           Heap(d.mortar_conductor_loads) + Heap(d.plane_conductor_vertices) +
+           Heap(d.off_plane_conductor_vertices) + Heap(d.adjacent_free_vertices) +
+           Heap(d.maxwell_probe_points) + Heap(d.maxwell_probe_conductors) +
+           Heap(d.maxwell_probe_vertices) + Heap(d.magnetic_domain_defect) +
+           Heap(d.magnetic_thin_domain) + Heap(d.magnetic_status);
+  }
+  static double Heap(const Operator::Patch &d)
+  {
+    return Heap(d.probe_points) + Heap(d.conductor_probe_edges) + Heap(d.conductor_probes) +
+           Heap(d.probe_snaps);
+  }
+  static double Heap(const ExcludedPatchPortions &d)
+  {
+    return Heap(d.portions) + Heap(d.patches) + Heap(d.translational) +
+           Heap(d.feature_portions);
+  }
+  static double Heap(const UncoveredSpatialSupportClip &d) { return Heap(d.topology); }
+  static double Heap(const UncoveredSpatialSupportClipping &d)
+  {
+    return Heap(d.clips) + Heap(d.removed_by_feature);
+  }
+  static double Heap(const SpatialClusterPriorityExclusions::Entry &d)
+  {
+    return Heap(d.window_portions) + Heap(d.outside_portions);
+  }
+  static double Heap(const SpatialClusterPriorityExclusions &d)
+  {
+    return Heap(d.entries) + Heap(d.portions);
+  }
+  static double Heap(const ModelRawClaimPortions::GroupMember &d) { return Heap(d.label); }
+  static double Heap(const ModelRawClaimPortions &d)
+  {
+    return Heap(d.portions) + Heap(d.members);
+  }
+  // A vector whose elements' own heap storage is not walked (the Maxwell-only members:
+  // empty on the electrostatic path): the buffer only, named "(shallow)".
+  template <typename T>
+  static double Shallow(const std::vector<T> &v)
+  {
+    return double(v.capacity()) * double(sizeof(T));
+  }
+  static void Add(Entries &entries, const Operator &op)
+  {
+    auto add = [&](const char *name, double bytes) { entries.emplace_back(name, bytes); };
+    add("op.models (library model data: the loaded matrices)", Heap(op.models));
+    // Round 2b B4 (decision 1484): op.models split into the matrices of the models this
+    // rank's patches reference, the matrices of the others (0 after F-M) and the rest
+    // (metadata: mortar geometry, probes, indices), with the counts.
+    {
+      double referenced_matrices = 0.0, unreferenced_matrices = 0.0, total = 0.0;
+      int referenced = 0;
+      for (std::size_t m = 0; m < op.models.size(); m++)
+      {
+        const auto &model = op.models[m];
+        double matrices = 0.0;
+        for (const auto *matrix :
+             {&model.fabricated_domain, &model.thin_domain, &model.domain_defect,
+              &model.fixed_flux_transform, &model.fixed_flux_domain_defect,
+              &model.mortar_mass_inverse, &model.magnetic_domain_defect,
+              &model.magnetic_thin_domain})
+        {
+          matrices += Heap(*matrix);
+        }
+        matrices += Heap(model.fabricated_surfaces) + Heap(model.surface_defects) +
+                    Heap(model.mortar_constant_load) + Heap(model.mortar_conductor_loads);
+        const bool local = op.ReferencesModelLocally(m);
+        referenced += local ? 1 : 0;
+        (local ? referenced_matrices : unreferenced_matrices) += matrices;
+        total += sizeof(model) + Heap(model);
+      }
+      add("op.models: the referenced models' matrices", referenced_matrices);
+      add("op.models: the unreferenced models' matrices (F-M)", unreferenced_matrices);
+      add("op.models: the rest (metadata)",
+          total - referenced_matrices - unreferenced_matrices);
+      add("op.models count", double(op.models.size()));
+      add("op.models referenced count", double(referenced));
+    }
+    add("op.dbc_tdof_list", Heap(op.dbc_tdof_list));
+    add("op.patches", Heap(op.patches));
+    add("op.patches count", double(op.patches.size()));
+    add("op.diagnostic_patches", Heap(op.diagnostic_patches));
+    add("op.diagnostic_entry_models + features",
+        Heap(op.diagnostic_entry_models) + Heap(op.diagnostic_entry_features));
+    add("op.patch_assignments", Heap(op.patch_assignments));
+    add("op.point communication counts / offsets",
+        Heap(op.point_send_counts) + Heap(op.point_send_offsets) +
+            Heap(op.point_receive_counts) + Heap(op.point_receive_offsets) +
+            Heap(op.point_send_counts_pair) + Heap(op.point_send_offsets_pair) +
+            Heap(op.point_receive_counts_pair) + Heap(op.point_receive_offsets_pair));
+    add("op.point_send_indices", Heap(op.point_send_indices));
+    add("op.point_dof_offsets + point_dofs",
+        Heap(op.point_dof_offsets) + Heap(op.point_dofs));
+    add("op.point_weights + magnetic_point_weights",
+        Heap(op.point_weights) + Heap(op.magnetic_point_weights));
+    add("op.magnetic_probe_rules", Heap(op.magnetic_probe_rules));
+    add("op.control_flipped_probe_records", Heap(op.control_flipped_probe_records));
+    add("op.magnetic_model_patch_counts", Heap(op.magnetic_model_patch_counts));
+    add("op.maxwell_contours + conductor_anchors",
+        Heap(op.maxwell_contours) + Heap(op.maxwell_conductor_anchors));
+    add("op.maxwell lines / paths / probes / fits / gate records (shallow)",
+        Shallow(op.maxwell_lines) + Shallow(op.maxwell_paths) +
+            Shallow(op.maxwell_conductor_paths) + Heap(op.maxwell_patch_paths) +
+            Shallow(op.maxwell_probes) + Shallow(op.maxwell_loop_fits) +
+            Shallow(op.maxwell_magnetic_loop_fits) + Heap(op.maxwell_line_lengths) +
+            Shallow(op.magnetic_gate_records));
+    add("op.patch_boxes", Heap(op.patch_boxes));
+    add("op.maxwell_patch_excluded_portions", Heap(op.maxwell_patch_excluded_portions));
+    add("op.maxwell_patch_raw_claims (I-11)", Heap(op.maxwell_patch_raw_claims));
+    add("op.fraction maps by interface",
+        Heap(op.matched_length_fraction_by_interface) +
+            Heap(op.corner_neighborhood_fraction_by_interface));
+    add("op.work vectors (x_free .. mortar_coefficients)",
+        Heap(op.x_free) + Heap(op.local_x) + Heap(op.local_x_imag) + Heap(op.local_y) +
+            Heap(op.trace) + Heap(op.response) + Heap(op.correction) +
+            Heap(op.mortar_load) + Heap(op.mortar_coefficients));
+    add("op.point owned / packed values",
+        Heap(op.point_owned_values) + Heap(op.point_packed_values) +
+            Heap(op.point_owned_values_pair) + Heap(op.point_packed_values_pair));
+    add("op.maxwell work vectors",
+        Heap(op.maxwell_point_values) + Heap(op.maxwell_trace_adjoint) +
+            Heap(op.maxwell_path_adjoint) + Heap(op.maxwell_fit_adjoint) +
+            Heap(op.maxwell_fit_line_adjoint) + Heap(op.maxwell_loop_workspace));
+    add("op.automatic_statistics (json)", Heap(op.automatic_statistics));
+    add("op.ownership_diagnostics (json; I-1 Records on the root)",
+        Heap(op.ownership_diagnostics));
+    add("op.geometry_fallbacks", Heap(op.geometry_fallbacks));
+    add("op.geometry_fallback maps", Heap(op.geometry_fallback_interface_lengths) +
+                                         Heap(op.geometry_fallback_interface_types) +
+                                         Heap(op.geometry_fallback_energy_shares));
+    add("op.geometry_fallback_portions", Heap(op.geometry_fallback_portions));
+    add("op.uncovered_portions", Heap(op.uncovered_portions));
+    add("op.uncovered_spatial_support_clipping",
+        Heap(op.uncovered_spatial_support_clipping));
+    add("op.domain_boundary_portions", Heap(op.domain_boundary_portions));
+    add("op.exclusion_portions", Heap(op.exclusion_portions));
+    add("op.unprobed_model_portions", Heap(op.unprobed_model_portions));
+    add("op.spatial_cluster_priority", Heap(op.spatial_cluster_priority));
+    add("op.conductor_consistency_claims (I-11)", Heap(op.conductor_consistency_claims));
+    add("op.conductor_consistency_portions", Heap(op.conductor_consistency_portions));
+    add("op.model_raw_claim_portions (I-11b)", Heap(op.model_raw_claim_portions));
+    add("op.mirror_planes", Heap(op.mirror_planes));
+  }
+
+  // The per-process response-matrix caches (O(library); decision 1475 (2)).
+  static double Heap(const ResponseMatrixFileKey &k) { return Heap(k.path); }
+  static double Heap(const DerivedResponseMatrixKey &k)
+  {
+    return Heap(k.files) + Heap(k.weights) + Heap(k.zero_trace_indices) +
+           Heap(k.interfaces);
+  }
+  static double Heap(const DomainResponseMatrices &m)
+  {
+    return Heap(m.fabricated) + Heap(m.thin) + Heap(m.defect) +
+           Heap(m.fixed_flux_transform) + Heap(m.fixed_flux_defect);
+  }
+  static double Heap(const SurfaceResponseMatrices &m)
+  {
+    return Heap(m.fabricated) + Heap(m.defects);
+  }
+
+  // The ranks' current RSS and (glibc) the allocator's in-use / free-but-retained bytes,
+  // beside the per-process matrix caches.
+  static void AddProcess(Entries &entries)
+  {
+    entries.emplace_back("cache: domain response matrix files",
+                         Heap(DomainResponseMatrixFileCache()));
+    entries.emplace_back("cache: derived domain response matrices",
+                         Heap(DerivedDomainResponseMatrixCache()));
+    entries.emplace_back("cache: surface response matrix files",
+                         Heap(SurfaceResponseMatrixFileCache()));
+    entries.emplace_back("cache: derived surface response matrices",
+                         Heap(DerivedSurfaceResponseMatrixCache()));
+    entries.emplace_back("process RSS", double(memory_reporting::GetCurrentMemory()));
+#if defined(__GLIBC__)
+    const struct mallinfo2 info = mallinfo2();
+    entries.emplace_back("malloc in use (uordblks + hblkhd)",
+                         double(info.uordblks) + double(info.hblkhd));
+    entries.emplace_back("malloc free retained in the arenas (fordblks)",
+                         double(info.fordblks));
+#endif
+  }
+
+  // Collective: min / max / sum over the ranks of every entry, printed on the root.
+  static void Print(MPI_Comm comm, const std::string &instant, const Entries &entries)
+  {
+    const std::size_t n = entries.size();
+    std::vector<double> mins(n), maxs(n), sums(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+      mins[i] = maxs[i] = sums[i] = entries[i].second;
+    }
+    Mpi::GlobalMin(static_cast<int>(n), mins.data(), comm);
+    Mpi::GlobalMax(static_cast<int>(n), maxs.data(), comm);
+    Mpi::GlobalSum(static_cast<int>(n), sums.data(), comm);
+    Mpi::Print(comm, " Response memory census [{}] ({:d} ranks; bytes per rank):\n",
+               instant, Mpi::Size(comm));
+    for (std::size_t i = 0; i < n; i++)
+    {
+      Mpi::Print(comm, "  census [{}] {}: min {:.0f} max {:.0f} sum {:.0f}\n", instant,
+                 entries[i].first, mins[i], maxs[i], sums[i]);
+    }
+  }
+};
+
+void PrintResponseMemoryCensusOfData(MPI_Comm comm, const std::string &instant,
+                                     const ResponseCorrectionData &data)
+{
+  if (!ResponseMemoryCensusEnabled(comm))
+  {
+    return;
+  }
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::Add(entries, "config.", data);
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(comm, instant, entries);
+}
+
+void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant)
+{
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(comm, instant, entries);
+}
+
+void SurfaceResponseOperator::PrintResponseMemoryCensus(
+    const std::string &instant, const SurfaceResponseGeometry *geometry) const
+{
+  if (!ResponseMemoryCensusEnabled(fespace.GetComm()))
+  {
+    return;
+  }
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::Add(entries, *this);
+  if (geometry)
+  {
+    ResponseMemoryCensus::Add(entries, *geometry);
+  }
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(fespace.GetComm(), instant, entries);
+}
+
 // C6: a placed patch packed into doubles, EVERY field of ResponseCorrectionPatchData
 // (configfile.hpp) in declaration order, so that the unpacked patch equals the packed one
 // field for field (the unit case test-responsegeometry-residency.cpp populates every field
@@ -23279,10 +23908,12 @@ std::vector<double> DomainBoundaryContainmentSignature(
 // PALACE_RESPONSE_CONTAINMENT_RECHECK (set, non-empty, not "0"): every construction
 // recomputes the containment test and fails closed unless its classification equals the
 // cached one (the validation guard of decision 734 F2).
-bool DomainBoundaryContainmentRechecks()
+// Collective (C10, decision 1471 (2)): the recheck recomputes the containment test (its
+// collectives) or reuses the cache, so every rank must take the root's branch.
+bool DomainBoundaryContainmentRechecks(MPI_Comm comm)
 {
-  const char *value = std::getenv("PALACE_RESPONSE_CONTAINMENT_RECHECK");
-  return value && !std::string_view(value).empty() && std::string_view(value) != "0";
+  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_CONTAINMENT_RECHECK");
+  return value && !value->empty() && *value != "0";
 }
 
 // The first entry where a construction's containment signature differs from the cached
@@ -26528,22 +27159,25 @@ int ReflectPointsIntoDomain(
   return reflected;
 }
 
-std::size_t DomainBoundaryContainmentBlockPoints()
+std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm)
 {
   // Lane fix-response-memory (decision 1446, C3 / DESIGN s2.5 I-7): the containment
   // test's per-point lists are built for a block of candidates at a time, at most this
-  // many points per block (35 B per point: 2^23 points = 0.3 GB per rank). Results-neutral:
-  // every block size gives the same exclusions (the per-point reductions are elementwise,
-  // the per-candidate decision reads its own points). No job of record sets the variable.
-  constexpr std::size_t default_block_points = std::size_t(1) << 23;
-  const char *environment = std::getenv("PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
-  if (!environment || std::string_view(environment).empty())
+  // many points per block (~38 B per point: the 2^23-point block measured 0.32 GB per rank
+  // at QUO-023, PBS 104964). Results-neutral: every block size gives the same exclusions
+  // (the per-point reductions are elementwise, the per-candidate decision reads its own
+  // points). No job of record sets the variable. Round 2a T1 (decision 1475 (1)): the
+  // default 2^23 -> 2^20 points (~0.04 GB per rank).
+  constexpr std::size_t default_block_points = std::size_t(1) << 20;
+  const auto environment =
+      CollectiveGetenv(comm, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS");
+  if (!environment || environment->empty())
   {
     return default_block_points;
   }
-  const long long value = std::atoll(environment);
+  const long long value = std::atoll(environment->c_str());
   MFEM_VERIFY(value > 0, "PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS must be a positive "
-                         "point count (default 8388608)!");
+                         "point count (default 1048576)!");
   return static_cast<std::size_t>(value);
 }
 
@@ -26565,6 +27199,10 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
               "The domain-boundary exclusion applies to three-dimensional devices!");
   const auto comm = mesh.GetComm();
   DomainBoundaryExclusions result;
+  if (block_points == 0)
+  {
+    block_points = DomainBoundaryContainmentBlockPoints(comm);
+  }
   MFEM_VERIFY(block_points > 0,
               "The containment test's block needs a positive point count!");
 
@@ -26740,6 +27378,9 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   // order; the misplaced-reference abort (fail closed, decision 260) fires at the
   // offending block.
   std::size_t c_begin = 0;
+  // Decision 1475 (2): the memory census of the candidate lists and the first block's point
+  // lists (log only; the gate read once, collectively; every rank walks the same blocks).
+  bool census_block = ResponseMemoryCensusEnabled(comm);
   while (c_begin < candidates.size())
   {
     std::size_t c_end = c_begin + 1;
@@ -26760,6 +27401,21 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
                 "The containment test's block holds " << points.size() << " points, "
                                                       << point_offsets[c_end] - block_base
                                                       << " expected!");
+    if (census_block)
+    {
+      census_block = false;
+      ResponseMemoryCensus::Entries entries = {
+          {"containment: candidates + point_offsets + origin_references",
+           ResponseMemoryCensus::Heap(candidates) +
+               ResponseMemoryCensus::Heap(point_offsets) +
+               ResponseMemoryCensus::Heap(origin_references)},
+          {"containment: the first block's points + point_band",
+           ResponseMemoryCensus::Heap(points) + ResponseMemoryCensus::Heap(point_band)},
+          {"containment: the first block's point count", double(points.size())}};
+      ResponseMemoryCensus::AddProcess(entries);
+      ResponseMemoryCensus::Print(comm, "inside the containment test (the first block)",
+                                  entries);
+    }
     // The block-local index of a global point.
     auto BlockLocal = [&](std::size_t global) { return global - block_base; };
     Phase("points");
@@ -28207,6 +28863,96 @@ bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
   return local > 0;
 }
 
+bool SurfaceResponseOperator::ReferencesModelLocally(std::size_t model) const
+{
+  auto References = [model](const auto &patch)
+  { return static_cast<std::size_t>(patch.model) == model; };
+  return std::any_of(patches.begin(), patches.end(), References) ||
+         std::any_of(diagnostic_patches.begin(), diagnostic_patches.end(), References);
+}
+
+std::size_t SurfaceResponseOperator::GetModelMatrixEntries(std::size_t model) const
+{
+  const auto &m = models[model];
+  std::size_t entries = 0;
+  for (const auto *matrix :
+       {&m.fabricated_domain, &m.thin_domain, &m.domain_defect, &m.fixed_flux_transform,
+        &m.fixed_flux_domain_defect, &m.mortar_mass_inverse, &m.magnetic_domain_defect,
+        &m.magnetic_thin_domain})
+  {
+    entries += static_cast<std::size_t>(matrix->Height()) * matrix->Width();
+  }
+  for (const auto *map : {&m.fabricated_surfaces, &m.surface_defects})
+  {
+    for (const auto &[interface, matrix] : *map)
+    {
+      (void)interface;
+      entries += static_cast<std::size_t>(matrix.Height()) * matrix.Width();
+    }
+  }
+  entries += static_cast<std::size_t>(m.mortar_constant_load.Size());
+  for (const auto &load : m.mortar_conductor_loads)
+  {
+    entries += static_cast<std::size_t>(load.Size());
+  }
+  return entries;
+}
+
+void SurfaceResponseOperator::ReleaseUnreferencedModelMatrices()
+{
+  std::vector<char> referenced(models.size(), 0);
+  for (const auto *list : {&patches, &diagnostic_patches})
+  {
+    for (const auto &patch : *list)
+    {
+      referenced[static_cast<std::size_t>(patch.model)] = 1;
+    }
+  }
+  for (std::size_t i = 0; i < models.size(); i++)
+  {
+    if (referenced[i])
+    {
+      continue;
+    }
+    auto &model = models[i];
+    for (auto *matrix : {&model.fabricated_domain, &model.thin_domain, &model.domain_defect,
+                         &model.fixed_flux_transform, &model.fixed_flux_domain_defect,
+                         &model.mortar_mass_inverse, &model.magnetic_domain_defect,
+                         &model.magnetic_thin_domain})
+    {
+      matrix->Clear();
+    }
+    // The keys stay (every all-model reader iterates them): only the storage goes.
+    for (auto *map : {&model.fabricated_surfaces, &model.surface_defects})
+    {
+      for (auto &[interface, matrix] : *map)
+      {
+        (void)interface;
+        matrix.Clear();
+      }
+    }
+    model.mortar_constant_load.Destroy();
+    for (auto &load : model.mortar_conductor_loads)
+    {
+      load.Destroy();
+    }
+  }
+}
+
+void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
+{
+  MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
+              "The conductor-consistency Records spill requires the ROOT_ONLY residency!");
+  if (Mpi::Root(fespace.GetComm()))
+  {
+    records_spill = std::make_unique<JsonArraySpill>(
+        (std::filesystem::path(directory) / ".palace-conductor-consistency-records.spill")
+            .string(),
+        std::vector<std::string>{"SurfaceResponse", "Diagnostics", "ConductorConsistency",
+                                 "Records"});
+  }
+}
+
 nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
 {
   auto &diagnostics = ownership_diagnostics["ConductorConsistency"];
@@ -29173,7 +29919,19 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
         {"Count", static_cast<int>(record.probe_snaps.size())},
         {"MaxDisplacement", record.max_probe_snap * mesh_coordinate_scale},
         {"Knots", std::move(snaps)}};
-    diagnostics["Records"].push_back(entry);
+    if (records_spill)
+    {
+      // Round 2a R2 (decision 1475 (1)): the root's Records entry goes to the scratch file
+      // in its palace.json text (spliced at the final metadata write), not to memory.
+      MFEM_VERIFY(records_spill->Append(entry),
+                  "Writing the conductor-consistency record to the scratch file \""
+                      << records_spill->Path()
+                      << "\" failed (a short write: the disk is full or an I/O error)!");
+    }
+    else
+    {
+      diagnostics["Records"].push_back(entry);
+    }
     if (record.excluded && record.record_only)
     {
       // RecordOnly (the diagnostic opt-out, idfix B.4 (F)): the verdict stands in the
@@ -29231,6 +29989,13 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                                    conductor_consistency_claim_tolerance);
       }
     }
+  }
+  if (records_spill)
+  {
+    MFEM_VERIFY(records_spill->Flush(),
+                "Writing the conductor-consistency records to the scratch file \""
+                    << records_spill->Path()
+                    << "\" failed (a short write: the disk is full or an I/O error)!");
   }
   // The totals of the pass: the root's values on every rank (under ROOT_ONLY the other
   // ranks hold no record; under REPLICATED every rank computed the same values).
@@ -29802,24 +30567,53 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       const bool first_order_mesh =
           !response_mesh.GetNodes() ||
           response_mesh.GetNodes()->FESpace()->GetMaxElementOrder() <= 1;
-      const bool containment_recheck = DomainBoundaryContainmentRechecks();
+      const bool containment_recheck = DomainBoundaryContainmentRechecks(fespace.GetComm());
       std::optional<DomainBoundaryContainmentCache> *containment_cache =
           cached_geometry ? &cached_geometry->impl->containment : nullptr;
-      const auto containment_signature = DomainBoundaryContainmentSignature(
-          placed_patches, spatially_owned_patches, BasisPointsOf, coordinate_scale,
-          config.matching_radius, containment_mirror_band);
-      const bool containment_hit = containment_cache && *containment_cache &&
-                                   (*containment_cache)->signature == containment_signature;
-      const bool containment_mismatch =
-          containment_cache && *containment_cache && !containment_hit;
+      // F-C (round 2a, decision 1475 (1)): the tested-input signature is built and kept on
+      // the ROOT only (the placed patches are identical on every rank, so is the verdict);
+      // the root compares it with the cached one and broadcasts hit / miss and, on a miss,
+      // the named difference. The result (the exclusions) stays on every rank.
+      const bool containment_root = Mpi::Root(fespace.GetComm());
+      const auto containment_signature =
+          containment_root
+              ? DomainBoundaryContainmentSignature(
+                    placed_patches, spatially_owned_patches, BasisPointsOf,
+                    coordinate_scale, config.matching_radius, containment_mirror_band)
+              : std::vector<double>();
+      const bool containment_present = containment_cache && *containment_cache;
+      int containment_verdict = 0;  // 1 = the cached signature equals this construction's
+      std::string containment_difference;
+      if (containment_root && containment_present)
+      {
+        containment_verdict =
+            (*containment_cache)->signature == containment_signature ? 1 : 0;
+        if (!containment_verdict)
+        {
+          containment_difference = DescribeDomainBoundaryContainmentSignatureMismatch(
+              (*containment_cache)->signature, containment_signature);
+        }
+      }
+      if (containment_present)
+      {
+        Mpi::Broadcast(1, &containment_verdict, 0, fespace.GetComm());
+        int length = static_cast<int>(containment_difference.size());
+        Mpi::Broadcast(1, &length, 0, fespace.GetComm());
+        containment_difference.resize(static_cast<std::size_t>(length));
+        if (length > 0)
+        {
+          Mpi::Broadcast(length, containment_difference.data(), 0, fespace.GetComm());
+        }
+      }
+      const bool containment_hit = containment_present && containment_verdict == 1;
+      const bool containment_mismatch = containment_present && !containment_hit;
       // The guard fails closed on a changed tested input too (decision 740 MAJOR-1): a
       // present entry for a different signature is never replaced silently under RECHECK.
       if (containment_mismatch && containment_recheck)
       {
         MFEM_ABORT("The domain-boundary containment cache holds the first construction's "
                    "result for a different tested-patch signature ("
-                   << DescribeDomainBoundaryContainmentSignatureMismatch(
-                          (*containment_cache)->signature, containment_signature)
+                   << containment_difference
                    << "); PALACE_RESPONSE_CONTAINMENT_RECHECK refuses to replace it!");
       }
       if (cached_geometry && !first_order_mesh)
@@ -29871,8 +30665,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                        " Domain-boundary containment result recomputed: the tested-patch "
                        "signature differs from the first construction's ({}); the cached "
                        "result is replaced\n",
-                       DescribeDomainBoundaryContainmentSignatureMismatch(
-                           (*containment_cache)->signature, containment_signature));
+                       containment_difference);
           }
           *containment_cache =
               DomainBoundaryContainmentCache{containment_signature, exclusions};
@@ -30012,6 +30805,34 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
         PlacementStamp("model raw claim portions (PatchEnergy)");
+      }
+      // Decision 1475 (2): the memory census INSIDE the placement, at the end of its claims
+      // phases (log only; collective gate).
+      if (ResponseMemoryCensusEnabled(fespace.GetComm()))
+      {
+        ResponseMemoryCensus::Entries entries;
+        ResponseMemoryCensus::Add(entries, "config.", config);
+        ResponseMemoryCensus::Add(entries, *this);
+        // The placement's own locals live at this instant.
+        entries.emplace_back("placement: placed_patches (the copy of config.patches)",
+                             ResponseMemoryCensus::Heap(placed_patches));
+        entries.emplace_back("placement: the containment exclusions",
+                             ResponseMemoryCensus::Heap(exclusions));
+        entries.emplace_back("placement: spatial_supports + spatially_owned_patches",
+                             ResponseMemoryCensus::Heap(spatial_supports) +
+                                 ResponseMemoryCensus::Heap(spatially_owned_patches));
+        entries.emplace_back(
+            "placement: exclusion reasons + overlap / priority pairs",
+            ResponseMemoryCensus::Heap(vertex_coupon_exclusion_reasons) +
+                ResponseMemoryCensus::Heap(overlap_excluded_pairs) +
+                ResponseMemoryCensus::Heap(spatial_cluster_priority_pairs));
+        entries.emplace_back(
+            "placement: continuation ownership cells + foreign cells",
+            ResponseMemoryCensus::Heap(ownership.cells) +
+                ResponseMemoryCensus::Heap(ownership.foreign_excluded_cells));
+        ResponseMemoryCensus::AddProcess(entries);
+        ResponseMemoryCensus::Print(fespace.GetComm(),
+                                    "inside the placement (after the claims)", entries);
       }
       if (!config.mirror_band.empty())
       {
@@ -30163,12 +30984,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     else
     {
       BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-      const auto geometry_cache = ResponseGeometryCachePath();
-      const char *write_cache_environment =
-          std::getenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      const auto geometry_cache = ResponseGeometryCachePath(fespace.GetComm());
+      const auto write_cache_environment =
+          CollectiveGetenv(fespace.GetComm(), "PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
       const bool write_geometry_cache = write_cache_environment &&
-                                        std::string_view(write_cache_environment) != "0" &&
-                                        !std::string_view(write_cache_environment).empty();
+                                        *write_cache_environment != "0" &&
+                                        !write_cache_environment->empty();
       if (geometry_cache && !write_geometry_cache)
       {
         MFEM_VERIFY(std::filesystem::is_regular_file(*geometry_cache),
@@ -30184,7 +31005,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         AutomaticResponseStatistics statistics;
         automatic_config =
             BuildAutomaticResponseData(iodata, laplace_op, *request, &statistics);
+#if defined(__GLIBC__)
+        // Round 2a F-D (decision 1475 (1); glibc only; a memory hint, no result path): the
+        // identification's freed transients go back to the system.
+        malloc_trim(0);
+#endif
         automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), statistics);
+        PrintResponseMemoryCensusOfData(fespace.GetComm(), "after the identification",
+                                        *automatic_config);
         if (geometry_cache)
         {
           MFEM_VERIFY(write_geometry_cache, "Response-geometry cache generation requires "
@@ -31599,6 +32427,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  ReleaseUnreferencedModelMatrices();
+#if defined(__GLIBC__)
+  // Round 2b B2 (decision 1484; glibc only; a memory hint, no result path): the
+  // construction's freed transients (the placement's lists, the unreferenced matrices) go
+  // back to the system.
+  malloc_trim(0);
+#endif
+  PrintResponseMemoryCensus("after the construction", cached_geometry.get());
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -31688,6 +32524,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op, *request, true,
                                        &local_diagnostics, nullptr, &local_statistics);
     }
+#if defined(__GLIBC__)
+    // Round 2a F-D (decision 1475 (1); glibc only; a memory hint, no result path): the
+    // identification's freed transients go back to the system.
+    malloc_trim(0);
+#endif
     automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), local_statistics);
     if (automatic_geometry)
     {
@@ -33203,6 +34044,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  ReleaseUnreferencedModelMatrices();
+#if defined(__GLIBC__)
+  // Round 2b B2 (decision 1484; glibc only; a memory hint, no result path): the
+  // construction's freed transients (the placement's lists, the unreferenced matrices) go
+  // back to the system.
+  malloc_trim(0);
+#endif
+  PrintResponseMemoryCensus("after the construction (Maxwell)", cached_geometry.get());
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -37178,6 +38027,16 @@ nlohmann::json SurfaceResponseOperator::GetGeometryFallbackRecord() const
 
 nlohmann::json SurfaceResponseOperator::GetStatistics() const
 {
+  return BuildStatistics(nullptr);
+}
+
+nlohmann::json SurfaceResponseOperator::ReleaseStatistics()
+{
+  return BuildStatistics(&ownership_diagnostics);
+}
+
+nlohmann::json SurfaceResponseOperator::BuildStatistics(nlohmann::json *release) const
+{
   const auto comm = fespace.GetComm();
   auto Replicated = [comm](long long int value, const char *name)
   {
@@ -37231,7 +38090,17 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                              {"PatchWeight", model_patch_weights[i]}});
   }
   result["ModelCatalog"] = std::move(model_catalog);
-  if (!ownership_diagnostics.is_null())
+  if (release && !release->is_null())
+  {
+    // Round 2a R1 (decision 1475 (1)): the final write moves the record (the root's
+    // Records: GBs at chip scale) instead of holding a second copy; the result is the same.
+    for (auto &[key, value] : release->items())
+    {
+      result["Diagnostics"][key] = std::move(value);
+    }
+    *release = nlohmann::json();
+  }
+  else if (!ownership_diagnostics.is_null())
   {
     for (const auto &[key, value] : ownership_diagnostics.items())
     {

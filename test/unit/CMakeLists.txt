@@ -33,6 +33,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cgsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-collectiveenvironment.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedcapacitance.cpp
@@ -66,6 +67,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwellinplanelines.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwelllinecoverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-metadatafile.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp

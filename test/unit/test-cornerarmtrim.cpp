@@ -2829,7 +2829,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const auto &electrostatic_claims = electrostatic_response.GetModelRawClaimPortions();
   const auto &maxwell_claims = response->GetModelRawClaimPortions();
   REQUIRE(!electrostatic_claims.portions.empty());
-  REQUIRE(electrostatic_claims.portions.size() == maxwell_claims.portions.size());
+  // Round 2b B1: the Maxwell operator's claims are taken into the PostOperator's list.
+  REQUIRE(maxwell_claims.portions.empty());
+  const auto &maxwell_portions = post_op.GetSurfaceResponseModelRawPortions();
+  REQUIRE(electrostatic_claims.portions.size() == maxwell_portions.size());
   REQUIRE(electrostatic_claims.members.size() == 1);
   REQUIRE(maxwell_claims.members.size() == 1);
   const auto &member = electrostatic_claims.members.front();
@@ -2887,10 +2890,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto uncovered = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
         {4}, field, nullptr, Perimeter(response->GetUncoveredPortions()));
     std::map<std::string, double> reference;
-    for (const auto *claims : {&electrostatic_claims, &maxwell_claims})
+    for (const auto &portions :
+         {Perimeter(electrostatic_claims.portions), maxwell_portions})
     {
-      const auto partition = surf_post_op.GetInterfacePartitionedEdgeEnergies(
-          {4}, field, nullptr, Perimeter(claims->portions));
+      const auto partition =
+          surf_post_op.GetInterfacePartitionedEdgeEnergies({4}, field, nullptr, portions);
       REQUIRE(partition.size() == 1);
       const auto &by_label = partition.at(4);
       REQUIRE(by_label.size() == 2);
@@ -3258,7 +3262,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
     auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
     REQUIRE(response);
-    CHECK(response->GetModelRawClaimPortions().portions.empty() == !patch_energy);
+    // Round 2b B1: the claims are taken from the operator into the PostOperator's list.
+    CHECK(response->GetModelRawClaimPortions().portions.empty());
+    CHECK(post_op.GetSurfaceResponseModelRawPortions().empty() == !patch_energy);
     mfem::FunctionCoefficient potential_coefficient(
         [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
     mfem::ParGridFunction potential(&space_op.GetH1Space().Get());

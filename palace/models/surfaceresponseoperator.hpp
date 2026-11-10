@@ -24,6 +24,7 @@
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
 #include "utils/configfile.hpp"
+#include "utils/metadatafile.hpp"
 
 namespace palace
 {
@@ -40,6 +41,14 @@ class MaterialOperator;
 class SpaceOperator;
 struct IdentifiedFeature;
 struct IdentificationResult;
+// Lane fix-response-memory round 2 (decision 1469 (1) (i)): the LOG-ONLY memory census of
+// the response machinery (PALACE_RESPONSE_MEMORY_CENSUS=1): the heap bytes of every
+// member of SurfaceResponseOperator and SurfaceResponseGeometry::Impl, min / max / sum
+// over the ranks, beside the rank's current RSS. Reads only; no result changes.
+struct ResponseMemoryCensus;
+// Collective (C10, decision 1471 (2)): the ROOT's PALACE_RESPONSE_MEMORY_CENSUS on every
+// rank.
+bool ResponseMemoryCensusEnabled(MPI_Comm comm);
 
 // The placement's clip of the uncovered requirements (decision 394 F2) by the matched
 // spatial clusters' support boxes (decision 399 MAJOR-1): the part of an uncovered portion
@@ -181,6 +190,7 @@ private:
   }
 
   friend class SurfaceResponseOperator;
+  friend struct ResponseMemoryCensus;
 
 public:
   // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): the placed-patch
@@ -1576,9 +1586,38 @@ public:
     patch_record_residency = residency;
   }
   PatchRecordResidency GetPatchRecordResidency() const { return patch_record_residency; }
+  // Round 2a R2 (decision 1475 (1)): under ROOT_ONLY, the root appends each gate pass's
+  // ConductorConsistency Records entries (per source / mode) to a scratch file in
+  // `directory` (the output directory) in their palace.json text instead of holding them;
+  // the final metadata write (BaseSolver::SaveMetadata) splices the file in place of the
+  // empty in-memory array (the same bytes) and removes it. Set by the drivers right after
+  // the residency; null (the in-memory form) otherwise and on the other ranks.
+  void SpillConductorConsistencyRecords(const std::string &directory);
+  JsonArraySpill *GetConductorConsistencyRecordsSpill() { return records_spill.get(); }
+
+  // Decision 1469 (1) (i): under PALACE_RESPONSE_MEMORY_CENSUS=1 print (root) the census
+  // of this operator's members (and of its geometry's, if any) at `instant`; collective;
+  // a no-op otherwise.
+  // Round 2a F-M (decision 1475 (1); the code read: lane REPORT STEP R2a.12): a rank reads
+  // a model's matrix CONTENTS only through its local regular or diagnostic patches (every
+  // all-model reader reads the maps' keys / sizes), so at the end of the construction the
+  // matrices of a model no local patch references are freed; the maps' keys, the vector
+  // sizes and all metadata stay. Whether this rank references `model`, and the matrix
+  // entries it holds for it.
+  bool ReferencesModelLocally(std::size_t model) const;
+  std::size_t GetModelMatrixEntries(std::size_t model) const;
+  std::size_t GetModelCount() const { return models.size(); }
+
+  void PrintResponseMemoryCensus(const std::string &instant,
+                                 const SurfaceResponseGeometry *geometry = nullptr) const;
 
 private:
+  friend struct ResponseMemoryCensus;
   PatchRecordResidency patch_record_residency = PatchRecordResidency::REPLICATED;
+  std::unique_ptr<JsonArraySpill> records_spill;
+  // F-M: frees the matrices of the models no local patch references (the construction's
+  // last step).
+  void ReleaseUnreferencedModelMatrices();
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,
@@ -1757,6 +1796,15 @@ public:
   {
     return model_raw_claim_portions;
   }
+  // Round 2b B1 (decision 1484): the claims' only reader after the construction is the
+  // driver's (or PostOperator's) conversion into the partition's portion list, made once;
+  // it takes the list out of the operator (the members and the length stay) so that the
+  // claims are held once per rank, not twice.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+  ReleaseModelRawClaimPortionList()
+  {
+    return std::exchange(model_raw_claim_portions.portions, {});
+  }
   // Whether this construction reused the first construction's domain-boundary containment
   // result through the cached automatic geometry (decision 734 F2; false on the first
   // construction, on a curved mesh, under PALACE_RESPONSE_CONTAINMENT_RECHECK, or when the
@@ -1801,6 +1849,10 @@ public:
   // Collect deterministic setup/work-distribution counters and runtime application
   // counts. This method is collective over the response operator communicator.
   nlohmann::json GetStatistics() const;
+  // The same record for the operator's FINAL metadata write (round 2a R1, decision 1475
+  // (1)): the diagnostics record (ownership_diagnostics: the gate's Records on the root) is
+  // MOVED into the result instead of deep-copied, and left empty. Collective.
+  nlohmann::json ReleaseStatistics();
 
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the entries of this configuration
   // (matching + placement), the record (null when none fired) and whether the whole run is
@@ -1819,6 +1871,9 @@ public:
   }
 
 private:
+  // GetStatistics / ReleaseStatistics: `release` (this operator's ownership_diagnostics) is
+  // moved from when given, else the record is copied.
+  nlohmann::json BuildStatistics(nlohmann::json *release) const;
   // Gather the local per-patch response records of GetElectrostaticResponse on every rank
   // and decode them, ordered by patch index.
   std::vector<PatchContribution>
@@ -2681,12 +2736,14 @@ struct DomainBoundaryExclusions
 // the configuration is read as a Missing feature); the coupon supports' reach into the
 // configurations (real or image portions) is recorded as information.
 // The containment test's block size in tested points (lane fix-response-memory, decision
-// 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^23 (0.3 GB of
-// per-point lists per rank). Results-neutral: the candidates are tested in blocks of at
-// most this many points with the same per-point arithmetic, the same elementwise
-// reductions and the same per-candidate decision; every block size gives the same
-// DomainBoundaryExclusions. No job of record sets it.
-std::size_t DomainBoundaryContainmentBlockPoints();
+// 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^20 (~0.04 GB
+// of per-point lists per rank; 2^23 before round 2a T1, decision 1475). Results-neutral:
+// the candidates are tested in blocks of at most this many points with the same per-point
+// arithmetic, the same elementwise reductions and the same per-candidate decision; every
+// block size gives the same DomainBoundaryExclusions. No job of record sets it. Collective
+// (C10, decision 1471 (2)): the ROOT's value on every rank, so that every rank walks the
+// same blocks.
+std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm);
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -2703,7 +2760,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
         &unmerged_portions = {},
     GeometryFallbackLedger *geometry_ledger = nullptr,
-    std::size_t block_points = DomainBoundaryContainmentBlockPoints());
+    // 0 = DomainBoundaryContainmentBlockPoints(mesh.GetComm()) (the collective default).
+    std::size_t block_points = 0);
 
 // The per-process cache of the DERIVED model response matrices (decision 734 F1; the
 // response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /
@@ -2726,6 +2784,10 @@ struct DerivedResponseMatrixCacheCounters
   long long int entries = 0;
 };
 DerivedResponseMatrixCacheCounters GetDerivedResponseMatrixCacheCounters();
+// Round 2b B3 (decision 1484): empties the per-process response-matrix caches (the counters
+// stay). The drivers call it right after the construction when no AMR construction can
+// follow (Refinement.MaxIts 0): the caches serve only a later construction.
+void ReleaseResponseMatrixCaches();
 
 // The mirror planes of a response configuration as the mirror module's planes.
 std::vector<MirrorPlane> MirrorPlanesOf(

@@ -15,6 +15,7 @@
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
+#include "utils/collectiveenvironment.hpp"
 #include "utils/communication.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
@@ -54,30 +55,32 @@ enum class ArchivedField : std::uint32_t
   FLUX = 2
 };
 
-bool EnvironmentFlag(const char *name)
+// Decision 1471 (2) (C10): the PALACE_RESPONSE_* run-mode gates below select code paths
+// with collectives (the solve, the archive streams, the source-timing reduction), so each
+// is read COLLECTIVELY: the root's value on every rank (utils/collectiveenvironment.hpp).
+bool EnvironmentFlag(MPI_Comm comm, const char *name)
 {
-  const char *value = std::getenv(name);
-  return value && std::string_view(value) == "1";
+  return CollectiveEnvironmentFlag(comm, name);
 }
 
-std::optional<std::filesystem::path> ResponseArchiveDirectory()
+std::optional<std::filesystem::path> ResponseArchiveDirectory(MPI_Comm comm)
 {
-  const char *value = std::getenv("PALACE_RESPONSE_ARCHIVE_DIR");
-  if (!value || std::string_view(value).empty())
+  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_ARCHIVE_DIR");
+  if (!value || value->empty())
   {
     return std::nullopt;
   }
-  return std::filesystem::absolute(value).lexically_normal();
+  return std::filesystem::absolute(*value).lexically_normal();
 }
 
-int ResponseArchiveBlockSize()
+int ResponseArchiveBlockSize(MPI_Comm comm)
 {
-  const char *value = std::getenv("PALACE_RESPONSE_BLOCK_SIZE");
+  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_BLOCK_SIZE");
   if (!value)
   {
     return 3;
   }
-  const int size = std::stoi(value);
+  const int size = std::stoi(*value);
   MFEM_VERIFY(size > 0, "PALACE_RESPONSE_BLOCK_SIZE must be positive!");
   return size;
 }
@@ -229,7 +232,7 @@ CorrectedSolveRecord SolveCorrectedField(KspSolver &ksp, const Operator &K,
 
 void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
 {
-  if (!EnvironmentFlag("PALACE_RESPONSE_ESTIMATE_ONLY"))
+  if (!EnvironmentFlag(comm, "PALACE_RESPONSE_ESTIMATE_ONLY"))
   {
     return;
   }
@@ -237,12 +240,14 @@ void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool ch
        {"PALACE_RESPONSE_ARCHIVE_ONLY", "PALACE_RESPONSE_REDUCE_ONLY",
         "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "PALACE_RESPONSE_BLOCK_SIZE"})
   {
-    MFEM_VERIFY(!std::getenv(flag), "Archive estimation conflicts with " << flag);
+    MFEM_VERIFY(!CollectiveGetenv(comm, flag),
+                "Archive estimation conflicts with " << flag);
   }
-  const auto archive = ResponseArchiveDirectory();
+  const auto archive = ResponseArchiveDirectory(comm);
   MFEM_VERIFY(archive && std::filesystem::is_directory(*archive),
               "Archive estimation requires an existing PALACE_RESPONSE_ARCHIVE_DIR!");
-  MFEM_VERIFY(std::getenv("PALACE_RESPONSE_ESTIMATE_REQUEST"),
+  const auto estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
+  MFEM_VERIFY(estimate_request,
               "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
   MFEM_VERIFY(iodata.problem.type == ProblemType::ELECTROSTATIC &&
                   !iodata.boundaries.prescribed_potential.empty() &&
@@ -278,7 +283,7 @@ void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool ch
   };
   Disjoint(*archive);
   Disjoint(iodata.model.mesh);
-  Disjoint(std::getenv("PALACE_RESPONSE_ESTIMATE_REQUEST"));
+  Disjoint(*estimate_request);
   for (const auto &[idx, data] : iodata.boundaries.prescribed_potential)
   {
     Disjoint(data.data_file);
@@ -300,7 +305,10 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
   using VT = Units::ValueType;
   const auto comm = laplace_op.GetComm();
   const auto &Grad = laplace_op.GetGradMatrix();
-  std::ifstream request_stream(std::getenv("PALACE_RESPONSE_ESTIMATE_REQUEST"));
+  const auto estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
+  MFEM_VERIFY(estimate_request,
+              "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
+  std::ifstream request_stream(*estimate_request);
   MFEM_VERIFY(request_stream, "Cannot read archive estimate request!");
   const auto request = json::parse(request_stream);
   MFEM_VERIFY(request.at("Version") == 1, "Unsupported archive estimate request version!");
@@ -835,13 +843,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The archive reduction solves nothing: it needs the gradient, the electric energy mass
   // operator and the grid functions, not the stiffness matrix nor the preconditioner
   // setup (decision 62(4)).
-  const bool archive_reduce_only = EnvironmentFlag("PALACE_RESPONSE_REDUCE_ONLY");
+  const bool archive_reduce_only =
+      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_REDUCE_ONLY");
   decltype(laplace_op.GetStiffnessMatrix()) K;
   if (!archive_reduce_only)
   {
     K = laplace_op.GetStiffnessMatrix();
   }
-  if (EnvironmentFlag("PALACE_RESPONSE_ESTIMATE_ONLY"))
+  if (EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_ESTIMATE_ONLY"))
   {
     MFEM_VERIFY(
         !archive_reduce_only,
@@ -849,7 +858,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "other!");
     ValidateArchiveEstimateOptions(iodata, laplace_op.GetComm(), false);
     SaveMetadata(laplace_op.GetH1Spaces());
-    auto indicator = EstimateArchivedFields(laplace_op, *K, *ResponseArchiveDirectory());
+    auto indicator = EstimateArchivedFields(
+        laplace_op, *K, *ResponseArchiveDirectory(laplace_op.GetComm()));
     SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
     return {std::move(indicator), laplace_op.GlobalTrueVSize()};
   }
@@ -920,6 +930,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // on the root only (their consumers are the root's tables below).
     response_correction->SetPatchRecordResidency(
         SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+    // Round 2a R2 (decision 1475 (1)): the root's Records spilled to the output directory.
+    response_correction->SpillConductorConsistencyRecords(iodata.problem.output);
+    // Round 2b B3 (decision 1484): no AMR construction follows (Refinement.MaxIts 0), so
+    // the per-process response-matrix caches serve nothing more.
+    if (iodata.model.refinement.max_it == 0)
+    {
+      ReleaseResponseMatrixCaches();
+    }
     if (response_correction->IsRawFallback())
     {
       SaveMetadata(*response_correction);
@@ -956,11 +974,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MFEM_VERIFY(n_step > 0,
               "No terminal or prescribed potential boundaries specified for electrostatic "
               "simulation!");
-  const auto response_archive = ResponseArchiveDirectory();
-  const bool archive_stream_only = EnvironmentFlag("PALACE_RESPONSE_ARCHIVE_ONLY");
-  const bool response_source_timing = EnvironmentFlag("PALACE_RESPONSE_SOURCE_TIMING");
+  const auto response_archive = ResponseArchiveDirectory(laplace_op.GetComm());
+  const bool archive_stream_only =
+      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_ARCHIVE_ONLY");
+  const bool response_source_timing =
+      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_SOURCE_TIMING");
   const bool archive_recycle_initial_guess =
-      archive_stream_only && EnvironmentFlag("PALACE_RESPONSE_RECYCLE_INITIAL_GUESS");
+      archive_stream_only &&
+      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS");
   MFEM_VERIFY(!archive_stream_only ||
                   (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
                    iodata.solver.electrostatic.response_matrix &&
@@ -1282,7 +1303,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
-    for (const auto &portion : response_correction->GetModelRawClaimPortions().portions)
+    // Round 2b B1 (decision 1484): converted once and released from the operator (the same
+    // portions in the same order; the operator reads them nowhere after the construction).
+    for (const auto &portion : response_correction->ReleaseModelRawClaimPortionList())
     {
       model_raw_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
@@ -1556,7 +1579,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nReducing archived electrostatic response fields from {}\n",
                response_archive->string());
     PostprocessArchivedResponseMatrix(post_op, laplace_op, Grad, *response_archive,
-                                      ResponseArchiveBlockSize());
+                                      ResponseArchiveBlockSize(laplace_op.GetComm()));
     SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
     return {indicator, laplace_op.GlobalTrueVSize()};
   }
@@ -2062,6 +2085,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else
     {
       estimator->AddErrorIndicator(E, total_domain_energy, indicator);
+    }
+
+    // Decision 1469 (1) (i): the memory census after the first source (log only; a no-op
+    // unless PALACE_RESPONSE_MEMORY_CENSUS=1).
+    if (step == 0 && response_correction)
+    {
+      response_correction->PrintResponseMemoryCensus("after source 1",
+                                                     response_geometry.get());
     }
 
     // Next terminal.
