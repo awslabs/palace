@@ -19955,9 +19955,17 @@ ResponseMatrixFileKey MakeResponseMatrixFileKey(const std::string &path, int exp
 }
 
 // Read one domain response matrix file as a dense matrix of the expected size.
-mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
+// The per-process response-matrix caches, each behind an accessor so that the memory
+// census (decision 1475 (2)) can read their size; the caching itself is unchanged.
+std::map<ResponseMatrixFileKey, mfem::DenseMatrix> &DomainResponseMatrixFileCache()
 {
   static std::map<ResponseMatrixFileKey, mfem::DenseMatrix> cache;
+  return cache;
+}
+
+mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
+{
+  auto &cache = DomainResponseMatrixFileCache();
   const auto key = MakeResponseMatrixFileKey(path, expected_size, std::nullopt);
   if (const auto it = cache.find(key); it != cache.end())
   {
@@ -20159,11 +20167,18 @@ void AddDomainFileKeys(
   }
 }
 
+std::map<DerivedResponseMatrixKey, DomainResponseMatrices> &
+DerivedDomainResponseMatrixCache()
+{
+  static std::map<DerivedResponseMatrixKey, DomainResponseMatrices> cache;
+  return cache;
+}
+
 DomainResponseMatrices BuildDomainResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const std::vector<int> &zero_trace_indices, const Units &units)
 {
-  static std::map<DerivedResponseMatrixKey, DomainResponseMatrices> cache;
+  auto &cache = DerivedDomainResponseMatrixCache();
   DerivedResponseMatrixKey key;
   AddDomainFileKeys(config, expected_size, key);
   key.zero_trace_indices = zero_trace_indices;
@@ -20521,11 +20536,18 @@ ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
 }
 
 // The cached reading (ResponseMatrixFileKey: the same file, size, time and parameters).
+std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> &
+SurfaceResponseMatrixFileCache()
+{
+  static std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> cache;
+  return cache;
+}
+
 const std::map<int, mfem::DenseMatrix> &
 ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
                             std::optional<double> within_radius = std::nullopt)
 {
-  static std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> cache;
+  auto &cache = SurfaceResponseMatrixFileCache();
   const auto key = MakeResponseMatrixFileKey(path, expected_size, within_radius);
   if (const auto it = cache.find(key); it != cache.end())
   {
@@ -20837,11 +20859,18 @@ SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
 // The cached derivation (decision 734 F1): a model without surface matrices computes its
 // (empty) result directly; the key adds the within-R selection (in the file keys), the
 // interface mappings and the unit scale factors to the domain cache's inputs.
+std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices> &
+DerivedSurfaceResponseMatrixCache()
+{
+  static std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices> cache;
+  return cache;
+}
+
 SurfaceResponseMatrices BuildSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
 {
-  static std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices> cache;
+  auto &cache = DerivedSurfaceResponseMatrixCache();
   if (config.fabricated_surface_matrix.empty() && config.thin_surface_matrix.empty())
   {
     return ComputeSurfaceResponseMatrices(config, expected_size, units, matching_radius);
@@ -23257,6 +23286,14 @@ struct ResponseMemoryCensus
   {
     return Heap(d.signature) + Heap(d.exclusions);
   }
+  static double Heap(const ContinuationOwnership::Cell &d)
+  {
+    return Heap(d.owners) + Heap(d.attributed) + Heap(d.attributed_intervals);
+  }
+  static double Heap(const ContinuationOwnership::ForeignExcludedCell &d)
+  {
+    return Heap(d.owners);
+  }
   static void Add(Entries &entries, const SurfaceResponseGeometry &geometry)
   {
     const auto &impl = *geometry.impl;
@@ -23395,9 +23432,35 @@ struct ResponseMemoryCensus
     add("op.mirror_planes", Heap(op.mirror_planes));
   }
 
-  // The ranks' current RSS and (glibc) the allocator's in-use / free-but-retained bytes.
+  // The per-process response-matrix caches (O(library); decision 1475 (2)).
+  static double Heap(const ResponseMatrixFileKey &k) { return Heap(k.path); }
+  static double Heap(const DerivedResponseMatrixKey &k)
+  {
+    return Heap(k.files) + Heap(k.weights) + Heap(k.zero_trace_indices) +
+           Heap(k.interfaces);
+  }
+  static double Heap(const DomainResponseMatrices &m)
+  {
+    return Heap(m.fabricated) + Heap(m.thin) + Heap(m.defect) +
+           Heap(m.fixed_flux_transform) + Heap(m.fixed_flux_defect);
+  }
+  static double Heap(const SurfaceResponseMatrices &m)
+  {
+    return Heap(m.fabricated) + Heap(m.defects);
+  }
+
+  // The ranks' current RSS and (glibc) the allocator's in-use / free-but-retained bytes,
+  // beside the per-process matrix caches.
   static void AddProcess(Entries &entries)
   {
+    entries.emplace_back("cache: domain response matrix files",
+                         Heap(DomainResponseMatrixFileCache()));
+    entries.emplace_back("cache: derived domain response matrices",
+                         Heap(DerivedDomainResponseMatrixCache()));
+    entries.emplace_back("cache: surface response matrix files",
+                         Heap(SurfaceResponseMatrixFileCache()));
+    entries.emplace_back("cache: derived surface response matrices",
+                         Heap(DerivedSurfaceResponseMatrixCache()));
     entries.emplace_back("process RSS", double(memory_reporting::GetCurrentMemory()));
 #if defined(__GLIBC__)
     const struct mallinfo2 info = mallinfo2();
@@ -27263,6 +27326,9 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   // order; the misplaced-reference abort (fail closed, decision 260) fires at the
   // offending block.
   std::size_t c_begin = 0;
+  // Decision 1475 (2): the memory census of the candidate lists and the first block's point
+  // lists (log only; the gate read once, collectively; every rank walks the same blocks).
+  bool census_block = ResponseMemoryCensusEnabled(comm);
   while (c_begin < candidates.size())
   {
     std::size_t c_end = c_begin + 1;
@@ -27283,6 +27349,21 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
                 "The containment test's block holds " << points.size() << " points, "
                                                       << point_offsets[c_end] - block_base
                                                       << " expected!");
+    if (census_block)
+    {
+      census_block = false;
+      ResponseMemoryCensus::Entries entries = {
+          {"containment: candidates + point_offsets + origin_references",
+           ResponseMemoryCensus::Heap(candidates) +
+               ResponseMemoryCensus::Heap(point_offsets) +
+               ResponseMemoryCensus::Heap(origin_references)},
+          {"containment: the first block's points + point_band",
+           ResponseMemoryCensus::Heap(points) + ResponseMemoryCensus::Heap(point_band)},
+          {"containment: the first block's point count", double(points.size())}};
+      ResponseMemoryCensus::AddProcess(entries);
+      ResponseMemoryCensus::Print(comm, "inside the containment test (the first block)",
+                                  entries);
+    }
     // The block-local index of a global point.
     auto BlockLocal = [&](std::size_t global) { return global - block_base; };
     Phase("points");
@@ -30535,6 +30616,34 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
         PlacementStamp("model raw claim portions (PatchEnergy)");
+      }
+      // Decision 1475 (2): the memory census INSIDE the placement, at the end of its claims
+      // phases (log only; collective gate).
+      if (ResponseMemoryCensusEnabled(fespace.GetComm()))
+      {
+        ResponseMemoryCensus::Entries entries;
+        ResponseMemoryCensus::Add(entries, "config.", config);
+        ResponseMemoryCensus::Add(entries, *this);
+        // The placement's own locals live at this instant.
+        entries.emplace_back("placement: placed_patches (the copy of config.patches)",
+                             ResponseMemoryCensus::Heap(placed_patches));
+        entries.emplace_back("placement: the containment exclusions",
+                             ResponseMemoryCensus::Heap(exclusions));
+        entries.emplace_back("placement: spatial_supports + spatially_owned_patches",
+                             ResponseMemoryCensus::Heap(spatial_supports) +
+                                 ResponseMemoryCensus::Heap(spatially_owned_patches));
+        entries.emplace_back(
+            "placement: exclusion reasons + overlap / priority pairs",
+            ResponseMemoryCensus::Heap(vertex_coupon_exclusion_reasons) +
+                ResponseMemoryCensus::Heap(overlap_excluded_pairs) +
+                ResponseMemoryCensus::Heap(spatial_cluster_priority_pairs));
+        entries.emplace_back(
+            "placement: continuation ownership cells + foreign cells",
+            ResponseMemoryCensus::Heap(ownership.cells) +
+                ResponseMemoryCensus::Heap(ownership.foreign_excluded_cells));
+        ResponseMemoryCensus::AddProcess(entries);
+        ResponseMemoryCensus::Print(fespace.GetComm(),
+                                    "inside the placement (after the claims)", entries);
       }
       if (!config.mirror_band.empty())
       {
