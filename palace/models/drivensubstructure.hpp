@@ -324,7 +324,8 @@ private:
     double border = 1.0;
   };
   Side env, region;
-  bool solvable = false;  // the region is factored against the environment
+  bool solvable = false;
+  bool probed = false;  // PROBE  // the region is factored against the environment
   // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots; the
   // environment's source condensation and the interface solution of the last Solve.
   std::vector<std::complex<double>> S, T, g_last, u_last;

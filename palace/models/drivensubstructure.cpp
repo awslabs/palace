@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "drivensubstructure.hpp"
+#include <random>    // PROBE
+#include <unistd.h>  // PROBE
 
 #include <algorithm>
 #include <array>
@@ -582,6 +584,75 @@ std::vector<int> DrivenSubstructure::InterfaceIndex() const
   return index;
 }
 
+namespace
+{
+
+// PROBE: with "_solvecost_" in the run directory, time a refactorization of a side (with
+// its Schur complement) against nb batches of 32 interior solves with the same factor,
+// extrapolated to |Γ| solves, then end the run.
+bool SolveCostProbe()
+{
+  char buf[4096];
+  const std::string cwd = getcwd(buf, sizeof(buf)) ? buf : "";
+  return cwd.find("_solvecost_") != std::string::npos;
+}
+
+template <typename Solver>
+void ProbeSolveCost(const char *name, Solver &schur, int nt, long long n_sys, int nG,
+                    MPI_Comm comm)
+{
+  const int nb = 4, B = 32;
+  MPI_Barrier(comm);
+  double t0 = MPI_Wtime();
+  schur.Refactor();
+  MPI_Barrier(comm);
+  const double t_fact = MPI_Wtime() - t0;
+  std::mt19937 gen(1234 + Mpi::Rank(comm));
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  std::vector<ComplexVector> X(B), Y(B);
+  for (int k = 0; k < B; k++)
+  {
+    X[k].SetSize(nt);
+    Y[k].SetSize(nt);
+    double *xr = X[k].Real().HostWrite(), *xi = X[k].Imag().HostWrite();
+    for (int i = 0; i < nt; i++)
+    {
+      xr[i] = dist(gen);
+      xi[i] = dist(gen);
+    }
+  }
+  std::vector<const ComplexVector *> px;
+  std::vector<ComplexVector *> py;
+  for (int k = 0; k < B; k++)
+  {
+    px.push_back(&X[k]);
+    py.push_back(&Y[k]);
+  }
+  std::vector<double> t_batch;
+  for (int b = 0; b < nb; b++)
+  {
+    MPI_Barrier(comm);
+    t0 = MPI_Wtime();
+    schur.SolveInternal(px, py);
+    MPI_Barrier(comm);
+    t_batch.push_back(MPI_Wtime() - t0);
+  }
+  double t_solve = 0.0;
+  for (double t : t_batch)
+  {
+    t_solve += t;
+  }
+  const double per_rhs = t_solve / (nb * B);
+  Mpi::Print(comm,
+             "PROBE solvecost {}: n_sys {} |Gamma| {} refactor {:.3f} s | {} solves {:.3f} s "
+             "(batches {:.3f} {:.3f} {:.3f} {:.3f} s), {:.4f} s per RHS -> |Gamma| solves "
+             "{:.1f} s = {:.2f}x the refactorization\n",
+             name, n_sys, nG, t_fact, nb * B, t_solve, t_batch[0], t_batch[1], t_batch[2],
+             t_batch[3], per_rhs, per_rhs * nG, per_rhs * nG / t_fact);
+}
+
+}  // namespace
+
 void DrivenSubstructure::Condense(double omega, bool region_too)
 {
   MFEM_VERIFY(!online, "An online substructure is condensed with a given S_E!");
@@ -602,10 +673,26 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
   // without copies (the buffers are allocated again at the next factorization).
   Release(S);
   Release(T);
+  const bool first = !probed;  // PROBE
   Factor(env, omega);
   if (region_too)
   {
     Factor(region, omega);
+  }
+  if (first && SolveCostProbe())  // PROBE
+  {
+    probed = true;
+    const int nt = space_op.GetNDSpace().Get().GetTrueVSize();
+    ProbeSolveCost("environment", *env.schur, nt, env.n_sys, InterfaceSize(),
+                   space_op.GetComm());
+    if (region_too)
+    {
+      ProbeSolveCost("region", *region.schur, nt, region.n_sys, InterfaceSize(),
+                     space_op.GetComm());
+    }
+    Mpi::Print(space_op.GetComm(), "PROBE solvecost done, ending the run\n");
+    MPI_Barrier(space_op.GetComm());
+    MPI_Abort(MPI_COMM_WORLD, 0);
   }
   if (Mpi::Root(space_op.GetComm()))
   {
