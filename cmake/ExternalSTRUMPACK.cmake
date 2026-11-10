@@ -284,8 +284,8 @@ set(STRUMPACK_PATCH_FILES
 include(PatchHelpers)
 download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
   strumpack_pr163.diff
-  "https://github.com/pghysels/STRUMPACK/commit/4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff"
-  4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1
+  "https://github.com/pghysels/STRUMPACK/commit/4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff?full_index=1"
+  b9a4d57b05a1790c6858f570d7a2c7fb82b7b4b6d6feaa39a364b0d56fefe092
 )
 # Reset the caches of the solve phase when the separators are reordered, which happens
 # again with compression when the matrix values are updated

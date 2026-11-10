@@ -183,8 +183,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         patches=[
             patch(
                 "https://github.com/pghysels/STRUMPACK/commit/"
-                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
-                sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff?full_index=1",
+                sha256="b9a4d57b05a1790c6858f570d7a2c7fb82b7b4b6d6feaa39a364b0d56fefe092",
                 when="@8.1.0",
             ),
             patch(
