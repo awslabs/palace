@@ -154,7 +154,6 @@ private:
   bool flux_imag_permittivity = false;
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
-  mfem::Vector farfield_x0;
   std::complex<double> farfield_omega = 0.0;
   int farfield_batch_size = 0;
   std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
@@ -304,15 +303,13 @@ public:
 
   // Construct a Stratton-Chu far-field functional for the given observation directions
   // (see AddStrattonChuIntegrandAtElement). On an interior surface, each face is traced
-  // from one side, the inside: the isotropic side next to an anisotropic material, or
-  // else the side facing x0, a point inside the surface (required in that case, ignored
-  // on external boundaries).
+  // from one side, the inside: the side facing the center of the bounding box of the
+  // marked boundary elements.
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &nd_fespace,
                     const mfem::ParFiniteElementSpace &rt_fespace,
                     const MaterialOperator &mat_op,
-                    const std::vector<std::array<double, 3>> &r_naughts,
-                    const mfem::Vector &x0 = mfem::Vector());
+                    const std::vector<std::array<double, 3>> &r_naughts);
 
   // Construct a linear H(curl) mode-overlap functional, ∫ E · f_mode dS, for lumped-port
   // voltage and S-parameter extraction. The mode coefficient data is real-valued; complex

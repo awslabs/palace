@@ -78,12 +78,8 @@ private:
   {
     std::vector<std::pair<double, double>> thetaphis;
 
-    // Interior surface, traced from one side of each face, the side facing the center
-    // (the user-specified "Center", or the center of the bounding box of the mesh) unless
-    // the materials decide (see SurfaceFunctional). The center is empty for external
-    // boundaries.
+    // Interior surface (not only external boundaries), which requires the libCEED path.
     bool interior = false;
-    mfem::Vector center;
 
     FarFieldData() = default;
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
