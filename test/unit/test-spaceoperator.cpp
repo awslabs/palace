@@ -570,10 +570,15 @@ TEST_CASE("Driven system operator from the preconditioner",
 
   SECTION("Floquet wave vector")
   {
-    // Periodic wave-vector terms are outside the reuse contract.
+    // The domain Floquet terms are in the stiffness matrix for a fixed wave vector, and in
+    // the damping and mass matrices when it scales with frequency. The Floquet terms of the
+    // second-order farfield boundary are in the extra system matrix.
     auto floquet_boundaries = boundaries;
     floquet_boundaries.periodic.wave_vector = {0.1, 0.2, 0.0};
-    CheckNoSystemOperator(solver, floquet_boundaries);
+    floquet_boundaries.periodic.floquet_reference_freq = GENERATE(0.0, 0.3);
+    floquet_boundaries.farfield.order = 2;
+    floquet_boundaries.farfield.attributes = {6};
+    CheckSystemOperator(floquet_boundaries);
   }
 }
 

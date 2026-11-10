@@ -1483,8 +1483,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
                                                                   const ComplexOperator &P)
 {
-  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || mat_op.HasWaveVector() ||
-      GetNDSpaces().GetNumLevels() < 2)
+  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || GetNDSpaces().GetNumLevels() < 2)
   {
     return {};
   }
