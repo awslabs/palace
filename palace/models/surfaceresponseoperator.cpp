@@ -23384,6 +23384,38 @@ struct ResponseMemoryCensus
   {
     auto add = [&](const char *name, double bytes) { entries.emplace_back(name, bytes); };
     add("op.models (library model data: the loaded matrices)", Heap(op.models));
+    // Round 2b B4 (decision 1484): op.models split into the matrices of the models this
+    // rank's patches reference, the matrices of the others (0 after F-M) and the rest
+    // (metadata: mortar geometry, probes, indices), with the counts.
+    {
+      double referenced_matrices = 0.0, unreferenced_matrices = 0.0, total = 0.0;
+      int referenced = 0;
+      for (std::size_t m = 0; m < op.models.size(); m++)
+      {
+        const auto &model = op.models[m];
+        double matrices = 0.0;
+        for (const auto *matrix :
+             {&model.fabricated_domain, &model.thin_domain, &model.domain_defect,
+              &model.fixed_flux_transform, &model.fixed_flux_domain_defect,
+              &model.mortar_mass_inverse, &model.magnetic_domain_defect,
+              &model.magnetic_thin_domain})
+        {
+          matrices += Heap(*matrix);
+        }
+        matrices += Heap(model.fabricated_surfaces) + Heap(model.surface_defects) +
+                    Heap(model.mortar_constant_load) + Heap(model.mortar_conductor_loads);
+        const bool local = op.ReferencesModelLocally(m);
+        referenced += local ? 1 : 0;
+        (local ? referenced_matrices : unreferenced_matrices) += matrices;
+        total += sizeof(model) + Heap(model);
+      }
+      add("op.models: the referenced models' matrices", referenced_matrices);
+      add("op.models: the unreferenced models' matrices (F-M)", unreferenced_matrices);
+      add("op.models: the rest (metadata)",
+          total - referenced_matrices - unreferenced_matrices);
+      add("op.models count", double(op.models.size()));
+      add("op.models referenced count", double(referenced));
+    }
     add("op.dbc_tdof_list", Heap(op.dbc_tdof_list));
     add("op.patches", Heap(op.patches));
     add("op.patches count", double(op.patches.size()));
