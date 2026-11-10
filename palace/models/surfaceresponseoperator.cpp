@@ -33089,6 +33089,15 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
   }
+  if (iodata.model.refinement.max_it == 0)
+  {
+    // Round 3 M2-e (decision 1501; the round-2b B3 release moved here from the drivers):
+    // the model loop above is this construction's last reader of the four response-matrix
+    // caches (the identification's reads precede it; the placement and the line / point
+    // configuration read none), and with Refinement.MaxIts 0 no construction follows. A
+    // later construction in the same process would re-derive the same matrices (a miss).
+    ReleaseResponseMatrixCaches();
+  }
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   // The record lengths / points of this path (the conductor-consistency records, the raw
   // portions) in mesh-file units, as on the electrostatic path (R0-a follow-up: the scale
@@ -33104,7 +33113,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // applied patches are the placed ones it does not own, keyed by their placed index.
   // The placement sub-stamps under PALACE_RESPONSE_SETUP_TIMING (lane fix-response-memory
   // C2; the electrostatic constructor's rule): the default log is byte-identical.
-  const auto placement = ApplyPlacementOwnership(
+  auto placement = ApplyPlacementOwnership(
       config, model_indices, basis_points, coordinate_scale, dimension, cached_geometry,
       std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
   if (raw_fallback)
@@ -33127,9 +33136,23 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   {
     if (!placement.owned_patches.count(patch_index))
     {
-      applied_patches.push_back(placement.placed_patches[patch_index]);
+      // Round 3 M2-a (decision 1501): MOVED, not copied (the same values; the placement's
+      // list is not read after this loop).
+      applied_patches.push_back(std::move(placement.placed_patches[patch_index]));
       applied_patch_indices.push_back(static_cast<int>(patch_index));
     }
+  }
+  // Round 3 M2-a / M2-b (decision 1501): the placement's list and the shared geometry's
+  // full placed-patch list (C6, moved here from the end of the construction) are not read
+  // after this point: `config` is last read by ApplyPlacementOwnership above and the
+  // configuration below reads applied_patches only.
+  std::vector<ResponsePatchData>().swap(placement.placed_patches);
+  std::set<std::size_t>().swap(placement.owned_patches);
+  if (cached_geometry)
+  {
+    // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
+    // the next construction (an AMR iteration) re-assembles the list.
+    cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
   global_patch_count = static_cast<int>(applied_patches.size());
   for (const auto &patch_config : applied_patches)
@@ -34067,6 +34090,17 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       patch_plane_normals[patch_index] = {
           u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
     }
+    // Round 3 M2-c / M2-d (decision 1501): the applied-patch list (a full copy of the
+    // placed patches; its last readers, local_patch_configs, end above) and the matrices of
+    // the models no local patch references (F-M, moved here from the end of the
+    // construction: `patches` is complete, and every later matrix reader reads a local
+    // patch's model) are released before the line and point exchanges.
+    std::vector<const ResponsePatchData *>().swap(local_patch_configs);
+    std::vector<ResponsePatchData>().swap(applied_patches);
+    ReleaseUnreferencedModelMatrices();
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
     ConfigureMaxwellLines(line_geometry, line_patches, patch_provenance,
                           patch_plane_normals, geometry_ledger);
   }
@@ -34223,17 +34257,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   geometry_ledger.Enforce("Maxwell surface-response configuration");
-  if (cached_geometry)
-  {
-    // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
-    // the next construction (an AMR iteration) re-assembles the list.
-    cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
-  }
-  ReleaseUnreferencedModelMatrices();
 #if defined(__GLIBC__)
   // Round 2b B2 (decision 1484; glibc only; a memory hint, no result path): the
-  // construction's freed transients (the placement's lists, the unreferenced matrices) go
-  // back to the system.
+  // construction's freed transients go back to the system (the placed-patch lists and the
+  // unreferenced matrices are released earlier since round 3 M2).
   malloc_trim(0);
 #endif
   PrintResponseMemoryCensus("after the construction (Maxwell)", cached_geometry.get());
