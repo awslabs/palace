@@ -95,6 +95,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  if (response_correction && iodata.model.refinement.max_it == 0)
+  {
+    // Round 2b B3 (decision 1484): no AMR construction follows (Refinement.MaxIts 0).
+    ReleaseResponseMatrixCaches();
+  }
   const bool self_consistent_response =
       response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
@@ -375,6 +380,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
                                             &surface_post_geometry);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  if (response_correction && iodata.model.refinement.max_it == 0)
+  {
+    // Round 2b B3 (decision 1484): no AMR construction follows (Refinement.MaxIts 0).
+    ReleaseResponseMatrixCaches();
+  }
   const bool self_consistent_response =
       response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();

@@ -246,6 +246,11 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_mg);
 
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
+  if (post_op.GetSurfaceResponseOperator() && iodata.model.refinement.max_it == 0)
+  {
+    // Round 2b B3 (decision 1484): no AMR construction follows (Refinement.MaxIts 0).
+    ReleaseResponseMatrixCaches();
+  }
   ComplexVector D(mode_op.GetRTSpace().GetTrueVSize());
   D.UseDevice(true);
 

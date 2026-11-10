@@ -21054,6 +21054,24 @@ DerivedResponseMatrixCacheCounters GetDerivedResponseMatrixCacheCounters()
   return derived_response_matrix_cache_counters;
 }
 
+void ReleaseResponseMatrixCaches()
+{
+  // Round 2b B3 (decision 1484): the four per-process response-matrix caches (the file and
+  // the derived matrices, domain and surface) emptied and their storage freed; the hit /
+  // miss counters untouched. Only when no further construction can follow in the process.
+  std::map<ResponseMatrixFileKey, mfem::DenseMatrix>().swap(
+      DomainResponseMatrixFileCache());
+  std::map<DerivedResponseMatrixKey, DomainResponseMatrices>().swap(
+      DerivedDomainResponseMatrixCache());
+  std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>>().swap(
+      SurfaceResponseMatrixFileCache());
+  std::map<DerivedResponseMatrixKey, SurfaceResponseMatrices>().swap(
+      DerivedSurfaceResponseMatrixCache());
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#endif
+}
+
 void WriteResponseGeometryCache(const std::filesystem::path &path,
                                 const ResponseCorrectionData &config)
 {

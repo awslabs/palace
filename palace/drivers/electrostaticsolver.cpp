@@ -932,6 +932,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
     // Round 2a R2 (decision 1475 (1)): the root's Records spilled to the output directory.
     response_correction->SpillConductorConsistencyRecords(iodata.problem.output);
+    // Round 2b B3 (decision 1484): no AMR construction follows (Refinement.MaxIts 0), so
+    // the per-process response-matrix caches serve nothing more.
+    if (iodata.model.refinement.max_it == 0)
+    {
+      ReleaseResponseMatrixCaches();
+    }
     if (response_correction->IsRawFallback())
     {
       SaveMetadata(*response_correction);

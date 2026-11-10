@@ -2784,6 +2784,10 @@ struct DerivedResponseMatrixCacheCounters
   long long int entries = 0;
 };
 DerivedResponseMatrixCacheCounters GetDerivedResponseMatrixCacheCounters();
+// Round 2b B3 (decision 1484): empties the per-process response-matrix caches (the counters
+// stay). The drivers call it right after the construction when no AMR construction can
+// follow (Refinement.MaxIts 0): the caches serve only a later construction.
+void ReleaseResponseMatrixCaches();
 
 // The mirror planes of a response configuration as the mirror module's planes.
 std::vector<MirrorPlane> MirrorPlanesOf(

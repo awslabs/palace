@@ -384,6 +384,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              type == EigenSolverBackend::ARPACK ? "ARPACK" : "SLEPc");
   auto eigen = MakeEigenvalueSolver();
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  if (response_correction && iodata.model.refinement.max_it == 0)
+  {
+    // Round 2b B3 (decision 1484): no AMR construction follows (Refinement.MaxIts 0).
+    ReleaseResponseMatrixCaches();
+  }
   const bool self_consistent_response =
       response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
