@@ -194,8 +194,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # https://github.com/xiaoyeli/superlu_dist/pull/251,
     # https://github.com/xiaoyeli/superlu_dist/pull/252 and
     # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
-    # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
-    # the Palace variants are not folded into the patch condition.
+    # the symbolic factorization, refactorizations and solves, and of
+    # https://github.com/xiaoyeli/superlu_dist/pull/254,
+    # https://github.com/xiaoyeli/superlu_dist/pull/255 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/256 for the solves with a 3D process
+    # grid. Kept off the `with` blocks so the Palace variants are not folded into the patch
+    # condition.
     depends_on(
         "superlu-dist@9.3.1",
         when="@0.20:+superlu-dist",
@@ -226,6 +230,27 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
                 "superlu_dist_pr253.diff",
                 sha256="8de4200968cfc3d8c2d5a5e60ec2c00c624dc6668d510a709dd79eb475ebfa34",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr254.diff",
+                sha256="6e52065a7f276e3db2b1b3a1ca91b3e03131a7a65751ad988a23d3de2b12bd1f",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr255.diff",
+                sha256="686b940b832c560d8fb703f8591cc7f39bedd78646b376142654187973b61bf7",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr256.diff",
+                sha256="f9658bc250bfdb7add6dd7087611f63bc1779eccd60505ea97118fe4f802c17a",
                 when="@9.3.1",
             ),
         ],
