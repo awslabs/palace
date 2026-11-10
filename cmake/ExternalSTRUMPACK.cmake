@@ -292,8 +292,8 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
 # (https://github.com/pghysels/STRUMPACK/pull/164)
 download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
   strumpack_pr164.diff
-  "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff"
-  4d561698fc2d19c31953ccd91e7df90daf89aedbf6434e016a283b9f7dff7b9a
+  "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1"
+  9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b
 )
 
 include(ExternalProject)
