@@ -32378,6 +32378,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
   ReleaseUnreferencedModelMatrices();
+#if defined(__GLIBC__)
+  // Round 2b B2 (decision 1484; glibc only; a memory hint, no result path): the
+  // construction's freed transients (the placement's lists, the unreferenced matrices) go
+  // back to the system.
+  malloc_trim(0);
+#endif
   PrintResponseMemoryCensus("after the construction", cached_geometry.get());
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
@@ -33989,6 +33995,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
   ReleaseUnreferencedModelMatrices();
+#if defined(__GLIBC__)
+  // Round 2b B2 (decision 1484; glibc only; a memory hint, no result path): the
+  // construction's freed transients (the placement's lists, the unreferenced matrices) go
+  // back to the system.
+  malloc_trim(0);
+#endif
   PrintResponseMemoryCensus("after the construction (Maxwell)", cached_geometry.get());
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
