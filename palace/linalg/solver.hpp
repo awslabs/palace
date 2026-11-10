@@ -124,8 +124,19 @@ private:
   mutable perf::MemoryProbe probe;
   const mfem::HypreParMatrix *A_check = nullptr;
   void BeginSetup();
-  void EndSetup(const mfem::HypreParMatrix *Ac);
+  void EndSetup(const mfem::HypreParMatrix *Ac, const OperType &op);
   void FinishSetup(const std::vector<std::pair<const Vector *, const Vector *>> &bx) const;
+
+  // Optional forward error check of the first solve after each setup of a direct solver,
+  // ‖x - M A x‖ / ‖x‖ for a random x and A the operator given to SetOperator (not owned):
+  // for complex operators the complex operator, also when the solver uses the real-valued
+  // approximation.
+  const OperType *op_check = nullptr;
+  MPI_Comm check_comm = MPI_COMM_NULL;
+  void CheckForwardError() const;
+
+  // Apply the wrapped solver, finishing the setup probes after the first application.
+  void Apply(const VecType &x, VecType &y, bool first) const;
 
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,

@@ -5,6 +5,7 @@
 
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
+#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 
 namespace palace
@@ -42,7 +43,7 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
       SetInnerOperator(*Ac);
     }
   }
-  EndSetup(Ac);
+  EndSetup(Ac, op);
   this->height = op.Height();
   this->width = op.Width();
 }
@@ -156,10 +157,16 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   {
     MFEM_ABORT("Empty ComplexOperator for MfemWrapperSolver!");
   }
-  EndSetup(Ac);
+  EndSetup(Ac, op);
   this->height = op.Height();
   this->width = op.Width();
 }
+
+template <>
+void MfemWrapperSolver<Operator>::Apply(const Vector &x, Vector &y, bool first) const;
+template <>
+void MfemWrapperSolver<ComplexOperator>::Apply(const ComplexVector &x, ComplexVector &y,
+                                               bool first) const;
 
 template <>
 void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
@@ -176,6 +183,16 @@ void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
   {
     probe.Start();
   }
+  Apply(x, y, first);
+  if (first && op_check)
+  {
+    CheckForwardError();
+  }
+}
+
+template <>
+void MfemWrapperSolver<Operator>::Apply(const Vector &x, Vector &y, bool first) const
+{
   pc->Mult(x, y);
   if (first)
   {
@@ -199,6 +216,17 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   {
     probe.Start();
   }
+  Apply(x, y, first);
+  if (first && op_check)
+  {
+    CheckForwardError();
+  }
+}
+
+template <>
+void MfemWrapperSolver<ComplexOperator>::Apply(const ComplexVector &x, ComplexVector &y,
+                                               bool first) const
+{
   if (pc->Height() == x.Size())
   {
     mfem::Array<const Vector *> X(2);
@@ -269,6 +297,7 @@ void MfemWrapperSolver<OperType>::SetInnerOperator(const mfem::HypreParMatrix &o
     BlockTimer bt(Timer::KSP_COARSE_SETUP, time_setup && eager_setup);
     pc->SetOperator(op);
   }
+  check_comm = op.GetComm();
   setup_pending = true;
   if (perf_setups >= 0)
   {
@@ -293,7 +322,8 @@ void MfemWrapperSolver<OperType>::BeginSetup()
 }
 
 template <OperatorType OperType>
-void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac)
+void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac,
+                                           const OperType &op)
 {
   if (direct)
   {
@@ -301,7 +331,9 @@ void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac)
   }
   // Only the main solver's coarse solve is checked: nested solvers (e.g. wave port mode
   // solves) may run on a subset of the matrix communicator.
-  A_check = (perf::Verification() && role == "Main") ? Ac : nullptr;
+  const bool check = perf::Verification() && role == "Main";
+  A_check = check ? Ac : nullptr;
+  op_check = (check && direct) ? &op : nullptr;
 }
 
 template <OperatorType OperType>
@@ -316,12 +348,14 @@ void MfemWrapperSolver<OperType>::FinishSetup(
   probe.Stop();
   probe.Record((role == "Main") ? std::string("CoarseFactorization")
                                 : "CoarseFactorization/" + role);
-  // The check is collective on the matrix communicator: all ranks must agree to run it.
-  int check = (A_check && A_check->Height() == bx[0].first->Size()) ? 1 : 0;
-  if (A_check)
+  if (!A_check)
   {
-    MPI_Allreduce(MPI_IN_PLACE, &check, 1, MPI_INT, MPI_MIN, A_check->GetComm());
+    return;
   }
+  // The check is collective on the matrix communicator: all ranks must agree to run it.
+  BlockTimer bt(Timer::VERIFICATION);
+  int check = (A_check->Height() == bx[0].first->Size()) ? 1 : 0;
+  MPI_Allreduce(MPI_IN_PLACE, &check, 1, MPI_INT, MPI_MIN, A_check->GetComm());
   if (check)
   {
     double res = 0.0;
@@ -337,6 +371,41 @@ void MfemWrapperSolver<OperType>::FinishSetup(
         perf::RegisterCounter(base + "/Checks", perf::Reduce::MAX, perf::Accumulate::SUM),
         1.0);
   }
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::CheckForwardError() const
+{
+  // Charged to the verification row and its own tally only.
+  BlockTimer bt(Timer::VERIFICATION);
+  perf::ScopedTally t(
+      perf::RegisterTally(role + "/Verification/CoarseForwardError", Timer::VERIFICATION));
+  const double err = [this]()
+  {
+    perf::ScopedPause pause;
+    VecType x(op_check->Width()), b(op_check->Height()), y(op_check->Height());
+    x.UseDevice(true);
+    b.UseDevice(true);
+    y.UseDevice(true);
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      perf::SetRandom(x.Real(), check_comm, 0);
+      perf::SetRandom(x.Imag(), check_comm, 1);
+    }
+    else
+    {
+      perf::SetRandom(x, check_comm);
+    }
+    op_check->Mult(x, b);
+    y = 0.0;
+    Apply(b, y, false);
+    y -= x;
+    return linalg::Norml2(check_comm, y) / linalg::Norml2(check_comm, x);
+  }();
+  perf::SetMax(
+      perf::RegisterCounter("Verification/CoarseSolve/" + role + "/MaxForwardError",
+                            perf::Reduce::MAX, perf::Accumulate::MAX),
+      err);
 }
 
 template <OperatorType OperType>

@@ -191,6 +191,9 @@ bool Report(std::string_view message, std::string_view fallback)
   nlohmann::json error = {{"Message", msg.empty() ? std::string(fallback) : msg},
                           {"Phase", Timer::names[BlockTimer::Current()]}};
 
+  // The failure may have happened within a verification probe: report as usual.
+  ClearPause();
+
   // Agreement step: wait for all processes to fail, up to the timeout. A non-root process
   // which gives up waits for up to twice as long more before it aborts, unless the
   // agreement shows that the root did not fail (see FailureReport).

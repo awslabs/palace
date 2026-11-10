@@ -6,10 +6,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <random>
+#include <_hypre_parcsr_ls.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
-#include <_hypre_parcsr_ls.h>
 #include "linalg/ams.hpp"
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
@@ -156,6 +157,18 @@ void RecordHypreHierarchy(const mfem::Solver &solver, std::string_view role)
     RecordAmg(hypre_AMSDataPoissonAlphaAMG(data) ? hypre_AMSDataPoissonAlphaAMG(data)
                                                  : hypre_AMSDataPoissonAlphaXAMG(data),
               base + "/Pi");
+  }
+}
+
+void SetRandom(mfem::Vector &x, MPI_Comm comm, int stream)
+{
+  std::seed_seq seq{Mpi::Rank(comm), stream};
+  std::mt19937_64 gen(seq);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  double *X = x.HostWrite();
+  for (int i = 0; i < x.Size(); i++)
+  {
+    X[i] = dist(gen);
   }
 }
 

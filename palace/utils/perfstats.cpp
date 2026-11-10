@@ -65,8 +65,13 @@ void StatsReduceOp(void *in, void *inout, int *len, MPI_Datatype *)
   double *b = static_cast<double *>(inout);
   for (int k = 0; k < *len; k++, a += STRIDE, b += STRIDE)
   {
-    b[0] = std::min(a[0], b[0]);
-    if (a[1] > b[1] || (a[1] == b[1] && a[3] < b[3]))
+    // A value which is not a number (NaN) wins.
+    if (!std::isnan(b[0]) && (std::isnan(a[0]) || a[0] < b[0]))
+    {
+      b[0] = a[0];
+    }
+    if (!std::isnan(b[1]) &&
+        (std::isnan(a[1]) || a[1] > b[1] || (a[1] == b[1] && a[3] < b[3])))
     {
       b[1] = a[1];
       b[3] = a[3];
@@ -246,9 +251,11 @@ double AccumulateValue(Accumulate acc, double cum, bool cum_set, double v, bool 
     case Accumulate::SUM:
       return cum + v;
     case Accumulate::MIN:
-      return std::min(cum, v);
+      return (std::isnan(cum) || std::isnan(v)) ? std::numeric_limits<double>::quiet_NaN()
+                                                : std::min(cum, v);
     case Accumulate::MAX:
-      return std::max(cum, v);
+      return (std::isnan(cum) || std::isnan(v)) ? std::numeric_limits<double>::quiet_NaN()
+                                                : std::max(cum, v);
     case Accumulate::NONE:
       break;
   }

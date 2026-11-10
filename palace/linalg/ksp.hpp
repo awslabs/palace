@@ -62,6 +62,13 @@ protected:
   // Preconditioner wrapper recording an inclusive tally for nested solvers.
   std::unique_ptr<Solver<OperType>> pc_tally;
 
+  // Verification of the error propagator of the preconditioner (main solver only): the
+  // operator to check after the next solve with at least one iteration, for the first
+  // setup which is solved (once per solver object, which is created anew in each adaptive
+  // mesh refinement iteration).
+  mutable bool check_pc = true;
+  mutable const OperType *check_op = nullptr;
+
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
                 int verbose, FiniteElementSpaceHierarchy &fespaces,

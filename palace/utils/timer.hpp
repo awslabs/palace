@@ -57,6 +57,7 @@ public:
     POSTPRO_FARFIELD,      // Computing far-fields
     POSTPRO_PARAVIEW,      // Paraview calculations and I/O
     POSTPRO_GRIDFUNCTION,  // MFEM gridfunction calculations and I/O
+    VERIFICATION,          // Opt-in verification checks
     IO,                    // Disk I/O
     TOTAL,
     NUM_TIMINGS
@@ -92,6 +93,7 @@ public:
       "  Far Fields",
       "  Paraview",
       "  Grid function",
+      "Verification",
       "Disk IO",
       "Total"});
 
@@ -102,7 +104,7 @@ public:
       "KSP_COARSE_SETUP", "KSP_COARSE_SOLVE", "TS", "EPS", "DIV_FREE", "CONSTRUCT_PROM",
       "SOLVE_PROM", "ESTIMATION", "CONSTRUCT_ESTIMATOR", "SOLVE_ESTIMATOR", "ADAPTATION",
       "REBALANCE", "ADAPT_MESH_OUTPUT", "POSTPRO", "POSTPRO_FARFIELD", "POSTPRO_PARAVIEW",
-      "POSTPRO_GRIDFUNCTION", "IO", "TOTAL"});
+      "POSTPRO_GRIDFUNCTION", "VERIFICATION", "IO", "TOTAL"});
   // clang-format on
   static_assert(descriptions.size() == NUM_TIMINGS);
   static_assert(names.size() == NUM_TIMINGS);
@@ -352,6 +354,7 @@ private:
   inline static bool started = false;
   // Number of stack entries which stayed open since the last heap sample taken.
   inline static std::size_t heap_open = 0;
+  inline static int paused = 0;  // Pause depth (perf::ScopedPause): new timers do not count
   bool count;
 
   // Phase charged with the heap growth across skipped samples: the innermost one open
@@ -368,7 +371,7 @@ private:
   }
 
 public:
-  BlockTimer(Index i, bool count = true) : count(count)
+  BlockTimer(Index i, bool count_it = true) : count(count_it && paused == 0)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
     if (count)
@@ -450,6 +453,13 @@ public:
   // prevent statistics from bleeding between successive solves when Palace is embedded
   // (e.g. in the regression test harness).
   static void Reset();
+
+  // Pause (true) or resume (false) the counting of new timers, see perf::ScopedPause.
+  static void Pause(bool pause)
+  {
+    paused = pause ? paused + 1 : (paused > 0 ? paused - 1 : 0);
+  }
+  static void ClearPause() { paused = 0; }
 
   // Print timing and memory tables from stored reduction results.
   static void Print(MPI_Comm comm);

@@ -5,6 +5,7 @@
 #define PALACE_UTILS_PERFSTATS_HPP
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -74,6 +75,7 @@ struct Registry
   std::unordered_map<std::string, int> tally_ids, counter_ids;
   std::vector<std::string> roles;
   bool suspended = false;  // Set while BlockTimer::Finalize reduces (not tallied)
+  int paused = 0;          // ScopedPause depth: tallies and counters record nothing
 };
 
 void AddPhaseTally(int id, double seconds, long count, double wait);
@@ -117,7 +119,7 @@ void RegisterCommunicationTallies();
 // Add to a tally: elapsed seconds, of which wait seconds were blocked in communication.
 inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
 {
-  if (id >= 0)
+  if (id >= 0 && detail::registry.paused == 0)
   {
     auto &t = detail::registry.tallies[id];
     t.time += seconds;
@@ -176,6 +178,33 @@ public:
   ScopedTally &operator=(const ScopedTally &) = delete;
 };
 
+// Pause all reporting in a scope: nested BlockTimer rows, tallies and counters record
+// nothing, and the time stays in the row active before. For verification probes, which are
+// measured by their own tally around the scope instead.
+class ScopedPause
+{
+public:
+  ScopedPause()
+  {
+    detail::registry.paused++;
+    BlockTimer::Pause(true);
+  }
+  ~ScopedPause()
+  {
+    detail::registry.paused = std::max(detail::registry.paused - 1, 0);  // See ClearPause
+    BlockTimer::Pause(false);
+  }
+  ScopedPause(const ScopedPause &) = delete;
+  ScopedPause &operator=(const ScopedPause &) = delete;
+};
+
+// End all pauses, for a failure inside a ScopedPause (see FailureReport).
+inline void ClearPause()
+{
+  detail::registry.paused = 0;
+  BlockTimer::ClearPause();
+}
+
 //
 // Counters: a number written to palace.json at a slash-separated path (for example
 // "LinearSolver/DivFree/Solves"). Counters are reset at the start of each iteration and a
@@ -187,6 +216,10 @@ int RegisterCounter(std::string_view path, Reduce reduce = Reduce::MAX,
 
 inline void Add(int id, double v)
 {
+  if (detail::registry.paused)
+  {
+    return;
+  }
   auto &c = detail::registry.counters[id];
   c.value += v;
   c.set = true;
@@ -203,20 +236,39 @@ inline bool IsSet(int id)
 
 inline void Set(int id, double v)
 {
+  if (detail::registry.paused)
+  {
+    return;
+  }
   auto &c = detail::registry.counters[id];
   c.value = v;
   c.set = true;
 }
+// SetMax and SetMin keep a value which is not a number (NaN) once set.
 inline void SetMax(int id, double v)
 {
+  if (detail::registry.paused)
+  {
+    return;
+  }
   auto &c = detail::registry.counters[id];
-  c.value = c.set ? std::max(c.value, v) : v;
+  if (!c.set || std::isnan(v) || (!std::isnan(c.value) && v > c.value))
+  {
+    c.value = v;
+  }
   c.set = true;
 }
 inline void SetMin(int id, double v)
 {
+  if (detail::registry.paused)
+  {
+    return;
+  }
   auto &c = detail::registry.counters[id];
-  c.value = c.set ? std::min(c.value, v) : v;
+  if (!c.set || std::isnan(v) || (!std::isnan(c.value) && v < c.value))
+  {
+    c.value = v;
+  }
   c.set = true;
 }
 

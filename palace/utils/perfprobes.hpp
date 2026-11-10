@@ -81,6 +81,10 @@ int AssemblyTally(AssemblyKind kind);
 // under LinearSolver/<Role>/AMG or LinearSolver/<Role>/AMS/{G,Pi}.
 void RecordHypreHierarchy(const mfem::Solver &solver, std::string_view role);
 
+// Fill x with uniform random entries in [-1, 1], seeded by the rank and a stream index,
+// without changing the state of the C library generator (unlike mfem::Vector::Randomize).
+void SetRandom(mfem::Vector &x, MPI_Comm comm, int stream = 0);
+
 // Relative residual ‖b - A x‖ / ‖b‖ (collective).
 double RelativeResidual(const mfem::HypreParMatrix &A, const mfem::Vector &b,
                         const mfem::Vector &x);

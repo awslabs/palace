@@ -76,6 +76,10 @@ TEST_CASE("SolverStats Krylov And Eigen", "[perfstats][Serial][Parallel]")
   CHECK_THAT(V("MaxFinalRelRes"), WithinRel(1e-2, 1e-12));
   CHECK_THAT(V("MeanReductionFactor"),
              WithinRel((0.2 + std::pow(1e-3, 0.01)) / 3.0, 1e-12));
+  CHECK_THAT(V("MinReductionFactor"), WithinRel(0.1, 1e-12));
+  CHECK_THAT(V("MaxReductionFactor"), WithinRel(std::pow(1e-3, 0.01), 1e-12));
+  CHECK_THAT(Value(r, "LinearSolver/TestRole/MinReductionFactor", true),
+             WithinRel(0.1, 1e-12));
   CHECK(Value(r, "LinearSolver/TestRole/Its", true) == 112.0);
   CHECK(Value(r, "EigenSolver/Solves") == 2.0);
   CHECK(Value(r, "EigenSolver/OuterIts") == 10.0);

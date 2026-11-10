@@ -24,12 +24,15 @@ public:
 
   explicit KspStats(std::string_view role);
 
+  // Per solve: iterations, convergence, restarts, and the initial and final residual norms
+  // (the reduction factor of a solve with n > 0 iterations is (final / initial)^(1 / n),
+  // the geometric mean of the residual reduction per iteration).
   void Record(int its, bool converged, int restarts, double initial_res,
               double final_res) const;
 
 private:
   int solves, its, max_its, not_converged, not_converged_its, zero_its, restarts,
-      mean_reduction, max_rel_res;
+      mean_reduction, min_reduction, max_reduction, max_rel_res;
   std::array<int, NUM_BUCKETS> histogram;
 };
 

@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <memory>
 #include <thread>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "linalg/ksp.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
+#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
@@ -49,6 +54,29 @@ int TallyIndex(const perf::TimerResults &r, const std::string &name)
   }
   return -1;
 }
+
+// Exact inverse of a diagonal matrix: a direct coarse solver for the verification checks.
+class DiagonalSolver : public mfem::Solver
+{
+  mfem::Vector d;
+
+public:
+  void SetOperator(const mfem::Operator &op) override
+  {
+    const auto &A = dynamic_cast<const mfem::HypreParMatrix &>(op);
+    height = width = A.Height();
+    A.GetDiag(d);
+  }
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  {
+    const double *X = x.HostRead(), *D = d.HostRead();
+    double *Y = y.HostWrite();
+    for (int i = 0; i < x.Size(); i++)
+    {
+      Y[i] = X[i] / D[i];
+    }
+  }
+};
 
 }  // namespace
 
@@ -96,6 +124,48 @@ TEST_CASE("PerfStats Reductions", "[perfstats][Serial][Parallel]")
   CHECK(r.peak_mem.n == np);
   CHECK(r.peak_node_mem.n == r.num_nodes);
   CHECK(r.num_nodes >= 1);
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfStats Non-Finite Values", "[perfstats][Serial][Parallel]")
+{
+  // Maxima and minima keep a value which is not a number, also over processes and in the
+  // Cumulative block.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm);
+  BlockTimer::Reset();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const int mx =
+      perf::RegisterCounter("Test/NaNMax", perf::Reduce::MAX, perf::Accumulate::MAX);
+  const int mn =
+      perf::RegisterCounter("Test/NaNMin", perf::Reduce::MAX, perf::Accumulate::MIN);
+  const int rk =
+      perf::RegisterCounter("Test/NaNRoot", perf::Reduce::STATS, perf::Accumulate::MAX);
+  perf::SetMax(mx, 1.0);
+  perf::SetMax(mx, nan);
+  perf::SetMax(mx, 2.0);
+  perf::SetMin(mn, 1.0);
+  perf::SetMin(mn, nan);
+  perf::SetMin(mn, 0.5);
+  perf::SetMax(rk, (rank == 0) ? nan : 1.0);
+  BlockTimer::Finalize(comm);
+  {
+    const auto &r = perf::GetResults();
+    CHECK(std::isnan(r.counter[CounterIndex(r, "Test/NaNMax")].max));
+    CHECK(std::isnan(r.counter[CounterIndex(r, "Test/NaNMin")].max));
+    CHECK(std::isnan(r.counter[CounterIndex(r, "Test/NaNRoot")].max));
+    CHECK(std::isnan(r.counter[CounterIndex(r, "Test/NaNRoot")].min));
+  }
+  BlockTimer::StartIteration();
+  perf::SetMax(mx, 3.0);
+  perf::SetMin(mn, 0.1);
+  BlockTimer::Finalize(comm);
+  {
+    const auto &r = perf::GetResults();
+    CHECK(r.counter[CounterIndex(r, "Test/NaNMax")].max == 3.0);
+    CHECK(std::isnan(r.cum_counter[CounterIndex(r, "Test/NaNMax")].max));
+    CHECK(std::isnan(r.cum_counter[CounterIndex(r, "Test/NaNMin")].max));
+  }
   BlockTimer::Reset();
 }
 
@@ -274,6 +344,162 @@ TEST_CASE("PerfStats Coarse Setup And Apply", "[perfstats][Serial][Parallel]")
   CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Refactorizations")].max == 0);
   CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Rows")].sum == np * n);
   CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/RowsPerRank")].min == n);
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
+          "[perfstats][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  constexpr int n = 20;
+  HYPRE_BigInt row_starts[2] = {static_cast<HYPRE_BigInt>(rank) * n,
+                                static_cast<HYPRE_BigInt>(rank + 1) * n};
+  std::vector<std::unique_ptr<mfem::SparseMatrix>> diags;
+  auto Identity = [&](double s)
+  {
+    diags.push_back(std::make_unique<mfem::SparseMatrix>(n));
+    for (int i = 0; i < n; i++)
+    {
+      diags.back()->Set(i, i, s);
+    }
+    diags.back()->Finalize();
+    return std::make_unique<mfem::HypreParMatrix>(comm, static_cast<HYPRE_BigInt>(np) * n,
+                                                  row_starts, diags.back().get());
+  };
+  auto A1 = Identity(1.0), A2 = Identity(2.0), A4 = Identity(4.0);
+  auto Amg = []()
+  {
+    auto amg = std::make_unique<mfem::HypreBoomerAMG>();
+    amg->SetPrintLevel(0);
+    return amg;
+  };
+  auto Direct = []() { return std::make_unique<DiagonalSolver>(); };
+  auto Value = [](const std::string &path)
+  {
+    const auto &r = perf::GetResults();
+    const int i = CounterIndex(r, path);
+    return (i >= 0 && r.counter[i].n > 0) ? r.counter[i].max : -1.0;
+  };
+  const std::string growth = "Verification/Preconditioner/Main/MaxErrorPropagatorGrowth",
+                    checks = "Verification/Preconditioner/Main/Checks",
+                    forward = "Verification/CoarseSolve/Main/MaxForwardError";
+
+  SECTION("Off by default")
+  {
+    perf::SetVerification(0);
+    BlockTimer::Reset();
+    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
+                  std::make_unique<MfemWrapperSolver<Operator>>(Direct()));
+    Vector b(n), x(n);
+    b = 1.0;
+    ksp.SetOperators(*A2, *A4);
+    ksp.Mult(b, x);
+    BlockTimer::Finalize(comm);
+    CHECK(Value(growth) == -1.0);
+    CHECK(Value(forward) == -1.0);
+    const auto &r = perf::GetResults();
+    CHECK(r.iter.count[Timer::VERIFICATION].max == 0);
+    CHECK(r.iter.time[Timer::VERIFICATION].max == 0.0);
+  }
+
+  SECTION("Real-valued")
+  {
+    // A = 2 I and M = (4 I)^-1 exactly: I - M A = I / 2.
+    perf::SetVerification(2);
+    BlockTimer::Reset();
+    auto pc = std::make_unique<MfemWrapperSolver<Operator>>(Direct());
+    pc->EnableTimer(true, Timer::KSP_COARSE_SOLVE);
+    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0), std::move(pc));
+    Vector b(n), x(n);
+    b = 0.0;
+    ksp.SetOperators(*A2, *A4);
+    ksp.Mult(b, x);  // No iteration: not checked yet
+    BlockTimer::Finalize(comm);
+    CHECK(Value(checks) == -1.0);
+    b = 1.0;
+    ksp.Mult(b, x);
+    ksp.SetOperators(*A2, *A4);
+    ksp.Mult(b, x);  // Checked after the first solve with iterations only
+    BlockTimer::Finalize(comm);
+    CHECK_THAT(Value(growth), WithinRel(0.5, 1.0e-10));
+    CHECK(Value(checks) == 1.0);
+    CHECK_THAT(Value(forward), WithinAbs(0.0, 1.0e-12));
+
+    // The 16 preconditioner applications of the check and the coarse solve of the forward
+    // error check are not counted as the solver's, only in their own tallies.
+    const auto &r = perf::GetResults();
+    const double applies = Value("LinearSolver/Main/Coarse/Applies");
+    CHECK(applies > 0.0);
+    CHECK(applies < 16.0);
+    CHECK(r.iter.count[Timer::KSP_COARSE_SOLVE].max +
+              r.iter.count[Timer::KSP_COARSE_SETUP].max ==
+          applies);
+    CHECK(r.iter.tally_count[TallyIndex(r.iter, "Main/Verification/ErrorPropagator")].max ==
+          1);
+    CHECK(r.iter.tally_count[TallyIndex(r.iter, "Main/Verification/CoarseForwardError")]
+              .max == 2);
+    CHECK(r.iter.tally_parents[TallyIndex(r.iter, "Main/Verification/ErrorPropagator")] ==
+          Timer::VERIFICATION);
+
+    // One verification row scope per check: the probe, and the forward error and the
+    // residual checks after each of the two setups.
+    CHECK(r.iter.count[Timer::VERIFICATION].max == 5);
+    CHECK(r.iter.time[Timer::VERIFICATION].min > 0.0);
+  }
+
+  SECTION("No forward error for hypre coarse solvers")
+  {
+    perf::SetVerification(2);
+    BlockTimer::Reset();
+    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
+                  std::make_unique<MfemWrapperSolver<Operator>>(Amg()));
+    Vector b(n), x(n);
+    b = 1.0;
+    ksp.SetOperators(*A2, *A4);
+    ksp.Mult(b, x);
+    BlockTimer::Finalize(comm);
+    CHECK(Value(forward) == -1.0);
+    CHECK_THAT(Value(growth), WithinRel(0.5, 1.0e-6));
+  }
+
+  SECTION("Complex-valued with a real-valued coarse solve")
+  {
+    // A = (2 + i) I and M = ((2 + 1) I)^-1, the real-valued approximation: the error
+    // propagators of the coarse solve and of the preconditioner are (1 - i) I / 3.
+    perf::SetVerification(2);
+    BlockTimer::Reset();
+    double total = 0.0, sum = 0.0;
+    {
+      BlockTimer bt(Timer::KSP);  // All of the time is in the exclusive rows
+      ComplexWrapperOperator A(A2.get(), A1.get());
+      ComplexKspSolver ksp(std::make_unique<GmresSolver<ComplexOperator>>(comm, 0),
+                           std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+                               Direct(), true, /*complex_matrix*/ false));
+      ComplexVector b(n), x(n);
+      b = 1.0;
+      ksp.SetOperators(A, A);
+      ksp.Mult(b, x);
+      BlockTimer::Finalize(comm);
+      const auto &r = perf::GetResults();
+      for (int i = 0; i < Timer::NUM_TIMINGS; i++)
+      {
+        if (i == Timer::TOTAL)
+        {
+          total = r.iter.time[i].avg;
+        }
+        else
+        {
+          sum += r.iter.time[i].avg;
+        }
+      }
+    }
+    CHECK_THAT(Value(growth), WithinRel(std::sqrt(2.0) / 3.0, 1.0e-10));
+    CHECK_THAT(Value(forward), WithinRel(std::sqrt(2.0) / 3.0, 1.0e-10));
+    CHECK(perf::GetResults().iter.time[Timer::VERIFICATION].min > 0.0);
+    CHECK_THAT(sum, WithinAbs(total, 1.0e-4));
+  }
+  perf::SetVerification(0);
   BlockTimer::Reset();
 }
 

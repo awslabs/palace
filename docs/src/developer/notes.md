@@ -385,6 +385,7 @@ Postprocessing                  // < Time spent in postprocessing once the field
                                 //   near fields to far fields
   Paraview                      // < Processing and writing Paraview fields for visualization
   Grid function                 // < Processing and writing grid function fields for visualization
+Verification                    // < Opt-in verification checks (zero unless enabled)
 Disk IO                         // < Disk read/write time for loading the mesh file and
                                 //   writing CSV fields
 -----------------------
@@ -443,8 +444,9 @@ current RSS at the iteration boundaries). The `Cumulative` block holds sums over
 for times and counts and the maximum for peak memory. The log's "Elapsed Time Report" table
 holds the totals over iterations so far, while the "Peak Memory" table is per iteration.
 
-  - `ElapsedTime`: per exclusive timer row (keys are `Timer::names`), `Durations` (average
-    over processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
+  - `ElapsedTime`: per exclusive timer row (keys are `Timer::names`, including
+    `VERIFICATION` for the opt-in verification checks), `Durations` (average over
+    processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
     measurements which do not interrupt the timer rows and may overlap each other; each
     names the row it is measured within as `Parent`, and must never be added to the rows.
     As a safeguard, a `perf::ScopedTally` opened while a scope of the same tally is open on
@@ -477,6 +479,28 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     `LinearSolver/<Role>/...`, reduced across processes as a sum, minimum, maximum or
     `{Min, Avg, Max, MaxRank}`.
   - Information set with `perf::SetInfo` (resolved solver choices) is written as is.
+
+Each solver role records the reduction factor (final / initial residual)^(1 / iterations)
+of its solves with at least one iteration as `LinearSolver/<Role>/MeanReductionFactor`,
+`MinReductionFactor` and `MaxReductionFactor`: values close to one mean that the
+preconditioner barely reduces the error. In verification mode, the main solver also records
+`Verification/CoarseSolve/Main/MaxForwardError` for direct coarse solvers,
+‖x - M A x‖ / ‖x‖ for a random x after each coarse solver setup, with A the operator given
+to the coarse solver (complex for complex problems, also when the coarse solver factors its
+real-valued approximation). For hypre coarse solvers (AMS, BoomerAMG), which are not exact,
+it is not computed: the reduction factor of the solver role covers the quality of the
+cycle. It also records `Verification/Preconditioner/Main/MaxErrorPropagatorGrowth` for the
+preconditioner M of the system operator A, once per solver object (so once per adaptive
+mesh refinement iteration), after its first solve with at least one iteration: the
+geometric mean growth of the error over the power iterations 9 to 16 of I - M A. It
+approaches the spectral radius ρ(I - M A) if I - M A is normal and is a growth rate
+otherwise; values above one mean that the error grows under the preconditioner (also
+expected on the null space of a singular operator, such as the magnetostatic curl-curl
+operator), and values which are not finite are written as `null` (maxima and minima keep
+them). The verification checks, including the coarse solve residual check, are charged to
+the exclusive `Verification` row (`VERIFICATION`, zero when verification is off) and the
+two probes also to their own tallies, `Main/Verification/...`; they pause the other timers,
+tallies and counters (`perf::ScopedPause`).
 
 Reports written at the end of an iteration have `"Complete": true`. If a process fails
 (an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the report

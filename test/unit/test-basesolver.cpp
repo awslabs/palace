@@ -1092,6 +1092,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Failure report in palace.json",
     }
   }
 
+  SECTION("Failure inside a verification probe")
+  {
+    {
+      perf::FailureReport report(comm, writer);
+      perf::ScopedPause pause;  // Timers, tallies and counters record nothing
+      CHECK(perf::ReportFailure("Test failure inside a probe"));
+    }
+    if (Mpi::Root(comm))
+    {
+      CHECK(Metadata()["ElapsedTime"]["Tallies"].contains("Wait/FailureReport"));
+    }
+  }
+
   SECTION("Failure off the main thread")
   {
     {
