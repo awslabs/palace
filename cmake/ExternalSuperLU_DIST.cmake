@@ -109,12 +109,26 @@ set(SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
 )
 
+# Lower the communication cost of the symbolic factorization, of refactorizations with
+# the same sparsity pattern, and of repeated solves: copies of
+# https://github.com/xiaoyeli/superlu_dist/pull/250,
+# https://github.com/xiaoyeli/superlu_dist/pull/251,
+# https://github.com/xiaoyeli/superlu_dist/pull/252 and
+# https://github.com/xiaoyeli/superlu_dist/pull/253, made for v9.3.1. Like the patch above,
+# they are applied to any version, so that a version they do not apply to fails the build
+# instead of silently dropping the changes.
+list(APPEND SUPERLU_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr250.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr251.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr252.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr253.diff"
+)
+
 # Fix the solves with a 3D process grid, and return an error instead of hanging for options
 # it does not support: copies of https://github.com/xiaoyeli/superlu_dist/pull/254,
 # https://github.com/xiaoyeli/superlu_dist/pull/255 and
-# https://github.com/xiaoyeli/superlu_dist/pull/256, made for v9.3.1. Like the patch above,
-# they are applied to any version, so that a version they do not apply to fails the build
-# instead of silently dropping the fixes.
+# https://github.com/xiaoyeli/superlu_dist/pull/256, made for v9.3.1. They are applied after
+# the patches above, and to any version as well.
 list(APPEND SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr254.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr255.diff"
@@ -131,7 +145,10 @@ ExternalProject_Add(superlu_dist
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/superlu_dist-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${SUPERLU_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${SUPERLU_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SUPERLU_OPTIONS}"
   TEST_COMMAND      ""
 )

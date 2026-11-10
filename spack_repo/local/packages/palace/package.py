@@ -189,6 +189,48 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ],
     )
 
+    # The SuperLU_DIST version of the superbuild, with the copies in
+    # extern/patch/superlu_dist of https://github.com/xiaoyeli/superlu_dist/pull/250,
+    # https://github.com/xiaoyeli/superlu_dist/pull/251,
+    # https://github.com/xiaoyeli/superlu_dist/pull/252 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
+    # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
+    # the Palace variants are not folded into the patch condition.
+    depends_on(
+        "superlu-dist@9.3.1",
+        when="@0.20:+superlu-dist",
+        patches=[
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr250.diff",
+                sha256="d8c22daed9ed89b982f7f12dd62db5509cc5a5a852c6f57bd10b3d7f330273ab",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr251.diff",
+                sha256="fbda88f8172a04bc7bbcda7f5fb8e5e697a92d3bd26682e7693703dae03d54f6",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr252.diff",
+                sha256="7b84bceb7e45333aaabdf38ce85c19d58aa20febd55bf664c4279669335a47dc",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr253.diff",
+                sha256="8de4200968cfc3d8c2d5a5e60ec2c00c624dc6668d510a709dd79eb475ebfa34",
+                when="@9.3.1",
+            ),
+        ],
+    )
+
     # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
     # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
     # the implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
