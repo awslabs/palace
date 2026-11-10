@@ -2064,6 +2064,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       estimator->AddErrorIndicator(E, total_domain_energy, indicator);
     }
 
+    // Decision 1469 (1) (i): the memory census after the first source (log only; a no-op
+    // unless PALACE_RESPONSE_MEMORY_CENSUS=1).
+    if (step == 0 && response_correction)
+    {
+      response_correction->PrintResponseMemoryCensus("after source 1",
+                                                     response_geometry.get());
+    }
+
     // Next terminal.
     step++;
   }

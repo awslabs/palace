@@ -40,6 +40,12 @@ class MaterialOperator;
 class SpaceOperator;
 struct IdentifiedFeature;
 struct IdentificationResult;
+// Lane fix-response-memory round 2 (decision 1469 (1) (i)): the LOG-ONLY memory census of
+// the response machinery (PALACE_RESPONSE_MEMORY_CENSUS=1): the heap bytes of every
+// member of SurfaceResponseOperator and SurfaceResponseGeometry::Impl, min / max / sum
+// over the ranks, beside the rank's current RSS. Reads only; no result changes.
+struct ResponseMemoryCensus;
+bool ResponseMemoryCensusEnabled();
 
 // The placement's clip of the uncovered requirements (decision 394 F2) by the matched
 // spatial clusters' support boxes (decision 399 MAJOR-1): the part of an uncovered portion
@@ -181,6 +187,7 @@ private:
   }
 
   friend class SurfaceResponseOperator;
+  friend struct ResponseMemoryCensus;
 
 public:
   // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): the placed-patch
@@ -1577,7 +1584,14 @@ public:
   }
   PatchRecordResidency GetPatchRecordResidency() const { return patch_record_residency; }
 
+  // Decision 1469 (1) (i): under PALACE_RESPONSE_MEMORY_CENSUS=1 print (root) the census
+  // of this operator's members (and of its geometry's, if any) at `instant`; collective;
+  // a no-op otherwise.
+  void PrintResponseMemoryCensus(const std::string &instant,
+                                 const SurfaceResponseGeometry *geometry = nullptr) const;
+
 private:
+  friend struct ResponseMemoryCensus;
   PatchRecordResidency patch_record_residency = PatchRecordResidency::REPLICATED;
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;

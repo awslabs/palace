@@ -46,6 +46,7 @@
 #include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/metaledge.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -752,6 +753,20 @@ public:
 // lowest rank / lowest element containing it. A point no candidate rank finds this way is
 // searched by the candidate ranks with a rank-local FindPointsGSLIB (MPI_COMM_SELF: the
 // hash of the local mesh only, no router across ranks) with gslib's border tolerance.
+// Decision 1469 (1) (i): the census's RSS read around the FIRST all-pairs exchange of the
+// point locator (the per-peer MPI state); defined with ResponseMemoryCensus below.
+void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant);
+bool TakeFirstExchangeCensus()
+{
+  static bool taken = false;
+  if (taken || !ResponseMemoryCensusEnabled())
+  {
+    return false;
+  }
+  taken = true;
+  return true;
+}
+
 class DistributedPointLocator
 {
 public:
@@ -854,6 +869,11 @@ private:
       }
     }
     std::vector<int> receive_counts(size);
+    const bool census = TakeFirstExchangeCensus();
+    if (census)
+    {
+      PrintResponseMemoryCensusOfRss(comm, "before the first point-locator Alltoall");
+    }
     Mpi::Alltoall(1, exchange.send_counts.data(), receive_counts.data(), comm);
     std::vector<int> receive_offsets;
     const int send_total = SetOffsets(exchange.send_counts, exchange.send_offsets);
@@ -906,6 +926,10 @@ private:
     Mpi::Alltoallv(receive_answers.data(), receive_answer_counts.data(),
                    receive_answer_offsets.data(), exchange.answers.data(),
                    send_answer_counts.data(), send_answer_offsets.data(), comm);
+    if (census)
+    {
+      PrintResponseMemoryCensusOfRss(comm, "after the first point-locator Alltoallv");
+    }
     return exchange;
   }
 
@@ -22951,6 +22975,493 @@ struct SurfaceResponseGeometry::Impl
   mutable std::optional<DomainBoundaryContainmentCache> containment;
 };
 
+// Lane fix-response-memory round 2 (decision 1469 (1) (i)): THE MEMORY CENSUS. Under
+// PALACE_RESPONSE_MEMORY_CENSUS=1 the heap bytes of every member of the response
+// machinery (SurfaceResponseOperator, SurfaceResponseGeometry::Impl, the identification's
+// ResponseCorrectionData) are printed on the root, min / max / sum over the ranks, beside
+// the ranks' current RSS (and, under glibc, the allocator's in-use and free-but-retained
+// bytes). It READS the members only: no state, no result and no output file changes; the
+// reductions are of the census values alone.
+bool ResponseMemoryCensusEnabled()
+{
+  const char *census = std::getenv("PALACE_RESPONSE_MEMORY_CENSUS");
+  return census && std::string_view(census) == "1";
+}
+
+struct ResponseMemoryCensus
+{
+  using Entries = std::vector<std::pair<std::string, double>>;
+  using Operator = SurfaceResponseOperator;
+
+  // Heap bytes owned by a value beyond its own sizeof (containers: their buffers and their
+  // elements' heap bytes; map / set nodes at the element size + a 32-byte node header;
+  // unordered nodes + 16 bytes and 8 bytes per bucket). A type with heap storage and no
+  // overload below fails to compile (no silent undercount).
+  template <typename T>
+  static double Heap(const T &)
+  {
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "ResponseMemoryCensus::Heap: this member type owns heap storage and "
+                  "needs its own overload");
+    return 0.0;
+  }
+  static double Heap(const std::string &s)
+  {
+    const char *data = s.data();
+    const char *self = reinterpret_cast<const char *>(&s);
+    return (data >= self && data < self + sizeof(s)) ? 0.0 : double(s.capacity() + 1);
+  }
+  template <typename T, typename A>
+  static double Heap(const std::vector<T, A> &v)
+  {
+    double bytes = double(v.capacity()) * double(sizeof(T));
+    if constexpr (!std::is_trivially_copyable_v<T>)
+    {
+      for (const auto &e : v)
+      {
+        bytes += Heap(e);
+      }
+    }
+    return bytes;
+  }
+  template <typename A>
+  static double Heap(const std::vector<bool, A> &v)
+  {
+    return double(v.capacity()) / 8.0;
+  }
+  template <typename T, std::size_t N>
+  static double Heap(const std::array<T, N> &a)
+  {
+    double bytes = 0.0;
+    if constexpr (!std::is_trivially_copyable_v<T>)
+    {
+      for (const auto &e : a)
+      {
+        bytes += Heap(e);
+      }
+    }
+    return bytes;
+  }
+  template <typename A, typename B>
+  static double Heap(const std::pair<A, B> &p)
+  {
+    return Heap(p.first) + Heap(p.second);
+  }
+  template <typename T>
+  static double Heap(const std::optional<T> &o)
+  {
+    return o ? Heap(*o) : 0.0;
+  }
+  template <typename K, typename V, typename C, typename A>
+  static double Heap(const std::map<K, V, C, A> &m)
+  {
+    double bytes = double(m.size()) * double(sizeof(std::pair<const K, V>) + 32);
+    for (const auto &[k, v] : m)
+    {
+      bytes += Heap(k) + Heap(v);
+    }
+    return bytes;
+  }
+  template <typename K, typename V, typename H, typename E, typename A>
+  static double Heap(const std::unordered_map<K, V, H, E, A> &m)
+  {
+    double bytes = double(m.size()) * double(sizeof(std::pair<const K, V>) + 16) +
+                   double(m.bucket_count()) * 8.0;
+    for (const auto &[k, v] : m)
+    {
+      bytes += Heap(k) + Heap(v);
+    }
+    return bytes;
+  }
+  template <typename T, typename C, typename A>
+  static double Heap(const std::set<T, C, A> &s)
+  {
+    double bytes = double(s.size()) * double(sizeof(T) + 32);
+    for (const auto &e : s)
+    {
+      bytes += Heap(e);
+    }
+    return bytes;
+  }
+  static double Heap(const mfem::Vector &v)
+  {
+    return v.OwnsData() ? double(v.Capacity()) * double(sizeof(double)) : 0.0;
+  }
+  static double Heap(const mfem::DenseMatrix &m)
+  {
+    return double(m.Height()) * double(m.Width()) * double(sizeof(double));
+  }
+  template <typename T>
+  static double Heap(const mfem::Array<T> &a)
+  {
+    return double(a.Capacity()) * double(sizeof(T));
+  }
+  static double Heap(const nlohmann::json &j)
+  {
+    double bytes = 0.0;
+    if (j.is_object())
+    {
+      for (auto it = j.begin(); it != j.end(); ++it)
+      {
+        bytes += double(sizeof(std::string) + sizeof(nlohmann::json) + 32) +
+                 Heap(it.key()) + Heap(it.value());
+      }
+    }
+    else if (j.is_array())
+    {
+      bytes += double(j.size()) * double(sizeof(nlohmann::json));
+      for (const auto &e : j)
+      {
+        bytes += Heap(e);
+      }
+    }
+    else if (j.is_string())
+    {
+      bytes += double(sizeof(std::string)) + Heap(j.get_ref<const std::string &>());
+    }
+    return bytes;
+  }
+
+  // The configuration (the identification's output; configfile.hpp).
+  static double Heap(const ResponseCorrectionData::ControlFlipProbePieceData &d)
+  {
+    return Heap(d.model);
+  }
+  static double Heap(const ResponseCorrectionData::MagneticRulesData &d)
+  {
+    return Heap(d.conductor_consistency_tolerance_by_order);
+  }
+  static double Heap(const ResponseCorrectionData::LegacyContractAliasData &d)
+  {
+    return Heap(d.model) + Heap(d.key) + Heap(d.context_digest) + Heap(d.reason) +
+           Heap(d.features);
+  }
+  static double Heap(const ResponseCorrectionData::SpanCapAllowanceData &d)
+  {
+    return Heap(d.claims_signature) + Heap(d.label) + Heap(d.reason) + Heap(d.approval);
+  }
+  static double Heap(const ResponseCorrectionData::QuantumNearMatchData &d)
+  {
+    return Heap(d.model) + Heap(d.model_key) + Heap(d.feature_key) + Heap(d.features);
+  }
+  static double Heap(const ResponseCorrectionData::MirrorPlaneData &d)
+  {
+    return Heap(d.status);
+  }
+  static double Heap(const ResponseCorrectionData::MirrorArmTrimData &d)
+  {
+    return Heap(d.topology) + Heap(d.cells);
+  }
+  static double Heap(const ResponseCorrectionData::CornerArmTrimData &d)
+  {
+    return Heap(d.topology) + Heap(d.cells);
+  }
+  static double Heap(const ResponseCorrectionData::GeometryFallbackData &d)
+  {
+    return Heap(d.cls) + Heap(d.site) + Heap(d.reason) + Heap(d.what) + Heap(d.features) +
+           Heap(d.patches) + Heap(d.models) + Heap(d.interfaces) + Heap(d.topology);
+  }
+  static double Heap(const ResponseCorrectionData::CornerArmExtensionData &d)
+  {
+    return Heap(d.topology) + Heap(d.arms) + Heap(d.cells);
+  }
+  static double Heap(const ResponseCorrectionData::UncoveredPortionData &d)
+  {
+    return Heap(d.topology);
+  }
+  static double Heap(const ResponseModelData::OpenContourPathData &d)
+  {
+    return Heap(d.indices);
+  }
+  static double Heap(const ResponseModelData::BlendSourceData &d)
+  {
+    return Heap(d.fabricated_matrix) + Heap(d.thin_matrix) +
+           Heap(d.fabricated_surface_matrix) + Heap(d.thin_surface_matrix) +
+           Heap(d.magnetic_fabricated_matrix) + Heap(d.magnetic_thin_matrix);
+  }
+  static double Heap(const ResponseModelData::MagneticLeafData &d)
+  {
+    return Heap(d.fabricated_matrix) + Heap(d.thin_matrix) + Heap(d.catalog_refusal);
+  }
+  static double Heap(const ResponseModelData &d)
+  {
+    return Heap(d.name) + Heap(d.topology) + Heap(d.fabricated_matrix) +
+           Heap(d.thin_matrix) + Heap(d.fabricated_surface_matrix) +
+           Heap(d.thin_surface_matrix) + Heap(d.basis_points) + Heap(d.trace_vertices) +
+           Heap(d.trace_triangles) + Heap(d.constructed_basis_points) +
+           Heap(d.constructed_trace_vertices) + Heap(d.constructed_trace_triangles) +
+           Heap(d.contour_groups) + Heap(d.zero_trace_indices) +
+           Heap(d.consistent_mortar_vertices) + Heap(d.consistent_mortar_rule) +
+           Heap(d.open_contour_paths) + Heap(d.interfaces) + Heap(d.blend) +
+           Heap(d.magnetic);
+  }
+  static double Heap(const ResponsePatchData::Provenance &d)
+  {
+    return Heap(d.claims) + Heap(d.chain) + Heap(d.foreign) + Heap(d.raw_claims) +
+           Heap(d.mirror_edge_weights) + Heap(d.probe_snaps);
+  }
+  static double Heap(const ResponsePatchData &d)
+  {
+    return Heap(d.conductor_references) + Heap(d.conductor_probe_edges) +
+           Heap(d.conductor_probes) + Heap(d.maxwell_conductor_anchors) +
+           Heap(d.provenance);
+  }
+  static void Add(Entries &entries, const std::string &prefix,
+                  const ResponseCorrectionData &d)
+  {
+    auto add = [&](const char *name, double bytes)
+    { entries.emplace_back(prefix + name, bytes); };
+    add("library", Heap(d.library));
+    add("target_interfaces", Heap(d.target_interfaces));
+    add("control_flip_probe_pieces", Heap(d.control_flip_probe_pieces));
+    add("magnetic_rules", Heap(d.magnetic_rules));
+    add("legacy_contract", Heap(d.legacy_contract));
+    add("span_cap_allowances", Heap(d.span_cap_allowances));
+    add("quantum_near_match", Heap(d.quantum_near_match));
+    add("mirror_planes", Heap(d.mirror_planes));
+    add("mirror_band", Heap(d.mirror_band));
+    add("mirror_unmerged_portions", Heap(d.mirror_unmerged_portions));
+    add("mirror_arm_trims", Heap(d.mirror_arm_trims));
+    add("corner_arm_trims", Heap(d.corner_arm_trims));
+    add("geometry_fallbacks", Heap(d.geometry_fallbacks));
+    add("geometry_fallback_interface_lengths", Heap(d.geometry_fallback_interface_lengths));
+    add("geometry_fallback_interface_types", Heap(d.geometry_fallback_interface_types));
+    add("corner_arm_extensions", Heap(d.corner_arm_extensions));
+    add("uncovered_portions", Heap(d.uncovered_portions));
+    add("exclusion_portions", Heap(d.exclusion_portions));
+    add("unpatched_pair_portions", Heap(d.unpatched_pair_portions));
+    add("geometry_fallback_cell_portions", Heap(d.geometry_fallback_cell_portions));
+    add("models (library model data: the configuration's model records)", Heap(d.models));
+    add("patches (I-10)", Heap(d.patches));
+    entries.emplace_back(prefix + "patches count", double(d.patches.size()));
+  }
+
+  // The geometry's residence (Impl) and its derived records.
+  static double Heap(const AutomaticResponseDiagnostics &d)
+  {
+    return Heap(d.selected_length_by_interface) + Heap(d.matched_length_by_interface) +
+           Heap(d.matched_corner_neighborhood_length_by_interface);
+  }
+  static double Heap(const DomainBoundaryExclusion &d) { return Heap(d.reason); }
+  static double Heap(const DomainBoundaryExclusions &d)
+  {
+    return Heap(d.patches) + Heap(d.mirrored) + Heap(d.unmerged_reach) +
+           Heap(d.phase_times);
+  }
+  static double Heap(const DomainBoundaryContainmentCache &d)
+  {
+    return Heap(d.signature) + Heap(d.exclusions);
+  }
+  static void Add(Entries &entries, const SurfaceResponseGeometry &geometry)
+  {
+    const auto &impl = *geometry.impl;
+    Add(entries, "geometry.config.", impl.config);
+    entries.emplace_back("geometry.diagnostics", Heap(impl.diagnostics));
+    entries.emplace_back("geometry.statistics (json)", Heap(impl.statistics));
+    entries.emplace_back("geometry.containment (I-10e: signature + ledger)",
+                         Heap(impl.containment));
+  }
+
+  // The operator's members (surfaceresponseoperator.hpp).
+  static double Heap(const Operator::MagneticLeafStatus &d)
+  {
+    return Heap(d.status) + Heap(d.rule) + Heap(d.reason);
+  }
+  static double Heap(const Operator::OpenContourPath &d) { return Heap(d.indices); }
+  static double Heap(const Operator::ResponseModel &d)
+  {
+    return Heap(d.name) + Heap(d.topology) + Heap(d.fabricated_domain) +
+           Heap(d.thin_domain) + Heap(d.domain_defect) + Heap(d.fixed_flux_transform) +
+           Heap(d.fixed_flux_domain_defect) + Heap(d.fabricated_surfaces) +
+           Heap(d.surface_defects) + Heap(d.contour_groups) + Heap(d.zero_trace_indices) +
+           Heap(d.open_contour_paths) + Heap(d.hat_rim_knots) +
+           Heap(d.ring_slave_vertices) + Heap(d.mortar_segments) +
+           Heap(d.consistent_mortar_vertices) + Heap(d.consistent_mortar_rule) +
+           Heap(d.mortar_vertices) + Heap(d.mortar_triangles) +
+           Heap(d.mortar_mass_inverse) + Heap(d.mortar_constant_load) +
+           Heap(d.mortar_conductor_loads) + Heap(d.plane_conductor_vertices) +
+           Heap(d.off_plane_conductor_vertices) + Heap(d.adjacent_free_vertices) +
+           Heap(d.maxwell_probe_points) + Heap(d.maxwell_probe_conductors) +
+           Heap(d.maxwell_probe_vertices) + Heap(d.magnetic_domain_defect) +
+           Heap(d.magnetic_thin_domain) + Heap(d.magnetic_status);
+  }
+  static double Heap(const Operator::Patch &d)
+  {
+    return Heap(d.probe_points) + Heap(d.conductor_probe_edges) + Heap(d.conductor_probes) +
+           Heap(d.probe_snaps);
+  }
+  static double Heap(const ExcludedPatchPortions &d)
+  {
+    return Heap(d.portions) + Heap(d.patches) + Heap(d.translational) +
+           Heap(d.feature_portions);
+  }
+  static double Heap(const UncoveredSpatialSupportClip &d) { return Heap(d.topology); }
+  static double Heap(const UncoveredSpatialSupportClipping &d)
+  {
+    return Heap(d.clips) + Heap(d.removed_by_feature);
+  }
+  static double Heap(const SpatialClusterPriorityExclusions::Entry &d)
+  {
+    return Heap(d.window_portions) + Heap(d.outside_portions);
+  }
+  static double Heap(const SpatialClusterPriorityExclusions &d)
+  {
+    return Heap(d.entries) + Heap(d.portions);
+  }
+  static double Heap(const ModelRawClaimPortions::GroupMember &d) { return Heap(d.label); }
+  static double Heap(const ModelRawClaimPortions &d)
+  {
+    return Heap(d.portions) + Heap(d.members);
+  }
+  // A vector whose elements' own heap storage is not walked (the Maxwell-only members:
+  // empty on the electrostatic path): the buffer only, named "(shallow)".
+  template <typename T>
+  static double Shallow(const std::vector<T> &v)
+  {
+    return double(v.capacity()) * double(sizeof(T));
+  }
+  static void Add(Entries &entries, const Operator &op)
+  {
+    auto add = [&](const char *name, double bytes) { entries.emplace_back(name, bytes); };
+    add("op.models (library model data: the loaded matrices)", Heap(op.models));
+    add("op.dbc_tdof_list", Heap(op.dbc_tdof_list));
+    add("op.patches", Heap(op.patches));
+    add("op.patches count", double(op.patches.size()));
+    add("op.diagnostic_patches", Heap(op.diagnostic_patches));
+    add("op.diagnostic_entry_models + features",
+        Heap(op.diagnostic_entry_models) + Heap(op.diagnostic_entry_features));
+    add("op.patch_assignments", Heap(op.patch_assignments));
+    add("op.point communication counts / offsets",
+        Heap(op.point_send_counts) + Heap(op.point_send_offsets) +
+            Heap(op.point_receive_counts) + Heap(op.point_receive_offsets) +
+            Heap(op.point_send_counts_pair) + Heap(op.point_send_offsets_pair) +
+            Heap(op.point_receive_counts_pair) + Heap(op.point_receive_offsets_pair));
+    add("op.point_send_indices", Heap(op.point_send_indices));
+    add("op.point_dof_offsets + point_dofs",
+        Heap(op.point_dof_offsets) + Heap(op.point_dofs));
+    add("op.point_weights + magnetic_point_weights",
+        Heap(op.point_weights) + Heap(op.magnetic_point_weights));
+    add("op.magnetic_probe_rules", Heap(op.magnetic_probe_rules));
+    add("op.control_flipped_probe_records", Heap(op.control_flipped_probe_records));
+    add("op.magnetic_model_patch_counts", Heap(op.magnetic_model_patch_counts));
+    add("op.maxwell_contours + conductor_anchors",
+        Heap(op.maxwell_contours) + Heap(op.maxwell_conductor_anchors));
+    add("op.maxwell lines / paths / probes / fits / gate records (shallow)",
+        Shallow(op.maxwell_lines) + Shallow(op.maxwell_paths) +
+            Shallow(op.maxwell_conductor_paths) + Heap(op.maxwell_patch_paths) +
+            Shallow(op.maxwell_probes) + Shallow(op.maxwell_loop_fits) +
+            Shallow(op.maxwell_magnetic_loop_fits) + Heap(op.maxwell_line_lengths) +
+            Shallow(op.magnetic_gate_records));
+    add("op.patch_boxes", Heap(op.patch_boxes));
+    add("op.maxwell_patch_excluded_portions", Heap(op.maxwell_patch_excluded_portions));
+    add("op.maxwell_patch_raw_claims (I-11)", Heap(op.maxwell_patch_raw_claims));
+    add("op.fraction maps by interface",
+        Heap(op.matched_length_fraction_by_interface) +
+            Heap(op.corner_neighborhood_fraction_by_interface));
+    add("op.work vectors (x_free .. mortar_coefficients)",
+        Heap(op.x_free) + Heap(op.local_x) + Heap(op.local_x_imag) + Heap(op.local_y) +
+            Heap(op.trace) + Heap(op.response) + Heap(op.correction) +
+            Heap(op.mortar_load) + Heap(op.mortar_coefficients));
+    add("op.point owned / packed values",
+        Heap(op.point_owned_values) + Heap(op.point_packed_values) +
+            Heap(op.point_owned_values_pair) + Heap(op.point_packed_values_pair));
+    add("op.maxwell work vectors",
+        Heap(op.maxwell_point_values) + Heap(op.maxwell_trace_adjoint) +
+            Heap(op.maxwell_path_adjoint) + Heap(op.maxwell_fit_adjoint) +
+            Heap(op.maxwell_fit_line_adjoint) + Heap(op.maxwell_loop_workspace));
+    add("op.automatic_statistics (json)", Heap(op.automatic_statistics));
+    add("op.ownership_diagnostics (json; I-1 Records on the root)",
+        Heap(op.ownership_diagnostics));
+    add("op.geometry_fallbacks", Heap(op.geometry_fallbacks));
+    add("op.geometry_fallback maps", Heap(op.geometry_fallback_interface_lengths) +
+                                         Heap(op.geometry_fallback_interface_types) +
+                                         Heap(op.geometry_fallback_energy_shares));
+    add("op.geometry_fallback_portions", Heap(op.geometry_fallback_portions));
+    add("op.uncovered_portions", Heap(op.uncovered_portions));
+    add("op.uncovered_spatial_support_clipping",
+        Heap(op.uncovered_spatial_support_clipping));
+    add("op.domain_boundary_portions", Heap(op.domain_boundary_portions));
+    add("op.exclusion_portions", Heap(op.exclusion_portions));
+    add("op.unprobed_model_portions", Heap(op.unprobed_model_portions));
+    add("op.spatial_cluster_priority", Heap(op.spatial_cluster_priority));
+    add("op.conductor_consistency_claims (I-11)", Heap(op.conductor_consistency_claims));
+    add("op.conductor_consistency_portions", Heap(op.conductor_consistency_portions));
+    add("op.model_raw_claim_portions (I-11b)", Heap(op.model_raw_claim_portions));
+    add("op.mirror_planes", Heap(op.mirror_planes));
+  }
+
+  // The ranks' current RSS and (glibc) the allocator's in-use / free-but-retained bytes.
+  static void AddProcess(Entries &entries)
+  {
+    entries.emplace_back("process RSS", double(memory_reporting::GetCurrentMemory()));
+#if defined(__GLIBC__)
+    const struct mallinfo2 info = mallinfo2();
+    entries.emplace_back("malloc in use (uordblks + hblkhd)",
+                         double(info.uordblks) + double(info.hblkhd));
+    entries.emplace_back("malloc free retained in the arenas (fordblks)",
+                         double(info.fordblks));
+#endif
+  }
+
+  // Collective: min / max / sum over the ranks of every entry, printed on the root.
+  static void Print(MPI_Comm comm, const std::string &instant, const Entries &entries)
+  {
+    const std::size_t n = entries.size();
+    std::vector<double> mins(n), maxs(n), sums(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+      mins[i] = maxs[i] = sums[i] = entries[i].second;
+    }
+    Mpi::GlobalMin(static_cast<int>(n), mins.data(), comm);
+    Mpi::GlobalMax(static_cast<int>(n), maxs.data(), comm);
+    Mpi::GlobalSum(static_cast<int>(n), sums.data(), comm);
+    Mpi::Print(comm, " Response memory census [{}] ({:d} ranks; bytes per rank):\n",
+               instant, Mpi::Size(comm));
+    for (std::size_t i = 0; i < n; i++)
+    {
+      Mpi::Print(comm, "  census [{}] {}: min {:.0f} max {:.0f} sum {:.0f}\n", instant,
+                 entries[i].first, mins[i], maxs[i], sums[i]);
+    }
+  }
+};
+
+void PrintResponseMemoryCensusOfData(MPI_Comm comm, const std::string &instant,
+                                     const ResponseCorrectionData &data)
+{
+  if (!ResponseMemoryCensusEnabled())
+  {
+    return;
+  }
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::Add(entries, "config.", data);
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(comm, instant, entries);
+}
+
+void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant)
+{
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(comm, instant, entries);
+}
+
+void SurfaceResponseOperator::PrintResponseMemoryCensus(
+    const std::string &instant, const SurfaceResponseGeometry *geometry) const
+{
+  if (!ResponseMemoryCensusEnabled())
+  {
+    return;
+  }
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::Add(entries, *this);
+  if (geometry)
+  {
+    ResponseMemoryCensus::Add(entries, *geometry);
+  }
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(fespace.GetComm(), instant, entries);
+}
+
 // C6: a placed patch packed into doubles, EVERY field of ResponseCorrectionPatchData
 // (configfile.hpp) in declaration order, so that the unpacked patch equals the packed one
 // field for field (the unit case test-responsegeometry-residency.cpp populates every field
@@ -30185,6 +30696,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         automatic_config =
             BuildAutomaticResponseData(iodata, laplace_op, *request, &statistics);
         automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), statistics);
+        PrintResponseMemoryCensusOfData(fespace.GetComm(), "after the identification",
+                                        *automatic_config);
         if (geometry_cache)
         {
           MFEM_VERIFY(write_geometry_cache, "Response-geometry cache generation requires "
@@ -31599,6 +32112,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  PrintResponseMemoryCensus("after the construction", cached_geometry.get());
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -33203,6 +33717,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  PrintResponseMemoryCensus("after the construction (Maxwell)", cached_geometry.get());
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
