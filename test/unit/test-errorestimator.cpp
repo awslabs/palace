@@ -17,6 +17,8 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/perfstats.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -252,6 +254,46 @@ TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel][GP
   FiniteElementSpace l2_value_fespace(mesh, &l2_value_fec);
   CHECK_THROWS(CurlFluxErrorEstimator<Vector>(mat_op, l2_value_fespace, h1_fespaces,
                                               1.0e-14, 1000, 0, false));
+}
+
+// The flux projection of an estimator with a two-level multigrid is a nested ("Estimator")
+// solver: its coarse solve is tallied once per V-cycle, without nested scopes.
+TEST_CASE("Nested multigrid coarse solve tally",
+          "[errorestimator][perfstats][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh =
+      LoadMesh(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/fichera-mixed-p2.mesh"));
+  const int dim = mesh.Dimension();
+  fem::DefaultIntegrationOrder::p_trial = 2;
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::EIGENMODE, mesh);
+  mfem::ND_FECollection nd_fec_1(1, dim), nd_fec_2(2, dim);
+  mfem::RT_FECollection rt_fec(1, dim);
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec_1));
+  nd_fespaces.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec_2));
+  FiniteElementSpace rt_fespace(mesh, &rt_fec);
+
+  BlockTimer::Reset();
+  CurlFluxErrorEstimator<Vector> estimator(mat_op, rt_fespace, nd_fespaces, 1.0e-8, 200, 0,
+                                           true);
+  Vector X(rt_fespace.GetTrueVSize());
+  X.UseDevice(true);
+  FillRandom(X, 7);
+  ErrorIndicator indicator;
+  estimator.AddErrorIndicator(X, 1.0, indicator);
+
+  const auto &reg = perf::detail::registry;
+  const auto &pc = reg.tallies[reg.tally_ids.at("Estimator/Preconditioner")];
+  const auto &coarse = reg.tallies[reg.tally_ids.at("Estimator/MG/Coarse")];
+  CHECK(pc.count > 0);
+  CHECK(coarse.count == pc.count);
+  CHECK(coarse.nested == 0);
+  CHECK(coarse.time <= pc.time);
+  BlockTimer::Reset();
 }
 
 }  // namespace palace

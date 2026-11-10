@@ -339,15 +339,12 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 {
   if (this->pc)
   {
-    // Nested solvers run without exclusive timers: tally their preconditioner and coarse
-    // solve instead (not on GPUs, where these points do not synchronize).
+    // Nested solvers run without exclusive timers: tally their preconditioner instead (not
+    // on GPUs, where these points do not synchronize). The multigrid's own tallies, set
+    // below, include its coarse solve (<role>/MG/Coarse).
     if (this->role != "Main" && !mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
     {
       const auto parent = perf::RoleParent(this->role);
-      if (auto *gmg = dynamic_cast<GeometricMultigridSolver<OperType> *>(this->pc.get()))
-      {
-        gmg->SetCoarseTally(perf::RegisterTally(this->role + "/MG/Coarse", parent));
-      }
       pc_tally = std::make_unique<TalliedSolver<OperType>>(
           *this->pc, perf::RegisterTally(this->role + "/Preconditioner", parent));
       this->ksp->SetPreconditioner(*pc_tally);
