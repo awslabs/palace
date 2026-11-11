@@ -4,6 +4,7 @@
 #include "rap.hpp"
 
 #include <array>
+#include <typeinfo>
 
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
@@ -33,6 +34,17 @@ ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
     diag_policy(DiagonalPolicy::DIAG_ONE), RAP(nullptr)
 {
   MFEM_VERIFY(A, "Cannot construct ParOperator from an empty matrix!");
+  // Owned square libCEED operators may apply small simplex leaves through their element
+  // matrices (CPU only, decided by the operator).
+  if (auto *ceed_A = dynamic_cast<ceed::Operator *>(data_A.get()))
+  {
+    if (&trial_fespace == &test_fespace &&
+        (typeid(*ceed_A) == typeid(ceed::Operator) ||
+         typeid(*ceed_A) == typeid(ceed::SymmetricOperator)))
+    {
+      ceed_A->UseElementAssembly();
+    }
+  }
 }
 
 ParOperator::ParOperator(std::unique_ptr<Operator> &&A,

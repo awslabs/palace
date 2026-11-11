@@ -39,6 +39,16 @@ protected:
   mutable Vector temp;
 
 public:
+  // Element matrices of leaves applied in place of their partial assembly in forward
+  // applications on CPUs, see UseElementAssembly.
+  struct ElementAssembly;
+  const ElementAssembly *GetElementAssembly() const { return ea.get(); }
+
+protected:
+  std::unique_ptr<ElementAssembly> ea;
+  void ElementAssemblyMult(const Vector &x, Vector &y, bool add) const;
+
+public:
   Operator(int h, int w);
   ~Operator() override;
 
@@ -53,6 +63,15 @@ public:
   void DestroyAssemblyData() const;
 
   void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
+
+  // For forward applications on a CPU, apply the dense element matrices of small simplex
+  // leaves instead of their partial assembly when that is cheaper for the given number of
+  // right hand sides per application. The transpose of a nonsymmetric operator, diagonal
+  // and full assembly keep using the partially assembled leaves. Requires a finalized
+  // square operator with a single CEED context. Returns whether any leaf is element
+  // assembled. The first call that element assembles leaves fixes the choice; later calls
+  // keep it.
+  bool UseElementAssembly(int num_rhs = 1);
 
   bool HasDofMultiplicity() const { return dof_multiplicity.Size() > 0; }
 
