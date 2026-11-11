@@ -757,6 +757,12 @@ public:
 // Decision 1469 (1) (i): the census's RSS read around the FIRST all-pairs exchange of the
 // point locator (the per-peer MPI state); defined with ResponseMemoryCensus below.
 void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant);
+// setupmem (decision 1546): the census INSIDE the patch build (BuildFeaturePatches; the
+// setup plateau before the placement): the configuration being built and the build's own
+// members (name, bytes or count); log only, collective, under the census switch.
+void PrintResponseMemoryCensusOfPatchBuild(
+    MPI_Comm comm, const std::string &instant, const ResponseCorrectionData &result,
+    const std::vector<std::pair<std::string, double>> &members);
 bool TakeFirstExchangeCensus(MPI_Comm comm)
 {
   static bool taken = false;
@@ -12361,7 +12367,7 @@ FeaturePatchSummary BuildFeaturePatches(
     const std::map<int, FeatureCornerMatch> &corner_matches = {},
     const std::vector<EdgeSegment3D> &image_segments = {},
     const std::vector<MirrorPlane> &mirror_planes = {},
-    GeometryFallbackLedger *geometry_ledger = nullptr)
+    GeometryFallbackLedger *geometry_ledger = nullptr, MPI_Comm census_comm = MPI_COMM_NULL)
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -14611,6 +14617,32 @@ FeaturePatchSummary BuildFeaturePatches(
       summary.first_order_missing_features++;
     }
   }
+  // setupmem (decision 1546): two log-only census instants inside the patch build (the
+  // setup plateau before the placement), under PALACE_RESPONSE_MEMORY_CENSUS; the
+  // identification's and the segments' vectors by their own storage only (shallow).
+  auto PatchBuildCensus = [&](const char *instant)
+  {
+    if (census_comm == MPI_COMM_NULL)
+    {
+      return;
+    }
+    const std::vector<std::pair<std::string, double>> members = {
+        {"patch build: identification features (shallow)",
+         double(identification.features.capacity() *
+                sizeof(decltype(identification.features)::value_type))},
+        {"patch build: identification features count",
+         double(identification.features.size())},
+        {"patch build: framed + image segments (shallow)",
+         double((framed_segments.capacity() + image_segments.capacity()) *
+                sizeof(EdgeSegment3D))},
+        {"patch build: trace meshes count", double(trace_meshes.size())},
+        {"patch build: nearest-foot indices count", double(foot_indices.size())},
+        {"patch build: deferred placements count",
+         double(deferred_r9_pairs.size() + deferred_placements.size())},
+        {"patch build: runtime models count", double(runtime_models.size())}};
+    PrintResponseMemoryCensusOfPatchBuild(census_comm, instant, result, members);
+  };
+  PatchBuildCensus("inside the patch build (features placed, before the deferred ones)");
   for (const auto &place : deferred_r9_pairs)
   {
     place();
@@ -14705,6 +14737,7 @@ FeaturePatchSummary BuildFeaturePatches(
   // claims clipped at the exit.
   FillVertexRawClaims(identification, result.patches, result.corner_arm_trims,
                       result.corner_arm_extensions, result.mirror_arm_trims, R);
+  PatchBuildCensus("inside the patch build (at its end)");
   return summary;
 }
 
@@ -15909,11 +15942,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         result.geometry_fallback_interface_types[target] = type;
       }
     }
-    const auto summary =
-        BuildFeaturePatches(library, identification, global_segments, quadrature,
-                            requirements ? *requirements : law_describer, diagnostics,
-                            result, coordinate_scale, curved_matches, corner_matches,
-                            mirror_band.image_frames, mirror_band.planes, &geometry_ledger);
+    const auto summary = BuildFeaturePatches(
+        library, identification, global_segments, quadrature,
+        requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
+        curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes,
+        &geometry_ledger, mesh.GetComm());
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     if (requirements && !summary.unpatched_pairs.empty())
     {
@@ -23764,6 +23797,21 @@ void PrintResponseMemoryCensusOfData(MPI_Comm comm, const std::string &instant,
 void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant)
 {
   ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(comm, instant, entries);
+}
+
+void PrintResponseMemoryCensusOfPatchBuild(
+    MPI_Comm comm, const std::string &instant, const ResponseCorrectionData &result,
+    const std::vector<std::pair<std::string, double>> &members)
+{
+  if (!ResponseMemoryCensusEnabled(comm))
+  {
+    return;
+  }
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::Add(entries, "config.", result);
+  entries.insert(entries.end(), members.begin(), members.end());
   ResponseMemoryCensus::AddProcess(entries);
   ResponseMemoryCensus::Print(comm, instant, entries);
 }
