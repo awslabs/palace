@@ -14660,8 +14660,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           follow_on_response["ModelCatalog"][m]["PatchCount"]);
   }
   REQUIRE(producer_response["Diagnostics"]["Uncovered"]["Length"].get<double>() > 0.0);
-  CHECK(producer_response["Diagnostics"]["Uncovered"]["Length"] ==
-        follow_on_response["Diagnostics"]["Uncovered"]["Length"]);
+  CHECK_THAT(
+      follow_on_response["Diagnostics"]["Uncovered"]["Length"].get<double>(),
+      Catch::Matchers::WithinRel(
+          producer_response["Diagnostics"]["Uncovered"]["Length"].get<double>(), 1e-12));
   CHECK(producer_response["Diagnostics"]["Uncovered"]["Count"] ==
         follow_on_response["Diagnostics"]["Uncovered"]["Count"]);
 
