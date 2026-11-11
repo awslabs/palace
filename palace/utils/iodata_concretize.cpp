@@ -246,14 +246,35 @@ void ConcretizePML(const config::PMLData &pml, json &j_pml)
   // used) when it applies to all axes.
   const bool computed_sigma_max =
       std::ranges::all_of(pml.sigma_max, [](double s) { return s < 0.0; });
-  ApplyEntries(j_pml, {{"Order", pml.order},
-                       {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max)
-                                    : pml.sigma_auto    ? json("Auto")
-                                                        : json(nullptr)},
-                       {"KappaMax", pml.kappa_max},
-                       {"AlphaMax", pml.alpha_max},
-                       {"FrequencyDependent", pml.frequency_dependent},
-                       {"AllowRefinement", pml.allow_refinement}});
+  if (pml.IsExtruded())
+  {
+    // config["Boundaries"]["PML"], with scalar parameters for the direction of the rays.
+    ApplyEntries(j_pml, {{"Layers", pml.extrusion.layers},
+                         {"Order", pml.order},
+                         {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max[0])
+                                      : pml.sigma_auto    ? json("Auto")
+                                                          : json(nullptr)},
+                         {"KappaMax", pml.kappa_max[0]},
+                         {"AlphaMax", pml.alpha_max[0]},
+                         {"FrequencyDependent", pml.frequency_dependent}});
+    // The core in the form it was given (a point or a segment), or the default.
+    const auto &center = pml.extrusion.center;
+    if (pml.extrusion.has_center)
+    {
+      j_pml["Center"] = (center[0] == center[1]) ? json(center[0]) : json(center);
+    }
+  }
+  else
+  {
+    ApplyEntries(j_pml, {{"Order", pml.order},
+                         {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max)
+                                      : pml.sigma_auto    ? json("Auto")
+                                                          : json(nullptr)},
+                         {"KappaMax", pml.kappa_max},
+                         {"AlphaMax", pml.alpha_max},
+                         {"FrequencyDependent", pml.frequency_dependent},
+                         {"AllowRefinement", pml.allow_refinement}});
+  }
   if (!pml.sigma_auto)
   {
     Concretize(j_pml, "ReflectionTarget", pml.reflection_target);
@@ -296,8 +317,14 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
   }
 }
 
-void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
+void ConcretizeBoundaries(const config::BoundaryData &boundaries,
+                          const config::DomainData &domains, json &j_boundaries)
 {
+  // Extruded PML, the last PML block.
+  if (j_boundaries.contains("PML") && !domains.pml.empty())
+  {
+    ConcretizePML(domains.pml.back(), j_boundaries["PML"]);
+  }
 
   // Absorbing (farfield) boundary. Only touch it if the user declared it.
   if (j_boundaries.contains("Absorbing"))
@@ -597,7 +624,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
 
   if (config.contains("Boundaries"))
   {
-    ConcretizeBoundaries(iodata.boundaries, config["Boundaries"]);
+    ConcretizeBoundaries(iodata.boundaries, iodata.domains, config["Boundaries"]);
   }
 
   return config;

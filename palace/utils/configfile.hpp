@@ -242,7 +242,9 @@ public:
 
 // PML configuration (the "PML" object of config["Domains"]): the domain attributes of the
 // PML regions, whose materials define the background material properties, and the
-// coordinate stretch, the same in all PML regions.
+// coordinate stretch, the same in all PML regions. For config["Boundaries"]["PML"]
+// (extruded), the PML regions are extruded from boundaries of the mesh instead (see
+// mesh::ExtrudePML), and this is one more block.
 struct PMLData
 {
 public:
@@ -339,7 +341,7 @@ public:
   bool allow_refinement = false;
 
   PMLData() = default;
-  PMLData(const json &pml);
+  PMLData(const json &pml, bool extruded = false);
 };
 
 struct MaterialData

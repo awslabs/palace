@@ -211,6 +211,42 @@ PML regions, which restores the convergence of the multigrid preconditioner with
 Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
 STRUMPACK, or MUMPS) and AMS is not supported with PML regions.
 
+### Extruded perfectly matched layer
+
+Instead of meshing the layer, *Palace* can extrude it from farfield boundaries of the mesh,
+with [`config["Boundaries"]["PML"]`](../config/reference.md#config-boundaries-pml), for
+example in place of the `"Absorbing"` boundary on the outer sphere of the
+[antenna example](../examples/antenna.md):
+
+```json
+"Boundaries":
+{
+  "PML": { "Attributes": [4], "Thickness": 1.0, "Layers": 4 }
+}
+```
+
+Each geometry node of the boundary moves along its ray from its closest point on a core, by
+default the center of the bounding box of the boundary, or the point or the segment
+`"Center"`, so that each face becomes a column of `"Layers"` prisms (triangles) or hexahedra
+(quadrilaterals), curved on curved meshes. The coordinates are stretched along the rays,
+with the same parameters as `config["Domains"]["PML"]` at the depth into the layer: on a
+sphere, this is the spherical PML. Every face of the boundary must face its closest point on
+the core. Flat boundaries are best terminated by the Cartesian PML of
+`config["Domains"]["PML"]`, since the rays from a point or a segment are not normal to a
+flat face.
+
+The extruded elements take the material of the elements below them, and the other boundaries
+through the edges of the extruded boundary, such as a ground plane, extend through the
+layer. The outer boundary of the layer is PEC, unless a boundary condition is given for its
+`"BackAttribute"`. The extruded boundary becomes an interior boundary, whose attribute can
+still be used for postprocessing. For a layered medium which reaches the boundary, such as a
+substrate, a segment `"Center"` normal to the layers and spanning all of the layers which
+reach the boundary keeps each layer in its plane through the PML.
+
+The extruded layer cannot be refined: parallel uniform and adaptive mesh refinement are not
+supported (`"SerialUniformLevels"` refines the mesh before the extrusion), and neither are
+ports, periodic, or Floquet boundaries which touch the extruded boundary.
+
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
 [`examples/pml_layered`](https://github.com/awslabs/palace/blob/main/examples/pml_layered),

@@ -237,6 +237,10 @@
           "title": "Absorbing Boundary",
           "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections."
         },
+        "PML": {
+          "$ref": "#/$defs/BoundaryPML",
+          "title": "Extruded Perfectly Matched Layer"
+        },
         "Conductivity": {
           "type": "array",
           "description": "Array of finite conductivity surface impedance boundaries. Models the effect of a boundary with non-infinite conductivity for conductors with thickness much larger than the skin depth. Only available for frequency domain driven and eigenmode simulations.",
@@ -960,6 +964,26 @@
         }
       ]
     },
+    "PointOrSegment": {
+      "title": "Point or Segment",
+      "description": "A point `[x, y, z]`, or the segment `[[x1, y1, z1], [x2, y2, z2]]` between two points.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Vector3",
+          "title": "Point"
+        },
+        {
+          "type": "array",
+          "title": "Segment",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Vector3"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      ]
+    },
     "DipoleDirection": {
       "type": "string",
       "enum": [
@@ -1177,6 +1201,100 @@
           "minimum": 1,
           "maximum": 2,
           "default": 1,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "BoundaryPML": {
+      "type": "object",
+      "title": "Extruded Perfectly Matched Layer",
+      "description": "Perfectly matched layer (PML) extruded from farfield boundaries, for 3D frequency domain driven and eigenmode simulations, instead of meshing the PML regions of `config[\"Domains\"][\"PML\"]`. The geometry nodes of each face of the boundaries move along their rays from their closest points on a core, the center of the bounding box of the boundaries or the point or segment `\"Center\"`, so that each triangle becomes a column of `\"Layers\"` prisms and each quadrilateral one of hexahedra, curved on curved meshes. Each extruded element takes the material of the element below it, so that materials which reach the boundaries continue through the layer. The coordinates are stretched along the rays, with the same parameters as `config[\"Domains\"][\"PML\"]` at the depth into the layer. The boundaries become interior boundaries, whose attributes can still be used for postprocessing, the other boundaries through their edges extend through the layer with their attributes, and the outer surface of the layer is PEC by default. Every face of the boundaries must face its closest point on the core, and ports, periodic, and Floquet boundaries must not touch them. Not available with parallel uniform or adaptive mesh refinement.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes",
+        "Thickness"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes of the exterior boundaries to extrude the layer from."
+        },
+        "Thickness": {
+          "type": "number",
+          "description": "Thickness of the layer along the rays, in mesh length units.",
+          "exclusiveMinimum": 0
+        },
+        "Layers": {
+          "type": "integer",
+          "description": "Number of layers of elements across the thickness of the layer.",
+          "minimum": 1,
+          "default": 4
+        },
+        "Center": {
+          "$ref": "#/$defs/PointOrSegment",
+          "title": "Center",
+          "description": "Core of the rays of the extrusion, which start from the closest point of each point of the boundaries on it, in mesh length units: a point `[x, y, z]`, or the segment `[[x1, y1, z1], [x2, y2, z2]]` between two different points. Defaults to the center of the bounding box of the boundaries. For a layered medium which reaches the boundaries, such as a substrate, a segment normal to the layers which spans all of the layers reaching the boundaries keeps each layer in its plane through the PML.",
+          "x-palace-advanced": true
+        },
+        "BackAttribute": {
+          "type": "integer",
+          "description": "Boundary attribute of the outer surface of the layer, which is PEC unless another boundary condition is given for it. Defaults to one more than the largest boundary attribute of the mesh.",
+          "exclusiveMinimum": 0,
+          "x-palace-advanced": true
+        },
+        "Order": {
+          "type": "integer",
+          "description": "Polynomial grading order of the PML profiles with depth into the layer, see `config[\"Domains\"][\"PML\"]`.",
+          "minimum": 2,
+          "default": 3,
+          "x-palace-advanced": true
+        },
+        "SigmaMax": {
+          "description": "Maximum PML conductivity at the outer edge of the layer, S/m, see `config[\"Domains\"][\"PML\"]`. `\"Auto\"`, `null`, or a negative value compute it from the size of the extruded elements across the layer.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": "Auto"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": "Auto",
+          "x-palace-advanced": true
+        },
+        "KappaMax": {
+          "type": "number",
+          "description": "Maximum real coordinate stretch at the outer edge of the layer, see `config[\"Domains\"][\"PML\"]`.",
+          "minimum": 1,
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "AlphaMax": {
+          "type": "number",
+          "description": "Maximum complex frequency shift, GHz, see `config[\"Domains\"][\"PML\"]`. Requires `\"FrequencyDependent\"`.",
+          "minimum": 0,
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "ReflectionTarget": {
+          "type": "number",
+          "description": "Target theoretical reflection coefficient at normal incidence, from which `\"SigmaMax\"` is computed if specified, see `config[\"Domains\"][\"PML\"]`.",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "FrequencyDependent": {
+          "type": "boolean",
+          "description": "Evaluate the stretch at the solve frequency rather than at `\"ReferenceFrequency\"`, see `config[\"Domains\"][\"PML\"]`.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "ReferenceFrequency": {
+          "type": "number",
+          "description": "Frequency at which the stretch is evaluated when `\"FrequencyDependent\"` is `false`, GHz, see `config[\"Domains\"][\"PML\"]`.",
+          "exclusiveMinimum": 0,
           "x-palace-advanced": true
         }
       }

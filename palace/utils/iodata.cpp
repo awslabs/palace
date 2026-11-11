@@ -262,6 +262,11 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   MFEM_VERIFY(boundaries_it != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
   boundaries = config::BoundaryData(*boundaries_it);
+  if (auto pml_it = boundaries_it->find("PML"); pml_it != boundaries_it->end())
+  {
+    // The PML extruded from boundaries is the last PML block.
+    domains.pml.emplace_back(*pml_it, true);
+  }
   if (auto err = config::Validate(boundaries))
   {
     MFEM_ABORT("Configuration file validation failed!\n  " << *err);
@@ -576,6 +581,33 @@ void IoData::CheckConfiguration()
                        [](const auto &data) { return data.two_sided; }),
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
+
+  // The extruded PML of config["Boundaries"]["PML"] is built on the serial mesh, and later
+  // steps cannot refine it. Its boundary becomes an interior boundary, between the physical
+  // region and the layer.
+  for (const auto &pml : domains.pml)
+  {
+    if (!pml.IsExtruded())
+    {
+      continue;
+    }
+    MFEM_VERIFY(problem.type == ProblemType::DRIVEN ||
+                    problem.type == ProblemType::EIGENMODE,
+                "config[\"Boundaries\"][\"PML\"] is only available for driven and "
+                "eigenmode simulations!");
+    MFEM_VERIFY(model.refinement.uniform_ref_levels == 0 && model.refinement.max_it == 0,
+                "config[\"Boundaries\"][\"PML\"] does not support parallel uniform or "
+                "adaptive mesh refinement, which would refine the extruded layer "
+                "(\"SerialUniformLevels\" refines the mesh before the extrusion)!");
+    for (auto attr : pml.extrusion.attributes)
+    {
+      MFEM_VERIFY(!std::ranges::binary_search(boundaries.attributes, attr),
+                  "Boundary attribute "
+                      << attr
+                      << " of config[\"Boundaries\"][\"PML\"] cannot have "
+                         "another boundary condition!");
+    }
+  }
 
   for (auto &pml : domains.pml)
   {

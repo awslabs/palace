@@ -355,14 +355,59 @@ void ParseScalarOrArray3(const json &pml, const std::string &key,
 
 }  // namespace
 
-PMLData::PMLData(const json &pml)
+PMLData::PMLData(const json &pml, bool extruded)
 {
-  attributes = pml.at("Attributes").get<std::vector<int>>();  // Required
+  if (extruded)
+  {
+    // The boundary to extrude the PML regions from, and their geometry.
+    auto &ex = extrusion;
+    ex.attributes = pml.at("Attributes").get<std::vector<int>>();  // Required
+    std::ranges::sort(ex.attributes);
+    ex.attributes.erase(std::ranges::unique(ex.attributes).begin(), ex.attributes.end());
+    MFEM_VERIFY(!ex.attributes.empty(), "\"PML.Attributes\" must not be empty!");
+    ex.thickness = pml.at("Thickness").get<double>();  // Required
+    MFEM_VERIFY(ex.thickness > 0.0, "\"PML.Thickness\" must be positive!");
+    ex.layers = pml.value("Layers", ex.layers);
+    MFEM_VERIFY(ex.layers > 0, "\"PML.Layers\" must be positive!");
+    if (auto it = pml.find("Center"); it != pml.end())
+    {
+      // A point [x, y, z], or the segment [[x1, y1, z1], [x2, y2, z2]] between two points.
+      auto IsPoint = [](const json &x)
+      {
+        return x.is_array() && x.size() == 3 &&
+               std::ranges::all_of(x, [](const json &c) { return c.is_number(); });
+      };
+      const bool point = IsPoint(*it);
+      MFEM_VERIFY(point || (it->is_array() && it->size() == 2 && IsPoint((*it)[0]) &&
+                            IsPoint((*it)[1])),
+                  "\"PML.Center\" must be a point [x, y, z] or a segment [[x1, y1, z1], "
+                  "[x2, y2, z2]]!");
+      if (point)
+      {
+        ex.center[0] = ex.center[1] = it->get<std::array<double, 3>>();
+      }
+      else
+      {
+        ex.center = it->get<std::array<std::array<double, 3>, 2>>();
+        MFEM_VERIFY(ex.center[0] != ex.center[1],
+                    "\"PML.Center\" is a segment between two equal points, give the point "
+                    "[x, y, z] instead!");
+      }
+      ex.has_center = true;
+    }
+    ex.back_attribute = pml.value("BackAttribute", ex.back_attribute);
+    MFEM_VERIFY(!pml.contains("BackAttribute") || ex.back_attribute > 0,
+                "\"PML.BackAttribute\" must be positive!");
+  }
+  else
+  {
+    attributes = pml.at("Attributes").get<std::vector<int>>();  // Required
+  }
   std::ranges::sort(attributes);
   attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
 
-  const bool has_direction = pml.find("Direction") != pml.end();
-  const bool has_thickness = pml.find("Thickness") != pml.end();
+  const bool has_direction = !extruded && pml.find("Direction") != pml.end();
+  const bool has_thickness = !extruded && pml.find("Thickness") != pml.end();
   autodetect_geometry = !has_direction && !has_thickness;
   MFEM_VERIFY(has_direction == has_thickness,
               "\"PML.Direction\" and \"PML.Thickness\" must be specified together (or "
@@ -417,6 +462,13 @@ PMLData::PMLData(const json &pml)
               "\"PML.KappaMax\" entries must be ≥ 1!");
   MFEM_VERIFY(std::ranges::all_of(alpha_max, [](double a) { return a >= 0.0; }),
               "\"PML.AlphaMax\" entries must be nonnegative!");
+  // The extruded PML stretches the single direction of the rays of the extrusion.
+  auto IsScalar = [](const std::array<double, 3> &v)
+  { return v[0] == v[1] && v[1] == v[2]; };
+  MFEM_VERIFY(!extruded ||
+                  (IsScalar(sigma_max) && IsScalar(kappa_max) && IsScalar(alpha_max)),
+              "\"PML.SigmaMax\", \"PML.KappaMax\", and \"PML.AlphaMax\" must be scalars "
+              "for config[\"Boundaries\"][\"PML\"]!");
 
   reflection_target = pml.value("ReflectionTarget", reflection_target);
   MFEM_VERIFY(reflection_target > 0.0 && reflection_target < 1.0,
@@ -2030,6 +2082,14 @@ void Nondimensionalize(const Units &units, PMLData &data)
   for (auto &t : data.thickness)
   {
     t /= units.GetMeshLengthRelativeScale();
+  }
+  data.extrusion.thickness /= units.GetMeshLengthRelativeScale();
+  for (auto &x : data.extrusion.center)
+  {
+    for (auto &c : x)
+    {
+      c /= units.GetMeshLengthRelativeScale();
+    }
   }
   // ω₀ [Hz] → angular nondimensional frequency. Palace's solver uses ω = 2πf
   // (angular) when passing "omega" into GetExtraSystemMatrix and the stretch

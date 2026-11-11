@@ -27,6 +27,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the field energy of each mode in the PML regions is written to `eig.csv`, which
     identifies the spurious modes of the layer. SchemaVer 4-3-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Added `config["Boundaries"]["PML"]`, a PML which *Palace* extrudes from farfield
+    boundaries of the mesh, for example in place of an absorbing boundary on a sphere. Each
+    face becomes a column of prisms or hexahedra along rays from a core point or segment,
+    and the coordinates are stretched along the rays, with the parameters of
+    `config["Domains"]["PML"]`. SchemaVer 4-3-0
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Interface Changes
 
