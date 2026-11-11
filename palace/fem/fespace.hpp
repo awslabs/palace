@@ -34,8 +34,10 @@ private:
   // Members for constructing libCEED operators. active_restr caches the single shared
   // lossy-domain or active-boundary subset for each geometry type.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
+  mutable ceed::CeedObjectMap<CeedBasis> reduced_basis, reduced_deriv_basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, interp_restr,
       interp_range_restr;
+  mutable ceed::CeedObjectMap<CeedElemRestriction> part_restr[2], part_active_restr[2];
 
   // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
@@ -257,6 +259,11 @@ public:
 
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
+
+  // Return the basis object from ceed::InitReducedBasis for affine elements of the given
+  // geometry type, representing the values and derivatives (values = true) or only the
+  // derivatives of the basis functions, or nullptr if there is none.
+  CeedBasis GetCeedReducedBasis(Ceed ceed, mfem::Geometry::Type geom, bool values) const;
 
   // Return the element restriction object for the full element index list or the shared
   // active subset of the given geometry factor data.

@@ -2198,6 +2198,95 @@ TEMPLATE_TEST_CASE_SIG("3D libCEED Boundary Normal Operators",
   }
 }
 
+TEST_CASE("libCEED Reduced Bases", "[libCEED][Serial][Parallel]")
+{
+  // Domain integrators of H(curl) and H(div) spaces on affine simplices use bases with
+  // fewer points than the default quadrature (also on the affine elements of a curved
+  // mesh). The partially assembled operators agree with the fully assembled ones, which use
+  // the default quadrature, to rounding.
+  auto mesh_file = GENERATE("fichera-tet.mesh", "fichera-mixed-p2.mesh", "star-tri.mesh",
+                            "star-mixed-p2.mesh");
+  auto order = GENERATE(1, 2, 3, 4);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  const bool affine = (std::string(mesh_file) == "fichera-tet.mesh" ||
+                       std::string(mesh_file) == "star-tri.mesh");
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = false;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  INFO("Mesh: " << mesh_file << ", order: " << order);
+
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  // The curl of a 2D field is a scalar.
+  const auto &CQ = (dim == 2) ? Q : MQ;
+  auto TestReducedBases = [&](BilinearForm &a, bool values)
+  {
+    a.AssembleQuadratureData();
+    auto op = a.PartialAssemble();
+    auto mat = a.FullAssemble(false);
+    Vector x(op->Width()), y(op->Height()), y_ref(op->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    linalg::SetRandom(comm, x);
+    op->Mult(x, y);
+    mat->Mult(x, y_ref);
+    y -= y_ref;
+    REQUIRE(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, y_ref));
+    // From order 3 on (for curl-only terms in 2D, 4), the elements of an affine mesh have
+    // fewer points than with the default rule.
+    if (affine && (order >= 4 || (order == 3 && (values || dim == 3))))
+    {
+      Ceed ceed = ceed::internal::GetCeedObjects()[0];
+      const auto geom = (dim == 3) ? mfem::Geometry::TETRAHEDRON : mfem::Geometry::TRIANGLE;
+      CeedInt default_qpts, count;
+      CeedOperator *leaves;
+      REQUIRE(CeedBasisGetNumQuadraturePoints(a.GetTrialSpace().GetCeedBasis(ceed, geom),
+                                              &default_qpts) == 0);
+      REQUIRE(CeedOperatorCompositeGetNumSub((*op)[0], &count) == 0);
+      REQUIRE(CeedOperatorCompositeGetSubList((*op)[0], &leaves) == 0);
+      REQUIRE(count > 0);
+      for (CeedInt j = 0; j < count; j++)
+      {
+        CeedInt qpts;
+        REQUIRE(CeedOperatorGetNumQuadraturePoints(leaves[j], &qpts) == 0);
+        CAPTURE(qpts, default_qpts);
+        CHECK(qpts < default_qpts);
+      }
+    }
+  };
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), rt_fespace(mesh, &rt_fec);
+  SECTION("Curl-Curl + Mass Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(CQ, Q);
+    TestReducedBases(a, true);
+  }
+  SECTION("Curl-Curl Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlIntegrator>(CQ);
+    TestReducedBases(a, false);
+  }
+  SECTION("H(div) Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
+    TestReducedBases(a, true);
+  }
+  SECTION("Div-Div + Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<DivDivMassIntegrator>(Q, MQ);
+    TestReducedBases(a, true);
+  }
+}
+
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
 // configures when running on CPU, including the boundary terms contributed by absorbing and
 // impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
@@ -2359,29 +2448,37 @@ bool IsOriginalComplexWrapper(const ComplexOperator &op)
   return typeid(op) == typeid(ComplexWrapperOperator);
 }
 
-void CheckPackedResult(const ComplexVector &actual, const ComplexVector &expected)
+void CheckApplicationResult(const Vector &actual, const Vector &expected)
 {
   REQUIRE(actual.Size() == expected.Size());
   constexpr double tol = 5.0e-13;
+  const auto *a = actual.HostRead();
+  const auto *b = expected.HostRead();
+  double error2 = 0.0, norm2 = 0.0, error_max = 0.0, ref_max = 0.0;
+  bool finite = true;
+  for (int j = 0; j < actual.Size(); j++)
+  {
+    finite = finite && std::isfinite(a[j]) && std::isfinite(b[j]);
+    const double delta = a[j] - b[j];
+    error2 += delta * delta;
+    norm2 += b[j] * b[j];
+    error_max = std::max(error_max, std::abs(delta));
+    ref_max = std::max(ref_max, std::abs(b[j]));
+  }
+  CAPTURE(error2, norm2, error_max, ref_max);
+  REQUIRE(finite);
+  REQUIRE(error2 <= tol * tol * norm2);
+  REQUIRE(error_max <= tol * ref_max);
+}
+
+void CheckPackedResult(const ComplexVector &actual, const ComplexVector &expected)
+{
+  REQUIRE(actual.Size() == expected.Size());
   for (int part = 0; part < 2; part++)
   {
-    const auto *a = (part == 0 ? actual.Real() : actual.Imag()).HostRead();
-    const auto *b = (part == 0 ? expected.Real() : expected.Imag()).HostRead();
-    double error2 = 0.0, norm2 = 0.0, error_max = 0.0, ref_max = 0.0;
-    bool finite = true;
-    for (int j = 0; j < actual.Size(); j++)
-    {
-      finite = finite && std::isfinite(a[j]) && std::isfinite(b[j]);
-      const double delta = a[j] - b[j];
-      error2 += delta * delta;
-      norm2 += b[j] * b[j];
-      error_max = std::max(error_max, std::abs(delta));
-      ref_max = std::max(ref_max, std::abs(b[j]));
-    }
-    CAPTURE(part, error2, norm2, error_max, ref_max);
-    REQUIRE(finite);
-    REQUIRE(error2 <= tol * tol * norm2);
-    REQUIRE(error_max <= tol * ref_max);
+    CAPTURE(part);
+    CheckApplicationResult(part == 0 ? actual.Real() : actual.Imag(),
+                           part == 0 ? expected.Real() : expected.Imag());
   }
 }
 
@@ -2779,14 +2876,13 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // Volume and boundary leaves without an imaginary partner are packed (or element
+  // assembled) as well, so the fine and H1 auxiliary operators all use the fast path.
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
+  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  if (!partial_lossy)
-  {
-    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
-  }
+  REQUIRE(!IsOriginalComplexWrapper(local));
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2867,7 +2963,7 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   }
 }
 
-TEST_CASE("libCEED packed complex unsupported input fallbacks",
+TEST_CASE("libCEED packed complex input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
   if (!PackedTestBackend())
@@ -2923,10 +3019,66 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     imag.reset();
     ref_imag.reset();
   }
+  auto *original_real = real.get(), *original_imag = imag.get();
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  REQUIRE(IsOriginalComplexWrapper(*actual));
+  // Non-tensor H1 bases and real-only inputs are element assembled or packed;
+  // tensor-product bases, dof multiplicity, and unassembled vector quadrature data keep the
+  // original action.
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
+  if (qdata)
+  {
+    // Element matrices and packed terms follow in-place updates of the values of their
+    // passive inputs.
+    ScalePackedTestQData(*original_real, -1.13);
+    ScalePackedTestQData(*ref_real, -1.13);
+    if (original_imag)
+    {
+      ScalePackedTestQData(*original_imag, 0.79);
+      ScalePackedTestQData(*ref_imag, 0.79);
+    }
+    CheckPackedActions(*actual, reference);
+  }
+}
+
+TEST_CASE("libCEED packed complex curl-curl terms",
+          "[libCEED][ComplexPacked][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
+  // Curl-curl terms without a mass term act on the curls only: paired with an imaginary
+  // curl-curl term, or packed on their own next to an imaginary mass term.
+  const auto [name, imag_curl] = GENERATE(table<const char *, bool>(
+      {{"Curl-curl pair", true}, {"Curl-curl and unmatched mass terms", false}}));
+  CAPTURE(name);
+  PackedIntegrationSettings settings(3);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath("fichera-tet.mesh"), 0, false);
+  mfem::ND_FECollection fec(3, 3);
+  FiniteElementSpace fespace(mesh, &fec);
+  auto real_coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto imag_coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  imag_coeff *= 0.37;
+  BilinearForm ar(fespace), ai(fespace);
+  ar.AddDomainIntegrator<CurlCurlIntegrator>(real_coeff);
+  if (imag_curl)
+  {
+    ai.AddDomainIntegrator<CurlCurlIntegrator>(imag_coeff);
+  }
+  else
+  {
+    ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_coeff);
+  }
+  ar.AssembleQuadratureData();
+  ai.AssembleQuadratureData();
+  auto real = ar.PartialAssemble(), imag = ai.PartialAssemble();
+  auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
+  REQUIRE(!IsOriginalComplexWrapper(*actual));
+  ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
+  CheckPackedActions(*actual, reference, true);
 }
 
 TEST_CASE("libCEED packed complex empty local operators",
@@ -2953,6 +3105,136 @@ TEST_CASE("libCEED packed complex empty local operators",
     actual->Mult(x, result);
     CheckPackedResult(result, expected);
   }
+}
+
+TEST_CASE("libCEED element assembly", "[libCEED][ElementAssembly][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Element assembly requires one CPU CEED context and one thread");
+  }
+  const auto [name, mesh_file, h1_space, order, curl, boundary, nonsymmetric, assembled] =
+      GENERATE(table<const char *, const char *, bool, int, bool, bool, bool, bool>(
+          {{"H1 p1 tetrahedra and boundary terms", "fichera-tet.mesh", true, 1, false, true,
+            false, true},
+           {"H1 p4 tetrahedra and a nonsymmetric coefficient", "fichera-tet.mesh", true, 4,
+            false, false, true, true},
+           {"H1 p2 tetrahedra, prisms and hexahedra", "fichera-mixed-p2.mesh", true, 2,
+            false, false, false, true},
+           {"H1 p5 tetrahedra", "fichera-tet.mesh", true, 5, false, false, false, false},
+           {"H1 p3 triangles and boundary terms", "star-tri.mesh", true, 3, false, true,
+            false, true},
+           {"H(curl) volume and boundary terms", "fichera-tet.mesh", false, 2, true, true,
+            false, true},
+           {"H(curl) curl-curl terms on triangles", "star-tri.mesh", false, 2, true, false,
+            false, false},
+           {"H(curl) mass terms on triangles", "star-tri.mesh", false, 2, false, false,
+            false, true}}));
+  CAPTURE(name);
+  PackedIntegrationSettings settings(order);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  std::unique_ptr<mfem::FiniteElementCollection> fec;
+  if (h1_space)
+  {
+    fec = std::make_unique<mfem::H1_FECollection>(order, dim);
+  }
+  else
+  {
+    fec = std::make_unique<mfem::ND_FECollection>(order, dim);
+  }
+  FiniteElementSpace fespace(mesh, fec.get());
+  auto matrix = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto scalar = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto bdr = BuildCoefficient(mesh, true, h1_space ? CoeffType::Scalar : CoeffType::Matrix);
+  if (nonsymmetric)
+  {
+    // Unequal off-diagonal entries give nonsymmetric element matrices.
+    mfem::DenseTensor values(matrix.GetMaterialProperties());
+    for (int k = 0; k < values.SizeK(); k++)
+    {
+      values(0, 1, k) = 0.7;
+      values(1, 0, k) = -0.4;
+      values(2, 1, k) = -0.8;
+    }
+    matrix = MaterialPropertyCoefficient(matrix.GetAttributeToMaterial(), values);
+  }
+  BilinearForm a(fespace);
+  if (h1_space)
+  {
+    a.AddDomainIntegrator<DiffusionIntegrator>(matrix);
+    a.AddDomainIntegrator<MassIntegrator>(scalar);
+    if (boundary)
+    {
+      a.AddBoundaryIntegrator<MassIntegrator>(bdr);
+    }
+  }
+  else
+  {
+    // Curl-curl terms, and all volume terms in 3D, keep partial assembly.
+    if (curl)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(dim == 2 ? scalar : matrix, matrix);
+    }
+    else
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(matrix);
+    }
+    if (boundary)
+    {
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(bdr);
+    }
+  }
+  a.AssembleQuadratureData();
+  auto actual = a.PartialAssemble(), reference = a.PartialAssemble();
+  // Processes without simplex volume or boundary elements have no element assembled leaf.
+  long long num_assembled = actual->UseElementAssembly();
+  Mpi::GlobalSum(1, &num_assembled, Mpi::World());
+  if (assembled)
+  {
+    REQUIRE(num_assembled > 0);
+  }
+  else
+  {
+    REQUIRE(num_assembled == 0);
+  }
+  Vector x(actual->Width()), y(actual->Height()), expected(actual->Height()),
+      initial(actual->Height());
+  x.Randomize(17);
+  initial.Randomize(29);
+  {
+    INFO("forward application");
+    reference->Mult(x, expected);
+    actual->Mult(x, y);
+    CheckApplicationResult(y, expected);
+  }
+  {
+    INFO("AddMult application");
+    y = initial;
+    expected += initial;
+    actual->AddMult(x, y);
+    CheckApplicationResult(y, expected);
+  }
+  {
+    INFO("diagonal assembly");
+    reference->AssembleDiagonal(expected);
+    actual->AssembleDiagonal(y);
+    CheckApplicationResult(y, expected);
+  }
+  {
+    // Element matrices follow in-place updates of the values of their passive inputs.
+    INFO("forward application after an in-place update of the quadrature data");
+    ScalePackedTestQData(*actual, -1.13);
+    ScalePackedTestQData(*reference, -1.13);
+    reference->Mult(x, expected);
+    actual->Mult(x, y);
+    CheckApplicationResult(y, expected);
+  }
+  // ParOperator element assembles the libCEED operators it owns.
+  ParOperator owner(a.PartialAssemble(), fespace);
+  const auto &local = dynamic_cast<const ceed::Operator &>(owner.LocalOperator());
+  REQUIRE((local.GetElementAssembly() != nullptr) ==
+          (actual->GetElementAssembly() != nullptr));
 }
 
 // Opt in with "[ComplexPreconditionerBenchmark]" or "[Benchmark]". Orders 2/3/4

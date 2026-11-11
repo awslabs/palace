@@ -39,6 +39,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Complex operators on CPUs now also pack the libCEED terms without a partner in the
+    other part, such as the real terms of lossless materials, and the H1 diffusion terms,
+    so that each of them acts on the real and imaginary parts in one application, as the
+    matching pairs of terms already did. This speeds up the fine and H1 auxiliary operators
+    of the multigrid preconditioner of driven and eigenmode simulations. Results change at
+    most at the level of round-off. [PR 1173](https://github.com/awslabs/palace/pull/1173).
+  - On CPUs, libCEED operators now apply the terms of small simplex elements, such as H1
+    elements up to order 4 on tetrahedra and triangular boundary elements, through their
+    dense element matrices instead of partial assembly when that moves less data. This
+    speeds up the H1 auxiliary operators of the multigrid preconditioners and the boundary
+    terms. Curl-curl and div-div terms, and the volume H(curl) and H(div) terms of 3D
+    meshes, keep partial assembly. Results change at most at the level of round-off.
+    [PR 1174](https://github.com/awslabs/palace/pull/1174).
+  - On CPUs, libCEED operators now integrate the H(curl) and H(div) volume terms of affine
+    simplices with an exact reduced quadrature, with fewer points per element than the
+    default rule: for example 20 instead of 24 at order 3, and 10 for curl-curl terms. This
+    lowers the cost of these terms and of their quadrature data, also on the coarser levels
+    of the multigrid preconditioners. Results change at most at the level of round-off.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
