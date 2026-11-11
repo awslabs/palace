@@ -52,11 +52,15 @@ constexpr double kBlrTol = 1.0e-14;
 
 using Factorization = SchurFactorization<std::complex<double>>;
 
-// The sparse direct solvers of a side, which condense it onto Γ (MUMPS's partial
-// factorization, else one solve per interface DOF), and of the coupled system online (as
-// for frequency domain problems), in these orders among those Palace is built with.
-LinearSolver SideSolver()
+// The sparse direct solvers of DrivenSubstructure: that given, or the preferences of the
+// sides and of the coupled system.
+LinearSolver SideSolver(LinearSolver type)
 {
+  if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
+      type == LinearSolver::SUPERLU)
+  {
+    return type;
+  }
 #if defined(MFEM_USE_MUMPS)
   return LinearSolver::MUMPS;
 #elif defined(MFEM_USE_STRUMPACK)
@@ -66,8 +70,13 @@ LinearSolver SideSolver()
 #endif
 }
 
-LinearSolver CoupledSolver()
+LinearSolver CoupledSolver(LinearSolver type)
 {
+  if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
+      type == LinearSolver::SUPERLU)
+  {
+    return type;
+  }
 #if defined(MFEM_USE_STRUMPACK)
   return LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_SUPERLU)
@@ -115,8 +124,9 @@ std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool i
 DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
                                        const std::vector<int> &environment_attributes,
-                                       bool online, const DrivenSubstructureModel *saved)
-  : space_op(space_op), online(online)
+                                       bool online, const DrivenSubstructureModel *saved,
+                                       LinearSolver solver)
+  : space_op(space_op), solver(solver), online(online)
 {
   env.attrs = environment_attributes;
   region.attrs = region_attributes;
@@ -585,7 +595,7 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   if (!side.schur)
   {
     side.schur = MakeFactorization(
-        SideSolver(), space_op.GetComm(), side.n_sys,
+        SideSolver(solver), space_op.GetComm(), side.n_sys,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
         side.gamma_sys, side.rows);
     return;
@@ -684,8 +694,8 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
           coo.jcn.push_back(static_cast<int>(b + 1));
           coo.val.push_back(v);
         });
-    coupled = MakeFactorization(CoupledSolver(), comm, region.n_sys, std::move(coo), {},
-                                region.rows);
+    coupled = MakeFactorization(CoupledSolver(solver), comm, region.n_sys, std::move(coo),
+                                {}, region.rows);
   }
   else
   {

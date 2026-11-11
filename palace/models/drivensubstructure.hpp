@@ -15,6 +15,7 @@
 #include "linalg/schursolver.hpp"
 #include "linalg/vector.hpp"
 #include "models/waveportoperator.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -168,9 +169,15 @@ public:
   // Online, with the saved model: a mesh holding the environment elements written with
   // the model in the mesh of the region holds the region, and Γ is the set of the region's
   // boundary DOFs at the points of the saved interface DOFs.
+  // The factorizations are by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU),
+  // else: of a side with its Schur complement onto Γ, by MUMPS (its partial factorization),
+  // STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region with S_E online
+  // (one system) by STRUMPACK, SuperLU_DIST or MUMPS, in these orders among those Palace is
+  // built with.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
-                     const DrivenSubstructureModel *saved = nullptr);
+                     const DrivenSubstructureModel *saved = nullptr,
+                     LinearSolver solver = LinearSolver::DEFAULT);
   ~DrivenSubstructure();
 
   // Condense the environment and factor the region against it at the angular frequency ω
@@ -285,6 +292,7 @@ public:
 
 private:
   SpaceOperator &space_op;
+  LinearSolver solver;
   bool online, region_only = false;
   std::vector<char> is_env_int, is_gamma, is_region_int;
   std::vector<HYPRE_BigInt> gamma_tdofs;

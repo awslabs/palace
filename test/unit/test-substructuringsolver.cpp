@@ -3777,16 +3777,29 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   };
   const auto kind = GENERATE(MeshKind::HEX, MeshKind::NC_HEX, MeshKind::TET);
   const int order = GENERATE(1, 2);
-  const bool tet = (kind == MeshKind::TET);
-  CAPTURE(order, static_cast<int>(kind));
-  // SuperLU_DIST's static pivoting, in the real equivalent form, is accurate to a few
-  // 1e-10 here: it factors the sides without MUMPS and STRUMPACK, and the online region
-  // without STRUMPACK.
-#if defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK)
-  constexpr double exact_tol = 1.0e-9;
-#else
-  constexpr double exact_tol = 1.0e-10;
+  // The default sparse direct solvers, and each one Palace is built with.
+  std::vector<LinearSolver> types = {LinearSolver::DEFAULT};
+#if defined(MFEM_USE_STRUMPACK)
+  types.push_back(LinearSolver::STRUMPACK);
 #endif
+#if defined(MFEM_USE_MUMPS)
+  types.push_back(LinearSolver::MUMPS);
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  types.push_back(LinearSolver::SUPERLU);
+#endif
+  const LinearSolver type = GENERATE_COPY(from_range(types));
+  const bool tet = (kind == MeshKind::TET);
+  CAPTURE(order, static_cast<int>(kind), static_cast<int>(type));
+  // SuperLU_DIST's static pivoting, in the real equivalent form, is accurate to a few
+  // 1e-10 here: by default, it factors the sides without MUMPS and STRUMPACK, and the
+  // online region without STRUMPACK.
+#if defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK)
+  const bool superlu = (type == LinearSolver::SUPERLU || type == LinearSolver::DEFAULT);
+#else
+  const bool superlu = (type == LinearSolver::SUPERLU);
+#endif
+  const double exact_tol = superlu ? 1.0e-9 : 1.0e-10;
   json config = {
       {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
       {"Model", {{"Mesh", "test.msh"}}},
@@ -3825,7 +3838,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
   const bool root = Mpi::Root(comm);
-  DrivenSubstructure ds(space_op, {1}, {2});
+  DrivenSubstructure ds(space_op, {1}, {2}, false, nullptr, type);
   const int nG = ds.InterfaceSize();
   REQUIRE(nG > 0);
 
@@ -3961,7 +3974,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
 
   // Online, with the region only: given S_E and the environment's source condensation
   // (offline), the region and interface solution must be the offline one.
-  DrivenSubstructure ds_online(space_op, {1}, {2}, true);
+  DrivenSubstructure ds_online(space_op, {1}, {2}, true, nullptr, type);
   REQUIRE(ds_online.InterfaceSize() == nG);
 
   for (const double omega : {1.3, 0.7})

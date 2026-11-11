@@ -253,7 +253,9 @@ voltage of a lumped port, would depend on both sides.
     without MUMPS uses STRUMPACK or SuperLU_DIST instead, with one solve per interface unknown: an
     order of magnitude slower or more. Online, the region is factored with the Schur complement of
     the environment as one sparse system, by STRUMPACK, SuperLU_DIST or MUMPS (preferred in this
-    order).
+    order). A sparse direct solver that
+    [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
+    is used for all of them instead.
     Floquet ports and periodic boundaries (which make the system non-symmetric),
     `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
     supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model

@@ -369,7 +369,7 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   }
   ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
                                             sub.environment_attributes, online,
-                                            online ? &model : nullptr);
+                                            online ? &model : nullptr, sub.direct_solver);
   nG = ds->InterfaceSize();
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   for (const auto &[idx, spec] : port_excitations)
@@ -982,7 +982,8 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   // The frequencies of the sweep from the model, on the region only.
   ds.reset();
   ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
-                                            sub.environment_attributes, true);
+                                            sub.environment_attributes, true, nullptr,
+                                            sub.direct_solver);
 }
 
 // The model's record at a frequency of the sweep, on the current interface (on rank 0;

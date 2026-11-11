@@ -50,8 +50,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     GPUs, with the factorizations on the CPU. Offline, MUMPS's partial factorization gives
     the condensed sides, or, without MUMPS, STRUMPACK or SuperLU_DIST takes one solve per
     interface unknown. Online, the region is factored with the condensed environment as one
-    system, by STRUMPACK, SuperLU_DIST or MUMPS. Adds a driven example in
-    `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 4-3-1.
+    system, by STRUMPACK, SuperLU_DIST or MUMPS. A sparse direct solver that
+    `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
+    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 4-3-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
