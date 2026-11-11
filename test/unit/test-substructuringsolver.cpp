@@ -12,6 +12,7 @@
 #include <random>
 #include <utility>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -26,11 +27,14 @@
 #include "fem/multigrid.hpp"
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
+#include "linalg/directschur.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/hodlr.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/strumpack.hpp"
+#include "linalg/superlu.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/materialoperator.hpp"
@@ -3028,6 +3032,252 @@ TEST_CASE("A saved driven model continues from its complete records",
   CHECK(other.SameHeader(saved, 1.0e-4));
   std::filesystem::remove(path);
 }
+
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
+TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Parallel]")
+{
+  // The complex symmetric shifted Laplacian of the MumpsSchurSolver tests, bordered by an
+  // unknown on the last rank (as by a wave port's modal term), with the Schur variables on
+  // a face of the cube and every other entry passed by another rank than that of its row
+  // (some split in two): the Schur complement and a condensed solve against dense ones,
+  // also after a refactorization with new values.
+  auto pmesh = MakeSplitCube(4);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const bool last = (rank == nranks - 1);
+  const HYPRE_BigInt n_dof = A->GetGlobalNumRows(), off = fes.GetMyTDofOffset();
+  const int n_glob = static_cast<int>(n_dof) + 1;
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
+  {
+    mine[i] = off + face[i];
+  }
+  std::vector<int> cnt(nranks), disp(nranks, 0);
+  {
+    int n = face.Size();
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  REQUIRE(!schur_vars.empty());
+
+  // The entries: c A by its lower triangle, and the border unknown (row n_dof) with entries
+  // b against the first local DOFs of each rank and -2 on its diagonal.
+  const std::complex<double> c(1.0, 0.1), b(0.5, 0.2);
+  DirectSchurSolver::Coo coo;
+  {
+    std::vector<std::vector<double>> vals;
+    std::vector<int> row_ptr;
+    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+    for (double v : vals[0])
+    {
+      coo.val.push_back(c * v);
+    }
+  }
+  for (int i = 0; i < std::min(3, nt); i++)
+  {
+    coo.irn.push_back(n_glob);
+    coo.jcn.push_back(static_cast<int>(off) + i + 1);
+    coo.val.push_back(b);
+  }
+  if (last)
+  {
+    coo.irn.push_back(n_glob);
+    coo.jcn.push_back(n_glob);
+    coo.val.push_back(-2.0);
+  }
+  {
+    DirectSchurSolver::Coo keep, give;
+    auto push = [](DirectSchurSolver::Coo &x, int i, int j, std::complex<double> v)
+    {
+      x.irn.push_back(i);
+      x.jcn.push_back(j);
+      x.val.push_back(v);
+    };
+    for (std::size_t e = 0; e < coo.irn.size(); e++)
+    {
+      const bool split = (e % 4 == 3);
+      push((e % 2) ? give : keep, coo.irn[e], coo.jcn[e], (split ? 0.5 : 1.0) * coo.val[e]);
+      if (split)
+      {
+        push(keep, coo.irn[e], coo.jcn[e], 0.5 * coo.val[e]);
+      }
+    }
+    const int dst = (rank + 1) % nranks, src = (rank + nranks - 1) % nranks;
+    int ns = static_cast<int>(give.irn.size()), nr = 0;
+    MPI_Sendrecv(&ns, 1, MPI_INT, dst, 0, &nr, 1, MPI_INT, src, 0, comm, MPI_STATUS_IGNORE);
+    std::vector<int> ri(nr), rj(nr);
+    std::vector<std::complex<double>> rv(nr);
+    MPI_Sendrecv(give.irn.data(), ns, MPI_INT, dst, 1, ri.data(), nr, MPI_INT, src, 1, comm,
+                 MPI_STATUS_IGNORE);
+    MPI_Sendrecv(give.jcn.data(), ns, MPI_INT, dst, 2, rj.data(), nr, MPI_INT, src, 2, comm,
+                 MPI_STATUS_IGNORE);
+    MPI_Sendrecv(give.val.data(), ns, MPI_C_DOUBLE_COMPLEX, dst, 3, rv.data(), nr,
+                 MPI_C_DOUBLE_COMPLEX, src, 3, comm, MPI_STATUS_IGNORE);
+    for (int e = 0; e < nr; e++)
+    {
+      push(keep, ri[e], rj[e], rv[e]);
+    }
+    coo = std::move(keep);
+  }
+
+  // The dense matrix on rank 0, from all the entries.
+  Eigen::MatrixXcd M;
+  {
+    int ne = static_cast<int>(coo.irn.size());
+    std::vector<int> ecnt(nranks), edisp(nranks, 0);
+    MPI_Gather(&ne, 1, MPI_INT, ecnt.data(), 1, MPI_INT, 0, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      edisp[r] = edisp[r - 1] + ecnt[r - 1];
+    }
+    const int ntot = edisp.back() + ecnt.back();
+    std::vector<int> gi(rank == 0 ? ntot : 0), gj(gi.size());
+    std::vector<std::complex<double>> gv(gi.size());
+    MPI_Gatherv(coo.irn.data(), ne, MPI_INT, gi.data(), ecnt.data(), edisp.data(), MPI_INT,
+                0, comm);
+    MPI_Gatherv(coo.jcn.data(), ne, MPI_INT, gj.data(), ecnt.data(), edisp.data(), MPI_INT,
+                0, comm);
+    MPI_Gatherv(coo.val.data(), ne, MPI_C_DOUBLE_COMPLEX, gv.data(), ecnt.data(),
+                edisp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+    if (rank == 0)
+    {
+      M = Eigen::MatrixXcd::Zero(n_glob, n_glob);
+      for (int e = 0; e < ntot; e++)
+      {
+        M(gi[e] - 1, gj[e] - 1) += gv[e];
+        if (gi[e] != gj[e])
+        {
+          M(gj[e] - 1, gi[e] - 1) += gv[e];
+        }
+      }
+    }
+  }
+  ComplexVector x(nt);
+  x.Real().Randomize(1 + rank);
+  x.Imag().Randomize(2 + rank);
+  // A vector of the true DOFs on rank 0.
+  auto gather = [&](const ComplexVector &v)
+  {
+    std::vector<int> vcnt(nranks), vdisp(nranks, 0);
+    int n = nt;
+    MPI_Gather(&n, 1, MPI_INT, vcnt.data(), 1, MPI_INT, 0, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      vdisp[r] = vdisp[r - 1] + vcnt[r - 1];
+    }
+    std::vector<std::complex<double>> loc(nt), glob(rank == 0 ? n_dof : 0);
+    for (int i = 0; i < nt; i++)
+    {
+      loc[i] = {v.Real()[i], v.Imag()[i]};
+    }
+    MPI_Gatherv(loc.data(), nt, MPI_C_DOUBLE_COMPLEX, glob.data(), vcnt.data(),
+                vdisp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+    return glob;
+  };
+  std::vector<int> sch, in;
+  Eigen::MatrixXcd S_ref;
+  Eigen::VectorXcd u_ref;
+  if (rank == 0)
+  {
+    std::vector<char> is_sch(n_glob, 0);
+    for (auto g : schur_vars)
+    {
+      is_sch[g] = 1;
+    }
+    for (auto g : schur_vars)
+    {
+      sch.push_back(static_cast<int>(g));
+    }
+    for (int g = 0; g < n_glob; g++)
+    {
+      if (!is_sch[g])
+      {
+        in.push_back(g);
+      }
+    }
+    const Eigen::MatrixXcd Aii = M(in, in), Ais = M(in, sch), Ass = M(sch, sch);
+    S_ref = Ass - Ais.transpose() * Aii.partialPivLu().solve(Ais);
+  }
+  const auto xg = gather(x);
+  if (rank == 0)
+  {
+    Eigen::VectorXcd rhs = Eigen::VectorXcd::Zero(n_glob);
+    for (HYPRE_BigInt g = 0; g < n_dof; g++)
+    {
+      rhs(g) = xg[g];
+    }
+    u_ref = M.partialPivLu().solve(rhs);
+  }
+
+  std::vector<int> rows(nt + (last ? 1 : 0), -1);
+  for (int i = 0; i < nt; i++)
+  {
+    rows[i] = i;
+  }
+  DirectSchurSolver solver(
+      comm, n_glob, static_cast<int>(rows.size()), std::move(coo), schur_vars, rows,
+#if defined(MFEM_USE_STRUMPACK)
+      std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
+                                        SparseCompression::NONE, 0.0, 1, 0, true, 0)
+#else
+      std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true, 0)
+#endif
+  );
+  auto dist = [](const auto &a, const auto &b)
+  { return (a - b).cwiseAbs().maxCoeff() / b.cwiseAbs().maxCoeff(); };
+  for (int k = 0; k < 2; k++)
+  {
+    const double s = (k == 0) ? 1.0 : 2.0;
+    if (k == 1)
+    {
+      for (auto &v : solver.Values())
+      {
+        v *= s;
+      }
+      solver.Refactor();
+    }
+    const auto S = solver.ReleaseSchur();
+    std::vector<std::complex<double>> red;
+    solver.Reduce({&x}, red);
+    std::vector<std::complex<double>> uS;
+    if (rank == 0)
+    {
+      const int nS = static_cast<int>(sch.size());
+      const Eigen::Map<const Eigen::MatrixXcd> Sm(S.data(), nS, nS);
+      CHECK(dist(Sm, s * S_ref) <= 1.0e-10);
+      const Eigen::VectorXcd u =
+          Sm.partialPivLu().solve(Eigen::Map<const Eigen::VectorXcd>(red.data(), nS));
+      uS.assign(u.data(), u.data() + nS);
+    }
+    ComplexVector y(nt);
+    solver.Expand(uS, {&y});
+    const auto yg = gather(y);
+    if (rank == 0)
+    {
+      const Eigen::Map<const Eigen::VectorXcd> ym(yg.data(), static_cast<int>(n_dof));
+      CHECK(dist(ym, u_ref.head(n_dof) / s) <= 1.0e-10);
+    }
+  }
+}
+#endif
 
 #if defined(MFEM_USE_MUMPS)
 
