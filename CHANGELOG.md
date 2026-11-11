@@ -78,6 +78,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     coarse levels at high process counts. Results are unchanged.
     [PR 1139](https://github.com/awslabs/palace/pull/1139).
   - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
+    Schur complement interface to its sparse solvers. Without MUMPS, the partial
+    factorization of STRUMPACK then condenses the environment of substructuring, instead of
+    one solve per interface unknown. [PR 995](https://github.com/awslabs/palace/pull/995).
+  - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#163](https://github.com/pghysels/STRUMPACK/pull/163), which lowers
     the communication cost of its distributed solve phase: point-to-point exchanges of only
     the nonempty messages instead of all-to-all collectives, cached right-hand side

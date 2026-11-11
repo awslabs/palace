@@ -146,10 +146,11 @@ else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palac
 when they have at most `config["Solver"]["Substructuring"]["DirectMaxSize"]` unknowns (2,000,000 by
 default), and otherwise solved by conjugate gradients preconditioned by geometric multigrid
 (electrostatics at order 2 and higher), BoomerAMG or AMS. Magnetostatic environments at order 2 and
-higher are always factored, and an environment with London sheets must be. With MUMPS, unless
-`"Type"` names another solver, the Schur complement of the environment comes instead from a single
-partial factorization, except when a magnetostatic model is saved: its energy operator takes two
-environment solves per interface unknown. The MUMPS factorizations follow the
+higher are always factored, and an environment with London sheets must be. The Schur complement of
+the environment comes instead from a single partial factorization, by MUMPS or, without it, by
+STRUMPACK (with the Schur complement interface that the superbuild and the Spack package patch in),
+unless `"Type"` names another solver, and except when a magnetostatic model is saved: its energy
+operator takes two environment solves per interface unknown. The MUMPS factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
 `config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
 are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the

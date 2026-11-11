@@ -1,0 +1,1048 @@
+diff --git a/src/SparseSolver.cpp b/src/SparseSolver.cpp
+index 51c6939c5d8817b05a6e6397e0a48f1fc18e4a5b..5ced5315b928114103a3a83e522f23f3bf72c6a6 100644
+--- a/src/SparseSolver.cpp
++++ b/src/SparseSolver.cpp
+@@ -37,6 +37,7 @@
+ #include "StrumpackOptions.hpp"
+ #include "sparse/ordering/MatrixReordering.hpp"
+ #include "sparse/EliminationTree.hpp"
++#include "sparse/fronts/Front.hpp"
+ #include "iterative/IterativeSolvers.hpp"
+ 
+ namespace strumpack {
+@@ -403,6 +404,61 @@ namespace strumpack {
+     tree_.reset(nullptr);
+   }
+ 
++  template<typename scalar_t,typename integer_t> DenseMatrix<scalar_t>
++  SparseSolver<scalar_t,integer_t>::schur_complement_internal() {
++    // the Schur variables are ordered last, in their given order, so
++    // the Schur complement of the equilibrated matrix R A C is
++    // R_s S C_s
++    auto S = tree()->root()->schur_complement();
++    bool row = equil_.type == EquilibrationType::ROW ||
++      equil_.type == EquilibrationType::BOTH;
++    bool col = equil_.type == EquilibrationType::COLUMN ||
++      equil_.type == EquilibrationType::BOTH;
++    if (row || col)
++      for (std::size_t j=0; j<S.cols(); j++)
++        for (std::size_t i=0; i<S.rows(); i++)
++          S(i,j) /= (row ? equil_.R[schur_[i]] : 1) *
++            (col ? equil_.C[schur_[j]] : 1);
++    return S;
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolver<scalar_t,integer_t>::schur_solve_internal
++  (const DenseM_t& b, DenseM_t& x, bool expand) {
++    integer_t N = matrix()->size(), d = b.cols(), ns = schur_.size();
++    bool row = equil_.type == EquilibrationType::ROW ||
++      equil_.type == EquilibrationType::BOTH;
++    bool col = equil_.type == EquilibrationType::COLUMN ||
++      equil_.type == EquilibrationType::BOTH;
++    DenseM_t bloc(N, d), xs;
++    transform_b(b, bloc);
++    // the Schur variables are the last rows of the permuted vectors
++    if (expand) {
++      xs = DenseM_t(ns, d);
++      for (integer_t j=0; j<d; j++)
++        for (integer_t i=0; i<ns; i++) {
++          xs(i, j) = x(schur_[i], j);
++          bloc(N-ns+i, j) = col ? xs(i, j) / equil_.C[schur_[i]] : xs(i, j);
++        }
++    }
++    tree()->root()->schur_solve(bloc, expand);
++    if (expand) {
++      x.copy(bloc);
++      transform_x(x, bloc);
++      // the given values, not their unscaled equilibrated ones
++      for (integer_t j=0; j<d; j++)
++        for (integer_t i=0; i<ns; i++)
++          x(schur_[i], j) = xs(i, j);
++    } else {
++      x.zero();
++      for (integer_t j=0; j<d; j++)
++        for (integer_t i=0; i<ns; i++)
++          x(schur_[i], j) = row ?
++            bloc(N-ns+i, j) / equil_.R[schur_[i]] : bloc(N-ns+i, j);
++    }
++    return ReturnCode::SUCCESS;
++  }
++
+   // explicit template instantiations
+   template class SparseSolver<float,int>;
+   template class SparseSolver<double,int>;
+diff --git a/src/SparseSolverBase.cpp b/src/SparseSolverBase.cpp
+index 55a66b9ed1433251017302347ef4bda549859bd8..57ef870a26ff44a29d7c2ef7b8380a75d820fbf0 100644
+--- a/src/SparseSolverBase.cpp
++++ b/src/SparseSolverBase.cpp
+@@ -36,6 +36,7 @@
+ #include "StrumpackOptions.hpp"
+ #include "sparse/ordering/MatrixReordering.hpp"
+ #include "sparse/EliminationTree.hpp"
++#include "sparse/fronts/Front.hpp"
+ #include "iterative/IterativeSolvers.hpp"
+ #include "dense/GPUWrapper.hpp"
+ 
+@@ -131,6 +132,8 @@ namespace strumpack {
+   SparseSolverBase<scalar_t,integer_t>::inertia
+   (integer_t& neg, integer_t& zero, integer_t& pos) {
+     neg = zero = pos = 0;
++    // the root front with Schur variables is not factored
++    if (!schur_.empty()) return schur_error("the inertia is not available");
+     if (opts_.matching() != MatchingJob::NONE)
+       return ReturnCode::INACCURATE_INERTIA;
+     if (!this->factored_) {
+@@ -319,6 +322,10 @@ namespace strumpack {
+    int components, int width) {
+     if (!matrix()) return ReturnCode::MATRIX_NOT_SET;
+     if (reordered_) return ReturnCode::SUCCESS;
++    if (!schur_.empty()) {
++      auto err = check_schur_variables(p);
++      if (err != ReturnCode::SUCCESS) return err;
++    }
+     TaskTimer t1("permute-scale");
+     int ierr;
+     if (opts_.verbose() && is_root_)
+@@ -365,6 +372,7 @@ namespace strumpack {
+     perf_counters_start();
+     t3.start();
+     setup_reordering();
++    reordering()->set_schur_variables(schur_);
+     ierr = compute_reordering(p, base, nx, ny, nz, components, width);
+     if (ierr) {
+       std::cerr << "ERROR: nested dissection went wrong, ierr="
+@@ -384,6 +392,7 @@ namespace strumpack {
+ 
+     perf_counters_start();
+     TaskTimer t0("symbolic-factorization", [&](){ setup_tree(); });
++    if (!schur_.empty()) tree()->root()->set_schur_root();
+     /* do not clear the tree data, because if we update the matrix
+      * values, we want to reuse this information */
+     // reordering()->clear_tree_data();
+@@ -696,6 +705,9 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> ReturnCode
+   SparseSolverBase<scalar_t,integer_t>::solve
+   (const DenseM_t& b, DenseM_t& x, bool use_initial_guess) {
++    // the other solve() overloads come here through solve_internal
++    if (!schur_.empty())
++      return schur_error("use schur_condense and schur_expand to solve");
+     return solve_internal(b, x, use_initial_guess);
+   }
+ 
+@@ -706,6 +718,107 @@ namespace strumpack {
+     return solve_internal(nrhs, b, ldb, x, ldx, use_initial_guess);
+   }
+ 
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::schur_error
++  (const std::string& msg) const {
++    if (is_root_)
++      std::cerr << "ERROR: with Schur variables, " << msg << "."
++                << std::endl;
++    return ReturnCode::SCHUR_ERROR;
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::set_schur_variables
++  (integer_t n, const integer_t* vars) {
++    if (reordered_)
++      return schur_error("set them before the matrix is reordered");
++    if (n < 0) return schur_error("their number must not be negative");
++    schur_.assign(vars, vars+n);
++    return ReturnCode::SUCCESS;
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::check_schur_variables
++  (const int* p) const {
++    integer_t n = matrix()->size();
++    if (integer_t(schur_.size()) >= n)
++      return schur_error("there must be fewer of them than rows");
++    std::vector<bool> mark(n, false);
++    for (auto s : schur_) {
++      if (s < 0 || s >= n)
++        return schur_error("they must be rows of the matrix");
++      if (mark[s]) return schur_error("they must not repeat");
++      mark[s] = true;
++    }
++    if (p) return schur_error("a given permutation is not supported");
++    // is_parallel includes the geometric reordering
++    if (is_parallel(opts_.reordering_method()))
++      return schur_error("the reordering method must be a sequential "
++                         "graph reordering");
++    if (opts_.matching() != MatchingJob::NONE)
++      return schur_error("matching is not supported");
++    if (opts_.compression() != CompressionType::NONE)
++      return schur_error("compression is not supported");
++    if (opts_.use_gpu())
++      return schur_error("the GPU is not supported");
++    return ReturnCode::SUCCESS;
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::get_schur_complement(DenseM_t& S) {
++    if (schur_.empty()) return schur_error("none are set");
++    if (!factored_) {
++      auto err = factor();
++      if (err != ReturnCode::SUCCESS) return err;
++    }
++    S = schur_complement_internal();
++    return ReturnCode::SUCCESS;
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::schur_solve
++  (const DenseM_t& b, DenseM_t& x, bool expand) {
++    if (schur_.empty()) return schur_error("none are set");
++    if (!factored_) {
++      auto err = factor();
++      if (err != ReturnCode::SUCCESS) return err;
++    }
++    assert(b.rows() == x.rows() && b.cols() == x.cols());
++    return schur_solve_internal(b, x, expand);
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::schur_condense
++  (const DenseM_t& b, DenseM_t& g) {
++    return schur_solve(b, g, false);
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::schur_expand
++  (const DenseM_t& b, DenseM_t& x) {
++    return schur_solve(b, x, true);
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::schur_condense
++  (int nrhs, const scalar_t* b, int ldb, scalar_t* g, int ldg) {
++    if (!nrhs) return ReturnCode::SUCCESS;
++    auto N = local_rows();
++    auto B = ConstDenseMatrixWrapperPtr(N, nrhs, b, ldb);
++    DenseMW_t G(N, nrhs, g, ldg);
++    return schur_solve(*B, G, false);
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverBase<scalar_t,integer_t>::schur_expand
++  (int nrhs, const scalar_t* b, int ldb, scalar_t* x, int ldx) {
++    if (!nrhs) return ReturnCode::SUCCESS;
++    auto N = local_rows();
++    auto B = ConstDenseMatrixWrapperPtr(N, nrhs, b, ldb);
++    DenseMW_t X(N, nrhs, x, ldx);
++    return schur_solve(*B, X, true);
++  }
++
+   template<typename scalar_t,typename integer_t> ReturnCode
+   SparseSolverBase<scalar_t,integer_t>::solve_internal
+   (int nrhs, const scalar_t* b, int ldb, scalar_t* x, int ldx,
+diff --git a/src/SparseSolverBase.hpp b/src/SparseSolverBase.hpp
+index 44e3b3a21b381ae2a4cac12c130fffc5c39fc8d1..cc5207c2aa77dbe05596517d6d6899c0c723174e 100644
+--- a/src/SparseSolverBase.hpp
++++ b/src/SparseSolverBase.hpp
+@@ -278,6 +278,83 @@ namespace strumpack {
+                      scalar_t* x, int ldx,
+                      bool use_initial_guess=false);
+ 
++    /**
++     * Set the Schur variables, with the other variables, i, ordered
++     * as A = [A_ii A_is; A_si A_ss]. The reordering places them last,
++     * and the factorization leaves them unfactored: it computes the
++     * Schur complement S = A_ss - A_si A_ii^{-1} A_is, returned by
++     * get_schur_complement, and the factors of A_ii, which
++     * schur_condense and schur_expand apply. solve() is not available
++     * with Schur variables. This must be called before reorder()
++     * (directly, or through factor()), and needs a sequential graph
++     * reordering method (not GEOMETRIC), no matching, no compression
++     * and no GPU. The matrix values can be updated, and refactored,
++     * as usual.
++     *
++     * \param n Number of Schur variables, smaller than the dimension
++     * of the matrix.
++     * \param vars The Schur variables, indices (0-based) of rows of
++     * the input matrix, without duplicates. For SparseSolverMPIDist,
++     * the same on every process.
++     * \return error code
++     */
++    ReturnCode set_schur_variables(integer_t n, const integer_t* vars);
++
++    /**
++     * Get the Schur complement onto the Schur variables. Calls
++     * factor() if needed.
++     *
++     * \param S Output, the n x n Schur complement, with its rows and
++     * columns in the order of the Schur variables. For
++     * SparseSolverMPIDist, it is set on the root process only (and is
++     * empty on the others). Collective.
++     * \return error code
++     * \see set_schur_variables
++     */
++    ReturnCode get_schur_complement(DenseM_t& S);
++
++    /**
++     * Condense right-hand sides onto the Schur variables: g_s = b_s -
++     * A_si A_ii^{-1} b_i. Calls factor() if needed.
++     *
++     * \param b Input, the right-hand sides, laid out as for solve().
++     * \param g Output, laid out as b, with g_s in the rows of the
++     * Schur variables and 0 in the other rows.
++     * \return error code
++     * \see set_schur_variables, schur_expand
++     */
++    ReturnCode schur_condense(const DenseM_t& b, DenseM_t& g);
++
++    /**
++     * Expand the values of the Schur variables to the other
++     * variables: x_i = A_ii^{-1} (b_i - A_is x_s). Calls factor() if
++     * needed.
++     *
++     * \param b Input, the right-hand sides, laid out as for solve();
++     * the rows of the Schur variables are not used.
++     * \param x Input and output, laid out as b. On input, x_s in the
++     * rows of the Schur variables; on output, x_i in the other rows.
++     * \return error code
++     * \see set_schur_variables, schur_condense
++     */
++    ReturnCode schur_expand(const DenseM_t& b, DenseM_t& x);
++
++    /**
++     * As schur_condense(const DenseM_t&, DenseM_t&), with nrhs
++     * right-hand sides in b, with leading dimension ldb, and g, with
++     * leading dimension ldg.
++     */
++    ReturnCode schur_condense(int nrhs, const scalar_t* b, int ldb,
++                              scalar_t* g, int ldg);
++
++    /**
++     * As schur_expand(const DenseM_t&, DenseM_t&), with nrhs
++     * right-hand sides in b, with leading dimension ldb, and x, with
++     * leading dimension ldx.
++     */
++    ReturnCode schur_expand(int nrhs, const scalar_t* b, int ldb,
++                            scalar_t* x, int ldx);
++
+     /**
+      * Return the object holding the options for this sparse solver.
+      */
+@@ -356,7 +433,8 @@ namespace strumpack {
+      * The inertia will not be correct if pivoting was performed, in
+      * which case the return value will be
+      * ReturnCode::INACCURATE_INERTIA.  Inertia also cannot be
+-     * computed when compression is applied (fi, HSS, HODLR, ...).
++     * computed when compression is applied (fi, HSS, HODLR, ...),
++     * nor with Schur variables (ReturnCode::SCHUR_ERROR).
+      *
+      * \param neg number of negative eigenvalues (if return value is
+      * ReturnCode::SUCCESS)
+@@ -438,6 +516,17 @@ namespace strumpack {
+                               scalar_t* x, int ldx,
+                               bool use_initial_guess=false);
+ 
++    // Number of rows of the vectors of the solves on this process.
++    virtual integer_t local_rows() const { return matrix()->size(); }
++
++    // With Schur variables: the unscaled Schur complement (on the root
++    // process), and the condensation or expansion of solves.
++    virtual DenseM_t schur_complement_internal() = 0;
++    virtual ReturnCode schur_solve_internal(const DenseM_t& b, DenseM_t& x,
++                                            bool expand) = 0;
++
++    std::vector<integer_t> schur_;
++
+     SPOptions<scalar_t> opts_;
+     bool is_root_;
+ 
+@@ -464,6 +553,10 @@ namespace strumpack {
+ #endif
+ 
+   private:
++    ReturnCode schur_error(const std::string& msg) const;
++    ReturnCode check_schur_variables(const int* p) const;
++    ReturnCode schur_solve(const DenseM_t& b, DenseM_t& x, bool expand);
++
+     ReturnCode reorder_internal(const int* p, int base,
+                                 int nx, int ny, int nz,
+                                 int components, int width);
+diff --git a/src/SparseSolverMPIDist.cpp b/src/SparseSolverMPIDist.cpp
+index 3299d414bee98ec449d0a1e5dc8a32ed1d115142..93fe39aaaf60f6063bf3b9e6bc9a88fbc96a170b 100644
+--- a/src/SparseSolverMPIDist.cpp
++++ b/src/SparseSolverMPIDist.cpp
+@@ -31,6 +31,7 @@
+ #include "iterative/IterativeSolversMPI.hpp"
+ #include "sparse/ordering/MatrixReorderingMPI.hpp"
+ #include "sparse/Redistribute.hpp"
++#include "sparse/fronts/Front.hpp"
+ 
+ namespace strumpack {
+ 
+@@ -489,6 +490,74 @@ namespace strumpack {
+     tree_mpi_dist_->delete_factors();
+   }
+ 
++  template<typename scalar_t,typename integer_t> DenseMatrix<scalar_t>
++  SparseSolverMPIDist<scalar_t,integer_t>::schur_complement_internal() {
++    using real_t = typename RealType<scalar_t>::value_type;
++    // gathered on the root (see SparseSolver::schur_complement_internal)
++    auto S = tree()->root()->schur_complement();
++    const auto& s = this->schur_;
++    const auto& eq = this->equil_;
++    bool row = eq.type == EquilibrationType::ROW ||
++      eq.type == EquilibrationType::BOTH;
++    bool col = eq.type == EquilibrationType::COLUMN ||
++      eq.type == EquilibrationType::BOTH;
++    if (!row && !col) return S;
++    // the row scaling of the Schur variables, from the processes
++    // holding their rows
++    std::vector<real_t> Rs(s.size(), 0.);
++    if (row) {
++      integer_t lo = mat_mpi_->begin_row(), hi = mat_mpi_->end_row();
++      for (std::size_t i=0; i<s.size(); i++)
++        if (s[i] >= lo && s[i] < hi) Rs[i] = eq.R[s[i]-lo];
++      comm_.all_reduce(Rs, MPI_SUM);
++    }
++    for (std::size_t j=0; j<S.cols(); j++)
++      for (std::size_t i=0; i<S.rows(); i++)
++        S(i,j) /= (row ? Rs[i] : 1) * (col ? eq.C[s[j]] : 1);
++    return S;
++  }
++
++  template<typename scalar_t,typename integer_t> ReturnCode
++  SparseSolverMPIDist<scalar_t,integer_t>::schur_solve_internal
++  (const DenseM_t& b, DenseM_t& x, bool expand) {
++    const auto& s = this->schur_;
++    const auto& eq = this->equil_;
++    bool row = eq.type == EquilibrationType::ROW ||
++      eq.type == EquilibrationType::BOTH;
++    bool col = eq.type == EquilibrationType::COLUMN ||
++      eq.type == EquilibrationType::BOTH;
++    integer_t lo = mat_mpi_->begin_row(), hi = mat_mpi_->end_row();
++    DenseM_t v(b), xs;
++    if (row) v.scale_rows_real(eq.R);
++    if (expand) {
++      xs = DenseM_t(s.size(), v.cols());
++      for (std::size_t i=0; i<s.size(); i++)
++        if (s[i] >= lo && s[i] < hi)
++          for (std::size_t j=0; j<v.cols(); j++) {
++            xs(i, j) = x(s[i]-lo, j);
++            v(s[i]-lo, j) = col ? xs(i, j) / eq.C[s[i]] : xs(i, j);
++          }
++    }
++    tree_mpi_dist_->schur_solve_dist(v, mat_mpi_->dist(), expand);
++    if (expand) {
++      x.copy(v);
++      if (col) x.scale_rows_real(eq.C.data() + lo);
++      // the given values, not their unscaled equilibrated ones
++      for (std::size_t i=0; i<s.size(); i++)
++        if (s[i] >= lo && s[i] < hi)
++          for (std::size_t j=0; j<v.cols(); j++)
++            x(s[i]-lo, j) = xs(i, j);
++    } else {
++      x.zero();
++      for (std::size_t i=0; i<s.size(); i++)
++        if (s[i] >= lo && s[i] < hi)
++          for (std::size_t j=0; j<v.cols(); j++)
++            x(s[i]-lo, j) = row ?
++              v(s[i]-lo, j) / eq.R[s[i]-lo] : v(s[i]-lo, j);
++    }
++    return ReturnCode::SUCCESS;
++  }
++
+   // explicit template instantiations
+   template class SparseSolverMPIDist<float,int>;
+   template class SparseSolverMPIDist<double,int>;
+diff --git a/src/StrumpackParameters.hpp b/src/StrumpackParameters.hpp
+index cc7bf6c6e86953fd0f24fe4f7bcd9b6c3551b99d..953791c63cf58a157027e86691c4136d58b43cb7 100644
+--- a/src/StrumpackParameters.hpp
++++ b/src/StrumpackParameters.hpp
+@@ -53,7 +53,8 @@ namespace strumpack { // these are all global variables
+     REORDERING_ERROR,   /*!< The matrix reordering failed.          */
+     ZERO_PIVOT,         /*!< A zero pivot was encountered.          */
+     NO_CONVERGENCE,     /*!< The iterative solver did not converge. */
+-    INACCURATE_INERTIA  /*!< Inertia could not be computed.         */
++    INACCURATE_INERTIA, /*!< Inertia could not be computed.         */
++    SCHUR_ERROR         /*!< Invalid use of Schur variables.        */
+   };
+ 
+   inline std::ostream& operator<<(std::ostream& os, ReturnCode& e) {
+@@ -64,6 +65,7 @@ namespace strumpack { // these are all global variables
+     case ReturnCode::ZERO_PIVOT:         os << "ZERO_PIVOT"; break;
+     case ReturnCode::NO_CONVERGENCE:     os << "NO_CONVERGENCE"; break;
+     case ReturnCode::INACCURATE_INERTIA: os << "INACCURATE_INERTIA"; break;
++    case ReturnCode::SCHUR_ERROR:        os << "SCHUR_ERROR"; break;
+     }
+     return os;
+   }
+diff --git a/src/StrumpackSparseSolver.h b/src/StrumpackSparseSolver.h
+index 61bd534ad8601141e09ae45e720377fe76281b3f..428cb9bfd59302663c24ae69c759dc1021129acb 100644
+--- a/src/StrumpackSparseSolver.h
++++ b/src/StrumpackSparseSolver.h
+@@ -145,7 +145,8 @@ typedef enum
+    STRUMPACK_REORDERING_ERROR=2,
+    STRUMPACK_ZERO_PIVOT=3,
+    STRUMPACK_NO_CONVERGENCE=4,
+-   STRUMPACK_INACCURATE_INERTIA=5
++   STRUMPACK_INACCURATE_INERTIA=5,
++   STRUMPACK_SCHUR_ERROR=6
+   } STRUMPACK_RETURN_CODE;
+ 
+ 
+diff --git a/src/StrumpackSparseSolver.hpp b/src/StrumpackSparseSolver.hpp
+index fd63af9ada56d81bcfdc465bbddac401d37a44f9..f46cd5d86e35fa081a5f63bff9733c64414fd26f 100644
+--- a/src/StrumpackSparseSolver.hpp
++++ b/src/StrumpackSparseSolver.hpp
+@@ -243,6 +243,10 @@ namespace strumpack {
+ 
+     void delete_factors_internal() override;
+ 
++    DenseM_t schur_complement_internal() override;
++    ReturnCode schur_solve_internal(const DenseM_t& b, DenseM_t& x,
++                                    bool expand) override;
++
+     void transform_x0(DenseM_t& x, DenseM_t& xtmp);
+     void transform_b(const DenseM_t& b, DenseM_t& bloc);
+     void transform_x(DenseM_t& x, DenseM_t& xtmp);
+@@ -260,6 +264,7 @@ namespace strumpack {
+     using SPBase_t::reordered_;
+     using SPBase_t::Krylov_its_;
+     using SPBase_t::solve_internal;
++    using SPBase_t::schur_;
+   };
+ 
+   template<typename scalar_t,typename integer_t>
+diff --git a/src/StrumpackSparseSolverMPIDist.hpp b/src/StrumpackSparseSolverMPIDist.hpp
+index 0431bf9ae143e25fa2e0bd131acd27e7fca3c9a1..8ba14a43b9ac60c165934545bce6946f0608e884 100644
+--- a/src/StrumpackSparseSolverMPIDist.hpp
++++ b/src/StrumpackSparseSolverMPIDist.hpp
+@@ -324,6 +324,12 @@ namespace strumpack {
+ 
+     void delete_factors_internal() override;
+ 
++    integer_t local_rows() const override { return mat_mpi_->local_rows(); }
++
++    DenseM_t schur_complement_internal() override;
++    ReturnCode schur_solve_internal(const DenseM_t& b, DenseM_t& x,
++                                    bool expand) override;
++
+     ReturnCode
+     solve_internal(const scalar_t* b, scalar_t* x,
+                    bool use_initial_guess=false) override;
+diff --git a/src/fortran/strumpack.f90 b/src/fortran/strumpack.f90
+index 7509fd399b20b43b4e1c5fb641129f295b07f3fe..75451b9cf309da8b386f6e83eb8e8bcff807431e 100644
+--- a/src/fortran/strumpack.f90
++++ b/src/fortran/strumpack.f90
+@@ -152,10 +152,11 @@ module strumpack
+   enumerator :: STRUMPACK_ZERO_PIVOT = 3
+   enumerator :: STRUMPACK_NO_CONVERGENCE = 4
+   enumerator :: STRUMPACK_INACCURATE_INERTIA = 5
++  enumerator :: STRUMPACK_SCHUR_ERROR = 6
+  end enum
+  integer, parameter, public :: STRUMPACK_RETURN_CODE = kind(STRUMPACK_SUCCESS)
+  public :: STRUMPACK_SUCCESS, STRUMPACK_MATRIX_NOT_SET, STRUMPACK_REORDERING_ERROR, STRUMPACK_ZERO_PIVOT, &
+-    STRUMPACK_NO_CONVERGENCE, STRUMPACK_INACCURATE_INERTIA
++    STRUMPACK_NO_CONVERGENCE, STRUMPACK_INACCURATE_INERTIA, STRUMPACK_SCHUR_ERROR
+  public :: STRUMPACK_init_mt
+  public :: STRUMPACK_set_distributed_csr_matrix
+  public :: STRUMPACK_update_distributed_csr_matrix_values
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 67cfd5b3c26a077fd7f9e970b5daefb581f58620..83ce2ec20e60b1564848565e51cc63ab1cf74494 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -245,6 +245,20 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> void
+   EliminationTreeMPIDist<scalar_t,integer_t>::multifrontal_solve_dist
+   (DenseM_t& x, const std::vector<integer_t>& dist) {
++    solve_dist(x, dist, [&](DenseM_t& bloc, DistM_t* bdist) {
++      this->root_->multifrontal_solve(bloc, bdist); });
++  }
++
++  template<typename scalar_t,typename integer_t> void
++  EliminationTreeMPIDist<scalar_t,integer_t>::schur_solve_dist
++  (DenseM_t& x, const std::vector<integer_t>& dist, bool expand) {
++    solve_dist(x, dist, [&](DenseM_t& bloc, DistM_t* bdist) {
++      this->root_->schur_solve(bloc, bdist, expand); });
++  }
++
++  template<typename scalar_t,typename integer_t> void
++  EliminationTreeMPIDist<scalar_t,integer_t>::solve_dist
++  (DenseM_t& x, const std::vector<integer_t>& dist, const TreeSolve& solve) {
+     integer_t B = DistM_t::default_MB;
+     integer_t lo = dist[rank_];
+     integer_t m = dist[rank_+1] - lo, n = x.cols();
+@@ -257,7 +271,7 @@ namespace strumpack {
+     // solves only exchange the values.
+     auto& sp = solve_perm_[n];
+     if (sp.ready && sp.m == m) {
+-      multifrontal_solve_dist_cached(x, sp);
++      multifrontal_solve_dist_cached(x, sp, solve);
+       return;
+     }
+     sp = SolvePerm();
+@@ -371,7 +385,7 @@ namespace strumpack {
+       }
+     }
+ 
+-    this->root_->multifrontal_solve(Xloc, xdist.data());
++    solve(Xloc, xdist.data());
+ 
+     rcnts = ibuf;
+     scnts = ibuf + P_;
+@@ -427,7 +441,7 @@ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t> void
+   EliminationTreeMPIDist<scalar_t,integer_t>::multifrontal_solve_dist_cached
+-  (DenseM_t& x, const SolvePerm& sp) {
++  (DenseM_t& x, const SolvePerm& sp, const TreeSolve& solve) {
+     auto n = x.cols();
+     std::vector<scalar_t> sval(sp.in_src_r.size()), rval(sp.in_dst_f.size());
+     for (std::size_t k=0; k<sval.size(); k++)
+@@ -449,7 +463,7 @@ namespace strumpack {
+       (f < 0 ? xloc.data() : xdist[f].data())[sp.in_dst_off[i]] = rval[i];
+     }
+ 
+-    this->root_->multifrontal_solve(Xloc, xdist.data());
++    solve(Xloc, xdist.data());
+ 
+     for (std::size_t k=0; k<rval.size(); k++) {
+       auto f = sp.out_src_f[k];
+diff --git a/src/sparse/EliminationTreeMPIDist.hpp b/src/sparse/EliminationTreeMPIDist.hpp
+index 6fb3d086d734923eb9cae445a3bdc28b84127eaf..74271825e09d86d3f064dde3f1ea3317009e21c8 100644
+--- a/src/sparse/EliminationTreeMPIDist.hpp
++++ b/src/sparse/EliminationTreeMPIDist.hpp
+@@ -30,6 +30,7 @@
+ #define ELIMINATION_TREE_MPI_DIST_HPP
+ 
+ #include <cstddef>
++#include <functional>
+ #include <map>
+ 
+ #include "EliminationTreeMPI.hpp"
+@@ -71,6 +72,13 @@ namespace strumpack {
+     void multifrontal_solve_dist(DenseM_t& x,
+                                  const std::vector<integer_t>& dist) override;
+ 
++    /**
++     * The solves with Schur variables (Front::schur_solve), for x in
++     * the row distribution dist of the input matrix.
++     */
++    void schur_solve_dist(DenseM_t& x, const std::vector<integer_t>& dist,
++                          bool expand);
++
+     std::tuple<int,int,int>
+     get_sparse_mapped_destination(const CSRMPI_t& A,
+                                   integer_t oi, integer_t oj,
+@@ -129,7 +137,11 @@ namespace strumpack {
+       std::vector<int> out_dst_c;
+     };
+     std::map<int,SolvePerm> solve_perm_;
+-    void multifrontal_solve_dist_cached(DenseM_t& x, const SolvePerm& sp);
++    using TreeSolve = std::function<void(DenseM_t&,DistM_t*)>;
++    void solve_dist(DenseM_t& x, const std::vector<integer_t>& dist,
++                    const TreeSolve& solve);
++    void multifrontal_solve_dist_cached(DenseM_t& x, const SolvePerm& sp,
++                                        const TreeSolve& solve);
+ 
+     struct ParallelFront {
+       ParallelFront() {}
+diff --git a/src/sparse/fronts/Front.cpp b/src/sparse/fronts/Front.cpp
+index 9cd3c25bdcd7b149a1dcc8d53949542225638307..1dc72b541534617d9e94b0258f78582c6682bc55 100644
+--- a/src/sparse/fronts/Front.cpp
++++ b/src/sparse/fronts/Front.cpp
+@@ -235,6 +235,23 @@ namespace strumpack {
+     TIMER_STOP(t_bwd);
+   }
+ 
++  template<typename scalar_t,typename integer_t> void
++  Front<scalar_t,integer_t>::schur_solve(DenseM_t& b, bool expand) const {
++    std::vector<DenseM_t> CB(levels());
++    for (std::size_t i=0; i<CB.size(); i++)
++      CB[i] = DenseM_t(max_dim_upd(), b.cols());
++    // the forward sweep adds the condensation to the rows of the
++    // Schur variables, which hold their values when expanding
++    DenseMW_t bs(dim_sep(), b.cols(), b, sep_begin_, 0);
++    DenseM_t xs;
++    if (expand) xs = bs;
++    forward_multifrontal_solve(b, CB.data());
++    if (expand) {
++      bs.copy(xs);
++      backward_multifrontal_solve(b, CB.data());
++    }
++  }
++
+   template<typename scalar_t,typename integer_t> void
+   Front<scalar_t,integer_t>::forward_multifrontal_solve
+   (DenseM_t& b, DenseM_t* work, int etree_level, int task_depth) const {
+@@ -246,7 +263,9 @@ namespace strumpack {
+ #pragma omp single nowait
+       this->fwd_solve_phase1(b, bupd, work, etree_level, task_depth);
+       // no tasking for the root node computations, use system blas threading!
+-      fwd_solve_phase2(b, bupd, etree_level, params::task_recursion_cutoff_level);
++      if (!schur_root_)
++        fwd_solve_phase2
++          (b, bupd, etree_level, params::task_recursion_cutoff_level);
+     } else {
+       this->fwd_solve_phase1(b, bupd, work, etree_level, task_depth);
+       fwd_solve_phase2(b, bupd, etree_level, task_depth);
+@@ -304,8 +323,9 @@ namespace strumpack {
+     DenseMW_t yupd(dim_upd(), y.cols(), work[0], 0, 0);
+     if (task_depth == 0) {
+       // no tasking in blas routines, use system threaded blas instead
+-      bwd_solve_phase1
+-        (y, yupd, etree_level, params::task_recursion_cutoff_level);
++      if (!schur_root_)
++        bwd_solve_phase1
++          (y, yupd, etree_level, params::task_recursion_cutoff_level);
+ #pragma omp parallel if(!omp_in_parallel())
+ #pragma omp single nowait
+       // tasking when calling children
+@@ -428,6 +448,30 @@ namespace strumpack {
+   }
+ 
+ #if defined(STRUMPACK_USE_MPI)
++  template<typename scalar_t,typename integer_t> void
++  Front<scalar_t,integer_t>::schur_solve
++  (DenseM_t& bloc, DistM_t* bdist, bool expand) const {
++    DistM_t CB;
++    DenseM_t seqCB;
++    // as in the sequential solve, the separator's rows hold the values
++    // of the Schur variables when expanding, distributed for a
++    // distributed front
++    DistM_t xsd;
++    DenseM_t xs;
++    DenseMW_t bs(grid() ? 0 : dim_sep(), bloc.cols(), bloc,
++                 grid() ? 0 : sep_begin_, 0);
++    if (expand) {
++      if (grid()) xsd = bdist[sep_];
++      else xs = bs;
++    }
++    forward_multifrontal_solve(bloc, bdist, CB, seqCB);
++    if (expand) {
++      if (grid()) bdist[sep_] = xsd;
++      else bs.copy(xs);
++      backward_multifrontal_solve(bloc, bdist, CB, seqCB);
++    }
++  }
++
+   template<typename scalar_t,typename integer_t> void
+   Front<scalar_t,integer_t>::multifrontal_solve
+   (DenseM_t& bloc, DistM_t* bdist) const {
+diff --git a/src/sparse/fronts/Front.hpp b/src/sparse/fronts/Front.hpp
+index eae188a10efc519780b6cf629ba8056cdcd21f10..3d712c321ab32943cdb514fdebedd45816b52460 100644
+--- a/src/sparse/fronts/Front.hpp
++++ b/src/sparse/fronts/Front.hpp
+@@ -122,6 +122,30 @@ namespace strumpack {
+ 
+     virtual void delete_factors() {}
+ 
++    /**
++     * Make this the root front of a tree with Schur variables, which
++     * form its separator. It is assembled but not factored, so that
++     * its F11 block is the Schur complement onto them, and the solves
++     * stop at it.
++     */
++    void set_schur_root() { schur_root_ = true; }
++
++    /**
++     * The Schur complement, the F11 block of the root front with
++     * Schur variables (empty for front types without it). A
++     * distributed front gathers it on the root of its communicator.
++     */
++    virtual DenseM_t schur_complement() const { return DenseM_t(); }
++
++    /**
++     * The solves of the root front with Schur variables. The forward
++     * sweep condenses b onto them, in the rows of this front's
++     * separator. With expand, the values of the Schur variables are
++     * given in those rows, and the backward sweep then gives the
++     * other variables.
++     */
++    void schur_solve(DenseM_t& b, bool expand) const;
++
+     virtual void multifrontal_solve(DenseM_t& b) const;
+ 
+     virtual void
+@@ -324,6 +348,8 @@ namespace strumpack {
+     }
+ 
+ #if defined(STRUMPACK_USE_MPI)
++    void schur_solve(DenseM_t& bloc, DistM_t* bdist, bool expand) const;
++
+     virtual void
+     multifrontal_solve(DenseM_t& bloc, DistM_t* bdist) const;
+ 
+@@ -439,6 +465,7 @@ namespace strumpack {
+     integer_t sep_, sep_begin_, sep_end_;
+     std::vector<integer_t> upd_;
+     std::unique_ptr<F_t> lchild_, rchild_;
++    bool schur_root_ = false;
+ 
+     // cached result of upd_to_parent, used in the solve phase
+     mutable std::vector<std::size_t> upd2pa_;
+diff --git a/src/sparse/fronts/FrontDense.cpp b/src/sparse/fronts/FrontDense.cpp
+index c9bc4b2f8b009131d2fccc628313ad40553f93d9..9aafefba847d969fc21f851fbd6ffb5e120489d2 100644
+--- a/src/sparse/fronts/FrontDense.cpp
++++ b/src/sparse/fronts/FrontDense.cpp
+@@ -258,6 +258,7 @@ namespace strumpack {
+   (const SpMat_t& A, const Opts_t& opts,
+    int etree_level, int task_depth) {
+     ReturnCode err_code = ReturnCode::SUCCESS;
++    if (this->schur_root_) return err_code;
+     if (dim_sep()) {
+       if (F11_.LU(piv_, task_depth))
+         err_code = ReturnCode::ZERO_PIVOT;
+diff --git a/src/sparse/fronts/FrontDense.hpp b/src/sparse/fronts/FrontDense.hpp
+index 65ffb692138a125bae73ac791f9aa3a71d509710..aedfb2dc4f4619c18a4b88b9105b4613b5a98816 100644
+--- a/src/sparse/fronts/FrontDense.hpp
++++ b/src/sparse/fronts/FrontDense.hpp
+@@ -108,6 +108,8 @@ namespace strumpack {
+ 
+     void delete_factors() override;
+ 
++    DenseM_t schur_complement() const override { return F11_; }
++
+     std::string type() const override { return "FrontDense"; }
+ 
+ #if defined(STRUMPACK_USE_MPI)
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index 154b7549e813a7f5d4b777b810f3ce39eafee548..0aa92e264d94450f397f692729e2698a78fc5527 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -263,6 +263,7 @@ namespace strumpack {
+     }
+     if (lchild_) lchild_->release_work_memory();
+     if (rchild_) rchild_->release_work_memory();
++    if (this->schur_root_) return err_code;
+     auto ef = partial_factorization(opts);
+     if (ef != ReturnCode::SUCCESS) err_code = ef;
+ #if defined(STRUMPACK_USE_ZFP) || defined(STRUMPACK_USE_SZ3)
+@@ -377,7 +378,8 @@ namespace strumpack {
+       fwd_solve_phase2(F11, F12, F21, b, bupd);
+     } else
+ #endif
+-      fwd_solve_phase2(F11_, F12_, F21_, b, bupd);
++      if (!this->schur_root_)
++        fwd_solve_phase2(F11_, F12_, F21_, b, bupd);
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+@@ -433,7 +435,8 @@ namespace strumpack {
+       bwd_solve_phase1(F11, F12, F21, y, yupd);
+     } else
+ #endif
+-      bwd_solve_phase1(F11_, F12_, F21_, y, yupd);
++      if (!this->schur_root_)
++        bwd_solve_phase1(F11_, F12_, F21_, y, yupd);
+     DistM_t CBl, CBr;
+     DenseM_t seqCBl, seqCBr;
+     this->extract_b(y, yupd, CBl, CBr, seqCBl, seqCBr);
+diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
+index e848684a0be6c549735b50f746d447776da3bdb1..2a7d4ac644c56bd23bd69f4cb29331abff39a0da 100644
+--- a/src/sparse/fronts/FrontDenseMPI.hpp
++++ b/src/sparse/fronts/FrontDenseMPI.hpp
+@@ -104,6 +104,8 @@ namespace strumpack {
+                                int etree_level=0, int task_depth=0)
+       override;
+ 
++    DenseM_t schur_complement() const override { return F11_.gather(); }
++
+     void
+     forward_multifrontal_solve(DenseM_t& bloc, DistM_t* bdist,
+                                DistM_t& bupd, DenseM_t& seqbupd,
+diff --git a/src/sparse/ordering/MatrixReordering.cpp b/src/sparse/ordering/MatrixReordering.cpp
+index 7f706b19de41168e6d0b77133f8629c492bb3d3b..69958e34cd30427f1a6ce5f464450f87f7ce5931 100644
+--- a/src/sparse/ordering/MatrixReordering.cpp
++++ b/src/sparse/ordering/MatrixReordering.cpp
+@@ -73,6 +73,31 @@ namespace strumpack {
+   MatrixReordering<scalar_t,integer_t>::nested_dissection
+   (const Opts_t& opts, const CSR_t& A,
+    int nx, int ny, int nz, int components, int width) {
++    int ierr = 0;
++    if (opts.reordering_method() == ReorderingStrategy::GEOMETRIC)
++      tree_ = geometric_ND(A, nx, ny, nz, components, width,
++                           perm_, iperm_, opts);
++    else if (schur_.empty())
++      ierr = graph_nested_dissection(opts, A);
++    else {
++      // with Schur variables, order the graph of the other variables,
++      // and the Schur variables last
++      std::vector<integer_t> other;
++      auto G = schur_free_graph(A, other);
++      perm_.resize(G.size());
++      iperm_.resize(G.size());
++      ierr = graph_nested_dissection(opts, G);
++      if (!ierr) add_schur_root(tree_, other);
++    }
++    if (ierr) return ierr;
++    tree_.check();
++    nested_dissection_print(opts, A.nnz(), opts.verbose());
++    return 0;
++  }
++
++  template<typename scalar_t,typename integer_t> template<typename G> int
++  MatrixReordering<scalar_t,integer_t>::graph_nested_dissection
++  (const Opts_t& opts, const G& A) {
+     switch (opts.reordering_method()) {
+     case ReorderingStrategy::NATURAL: {
+       std::iota(perm_.begin(), perm_.end(), 0);
+@@ -93,11 +118,6 @@ namespace strumpack {
+ #endif
+       break;
+     }
+-    case ReorderingStrategy::GEOMETRIC: {
+-      tree_ = geometric_ND(A, nx, ny, nz, components, width,
+-                           perm_, iperm_, opts);
+-      break;
+-    }
+     case ReorderingStrategy::RCM: {
+       tree_ = rcm_reordering(A, perm_, iperm_);
+       break;
+@@ -131,11 +151,48 @@ namespace strumpack {
+         "\tuse SparseSolverMPIDist instead." << std::endl;
+       return 1;
+     }
+-    tree_.check();
+-    nested_dissection_print(opts, A.nnz(), opts.verbose());
+     return 0;
+   }
+ 
++  /**
++   * Turn the permutation and the separator tree of the graph without
++   * the Schur variables (the variables other) into those of all the
++   * variables: the Schur variables are ordered last, as a new root
++   * separator. Its left child is the previous root, and its right
++   * child an empty leaf, so that the tree remains a full binary tree.
++   */
++  template<typename scalar_t,typename integer_t> void
++  MatrixReordering<scalar_t,integer_t>::add_schur_root
++  (SeparatorTree<integer_t>& tree, const std::vector<integer_t>& other) {
++    if (schur_.empty()) return;
++    integer_t ni = other.size(), ns = schur_.size(), n = ni + ns,
++      nsep = tree.separators();
++    std::vector<integer_t> perm(n);
++    for (integer_t i=0; i<ni; i++) perm[other[i]] = perm_[i];
++    for (integer_t i=0; i<ns; i++) perm[schur_[i]] = ni + i;
++    perm_ = std::move(perm);
++    iperm_.resize(n);
++    for (integer_t i=0; i<n; i++) iperm_[perm_[i]] = i;
++    SeparatorTree<integer_t> t(nsep + 2);
++    for (integer_t sep=0; sep<nsep; sep++) {
++      t.sizes[sep] = tree.sizes[sep];
++      t.parent[sep] = tree.parent[sep];
++      t.lch[sep] = tree.lch[sep];
++      t.rch[sep] = tree.rch[sep];
++    }
++    auto root = tree.root();
++    integer_t leaf = nsep, top = nsep + 1;
++    t.parent[root] = top;
++    t.sizes[leaf] = t.sizes[top] = ni;
++    t.parent[leaf] = top;
++    t.lch[leaf] = t.rch[leaf] = -1;
++    t.sizes[top+1] = n;
++    t.parent[top] = -1;
++    t.lch[top] = root;
++    t.rch[top] = leaf;
++    tree = std::move(t);
++  }
++
+   template<typename scalar_t,typename integer_t> int
+   MatrixReordering<scalar_t,integer_t>::set_permutation
+   (const Opts_t& opts, const CSR_t& A, const int* p, int base) {
+diff --git a/src/sparse/ordering/MatrixReordering.hpp b/src/sparse/ordering/MatrixReordering.hpp
+index c921f6958c135146b53231e00ca5ff9000998b1c..a62ccf35c6c427155b22f634b610a435b5f0b5fc 100644
+--- a/src/sparse/ordering/MatrixReordering.hpp
++++ b/src/sparse/ordering/MatrixReordering.hpp
+@@ -38,6 +38,7 @@
+ #include "misc/MPIWrapper.hpp"
+ #endif
+ #include "sparse/SeparatorTree.hpp"
++#include "sparse/CSRGraph.hpp"
+ 
+ namespace strumpack {
+ 
+@@ -71,6 +72,16 @@ namespace strumpack {
+     const SeparatorTree<integer_t>& tree() const { return tree_; }
+     SeparatorTree<integer_t>& tree() { return tree_; }
+ 
++    /**
++     * Set the Schur variables (indices in the input matrix). The
++     * reordering orders the graph of the other variables, and then
++     * the Schur variables last, as the root separator.
++     */
++    void set_schur_variables(const std::vector<integer_t>& s) {
++      schur_ = s;
++    }
++    integer_t schur_size() const { return schur_.size(); }
++
+   protected:
+     virtual void
+     separator_reordering_print(integer_t max_nr_neighbours,
+@@ -85,6 +96,42 @@ namespace strumpack {
+ 
+     SeparatorTree<integer_t> tree_;
+ 
++    std::vector<integer_t> schur_;
++
++    /**
++     * The graph of A without the Schur variables, and the variables
++     * of its vertices, in other.
++     */
++    template<typename G> CSRGraph<integer_t>
++    schur_free_graph(const G& A, std::vector<integer_t>& other) const {
++      integer_t n = A.size();
++      std::vector<integer_t> num(n, 0);
++      for (auto s : schur_) num[s] = -1;
++      other.clear();
++      for (integer_t i=0; i<n; i++)
++        if (num[i] != -1) {
++          num[i] = other.size();
++          other.push_back(i);
++        }
++      std::vector<integer_t> ptr(other.size()+1, 0), ind;
++      for (std::size_t q=0; q<other.size(); q++) {
++        for (integer_t t=A.ptr()[other[q]]; t<A.ptr()[other[q]+1]; t++)
++          if (num[A.ind()[t]] >= 0) ind.push_back(num[A.ind()[t]]);
++        ptr[q+1] = ind.size();
++      }
++      return CSRGraph<integer_t>(std::move(ptr), std::move(ind));
++    }
++
++    void add_schur_root(SeparatorTree<integer_t>& tree,
++                        const std::vector<integer_t>& other);
++
++    /**
++     * The sequential graph reorderings (all but the geometric one),
++     * of the matrix or of its graph without the Schur variables.
++     */
++    template<typename G> int
++    graph_nested_dissection(const Opts_t& opts, const G& A);
++
+   private:
+     void
+     nested_dissection_print(const Opts_t& opts, integer_t nnz,
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
+index ff3b03a289963dcc699295658293092d1498fd1c..f9d8fa410159a77a8bee45cfdd2247398184881a 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -73,6 +73,13 @@ namespace strumpack {
+       auto P = comm_->size();
+       auto Aseq = A.gather_graph();
+       SeparatorTree<integer_t> global_sep_tree;
++      // with Schur variables, order the graph of the other variables
++      std::vector<integer_t> other;
++      if (Aseq && !this->schur_.empty()) {
++        *Aseq = this->schur_free_graph(*Aseq, other);
++        perm_.resize(Aseq->size());
++        iperm_.resize(Aseq->size());
++      }
+       if (Aseq) { // only root
+         switch (opts.reordering_method()) {
+         case ReorderingStrategy::NATURAL: {
+@@ -127,6 +134,7 @@ namespace strumpack {
+         default: assert(true);
+         }
+         Aseq.reset();
++        this->add_schur_root(global_sep_tree, other);
+         global_sep_tree.check();
+       }
+       comm_->broadcast(perm_);
