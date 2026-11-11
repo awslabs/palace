@@ -386,6 +386,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     applied position vs the placed index; a regression of the round-1 memory fix): the
     excluded patches are gathered and each owner serves its raw claims (lane fix-gate-claim;
     decision 1533; results bitwise for every run that completed before).
+  - The Maxwell surface-response patch-energy CSV no longer rebuilds a response's per-patch
+    maximum loop residuals for every row on the root (rows x loop records: a chip-scale
+    eigenmode postprocessing stalled there, OI-PATCH-ENERGY-CSV-QUADRATIC-ROOT-WRITER), and
+    the conductor-consistency gate no longer scans the whole patch table per excluded patch;
+    both are indexed once (decision 1544; the same bytes are written).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
