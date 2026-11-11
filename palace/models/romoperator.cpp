@@ -40,6 +40,8 @@ extern "C"
               int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
               int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
               int *);
+  void dgeev_(char *, char *, int *, double *, int *, double *, double *, double *, int *,
+              double *, int *, double *, int *, int *);
 }
 
 namespace palace
@@ -368,6 +370,13 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
 
 std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
 {
+  return FindMaxError(N, {}, {});
+}
+
+std::vector<double> MinimalRationalInterpolation::FindMaxError(
+    std::size_t N, const std::vector<std::pair<double, double>> &exclude,
+    const std::vector<double> &candidates) const
+{
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
@@ -388,23 +397,9 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   using q_t = std::pair<std::complex<double>, double>;
   std::vector<q_t> queue{};
   queue.reserve(N);
-
-  // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
-  // Consider making configurable or scaling with the parameter range, so that it is e.g.
-  // always 1 kHz.
-  const std::size_t nr_sample = 1.0e6;  // must be >= N
-  MFEM_VERIFY(N < nr_sample,
-              fmt::format("Number of location of error maximum N={} needs to be less than "
-                          "the fine sampling grid nr_sample={}.",
-                          N, nr_sample));
-  const auto delta = (end - start) / nr_sample;
-  for (std::size_t i = 0; i <= nr_sample; i++)
+  auto Insert = [&](double z_sample)
   {
-    // Index the points rather than accumulate delta, which can be below the spacing of
-    // doubles near z, so the loop always ends.
-    const double z_sample = start + i * delta;
     const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
-
     bool partial_full = (queue.size() < N);
     if (partial_full || Q_sample < queue.back().second)
     {
@@ -415,6 +410,43 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
         queue.pop_back();
       }
     }
+  };
+
+  // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
+  // Consider making configurable or scaling with the parameter range, so that it is e.g.
+  // always 1 kHz.
+  const std::size_t nr_sample = 1.0e6;  // must be >= N
+  MFEM_VERIFY(N < nr_sample,
+              fmt::format("Number of location of error maximum N={} needs to be less than "
+                          "the fine sampling grid nr_sample={}.",
+                          N, nr_sample));
+  const auto delta = (end - start) / nr_sample;
+  std::size_t k = 0;
+  for (std::size_t i = 0; i <= nr_sample; i++)
+  {
+    // Index the points rather than accumulate delta, which can be below the spacing of
+    // doubles near z, so the loop always ends.
+    const double z_sample = start + i * delta;
+    while (k < exclude.size() && exclude[k].second < z_sample)
+    {
+      k++;
+    }
+    if (k < exclude.size() && exclude[k].first <= z_sample)
+    {
+      continue;
+    }
+    Insert(z_sample);
+  }
+  for (auto z_sample : candidates)
+  {
+    if (z_sample >= start && z_sample <= end && std::ranges::find(z, z_sample) == z.end())
+    {
+      Insert(z_sample);
+    }
+  }
+  if (queue.size() < N && !exclude.empty())
+  {
+    return FindMaxError(N, {}, candidates);  // Everything was excluded
   }
   MFEM_VERIFY(queue.size() == N,
               fmt::format("Internal failure: queue should be size should be N={} (got {})",
@@ -423,6 +455,186 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   std::vector<double> vals(N);
   std::ranges::transform(queue, vals.begin(), [](const q_t &p) { return p.first.real(); });
   return vals;
+}
+
+std::vector<std::complex<double>> QuadraticEigenvalues(const Eigen::MatrixXcd &K,
+                                                       const Eigen::MatrixXcd *C,
+                                                       const Eigen::MatrixXcd &M)
+{
+  // Companion linearization of (K + s C + s² M) x = 0 in s = iω, scaled by s = ω₀ s' with
+  // ω₀ = √(‖K‖/‖M‖): [0 I; -K' -C'] [x; s' x] = s' [I 0; 0 M] [x; s' x] with K' = K / ω₀²,
+  // C' = C / ω₀. For real matrices with M symmetric positive definite (lossless materials),
+  // the standard real eigenvalue problem for M⁻¹ times the second block row is ~15x cheaper
+  // than the complex generalized one.
+  const int n = static_cast<int>(K.rows());
+  MFEM_VERIFY(K.cols() == n && M.rows() == n && M.cols() == n &&
+                  (!C || (C->rows() == n && C->cols() == n)),
+              "Invalid matrix sizes for the quadratic eigenvalue problem!");
+  std::vector<std::complex<double>> eig;
+  if (n == 0)
+  {
+    return eig;
+  }
+  const double norm_K = K.cwiseAbs().maxCoeff(), norm_M = M.cwiseAbs().maxCoeff();
+  const double w0 = (norm_K > 0.0 && norm_M > 0.0) ? std::sqrt(norm_K / norm_M) : 1.0;
+  int N = 2 * n, info = 0, one = 1;
+  char jobN = 'N';
+  const bool real =
+      (K.imag().cwiseAbs().maxCoeff() == 0.0 && M.imag().cwiseAbs().maxCoeff() == 0.0 &&
+       (!C || C->imag().cwiseAbs().maxCoeff() == 0.0));
+  if (real)
+  {
+    Eigen::LLT<Eigen::MatrixXd> llt(M.real());
+    if (llt.info() == Eigen::Success)
+    {
+      Eigen::MatrixXd A = Eigen::MatrixXd::Zero(N, N);
+      A.topRightCorner(n, n).setIdentity();
+      A.bottomLeftCorner(n, n) = llt.solve(K.real()) / (-w0 * w0);
+      if (C)
+      {
+        A.bottomRightCorner(n, n) = llt.solve(C->real()) / (-w0);
+      }
+      Eigen::VectorXd wr(N), wi(N), dummy(1);
+      int lwork = 4 * N;
+      Eigen::VectorXd work(lwork);
+      dgeev_(&jobN, &jobN, &N, A.data(), &N, wr.data(), wi.data(), dummy.data(), &one,
+             dummy.data(), &one, work.data(), &lwork, &info);
+      MFEM_VERIFY(info == 0, "dgeev failed with info = " << info);
+      eig.reserve(N);
+      for (int i = 0; i < N; i++)
+      {
+        eig.emplace_back(w0 * wi(i), -w0 * wr(i));  // ω = s / i
+      }
+      return eig;
+    }
+  }
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(N, N), B = Eigen::MatrixXcd::Zero(N, N);
+  A.topRightCorner(n, n).setIdentity();
+  A.bottomLeftCorner(n, n) = K / (-w0 * w0);
+  if (C)
+  {
+    A.bottomRightCorner(n, n) = *C / (-w0);
+  }
+  B.topLeftCorner(n, n).setIdentity();
+  B.bottomRightCorner(n, n) = M;
+  Eigen::VectorXcd alpha(N), beta(N), work(4 * N), dummy(1);
+  Eigen::VectorXd rwork(8 * N);
+  int lwork = 4 * N;
+  zggev_(&jobN, &jobN, &N, A.data(), &N, B.data(), &N, alpha.data(), beta.data(),
+         dummy.data(), &one, dummy.data(), &one, work.data(), &lwork, rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
+  eig.reserve(N);
+  for (int i = 0; i < N; i++)
+  {
+    if (std::abs(beta(i)) > 0.0)
+    {
+      eig.push_back(w0 * alpha(i) / beta(i) * std::complex<double>(0.0, -1.0));
+    }
+  }
+  return eig;
+}
+
+std::pair<std::vector<std::complex<double>>, Eigen::MatrixXcd>
+QuadraticEigenpairs(const Eigen::MatrixXcd &K, const Eigen::MatrixXcd *C,
+                    const Eigen::MatrixXcd &M)
+{
+  // The complex companion linearization of QuadraticEigenvalues: the first block of the
+  // right eigenvectors [x; s' x].
+  const int n = static_cast<int>(K.rows());
+  MFEM_VERIFY(K.cols() == n && M.rows() == n && M.cols() == n &&
+                  (!C || (C->rows() == n && C->cols() == n)),
+              "Invalid matrix sizes for the quadratic eigenvalue problem!");
+  std::vector<std::complex<double>> eig;
+  if (n == 0)
+  {
+    return {eig, Eigen::MatrixXcd(0, 0)};
+  }
+  const double norm_K = K.cwiseAbs().maxCoeff(), norm_M = M.cwiseAbs().maxCoeff();
+  const double w0 = (norm_K > 0.0 && norm_M > 0.0) ? std::sqrt(norm_K / norm_M) : 1.0;
+  int N = 2 * n, info = 0, one = 1;
+  char jobN = 'N', jobV = 'V';
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(N, N), B = Eigen::MatrixXcd::Zero(N, N);
+  A.topRightCorner(n, n).setIdentity();
+  A.bottomLeftCorner(n, n) = K / (-w0 * w0);
+  if (C)
+  {
+    A.bottomRightCorner(n, n) = *C / (-w0);
+  }
+  B.topLeftCorner(n, n).setIdentity();
+  B.bottomRightCorner(n, n) = M;
+  Eigen::MatrixXcd Z(N, N);
+  Eigen::VectorXcd alpha(N), beta(N), work(4 * N), dummy(1);
+  Eigen::VectorXd rwork(8 * N);
+  int lwork = 4 * N;
+  zggev_(&jobN, &jobV, &N, A.data(), &N, B.data(), &N, alpha.data(), beta.data(),
+         dummy.data(), &one, Z.data(), &N, work.data(), &lwork, rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
+  Eigen::MatrixXcd X(n, N);
+  int m = 0;
+  for (int i = 0; i < N; i++)
+  {
+    if (std::abs(beta(i)) > 0.0)
+    {
+      eig.push_back(w0 * alpha(i) / beta(i) * std::complex<double>(0.0, -1.0));
+      X.col(m++) = Z.col(i).head(n);
+    }
+  }
+  return {eig, X.leftCols(m)};
+}
+
+std::vector<std::pair<double, double>>
+NarrowPoleIntervals(const std::vector<std::complex<double>> &poles,
+                    const std::vector<std::complex<double>> &prev_poles, double omega_min,
+                    double omega_max, double w, double tol)
+{
+  // A pole moved by δ changes the PROM outside of its interval by about δ / (w |p|)
+  // relative to the resonance: it is converged when the last sample moved it by less than
+  // tol w |p|.
+  std::vector<std::pair<double, double>> intervals;
+  for (const auto &p : poles)
+  {
+    const double r = w * std::abs(p);
+    if (!std::isfinite(r) || p.real() < omega_min || p.real() > omega_max ||
+        !(std::abs(p.imag()) < r))
+    {
+      continue;
+    }
+    if (std::ranges::any_of(prev_poles,
+                            [&](const auto &q) { return std::abs(q - p) < tol * r; }))
+    {
+      intervals.emplace_back(p.real() - r, p.real() + r);
+    }
+  }
+  std::ranges::sort(intervals);
+  std::vector<std::pair<double, double>> merged;
+  for (const auto &interval : intervals)
+  {
+    if (!merged.empty() && interval.first <= merged.back().second)
+    {
+      merged.back().second = std::max(merged.back().second, interval.second);
+    }
+    else
+    {
+      merged.push_back(interval);
+    }
+  }
+  return merged;
+}
+
+std::vector<std::size_t> ResonanceIndices(const std::vector<std::complex<double>> &poles,
+                                          double omega_min, double omega_max, double max_Q)
+{
+  std::vector<std::size_t> idx;
+  for (std::size_t i = 0; i < poles.size(); i++)
+  {
+    const auto &p = poles[i];
+    if (p.real() >= omega_min && p.real() <= omega_max &&
+        std::abs(p) < 2.0 * max_Q * std::abs(p.imag()))
+    {
+      idx.push_back(i);
+    }
+  }
+  return idx;
 }
 
 // Hybrid inner-product matrix. This is made from MassIntegrator of the domain and port
@@ -532,7 +744,8 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
+  : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type),
+    coarse_reuse(iodata.solver.driven.coarse_reuse_tol)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are
   // handled simply by setting diagonal entries of the system matrix for the corresponding
@@ -655,6 +868,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(
       iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
       space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  initial_guess = iodata.solver.linear.initial_guess;
+
+  // A PROM solution whose true residual is at least half that of zero (the bound of the
+  // true residual check) is no initial guess: on multiscale models its residual is
+  // dominated by stiff rows, which the preconditioned residual of GMRES does not see, so
+  // that the solve fails the true residual check and is solved again from zero (see
+  // GmresSolver::SetInitialGuessCheck).
+  ksp->SetInitialGuessCheck(0.5);
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
@@ -918,18 +1139,24 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   SetExcitationIndex(excitation_idx);
 
   // Compute HDM solution at the given frequency. The sparse A2 is stored as a member for
-  // PROM projection. The full frequency-dependent operator (A2 + low-rank Floquet DtN) is
-  // built locally for the HDM system matrix.
+  // PROM projection, as are K, C and M. The HDM system operator applies the
+  // preconditioner's finest level when it is the sparse part of the system (see
+  // SpaceOperator::GetSystemOperator), or else the fixed operators and the full
+  // frequency-dependent operator (A2 + wave-port modal correction + Floquet DtN). A refers
+  // to P, and to A2_full when assembled, so both must outlive it.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2_full.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
-  ksp->SetOperators(*A, *P);
-
+  std::unique_ptr<ComplexOperator> A2_full;
+  auto A = space_op.GetSystemOperator(omega, *P);
+  if (!A)
+  {
+    A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                 std::complex<double>(-omega * omega, 0.0), K.get(),
+                                 C.get(), M.get(), A2_full.get());
+  }
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
   if (has_RHS2)
@@ -945,8 +1172,18 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
     r.Add(1i * omega, RHS1);
   }
 
-  // Solve the linear system.
-  ksp->Mult(r, u);
+  // Solve the linear system. A nonzero initial guess returned unchanged would add no new
+  // direction to the PROM basis: then solve again from zero, with the same operators. (A
+  // solve from the PROM solution which fails the true residual check of GMRES is solved
+  // again from zero by GMRES, see GmresSolver::SetTrueResidualCheck.)
+  const bool nonzero_guess = initial_guess && linalg::Norml2(space_op.GetComm(), u) > 0.0;
+  const int num_it = ksp->NumTotalMultIterations();
+  coarse_reuse.Solve(*ksp, *A, *P, omega, r, u, initial_guess);
+  if (nonzero_guess && ksp->NumTotalMultIterations() == num_it)
+  {
+    u = 0.0;
+    ksp->Mult(r, u);
+  }
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const
@@ -1132,6 +1369,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
 
     if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
     {
+      V.pop_back();
       return false;
     }
 
@@ -1140,17 +1378,25 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return true;
   };
 
-  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
+  // A solve started from the PROM solution can return a real or imaginary part already in
+  // the span of the basis (for example the small imaginary part of a nearly lossless
+  // problem): it then adds no direction, but the sample is still valid.
+  const bool added_real =
+      has_real && add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label));
+  const bool added_imag =
+      has_imag && add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label));
+  MFEM_VERIFY(added_real || added_imag || (!has_real && !has_imag),
+              "Linearly dependent vector added to PROM basis. This indicates a convergence "
+              "issue or a code error (the same vector was added multiple times "
+              "accidentally).");
+  if ((has_real && !added_real) || (has_imag && !added_imag))
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
-  }
-  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
-  {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    Mpi::Warning(space_op.GetComm(),
+                 "The {} part of PROM sample {} is in the span of the reduced basis and is "
+                 "not added to it.\n",
+                 (has_real && !added_real) ? "real" : "imaginary", node_label);
+    dim_V_new = V.size();
+    orth_R.conservativeResize(dim_V_new, dim_V_new);
   }
 
   if (dim_V_new == dim_V_old)
@@ -1477,7 +1723,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // the per-port cross-section EVP at this ω and refreshes the modal post-processing
     // state used by MeasureWavePorts for S-parameters and power.
     {
-      BlockTimer bt(Timer::WAVE_PORT);
+      BlockTimer bt(Timer::WAVE_PORT, !Mwp_p_r.empty());
       for (const auto &[port_idx, Mp_r] : Mwp_p_r)
       {
         const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
@@ -1545,7 +1791,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
     // for active ports only, so an excitation that also drives an inactive port uses the
     // assembled excitation vector instead.
-    BlockTimer bt_wp(Timer::WAVE_PORT);
+    BlockTimer bt_wp(Timer::WAVE_PORT, space_op.GetWavePortOp().Size() > 0);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation != excitation_idx)
@@ -3321,6 +3567,73 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                  e.freq_re_GHz, e.freq_im_GHz, e.Q, e.error_bkwd);
     }
   }
+}
+
+std::vector<std::complex<double>> RomOperator::ComputePoles() const
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+
+  // Frequency-dependent boundary terms (wave ports, Floquet ports, second-order farfield,
+  // surface conductivity and impedance) are not part of the quadratic pencil.
+  const auto any = [](const auto &ops)
+  { return std::ranges::any_of(ops, [](const auto &op) { return op != nullptr; }); };
+  if (V.empty() || has_A2 || !Mwp_p_r.empty() || !floquet_reduced.empty() || M_ff_ ||
+      any(Asig_g_) || any(Arz_b_))
+  {
+    return {};
+  }
+  return QuadraticEigenvalues(Kr, C ? &Cr : nullptr, Mr);
+}
+
+std::optional<std::vector<std::pair<std::complex<double>, double>>>
+RomOperator::ComputePoleResiduals(double omega_min, double omega_max, double max_Q) const
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  const auto any = [](const auto &ops)
+  { return std::ranges::any_of(ops, [](const auto &op) { return op != nullptr; }); };
+  if (V.empty() || has_A2 || !Mwp_p_r.empty() || !floquet_reduced.empty() || M_ff_ ||
+      any(Asig_g_) || any(Arz_b_))
+  {
+    return std::nullopt;
+  }
+
+  // The eigenvectors of the spurious poles of the projection are no eigenvectors of the
+  // HDM: the terms of the residual do not cancel.
+  const auto [eig, Y] = QuadraticEigenpairs(Kr, C ? &Cr : nullptr, Mr);
+  MPI_Comm comm = space_op.GetComm();
+  ComplexVector u(K->Width()), t(K->Width()), res(K->Width());
+  u.UseDevice(true);
+  t.UseDevice(true);
+  res.UseDevice(true);
+  const auto n = std::min(V.size(), static_cast<std::size_t>(Y.rows()));
+  std::vector<std::pair<std::complex<double>, double>> poles;
+  for (auto i : ResonanceIndices(eig, omega_min, omega_max, max_Q))
+  {
+    u = 0.0;
+    for (std::size_t j = 0; j < n; j++)
+    {
+      const std::complex<double> yj =
+          Y(static_cast<Eigen::Index>(j), static_cast<Eigen::Index>(i));
+      linalg::AXPY(yj.real(), V[j], u.Real());
+      linalg::AXPY(yj.imag(), V[j], u.Imag());
+    }
+    const std::complex<double> w = eig[i];
+    K->Mult(u, res);
+    double scale = linalg::Norml2(comm, res);
+    if (C)
+    {
+      C->Mult(u, t);
+      scale += std::abs(w) * linalg::Norml2(comm, t);
+      C->AddMult(u, res, 1i * w);
+    }
+    M->Mult(u, t);
+    scale += std::norm(w) * linalg::Norml2(comm, t);
+    M->AddMult(u, res, -w * w);
+    poles.emplace_back(w, (scale > 0.0) ? linalg::Norml2(comm, res) / scale : 1.0);
+  }
+  std::ranges::sort(poles, [](const auto &a, const auto &b)
+                    { return a.first.real() < b.first.real(); });
+  return poles;
 }
 
 std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstimates(

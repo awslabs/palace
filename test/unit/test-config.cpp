@@ -6,6 +6,7 @@
 #include <numbers>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -827,6 +828,58 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
+    CHECK(driven_solver.adaptive_pole_exclusion == 0.0);
+  }
+
+  SECTION("Adaptive pole exclusion")
+  {
+    json driven = {{"MinFreq", 0.1},
+                   {"MaxFreq", 1.1},
+                   {"FreqStep", 0.1},
+                   {"AdaptiveTol", 1.0e-3},
+                   {"AdaptivePoleExclusion", 1.0e-5}};
+    CHECK(config::DrivenSolverData(driven).adaptive_pole_exclusion == 1.0e-5);
+    driven["AdaptivePoleExclusion"] = 0.0;
+    CHECK(config::DrivenSolverData(driven).adaptive_pole_exclusion == 0.0);
+    driven["AdaptivePoleExclusion"] = -1.0e-4;
+    CHECK_THROWS(config::DrivenSolverData(driven));
+  }
+
+  SECTION("Adaptive indicator samples")
+  {
+    json driven = {
+        {"MinFreq", 1.0}, {"MaxFreq", 10.0}, {"FreqStep", 0.05}, {"AdaptiveTol", 1e-3}};
+    CHECK(config::DrivenSolverData(driven).adaptive_indicator_samples == 0);
+    CHECK(config::DrivenSolverData(driven).indicator_indices.empty());
+    CHECK(config::DrivenSolverData(driven).adaptive_indicator_max_q == 0.0);
+
+    // 181 frequencies, 19 indicator samples: every tenth, both ends included.
+    driven["AdaptiveIndicatorSamples"] = 19;
+    const auto indices = config::DrivenSolverData(driven).indicator_indices;
+    REQUIRE(indices.size() == 19);
+    for (std::size_t k = 0; k < indices.size(); k++)
+    {
+      CHECK(indices[k] == 10 * k);
+    }
+
+    // Uneven spacing rounds to the closest sample; one sample is the middle one; more
+    // samples than frequencies take every frequency.
+    driven["AdaptiveIndicatorSamples"] = 4;
+    CHECK(config::DrivenSolverData(driven).indicator_indices ==
+          std::vector<std::size_t>{0, 60, 120, 180});
+    driven["AdaptiveIndicatorSamples"] = 7;
+    CHECK(config::DrivenSolverData(driven).indicator_indices ==
+          std::vector<std::size_t>{0, 30, 60, 90, 120, 150, 180});
+    driven["AdaptiveIndicatorSamples"] = 1;
+    CHECK(config::DrivenSolverData(driven).indicator_indices ==
+          std::vector<std::size_t>{90});
+    driven["AdaptiveIndicatorSamples"] = 1000;
+    CHECK(config::DrivenSolverData(driven).indicator_indices.size() == 181);
+
+    // Resonances of the PROM below a quality factor, with the fixed frequencies.
+    driven["AdaptiveIndicatorSamples"] = 19;
+    driven["AdaptiveIndicatorMaxQ"] = 5.0e3;
+    CHECK(config::DrivenSolverData(driven).adaptive_indicator_max_q == 5.0e3);
   }
 
   SECTION("Uniform freq step with Samples")
@@ -1086,6 +1139,51 @@ TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
   const config::EigenSolverData nonlinear(json{{"Target", 1.0}, {"NonlinearMaxIts", 500}});
   CHECK(nonlinear.max_it == 1'000'000);
   CHECK(nonlinear.nonlinear_max_it == 500);
+}
+
+TEST_CASE("Config Eigenmode subspace, search region and relaxation", "[config][Serial]")
+{
+  auto Parse = [](json eigenmode)
+  {
+    eigenmode["Target"] = 1.0;
+    return config::EigenSolverData(eigenmode);
+  };
+  const auto defaults = Parse({{"N", 12}});
+  CHECK(defaults.warm_start);
+  CHECK(defaults.adaptive_shift);
+  CHECK(defaults.linear_relaxation == 0.0);
+  CHECK(defaults.linear_deflation == 0);
+  CHECK(Parse({{"N", 12}, {"LinearSolverDeflation", 16}}).linear_deflation == 16);
+  CHECK(Parse({{"N", 12}, {"LinearSolverDeflation", -1}}).linear_deflation == -1);
+  CHECK(defaults.min_q == 0.54);
+  CHECK(defaults.intermediate_tol == defaults.tol);
+
+  // With the minimum quality factor of the search region (by default), the SLEPc solver
+  // uses a larger subspace for N >= 6: max(3 N, N + 28).
+  if (defaults.type == EigenSolverBackend::SLEPC)
+  {
+    CHECK(defaults.max_size == 40);
+    CHECK(Parse({{"N", 6}}).max_size == 34);
+    CHECK(Parse({{"N", 20}}).max_size == 60);
+  }
+
+  // Otherwise, max(2 N, N + 15): for fewer modes, without the region, with the SLP
+  // nonlinear solver, or with ARPACK.
+  CHECK(Parse({{"N", 1}}).max_size == 16);
+  CHECK(Parse({{"N", 5}}).max_size == 20);
+  CHECK(Parse({{"N", 12}, {"MinQ", 0.0}}).max_size == 27);
+  CHECK(Parse({{"N", 12}, {"MinQ", 0.5}}).max_size == 27);
+  CHECK(Parse({{"N", 12}, {"NonlinearType", "SLP"}}).max_size == 27);
+#if defined(PALACE_WITH_ARPACK)
+  CHECK(Parse({{"N", 12}, {"Type", "ARPACK"}}).max_size == 27);
+#endif
+
+  // An explicit subspace dimension is kept.
+  CHECK(Parse({{"N", 12}, {"MaxSize", 30}}).max_size == 30);
+
+  // Intermediate adaptation iterations do not use a tighter tolerance than the last one.
+  CHECK(Parse({{"Tol", 1.0e-8}, {"IntermediateTol", 1.0e-6}}).intermediate_tol == 1.0e-6);
+  CHECK(Parse({{"Tol", 1.0e-8}, {"IntermediateTol", 1.0e-10}}).intermediate_tol == 1.0e-8);
 }
 
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
@@ -1385,9 +1483,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.pc_mat_shifted == 0);
     CHECK(iodata.solver.linear.mg_smooth_aux == 0);
     CHECK(iodata.solver.linear.ams_singular_op == 0);
+    CHECK(iodata.solver.linear.strumpack_selective_inversion == 0);
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_smooth_it == 1);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
+    CHECK_FALSE(iodata.solver.linear.always_error_estimation);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
     // ConcretizeDefaults should write resolved values back to JSON.
@@ -1402,7 +1503,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
+    CHECK(j_linear["AMSSmoothIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK(j_linear["AlwaysComputeErrorEstimation"].get<bool>() == false);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")
@@ -1436,6 +1539,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
     CHECK(iodata.solver.linear.ams_singular_op == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_smooth_it == 8);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -1443,6 +1547,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSSmoothIts"].get<int>() == 8);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
     CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
   }
@@ -1534,6 +1639,187 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 5);
   }
 
+  SECTION("mg_smooth_order is adaptive for second-order eigenmode problems")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 2}, {"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    CHECK(iodata1.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata1.solver.linear.mg_smooth_order_max == 8);
+
+    // The order is chosen at runtime, so the resolved config leaves it unspecified.
+    json resolved = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK_FALSE(resolved["Solver"]["Linear"].contains("MGSmoothOrder"));
+    IoData iodata2(resolved, false);
+    CHECK(iodata2.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata2.solver.linear.mg_smooth_order_max == 8);
+
+    // An explicit order is used as is.
+    config["Solver"]["Linear"]["MGSmoothOrder"] = 4;
+    IoData iodata3(config, false);
+    CHECK(iodata3.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata3.solver.linear.mg_smooth_order_max == 4);
+
+    // Other problem types and orders use a fixed order.
+    config["Solver"]["Linear"].erase("MGSmoothOrder");
+    config["Solver"]["Order"] = 3;
+    IoData iodata4(config, false);
+    CHECK(iodata4.solver.linear.mg_smooth_order == 6);
+    CHECK(iodata4.solver.linear.mg_smooth_order_max == 6);
+    config["Problem"]["Type"] = "Electrostatic";
+    config["Solver"]["Order"] = 2;
+    IoData iodata5(config, false);
+    CHECK(iodata5.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata5.solver.linear.mg_smooth_order_max == 4);
+  }
+
+  SECTION("auxiliary space smoothing order")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 2}, {"Eigenmode", {{"Target", 1.0}}}}}};
+
+    // By default the auxiliary space smoother follows the (runtime) primary order.
+    IoData iodata1(config, false);
+    CHECK(iodata1.solver.linear.mg_smooth_order_aux == -1);
+    json resolved = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK_FALSE(resolved["Solver"]["Linear"].contains("MGAuxiliarySmoothOrder"));
+
+    // With the exact complex coarse solve it uses max(2 p, 4).
+    config["Solver"]["Linear"]["ComplexCoarseSolve"] = true;
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.linear.mg_smooth_order_aux == 4);
+    resolved = IoData::ConcretizeDefaults(iodata2, config);
+    CHECK(resolved["Solver"]["Linear"]["MGAuxiliarySmoothOrder"].get<int>() == 4);
+    config["Solver"]["Order"] = 3;
+    IoData iodata3(config, false);
+    CHECK(iodata3.solver.linear.mg_smooth_order_aux == 6);
+
+    // An explicit order is used as is.
+    config["Solver"]["Linear"]["MGAuxiliarySmoothOrder"] = 2;
+    IoData iodata4(config, false);
+    CHECK(iodata4.solver.linear.mg_smooth_order_aux == 2);
+  }
+
+  SECTION("complex-valued coarse solve chosen at runtime")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 2}, {"Eigenmode", {{"Target", 1.0}}}}}};
+
+    // Eigenmode simulations with a sparse direct coarse solver (the default when one is
+    // available) choose at setup, so the resolved config leaves it unspecified.
+    IoData iodata1(config, false);
+    const auto type = iodata1.solver.linear.type;
+    const bool direct = (type == LinearSolver::STRUMPACK);
+    CHECK_FALSE(iodata1.solver.linear.complex_coarse_solve);
+    CHECK(iodata1.solver.linear.complex_coarse_check == direct);
+    json resolved = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK(resolved["Solver"]["Linear"].contains("ComplexCoarseSolve") == !direct);
+    IoData iodata2(resolved, false);
+    CHECK(iodata2.solver.linear.complex_coarse_check == direct);
+
+    // An explicit choice is used as is.
+    for (bool complex_coarse : {false, true})
+    {
+      config["Solver"]["Linear"]["ComplexCoarseSolve"] = complex_coarse;
+      IoData iodata3(config, false);
+      CHECK(iodata3.solver.linear.complex_coarse_solve == complex_coarse);
+      CHECK_FALSE(iodata3.solver.linear.complex_coarse_check);
+      resolved = IoData::ConcretizeDefaults(iodata3, config);
+      CHECK(resolved["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+            complex_coarse);
+    }
+
+    // So do the configurations without a sparse direct coarse solver which chooses (only
+    // STRUMPACK by default) on the host, or with first-kind Chebyshev smoothers.
+    config["Solver"]["Linear"].erase("ComplexCoarseSolve");
+    config["Solver"]["Linear"]["Type"] = "AMS";
+    IoData iodata5(config, false);
+    CHECK_FALSE(iodata5.solver.linear.complex_coarse_check);
+#if defined(MFEM_USE_SUPERLU)
+    config["Solver"]["Linear"]["Type"] = "SuperLU";
+    IoData iodata7(config, false);
+    CHECK_FALSE(iodata7.solver.linear.complex_coarse_check);
+    SetComplexCoarseSolversForTesting({LinearSolver::SUPERLU});
+    IoData iodata8(config, false);
+    CHECK(iodata8.solver.linear.complex_coarse_check);
+    SetComplexCoarseSolversForTesting({});
+#endif
+    config["Solver"]["Linear"].erase("Type");
+    config["Solver"]["Linear"]["MGSmoothChebyshev4th"] = false;
+    IoData iodata6(config, false);
+    CHECK_FALSE(iodata6.solver.linear.complex_coarse_check);
+    config["Solver"]["Linear"].erase("MGSmoothChebyshev4th");
+
+    // Other problem types use the real-valued approximation.
+    config["Problem"]["Type"] = "Driven";
+    config["Solver"]["Driven"] = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
+    IoData iodata4(config, false);
+    CHECK_FALSE(iodata4.solver.linear.complex_coarse_solve);
+    CHECK_FALSE(iodata4.solver.linear.complex_coarse_check);
+    resolved = IoData::ConcretizeDefaults(iodata4, config);
+    CHECK_FALSE(resolved["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>());
+  }
+
+  SECTION("single-precision smoothing")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 2}, {"Eigenmode", {{"Target", 1.0}}}}}};
+    IoData iodata1(config, false);
+    CHECK(iodata1.solver.linear.mg_smooth_single);
+    json resolved = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK(resolved["Solver"]["Linear"]["MGSmoothSinglePrecision"].get<bool>());
+    config["Solver"]["Linear"]["MGSmoothSinglePrecision"] = false;
+    IoData iodata2(config, false);
+    CHECK_FALSE(iodata2.solver.linear.mg_smooth_single);
+    resolved = IoData::ConcretizeDefaults(iodata2, config);
+    CHECK_FALSE(resolved["Solver"]["Linear"]["MGSmoothSinglePrecision"].get<bool>());
+  }
+
+  SECTION("auxiliary space smoother residuals")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 2}, {"Eigenmode", {{"Target", 1.0}}}}}};
+    // GMRES lags the residuals, the symmetric Krylov solvers update them.
+    IoData iodata1(config, false);
+    CHECK(iodata1.solver.linear.mg_aux_residual == MultigridAuxiliaryResidual::LAGGED);
+    json resolved = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK(resolved["Solver"]["Linear"]["MGAuxiliaryResidual"].get<std::string>() ==
+          "Lagged");
+    config["Solver"]["Linear"]["KSPType"] = "CG";
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.linear.mg_aux_residual == MultigridAuxiliaryResidual::UPDATED);
+    config["Solver"]["Linear"]["MGAuxiliaryResidual"] = "Exact";
+    IoData iodata3(config, false);
+    CHECK(iodata3.solver.linear.mg_aux_residual == MultigridAuxiliaryResidual::EXACT);
+    resolved = IoData::ConcretizeDefaults(iodata3, config);
+    CHECK(resolved["Solver"]["Linear"]["MGAuxiliaryResidual"].get<std::string>() ==
+          "Exact");
+    config["Problem"]["Type"] = "Transient";
+    config["Solver"]["Linear"].erase("KSPType");
+    config["Solver"]["Linear"].erase("MGAuxiliaryResidual");
+    config["Solver"].erase("Eigenmode");
+    config["Solver"]["Transient"] = {
+        {"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}};
+    IoData iodata4(config, false);
+    CHECK(iodata4.solver.linear.mg_aux_residual == MultigridAuxiliaryResidual::UPDATED);
+  }
+
   SECTION("max_size defaults to max_it")
   {
     json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -1578,12 +1864,124 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     CHECK(j_linear["Tol"].get<double>() == Catch::Approx(1.0e-6));
     CHECK(j_linear["MaxIts"].get<int>() == 100);
-    CHECK(j_linear["GSOrthogonalization"].get<std::string>() == "MGS");
+    CHECK(j_linear["GSOrthogonalization"].get<std::string>() == "CGS2");
     // PCSide and ColumnOrdering default to the DEFAULT enum value (not a compile-time
     // alias); the concretized name records that the user accepted Palace's internal
     // default rather than naming a specific backend option.
     CHECK(j_linear["PCSide"].get<std::string>() == "Default");
     CHECK(j_linear["ColumnOrdering"].get<std::string>() == "Default");
+  }
+
+  SECTION("Linear EstimatorTol defaults to 1e-4 for every problem type")
+  {
+    const std::vector<std::pair<std::string, json>> problems = {
+        {"Electrostatic", json::object()},
+        {"Magnetostatic", json::object()},
+        {"Eigenmode", {{"Eigenmode", {{"Target", 1.0}}}}},
+        {"Driven", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}},
+        {"Transient",
+         {{"Transient",
+           {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+    for (const auto &[type, solver] : problems)
+    {
+      INFO("type = " << type);
+      json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver", solver}};
+      if (type == "Driven")
+      {
+        config["Boundaries"] = {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}};
+      }
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.estimator_tol == 1.0e-4);
+      json resolved = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(resolved["Solver"]["Linear"]["EstimatorTol"].get<double>() == 1.0e-4);
+
+      // A refinement tolerance below 1e-2 lowers it to 1e-2 times the refinement
+      // tolerance, but not below 1e-10, and an explicit value is kept.
+      config["Model"]["Refinement"] = {{"Tol", 1.0e-5}};
+      IoData iodata_reftol(config, false);
+      CHECK(iodata_reftol.solver.linear.estimator_tol == Catch::Approx(1.0e-7));
+      config["Model"]["Refinement"] = {{"Tol", 1.0e-12}};
+      IoData iodata_floor(config, false);
+      CHECK(iodata_floor.solver.linear.estimator_tol == 1.0e-10);
+      config["Solver"]["Linear"] = {{"EstimatorTol", 1.0e-6}};
+      IoData iodata_tight(config, false);
+      CHECK(iodata_tight.solver.linear.estimator_tol == 1.0e-6);
+    }
+  }
+
+  SECTION("Driven resolves InitialGuess to true for uniform and adaptive sweeps")
+  {
+    auto make_config = [](bool adaptive)
+    {
+      json driven = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
+      if (adaptive)
+      {
+        driven["AdaptiveTol"] = 1.0e-3;
+      }
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                  {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+                  {"Solver", {{"Driven", driven}}}};
+    };
+    for (bool adaptive : {false, true})
+    {
+      INFO("adaptive = " << adaptive);
+      json config = make_config(adaptive);
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.initial_guess == 1);
+      CHECK(iodata.solver.linear.strumpack_selective_inversion == 0);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["InitialGuess"].get<int>() == 1);
+      CHECK_FALSE(config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"].get<bool>());
+
+      // An explicit false is kept.
+      config = make_config(adaptive);
+      config["Solver"]["Linear"] = {{"InitialGuess", false}};
+      IoData iodata_off(config, false);
+      CHECK(iodata_off.solver.linear.initial_guess == 0);
+    }
+  }
+
+  SECTION("Driven resolves CoarseReuseTol by sweep type")
+  {
+    auto make_config = [](bool adaptive)
+    {
+      json driven = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
+      if (adaptive)
+      {
+        driven["AdaptiveTol"] = 1.0e-3;
+      }
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                  {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+                  {"Solver", {{"Driven", driven}}}};
+    };
+    for (bool adaptive : {false, true})
+    {
+      INFO("adaptive = " << adaptive);
+      const double resolved = adaptive ? 0.0 : 0.05;
+      json config = make_config(adaptive);
+      IoData iodata(config, false);
+      CHECK(iodata.solver.driven.coarse_reuse_tol == resolved);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Driven"]["CoarseReuseTol"].get<double>() == resolved);
+      CHECK(ValidateConfig(config).empty());
+
+      // An explicit value always wins, including 0 for a uniform sweep.
+      for (double tol : {0.0, 0.02})
+      {
+        config = make_config(adaptive);
+        config["Solver"]["Driven"]["CoarseReuseTol"] = tol;
+        IoData iodata_explicit(config, false);
+        CHECK(iodata_explicit.solver.driven.coarse_reuse_tol == tol);
+      }
+    }
   }
 
   SECTION("Transient resolves Type DEFAULT to GeneralizedAlpha")
@@ -1599,6 +1997,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     IoData iodata(config, false);
     CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);
+    CHECK(iodata.solver.linear.strumpack_selective_inversion == 1);
 
     config = IoData::ConcretizeDefaults(iodata, config);
     auto &j_transient = config["Solver"]["Transient"];
@@ -1621,7 +2020,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
 
     IoData iodata(config, false);
+    CHECK(iodata.solver.linear.strumpack_selective_inversion == 1);
     config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"].get<bool>());
     auto &j_eigen = config["Solver"]["Eigenmode"];
 
     CHECK(j_eigen["Tol"].get<double>() == Catch::Approx(1.0e-6));
@@ -1632,6 +2033,17 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_eigen["StartVector"].get<bool>() == true);
     CHECK(j_eigen["StartVectorConstant"].get<bool>() == false);
     CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
+
+    // An explicit false is kept.
+    json config_off = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                       {"Model", {{"Mesh", "test.msh"}}},
+                       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                       {"Boundaries", json::object()},
+                       {"Solver",
+                        {{"Eigenmode", {{"Target", 1.0}}},
+                         {"Linear", {{"STRUMPACKSelectiveInversion", false}}}}}};
+    IoData iodata_off(config_off, false);
+    CHECK(iodata_off.solver.linear.strumpack_selective_inversion == 0);
   }
 
   SECTION("Round-trip: resolved config validates and re-parses identically")
@@ -1670,7 +2082,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.ams_smooth_it == l1.ams_smooth_it);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
+    CHECK(l2.always_error_estimation == l1.always_error_estimation);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
     CHECK(l2.pc_side == l1.pc_side);
     CHECK(l2.sym_factorization == l1.sym_factorization);
@@ -2074,6 +2488,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK_FALSE(w2.complex_coarse_solve.has_value());
     CHECK_FALSE(config["Boundaries"]["WavePort"][0].contains("ComplexCoarseSolve"));
     CHECK(w2.eig_tol == w1.eig_tol);
+    CHECK(w1.eig_tol == 1.0e-6);
+    CHECK(config["Boundaries"]["WavePort"][0]["EigenTol"].get<double>() == 1.0e-6);
     CHECK(w2.max_size == w1.max_size);
     CHECK(w2.verbose == w1.verbose);
 

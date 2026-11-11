@@ -3,6 +3,7 @@
 
 #include "vector.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <random>
 #include <mfem/general/forall.hpp>
@@ -737,6 +738,583 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
       x.Size(), [=](int i)
       { return std::array{YR[i] * XR[i] + YI[i] * XI[i], YR[i] * XI[i] - YI[i] * XR[i]}; });
   return {sum[0], sum[1]};
+}
+
+namespace
+{
+
+// Chunk length of the fused Gram-Schmidt kernels: the chunks of x and y (four arrays of
+// 64 KiB for complex vectors) stay in the L2 cache while the basis vectors stream through.
+constexpr int GS_CHUNK = 8192;
+
+// Call f(t, begin, end) for contiguous parts of [0, n), one per thread.
+template <typename Function>
+void ForThreadParts(int n, Function &&f)
+{
+  if (utils::GetMaxThreads() == 1)
+  {
+    f(0, 0, n);
+    return;
+  }
+  PalacePragmaOmp(parallel)
+  {
+    const std::int64_t t = utils::GetThreadNum(), T = utils::GetNumActiveThreads();
+    f(static_cast<int>(t), static_cast<int>(n * t / T), static_cast<int>(n * (t + 1) / T));
+  }
+}
+
+// Add V[j]ᵀ x to hx[j] and V[j]ᵀ y to hy[j] over [begin, end), and the sums of x², xy, y²
+// to e[0], e[1], e[2] if e is not null.
+template <bool Y>
+void RealMultiDotPart(int begin, int end, int m, const double *const *V, const double *X,
+                      const double *Yv, double *hx, double *hy, double *e)
+{
+  constexpr int K = 4;
+  for (int c0 = begin; c0 < end; c0 += GS_CHUNK)
+  {
+    const int len = std::min(GS_CHUNK, end - c0);
+    const double *__restrict__ x = X + c0;
+    const double *__restrict__ y = Y ? Yv + c0 : nullptr;
+    for (int j = 0; j < m; j++)
+    {
+      const double *__restrict__ v = V[j] + c0;
+      double s0[K] = {}, s1[K] = {};
+      int i = 0;
+      for (; i + K <= len; i += K)
+      {
+        for (int k = 0; k < K; k++)
+        {
+          s0[k] += v[i + k] * x[i + k];
+          if constexpr (Y)
+          {
+            s1[k] += v[i + k] * y[i + k];
+          }
+        }
+      }
+      for (int k = 0; i < len; i++, k++)
+      {
+        s0[k] += v[i] * x[i];
+        if constexpr (Y)
+        {
+          s1[k] += v[i] * y[i];
+        }
+      }
+      hx[j] += (s0[0] + s0[1]) + (s0[2] + s0[3]);
+      if constexpr (Y)
+      {
+        hy[j] += (s1[0] + s1[1]) + (s1[2] + s1[3]);
+      }
+    }
+    if (e)
+    {
+      double t0 = 0.0, t1 = 0.0, t2 = 0.0;
+      for (int i = 0; i < len; i++)
+      {
+        t0 += x[i] * x[i];
+        if constexpr (Y)
+        {
+          t1 += x[i] * y[i];
+          t2 += y[i] * y[i];
+        }
+      }
+      e[0] += t0;
+      e[1] += t1;
+      e[2] += t2;
+    }
+  }
+}
+
+// Complex version: hx, hy hold (real, imaginary) pairs, and e = (xᴴ x, Re xᴴ y, Im xᴴ y,
+// yᴴ y).
+template <bool Y>
+void ComplexMultiDotPart(int begin, int end, int m, const double *const *VR,
+                         const double *const *VI, const double *XR, const double *XI,
+                         const double *YR, const double *YI, double *hx, double *hy,
+                         double *e)
+{
+  constexpr int K = 4;
+  for (int c0 = begin; c0 < end; c0 += GS_CHUNK)
+  {
+    const int len = std::min(GS_CHUNK, end - c0);
+    const double *__restrict__ xr = XR + c0;
+    const double *__restrict__ xi = XI + c0;
+    const double *__restrict__ yr = Y ? YR + c0 : nullptr;
+    const double *__restrict__ yi = Y ? YI + c0 : nullptr;
+    for (int j = 0; j < m; j++)
+    {
+      const double *__restrict__ vr = VR[j] + c0;
+      const double *__restrict__ vi = VI[j] + c0;
+      double s[8][K] = {};
+      auto Add = [&](int i, int k)
+      {
+        const double a = vr[i], b = vi[i];
+        s[0][k] += a * xr[i];
+        s[1][k] += b * xi[i];
+        s[2][k] += a * xi[i];
+        s[3][k] += b * xr[i];
+        if constexpr (Y)
+        {
+          s[4][k] += a * yr[i];
+          s[5][k] += b * yi[i];
+          s[6][k] += a * yi[i];
+          s[7][k] += b * yr[i];
+        }
+      };
+      int i = 0;
+      for (; i + K <= len; i += K)
+      {
+        for (int k = 0; k < K; k++)
+        {
+          Add(i + k, k);
+        }
+      }
+      for (int k = 0; i < len; i++, k++)
+      {
+        Add(i, k);
+      }
+      double r[8];
+      for (int l = 0; l < 8; l++)
+      {
+        r[l] = (s[l][0] + s[l][1]) + (s[l][2] + s[l][3]);
+      }
+      hx[2 * j] += r[0] + r[1];
+      hx[2 * j + 1] += r[2] - r[3];
+      if constexpr (Y)
+      {
+        hy[2 * j] += r[4] + r[5];
+        hy[2 * j + 1] += r[6] - r[7];
+      }
+    }
+    if (e)
+    {
+      double t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
+      for (int i = 0; i < len; i++)
+      {
+        t0 += xr[i] * xr[i] + xi[i] * xi[i];
+        if constexpr (Y)
+        {
+          t1 += xr[i] * yr[i] + xi[i] * yi[i];
+          t2 += xr[i] * yi[i] - xi[i] * yr[i];
+          t3 += yr[i] * yr[i] + yi[i] * yi[i];
+        }
+      }
+      e[0] += t0;
+      e[1] += t1;
+      e[2] += t2;
+      e[3] += t3;
+    }
+  }
+}
+
+// x = sx (x - Σⱼ hx[j] V[j]) (if HX, else x = sx x) and y = sy (y - Σⱼ hy[j] V[j] - gy x)
+// (if Y) over [begin, end); returns the sum of the squares of the updated y (or x).
+template <bool HX, bool Y>
+double RealMultiSubtractPart(int begin, int end, int m, const double *const *V, double *X,
+                             const double *hx, double sx, double *Yv, const double *hy,
+                             double gy, double sy)
+{
+  double nrm2 = 0.0;
+  for (int c0 = begin; c0 < end; c0 += GS_CHUNK)
+  {
+    const int len = std::min(GS_CHUNK, end - c0);
+    double *__restrict__ x = X + c0;
+    double *__restrict__ y = Y ? Yv + c0 : nullptr;
+    if constexpr (HX || Y)
+    {
+      for (int j = 0; j < m; j++)
+      {
+        const double *__restrict__ v = V[j] + c0;
+        const double a = HX ? hx[j] : 0.0, b = Y ? hy[j] : 0.0;
+        for (int i = 0; i < len; i++)
+        {
+          if constexpr (HX)
+          {
+            x[i] -= a * v[i];
+          }
+          if constexpr (Y)
+          {
+            y[i] -= b * v[i];
+          }
+        }
+      }
+    }
+    double t = 0.0;
+    for (int i = 0; i < len; i++)
+    {
+      const double q = sx * x[i];
+      x[i] = q;
+      if constexpr (Y)
+      {
+        const double z = sy * (y[i] - gy * q);
+        y[i] = z;
+        t += z * z;
+      }
+      else
+      {
+        t += q * q;
+      }
+    }
+    nrm2 += t;
+  }
+  return nrm2;
+}
+
+template <bool HX, bool Y>
+double ComplexMultiSubtractPart(int begin, int end, int m, const double *const *VR,
+                                const double *const *VI, double *XR, double *XI,
+                                const double *hx, double sx, double *YR, double *YI,
+                                const double *hy, double gr, double gi, double sy)
+{
+  double nrm2 = 0.0;
+  for (int c0 = begin; c0 < end; c0 += GS_CHUNK)
+  {
+    const int len = std::min(GS_CHUNK, end - c0);
+    double *__restrict__ xr = XR + c0;
+    double *__restrict__ xi = XI + c0;
+    double *__restrict__ yr = Y ? YR + c0 : nullptr;
+    double *__restrict__ yi = Y ? YI + c0 : nullptr;
+    if constexpr (HX || Y)
+    {
+      for (int j = 0; j < m; j++)
+      {
+        const double *__restrict__ vr = VR[j] + c0;
+        const double *__restrict__ vi = VI[j] + c0;
+        const double ar = HX ? hx[2 * j] : 0.0, ai = HX ? hx[2 * j + 1] : 0.0;
+        const double br = Y ? hy[2 * j] : 0.0, bi = Y ? hy[2 * j + 1] : 0.0;
+        for (int i = 0; i < len; i++)
+        {
+          const double a = vr[i], b = vi[i];
+          if constexpr (HX)
+          {
+            xr[i] -= ar * a - ai * b;
+            xi[i] -= ar * b + ai * a;
+          }
+          if constexpr (Y)
+          {
+            yr[i] -= br * a - bi * b;
+            yi[i] -= br * b + bi * a;
+          }
+        }
+      }
+    }
+    double t = 0.0;
+    for (int i = 0; i < len; i++)
+    {
+      const double q0 = sx * xr[i], q1 = sx * xi[i];
+      xr[i] = q0;
+      xi[i] = q1;
+      if constexpr (Y)
+      {
+        const double z0 = sy * (yr[i] - (gr * q0 - gi * q1));
+        const double z1 = sy * (yi[i] - (gr * q1 + gi * q0));
+        yr[i] = z0;
+        yi[i] = z1;
+        t += z0 * z0 + z1 * z1;
+      }
+      else
+      {
+        t += q0 * q0 + q1 * q1;
+      }
+    }
+    nrm2 += t;
+  }
+  return nrm2;
+}
+
+// Run part(t, begin, end, out) on each thread part of [0, n) with a private zeroed output
+// array of size s, and add the outputs in thread order into out.
+template <typename Function>
+void ThreadedPartSums(int n, int s, double *out, Function &&part)
+{
+  std::fill(out, out + s, 0.0);
+  const int nt = utils::GetMaxThreads();
+  if (nt == 1)
+  {
+    part(0, n, out);
+    return;
+  }
+  std::vector<double> parts(static_cast<std::size_t>(nt) * s, 0.0);
+  ForThreadParts(n, [&](int t, int begin, int end)
+                 { part(begin, end, parts.data() + static_cast<std::size_t>(t) * s); });
+  for (int t = 0; t < nt; t++)
+  {
+    for (int l = 0; l < s; l++)
+    {
+      out[l] += parts[static_cast<std::size_t>(t) * s + l];
+    }
+  }
+}
+
+}  // namespace
+
+void LocalMultiDot(const std::vector<Vector> &V, int m, const Vector &x, const Vector *y,
+                   double *hx, double *hy, double *extra)
+{
+  MFEM_ASSERT(m >= 0 && m <= static_cast<int>(V.size()),
+              "Out of bounds number of basis vectors for LocalMultiDot!");
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    for (int j = 0; j < m; j++)
+    {
+      hx[j] = LocalDot(x, V[j]);
+      if (y)
+      {
+        hy[j] = LocalDot(*y, V[j]);
+      }
+    }
+    if (extra)
+    {
+      extra[0] = LocalDot(x, x);
+      if (y)
+      {
+        extra[1] = LocalDot(*y, x);
+        extra[2] = LocalDot(*y, *y);
+      }
+    }
+    return;
+  }
+  const int n = x.Size();
+  std::vector<const double *> P(m);
+  for (int j = 0; j < m; j++)
+  {
+    MFEM_ASSERT(V[j].Size() == n, "Size mismatch for LocalMultiDot!");
+    P[j] = V[j].HostRead();
+  }
+  const double *X = x.HostRead(), *Y = y ? y->HostRead() : nullptr;
+  std::vector<double> out(2 * m + 3);
+  ThreadedPartSums(n, 2 * m + 3, out.data(),
+                   [&](int begin, int end, double *o)
+                   {
+                     double *e = extra ? o + 2 * m : nullptr;
+                     if (y)
+                     {
+                       RealMultiDotPart<true>(begin, end, m, P.data(), X, Y, o, o + m, e);
+                     }
+                     else
+                     {
+                       RealMultiDotPart<false>(begin, end, m, P.data(), X, nullptr, o,
+                                               nullptr, e);
+                     }
+                   });
+  std::copy(out.begin(), out.begin() + m, hx);
+  if (y)
+  {
+    std::copy(out.begin() + m, out.begin() + 2 * m, hy);
+  }
+  if (extra)
+  {
+    extra[0] = out[2 * m];
+    if (y)
+    {
+      extra[1] = out[2 * m + 1];
+      extra[2] = out[2 * m + 2];
+    }
+  }
+}
+
+void LocalMultiDot(const std::vector<ComplexVector> &V, int m, const ComplexVector &x,
+                   const ComplexVector *y, std::complex<double> *hx,
+                   std::complex<double> *hy, std::complex<double> *extra)
+{
+  MFEM_ASSERT(m >= 0 && m <= static_cast<int>(V.size()),
+              "Out of bounds number of basis vectors for LocalMultiDot!");
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    for (int j = 0; j < m; j++)
+    {
+      hx[j] = LocalDot(x, V[j]);
+      if (y)
+      {
+        hy[j] = LocalDot(*y, V[j]);
+      }
+    }
+    if (extra)
+    {
+      extra[0] = LocalDot(x, x);
+      if (y)
+      {
+        extra[1] = LocalDot(*y, x);
+        extra[2] = LocalDot(*y, *y);
+      }
+    }
+    return;
+  }
+  const int n = x.Size();
+  std::vector<const double *> PR(m), PI(m);
+  for (int j = 0; j < m; j++)
+  {
+    MFEM_ASSERT(V[j].Size() == n, "Size mismatch for LocalMultiDot!");
+    PR[j] = V[j].Real().HostRead();
+    PI[j] = V[j].Imag().HostRead();
+  }
+  const double *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
+  const double *YR = y ? y->Real().HostRead() : nullptr;
+  const double *YI = y ? y->Imag().HostRead() : nullptr;
+  std::vector<double> out(4 * m + 4);
+  ThreadedPartSums(n, 4 * m + 4, out.data(),
+                   [&](int begin, int end, double *o)
+                   {
+                     double *e = extra ? o + 4 * m : nullptr;
+                     if (y)
+                     {
+                       ComplexMultiDotPart<true>(begin, end, m, PR.data(), PI.data(), XR,
+                                                 XI, YR, YI, o, o + 2 * m, e);
+                     }
+                     else
+                     {
+                       ComplexMultiDotPart<false>(begin, end, m, PR.data(), PI.data(), XR,
+                                                  XI, nullptr, nullptr, o, nullptr, e);
+                     }
+                   });
+  for (int j = 0; j < m; j++)
+  {
+    hx[j] = {out[2 * j], out[2 * j + 1]};
+    if (y)
+    {
+      hy[j] = {out[2 * m + 2 * j], out[2 * m + 2 * j + 1]};
+    }
+  }
+  if (extra)
+  {
+    extra[0] = out[4 * m];
+    if (y)
+    {
+      extra[1] = {out[4 * m + 1], out[4 * m + 2]};
+      extra[2] = out[4 * m + 3];
+    }
+  }
+}
+
+double MultiSubtract(const std::vector<Vector> &V, int m, Vector &x, const double *hx,
+                     double sx, Vector *y, const double *hy, double gy, double sy)
+{
+  MFEM_ASSERT(m >= 0 && m <= static_cast<int>(V.size()),
+              "Out of bounds number of basis vectors for MultiSubtract!");
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    for (int j = 0; hx && j < m; j++)
+    {
+      x.Add(-hx[j], V[j]);
+    }
+    x *= sx;
+    if (!y)
+    {
+      return LocalDot(x, x);
+    }
+    for (int j = 0; j < m; j++)
+    {
+      y->Add(-hy[j], V[j]);
+    }
+    y->Add(-gy, x);
+    *y *= sy;
+    return LocalDot(*y, *y);
+  }
+  const int n = x.Size();
+  std::vector<const double *> P(m);
+  for (int j = 0; j < m; j++)
+  {
+    MFEM_ASSERT(V[j].Size() == n, "Size mismatch for MultiSubtract!");
+    P[j] = V[j].HostRead();
+  }
+  double *X = x.HostReadWrite(), *Y = y ? y->HostReadWrite() : nullptr;
+  double nrm2;
+  ThreadedPartSums(n, 1, &nrm2,
+                   [&](int begin, int end, double *o)
+                   {
+                     if (hx && y)
+                     {
+                       *o = RealMultiSubtractPart<true, true>(begin, end, m, P.data(), X,
+                                                              hx, sx, Y, hy, gy, sy);
+                     }
+                     else if (hx)
+                     {
+                       *o = RealMultiSubtractPart<true, false>(
+                           begin, end, m, P.data(), X, hx, sx, nullptr, nullptr, 0.0, 1.0);
+                     }
+                     else if (y)
+                     {
+                       *o = RealMultiSubtractPart<false, true>(begin, end, m, P.data(), X,
+                                                               nullptr, sx, Y, hy, gy, sy);
+                     }
+                     else
+                     {
+                       *o = RealMultiSubtractPart<false, false>(begin, end, m, P.data(), X,
+                                                                nullptr, sx, nullptr,
+                                                                nullptr, 0.0, 1.0);
+                     }
+                   });
+  return nrm2;
+}
+
+double MultiSubtract(const std::vector<ComplexVector> &V, int m, ComplexVector &x,
+                     const std::complex<double> *hx, double sx, ComplexVector *y,
+                     const std::complex<double> *hy, std::complex<double> gy, double sy)
+{
+  MFEM_ASSERT(m >= 0 && m <= static_cast<int>(V.size()),
+              "Out of bounds number of basis vectors for MultiSubtract!");
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    for (int j = 0; hx && j < m; j++)
+    {
+      x.Add(-hx[j], V[j]);
+    }
+    x *= sx;
+    if (!y)
+    {
+      return LocalDot(x, x).real();
+    }
+    for (int j = 0; j < m; j++)
+    {
+      y->Add(-hy[j], V[j]);
+    }
+    y->Add(-gy, x);
+    *y *= sy;
+    return LocalDot(*y, *y).real();
+  }
+  const int n = x.Size();
+  std::vector<const double *> PR(m), PI(m);
+  for (int j = 0; j < m; j++)
+  {
+    MFEM_ASSERT(V[j].Size() == n, "Size mismatch for MultiSubtract!");
+    PR[j] = V[j].Real().HostRead();
+    PI[j] = V[j].Imag().HostRead();
+  }
+  double *XR = x.Real().HostReadWrite(), *XI = x.Imag().HostReadWrite();
+  double *YR = y ? y->Real().HostReadWrite() : nullptr;
+  double *YI = y ? y->Imag().HostReadWrite() : nullptr;
+  const double *H = reinterpret_cast<const double *>(hx);
+  const double *G = reinterpret_cast<const double *>(hy);
+  const double gr = gy.real(), gi = gy.imag();
+  double nrm2;
+  ThreadedPartSums(
+      n, 1, &nrm2,
+      [&](int begin, int end, double *o)
+      {
+        if (hx && y)
+        {
+          *o = ComplexMultiSubtractPart<true, true>(begin, end, m, PR.data(), PI.data(), XR,
+                                                    XI, H, sx, YR, YI, G, gr, gi, sy);
+        }
+        else if (hx)
+        {
+          *o = ComplexMultiSubtractPart<true, false>(begin, end, m, PR.data(), PI.data(),
+                                                     XR, XI, H, sx, nullptr, nullptr,
+                                                     nullptr, 0.0, 0.0, 1.0);
+        }
+        else if (y)
+        {
+          *o =
+              ComplexMultiSubtractPart<false, true>(begin, end, m, PR.data(), PI.data(), XR,
+                                                    XI, nullptr, sx, YR, YI, G, gr, gi, sy);
+        }
+        else
+        {
+          *o = ComplexMultiSubtractPart<false, false>(begin, end, m, PR.data(), PI.data(),
+                                                      XR, XI, nullptr, sx, nullptr, nullptr,
+                                                      nullptr, 0.0, 0.0, 1.0);
+        }
+      });
+  return nrm2;
 }
 
 // We implement LocalSum using Hypre instead of using MFEM's Sum because it is

@@ -31,6 +31,21 @@ private:
 
   int v_dim_fes;  // dimension of interpolated vector from NDSpace
 
+  // For a mesh whose elements were reordered for locality, a probe on the boundary between
+  // elements (a vertex, an edge or a face) takes the value in the element first in the
+  // order of the input mesh (see mesh::GetElementInputKeys) among those containing it,
+  // instead of the one which the element order selects: canonical[i] holds, for the points
+  // of this process, the probe index, the local element and the reference point, and
+  // is_canonical marks the probes found this way.
+  struct CanonicalPoint
+  {
+    int index, elem;
+    mfem::IntegrationPoint ip;
+  };
+  std::vector<CanonicalPoint> canonical;
+  std::vector<char> is_canonical;
+  const mfem::ParMesh *probe_mesh = nullptr;
+
   std::vector<double> ProbeField(const mfem::ParGridFunction &U);
 
 public:

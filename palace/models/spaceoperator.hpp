@@ -40,6 +40,13 @@ struct SolverData;
 
 }  // namespace config
 
+namespace ceed
+{
+
+class ElementMatrixTerms;
+
+}  // namespace ceed
+
 enum class ProblemType : char;
 
 //
@@ -51,6 +58,7 @@ private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
   const bool pc_mat_amg;      // Preconditioner uses AMS/BoomerAMG on the real-valued matrix
+  const bool pc_single;       // Single-precision element matrices for multigrid smoothing
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -143,6 +151,25 @@ private:
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+
+  // Diagonals of the preconditioner levels in frequency sweeps, which assemble a complex
+  // preconditioner a0 K + a1 C + a2 M at every frequency: for each level above the coarsest
+  // of the Nédélec and auxiliary hierarchies, the diagonals of the three terms (assembled
+  // once, from the second assembly on), which the diagonal at any (a0, a1, a2) combines
+  // since it is linear in the coefficients. Used without frequency-dependent boundary terms
+  // or Floquet periodicity. With single-precision smoothing, the single-precision element
+  // matrices of the terms (see ceed::ElementMatrixTerms) similarly give those of the
+  // smoothers of these levels.
+  int num_complex_pc_assemblies = 0;
+  std::vector<std::array<ComplexVector, 3>> pc_term_diags, pc_term_aux_diags;
+  std::vector<std::shared_ptr<const ceed::ElementMatrixTerms>> pc_term_ea, pc_term_aux_ea;
+  bool UsePreconditionerTermDiagonals(double a3);
+  void AssemblePreconditionerTermDiagonals(double a3);
+
+  // The terms of GetExtraSystemOperator(ω) which are applied matrix-free and so are not
+  // part of any assembled matrix: the wave-port modal correction W and the Floquet DtN F.
+  // Returns nullptr if there are none.
+  std::unique_ptr<ComplexOperator> GetMatrixFreeExtraSystemOperator(double omega);
 
 public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
@@ -363,6 +390,23 @@ public:
   template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);
+
+  // Construct the driven system operator A = K + iω C - ω² (Mr + i Mi) + A2(ω), with
+  // A2(ω) = GetExtraSystemOperator(ω), from the preconditioner
+  // P = GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω) at the same ω. The finest
+  // level of P is assembled from the same material and boundary coefficients as the sparse
+  // part of A, including the sparse frequency-dependent boundary terms, with the same
+  // essential-dof policy. The returned operator applies that level once (fused where
+  // supported) instead of K, C, M and the sparse A2 separately, and adds only the
+  // matrix-free terms of A2. It refers to P without owning it, so P must outlive it.
+  //
+  // Returns nullptr, at every ω, if the finest level of P is not the sparse part of A. The
+  // caller then assembles A with GetSystemMatrix. Real and shifted preconditioners
+  // intentionally change the matrix, and Floquet-wave-vector assembly is outside this
+  // equivalence. A single-level hierarchy is excluded too: its only level is the fully
+  // assembled coarse matrix, which must not replace the matrix-free system operator.
+  std::unique_ptr<ComplexOperator> GetSystemOperator(double omega,
+                                                     const ComplexOperator &P);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const

@@ -261,6 +261,15 @@ for implementation details.
     The driven wave port boundary condition models a lossless port line: for a lossy line,
     the reflection coefficient of a matched port is of the order of the ratio of the
     attenuation to the phase constant.
+    The phases of the S-parameters and of the port voltages and currents depend on the
+    accuracy of the port modes: with the default tolerance of the boundary mode eigenvalue
+    solver, [`"EigenTol"`](../config/reference.md#config-boundaries-waveport-eigentol)
+    `1e-6`, the port modes that adaptive frequency sweeps take from their reduced port
+    model at the output frequencies can shift the phases of the transmission coefficients
+    at some frequencies by up to tenths of a degree. Set `"EigenTol": 1.0e-8` when the
+    phases matter; tighter tolerances such as `1e-10` make adaptive sweeps compute most port
+    modes at the output frequencies with the eigenvalue solver, which can slow down sweeps
+    with many output frequencies.
 
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain

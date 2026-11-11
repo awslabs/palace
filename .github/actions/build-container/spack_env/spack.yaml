@@ -38,6 +38,10 @@ spack:
     # We do not want to include the full Python stack in the container
     rdma-core:
       require: ~pyverbs
+    # Keep ParMETIS out of the container because of its license: the solvers are built
+    # without it, and concretization fails if anything needs it.
+    parmetis:
+      buildable: false
   container:
     format: docker
     template: PalaceDockerfile

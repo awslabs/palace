@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -20,6 +21,7 @@
 #include "utils/jsonschema.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 #include "utils/versions.hpp"
 
@@ -165,11 +167,20 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Devic
 int main(int argc, char *argv[])
 {
   // Initialize MPI.
-#if defined(MFEM_USE_STRUMPACK) && \
-    (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
+#if defined(MFEM_USE_STRUMPACK) && defined(STRUMPACK_USE_SLATE_SCALAPACK)
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
+#if defined(MFEM_USE_STRUMPACK) && defined(STRUMPACK_USE_PTSCOTCH)
+  // STRUMPACK calls PT-Scotch without a context (which does not need MPI_THREAD_MULTIPLE):
+  // unless set by the user, run it on one thread per process with deterministic orderings,
+  // whatever the Scotch build options.
+  setenv("SCOTCH_PTHREAD_NUMBER", "1", 0);
+  setenv("SCOTCH_DETERMINISTIC", "1", 0);
+#endif
+  const auto t_mpi = Timer::Now();
   Mpi::Init(argc, argv);
+  perf::AddTally(perf::RegisterTally("Startup/MPIInit", Timer::STARTUP),
+                 Timer::Duration(Timer::Now() - t_mpi).count());
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
@@ -237,6 +248,7 @@ int main(int argc, char *argv[])
 
   // Parse configuration file.
   PrintPalaceBanner(world_comm);
+  const auto t_config = Timer::Now();
   auto config = IoData::ParseAndValidate(argv[1]);
   IoData iodata(config, false);
   MakeOutputFolder(iodata, world_comm);
@@ -247,6 +259,8 @@ int main(int argc, char *argv[])
   {
     iodata.WriteResolvedConfig(config, argv[1]);
   }
+  perf::AddTally(perf::RegisterTally("Startup/Config", Timer::STARTUP),
+                 Timer::Duration(Timer::Now() - t_config).count());
 
   // Initialize device + numerics. The BlockTimer is scoped to this block so it
   // credits the INIT phase before palace::Run starts its own timing.

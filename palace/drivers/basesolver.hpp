@@ -54,6 +54,25 @@ protected:
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
 
+  // Set by SolveEstimateMarkRefine for the solve after the last refinement allowed by
+  // Model.Refinement.MaxIts, whose error indicator would mark nothing, and for a solve
+  // repeated on the final mesh.
+  mutable bool final_amr_solve_ = false;
+
+  // Called after each modification (refinement, rebalancing) of the finest mesh during
+  // adaptation, for example to transfer solution data to the modified mesh.
+  virtual void UpdateAfterMeshChange(Mesh &mesh) const {}
+
+  // Whether the last solve used looser tolerances meant for intermediate adaptation
+  // iterations only. If adaptation stops after such a solve, for example because the error
+  // indicator is below Model.Refinement.Tol, the solve is repeated on the final mesh with
+  // final_amr_solve_ set.
+  virtual bool SolvedWithIntermediateTolerances() const { return false; }
+
+  // Whether to compute the error indicator after each solve: for adaptive mesh refinement,
+  // which uses it, except after the last allowed refinement, and otherwise only on request.
+  bool ComputeErrorEstimation() const;
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
@@ -74,10 +93,9 @@ public:
   // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
   // initial solve is iteration 1).
   void SaveAdaptationIteration(int iteration) const;
-  template <typename SolverType>
-  void SaveMetadata(const SolverType &ksp) const;
-  void SaveMetadata(const Timer &timer) const;
-  void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
+  // Reduce the performance statistics of the current iteration (collective), print them,
+  // and write them to palace.json.
+  void ReportPerformance(MPI_Comm comm) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
   void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
 };

@@ -53,6 +53,7 @@ PALACE_JSON_SERIALIZE_ENUM(Excitation)
 PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
 PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
+PALACE_JSON_SERIALIZE_ENUM(MultigridAuxiliaryResidual)
 PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
@@ -73,6 +74,20 @@ namespace
 inline int DefaultEigenSubspaceSize(int num_modes)
 {
   return std::max(2 * num_modes, num_modes + 15);
+}
+
+// The Krylov-Schur eigenmode solve of more than a few modes needs fewer linear solves with
+// a larger subspace, as long as strongly damped Ritz values, of which a larger subspace
+// captures more, are kept from stalling its convergence by the minimum quality factor of
+// the search region. Few modes often converge within the first, longer, Krylov cycle.
+inline int DefaultEigenmodeSubspaceSize(const EigenSolverData &eigenmode)
+{
+  if (eigenmode.type == EigenSolverBackend::SLEPC && eigenmode.min_q > 0.5 &&
+      eigenmode.nonlinear_type != NonlinearEigenSolver::SLP && eigenmode.n >= 6)
+  {
+    return std::max(3 * eigenmode.n, eigenmode.n + 28);
+  }
+  return DefaultEigenSubspaceSize(eigenmode.n);
 }
 
 int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
@@ -273,6 +288,7 @@ ModelData::ModelData(const json &model)
   make_simplex = model.value("MakeSimplex", make_simplex);
   make_hex = model.value("MakeHexahedral", make_hex);
   reorder_elements = model.value("ReorderElements", reorder_elements);
+  local_reorder = model.value("LocalReorder", local_reorder);
   clean_unused_elements = model.value("CleanUnusedElements", clean_unused_elements);
   if (auto it = model.find("CrackInternalBoundaryElements"); it != model.end())
   {
@@ -1344,6 +1360,20 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_tol = driven.value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven.value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven.value("AdaptiveConvergenceMemory", adaptive_memory);
+  adaptive_pole_exclusion = driven.value("AdaptivePoleExclusion", adaptive_pole_exclusion);
+  MFEM_VERIFY(adaptive_pole_exclusion >= 0.0 && adaptive_pole_exclusion < 0.1,
+              "\"AdaptivePoleExclusion\" must be in [0, 0.1)!");
+  adaptive_indicator_samples =
+      driven.value("AdaptiveIndicatorSamples", adaptive_indicator_samples);
+  adaptive_indicator_max_q =
+      driven.value("AdaptiveIndicatorMaxQ", adaptive_indicator_max_q);
+  MFEM_VERIFY(adaptive_indicator_max_q >= 0.0,
+              "\"AdaptiveIndicatorMaxQ\" must be nonnegative!");
+  MFEM_VERIFY(adaptive_indicator_max_q == 0.0 || adaptive_indicator_samples > 0,
+              "\"AdaptiveIndicatorMaxQ\" requires \"AdaptiveIndicatorSamples\" > 0!");
+  coarse_reuse_tol = driven.value("CoarseReuseTol", coarse_reuse_tol);
+  MFEM_VERIFY(!driven.contains("CoarseReuseTol") || coarse_reuse_tol >= 0.0,
+              "\"CoarseReuseTol\" must be nonnegative!");
   adaptive_solver_gs_orthog_type =
       driven.value("AdaptiveGSOrthogonalization", adaptive_solver_gs_orthog_type);
   adaptive_circuit_synthesis =
@@ -1494,6 +1524,20 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
+
+  // Error indicator frequencies of adaptive sweeps: uniformly spaced in the sample index,
+  // including the first and the last sample.
+  const std::size_t n_ind = std::min(adaptive_indicator_samples, sample_f.size());
+  for (std::size_t k = 0; k < n_ind; k++)
+  {
+    const std::size_t i =
+        (n_ind == 1) ? (sample_f.size() - 1) / 2
+                     : (2 * k * (sample_f.size() - 1) + n_ind - 1) / (2 * (n_ind - 1));
+    if (indicator_indices.empty() || indicator_indices.back() != i)
+    {
+      indicator_indices.push_back(i);
+    }
+  }
 }
 
 EigenSolverData::EigenSolverData(const json &eigenmode)
@@ -1509,6 +1553,17 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   scale = eigenmode.value("Scaling", scale);
   init_v0 = eigenmode.value("StartVector", init_v0);
   init_v0_const = eigenmode.value("StartVectorConstant", init_v0_const);
+  warm_start = eigenmode.value("WarmStart", warm_start);
+  adaptive_shift = eigenmode.value("AdaptiveShift", adaptive_shift);
+  linear_relaxation = eigenmode.value("LinearSolverRelaxation", linear_relaxation);
+  linear_deflation = eigenmode.value("LinearSolverDeflation", linear_deflation);
+  MFEM_VERIFY(linear_deflation >= -1,
+              "config[\"Eigenmode\"][\"LinearSolverDeflation\"] must be -1 (automatic), 0 "
+              "(off) or positive!");
+  min_q = eigenmode.value("MinQ", min_q);
+  intermediate_tol = eigenmode.value("IntermediateTol", intermediate_tol);
+  intermediate_linear_tol =
+      eigenmode.value("IntermediateLinearSolverTol", intermediate_linear_tol);
   mass_orthog = eigenmode.value("MassOrthogonal", mass_orthog);
   nonlinear_type = eigenmode.value("NonlinearType", nonlinear_type);
   refine_nonlinear = eigenmode.value("RefineNonlinear", refine_nonlinear);
@@ -1530,9 +1585,14 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   }
   if (max_size <= 0)
   {
-    max_size = DefaultEigenSubspaceSize(n);
+    max_size = DefaultEigenmodeSubspaceSize(*this);
   }
   n_post = std::clamp(n_post, 0, n);
+
+  // Intermediate adaptation iterations use the final tolerance unless a looser one is
+  // given. The linear solver tolerance is resolved in IoData, from
+  // config["Solver"]["Linear"].
+  intermediate_tol = (intermediate_tol < 0.0) ? tol : std::max(intermediate_tol, tol);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
@@ -1610,6 +1670,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   abs_tol = linear.value("AbsTol", abs_tol);
   max_it = linear.value("MaxIts", max_it);
   max_size = linear.value("MaxSize", max_size);
+  stagnation_it = linear.value("StagnationIts", stagnation_it);
+  stagnation_tol = linear.value("StagnationTol", stagnation_tol);
   initial_guess = linear.value("InitialGuess", initial_guess);
 
   // Options related to multigrid.
@@ -1620,14 +1682,20 @@ LinearSolverData::LinearSolverData(const json &linear)
   mg_smooth_aux = linear.value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_smooth_it = linear.value("MGSmoothIts", mg_smooth_it);
   mg_smooth_order = linear.value("MGSmoothOrder", mg_smooth_order);
+  mg_smooth_order_aux = linear.value("MGAuxiliarySmoothOrder", mg_smooth_order_aux);
   mg_smooth_sf_max = linear.value("MGSmoothEigScaleMax", mg_smooth_sf_max);
   mg_smooth_sf_min = linear.value("MGSmoothEigScaleMin", mg_smooth_sf_min);
   mg_smooth_cheby_4th = linear.value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
+  mg_smooth_single = linear.value("MGSmoothSinglePrecision", mg_smooth_single);
+  mg_aux_residual = linear.value("MGAuxiliaryResidual", mg_aux_residual);
+  mg_sliver_angle = linear.value("MGSliverAngle", mg_sliver_angle);
+  mg_sliver_layers = linear.value("MGSliverLayers", mg_sliver_layers);
 
   // Preconditioner-specific options.
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
+  complex_coarse_check = complex_coarse_check && !linear.contains("ComplexCoarseSolve");
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
   reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
   pc_side = linear.value("PCSide", pc_side);
@@ -1638,19 +1706,26 @@ LinearSolverData::LinearSolverData(const json &linear)
   strumpack_lossy_precision =
       linear.value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
   strumpack_butterfly_l = linear.value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
+  strumpack_selective_inversion =
+      linear.value("STRUMPACKSelectiveInversion", strumpack_selective_inversion);
   superlu_3d = linear.value("SuperLU3DCommunicator", superlu_3d);
   ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
   ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
   london_pc_shift = linear.value("LondonPCShift", london_pc_shift);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
+  ams_smooth_it = linear.value("AMSSmoothIts", ams_smooth_it);
 
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);
   divfree_max_it = linear.value("DivFreeMaxIts", divfree_max_it);
   estimator_tol = linear.value("EstimatorTol", estimator_tol);
+  MFEM_VERIFY(!linear.contains("EstimatorTol") || estimator_tol >= 0.0,
+              "\"EstimatorTol\" must be nonnegative!");
   estimator_max_it = linear.value("EstimatorMaxIts", estimator_max_it);
   estimator_mg = linear.value("EstimatorMG", estimator_mg);
+  always_error_estimation =
+      linear.value("AlwaysComputeErrorEstimation", always_error_estimation);
   gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 

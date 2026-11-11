@@ -283,6 +283,30 @@ inline std::array<double, M> HostSums(int begin, int end, Function &&f)
   return sum;
 }
 
+// Fused kernels for Gram-Schmidt orthogonalization against the basis V[0], ..., V[m - 1]:
+// on the host, each call streams every basis vector once, by chunks, while the chunks of x
+// and y stay in cache.
+
+// Calculate the local inner products hx[j] = V[j]ᴴ x and, if y is given, hy[j] = V[j]ᴴ y
+// for j < m. If extra is given, also extra[0] = xᴴ x and, with y, extra[1] = xᴴ y and
+// extra[2] = yᴴ y.
+void LocalMultiDot(const std::vector<Vector> &V, int m, const Vector &x, const Vector *y,
+                   double *hx, double *hy, double *extra = nullptr);
+void LocalMultiDot(const std::vector<ComplexVector> &V, int m, const ComplexVector &x,
+                   const ComplexVector *y, std::complex<double> *hx,
+                   std::complex<double> *hy, std::complex<double> *extra = nullptr);
+
+// Calculate x = sx (x - Σⱼ hx[j] V[j]) (only the scaling if hx is null) and, if y is given,
+// y = sy (y - Σⱼ hy[j] V[j] - gy x) with the updated x. Returns the local squared norm of
+// the updated y, or of the updated x without y.
+double MultiSubtract(const std::vector<Vector> &V, int m, Vector &x, const double *hx,
+                     double sx, Vector *y = nullptr, const double *hy = nullptr,
+                     double gy = 0.0, double sy = 1.0);
+double MultiSubtract(const std::vector<ComplexVector> &V, int m, ComplexVector &x,
+                     const std::complex<double> *hx, double sx, ComplexVector *y = nullptr,
+                     const std::complex<double> *hy = nullptr,
+                     std::complex<double> gy = 0.0, double sy = 1.0);
+
 // Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>
 inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)

@@ -3,7 +3,10 @@
 
 #include "integrator.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
+#include <vector>
 #include <ceed/backend.h>
 #include <mfem.hpp>
 #include "utils/diagnostic.hpp"
@@ -18,6 +21,21 @@ PalacePragmaDiagnosticPop
 
 namespace palace::ceed
 {
+
+bool AssembleAllQuadratureData()
+{
+  // The CPU backends gather a copy of every passive input of an operator (geometry factors
+  // or quadrature data) into their element layout, so operators reading the smaller
+  // quadrature data (stored once per element where possible) use less memory.
+  return !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+}
+
+bool UsePerElementQuadratureData()
+{
+  // GPU backends read passive inputs in their own layout instead of copying them per
+  // operator, so per-element storage would only add the expansion to the points there.
+  return !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+}
 
 namespace
 {
@@ -218,6 +236,129 @@ std::vector<CeedInt> QuadratureDataSetup(unsigned int ops, Ceed ceed,
   return active_input_sizes;
 }
 
+// Quadrature data which is the same at all points of each element up to the quadrature
+// weight (affine elements with elementwise constant coefficients) is stored once per
+// element and expanded to the points at application time by a basis with one node whose
+// interpolation values are the weights. Otherwise the per-point data is kept. Besides the
+// storage of the vector, this also avoids the copy of it which CPU backends gather per
+// operator into their element layout. Returns false if any element of the local subset
+// varies between points (or on GPU backends, see UsePerElementQuadratureData).
+bool CompressQuadratureData(Ceed ceed, CeedBasis basis, CeedVector q_data,
+                            CeedElemRestriction q_data_restr, CeedVector *qe_data,
+                            CeedElemRestriction *qe_restr, CeedBasis *qe_basis)
+{
+  if (!UsePerElementQuadratureData())
+  {
+    return false;
+  }
+  CeedInt num_elem, num_qpts, num_comp, layout[3];
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(q_data_restr, &num_elem));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(q_data_restr, &num_qpts));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(q_data_restr, &num_comp));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(q_data_restr, layout));
+  // Tensor-product bases only store the one-dimensional weights (and their elements are
+  // rarely affine).
+  bool is_tensor;
+  PalaceCeedCall(ceed, CeedBasisIsTensor(basis, &is_tensor));
+  if (is_tensor)
+  {
+    return false;
+  }
+  CeedInt basis_num_qpts;
+  PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(basis, &basis_num_qpts));
+  const CeedScalar *qw = nullptr;
+  PalaceCeedCall(ceed, CeedBasisGetQWeights(basis, &qw));
+  if (num_elem == 0 || basis_num_qpts != num_qpts || !qw)
+  {
+    return false;
+  }
+  CeedInt q0 = 0;
+  for (CeedInt q = 1; q < num_qpts; q++)
+  {
+    if (std::abs(qw[q]) > std::abs(qw[q0]))
+    {
+      q0 = q;
+    }
+  }
+  if (qw[q0] == 0.0)
+  {
+    return false;
+  }
+
+  // Check every element: the data at each point must be the weight times the data at the
+  // reference point (or the same at all points, for data without the weight), to rounding.
+  constexpr double tol = 1.0e-11;
+  const CeedScalar *qd;
+  PalaceCeedCall(ceed, CeedVectorGetArrayRead(q_data, CEED_MEM_HOST, &qd));
+  auto Check = [&](bool weighted)
+  {
+    for (CeedInt e = 0; e < num_elem; e++)
+    {
+      const CeedScalar *qde = qd + static_cast<std::ptrdiff_t>(e) * layout[2];
+      double emax = 0.0;
+      for (CeedInt c = 0; c < num_comp; c++)
+      {
+        for (CeedInt q = 0; q < num_qpts; q++)
+        {
+          emax = std::max(emax, std::abs(qde[c * layout[1] + q * layout[0]]));
+        }
+      }
+      for (CeedInt c = 0; c < num_comp; c++)
+      {
+        const CeedScalar d =
+            qde[c * layout[1] + q0 * layout[0]] / (weighted ? qw[q0] : 1.0);
+        for (CeedInt q = 0; q < num_qpts; q++)
+        {
+          const CeedScalar s = weighted ? qw[q] : 1.0;
+          if (std::abs(qde[c * layout[1] + q * layout[0]] - s * d) >
+              tol * emax * std::max(std::abs(s), 1.0))
+          {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  };
+  const bool weighted = Check(true);
+  const bool constant = !weighted && Check(false);
+  if (!weighted && !constant)
+  {
+    PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(q_data, &qd));
+    return false;
+  }
+
+  // Per-element data: layout [element][component].
+  const CeedSize length = static_cast<CeedSize>(num_elem) * num_comp;
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, length, qe_data));
+  CeedScalar *qe;
+  PalaceCeedCall(ceed, CeedVectorGetArrayWrite(*qe_data, CEED_MEM_HOST, &qe));
+  for (CeedInt e = 0; e < num_elem; e++)
+  {
+    const CeedScalar *qde = qd + static_cast<std::ptrdiff_t>(e) * layout[2];
+    for (CeedInt c = 0; c < num_comp; c++)
+    {
+      qe[static_cast<std::ptrdiff_t>(e) * num_comp + c] =
+          qde[c * layout[1] + q0 * layout[0]] / (weighted ? qw[q0] : 1.0);
+    }
+  }
+  PalaceCeedCall(ceed, CeedVectorRestoreArray(*qe_data, &qe));
+  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(q_data, &qd));
+  const CeedInt strides[3] = {1, 1, num_comp};
+  PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, num_comp, length,
+                                                        strides, qe_restr));
+  std::vector<CeedScalar> B(num_qpts), G(num_qpts, 0.0), qX(num_qpts, 0.0),
+      qW(num_qpts, 0.0);
+  for (CeedInt q = 0; q < num_qpts; q++)
+  {
+    B[q] = weighted ? qw[q] : 1.0;
+  }
+  PalaceCeedCall(ceed,
+                 CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, num_comp, 1, num_qpts,
+                                   B.data(), G.data(), qX.data(), qW.data(), qe_basis));
+  return true;
+}
+
 void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
                             const CeedQFunctionInfo &info, Ceed ceed,
                             CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
@@ -229,6 +370,11 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
   PalaceCeedCall(ceed,
                  CeedOperatorApply(*op, CEED_VECTOR_NONE, q_data, CEED_REQUEST_IMMEDIATE));
   PalaceCeedCall(ceed, CeedOperatorDestroy(op));
+  CeedVector qe_data = nullptr;
+  CeedElemRestriction qe_restr = nullptr;
+  CeedBasis qe_basis = nullptr;
+  const bool per_elem = CompressQuadratureData(ceed, trial_basis, q_data, q_data_restr,
+                                               &qe_data, &qe_restr, &qe_basis);
 
   MFEM_VERIFY(!qf_active_sizes.empty() && qf_active_sizes.size() <= 2,
               "Invalid number of active QFunction input/output fields ("
@@ -297,7 +443,8 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
     CeedInt q_data_size;
     PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(q_data_restr, &q_data_size));
     PalaceCeedCall(ceed,
-                   CeedQFunctionAddInput(apply_qf, "q_data", q_data_size, CEED_EVAL_NONE));
+                   CeedQFunctionAddInput(apply_qf, "q_data", q_data_size,
+                                         per_elem ? CEED_EVAL_INTERP : CEED_EVAL_NONE));
   }
   AddQFunctionActiveInputs(info.trial_ops, ceed, trial_basis, apply_qf);
   AddQFunctionActiveOutputs(info.test_ops, ceed, test_basis, apply_qf);
@@ -306,8 +453,18 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
 
-  PalaceCeedCall(
-      ceed, CeedOperatorSetField(*op, "q_data", q_data_restr, CEED_BASIS_NONE, q_data));
+  if (per_elem)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "q_data", qe_restr, qe_basis, qe_data));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&qe_data));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&qe_restr));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&qe_basis));
+  }
+  else
+  {
+    PalaceCeedCall(
+        ceed, CeedOperatorSetField(*op, "q_data", q_data_restr, CEED_BASIS_NONE, q_data));
+  }
   AddOperatorActiveInputFields(info.trial_ops, ceed, trial_restr, trial_basis, *op);
   AddOperatorActiveOutputFields(info.test_ops, ceed, test_restr, test_basis, *op);
 

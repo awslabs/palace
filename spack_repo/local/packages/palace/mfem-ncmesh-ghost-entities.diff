@@ -1,0 +1,202 @@
+--- a/mesh/ncmesh.cpp
++++ b/mesh/ncmesh.cpp
+@@ -17,6 +17,8 @@
+ #include <string>
+ #include <cmath>
+ #include <map>
++#include <functional>
++#include <vector>
+ 
+ #include "ncmesh_tables.hpp"
+ 
+@@ -2961,7 +2963,178 @@
+    }
+ 
+    //// PART 2: assign indices of ghost edges/faces, if any
++
++   if (Dim == 3 && Iso && NGhostElements > 0)
++   {
++      // Every process of a ParNCMesh holds all root elements: numbering all edges
++      // and faces which are not local, as below, makes the arrays over the ghost
++      // entities (for example, those of the parallel conforming interpolation of a
++      // finite element space) grow with the number of root elements. Number only
++      // what is reached from the ghost elements: their edges and faces, the edges
++      // and faces of their refinement (slaves) and those containing them (masters).
++      NGhostEdges = 0;
++      auto number_edge = [&](Node &nd)
++      {
++         if (nd.HasEdge() && nd.edge_index < 0)
++         {
++            nd.edge_index = NEdges + (NGhostEdges++);
++         }
++      };
++      int nghosts = 0;
++      std::vector<Geometry::Type> ghost_geom;
++      auto number_face = [&](int fid, int v3)
++      {
++         if (fid >= 0 && faces[fid].index < 0)
++         {
++            faces[fid].index = NFaces + (nghosts++);
++            ghost_geom.push_back(v3 < 0 ? Geometry::TRIANGLE : Geometry::SQUARE);
++         }
++      };
++
++      // An edge and the edges of its refinement.
++      std::function<void(int, int)> mark_edge = [&](int n0, int n1)
++      {
++         const int id = nodes.FindId(n0, n1);
++         if (id < 0) { return; }
++         number_edge(nodes[id]);
++         if (nodes[id].HasVertex() && nodes[id].p1 != nodes[id].p2)
++         {
++            mark_edge(n0, id);
++            mark_edge(id, n1);
++         }
++      };
++
++      // The edges containing an edge: the node of a split edge is its midpoint,
++      // whose parents are the end points of the edge.
++      auto mark_edge_masters = [&](int n0, int n1)
++      {
++         while (true)
++         {
++            const Node &a = nodes[n0], &b = nodes[n1];
++            int mid = -1;
++            if (b.p1 != b.p2 && (b.p1 == n0 || b.p2 == n0)) { mid = n1; }
++            else if (a.p1 != a.p2 && (a.p1 == n1 || a.p2 == n1)) { mid = n0; }
++            if (mid < 0) { return; }
++            Node &nd = nodes[mid];
++            number_edge(nd);
++            n0 = nd.p1;
++            n1 = nd.p2;
++         }
++      };
+ 
++      // A face, the faces of its refinement and their inner edges, following the
++      // splits as NCMesh::TraverseQuadFace and NCMesh::TraverseTriFace do.
++      std::function<void(int, int, int, int)> mark_face =
++         [&](int v0, int v1, int v2, int v3)
++      {
++         number_face(faces.FindId(v0, v1, v2, v3), v3);
++         if (v3 < 0)
++         {
++            int mid[3];
++            if (TriFaceSplit(v0, v1, v2, mid))
++            {
++               mark_edge(mid[0], mid[1]);
++               mark_edge(mid[1], mid[2]);
++               mark_edge(mid[2], mid[0]);
++               mark_face(v0, mid[0], mid[2], -1);
++               mark_face(mid[0], v1, mid[1], -1);
++               mark_face(mid[2], mid[1], v2, -1);
++               mark_face(mid[0], mid[1], mid[2], -1);
++            }
++         }
++         else
++         {
++            real_t s;
++            int mid[5];
++            switch (QuadFaceSplitType(v0, v1, v2, v3, s, mid))
++            {
++               case 1:
++                  mark_edge(mid[0], mid[2]);
++                  mark_face(v0, mid[0], mid[2], v3);
++                  mark_face(mid[0], v1, v2, mid[2]);
++                  break;
++               case 2:
++                  mark_edge(mid[1], mid[3]);
++                  mark_face(v0, v1, mid[1], mid[3]);
++                  mark_face(mid[3], mid[1], v2, v3);
++                  break;
++               default:
++                  break;
++            }
++         }
++      };
++
++      for (int i = 0; i < NGhostElements; i++)
++      {
++         const Element &el = elements[leaf_elements[NElements + i]];
++         const GeomInfo &gi = GI[el.Geom()];
++         for (int j = 0; j < gi.ne; j++)
++         {
++            const int *ev = gi.edges[j];
++            mark_edge(el.node[ev[0]], el.node[ev[1]]);
++            mark_edge_masters(el.node[ev[0]], el.node[ev[1]]);
++         }
++         for (int j = 0; j < gi.nf; j++)
++         {
++            const int *fv = gi.faces[j];
++            mark_face(el.node[fv[0]], el.node[fv[1]], el.node[fv[2]],
++                      (gi.nfv[j] == 4) ? el.node[fv[3]] : -1);
++         }
++      }
++
++      // The faces containing a numbered face: those not numbered with a numbered
++      // face in their refinement.
++      std::function<bool(int, int, int, int)> numbered_refinement =
++         [&](int v0, int v1, int v2, int v3) -> bool
++      {
++         auto numbered = [&](int n0, int n1, int n2, int n3)
++         {
++            const int fid = faces.FindId(n0, n1, n2, n3);
++            return (fid >= 0 && faces[fid].index >= 0) ||
++                   numbered_refinement(n0, n1, n2, n3);
++         };
++         if (v3 < 0)
++         {
++            int mid[3];
++            return TriFaceSplit(v0, v1, v2, mid) &&
++                   (numbered(v0, mid[0], mid[2], -1) || numbered(mid[0], v1, mid[1], -1) ||
++                    numbered(mid[2], mid[1], v2, -1) ||
++                    numbered(mid[0], mid[1], mid[2], -1));
++         }
++         real_t s;
++         int mid[5];
++         switch (QuadFaceSplitType(v0, v1, v2, v3, s, mid))
++         {
++            case 1:
++               return numbered(v0, mid[0], mid[2], v3) || numbered(mid[0], v1, v2, mid[2]);
++            case 2:
++               return numbered(v0, v1, mid[1], mid[3]) || numbered(mid[3], mid[1], v2, v3);
++            default:
++               return false;
++         }
++      };
++      for (auto face = faces.begin(); face != faces.end(); ++face)
++      {
++         if (face->index < 0 && !face->Unused())
++         {
++            const std::array<int, 4> fn = FindFaceNodes(*face);
++            if (numbered_refinement(fn[0], fn[1], fn[2], fn[3]))
++            {
++               face->index = NFaces + (nghosts++);
++               ghost_geom.push_back(fn[3] < 0 ? Geometry::TRIANGLE : Geometry::SQUARE);
++            }
++         }
++      }
++
++      NGhostFaces = nghosts;
++      face_geom.SetSize(NFaces + NGhostFaces);
++      for (int i = 0; i < NGhostFaces; i++)
++      {
++         face_geom[NFaces + i] = ghost_geom[i];
++      }
++      return;
++   }
++
+    // count ghost edges and assign their indices
+    NGhostEdges = 0;
+    for (auto &node : nodes)
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -771,7 +771,8 @@
+ 
+    for (const auto &face : faces)
+    {
+-      if (face.elem[0] >= 0 && face.elem[1] >= 0 && face.index < NFaces)
++      if (face.elem[0] >= 0 && face.elem[1] >= 0 && face.index >= 0 &&
++          face.index < NFaces)
+       {
+          Element *e1 = &elements[face.elem[0]];
+          Element *e2 = &elements[face.elem[1]];

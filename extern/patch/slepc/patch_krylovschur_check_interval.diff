@@ -1,0 +1,372 @@
+diff --git a/include/slepceps.h b/include/slepceps.h
+index d3551545a..4546d6eb5 100644
+--- a/include/slepceps.h
++++ b/include/slepceps.h
+@@ -997,6 +997,9 @@ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurGetLREPType(EPS,EPSKrylovSchurLREPType
+ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurSetRestart(EPS,PetscReal);
+ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurGetRestart(EPS,PetscReal*);
+ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurSetLocking(EPS,PetscBool);
++SLEPC_EXTERN PetscErrorCode EPSKrylovSchurSetCheckInterval(EPS,PetscInt);
++SLEPC_EXTERN PetscErrorCode EPSKrylovSchurGetCheckInterval(EPS,PetscInt*);
++#define SLEPC_HAVE_EPS_KRYLOVSCHUR_CHECK_INTERVAL 1
+ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurGetLocking(EPS,PetscBool*);
+ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurSetPartitions(EPS,PetscInt);
+ SLEPC_EXTERN PetscErrorCode EPSKrylovSchurGetPartitions(EPS,PetscInt*);
+diff --git a/src/eps/impls/krylov/krylovschur/krylovschur.c b/src/eps/impls/krylov/krylovschur/krylovschur.c
+index 7114438de..9721db34e 100644
+--- a/src/eps/impls/krylov/krylovschur/krylovschur.c
++++ b/src/eps/impls/krylov/krylovschur/krylovschur.c
+@@ -230,20 +230,79 @@ static PetscErrorCode EPSSetUpSort_KrylovSchur(EPS eps)
+   PetscFunctionReturn(PETSC_SUCCESS);
+ }
+ 
++/*
++   Whether the wanted unlocked Ritz values eps->eigr/eigi[nconv:nev) of the current check are each within
++   tol (relative) of one of the nprev values of the previous check, then store the values [nconv:n) of
++   the current check as the previous ones
++*/
++static PetscErrorCode EPSKrylovSchurSettled_Private(EPS eps,PetscScalar *prevr,PetscScalar *previ,PetscInt *nprev,PetscInt n,PetscBool *settled)
++{
++  PetscInt  i,j;
++  PetscReal d,dmin,a;
++
++  PetscFunctionBegin;
++  *settled = PETSC_TRUE;
++  for (i=eps->nconv;i<PetscMin(eps->nev,n) && *settled;i++) {
++    a = SlepcAbsEigenvalue(eps->eigr[i],eps->eigi[i]);
++    dmin = PETSC_MAX_REAL;
++    for (j=0;j<*nprev;j++) {
++      d = SlepcAbsEigenvalue(eps->eigr[i]-prevr[j],eps->eigi[i]-previ[j]);
++      dmin = PetscMin(dmin,d);
++    }
++    if (!(dmin<=eps->tol*a)) *settled = PETSC_FALSE;
++  }
++  *nprev = n-eps->nconv;
++  for (j=0;j<*nprev;j++) {
++    prevr[j] = eps->eigr[eps->nconv+j];
++    previ[j] = eps->eigi[eps->nconv+j];
++  }
++  PetscFunctionReturn(PETSC_SUCCESS);
++}
++
++/*
++   Whether two of the k converged Ritz values eps->eigr/eigi[0:k), back-transformed, are within a
++   relative distance of 1e-6 of each other: (numerically) multiple eigenvalues, as with symmetries.
++   In exact arithmetic, a Krylov subspace generated from one start vector holds a single vector of
++   the eigenspace of a multiple eigenvalue; the other copies enter it only through rounding errors
++   and inexact applications of the operator, after more steps, so that a check within a cycle can
++   find the wanted Ritz values converged before they appear. wr, wi: work arrays of size >= k
++*/
++static PetscErrorCode EPSKrylovSchurMultiple_Private(EPS eps,PetscInt k,PetscScalar *wr,PetscScalar *wi,PetscBool *multiple)
++{
++  const PetscReal rtol = 1e-6;
++  PetscInt        i,j;
++
++  PetscFunctionBegin;
++  *multiple = PETSC_FALSE;
++  PetscCall(PetscArraycpy(wr,eps->eigr,k));
++  PetscCall(PetscArraycpy(wi,eps->eigi,k));
++  PetscCall(STBackTransform(eps->st,k,wr,wi));
++  for (i=0;i<k && !*multiple;i++) {
++    for (j=i+1;j<k && !*multiple;j++) {
++      if (SlepcAbsEigenvalue(wr[i]-wr[j],wi[i]-wi[j])<=rtol*PetscMax(SlepcAbsEigenvalue(wr[i],wi[i]),SlepcAbsEigenvalue(wr[j],wi[j]))) *multiple = PETSC_TRUE;
++    }
++  }
++  PetscFunctionReturn(PETSC_SUCCESS);
++}
++
+ PetscErrorCode EPSSolve_KrylovSchur_Default(EPS eps)
+ {
+-  EPS_KRYLOVSCHUR *ctx = (EPS_KRYLOVSCHUR*)eps->data;
+-  PetscInt        i,j,*pj,k,l,nv,ld,nconv;
+-  Mat             U,Op,H,T;
+-  PetscScalar     *g;
+-  PetscReal       beta,gamma=1.0;
+-  PetscBool       breakdown,harmonic,hermitian;
++  EPS_KRYLOVSCHUR    *ctx = (EPS_KRYLOVSCHUR*)eps->data;
++  PetscInt           i,j,*pj,k,l,nv,ld,nconv,m,mt,nprev=0;
++  Mat                U,Op,H,T;
++  PetscScalar        *g,*A,*Asave=NULL,*prevr=NULL,*previ=NULL,*wr=NULL,*wi=NULL;
++  PetscReal          beta,gamma=1.0;
++  PetscBool          breakdown,harmonic,hermitian,check,checked,settled,multiple,first;
++  EPSConvergedReason reason;
+ 
+   PetscFunctionBegin;
+   PetscCall(DSGetLeadingDimension(eps->ds,&ld));
+   harmonic = (eps->extraction==EPS_HARMONIC || eps->extraction==EPS_REFINED_HARMONIC)?PETSC_TRUE:PETSC_FALSE;
+   hermitian = (eps->ishermitian && !harmonic)?PETSC_TRUE:PETSC_FALSE;
+   if (harmonic) PetscCall(PetscMalloc1(ld,&g));
++  /* convergence checks within a cycle: Arnoldi, standard extraction, no arbitrary selection or threshold stopping */
++  check = (ctx->check>0 && !hermitian && !harmonic && !eps->arbitrary && eps->stop!=EPS_STOP_THRESHOLD)?PETSC_TRUE:PETSC_FALSE;
++  if (check) PetscCall(PetscMalloc5(ld*ld,&Asave,ld,&prevr,ld,&previ,ld,&wr,ld,&wi));
+   if (eps->arbitrary) pj = &j;
+   else pj = NULL;
+ 
+@@ -259,37 +318,90 @@ PetscErrorCode EPSSolve_KrylovSchur_Default(EPS eps)
+     nv = PetscMin(eps->nconv+eps->mpd,eps->ncv);
+     PetscCall(DSSetDimensions(eps->ds,nv,eps->nconv,eps->nconv+l));
+     PetscCall(STGetOperator(eps->st,&Op));
++    checked = PETSC_FALSE;
+     if (hermitian) {
+       PetscCall(DSGetMat(eps->ds,DS_MAT_T,&T));
+       PetscCall(BVMatLanczos(eps->V,Op,T,eps->nconv+l,&nv,&beta,&breakdown));
+       PetscCall(DSRestoreMat(eps->ds,DS_MAT_T,&T));
+-    } else {
++    } else if (!check) {
+       PetscCall(DSGetMat(eps->ds,DS_MAT_A,&H));
+       PetscCall(BVMatArnoldi(eps->V,Op,H,eps->nconv+l,&nv,&beta,&breakdown));
+       PetscCall(DSRestoreMat(eps->ds,DS_MAT_A,&H));
++    } else {
++      /* Extend the factorization ctx->check columns at a time. From nev columns on, solve the projected
++         problem and test convergence after each extension, as at the end of the cycle, and end the cycle
++         when the stopping test is satisfied and the wanted Ritz values have settled: each unlocked one
++         within tol (relative) of a Ritz value of the previous check (the residual estimates can be far
++         below the error of the Ritz values, which the end of the cycle usually hides by converging them
++         further), unless two of the converged Ritz values are numerically multiple, since the other copies
++         of a multiple eigenvalue may then still be missing from the Krylov subspace. A check that fails
++         restores the projected matrix, so the cycle then continues exactly as it would without checks. */
++      m = eps->nconv+l;
++      while (!checked) {
++        mt = PetscMin(m+ctx->check,nv);
++        PetscCall(DSGetMat(eps->ds,DS_MAT_A,&H));
++        PetscCall(BVMatArnoldi(eps->V,Op,H,m,&mt,&beta,&breakdown));
++        PetscCall(DSRestoreMat(eps->ds,DS_MAT_A,&H));
++        m = mt;
++        if (breakdown || m>=nv) break;
++        if (m<eps->nev) continue;
++        PetscCall(DSGetArray(eps->ds,DS_MAT_A,&A));
++        PetscCall(PetscArraycpy(Asave,A,ld*ld));
++        PetscCall(DSRestoreArray(eps->ds,DS_MAT_A,&A));
++        PetscCall(DSSetDimensions(eps->ds,m,eps->nconv,eps->nconv+l));
++        PetscCall(DSSetState(eps->ds,l?DS_STATE_RAW:DS_STATE_INTERMEDIATE));
++        PetscCall(BVSetActiveColumns(eps->V,eps->nconv,m));
++        PetscCall(DSSolve(eps->ds,eps->eigr,eps->eigi));
++        PetscCall(DSSort(eps->ds,eps->eigr,eps->eigi,eps->rr,eps->ri,NULL));
++        PetscCall(DSUpdateExtraRow(eps->ds));
++        PetscCall(DSSynchronize(eps->ds,eps->eigr,eps->eigi));
++        PetscCall(EPSKrylovConvergence(eps,PETSC_FALSE,eps->nconv,m-eps->nconv,beta,0.0,gamma,&k));
++        PetscCall((*eps->stopping)(eps,eps->its,eps->max_it,k,eps->nev,&reason,eps->stoppingctx));
++        PetscCall(EPSKrylovSchurSettled_Private(eps,prevr,previ,&nprev,m,&settled));
++        multiple = PETSC_FALSE;
++        if (reason==EPS_CONVERGED_TOL && settled) PetscCall(EPSKrylovSchurMultiple_Private(eps,k,wr,wi,&multiple));
++        if (multiple) PetscCall(PetscInfo(eps,"Krylov-Schur cycle not ended by the convergence check at m=%" PetscInt_FMT " of %" PetscInt_FMT ": multiple converged Ritz values\n",m,nv));
++        /* nor the first cycle (see EPSKrylovSchurSetCheckInterval()) */
++        first = (reason==EPS_CONVERGED_TOL && settled && !multiple && eps->its==1)?PETSC_TRUE:PETSC_FALSE;
++        if (first) PetscCall(PetscInfo(eps,"Krylov-Schur cycle not ended by the convergence check at m=%" PetscInt_FMT " of %" PetscInt_FMT ": first cycle\n",m,nv));
++        if (reason>0 && settled && !multiple && !first) {
++          PetscCall(PetscInfo(eps,"Krylov-Schur cycle ended by a convergence check at m=%" PetscInt_FMT " of %" PetscInt_FMT "\n",m,nv));
++          eps->reason = reason;
++          checked = PETSC_TRUE;
++        } else {
++          PetscCall(DSGetArray(eps->ds,DS_MAT_A,&A));
++          PetscCall(PetscArraycpy(A,Asave,ld*ld));
++          PetscCall(DSRestoreArray(eps->ds,DS_MAT_A,&A));
++          PetscCall(DSSetDimensions(eps->ds,nv,eps->nconv,eps->nconv+l));
++        }
++      }
++      nv = m;
+     }
+     PetscCall(STRestoreOperator(eps->st,&Op));
+-    PetscCall(DSSetDimensions(eps->ds,nv,eps->nconv,eps->nconv+l));
+-    PetscCall(DSSetState(eps->ds,l?DS_STATE_RAW:DS_STATE_INTERMEDIATE));
+-    PetscCall(BVSetActiveColumns(eps->V,eps->nconv,nv));
+-
+-    /* Compute translation of Krylov decomposition if harmonic extraction used */
+-    if (PetscUnlikely(harmonic)) PetscCall(DSTranslateHarmonic(eps->ds,eps->target,beta,PETSC_FALSE,g,&gamma));
+-
+-    /* Solve projected problem */
+-    PetscCall(DSSolve(eps->ds,eps->eigr,eps->eigi));
+-    if (PetscUnlikely(eps->arbitrary)) {
+-      PetscCall(EPSGetArbitraryValues(eps,eps->rr,eps->ri));
+-      j=1;
++    if (!checked) {
++      PetscCall(DSSetDimensions(eps->ds,nv,eps->nconv,eps->nconv+l));
++      PetscCall(DSSetState(eps->ds,l?DS_STATE_RAW:DS_STATE_INTERMEDIATE));
++      PetscCall(BVSetActiveColumns(eps->V,eps->nconv,nv));
++
++      /* Compute translation of Krylov decomposition if harmonic extraction used */
++      if (PetscUnlikely(harmonic)) PetscCall(DSTranslateHarmonic(eps->ds,eps->target,beta,PETSC_FALSE,g,&gamma));
++
++      /* Solve projected problem */
++      PetscCall(DSSolve(eps->ds,eps->eigr,eps->eigi));
++      if (PetscUnlikely(eps->arbitrary)) {
++        PetscCall(EPSGetArbitraryValues(eps,eps->rr,eps->ri));
++        j=1;
++      }
++      PetscCall(DSSort(eps->ds,eps->eigr,eps->eigi,eps->rr,eps->ri,pj));
++      PetscCall(DSUpdateExtraRow(eps->ds));
++      PetscCall(DSSynchronize(eps->ds,eps->eigr,eps->eigi));
++
++      /* Check convergence */
++      PetscCall(EPSKrylovConvergence(eps,PETSC_FALSE,eps->nconv,nv-eps->nconv,beta,0.0,gamma,&k));
++      EPSSetCtxThreshold(eps,eps->eigr,eps->eigi,eps->errest,k,nv);
++      PetscCall((*eps->stopping)(eps,eps->its,eps->max_it,k,eps->nev,&eps->reason,eps->stoppingctx));
++      if (check) PetscCall(EPSKrylovSchurSettled_Private(eps,prevr,previ,&nprev,nv,&settled));
+     }
+-    PetscCall(DSSort(eps->ds,eps->eigr,eps->eigi,eps->rr,eps->ri,pj));
+-    PetscCall(DSUpdateExtraRow(eps->ds));
+-    PetscCall(DSSynchronize(eps->ds,eps->eigr,eps->eigi));
+-
+-    /* Check convergence */
+-    PetscCall(EPSKrylovConvergence(eps,PETSC_FALSE,eps->nconv,nv-eps->nconv,beta,0.0,gamma,&k));
+-    EPSSetCtxThreshold(eps,eps->eigr,eps->eigi,eps->errest,k,nv);
+-    PetscCall((*eps->stopping)(eps,eps->its,eps->max_it,k,eps->nev,&eps->reason,eps->stoppingctx));
+     nconv = k;
+ 
+     /* Update l */
+@@ -349,10 +461,106 @@ PetscErrorCode EPSSolve_KrylovSchur_Default(EPS eps)
+   }
+ 
+   if (harmonic) PetscCall(PetscFree(g));
++  PetscCall(PetscFree5(Asave,prevr,previ,wr,wi));
+   PetscCall(DSTruncate(eps->ds,eps->nconv,PETSC_TRUE));
+   PetscFunctionReturn(PETSC_SUCCESS);
+ }
+ 
++static PetscErrorCode EPSKrylovSchurSetCheckInterval_KrylovSchur(EPS eps,PetscInt check)
++{
++  EPS_KRYLOVSCHUR *ctx = (EPS_KRYLOVSCHUR*)eps->data;
++
++  PetscFunctionBegin;
++  if (check==PETSC_DEFAULT || check==PETSC_DECIDE) ctx->check = 0;
++  else {
++    PetscCheck(check>=0,PetscObjectComm((PetscObject)eps),PETSC_ERR_ARG_OUTOFRANGE,"The check interval %" PetscInt_FMT " must be nonnegative",check);
++    ctx->check = check;
++  }
++  PetscFunctionReturn(PETSC_SUCCESS);
++}
++
++/*@
++   EPSKrylovSchurSetCheckInterval - Sets the number of Arnoldi steps between the convergence checks
++   performed within a cycle of the Krylov-Schur method.
++
++   Logically Collective
++
++   Input Parameters:
+++  eps   - the linear eigensolver context
++-  check - the number of steps between checks (0 to check only at the end of each cycle)
++
++   Options Database Key:
++.  -eps_krylovschur_check_interval <check> - sets the check interval
++
++   Notes:
++   By default, the Krylov-Schur method tests convergence once per cycle (restart), after the
++   factorization has been extended to the full basis size, so a solve that converges in its first
++   cycle always costs ncv applications of the operator. With a positive interval, the projected
++   problem is also solved and the convergence and stopping tests applied every check steps once
++   the factorization has nev columns, and the cycle ends as soon as the stopping test is satisfied
++   and each wanted Ritz value is within the tolerance (relative) of a Ritz value of the previous
++   check, since the residual estimates can be far below the error of Ritz values which have not
++   settled. A check does not end the cycle either while two of the converged Ritz values are within a
++   relative distance of 1e-6 of each other (back-transformed): the other copies of a multiple
++   eigenvalue enter a Krylov subspace generated from one start vector only through rounding errors,
++   after more steps, so problems with multiple eigenvalues (as with symmetries) keep the end-of-cycle
++   test. Nor does a check end the first cycle, which extends the factorization to the full basis size
++   as without checks: the first multiple eigenvalue of a problem can have a single converged copy in
++   it, with no other pair of converged Ritz values to keep the cycle running. A check that is not
++   satisfied leaves the iteration unchanged. Each check costs a dense
++   eigensolve of the projected problem, which is negligible when the operator applications are
++   expensive, as in shift-and-invert with iterative linear solves.
++
++   The checks apply to the Arnoldi variant with the standard extraction, without arbitrary
++   selection or threshold stopping; other cases ignore this setting.
++
++   Level: advanced
++
++.seealso: [](ch:eps), `EPSKRYLOVSCHUR`, `EPSKrylovSchurGetCheckInterval()`, `EPSSetDimensions()`
++@*/
++PetscErrorCode EPSKrylovSchurSetCheckInterval(EPS eps,PetscInt check)
++{
++  PetscFunctionBegin;
++  PetscValidHeaderSpecific(eps,EPS_CLASSID,1);
++  PetscValidLogicalCollectiveInt(eps,check,2);
++  PetscTryMethod(eps,"EPSKrylovSchurSetCheckInterval_C",(EPS,PetscInt),(eps,check));
++  PetscFunctionReturn(PETSC_SUCCESS);
++}
++
++static PetscErrorCode EPSKrylovSchurGetCheckInterval_KrylovSchur(EPS eps,PetscInt *check)
++{
++  EPS_KRYLOVSCHUR *ctx = (EPS_KRYLOVSCHUR*)eps->data;
++
++  PetscFunctionBegin;
++  *check = ctx->check;
++  PetscFunctionReturn(PETSC_SUCCESS);
++}
++
++/*@
++   EPSKrylovSchurGetCheckInterval - Gets the number of Arnoldi steps between the convergence checks
++   performed within a cycle of the Krylov-Schur method.
++
++   Not Collective
++
++   Input Parameter:
++.  eps - the linear eigensolver context
++
++   Output Parameter:
++.  check - the check interval
++
++   Level: advanced
++
++.seealso: [](ch:eps), `EPSKRYLOVSCHUR`, `EPSKrylovSchurSetCheckInterval()`
++@*/
++PetscErrorCode EPSKrylovSchurGetCheckInterval(EPS eps,PetscInt *check)
++{
++  PetscFunctionBegin;
++  PetscValidHeaderSpecific(eps,EPS_CLASSID,1);
++  PetscAssertPointer(check,2);
++  PetscUseMethod(eps,"EPSKrylovSchurGetCheckInterval_C",(EPS,PetscInt*),(eps,check));
++  PetscFunctionReturn(PETSC_SUCCESS);
++}
++
+ static PetscErrorCode EPSKrylovSchurSetRestart_KrylovSchur(EPS eps,PetscReal keep)
+ {
+   EPS_KRYLOVSCHUR *ctx = (EPS_KRYLOVSCHUR*)eps->data;
+@@ -1596,6 +1804,10 @@ static PetscErrorCode EPSSetFromOptions_KrylovSchur(EPS eps,PetscOptionItems Pet
+     PetscCall(PetscOptionsBool("-eps_krylovschur_locking","Choose between locking and non-locking variants","EPSKrylovSchurSetLocking",PETSC_TRUE,&lock,&flg));
+     if (flg) PetscCall(EPSKrylovSchurSetLocking(eps,lock));
+ 
++    i = ctx->check;
++    PetscCall(PetscOptionsInt("-eps_krylovschur_check_interval","Arnoldi steps between convergence checks within a cycle (0: at its end only)","EPSKrylovSchurSetCheckInterval",ctx->check,&i,&flg));
++    if (flg) PetscCall(EPSKrylovSchurSetCheckInterval(eps,i));
++
+     i = ctx->npart;
+     PetscCall(PetscOptionsInt("-eps_krylovschur_partitions","Number of partitions of the communicator for spectrum slicing","EPSKrylovSchurSetPartitions",ctx->npart,&i,&flg));
+     if (flg) PetscCall(EPSKrylovSchurSetPartitions(eps,i));
+@@ -1645,6 +1857,7 @@ static PetscErrorCode EPSView_KrylovSchur(EPS eps,PetscViewer viewer)
+   if (isascii) {
+     PetscCall(PetscViewerASCIIPrintf(viewer,"  %d%% of basis vectors kept after restart\n",(int)(100*ctx->keep)));
+     PetscCall(PetscViewerASCIIPrintf(viewer,"  using the %slocking variant\n",ctx->lock?"":"non-"));
++    if (ctx->check>0) PetscCall(PetscViewerASCIIPrintf(viewer,"  convergence checks every %" PetscInt_FMT " steps within a cycle\n",ctx->check));
+     if (eps->problem_type==EPS_BSE) PetscCall(PetscViewerASCIIPrintf(viewer,"  BSE method: %s\n",EPSKrylovSchurBSETypes[ctx->bse]));
+     else if (eps->problem_type==EPS_LREP) PetscCall(PetscViewerASCIIPrintf(viewer,"  LREP method: %s\n",EPSKrylovSchurLREPTypes[ctx->lrep]));
+     if (eps->which==EPS_ALL) {
+@@ -1686,6 +1899,8 @@ static PetscErrorCode EPSDestroy_KrylovSchur(EPS eps)
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetRestart_C",NULL));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetLocking_C",NULL));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetLocking_C",NULL));
++  PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetCheckInterval_C",NULL));
++  PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetCheckInterval_C",NULL));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetPartitions_C",NULL));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetPartitions_C",NULL));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetDetectZeros_C",NULL));
+@@ -1785,6 +2000,8 @@ SLEPC_EXTERN PetscErrorCode EPSCreate_KrylovSchur(EPS eps)
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetRestart_C",EPSKrylovSchurGetRestart_KrylovSchur));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetLocking_C",EPSKrylovSchurSetLocking_KrylovSchur));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetLocking_C",EPSKrylovSchurGetLocking_KrylovSchur));
++  PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetCheckInterval_C",EPSKrylovSchurSetCheckInterval_KrylovSchur));
++  PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetCheckInterval_C",EPSKrylovSchurGetCheckInterval_KrylovSchur));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetPartitions_C",EPSKrylovSchurSetPartitions_KrylovSchur));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurGetPartitions_C",EPSKrylovSchurGetPartitions_KrylovSchur));
+   PetscCall(PetscObjectComposeFunction((PetscObject)eps,"EPSKrylovSchurSetDetectZeros_C",EPSKrylovSchurSetDetectZeros_KrylovSchur));
+diff --git a/src/eps/impls/krylov/krylovschur/krylovschur.h b/src/eps/impls/krylov/krylovschur/krylovschur.h
+index e7eb6a53d..d4c69132d 100644
+--- a/src/eps/impls/krylov/krylovschur/krylovschur.h
++++ b/src/eps/impls/krylov/krylovschur/krylovschur.h
+@@ -81,6 +81,7 @@ typedef struct _n_SR *EPS_SR;
+ typedef struct {
+   PetscReal        keep;               /* restart parameter */
+   PetscBool        lock;               /* locking/non-locking variant */
++  PetscInt         check;              /* Arnoldi steps between convergence checks within a cycle (0: at its end only) */
+   /* the following are used only in spectrum slicing */
+   EPS_SR           sr;                 /* spectrum slicing context */
+   PetscInt         nev;                /* number of eigenvalues to compute */

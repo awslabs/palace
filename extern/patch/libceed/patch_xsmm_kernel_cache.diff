@@ -1,0 +1,95 @@
+diff --git a/backends/xsmm/ceed-xsmm-tensor.c b/backends/xsmm/ceed-xsmm-tensor.c
+index db9c131a..26f5d849 100644
+--- a/backends/xsmm/ceed-xsmm-tensor.c
++++ b/backends/xsmm/ceed-xsmm-tensor.c
+@@ -11,6 +11,19 @@
+ 
+ #include "ceed-xsmm.h"
+ 
++// Kernels of the blocked contractions of a tensor contraction object, so that repeated applications skip the
++// LIBXSMM dispatch (descriptor setup and registry lookup on every call)
++#define CEED_XSMM_NUM_KERNELS 16
++typedef struct {
++  CeedInt              B, C, J, t_mode, add;
++  libxsmm_gemmfunction kernel;
++} CeedXsmmKernel;
++
++typedef struct {
++  CeedInt        num_kernels;
++  CeedXsmmKernel kernels[CEED_XSMM_NUM_KERNELS];
++} CeedTensorContract_Xsmm;
++
+ //------------------------------------------------------------------------------
+ // Tensor Contract Apply
+ //------------------------------------------------------------------------------
+@@ -37,6 +50,25 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+     gemm_param.c.primary = (CeedScalar *)&v[0];
+     kernel(&gemm_param);
+   } else {
++    CeedTensorContract_Xsmm *impl;
++    libxsmm_gemm_param       gemm_param;
++
++    // Kernel used by an earlier application
++    CeedCallBackend(CeedTensorContractGetData(contract, &impl));
++    for (CeedInt i = 0; i < impl->num_kernels; i++) {
++      const CeedXsmmKernel *cached = &impl->kernels[i];
++
++      if (cached->B == B && cached->C == C && cached->J == J && cached->t_mode == (CeedInt)t_mode && cached->add == add) {
++        gemm_param.b.primary = (CeedScalar *)&t[0];
++        for (CeedInt a = 0; a < A; a++) {
++          gemm_param.a.primary = (CeedScalar *)&u[a * B * C];
++          gemm_param.c.primary = &v[a * J * C];
++          cached->kernel(&gemm_param);
++        }
++        return CEED_ERROR_SUCCESS;
++      }
++    }
++
+     // Build or query the required kernel
+     const int                flags_t    = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
+     const int                flags_ab   = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : LIBXSMM_BASIC_GEMM_FLAG_NONE;
+@@ -47,9 +79,18 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+                                               : libxsmm_create_gemm_shape(C, J, B, C, !t_mode ? B : J, C, LIBXSMM_DATATYPE_F32, LIBXSMM_DATATYPE_F32,
+                                                                           LIBXSMM_DATATYPE_F32, LIBXSMM_DATATYPE_F32);
+     const libxsmm_gemmfunction kernel   = libxsmm_dispatch_gemm(gemm_shape, (libxsmm_bitfield)(flags), (libxsmm_bitfield)LIBXSMM_GEMM_PREFETCH_NONE);
+-    libxsmm_gemm_param         gemm_param;
+ 
+     CeedCheck(kernel, CeedTensorContractReturnCeed(contract), CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
++    if (impl->num_kernels < CEED_XSMM_NUM_KERNELS) {
++      CeedXsmmKernel *cached = &impl->kernels[impl->num_kernels++];
++
++      cached->B      = B;
++      cached->C      = C;
++      cached->J      = J;
++      cached->t_mode = (CeedInt)t_mode;
++      cached->add    = add;
++      cached->kernel = kernel;
++    }
+ 
+     // Run kernel
+     gemm_param.b.primary = (CeedScalar *)&t[0];
+@@ -65,8 +106,24 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+ //------------------------------------------------------------------------------
+ // Tensor Contract Create
+ //------------------------------------------------------------------------------
++//------------------------------------------------------------------------------
++// Tensor Contract Destroy
++//------------------------------------------------------------------------------
++static int CeedTensorContractDestroy_Xsmm(CeedTensorContract contract) {
++  CeedTensorContract_Xsmm *impl;
++
++  CeedCallBackend(CeedTensorContractGetData(contract, &impl));
++  CeedCallBackend(CeedFree(&impl));
++  return CEED_ERROR_SUCCESS;
++}
++
+ int CeedTensorContractCreate_Xsmm(CeedTensorContract contract) {
++  CeedTensorContract_Xsmm *impl;
++
++  CeedCallBackend(CeedCalloc(1, &impl));
++  CeedCallBackend(CeedTensorContractSetData(contract, impl));
+   CeedCallBackend(CeedSetBackendFunction(CeedTensorContractReturnCeed(contract), "TensorContract", contract, "Apply", CeedTensorContractApply_Xsmm));
++  CeedCallBackend(CeedSetBackendFunction(CeedTensorContractReturnCeed(contract), "TensorContract", contract, "Destroy", CeedTensorContractDestroy_Xsmm));
+   return CEED_ERROR_SUCCESS;
+ }
+ 

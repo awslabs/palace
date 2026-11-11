@@ -6,27 +6,52 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cmath>
+#include <condition_variable>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
+#include <memory_resource>
+#include <mutex>
 #include <numbers>
 #include <numeric>
 #include <queue>
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#if defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 #include <Eigen/Dense>
+#include <mpi.h>
+#if defined(MFEM_USE_ZLIB)
+#include <zlib.h>
+#endif
+#include <ptscotch.h>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
+#include "linalg/sliverpatch.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/gmshreader.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/meshio.hpp"
+#include "utils/ncmeshdist.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
@@ -44,13 +69,95 @@ namespace
 // lost!
 constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
+void UnpinThread(std::thread &t);
+
+// Wait for all processes without spinning, leaving the CPUs to the threads of the processes
+// working meanwhile.
+void SleepyBarrier(MPI_Comm comm)
+{
+  MPI_Request req;
+  MPI_Ibarrier(comm, &req);
+  for (int flag = 0;;)
+  {
+    MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
+    if (flag)
+    {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::microseconds(200));
+  }
+}
+
+// Threads for the serial mesh preprocessing of the processes holding the serial mesh: one
+// per process of the node, the others waiting without spinning (set by mesh::Load).
+int serial_mesh_threads = 1;
+
+// Call f(k, t) for k in [0, n) from nt threads t (the calling one is t = 0).
+template <typename Func>
+void ParallelForThreads(std::size_t n, int nt, Func &&f)
+{
+  std::atomic<std::size_t> next = 0;
+  auto Work = [&](int t)
+  {
+    for (std::size_t k; (k = next.fetch_add(1)) < n;)
+    {
+      f(k, t);
+    }
+  };
+  std::vector<std::thread> threads;
+  for (int t = 1; t < nt; t++)
+  {
+    threads.emplace_back(Work, t);
+    UnpinThread(threads.back());
+  }
+  Work(0);
+  for (auto &t : threads)
+  {
+    t.join();
+  }
+}
+
+// mfem::Mesh::GetEdgeLengths2 for the vertices of a mesh without nodes (the squared length
+// of each edge of v_to_v, by edge index), with nt threads over the rows of v_to_v.
+void EdgeLengths2(const mfem::DSTable &v_to_v, const mfem::Array<mfem::Vertex> &vertices,
+                  int sdim, int nedges, int nt, mfem::Array<mfem::real_t> &lengths)
+{
+  lengths.SetSize(nedges);
+  constexpr int block = 4096;
+  const int nrows = v_to_v.NumberOfRows();
+  ParallelForThreads((nrows + block - 1) / block, nt,
+                     [&](std::size_t b, int)
+                     {
+                       const int end = std::min(nrows, static_cast<int>(b + 1) * block);
+                       for (int i = static_cast<int>(b) * block; i < end; i++)
+                       {
+                         for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
+                         {
+                           const mfem::real_t *vi = vertices[i]();
+                           const mfem::real_t *vj = vertices[it.Column()]();
+                           mfem::real_t l = 0.;
+                           for (int k = 0; k < sdim; k++)
+                           {
+                             l += (vi[k] - vj[k]) * (vi[k] - vj[k]);
+                           }
+                           lengths[it.Index()] = l;
+                         }
+                       }
+                     });
+}
+
 // Load the serial mesh from disk.
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
-                                     const config::BoundaryData &);
+                                     const config::BoundaryData &, bool = false,
+                                     bool * = nullptr);
 
 // Read a serial mesh from a stream like the mfem::Mesh stream constructor, but removing the
 // boundary elements which are not faces of any element of the mesh.
-std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &, bool, bool, bool);
+std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &, bool, bool, bool,
+                                           bool * = nullptr);
+std::unique_ptr<mfem::Mesh> FinishReadMesh(std::unique_ptr<mfem::Mesh>, bool, bool,
+                                           bool * = nullptr);
+bool HasTopology(const mfem::Mesh &);
 
 // Clean the provided serial mesh by removing unused domain and boundary elements.
 void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &);
@@ -79,7 +186,8 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh over the given communicator. The serial mesh is destroyed when no longer needed.
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
-                                              const int *, const std::string & = "");
+                                              const int *, const std::string & = "",
+                                              bool = false);
 
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
@@ -125,26 +233,117 @@ bool UseAmr(const config::RefinementData &refinement)
 
 }  // namespace
 
+namespace
+{
+
+// A mesh marking its tetrahedra for refinement as mfem::Mesh::MarkTetMeshForRefinement does
+// (the longest edge of each tetrahedron, ties broken by the edge index), with threads for
+// the elements, whose marking changes only themselves (see serial_mesh_threads).
+class ThreadedMarkMesh : public mfem::Mesh
+{
+  void MarkTetMeshForRefinement(const mfem::DSTable &v_to_v) override
+  {
+    mfem::Array<mfem::real_t> lengths;
+    if (Nodes)
+    {
+      GetEdgeLengths2(v_to_v, lengths);
+    }
+    else
+    {
+      EdgeLengths2(v_to_v, vertices, spaceDim, NumOfEdges, serial_mesh_threads, lengths);
+    }
+    mfem::Array<int> idx(NumOfEdges);
+    std::iota(idx.begin(), idx.end(), 0);
+    constexpr int block = 4096;
+    const int nt = serial_mesh_threads;
+    ParallelForThreads(
+        (NumOfElements + block - 1) / block, nt,
+        [&](std::size_t b, int)
+        {
+          const int end = std::min(NumOfElements, static_cast<int>(b + 1) * block);
+          for (int i = static_cast<int>(b) * block; i < end; i++)
+          {
+            if (elements[i]->GetType() == mfem::Element::TETRAHEDRON)
+            {
+              MFEM_ASSERT(dynamic_cast<mfem::Tetrahedron *>(elements[i]),
+                          "Unexpected non-Tetrahedron element type!");
+              static_cast<mfem::Tetrahedron *>(elements[i])->MarkEdge(v_to_v, lengths, idx);
+            }
+          }
+        });
+    ParallelForThreads(
+        (NumOfBdrElements + block - 1) / block, nt,
+        [&](std::size_t b, int)
+        {
+          const int end = std::min(NumOfBdrElements, static_cast<int>(b + 1) * block);
+          for (int i = static_cast<int>(b) * block; i < end; i++)
+          {
+            if (boundary[i]->GetType() == mfem::Element::TRIANGLE)
+            {
+              MFEM_ASSERT(dynamic_cast<mfem::Triangle *>(boundary[i]),
+                          "Unexpected non-Triangle element type!");
+              static_cast<mfem::Triangle *>(boundary[i])->MarkEdge(v_to_v, lengths, idx);
+            }
+          }
+        });
+  }
+
+public:
+  explicit ThreadedMarkMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
+};
+
+}  // namespace
+
 std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
+  // The processes holding the serial mesh preprocess it with one thread per process of
+  // their node (PALACE_SETUP_THREADS overrides), while the others wait without spinning
+  // (until the end of Load).
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                        &node_comm);
+    serial_mesh_threads = Mpi::Size(node_comm);
+    MPI_Comm_free(&node_comm);
+    if (const char *env = std::getenv("PALACE_SETUP_THREADS"))
+    {
+      serial_mesh_threads = std::max(1, std::atoi(env));
+    }
+  }
+
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = UseAmr(refinement);
+
+  // Unless an element splitting, reordering, or serial refinement (which depend on the
+  // element orientations) or periodicity requires the mesh finalized once read, the
+  // orientation fix after reading is done with the refinement marking below.
+  const bool defer_finalize = !iodata.model.make_simplex && !iodata.model.make_hex &&
+                              !iodata.model.reorder_elements &&
+                              refinement.ser_uniform_ref_levels == 0 &&
+                              iodata.boundaries.periodic.boundary_pairs.empty();
+  bool finalize_deferred = false;
 
   // Root loads first so conformality of the input mesh can be factored into the
   // distribution-path decision. Non-conformal AMR on an already-nonconforming mesh
   // forces the byte-string broadcast path, since MFEM's MeshPartitioner doesn't accept
-  // nonconforming meshes.
+  // nonconforming meshes. When the configuration alone excludes the partitioner, one
+  // process per node reads the serial mesh, all of them at once.
   std::unique_ptr<mfem::Mesh> smesh;
   bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+  const bool load_per_node = !use_mesh_partitioner;
+  if (!load_per_node)
   {
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm))
     {
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/Root", Timer::IO));
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries,
+                       true, defer_finalize ? &finalize_deferred : nullptr);
       use_mesh_partitioner &= smesh->Conforming();
     }
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad", Timer::IO));
     Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
   }
 
@@ -156,13 +355,17 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   }
   {
     BlockTimer bt1(Timer::IO);
-    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
+    if (!use_mesh_partitioner && Mpi::Root(node_comm) &&
+        (load_per_node || !Mpi::Root(comm)))
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      perf::ScopedTally t(perf::RegisterTally("Startup/MeshLoad/NodeRoot", Timer::IO));
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries,
+                       true, defer_finalize ? &finalize_deferred : nullptr);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad", Timer::IO));
     Mpi::Barrier(comm);
   }
   if (node_comm != MPI_COMM_NULL)
@@ -172,8 +375,22 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 
   if (!smesh)
   {
+    SleepyBarrier(comm);
     return smesh;
   }
+
+  // The mesh is read without nodes when it has none (a linear mesh): first-order nodes,
+  // which every later step updates along with the vertices, are added only once the mesh
+  // topology is final, or before a step which handles the nodes of a mesh differently than
+  // its vertices. The vertices, and the nodes once added, are the same as with nodes from
+  // the start.
+  auto EnsureNodes = [&]()
+  {
+    if (!iodata.model.remove_curvature && !smesh->GetNodes())
+    {
+      smesh->EnsureNodes();
+    }
+  };
 
   // AMR / element compatibility.
   const auto element_types = CheckElements(*smesh);
@@ -207,12 +424,14 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // Optionally convert mesh elements to simplices or hexes.
   if (iodata.model.make_simplex || iodata.model.make_hex)
   {
+    EnsureNodes();
     SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
   }
 
   // Optionally reorder elements/vertices by spatial location for cache locality.
   if (iodata.model.reorder_elements)
   {
+    EnsureNodes();
     ReorderMeshElements(*smesh);
   }
 
@@ -220,6 +439,10 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // RefineMesh).
   {
     int ne = smesh->GetNE();
+    if (refinement.ser_uniform_ref_levels > 0)
+    {
+      EnsureNodes();
+    }
     for (int l = 0; l < refinement.ser_uniform_ref_levels; l++)
     {
       smesh->UniformRefinement();
@@ -236,8 +459,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // needs tet refinement flags set, which Finalize(refine=true) provides. Initial
   // orientation was already fixed at load.
   {
-    constexpr bool refine = true, fix_orientation = false;
-    smesh->Finalize(refine, fix_orientation);
+    constexpr bool refine = true;
+    const bool fix_orientation = finalize_deferred;
+    ThreadedMarkMesh mesh(std::move(*smesh));
+    mesh.Finalize(refine, fix_orientation);
+    *smesh = std::move(mesh);
   }
 
   // Box / sphere region refinement on the serial mesh, before partitioning. Done here
@@ -279,6 +505,10 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                      "cracked! Use a mesh which is cracked along them, for "
                      "example from a previous adaptive simulation with the "
                      "same boundary conditions.");
+  if (!refinement.GetBoxes().empty() || !refinement.GetSpheres().empty())
+  {
+    EnsureNodes();
+  }
   RegionRefine(refinement, *smesh);
   MFEM_VERIFY(
       interior_crack_attrs.empty() || smesh->Conforming(),
@@ -315,6 +545,8 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                  iodata.model.mesh);
   }
 
+  EnsureNodes();
+  SleepyBarrier(comm);
   return smesh;
 }
 
@@ -322,6 +554,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
                                          MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
+  perf::ScopedTally t(perf::RegisterTally("Startup/Partition", Timer::MESH_PREPROCESS));
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = UseAmr(refinement);
 
@@ -333,6 +566,15 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     use_mesh_partitioner &= smesh->Conforming();
   }
   Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
+
+  // Whether the serial mesh is conforming before the conversion to NC below (an NC input
+  // mesh, for example from a previous adaptive simulation, carries a refinement tree).
+  bool input_conforming = false;
+  if (Mpi::Root(comm) && smesh)
+  {
+    input_conforming = smesh->Conforming();
+  }
+  Mpi::Broadcast(1, &input_conforming, 0, comm);
 
   // For nonconformal AMR, each loading rank converts its own serial copy to NC here
   // (after Load has done all preprocessing and EnsureNodes), before partitioning. The
@@ -379,57 +621,82 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (use_mesh_partitioner)
   {
-    pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
+    // A conforming mesh which is refined after its distribution (conformal adaptive or
+    // parallel uniform refinement) keeps the element order of the serial mesh: the tie
+    // breaks of the marking of the tetrahedra for refinement follow the local edge order.
+    pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output,
+                           iodata.model.local_reorder && !use_amr &&
+                               refinement.uniform_ref_levels == 0);
   }
   else
   {
-    // Send the preprocessed serial mesh and partitioning as a byte string. The
-    // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit
-    // length and a chunked broadcast.
-    MPI_Comm node_comm;
-    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                        &node_comm);
-    constexpr bool generate_edges = false, refine = true, fix_orientation = false;
-    std::string so;
-    std::int64_t slen = 0;
-    if (smesh)
+    auto DistributeSerialMesh = [&]()
     {
-      std::ostringstream fo(std::stringstream::out);
-      fo << std::scientific;
-      fo.precision(MSH_FLT_PRECISION);
-      smesh->Print(fo);
-      smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
-                      // with the saved serial mesh (refinement marking, for example)
-      so = fo.str();
-      slen = static_cast<std::int64_t>(so.size());
-    }
-    Mpi::Broadcast(1, &slen, 0, node_comm);
-    if (so.empty())
+      // Send the preprocessed serial mesh and partitioning as a byte string. The
+      // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit
+      // length and a chunked broadcast.
+      std::unique_ptr<mfem::ParMesh> spmesh;
+      MPI_Comm node_comm;
+      MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                          &node_comm);
+      constexpr bool generate_edges = false, refine = true, fix_orientation = false;
+      std::string so;
+      std::int64_t slen = 0;
+      if (smesh)
+      {
+        std::ostringstream fo(std::stringstream::out);
+        fo << std::scientific;
+        fo.precision(MSH_FLT_PRECISION);
+        smesh->Print(fo);
+        smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
+                        // with the saved serial mesh (refinement marking, for example)
+        so = fo.str();
+        slen = static_cast<std::int64_t>(so.size());
+      }
+      Mpi::Broadcast(1, &slen, 0, node_comm);
+      if (so.empty())
+      {
+        so.resize(slen);
+      }
+      Mpi::BroadcastLarge(slen, so.data(), 0, node_comm);
+      {
+        std::istringstream fi(so);
+        smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+        so.clear();
+      }
+      // !use_mesh_partitioner implies use_amr && nonconformal. EnsureNCMesh has already
+      // been called on each loading rank's serial copy above; the rebuilt mesh below
+      // needs the same treatment.
+      if (refinement.nonconformal && use_amr)
+      {
+        smesh->EnsureNCMesh(true);
+      }
+      if (!partitioning)
+      {
+        partitioning = std::make_unique<int[]>(smesh->GetNE());
+      }
+      Mpi::Broadcast(smesh->GetNE(), partitioning.get(), 0, node_comm);
+      MPI_Comm_free(&node_comm);
+      spmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+      smesh.reset();
+      SetRootElementOrigin(*spmesh, {});  // Root elements in the input order
+      return spmesh;
+    };
+
+    // Every process builds only the NCMesh of the root elements (which mfem::ParNCMesh
+    // replicates) instead of the full serial mesh; a nonconforming input mesh has its
+    // refinement tree replayed in parallel. A refinement tree which cannot be replayed is
+    // sent as the serialized serial mesh.
+    pmesh = input_conforming ? DistributeNCMesh(comm, smesh, partitioning.get(),
+                                                iodata.model.local_reorder)
+                             : DistributeNCMeshTree(comm, smesh, partitioning.get());
+    if (!pmesh)
     {
-      so.resize(slen);
+      pmesh = DistributeSerialMesh();
     }
-    Mpi::BroadcastLarge(slen, so.data(), 0, node_comm);
-    {
-      std::istringstream fi(so);
-      smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
-      so.clear();
-    }
-    // !use_mesh_partitioner implies use_amr && nonconformal. EnsureNCMesh has already
-    // been called on each loading rank's serial copy above; the rebuilt mesh below
-    // needs the same treatment.
-    if (refinement.nonconformal && use_amr)
-    {
-      smesh->EnsureNCMesh(true);
-    }
-    if (!partitioning)
-    {
-      partitioning = std::make_unique<int[]>(smesh->GetNE());
-    }
-    Mpi::Broadcast(smesh->GetNE(), partitioning.get(), 0, node_comm);
-    MPI_Comm_free(&node_comm);
-    pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
     smesh.reset();
   }
+  memory_reporting::TrimHeap();
 
   // Debug: optionally write the partitioned and final meshes to tmp/ for inspection.
   if constexpr (false)
@@ -468,13 +735,60 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   return Partition(iodata, Load(iodata, comm), comm);
 }
 
+namespace
+{
+
+// mfem::Mesh::GetBoundingBox of a serial mesh. For first-order nodes on a simplex mesh the
+// box is that of the nodal values: the points of mfem::Mesh::GetBoundingBox are the element
+// vertices and edge midpoints, whose coordinates are the node values or lie between two of
+// them (also in floating point), and the box is found without element transformations.
+void GetSerialBoundingBox(const mfem::Mesh &mesh, mfem::Vector &bbmin, mfem::Vector &bbmax)
+{
+  const mfem::GridFunction *nodes = mesh.GetNodes();
+  const bool simplex_mesh = [&mesh]()
+  {
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const auto geom = mesh.GetElementBaseGeometry(e);
+      if (geom != mfem::Geometry::TETRAHEDRON && geom != mfem::Geometry::TRIANGLE)
+      {
+        return false;
+      }
+    }
+    return true;
+  }();
+  const auto *fespace = nodes ? nodes->FESpace() : nullptr;
+  if (!nodes || !simplex_mesh || fespace->GetMaxElementOrder() != 1 ||
+      !dynamic_cast<const mfem::H1_FECollection *>(fespace->FEColl()))
+  {
+    const_cast<mfem::Mesh &>(mesh).GetBoundingBox(bbmin, bbmax);
+    return;
+  }
+  const int sdim = mesh.SpaceDimension();
+  bbmin.SetSize(sdim);
+  bbmax.SetSize(sdim);
+  bbmin = mfem::infinity();
+  bbmax = -mfem::infinity();
+  for (int i = 0; i < fespace->GetNDofs(); i++)
+  {
+    for (int d = 0; d < sdim; d++)
+    {
+      const double x = (*nodes)(fespace->DofToVDof(i, d));
+      bbmin(d) = std::min(bbmin(d), x);
+      bbmax(d) = std::max(bbmax(d), x);
+    }
+  }
+}
+
+}  // namespace
+
 double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm)
 {
   double Lc_local = 0.0;
   if (mesh)
   {
     mfem::Vector bbmin, bbmax;
-    mesh->GetBoundingBox(bbmin, bbmax);
+    GetSerialBoundingBox(*mesh, bbmin, bbmax);
     bbmax -= bbmin;
     Lc_local = *std::ranges::max_element(bbmax);
   }
@@ -514,6 +828,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     if (mesh.capacity() > 1)
     {
       mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
+      if (const std::vector<int> *origin = GetRootElementOrigin(*mesh[mesh.size() - 2]))
+      {
+        SetRootElementOrigin(*mesh.back(), std::vector<int>(*origin));
+      }
     }
     mesh.back()->UniformRefinement();
   }
@@ -582,6 +900,18 @@ void PrintMeshInfo(mfem::ParMesh &mesh, const IoData &iodata, bool full,
   }
   Mpi::Print(mesh.GetComm(), "\n{}", prefix);
   mesh.PrintInfo();
+
+  // Degenerate (sliver) tetrahedra can slow down the convergence of the iterative linear
+  // solvers, see config["Solver"]["Linear"]["MGSliverAngle"].
+  SliverStatistics stats;
+  FindSliverElements(mesh, 0.0, &stats);
+  if (stats.num_below_5 > 0)
+  {
+    Mpi::Print(mesh.GetComm(),
+               " Tetrahedra with a minimum dihedral angle below 5 degrees: {:d} ({:d} "
+               "below 2, {:d} below 1, smallest {:.3g})\n",
+               stats.num_below_5, stats.num_below_2, stats.num_below_1, stats.min_angle);
+  }
 }
 
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
@@ -958,6 +1288,177 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
     Mpi::GlobalAnd(1, &marked, pmesh->GetComm());
   }
   return marked;
+}
+
+std::vector<int> HilbertOrder(const double *x, int n, int sdim)
+{
+  std::array<double, 3> lo, hi;
+  lo.fill(mfem::infinity());
+  hi.fill(-mfem::infinity());
+  for (int i = 0; i < n; i++)
+  {
+    for (int d = 0; d < sdim; d++)
+    {
+      lo[d] = std::min(lo[d], x[i * sdim + d]);
+      hi[d] = std::max(hi[d], x[i * sdim + d]);
+    }
+  }
+  double len = 0.0;
+  for (int d = 0; d < sdim; d++)
+  {
+    len = std::max(len, hi[d] - lo[d]);
+  }
+  return HilbertOrder(x, n, sdim, lo.data(), len);
+}
+
+std::vector<int> HilbertOrder(const double *x, int n, int sdim, const double *lo,
+                              double len)
+{
+  const int b = (sdim == 3) ? 21 : 31;
+  const double nb = std::ldexp(1.0, b);
+  std::vector<std::pair<std::uint64_t, int>> key(n);
+  for (int i = 0; i < n; i++)
+  {
+    std::array<std::uint32_t, 3> X = {0, 0, 0};
+    for (int d = 0; d < sdim; d++)
+    {
+      const double t = (len > 0.0) ? (x[i * sdim + d] - lo[d]) / len : 0.0;
+      X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+    }
+    key[i] = {HilbertIndex(X, sdim, b), i};
+  }
+  std::sort(key.begin(), key.end());
+  std::vector<int> order(n);
+  for (int i = 0; i < n; i++)
+  {
+    order[i] = key[i].second;
+  }
+  return order;
+}
+
+namespace
+{
+
+// Root element origins of the reordered nonconforming meshes, by their mfem::ParNCMesh
+// (which an mfem::ParMesh keeps through refinement and rebalancing), with the number of
+// root elements as a check.
+std::map<const mfem::NCMesh *, std::vector<int>> &RootElementOrigins()
+{
+  static std::map<const mfem::NCMesh *, std::vector<int>> origins;
+  return origins;
+}
+
+// Element origins of the reordered conforming meshes, by their mfem::ParMesh, with the
+// number of elements as a check.
+std::map<const mfem::Mesh *, std::vector<std::int64_t>> &ElementOrigins()
+{
+  static std::map<const mfem::Mesh *, std::vector<std::int64_t>> origins;
+  return origins;
+}
+
+// Access to the leaf elements of an mfem::NCMesh (the tree index of each mesh element).
+struct NCMeshLeaves : public mfem::ParNCMesh
+{
+  static const mfem::Array<int> &Get(const mfem::NCMesh &ncmesh)
+  {
+    return ncmesh.*(&NCMeshLeaves::leaf_elements);
+  }
+};
+
+}  // namespace
+
+void SetRootElementOrigin(const mfem::ParMesh &mesh, std::vector<int> &&origin)
+{
+  if (!mesh.pncmesh)
+  {
+    return;
+  }
+  if (origin.empty())
+  {
+    RootElementOrigins().erase(mesh.pncmesh);
+  }
+  else
+  {
+    RootElementOrigins()[mesh.pncmesh] = std::move(origin);
+  }
+}
+
+const std::vector<int> *GetRootElementOrigin(const mfem::ParMesh &mesh)
+{
+  if (!mesh.pncmesh)
+  {
+    return nullptr;
+  }
+  const auto it = RootElementOrigins().find(mesh.pncmesh);
+  if (it == RootElementOrigins().end() ||
+      static_cast<int>(it->second.size()) !=
+          const_cast<mfem::ParNCMesh *>(mesh.pncmesh)->GetNumRootElements())
+  {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+void SetElementOrigin(const mfem::ParMesh &mesh, std::vector<std::int64_t> &&origin)
+{
+  if (origin.empty())
+  {
+    ElementOrigins().erase(&mesh);
+  }
+  else
+  {
+    ElementOrigins()[&mesh] = std::move(origin);
+  }
+}
+
+std::vector<std::array<std::int64_t, 2>> GetElementInputKeys(const mfem::ParMesh &mesh)
+{
+  std::vector<std::array<std::int64_t, 2>> keys;
+  if (const std::vector<int> *origin = GetRootElementOrigin(mesh))
+  {
+    // The input index of the root element, then the path from the root element (the child
+    // index at each level, 4 bits per level from the most significant ones, offset by 1),
+    // whose order is the depth-first order of the leaves of a tetrahedral tree.
+    const mfem::NCMesh &ncmesh = *mesh.ncmesh;
+    const mfem::Array<int> &leaves = NCMeshLeaves::Get(ncmesh);
+    keys.resize(mesh.GetNE());
+    std::vector<int> path;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      int elem = leaves[e];
+      path.clear();
+      while (ncmesh.GetElement(elem).parent >= 0)
+      {
+        const int parent = ncmesh.GetElement(elem).parent;
+        const auto &pa = ncmesh.GetElement(parent);
+        int c = 0;
+        while (pa.child[c] != elem)
+        {
+          c++;
+        }
+        path.push_back(c);
+        elem = parent;
+      }
+      std::uint64_t key = 0;
+      int shift = 60;
+      for (auto it = path.rbegin(); it != path.rend() && shift >= 0; ++it, shift -= 4)
+      {
+        key |= static_cast<std::uint64_t>(*it + 1) << shift;
+      }
+      keys[e] = {(*origin)[elem], static_cast<std::int64_t>(key >> 1)};
+    }
+  }
+  else if (const auto it = ElementOrigins().find(&mesh);
+           !mesh.Nonconforming() && it != ElementOrigins().end() &&
+           static_cast<int>(it->second.size()) == mesh.GetNE())
+  {
+    keys.resize(mesh.GetNE());
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      keys[e] = {it->second[e], 0};
+    }
+  }
+  return keys;
 }
 
 int GetMaxBdrAttribute(const mfem::ParMesh &mesh)
@@ -2677,6 +3178,306 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
+// Partition the elements of a nonconforming mesh with PT-Scotch, on the element adjacency
+// graph through all conforming and nonconforming faces. MFEM's default partition splits the
+// sequence of refinement tree leaves into equal chunks, which fragments the subdomains over
+// the AMR iterations. The parts are numbered so that the ranks of a node hold neighboring
+// subdomains (see NumberPartsOnNodes). Returns false if PT-Scotch fails or would leave a
+// process without elements.
+bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
+                                           mfem::Array<int> &partitioning)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const int ne = mesh.GetNE(), dim = mesh.SpaceDimension();
+  std::vector<SCOTCH_Num> vtxdist(size + 1, 0);
+  {
+    long long ne_ll = ne;
+    std::vector<long long> counts(size);
+    MPI_Allgather(&ne_ll, 1, MPI_LONG_LONG, counts.data(), 1, MPI_LONG_LONG, comm);
+    for (int i = 0; i < size; i++)
+    {
+      vtxdist[i + 1] = vtxdist[i] + static_cast<SCOTCH_Num>(counts[i]);
+    }
+    if (std::ranges::min(counts) == 0)
+    {
+      return false;  // Leave the empty processes to MFEM's partition
+    }
+  }
+
+  // The elements are numbered in the order of the input mesh: for a mesh with reordered
+  // root elements (see SetRootElementOrigin), at[k] is the local element at position
+  // pos[at[k]] = k in the order of their root elements in the input mesh (the leaves of a
+  // root element are consecutive and in the same order), so that the partition does not
+  // depend on the reordering.
+  std::vector<int> pos(ne), at(ne);
+  std::iota(at.begin(), at.end(), 0);
+  if (const std::vector<int> *origin = GetRootElementOrigin(mesh))
+  {
+    mfem::CoarseFineTransformations transforms;
+    mesh.ncmesh->GetRootTransforms(transforms);
+    std::ranges::stable_sort(at, {}, [&](int e)
+                             { return (*origin)[transforms.embeddings[e].parent]; });
+  }
+  for (int k = 0; k < ne; k++)
+  {
+    pos[at[k]] = k;
+  }
+
+  // Calls f(e1, e2, v2) for each face between elements e1 and e2 != e1, where v2 is
+  // value(e2) exchanged in a piecewise constant field, and e2 < 0 for a face neighbor.
+  mfem::L2_FECollection fec(0, mesh.Dimension());
+  mfem::ParFiniteElementSpace fes(&mesh, &fec);
+  mfem::ParGridFunction field(&fes);
+  mfem::Array<int> vdofs;
+  auto ForEachFace = [&](auto &&value, auto &&f)
+  {
+    double *h_field = field.HostWrite();
+    for (int e = 0; e < ne; e++)
+    {
+      fes.GetElementVDofs(e, vdofs);
+      h_field[vdofs[0]] = static_cast<double>(value(e));
+    }
+    field.ExchangeFaceNbrData();
+    const double *nbr = field.FaceNbrData().HostRead();
+    for (int i = 0; i < mesh.GetNumFacesWithGhost(); i++)
+    {
+      const auto info = mesh.GetFaceInformation(i);
+      const int e1 = info.element[0].index, e2 = info.element[1].index;
+      if (info.IsLocal() && e1 != e2)  // A periodic face can connect an element to itself
+      {
+        f(e1, e2, static_cast<double>(value(e2)));
+      }
+      else if (info.IsShared())
+      {
+        fes.GetFaceNbrElementVDofs(e2, vdofs);
+        f(e1, -1, nbr[vdofs[0]]);
+      }
+    }
+  };
+  std::vector<std::vector<SCOTCH_Num>> adj(ne);
+  ForEachFace([&](int e) { return vtxdist[rank] + pos[e]; },
+              [&](int e1, int e2, double g2)
+              {
+                adj[e1].push_back(static_cast<SCOTCH_Num>(g2));
+                if (e2 >= 0)
+                {
+                  adj[e2].push_back(vtxdist[rank] + pos[e1]);
+                }
+              });
+  std::vector<SCOTCH_Num> deg(ne), adjncy;
+  for (int k = 0; k < ne; k++)
+  {
+    auto &a = adj[at[k]];
+    std::ranges::sort(a);
+    const auto dup = std::ranges::unique(a);
+    a.erase(dup.begin(), dup.end());
+    deg[k] = static_cast<SCOTCH_Num>(a.size());
+    adjncy.insert(adjncy.end(), a.begin(), a.end());
+  }
+  const auto nedge = static_cast<SCOTCH_Num>(adjncy.size());
+
+  // PT-Scotch's cost grows with the number of processes, as its band graphs connect all
+  // pairs of processes. So only the first process of each group of consecutive ranks
+  // partitions, with the rows of its group, a contiguous range of the global numbering:
+  // about 100000 elements per process and at least 8 processes. SPEED and SAFETY skip the
+  // second bipartition attempt and the diffusion. Whatever its build options, the context
+  // runs PT-Scotch on one thread per process, with deterministic communication and a fixed
+  // seed.
+  const int nproc = static_cast<int>(
+      std::clamp<SCOTCH_Num>((vtxdist[size] + 99999) / 100000, std::min(size, 8), size));
+  MPI_Comm group_comm, part_comm;
+  MPI_Comm_split(comm, static_cast<int>(static_cast<long long>(rank) * nproc / size), rank,
+                 &group_comm);
+  const int group_rank = Mpi::Rank(group_comm), group_size = Mpi::Size(group_comm);
+  const bool leader = (group_rank == 0);
+  MPI_Comm_split(comm, leader ? 0 : MPI_UNDEFINED, rank, &part_comm);
+  std::vector<int> group_counts(2 * group_size), vcounts(group_size), ecounts(group_size),
+      vdispls(group_size + 1, 0), edispls(group_size + 1, 0);
+  {
+    const int loc[2] = {ne, static_cast<int>(nedge)};
+    MPI_Gather(loc, 2, MPI_INT, group_counts.data(), 2, MPI_INT, 0, group_comm);
+  }
+  for (int i = 0; i < group_size; i++)
+  {
+    vcounts[i] = group_counts[2 * i];
+    ecounts[i] = group_counts[2 * i + 1];
+    vdispls[i + 1] = vdispls[i] + vcounts[i];
+    edispls[i + 1] = edispls[i] + ecounts[i];
+  }
+  const SCOTCH_Num gne = leader ? vdispls[group_size] : 0,
+                   gnedge = leader ? edispls[group_size] : 0;
+  std::vector<SCOTCH_Num> gxadj(gne + 1, 0), gadjncy(gnedge + 1), gpart(gne + 1);
+  const MPI_Datatype num_type = mpi::DataType<SCOTCH_Num>();
+  MPI_Gatherv(deg.data(), ne, num_type, gxadj.data() + 1, vcounts.data(), vdispls.data(),
+              num_type, 0, group_comm);
+  MPI_Gatherv(adjncy.data(), static_cast<int>(nedge), num_type, gadjncy.data(),
+              ecounts.data(), edispls.data(), num_type, 0, group_comm);
+  std::partial_sum(gxadj.begin(), gxadj.end(), gxadj.begin());
+  int ok = 1;
+  if (leader)
+  {
+    SCOTCH_Context context;
+    SCOTCH_Dgraph graph, context_graph;
+    SCOTCH_Strat strat;
+    SCOTCH_contextInit(&context);
+    SCOTCH_dgraphInit(&graph, part_comm);
+    SCOTCH_stratInit(&strat);
+    ok = (SCOTCH_contextOptionSetNum(&context, SCOTCH_OPTIONNUMDETERMINISTIC, 1) == 0 &&
+          SCOTCH_contextRandomClone(&context) == 0 &&
+          SCOTCH_contextThreadSpawn(&context, 1, nullptr) == 0);
+    if (ok)
+    {
+      SCOTCH_contextRandomSeed(&context, 1);
+    }
+    Mpi::GlobalMin(1, &ok, part_comm);
+    ok = ok &&
+         (SCOTCH_dgraphBuild(&graph, 0, gne, gne, gxadj.data(), nullptr, nullptr, nullptr,
+                             gnedge, gnedge, gadjncy.data(), nullptr, nullptr) == 0);
+    ok = ok && (SCOTCH_contextBindDgraph(&context, &graph, &context_graph) == 0);
+    ok = ok && (SCOTCH_stratDgraphMapBuild(&strat, SCOTCH_STRATSPEED | SCOTCH_STRATSAFETY,
+                                           Mpi::Size(part_comm), size, 0.02) == 0);
+    ok = ok && (SCOTCH_dgraphPart(&context_graph, size, &strat, gpart.data()) == 0);
+    SCOTCH_stratExit(&strat);
+    SCOTCH_dgraphExit(&graph);
+    SCOTCH_contextExit(&context);
+    MPI_Comm_free(&part_comm);
+  }
+  std::vector<SCOTCH_Num> part(ne);
+  {
+    std::vector<SCOTCH_Num> kpart(ne);
+    MPI_Scatterv(gpart.data(), vcounts.data(), vdispls.data(), num_type, kpart.data(), ne,
+                 num_type, 0, group_comm);
+    for (int e = 0; e < ne; e++)
+    {
+      part[e] = kpart[pos[e]];
+    }
+  }
+  MPI_Comm_free(&group_comm);
+  Mpi::GlobalMin(1, &ok, comm);
+  if (!ok)
+  {
+    return false;
+  }
+
+  // Centroid, number of elements, and mean global element index of each part.
+  std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0),
+      gidx(size, 0.0);
+  mfem::Vector center;
+  for (int k = 0; k < ne; k++)
+  {
+    const int e = at[k];
+    mesh.GetElementCenter(e, center);  // From the nodes, correct on periodic meshes
+    for (int d = 0; d < dim; d++)
+    {
+      xc[part[e] * dim + d] += center(d);
+    }
+    cnt[part[e]] += 1.0;
+    gidx[part[e]] += static_cast<double>(vtxdist[rank] + k);
+  }
+  Mpi::GlobalSum(static_cast<int>(xc.size()), xc.data(), comm);
+  Mpi::GlobalSum(size, cnt.data(), comm);
+  Mpi::GlobalSum(size, gidx.data(), comm);
+  if (std::find(cnt.begin(), cnt.end(), 0.0) != cnt.end())
+  {
+    return false;  // Do not leave a process without elements
+  }
+
+  // Gather on the root the faces between the parts, with weight 2 for a local face and 1 on
+  // each side of a shared face, and the node of each rank, labeled by its lowest rank.
+  std::map<std::pair<int, int>, int> faces;
+  ForEachFace([&](int e) { return part[e]; },
+              [&](int e1, int e2, double p2)
+              {
+                const int p = static_cast<int>(part[e1]), q = static_cast<int>(p2);
+                if (p != q)
+                {
+                  faces[{std::min(p, q), std::max(p, q)}] += (e2 >= 0) ? 2 : 1;
+                }
+              });
+  static_assert(sizeof(std::array<int, 3>) == 3 * sizeof(int));
+  std::vector<std::array<int, 3>> loc, pairs;
+  for (const auto &[pq, w] : faces)
+  {
+    loc.push_back({pq.first, pq.second, w});
+  }
+  std::vector<int> counts(size), displs(size + 1, 0);
+  const int nloc = 3 * static_cast<int>(loc.size());
+  MPI_Gather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+  for (int i = 0; i < size; i++)
+  {
+    displs[i + 1] = displs[i] + counts[i];
+  }
+  pairs.resize(rank == 0 ? displs[size] / 3 : 0);  // Repeated pairs add up their weights
+  MPI_Gatherv(loc.data(), nloc, MPI_INT, pairs.data(), counts.data(), displs.data(),
+              MPI_INT, 0, comm);
+  std::vector<int> rank_node(size);
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node_comm);
+    int node = rank;
+    Mpi::Broadcast(1, &node, 0, node_comm);
+    MPI_Comm_free(&node_comm);
+    MPI_Gather(&node, 1, MPI_INT, rank_node.data(), 1, MPI_INT, 0, comm);
+  }
+  std::vector<int> new_part(size);
+  if (rank == 0)
+  {
+    // Number the parts so that the ranks of a node hold neighboring subdomains. Start from
+    // three orders of the parts: along a Hilbert curve through their centroids, with
+    // per-axis and with isotropic scaling, and by the mean current global index of their
+    // elements.
+    std::array<double, 3> lo, hi;
+    lo.fill(mfem::infinity());
+    hi.fill(-mfem::infinity());
+    for (int p = 0; p < size; p++)
+    {
+      for (int d = 0; d < dim; d++)
+      {
+        xc[p * dim + d] /= cnt[p];
+        lo[d] = std::min(lo[d], xc[p * dim + d]);
+        hi[d] = std::max(hi[d], xc[p * dim + d]);
+      }
+      gidx[p] /= cnt[p];
+    }
+    double len_max = 0.0;
+    for (int d = 0; d < dim; d++)
+    {
+      len_max = std::max(len_max, hi[d] - lo[d]);
+    }
+    const int b = (dim == 3) ? 21 : 31;
+    const double nb = std::ldexp(1.0, b);
+    std::vector<std::vector<int>> orders(3, std::vector<int>(size));
+    std::vector<std::uint64_t> key(size, 0);
+    for (int s = 0; s < 2; s++)
+    {
+      for (int p = 0; p < size; p++)
+      {
+        std::array<std::uint32_t, 3> X = {0, 0, 0};
+        for (int d = 0; d < dim; d++)
+        {
+          const double len = (s == 0) ? hi[d] - lo[d] : len_max;
+          const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
+          X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+        }
+        key[p] = HilbertIndex(X, dim, b);
+      }
+      std::iota(orders[s].begin(), orders[s].end(), 0);
+      std::ranges::stable_sort(orders[s], {}, [&key](int p) { return key[p]; });
+    }
+    std::iota(orders[2].begin(), orders[2].end(), 0);
+    std::ranges::stable_sort(orders[2], {}, [&gidx](int p) { return gidx[p]; });
+    new_part = NumberPartsOnNodes(orders, pairs, rank_node);
+  }
+  Mpi::Broadcast(size, new_part.data(), 0, comm);  // Same numbering on every process
+  partitioning.SetSize(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    partitioning[e] = new_part[part[e]];
+  }
+  return true;
+}
+
 }  // namespace
 
 void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
@@ -2710,6 +3511,924 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
   }
 }
 
+namespace
+{
+
+// Background writing of the adapted mesh on the root process. The serial mesh is written by
+// one process while all others would wait, so when the node has a CPU not used by any MPI
+// process, the root writes it from a thread pinned to that CPU and continues meanwhile.
+class BackgroundMeshWriter
+{
+private:
+  std::thread thread;
+  std::shared_ptr<void> payload;
+  std::string error;
+  int cpu = -2;  // Idle CPU for the writer (-1 if none, -2 if not yet determined)
+
+public:
+  ~BackgroundMeshWriter()
+  {
+    if (thread.joinable())
+    {
+      thread.join();
+    }
+  }
+
+  // Determine (collectively, once) whether background writing is possible.
+  bool Available(MPI_Comm comm)
+  {
+    if (cpu == -2)
+    {
+      cpu = -1;
+#if defined(__linux__)
+      MPI_Comm node_comm;
+      MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                          &node_comm);
+      cpu_set_t set;
+      CPU_ZERO(&set);
+      sched_getaffinity(0, sizeof(set), &set);
+      std::vector<unsigned char> used(CPU_SETSIZE, 0), all_used(CPU_SETSIZE, 0);
+      for (int c = 0; c < CPU_SETSIZE; c++)
+      {
+        used[c] = CPU_ISSET(c, &set) ? 1 : 0;
+      }
+      MPI_Allreduce(used.data(), all_used.data(), CPU_SETSIZE, MPI_UNSIGNED_CHAR, MPI_BOR,
+                    node_comm);
+      MPI_Comm_free(&node_comm);
+      const int ncpu = std::min<int>(CPU_SETSIZE, std::thread::hardware_concurrency());
+      for (int c = ncpu - 1; c >= 0; c--)
+      {
+        if (!all_used[c])
+        {
+          cpu = c;
+          break;
+        }
+      }
+#endif
+      // Only the root writes: all processes agree on the root's decision.
+      Mpi::Broadcast(1, &cpu, 0, comm);
+      if (!Mpi::Root(comm) && cpu >= 0)
+      {
+        cpu = 0;
+      }
+    }
+    return cpu >= 0;
+  }
+
+  // Wait for a pending write (root), and report its errors.
+  void Wait()
+  {
+    if (thread.joinable())
+    {
+      thread.join();
+    }
+    payload.reset();
+    if (!error.empty())
+    {
+      const auto msg = error;
+      error.clear();
+      MFEM_ABORT("Error writing the adapted mesh: " << msg);
+    }
+  }
+
+  template <typename T, typename Func>
+  void Start(std::unique_ptr<T> &&mesh, Func &&write)
+  {
+    Wait();
+    std::shared_ptr<T> smesh(std::move(mesh));
+    payload = smesh;
+    thread = std::thread(
+        [this, smesh, write = std::forward<Func>(write)]()
+        {
+#if defined(__linux__)
+          cpu_set_t set;
+          CPU_ZERO(&set);
+          CPU_SET(cpu, &set);
+          pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+#endif
+          try
+          {
+            write(*smesh);
+          }
+          catch (const std::exception &e)
+          {
+            error = e.what();
+          }
+          catch (...)
+          {
+            error = "Unknown filesystem error";
+          }
+        });
+  }
+};
+
+BackgroundMeshWriter &GetBackgroundMeshWriter()
+{
+  static BackgroundMeshWriter writer;
+  return writer;
+}
+
+// Whether the adapted mesh is written in the foreground even when a CPU is idle (for
+// testing).
+bool ForegroundMeshOutput()
+{
+  return GetMeshOutputTestSettings().foreground;
+}
+
+// Concurrent formatting and compression of a large file written by the root process (the
+// adapted mesh), while the other processes wait without spinning. The text is a sequence of
+// chunks, each formatted into its own stream (with the stream settings of the sequential
+// writer), which threads format and compress independently. Compressed, each chunk is raw
+// deflate data ending on a byte boundary (Z_SYNC_FLUSH, Z_FINISH for the last one), so the
+// chunks form a single gzip member with the combined CRC-32 (as pigz writes it) and the
+// file decompresses to exactly the bytes of the sequential writer.
+using TextChunk = std::function<void(std::ostream &)>;
+
+// Call f(k) for k in [0, n) from nt threads (the calling one included).
+void ParallelFor(std::size_t n, int nt, const std::function<void(std::size_t)> &f)
+{
+  std::atomic<std::size_t> next = 0;
+  auto Work = [&]()
+  {
+    for (std::size_t k; (k = next.fetch_add(1)) < n;)
+    {
+      f(k);
+    }
+  };
+  std::vector<std::thread> threads;
+  const auto m = static_cast<int>(std::min<std::size_t>(std::max(nt, 1), n));
+  threads.reserve(std::max(m - 1, 0));
+  for (int t = 1; t < m; t++)
+  {
+    threads.emplace_back(Work);
+    UnpinThread(threads.back());
+  }
+  Work();
+  for (auto &t : threads)
+  {
+    t.join();
+  }
+}
+
+// Items per chunk of the concurrent text output.
+std::size_t ChunkItems()
+{
+  const std::size_t n = GetMeshOutputTestSettings().chunk_items;
+  return (n > 0) ? n : (std::size_t(1) << 17);
+}
+
+// Add the chunks of the lines of items [0, n), block items per chunk.
+template <typename Func>
+void AddChunkRanges(std::vector<TextChunk> &chunks, std::size_t n, std::size_t block,
+                    Func &&print_range)
+{
+  for (std::size_t b = 0; b < n; b += block)
+  {
+    const std::size_t e = std::min(n, b + block);
+    chunks.emplace_back([print_range, b, e](std::ostream &os) { print_range(os, b, e); });
+  }
+}
+
+// Add the chunks of mfem::Vector::Print(os, width) for the values (shared by the chunks).
+void AddVectorPrintChunks(std::vector<TextChunk> &chunks,
+                          std::shared_ptr<const std::vector<double>> values, int width)
+{
+  const std::size_t block = ChunkItems();
+  const std::size_t n = values->size();
+  AddChunkRanges(chunks, n, block,
+                 [values, width, n](std::ostream &os, std::size_t b, std::size_t e)
+                 {
+                   const auto &v = *values;
+                   for (std::size_t i = b; i < e; i++)
+                   {
+                     os << mfem::ZeroSubnormal(v[i]);
+                     os << ((i + 1 == n || (i + 1) % width == 0) ? '\n' : ' ');
+                   }
+                 });
+}
+
+// Root: write the chunks to the file (with compression, as gzip) using nt threads. Throws
+// on filesystem errors.
+void WriteTextChunks(const fs::path &path, const std::vector<TextChunk> &chunks,
+                     bool compress, int nt)
+{
+#if !defined(MFEM_USE_ZLIB)
+  compress = false;
+#endif
+  struct Output
+  {
+    std::string data;
+    unsigned long crc = 0;
+    std::size_t size = 0;
+    bool ready = false;
+  };
+  const std::size_t n = chunks.size();
+  std::vector<Output> out(n);
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::size_t written = 0;  // Chunks written to the file (guarded by mutex)
+  std::string error;        // First formatting or compression error (guarded by mutex)
+  const std::size_t window = 2 * static_cast<std::size_t>(std::max(nt, 1)) + 2;
+  auto Produce = [&](std::size_t k)
+  {
+    {
+      // Limit the chunks held in memory ahead of the file.
+      std::unique_lock lock(mutex);
+      cv.wait(lock, [&]() { return k < written + window || !error.empty(); });
+      if (!error.empty())
+      {
+        return;
+      }
+    }
+    Output o;
+    try
+    {
+      std::ostringstream os;
+      os << std::scientific;
+      os.precision(MSH_FLT_PRECISION);
+      chunks[k](os);
+      std::string text = std::move(os).str();
+      o.size = text.size();
+#if defined(MFEM_USE_ZLIB)
+      if (compress)
+      {
+        o.crc = crc32(0L, reinterpret_cast<const Bytef *>(text.data()),
+                      static_cast<uInt>(text.size()));
+        z_stream zs = {};
+        if (deflateInit2(&zs, Z_BEST_SPEED, Z_DEFLATED, -MAX_WBITS, 8,
+                         Z_DEFAULT_STRATEGY) != Z_OK)
+        {
+          throw std::runtime_error("deflateInit2 failed");
+        }
+        o.data.resize(deflateBound(&zs, static_cast<uLong>(text.size())) + 64);
+        zs.next_in = reinterpret_cast<Bytef *>(text.data());
+        zs.avail_in = static_cast<uInt>(text.size());
+        const int flush = (k + 1 == n) ? Z_FINISH : Z_SYNC_FLUSH;
+        std::size_t used = 0;
+        for (;;)
+        {
+          zs.next_out = reinterpret_cast<Bytef *>(o.data.data() + used);
+          zs.avail_out = static_cast<uInt>(o.data.size() - used);
+          const int ret = deflate(&zs, flush);
+          used = o.data.size() - zs.avail_out;
+          if (ret == Z_STREAM_END || (flush == Z_SYNC_FLUSH && ret == Z_OK &&
+                                      zs.avail_in == 0 && zs.avail_out > 0))
+          {
+            break;
+          }
+          if (ret != Z_OK && ret != Z_BUF_ERROR)
+          {
+            deflateEnd(&zs);
+            throw std::runtime_error("deflate failed");
+          }
+          o.data.resize(2 * o.data.size());
+        }
+        deflateEnd(&zs);
+        o.data.resize(used);
+      }
+      else
+#endif
+      {
+        o.data = std::move(text);
+      }
+    }
+    catch (const std::exception &e)
+    {
+      std::lock_guard lock(mutex);
+      if (error.empty())
+      {
+        error = e.what();
+      }
+      cv.notify_all();
+      return;
+    }
+    {
+      std::lock_guard lock(mutex);
+      out[k] = std::move(o);
+      out[k].ready = true;
+    }
+    cv.notify_all();
+  };
+
+  // The calling thread writes the chunks in order while the workers produce them.
+  fs::remove_all(path);
+  std::thread producer([&]() { ParallelFor(n, nt, Produce); });
+  UnpinThread(producer);
+  std::string write_error;
+  {
+    std::ofstream file(path, std::ios_base::binary);
+    if (!file.is_open())
+    {
+      write_error = "Could not open output file";
+    }
+    unsigned long crc = 0;
+    std::size_t total = 0;
+#if defined(MFEM_USE_ZLIB)
+    if (compress && write_error.empty())
+    {
+      // Header as written by zlib for Z_BEST_SPEED: no file name or time, OS = Unix.
+      const char header[10] = {'\x1f', '\x8b', '\x08', 0, 0, 0, 0, 0, '\x04', '\x03'};
+      file.write(header, sizeof(header));
+    }
+#endif
+    for (std::size_t k = 0; k < n; k++)
+    {
+      Output o;
+      {
+        std::unique_lock lock(mutex);
+        cv.wait(lock, [&]() { return out[k].ready || !error.empty(); });
+        if (!error.empty())
+        {
+          break;
+        }
+        o = std::move(out[k]);
+        out[k].data = std::string();
+      }
+      if (write_error.empty())
+      {
+        file.write(o.data.data(), static_cast<std::streamsize>(o.data.size()));
+        if (file.fail())
+        {
+          write_error = "Could not write output file";
+        }
+      }
+#if defined(MFEM_USE_ZLIB)
+      if (compress)
+      {
+        crc = crc32_combine(crc, o.crc, static_cast<z_off_t>(o.size));
+      }
+#endif
+      total += o.size;
+      {
+        std::lock_guard lock(mutex);
+        written = k + 1;
+      }
+      cv.notify_all();
+    }
+#if defined(MFEM_USE_ZLIB)
+    if (compress && write_error.empty() && error.empty())
+    {
+      unsigned char trailer[8];
+      const auto isize = static_cast<std::uint32_t>(total & 0xFFFFFFFFu);
+      for (int i = 0; i < 4; i++)
+      {
+        trailer[i] = static_cast<unsigned char>((crc >> (8 * i)) & 0xFF);
+        trailer[4 + i] = static_cast<unsigned char>((isize >> (8 * i)) & 0xFF);
+      }
+      file.write(reinterpret_cast<const char *>(trailer), sizeof(trailer));
+    }
+#endif
+    file.close();
+    if (write_error.empty() && file.fail())
+    {
+      write_error = "Could not write output file";
+    }
+  }
+  producer.join();
+  if (!error.empty())
+  {
+    throw std::runtime_error("Error formatting or compressing \"" + path.string() +
+                             "\": " + error);
+  }
+  if (!write_error.empty())
+  {
+    throw fs::filesystem_error(write_error, path,
+                               std::make_error_code(std::errc::io_error));
+  }
+}
+
+// Write a file from the root process with one thread per process on the root's node, from
+// the chunks added by add_chunks(chunks, threads) on the root (collective).
+template <typename Func>
+void WriteRootOutputChunks(const fs::path &path, MPI_Comm comm, Func &&add_chunks,
+                           bool compress)
+{
+  BlockTimer bt(Timer::IO);
+  int nt = 1;
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                        &node_comm);
+    nt = Mpi::Size(node_comm);
+    MPI_Comm_free(&node_comm);
+  }
+  std::string local_error;
+  if (Mpi::Root(comm))
+  {
+    try
+    {
+      std::vector<TextChunk> chunks;
+      add_chunks(chunks, nt);
+      WriteTextChunks(path, chunks, compress, nt);
+    }
+    catch (const std::exception &e)
+    {
+      local_error = e.what();
+    }
+  }
+  SleepyBarrier(comm);
+  internal::AbortOnNodeFilesystemError(
+      comm, fmt::format("Writing output file \"{}\"", path.string()), local_error);
+}
+
+// The refinement hierarchy of a nonconforming ParMesh gathered on the root process, to
+// write the serial mesh without constructing it: the file is the nonconforming mesh
+// followed by the mesh nodes. Supported for meshes of simplices with linear nodes, for
+// which the nodes are the vertex coordinates, and the refinement vertices are edge
+// midpoints with the coordinates computed as by the refinement of the nodes.
+class SerialNCMesh : public mfem::ParNCMesh
+{
+private:
+  // Root: coordinates of the top-level vertices (by node id) and the header of the nodes
+  // grid function.
+  std::vector<double> top_coords;
+  std::string nodes_header;
+  int sdim = 0;
+  bool by_vdim = true, valid = false;
+
+public:
+  // Whether the serial mesh of the given mesh can be written this way (collective).
+  static bool Supported(const mfem::ParMesh &mesh)
+  {
+    int ok = mesh.Nonconforming() && !mesh.NURBSext;
+    const auto simplex =
+        (mesh.Dimension() == 3) ? mfem::Geometry::TETRAHEDRON : mfem::Geometry::TRIANGLE;
+    for (int e = 0; ok && e < mesh.GetNE(); e++)
+    {
+      ok = (mesh.GetElementBaseGeometry(e) == simplex);
+    }
+    if (ok && mesh.GetNodes())
+    {
+      const auto *fes = mesh.GetNodes()->FESpace();
+      ok = (dynamic_cast<const mfem::H1_FECollection *>(fes->FEColl()) != nullptr &&
+            fes->GetMaxElementOrder() == 1 && fes->GetVDim() == mesh.SpaceDimension());
+    }
+    Mpi::GlobalMin(1, &ok, mesh.GetComm());
+    return ok;
+  }
+
+  // Copy the hierarchy and gather all elements on the root (collective). Valid only if
+  // supported (with standard refinement scaling).
+  SerialNCMesh(const mfem::ParMesh &mesh) : mfem::ParNCMesh(*mesh.pncmesh)
+  {
+    MPI_Comm comm = mesh.GetComm();
+    int ok = !using_scaling;
+    Mpi::GlobalMin(1, &ok, comm);
+    valid = ok;
+    if (!valid)
+    {
+      return;
+    }
+    sdim = mesh.SpaceDimension();
+    if (const auto *mesh_nodes = mesh.GetNodes())
+    {
+      // Coordinates of the local top-level vertices, from the mesh nodes.
+      const auto *fes = mesh_nodes->FESpace();
+      by_vdim = (fes->GetOrdering() == mfem::Ordering::byVDIM);
+      if (Mpi::Root(comm))
+      {
+        std::ostringstream os;
+        fes->Save(os);
+        nodes_header = os.str();
+      }
+      std::vector<double> local;
+      mfem::Array<int> dofs;
+      for (int v = 0; v < mesh.GetNV(); v++)
+      {
+        const int id = vertex_nodeId[v];
+        if (nodes[id].p1 != nodes[id].p2)
+        {
+          continue;
+        }
+        fes->GetVertexDofs(v, dofs);
+        local.push_back(id);
+        for (int d = 0; d < sdim; d++)
+        {
+          local.push_back((*mesh_nodes)(fes->DofToVDof(dofs[0], d)));
+        }
+      }
+      // Gathered as records of the node id and the coordinates.
+      MPI_Datatype record;
+      MPI_Type_contiguous(1 + sdim, MPI_DOUBLE, &record);
+      MPI_Type_commit(&record);
+      int count = static_cast<int>(local.size() / (1 + sdim));
+      std::vector<int> counts(Mpi::Size(comm)), displs(Mpi::Size(comm) + 1, 0);
+      MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+      std::vector<double> all;
+      if (Mpi::Root(comm))
+      {
+        for (int r = 0; r < Mpi::Size(comm); r++)
+        {
+          displs[r + 1] = displs[r] + counts[r];
+        }
+        all.resize((1 + sdim) * std::size_t(displs.back()));
+      }
+      MPI_Gatherv(local.data(), count, record, all.data(), counts.data(), displs.data(),
+                  record, 0, comm);
+      MPI_Type_free(&record);
+      if (Mpi::Root(comm))
+      {
+        for (std::size_t i = 0; i < all.size(); i += 1 + sdim)
+        {
+          const auto id = static_cast<std::size_t>(all[i]);
+          if (top_coords.size() < sdim * (id + 1))
+          {
+            top_coords.resize(sdim * (id + 1), 0.0);
+          }
+          std::copy(all.begin() + i + 1, all.begin() + i + 1 + sdim,
+                    top_coords.begin() + sdim * id);
+        }
+      }
+    }
+
+    // All elements to the root, as by Rebalance with this partition but without its final
+    // pruning of the elements beyond the new ghost layers: the root owns every element, so
+    // it would remove none of its elements while passing over all of them, and the other
+    // processes discard this copy.
+    mfem::Array<int> new_ranks(leaf_elements.Size());
+    new_ranks = -1;
+    for (int i = 0; i < NElements; i++)
+    {
+      new_ranks[i] = 0;
+    }
+    RedistributeElements(new_ranks, -1, false);
+  }
+
+  bool Valid() const { return valid; }
+
+  // Root: per-geometry element counts of the serial mesh.
+  void CountElements(std::map<mfem::Geometry::Type, long long> &cells) const
+  {
+    for (int i = 0; i < NElements; i++)
+    {
+      cells[elements[leaf_elements[i]].Geom()]++;
+    }
+  }
+
+  // Root: add the text chunks of mfem::NCMesh::Print(os) of a nonconforming mesh (v1.0 and
+  // v1.1 formats, without comments; the coordinates section only with print_coordinates,
+  // as mfem::Mesh::Print for a mesh with nodes). The counts of the boundary section, which
+  // precede it, are computed with nt threads.
+  static void AddPrintChunks(const mfem::NCMesh &m, bool print_coordinates, int nt,
+                             std::vector<TextChunk> &chunks)
+  {
+    // The chunks refer to the mesh data through pointers.
+    const auto *elements = &(m.*(&SerialNCMesh::elements));
+    const auto *faces = &(m.*(&SerialNCMesh::faces));
+    const auto *nodes = &(m.*(&SerialNCMesh::nodes));
+    const auto *root_state = &(m.*(&SerialNCMesh::root_state));
+    const auto *coordinates = &(m.*(&SerialNCMesh::coordinates));
+    const int dim = m.*(&SerialNCMesh::Dim);
+    const int space_dim = m.*(&SerialNCMesh::spaceDim);
+    const int my_rank = m.*(&SerialNCMesh::MyRank);
+    const bool scaling = m.*(&SerialNCMesh::using_scaling);
+    const std::size_t ne = elements->Size();
+
+    // Header and elements.
+    chunks.emplace_back(
+        [dim, my_rank, scaling, ne](std::ostream &os)
+        {
+          os << (scaling ? "MFEM NC mesh v1.1\n\n" : "MFEM NC mesh v1.0\n\n");
+          os << "# NCMesh supported geometry types:\n"
+                "# SEGMENT     = 1\n"
+                "# TRIANGLE    = 2\n"
+                "# SQUARE      = 3\n"
+                "# TETRAHEDRON = 4\n"
+                "# CUBE        = 5\n"
+                "# PRISM       = 6\n"
+                "# PYRAMID     = 7\n";
+          os << "\ndimension\n" << dim << "\n";
+          os << "\nrank\n" << my_rank << "\n";
+          os << "\n# rank attr geom ref_type nodes/children";
+          os << "\nelements\n" << ne << "\n";
+        });
+    const std::size_t block = ChunkItems();
+    AddChunkRanges(chunks, ne, block,
+                   [elements](std::ostream &os, std::size_t b, std::size_t e)
+                   {
+                     for (std::size_t i = b; i < e; i++)
+                     {
+                       const auto &el = (*elements)[static_cast<int>(i)];
+                       os << el.rank << " " << el.attribute << " ";
+                       if (el.parent == -2)
+                       {
+                         os << "-1\n";
+                         continue;
+                       }
+                       os << int(el.geom) << " " << int(el.ref_type);
+                       for (int j = 0; j < mfem::NCMesh::MaxElemNodes && el.node[j] >= 0;
+                            j++)
+                       {
+                         os << " " << el.node[j];
+                       }
+                       os << "\n";
+                     }
+                   });
+
+    // Boundary (faces of leaf elements with a boundary attribute, in element order).
+    auto PrintBoundary =
+        [elements, faces, dim](std::ostream *os, std::size_t b, std::size_t e)
+    {
+      static const int nfv2geom[5] = {mfem::Geometry::INVALID, mfem::Geometry::POINT,
+                                      mfem::Geometry::SEGMENT, mfem::Geometry::TRIANGLE,
+                                      mfem::Geometry::SQUARE};
+      const int deg = (dim == 2) ? 2 : 1;
+      std::size_t count = 0;
+      for (std::size_t i = b; i < e; i++)
+      {
+        const auto &el = (*elements)[static_cast<int>(i)];
+        if (!el.IsLeaf())
+        {
+          continue;
+        }
+        const auto &gi = GI[el.Geom()];
+        for (int k = 0; k < gi.nf; k++)
+        {
+          const int *fv = gi.faces[k];
+          const int nfv = gi.nfv[k];
+          const auto *face =
+              faces->Find(el.node[fv[0]], el.node[fv[1]], el.node[fv[2]], el.node[fv[3]]);
+          MFEM_ASSERT(face != NULL, "face not found");
+          if (face->Boundary())
+          {
+            count++;
+            if (os)
+            {
+              (*os) << face->attribute << " " << nfv2geom[nfv];
+              for (int j = 0; j < nfv; j++)
+              {
+                (*os) << " " << el.node[fv[j * deg]];
+              }
+              (*os) << "\n";
+            }
+          }
+        }
+      }
+      return count;
+    };
+    const std::size_t nblocks = (ne + block - 1) / block;
+    std::vector<std::size_t> counts(nblocks, 0);
+    ParallelFor(
+        nblocks, nt, [&](std::size_t k)
+        { counts[k] = PrintBoundary(nullptr, k * block, std::min(ne, (k + 1) * block)); });
+    const std::size_t nb = std::accumulate(counts.begin(), counts.end(), std::size_t(0));
+    if (nb)
+    {
+      chunks.emplace_back(
+          [nb](std::ostream &os)
+          {
+            os << "\n# attr geom nodes";
+            os << "\nboundary\n" << nb << "\n";
+          });
+      AddChunkRanges(chunks, ne, block,
+                     [PrintBoundary](std::ostream &os, std::size_t b, std::size_t e)
+                     { PrintBoundary(&os, b, e); });
+    }
+
+    // Vertex parents (vertex nodes with parents, in node id order).
+    const std::size_t nids = nodes->NumIds();
+    std::size_t nvp = 0;
+    bool uniform_scaling = true;
+    for (std::size_t id = 0; id < nids; id++)
+    {
+      if (!nodes->IdExists(static_cast<int>(id)))
+      {
+        continue;
+      }
+      const auto &node = (*nodes)[static_cast<int>(id)];
+      if (node.HasVertex() && node.p1 != node.p2)
+      {
+        nvp++;
+        uniform_scaling = uniform_scaling && (node.GetScale() == 0.5);
+      }
+    }
+    MFEM_VERIFY(scaling || uniform_scaling, "NCMesh has nonuniform "
+                                            "scaling. Call Mesh::SetScaledNCMesh first.");
+    if (nvp)
+    {
+      chunks.emplace_back(
+          [nvp](std::ostream &os)
+          {
+            os << "\n# vert_id p1 p2";
+            os << "\nvertex_parents\n" << nvp << "\n";
+          });
+      AddChunkRanges(chunks, nids, block,
+                     [nodes, scaling](std::ostream &os, std::size_t b, std::size_t e)
+                     {
+                       for (std::size_t id = b; id < e; id++)
+                       {
+                         if (!nodes->IdExists(static_cast<int>(id)))
+                         {
+                           continue;
+                         }
+                         const auto &node = (*nodes)[static_cast<int>(id)];
+                         if (node.HasVertex() && node.p1 != node.p2)
+                         {
+                           os << id << " " << node.p1 << " " << node.p2;
+                           if (scaling)
+                           {
+                             os << " " << node.GetScale();
+                           }
+                           os << "\n";
+                         }
+                       }
+                     });
+    }
+
+    // Root element orientations.
+    if (std::any_of(root_state->begin(), root_state->end(), [](int r) { return r != 0; }))
+    {
+      chunks.emplace_back(
+          [root_state](std::ostream &os)
+          {
+            os << "\n# root element orientation";
+            os << "\nroot_state\n" << root_state->Size() << "\n";
+            for (int i = 0; i < root_state->Size(); i++)
+            {
+              os << (*root_state)[i] << "\n";
+            }
+          });
+    }
+
+    // Top-level vertex coordinates.
+    if (print_coordinates && coordinates->Size())
+    {
+      const std::size_t nv = coordinates->Size() / 3;
+      chunks.emplace_back(
+          [nv, space_dim](std::ostream &os)
+          {
+            os << "\n# top-level node coordinates";
+            os << "\ncoordinates\n";
+            os << nv << "\n";
+            if (nv)
+            {
+              os << space_dim << "\n";
+            }
+          });
+      AddChunkRanges(
+          chunks, nv, block,
+          [coordinates, space_dim](std::ostream &os, std::size_t b, std::size_t e)
+          {
+            for (std::size_t i = b; i < e; i++)
+            {
+              os << (*coordinates)[static_cast<int>(3 * i)];
+              for (int j = 1; j < space_dim; j++)
+              {
+                os << " " << (*coordinates)[static_cast<int>(3 * i + j)];
+              }
+              os << "\n";
+            }
+          });
+    }
+  }
+
+  // Root: add the text chunks of PrintSerial (the chunks refer to this object).
+  void AddSerialChunks(double scale, int nt, std::vector<TextChunk> &chunks)
+  {
+    AddPrintChunks(*this, true, nt, chunks);
+    if (!nodes_header.empty())
+    {
+      auto values = std::make_shared<std::vector<double>>(SerialNodes(scale));
+      chunks.emplace_back(
+          [header = nodes_header](std::ostream &os)
+          {
+            os << "\n# mesh curvature GridFunction";
+            os << "\nnodes\n";
+            os << header << '\n';
+          });
+      AddVectorPrintChunks(chunks, values, by_vdim ? sdim : 1);
+    }
+    chunks.emplace_back([](std::ostream &os) { os << "\nmfem_mesh_end" << std::endl; });
+  }
+
+  // Root: the nodes (vertex coordinates by Mesh vertex index, scaled), with the refinement
+  // vertices at the midpoints of their parent vertices (as computed by the refinement of
+  // linear nodes).
+  std::vector<double> SerialNodes(double scale) const
+  {
+    std::vector<double> coords(sdim * nodes.NumIds());
+    std::vector<char> done(nodes.NumIds(), 0);
+    std::vector<int> stack;
+    auto Compute = [&](int id0)
+    {
+      stack.assign(1, id0);
+      while (!stack.empty())
+      {
+        const int id = stack.back();
+        const auto &nd = nodes[id];
+        if (nd.p1 == nd.p2)
+        {
+          MFEM_VERIFY(top_coords.size() >= sdim * (std::size_t(id) + 1),
+                      "Missing coordinates of a top-level vertex!");
+          std::copy_n(top_coords.begin() + sdim * id, sdim, coords.begin() + sdim * id);
+        }
+        else if (!done[nd.p1] || !done[nd.p2])
+        {
+          if (!done[nd.p1])
+          {
+            stack.push_back(nd.p1);
+          }
+          if (!done[nd.p2])
+          {
+            stack.push_back(nd.p2);
+          }
+          continue;
+        }
+        else
+        {
+          for (int d = 0; d < sdim; d++)
+          {
+            coords[sdim * id + d] =
+                0.5 * coords[sdim * nd.p1 + d] + 0.5 * coords[sdim * nd.p2 + d];
+          }
+        }
+        done[id] = 1;
+        stack.pop_back();
+      }
+    };
+    std::vector<double> values(static_cast<std::size_t>(sdim) * NVertices, 0.0);
+    for (const auto &node : nodes)
+    {
+      if (!node.HasVertex() || node.vert_index < 0 || node.vert_index >= NVertices)
+      {
+        continue;
+      }
+      const int id = nodes.FindId(node.p1, node.p2);
+      if (!done[id])
+      {
+        Compute(id);
+      }
+      for (int d = 0; d < sdim; d++)
+      {
+        const int i =
+            by_vdim ? sdim * node.vert_index + d : d * NVertices + node.vert_index;
+        values[i] = coords[sdim * id + d] * scale;
+      }
+    }
+    return values;
+  }
+
+  // Root: write the serial mesh (as mfem::Mesh::Print), with the coordinates scaled.
+  void PrintSerial(std::ostream &os, double scale)
+  {
+    Print(os);
+    if (!nodes_header.empty())
+    {
+      auto values = SerialNodes(scale);
+      os << "\n# mesh curvature GridFunction";
+      os << "\nnodes\n";
+      os << nodes_header << '\n';
+      mfem::Vector v(values.data(), static_cast<int>(values.size()));
+      v.Print(os, by_vdim ? sdim : 1);
+    }
+    os << "\nmfem_mesh_end" << std::endl;
+  }
+};
+
+// Root: add the text chunks of mfem::Mesh::Print for a nonconforming serial mesh (the
+// chunks refer to the mesh).
+void AddSerialMeshChunks(const mfem::Mesh &smesh, int nt, std::vector<TextChunk> &chunks)
+{
+  MFEM_VERIFY(smesh.Nonconforming() && !smesh.NURBSext,
+              "Chunked output requires a nonconforming mesh!");
+  const auto *nodes = smesh.GetNodes();
+  SerialNCMesh::AddPrintChunks(*smesh.ncmesh, nodes == nullptr, nt, chunks);
+  if (nodes)
+  {
+    // As mfem::GridFunction::Save (the nodes of H1 spaces have no negative dof signs, so
+    // mfem::ParGridFunction::Save writes the same values).
+    const auto *fes = nodes->FESpace();
+    std::ostringstream header;
+    fes->Save(header);
+    const double *data = nodes->HostRead();
+    auto values = std::make_shared<std::vector<double>>(data, data + nodes->Size());
+    chunks.emplace_back(
+        [header = header.str()](std::ostream &os)
+        {
+          os << "\n# mesh curvature GridFunction";
+          os << "\nnodes\n";
+          os << header << '\n';
+        });
+    AddVectorPrintChunks(chunks, values,
+                         (fes->GetOrdering() == mfem::Ordering::byNODES) ? 1
+                                                                         : fes->GetVDim());
+  }
+  chunks.emplace_back([](std::ostream &os) { os << "\nmfem_mesh_end" << std::endl; });
+}
+
+}  // namespace
+
+MeshOutputTestSettings &GetMeshOutputTestSettings()
+{
+  static MeshOutputTestSettings settings;
+  return settings;
+}
+
+void FinishMeshOutput()
+{
+  GetBackgroundMeshWriter().Wait();
+}
+
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts)
 {
@@ -2717,6 +4436,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   MPI_Comm comm = mesh->GetComm();
   if (iodata.model.refinement.save_adapt_mesh)
   {
+    BlockTimer bt1(Timer::ADAPT_MESH_OUTPUT);
     // Create a separate serial mesh to write to disk. When MFEM is built with zlib the mesh
     // is gzip-compressed and written with a ".meshgz" extension; MFEM detects gzip from the
     // file's magic bytes on read, so a restart reopens it transparently regardless of the
@@ -2752,13 +4472,118 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
           compress_mesh);
     };
 
-    if (mesh->Nonconforming())
+    std::unique_ptr<SerialNCMesh> ncmesh;
+    if (mesh->Nonconforming() && SerialNCMesh::Supported(*mesh))
     {
-      mfem::ParMesh smesh(*mesh);
+      ncmesh = std::make_unique<SerialNCMesh>(*mesh);
+      if (!ncmesh->Valid())
+      {
+        ncmesh.reset();
+      }
+    }
+    if (ncmesh)
+    {
+      // The true face count is the global number of RT(0) true dofs, the other counts are
+      // those of the gathered hierarchy.
+      long long true_faces = 0;
+      if (out_counts != nullptr && mesh->Dimension() == 3)
+      {
+        mfem::RT_FECollection rt_fec(0, 3);
+        mfem::ParFiniteElementSpace rt_fespace(mesh.get(), &rt_fec);
+        true_faces = rt_fespace.GlobalTrueVSize();
+      }
+      if (out_counts != nullptr && Mpi::Root(comm))
+      {
+        *out_counts = MeshEntityCounts{};
+        out_counts->dim = mesh->Dimension();
+        ncmesh->CountElements(out_counts->cells);
+        if (mesh->Dimension() == 3)
+        {
+          out_counts->true_faces[mfem::Geometry::TRIANGLE] = true_faces;
+        }
+        out_counts->domain_attributes =
+            std::vector<int>(mesh->attributes.begin(), mesh->attributes.end());
+        out_counts->boundary_attributes =
+            std::vector<int>(mesh->bdr_attributes.begin(), mesh->bdr_attributes.end());
+      }
+      const double scale = iodata.units.GetMeshLengthRelativeScale();
+      auto &writer = GetBackgroundMeshWriter();
+      if (writer.Available(comm) && !ForegroundMeshOutput())
+      {
+        if (Mpi::Root(comm))
+        {
+          writer.Start(std::move(ncmesh),
+                       [sfile, scale](SerialNCMesh &smesh)
+                       {
+                         WriteOutputFile(
+                             sfile,
+                             [&](std::ostream &stream)
+                             {
+                               stream << std::scientific;
+                               stream.precision(MSH_FLT_PRECISION);
+                               smesh.PrintSerial(stream, scale);
+                             },
+                             compress_mesh);
+                       });
+        }
+      }
+      else
+      {
+        WriteRootOutputChunks(
+            sfile, comm, [&](std::vector<TextChunk> &chunks, int nt)
+            { ncmesh->AddSerialChunks(scale, nt, chunks); }, compress_mesh);
+      }
+    }
+    else if (mesh->Nonconforming())
+    {
+      auto smesh = std::make_unique<mfem::ParMesh>(*mesh);
       mfem::Array<int> serial_partition(mesh->GetNE());
       serial_partition = 0;
-      smesh.Rebalance(serial_partition);
-      PrintSerial(smesh);
+      smesh->Rebalance(serial_partition);
+      auto &writer = GetBackgroundMeshWriter();
+      if (writer.Available(comm) && !ForegroundMeshOutput())
+      {
+        // The root writes in the background (no further collective communication for the
+        // file, errors are reported when the write is completed).
+        if (Mpi::Root(comm))
+        {
+          if (out_counts != nullptr)
+          {
+            FillMeshEntityCounts(*smesh, *out_counts);
+          }
+          const double scale = iodata.units.GetMeshLengthRelativeScale();
+          writer.Start(std::move(smesh),
+                       [sfile, scale](mfem::ParMesh &smesh)
+                       {
+                         WriteOutputFile(
+                             sfile,
+                             [&](std::ostream &stream)
+                             {
+                               stream << std::scientific;
+                               stream.precision(MSH_FLT_PRECISION);
+                               mesh::DimensionalizeMesh(smesh, scale);
+                               smesh.Mesh::Print(stream);
+                             },
+                             compress_mesh);
+                       });
+        }
+      }
+      else
+      {
+        if (out_counts != nullptr && Mpi::Root(comm))
+        {
+          FillMeshEntityCounts(*smesh, *out_counts);
+        }
+        const double scale = iodata.units.GetMeshLengthRelativeScale();
+        WriteRootOutputChunks(
+            sfile, comm,
+            [&](std::vector<TextChunk> &chunks, int nt)
+            {
+              mesh::DimensionalizeMesh(*smesh, scale);
+              AddSerialMeshChunks(*smesh, nt, chunks);
+            },
+            compress_mesh);
+      }
     }
     else
     {
@@ -2788,7 +4613,17 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   {
     if (mesh->Nonconforming())
     {
-      mesh->Rebalance();
+      mfem::Array<int> partitioning;
+      if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
+      {
+        mesh->Rebalance(partitioning);
+      }
+      else
+      {
+        Mpi::Warning(comm, "Could not partition the nonconforming mesh with PT-Scotch, "
+                           "rebalancing it with MFEM's default partition!\n");
+        mesh->Rebalance();
+      }
     }
     else
     {
@@ -2806,7 +4641,8 @@ namespace
 {
 
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature,
-                                     const config::BoundaryData &boundaries)
+                                     const config::BoundaryData &boundaries,
+                                     bool defer_nodes, bool *finalize_deferred)
 {
   // Read the (serial) mesh from the given mesh file. Handle preparation for refinement and
   // orientations here to avoid possible reorientations and reordering later on. MFEM
@@ -2834,26 +4670,40 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       mesh::ConvertMeshNastran(mesh_file, fi, remove_curvature);
       // mesh::ConvertMeshNastran(mesh_file, fo, remove_curvature);
     }
-    mesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation);
+    mesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation, finalize_deferred);
   }
   else
   {
-    // Otherwise, just rely on MFEM to load the mesh. Use named_ifgzstream (as MFEM's own
-    // Mesh::LoadFromFile does) so a gzip-compressed mesh, such as a ".meshgz" saved-adapt
-    // mesh, is transparently decompressed when MFEM is built with zlib; it detects gzip
-    // from the file's magic bytes, so a plain-text mesh reads through unchanged.
-    mfem::named_ifgzstream fi(mesh_file);
-    if (!fi.good())
+    // Otherwise, read a Gmsh mesh with the fast reader where it supports the file (unless
+    // the environment variable PALACE_GMSH_FAST is 0), or rely on MFEM to load the mesh.
+    // Use named_ifgzstream (as MFEM's own Mesh::LoadFromFile does) so a gzip-compressed
+    // mesh, such as a ".meshgz" saved-adapt mesh, is transparently decompressed when MFEM
+    // is built with zlib; it detects gzip from the file's magic bytes, so a plain-text mesh
+    // reads through unchanged.
+    const char *fast_env = std::getenv("PALACE_GMSH_FAST");
+    if (!fast_env || std::string(fast_env) != "0")
     {
-      MFEM_ABORT("Unable to open mesh file \"" << mesh_file << "\"!");
+      mesh = mesh::ReadGmshMeshFast(mesh_file, !finalize_deferred);
     }
-    mesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation);
+    if (mesh)
+    {
+      mesh = FinishReadMesh(std::move(mesh), refine, fix_orientation, finalize_deferred);
+    }
+    else
+    {
+      mfem::named_ifgzstream fi(mesh_file);
+      if (!fi.good())
+      {
+        MFEM_ABORT("Unable to open mesh file \"" << mesh_file << "\"!");
+      }
+      mesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation, finalize_deferred);
+    }
   }
   if (remove_curvature)
   {
     mesh->SetCurvature(-1);
   }
-  else
+  else if (!defer_nodes || mesh->GetNodes() || !boundaries.periodic.boundary_pairs.empty())
   {
     mesh->EnsureNodes();
   }
@@ -2961,8 +4811,113 @@ void DeleteMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   orig_mesh = std::move(new_mesh);
 }
 
+// Whether the faces and edges of a mesh have been generated (FinalizeTopology).
+bool HasTopology(const mfem::Mesh &mesh)
+{
+  return mesh.Dimension() < 2 || mesh.GetNEdges() > 0 || mesh.GetNE() == 0;
+}
+
+// For each boundary element of a mesh without topology, whether it is a face (an edge in
+// 2D) of an element of the mesh, with the face identification of MFEM's topology tables
+// (the vertex set of a triangle or an edge, the three smallest vertices of a
+// quadrilateral).
+std::vector<bool> BdrElementIsFace(const mfem::Mesh &mesh)
+{
+  const int dim = mesh.Dimension(), nv = mesh.GetNV();
+  using Key = std::array<int, 3>;
+  auto MakeKey = [dim](const int *v, int n)
+  {
+    Key k = {v[0], v[1], (dim == 3) ? v[2] : -1};
+    if (dim == 3 && n == 4)
+    {
+      // STable3D::Push4/operator(): drop the largest vertex.
+      int imax = 0;
+      for (int i = 1; i < 4; i++)
+      {
+        if (v[i] > v[imax])
+        {
+          imax = i;
+        }
+      }
+      for (int i = 0, j = 0; i < 4; i++)
+      {
+        if (i != imax)
+        {
+          k[j++] = v[i];
+        }
+      }
+    }
+    std::sort(k.begin(), k.begin() + ((dim == 3) ? 3 : 2));
+    return k;
+  };
+
+  // Vertex to element adjacency.
+  std::vector<int> offsets(nv + 1, 0), elems;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const mfem::Element *el = mesh.GetElement(e);
+    for (int i = 0; i < el->GetNVertices(); i++)
+    {
+      offsets[el->GetVertices()[i] + 1]++;
+    }
+  }
+  std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+  elems.resize(offsets[nv]);
+  {
+    std::vector<int> pos(offsets.begin(), offsets.end() - 1);
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const mfem::Element *el = mesh.GetElement(e);
+      for (int i = 0; i < el->GetNVertices(); i++)
+      {
+        elems[pos[el->GetVertices()[i]]++] = e;
+      }
+    }
+  }
+
+  std::vector<bool> is_face(mesh.GetNBE(), false);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const mfem::Element *bel = mesh.GetBdrElement(be);
+    const Key key = MakeKey(bel->GetVertices(), bel->GetNVertices());
+    const int v = key[0];
+    for (int k = offsets[v]; k < offsets[v + 1] && !is_face[be]; k++)
+    {
+      const mfem::Element *el = mesh.GetElement(elems[k]);
+      const int *ev = el->GetVertices();
+      const int nf = (dim == 3) ? el->GetNFaces() : el->GetNEdges();
+      for (int f = 0; f < nf; f++)
+      {
+        int fv[4];
+        int n;
+        if (dim == 3)
+        {
+          n = el->GetNFaceVertices(f);
+          for (int i = 0; i < n; i++)
+          {
+            fv[i] = ev[el->GetFaceVertices(f)[i]];
+          }
+        }
+        else
+        {
+          n = 2;
+          fv[0] = ev[el->GetEdgeVertices(f)[0]];
+          fv[1] = ev[el->GetEdgeVertices(f)[1]];
+        }
+        if (MakeKey(fv, n) == key)
+        {
+          is_face[be] = true;
+          break;
+        }
+      }
+    }
+  }
+  return is_face;
+}
+
 std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &input, bool generate_edges,
-                                           bool refine, bool fix_orientation)
+                                           bool refine, bool fix_orientation,
+                                           bool *finalize_deferred)
 {
   // Read the mesh without finalizing it (see mfem::Mesh::Load), to first remove the
   // boundary elements which are not a face (an edge in 2D) of any element of the mesh:
@@ -2979,11 +4934,32 @@ std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &input, bool generate_ed
     }
   };
   auto mesh = std::make_unique<mfem::Mesh>(UnfinalizedMesh(input, generate_edges));
+  return FinishReadMesh(std::move(mesh), refine, fix_orientation, finalize_deferred);
+}
 
+// Remove the boundary elements which are not a face of any element (see ReadMeshStream)
+// and finalize a mesh read without finalization.
+std::unique_ptr<mfem::Mesh> FinishReadMesh(std::unique_ptr<mfem::Mesh> mesh, bool refine,
+                                           bool fix_orientation, bool *finalize_deferred)
+{
   // The boundary elements of nonconforming and NURBS meshes are faces of the mesh by
   // construction, and those of 1D meshes are vertices.
   if (mesh->Conforming() && !mesh->NURBSext && mesh->Dimension() > 1)
   {
+    // A mesh read without its topology is checked with the element faces directly. In 3D,
+    // MFEM aborts on a boundary element which is not a face when generating the topology,
+    // which is then done for the same error as when reading the mesh with MFEM.
+    std::vector<bool> is_face;
+    if (!HasTopology(*mesh))
+    {
+      is_face = BdrElementIsFace(*mesh);
+      if (mesh->Dimension() == 3 && std::ranges::find(is_face, false) != is_face.end())
+      {
+        mesh->FinalizeTopology();
+      }
+    }
+    auto IsFace = [&](int be)
+    { return HasTopology(*mesh) ? mesh->GetBdrElementFaceIndex(be) >= 0 : is_face[be]; };
     std::vector<int> elem_delete_map(mesh->GetNE()),
         bdr_elem_delete_map(mesh->GetNBE(), -1);
     std::iota(elem_delete_map.begin(), elem_delete_map.end(), 0);
@@ -2992,7 +4968,7 @@ std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &input, bool generate_ed
     std::vector<std::string> warn_vertices;
     for (int be = 0; be < mesh->GetNBE(); be++)
     {
-      if (mesh->GetBdrElementFaceIndex(be) >= 0)
+      if (IsFace(be))
       {
         bdr_elem_delete_map[be] = new_nbe++;
         continue;
@@ -3023,6 +4999,13 @@ std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &input, bool generate_ed
                          new_nbe);
     }
   }
+  // A caller can finalize a mesh without nodes later along with its own finalization
+  // (refinement marking), in one topology update instead of two.
+  if (finalize_deferred && !mesh->GetNodes())
+  {
+    *finalize_deferred = true;
+    return mesh;
+  }
   mesh->Finalize(refine, fix_orientation);
   return mesh;
 }
@@ -3047,7 +5030,16 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
   }
 
   // Make sure to remove any boundary elements which are no longer attached to elements in
-  // the domain.
+  // the domain. Every boundary element is attached to an element of the mesh (see
+  // ReadMeshStream), so this is needed only when elements are deleted.
+  if (new_ne == orig_mesh->GetNE())
+  {
+    return;
+  }
+  if (!HasTopology(*orig_mesh))
+  {
+    orig_mesh->FinalizeTopology();
+  }
   int new_nbe = 0;
   for (int be = 0; be < orig_mesh->GetNBE(); be++)
   {
@@ -3588,50 +5580,91 @@ private:
     // should hopefully limit the amount of extra refinement required to ensure conformity
     // after the marked elements are refined. Marking will then discover only the longest
     // edges, which are those within the boundary to be cracked.
+    // The rows of v_to_v and the elements are processed independently by threads (the
+    // marking of an element changes only that element).
     mfem::Array<mfem::real_t> lengths;
-    GetEdgeLengths2(v_to_v, lengths);
-    const auto min_length = 0.01 * lengths.Min();
-    for (int i = 0; i < v_to_v.NumberOfRows(); i++)
+    if (Nodes)
     {
-      for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
-      {
-        int j = it.Column();
-        if (!refinement_edges.contains({i, j}))
-        {
-          // "Zero" the edge lengths which do not connect vertices on the interface. Avoid
-          // zero-length edges just in case.
-          lengths[it.Index()] = min_length;
-        }
-      }
+      GetEdgeLengths2(v_to_v, lengths);
     }
+    else
+    {
+      EdgeLengths2(v_to_v, vertices, spaceDim, NumOfEdges, serial_mesh_threads, lengths);
+    }
+    const auto min_length = 0.01 * lengths.Min();
+    constexpr int block = 4096;
+    const int nt = serial_mesh_threads;
+    const int nrows = v_to_v.NumberOfRows();
+    ParallelForThreads((nrows + block - 1) / block, nt,
+                       [&](std::size_t b, int)
+                       {
+                         const int end = std::min(nrows, static_cast<int>(b + 1) * block);
+                         for (int i = static_cast<int>(b) * block; i < end; i++)
+                         {
+                           for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
+                           {
+                             int j = it.Column();
+                             if (!refinement_edges.contains({i, j}))
+                             {
+                               // "Zero" the edge lengths which do not connect vertices on
+                               // the interface. Avoid zero-length edges just in case.
+                               lengths[it.Index()] = min_length;
+                             }
+                           }
+                         }
+                       });
 
     // Finish marking (see mfem::Mesh::MarkTetMeshForRefinement).
     mfem::Array<int> indices(NumOfEdges);
     std::iota(indices.begin(), indices.end(), 0);
-    for (int i = 0; i < NumOfElements; i++)
-    {
-      if (elements[i]->GetType() == mfem::Element::TETRAHEDRON)
-      {
-        MFEM_ASSERT(dynamic_cast<mfem::Tetrahedron *>(elements[i]),
-                    "Unexpected non-Tetrahedron element type!");
-        static_cast<mfem::Tetrahedron *>(elements[i])->MarkEdge(v_to_v, lengths, indices);
-      }
-    }
-    for (int i = 0; i < NumOfBdrElements; i++)
-    {
-      if (boundary[i]->GetType() == mfem::Element::TRIANGLE)
-      {
-        MFEM_ASSERT(dynamic_cast<mfem::Triangle *>(boundary[i]),
-                    "Unexpected non-Triangle element type!");
-        static_cast<mfem::Triangle *>(boundary[i])->MarkEdge(v_to_v, lengths, indices);
-      }
-    }
+    ParallelForThreads((NumOfElements + block - 1) / block, nt,
+                       [&](std::size_t b, int)
+                       {
+                         const int end =
+                             std::min(NumOfElements, static_cast<int>(b + 1) * block);
+                         for (int i = static_cast<int>(b) * block; i < end; i++)
+                         {
+                           if (elements[i]->GetType() == mfem::Element::TETRAHEDRON)
+                           {
+                             MFEM_ASSERT(dynamic_cast<mfem::Tetrahedron *>(elements[i]),
+                                         "Unexpected non-Tetrahedron element type!");
+                             static_cast<mfem::Tetrahedron *>(elements[i])
+                                 ->MarkEdge(v_to_v, lengths, indices);
+                           }
+                         }
+                       });
+    ParallelForThreads((NumOfBdrElements + block - 1) / block, nt,
+                       [&](std::size_t b, int)
+                       {
+                         const int end =
+                             std::min(NumOfBdrElements, static_cast<int>(b + 1) * block);
+                         for (int i = static_cast<int>(b) * block; i < end; i++)
+                         {
+                           if (boundary[i]->GetType() == mfem::Element::TRIANGLE)
+                           {
+                             MFEM_ASSERT(dynamic_cast<mfem::Triangle *>(boundary[i]),
+                                         "Unexpected non-Triangle element type!");
+                             static_cast<mfem::Triangle *>(boundary[i])
+                                 ->MarkEdge(v_to_v, lengths, indices);
+                           }
+                         }
+                       });
   }
 
 public:
   EdgeRefinementMesh(mfem::Mesh &&mesh, const T &refinement_edges)
     : mfem::Mesh(std::move(mesh)), refinement_edges(refinement_edges)
   {
+  }
+
+  // Mark the elements for refinement as Finalize(true, false) does, for a mesh without
+  // nodes: the orientation check and topology update of Finalize are not needed before a
+  // local refinement, which updates the topology itself (and the marking preserves the
+  // element orientations).
+  void Mark()
+  {
+    MFEM_VERIFY(!GetNodes(), "Marking without finalization requires a mesh without nodes!");
+    MarkForRefinement();
   }
 };
 
@@ -3686,7 +5719,10 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   // handles cracks where more than two domains intersect as well as seams where a crack
   // ends and the vertices are not duplicated.
   std::unordered_set<int> crack_bdr_elem;
-  std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
+  // The element sets live in a pool (they are many and small); the containers behave like
+  // the std:: ones, including the iteration order which determines the duplicate numbering.
+  std::vector<std::unique_ptr<std::pmr::unsynchronized_pool_resource>> component_pools;
+  std::unordered_map<int, std::vector<std::pair<int, std::pmr::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
   if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements.value_or(true))
@@ -3732,71 +5768,121 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     const mfem::Table &elem_to_face =
         (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
                                      : orig_mesh->ElementToFaceTable());
-    int new_nv_dups = 0;
-    for (auto be : crack_bdr_elem)
+    // Faces whose boundary element is on the crack, for the connectivity search below.
+    std::vector<bool> crack_face(orig_mesh->GetNumFaces(), false);
+    for (const auto &[f, be] : face_to_be)
     {
-      const mfem::Element *bdr_el = orig_mesh->GetBdrElement(be);
-      const int *verts = bdr_el->GetVertices();
-      for (int i = 0; i < bdr_el->GetNVertices(); i++)
+      crack_face[f] = crack_bdr_elem.contains(be);
+    }
+    // Neighbor of each element across each of its faces (the other element of the face, or
+    // -1 for a boundary face or a face on the crack), in the order of the element faces:
+    // the connectivity search reads these instead of the face table and face information.
+    const int *etf_I = elem_to_face.GetI(), *etf_J = elem_to_face.GetJ();
+    std::vector<int> face_nbr(etf_I[orig_mesh->GetNE()]);
+    for (int e = 0; e < orig_mesh->GetNE(); e++)
+    {
+      for (int k = etf_I[e]; k < etf_I[e + 1]; k++)
       {
-        // Skip vertices we have already processed.
-        const auto v = verts[i];
-        if (crack_vert_duplicates.contains(v))
+        const int f = etf_J[k];
+        if (crack_face[f])
         {
+          // Skip element-element connectivities which cross the crack.
+          face_nbr[k] = -1;
           continue;
         }
-
-        // Collect connected components of elements connected to the vertex. Perform BFS
-        // on graph of all elements connected to this vertex, where adjacencies are
-        // determined by face connectivity excluding the crack faces.
-        std::vector<std::unordered_set<int>> components;
-        const int *elems = vert_to_elem->GetRow(v);
-        std::unordered_set<int> unvisited(elems, elems + vert_to_elem->RowSize(v));
-        while (!unvisited.empty())
+        int e1, e2;
+        orig_mesh->GetFaceElements(f, &e1, &e2);
+        MFEM_VERIFY(e == e1 || e == e2,
+                    "Unexpected face-element connectivity in internal boundary cracking!");
+        face_nbr[k] = (e == e1) ? e2 : e1;
+      }
+    }
+    // The crack vertices, each once, in the order of the boundary elements, and the
+    // connected components of the elements around each of them: a search on the graph of
+    // the elements connected to the vertex, with the adjacencies given by the face
+    // connectivity off the crack. The searches are independent and run on threads, with
+    // their results kept in the order of the vertices.
+    std::vector<int> crack_verts;
+    {
+      std::unordered_set<int> seen;
+      for (auto be : crack_bdr_elem)
+      {
+        const mfem::Element *bdr_el = orig_mesh->GetBdrElement(be);
+        const int *verts = bdr_el->GetVertices();
+        for (int i = 0; i < bdr_el->GetNVertices(); i++)
         {
-          auto &component = components.emplace_back();
-          component.reserve(unvisited.size());
-          std::queue<int> que;
-          que.push(*unvisited.begin());
-          unvisited.erase(unvisited.begin());
-          while (!que.empty())
+          if (seen.insert(verts[i]).second)
           {
-            // Process the current node.
-            int e = que.front();
-            que.pop();
-            component.insert(e);
-
-            // Add neighbors.
-            const int *faces = elem_to_face.GetRow(e);
-            for (int j = 0; j < elem_to_face.RowSize(e); j++)
-            {
-              const auto f = faces[j];
-              {
-                auto it = face_to_be.find(f);
-                if (it != face_to_be.end() && crack_bdr_elem.contains(it->second))
-                {
-                  // Skip element-element connectivities which cross the crack.
-                  continue;
-                }
-              }
-              int e1, e2;
-              orig_mesh->GetFaceElements(f, &e1, &e2);
-              MFEM_VERIFY(
-                  e == e1 || e == e2,
-                  "Unexpected face-element connectivity in internal boundary cracking!");
-              int nbr = (e == e1) ? e2 : e1;
-              if (nbr >= 0)
-              {
-                auto it = unvisited.find(nbr);
-                if (it != unvisited.end())
-                {
-                  que.push(nbr);
-                  unvisited.erase(it);
-                }
-              }
-            }
+            crack_verts.push_back(verts[i]);
           }
         }
+      }
+    }
+    const int nt = std::max(
+        1, std::min(serial_mesh_threads, static_cast<int>(crack_verts.size() / 256)));
+    while (component_pools.size() < static_cast<std::size_t>(nt))
+    {
+      component_pools.push_back(std::make_unique<std::pmr::unsynchronized_pool_resource>());
+    }
+    std::vector<std::unique_ptr<std::pmr::monotonic_buffer_resource>> bfs_buffers(nt);
+    std::vector<std::vector<int>> ques(nt);
+    for (auto &buffer : bfs_buffers)
+    {
+      buffer = std::make_unique<std::pmr::monotonic_buffer_resource>();
+    }
+    int new_nv_dups = 0;
+    constexpr std::size_t batch = std::size_t(1) << 16;
+    std::vector<std::vector<std::pmr::unordered_set<int>>> crack_vert_components(batch);
+    for (std::size_t b = 0; b < crack_verts.size(); b += batch)
+    {
+      const std::size_t nb = std::min(batch, crack_verts.size() - b);
+      ParallelForThreads(nb, nt,
+                         [&](std::size_t k, int t)
+                         {
+                           auto &bfs_buffer = *bfs_buffers[t];
+                           auto &que = ques[t];
+                           const int v = crack_verts[b + k];
+                           auto &components = crack_vert_components[k];
+                           const int *elems = vert_to_elem->GetRow(v);
+                           bfs_buffer.release();
+                           std::pmr::unordered_set<int> unvisited(
+                               elems, elems + vert_to_elem->RowSize(v), 0, std::hash<int>(),
+                               std::equal_to<int>(), &bfs_buffer);
+                           while (!unvisited.empty())
+                           {
+                             auto &component =
+                                 components.emplace_back(component_pools[t].get());
+                             component.reserve(unvisited.size());
+                             que.clear();
+                             que.push_back(*unvisited.begin());
+                             unvisited.erase(unvisited.begin());
+                             for (std::size_t head = 0; head < que.size(); head++)
+                             {
+                               // Process the current node.
+                               int e = que[head];
+                               component.insert(e);
+
+                               // Add neighbors.
+                               for (int k = etf_I[e]; k < etf_I[e + 1]; k++)
+                               {
+                                 const int nbr = face_nbr[k];
+                                 if (nbr >= 0)
+                                 {
+                                   auto it = unvisited.find(nbr);
+                                   if (it != unvisited.end())
+                                   {
+                                     que.push_back(nbr);
+                                     unvisited.erase(it);
+                                   }
+                                 }
+                               }
+                             }
+                           }
+                         });
+      for (std::size_t k = 0; k < nb; k++)
+      {
+        const int v = crack_verts[b + k];
+        auto &components = crack_vert_components[k];
         MFEM_VERIFY(
             !components.empty(),
             "No connected components found for elements adjacent to a crack vertex!");
@@ -3823,6 +5909,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           vert_components.emplace_back(-1, std::move(*it));
           new_nv_dups++;
         }
+        components.clear();
       }
     }
 
@@ -3924,7 +6011,14 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
             // refinement hierarchy).
             constexpr bool refine = true, fix_orientation = false;
             EdgeRefinementMesh ref_mesh(std::move(*orig_mesh), coarse_crack_edge_to_be);
-            ref_mesh.Finalize(refine, fix_orientation);
+            if (ref_mesh.GetNodes())
+            {
+              ref_mesh.Finalize(refine, fix_orientation);
+            }
+            else
+            {
+              ref_mesh.Mark();
+            }
             *orig_mesh = std::move(ref_mesh);
           }
           orig_mesh->GeneralRefinement(refinements, 0);
@@ -4335,6 +6429,11 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   if (!crack_boundary_attributes.empty() && !crack_bdr_elem.empty() &&
       iodata.model.crack_displ_factor > 0.0)
   {
+    // The displacement moves the nodes of a mesh with nodes, not its vertices (see Load).
+    if (!iodata.model.remove_curvature)
+    {
+      new_mesh->EnsureNodes();
+    }
     // mfem::Mesh::MoveNodes expects byNODES ordering when using vertices.
     mfem::GridFunction *nodes = new_mesh->GetNodes();
     mfem::Ordering::Type ordering =
@@ -4513,10 +6612,186 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
   return partitioning;
 }
 
-std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
-                                              std::unique_ptr<mfem::Mesh> &smesh,
-                                              const int *partitioning,
-                                              const std::string &output_dir)
+// Let a worker thread of a process bound to a single CPU run on any online CPU of the node
+// (best effort).
+void UnpinThread(std::thread &t)
+{
+#if defined(__linux__)
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  const long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+  for (long c = 0; c < ncpu && c < CPU_SETSIZE; c++)
+  {
+    CPU_SET(c, &set);
+  }
+  pthread_setaffinity_np(t.native_handle(), sizeof(set), &set);
+#endif
+}
+
+// Reorder the elements of a mesh part along the Hilbert curve of their centroids through
+// the cube [lo, lo + len]^sdim (that of the whole mesh, so that the element order of every
+// part is a subsequence of one order), for the locality of the elements, edges and faces
+// (and so of the degrees of freedom) of the parallel mesh built from it, which numbers its
+// edges and faces in the order of the elements. The vertices keep their numbering (the
+// global order), so that the edge orientations, given by their vertex numbers, and the
+// shared entities are those without the reordering. Returns the new order (the element id
+// of the part before the reordering, for each element), or an empty order for a part
+// described by nodes, which is not reordered.
+std::vector<int> ReorderMeshPart(mfem::MeshPart &part, const double *lo, double len)
+{
+  const int ne = part.num_elements, nv = part.num_vertices, sdim = part.space_dimension;
+  if (part.nodes || ne == 0 || part.vertex_coordinates.Size() != nv * sdim)
+  {
+    return {};
+  }
+
+  // Elements are stored by geometry (the "by-type" ids), in the order of the geometries.
+  const int dim = part.dimension;
+  std::array<int, mfem::Geometry::NumGeom + 1> offsets{};
+  for (int g = 0; g < mfem::Geometry::NumGeom; g++)
+  {
+    const bool elem_geom =
+        g >= mfem::Geometry::DimStart[dim] && g < mfem::Geometry::DimStart[dim + 1];
+    offsets[g + 1] =
+        offsets[g] +
+        (elem_geom ? part.entity_to_vertex[g].Size() / mfem::Geometry::NumVerts[g] : 0);
+  }
+  const bool have_map = (part.element_map.Size() == ne);
+  std::vector<double> xc(static_cast<std::size_t>(ne) * sdim, 0.0);
+  for (int i = 0; i < ne; i++)
+  {
+    const int bytype = have_map ? part.element_map[i] : i;
+    int g = mfem::Geometry::DimStart[dim];
+    while (bytype >= offsets[g + 1])
+    {
+      g++;
+    }
+    const int num_verts = mfem::Geometry::NumVerts[g];
+    const int *v = part.entity_to_vertex[g].GetData() + (bytype - offsets[g]) * num_verts;
+    for (int j = 0; j < num_verts; j++)
+    {
+      for (int d = 0; d < sdim; d++)
+      {
+        xc[i * sdim + d] += part.vertex_coordinates[v[j] * sdim + d];
+      }
+    }
+    for (int d = 0; d < sdim; d++)
+    {
+      xc[i * sdim + d] /= num_verts;
+    }
+  }
+  std::vector<int> order = mesh::HilbertOrder(xc.data(), ne, sdim, lo, len);
+
+  // The new element order, as the map from the element ids to the by-type ids, and the
+  // attributes in that order.
+  mfem::Array<int> element_map(ne), attributes(ne);
+  for (int i = 0; i < ne; i++)
+  {
+    element_map[i] = have_map ? part.element_map[order[i]] : order[i];
+    attributes[i] = part.attributes[order[i]];
+  }
+  part.element_map = std::move(element_map);
+  part.attributes = std::move(attributes);
+  return order;
+}
+
+// Extract the parts of a partitioned serial mesh and write them in the MFEM parallel mesh
+// format, with nt threads (each part is extracted independently). With a partitioning, the
+// elements of each part are reordered (see ReorderMeshPart) along the curve through the
+// bounding cube of the serial mesh, and origins returns the serial index of each element of
+// each reordered part (empty for a part which is not reordered).
+std::vector<std::string>
+ExtractPartsAsText(mfem::Mesh &smesh, const mfem::MeshPartitioner &partitioner, int nparts,
+                   int nt, const int *partitioning = nullptr,
+                   std::vector<std::vector<std::int64_t>> *origins = nullptr)
+{
+  std::vector<std::string> so(nparts);
+  std::array<double, 3> lo{};
+  double len = 0.0;
+  std::vector<std::int64_t> part_offsets, part_elements;
+  if (partitioning)
+  {
+    // Bounding cube of the vertices, and the elements of each part in increasing order
+    // (the order of the elements of an extracted part).
+    const int sdim = smesh.SpaceDimension();
+    std::array<double, 3> hi{};
+    lo.fill(mfem::infinity());
+    hi.fill(-mfem::infinity());
+    for (int v = 0; v < smesh.GetNV(); v++)
+    {
+      const double *x = smesh.GetVertex(v);
+      for (int d = 0; d < sdim; d++)
+      {
+        lo[d] = std::min(lo[d], x[d]);
+        hi[d] = std::max(hi[d], x[d]);
+      }
+    }
+    for (int d = 0; d < sdim; d++)
+    {
+      len = std::max(len, hi[d] - lo[d]);
+    }
+    part_offsets.assign(nparts + 1, 0);
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      part_offsets[partitioning[e] + 1]++;
+    }
+    std::partial_sum(part_offsets.begin(), part_offsets.end(), part_offsets.begin());
+    part_elements.resize(smesh.GetNE());
+    std::vector<std::int64_t> next(part_offsets.begin(), part_offsets.end() - 1);
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      part_elements[next[partitioning[e]]++] = e;
+    }
+    origins->assign(nparts, {});
+  }
+  auto Work = [&](int k)
+  {
+    for (int i = k; i < nparts; i += nt)
+    {
+      mfem::MeshPart part;
+      partitioner.ExtractPart(i, part);
+      if (partitioning)
+      {
+        const std::vector<int> order = ReorderMeshPart(part, lo.data(), len);
+        auto &origin = (*origins)[i];
+        origin.resize(order.size());
+        for (std::size_t j = 0; j < order.size(); j++)
+        {
+          origin[j] = part_elements[part_offsets[i] + order[j]];
+        }
+      }
+      std::ostringstream fo(std::stringstream::out);
+      // fo << std::fixed;
+      fo << std::scientific;
+      fo.precision(MSH_FLT_PRECISION);
+      part.Print(fo);
+      so[i] = fo.str();
+    }
+  };
+  if (nt > 1 && smesh.Dimension() >= 2)
+  {
+    // Created on first use by mfem::MeshPartitioner::ExtractPart: create it before the
+    // threads do.
+    smesh.GetEdgeVertexTable();
+  }
+  std::vector<std::thread> threads;
+  threads.reserve(nt - 1);
+  for (int k = 1; k < nt; k++)
+  {
+    threads.emplace_back(Work, k);
+    UnpinThread(threads.back());
+  }
+  Work(0);
+  for (auto &t : threads)
+  {
+    t.join();
+  }
+  return so;
+}
+
+std::unique_ptr<mfem::ParMesh>
+DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *partitioning,
+               const std::string &output_dir, bool local_reorder)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
   // parallel mesh. For now, prefer the MPI-based version to the file IO one. When
@@ -4525,29 +6800,76 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   // same as mfem::Mesh! Each processor's component gets sent as a byte string.
   constexpr bool generate_edges = false, refine = true, fix_orientation = false;
   std::unique_ptr<mfem::ParMesh> pmesh;
+
+  // A serial mesh with first-order nodes, as from mfem::Mesh::EnsureNodes, is distributed
+  // with its vertices moved to the nodes and without the nodes, which are added again to
+  // the parallel mesh: extracting the parts is much cheaper without nodes, and the parallel
+  // mesh is the same (it otherwise gets its vertices from the nodes of its part).
+  bool first_order_nodes = false;
+  if (Mpi::Root(comm) && smesh->GetNodes())
+  {
+    const auto *fespace = smesh->GetNodes()->FESpace();
+    const mfem::H1_FECollection fec(1, smesh->Dimension());
+    first_order_nodes = fespace->GetOrdering() == mfem::Ordering::byVDIM &&
+                        fespace->GetVDim() == smesh->SpaceDimension() &&
+                        !std::strcmp(fespace->FEColl()->Name(), fec.Name());
+  }
+  Mpi::Broadcast(1, &first_order_nodes, 0, comm);
+  if (Mpi::Root(comm) && first_order_nodes)
+  {
+    const mfem::GridFunction &nodes = *smesh->GetNodes();
+    const int sdim = smesh->SpaceDimension();
+    mfem::Array<int> vdofs;
+    for (int v = 0; v < smesh->GetNV(); v++)
+    {
+      nodes.FESpace()->GetVertexVDofs(v, vdofs);
+      double *x = smesh->GetVertex(v);
+      for (int d = 0; d < sdim; d++)
+      {
+        x[d] = nodes(vdofs[d]);
+      }
+    }
+    smesh->SetCurvature(-1);
+  }
+
+  // Threads for the root: one per process on its node (PALACE_SETUP_THREADS overrides).
+  int num_threads = 1;
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                        &node_comm);
+    num_threads = Mpi::Size(node_comm);
+    MPI_Comm_free(&node_comm);
+    if (const char *env = std::getenv("PALACE_SETUP_THREADS"))
+    {
+      num_threads = std::max(1, std::atoi(env));
+    }
+  }
+  std::vector<std::vector<std::int64_t>> origins;
   if (Mpi::Root(comm))
   {
     mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm),
                                       const_cast<int *>(partitioning));
-    std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
-    std::vector<std::string> so;
-    so.reserve(Mpi::Size(comm));
-    for (int i = 0; i < Mpi::Size(comm); i++)
+    // The parts are extracted and written by threads on the CPUs of the other processes
+    // of the node, which wait without spinning meanwhile (see below). Only parts without
+    // nodes are extracted concurrently (the extraction of the nodes builds finite element
+    // spaces from shared collections).
+    const int nt = smesh->GetNodes() ? 1 : std::min(num_threads, Mpi::Size(comm));
+    std::vector<std::string> so =
+        ExtractPartsAsText(*smesh, partitioner, Mpi::Size(comm), nt,
+                           local_reorder ? partitioning : nullptr, &origins);
+    std::vector<MPI_Request> send_requests(2 * (Mpi::Size(comm) - 1), MPI_REQUEST_NULL);
+    for (int i = 1; i < Mpi::Size(comm); i++)
     {
-      mfem::MeshPart part;
-      partitioner.ExtractPart(i, part);
-      std::ostringstream fo(std::stringstream::out);
-      // fo << std::fixed;
-      fo << std::scientific;
-      fo.precision(MSH_FLT_PRECISION);
-      part.Print(fo);
-      so.push_back(fo.str());
-      if (i > 0)
+      int slen = static_cast<int>(so[i].length());
+      MFEM_VERIFY(so[i].length() == static_cast<std::size_t>(slen),
+                  "Overflow error distributing parallel mesh!");
+      MPI_Isend(so[i].data(), slen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
+      if (local_reorder)
       {
-        int slen = static_cast<int>(so[i].length());
-        MFEM_VERIFY(so[i].length() == static_cast<std::size_t>(slen),
-                    "Overflow error distributing parallel mesh!");
-        MPI_Isend(so[i].data(), slen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
+        // The serial index of each element of the part, after the part (same tag).
+        MPI_Isend(origins[i].data(), static_cast<int>(origins[i].size()), MPI_INT64_T, i, i,
+                  comm, &send_requests[Mpi::Size(comm) - 1 + i - 1]);
       }
     }
     smesh.reset();
@@ -4562,14 +6884,43 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     MPI_Status status;
     int rlen;
     std::string si;
-    MPI_Probe(0, Mpi::Rank(comm), comm, &status);
+    // Wait for the part without spinning, leaving the CPU to the root's threads.
+    for (int flag = 0;;)
+    {
+      MPI_Iprobe(0, Mpi::Rank(comm), comm, &flag, &status);
+      if (flag)
+      {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
     MPI_Get_count(&status, MPI_CHAR, &rlen);
     si.resize(rlen);
     MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
+    if (local_reorder)
+    {
+      MPI_Probe(0, Mpi::Rank(comm), comm, &status);
+      MPI_Get_count(&status, MPI_INT64_T, &rlen);
+      origins.assign(1, std::vector<std::int64_t>(rlen));
+      MPI_Recv(origins[0].data(), rlen, MPI_INT64_T, 0, Mpi::Rank(comm), comm,
+               MPI_STATUS_IGNORE);
+    }
     std::istringstream fi(si);
     pmesh =
         std::make_unique<mfem::ParMesh>(comm, fi, refine, generate_edges, fix_orientation);
   }
+  if (first_order_nodes)
+  {
+    pmesh->EnsureNodes();
+  }
+  // The serial index of each local element of a reordered part (none for a part
+  // described by nodes, which is not reordered).
+  std::vector<std::int64_t> origin;
+  if (local_reorder && !origins.empty())
+  {
+    origin = std::move(origins[0]);
+  }
+  mesh::SetElementOrigin(*pmesh, std::move(origin));
   return pmesh;
 }
 

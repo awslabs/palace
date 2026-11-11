@@ -8,12 +8,12 @@
 namespace palace
 {
 
-void ErrorIndicator::AddIndicator(const Vector &indicator)
+void ErrorIndicator::AddIndicator(const Vector &indicator, double weight)
 {
-  if (n == 0)
+  if (n == 0.0)
   {
     local = indicator;
-    n = 1;
+    n = weight;
     return;
   }
 
@@ -33,17 +33,18 @@ void ErrorIndicator::AddIndicator(const Vector &indicator)
   // Squaring both sides means the summation can be rearranged, and then the local error
   // indicators become:
   //                            eₖ = √(1/N ∑ₙ ηₖₙ²)
+  // An indicator of weight w counts as w samples (N is then the sum of the weights).
   const bool use_dev = local.UseDevice() || indicator.UseDevice();
   const int N = local.Size();
-  const int Dn = n;
+  const double Dn = n, Dw = weight;
   const auto *DI = indicator.Read();
   auto *DL = local.ReadWrite();
   mfem::forall_switch(
       use_dev, N, [=] MFEM_HOST_DEVICE(int i)
-      { DL[i] = std::sqrt((DL[i] * DL[i] * Dn + DI[i] * DI[i]) / (Dn + 1)); });
+      { DL[i] = std::sqrt((DL[i] * DL[i] * Dn + Dw * DI[i] * DI[i]) / (Dn + Dw)); });
 
   // More samples have been added, update for the running average.
-  n += 1;
+  n += weight;
 }
 
 }  // namespace palace

@@ -4,7 +4,10 @@
 #ifndef PALACE_UTILS_GEODATA_HPP
 #define PALACE_UTILS_GEODATA_HPP
 
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -82,6 +85,35 @@ ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
 
 // Check if a tetrahedral (Par)Mesh is ready for local refinement.
 bool CheckRefinementFlags(const mfem::Mesh &mesh);
+
+// Order of n points of sdim coordinates each (stored consecutively) along a Hilbert curve
+// through the cube of the largest extent of their bounding box: entry k is the index of the
+// k-th point on the curve. Points with the same curve index keep their relative order.
+std::vector<int> HilbertOrder(const double *x, int n, int sdim);
+
+// The same along the Hilbert curve through the cube [lo, lo + len]^sdim (points outside are
+// clamped to it), so that the orders of subsets of a point set through the same cube are
+// subsequences of one order.
+std::vector<int> HilbertOrder(const double *x, int n, int sdim, const double *lo,
+                              double len);
+
+// For a nonconforming mesh whose root elements were reordered for locality (see
+// DistributeNCMesh), the index of each root element in the input (serial) mesh, which the
+// rebalancing partition uses to number the elements in the order of the input mesh. Null
+// for other meshes.
+void SetRootElementOrigin(const mfem::ParMesh &mesh, std::vector<int> &&origin);
+const std::vector<int> *GetRootElementOrigin(const mfem::ParMesh &mesh);
+
+// For a conforming mesh whose local elements were reordered for locality (see
+// DistributeMesh), the index of each local element in the input (serial) mesh.
+void SetElementOrigin(const mfem::ParMesh &mesh, std::vector<std::int64_t> &&origin);
+
+// For a mesh whose elements were reordered for locality, a key for each local element which
+// orders the elements of all processes as the input mesh does, independently of the
+// reordering and of the partition (the input index of the element for a conforming mesh,
+// or the input index of its root element and its path in the refinement tree for a
+// nonconforming one); empty for other meshes.
+std::vector<std::array<std::int64_t, 2>> GetElementInputKeys(const mfem::ParMesh &mesh);
 
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
@@ -377,6 +409,20 @@ struct MeshEntityCounts
 // collectively with CompleteMeshEntityCounts.
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts = nullptr);
+
+// Complete the writing of the adapted mesh, which RebalanceMesh may perform in the
+// background on the root process.
+void FinishMeshOutput();
+
+// Settings of the adapted mesh output for testing: write in the foreground even when the
+// root's node has an idle CPU for the background writer, and the number of items per chunk
+// of the concurrent text output (0 for the default).
+struct MeshOutputTestSettings
+{
+  bool foreground = false;
+  std::size_t chunk_items = 0;
+};
+MeshOutputTestSettings &GetMeshOutputTestSettings();
 
 // Complete true vertex and edge counts for a nonconforming mesh using distributed
 // lowest-order H1 and ND spaces. This is collective over the mesh communicator and must be

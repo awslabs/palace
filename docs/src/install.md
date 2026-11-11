@@ -277,14 +277,14 @@ As part of the [Build from source](#Build-from-source), the CMake build will aut
 build and install a small number of third-party dependencies before building *Palace*. The
 source code for these dependencies is downloaded during the build process:
 
-  - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview) and
-    [ParMETIS](http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview)
+  - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview)
+  - [PT-Scotch](https://gitlab.inria.fr/scotch/scotch)
   - [Hypre](https://github.com/hypre-space/hypre)
   - [SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) (optional, when
     `PALACE_WITH_SUPERLU=ON`)
   - [STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) (optional, when
-    `PALACE_WITH_STRUMPACK=ON`), including
-    [ButterflyPACK](https://github.com/liuyangzhuan/ButterflyPACK) and
+    `PALACE_WITH_STRUMPACK=ON`), including PT-Scotch,
+    [ButterflyPACK](https://github.com/liuyangzhuan/ButterflyPACK), and
     [zfp](https://github.com/LLNL/zfp) support
   - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`)
   - [SLEPc](https://slepc.upv.es/) (optional, when `PALACE_WITH_SLEPC=ON`), including

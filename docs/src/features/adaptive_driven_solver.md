@@ -96,6 +96,42 @@ The most important configuration options are:
   - [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](../config/reference.md#config-solver-driven):
     number of consecutive successful sample checks required before convergence. Increasing
     this can make early termination less likely, at the cost of more full solves.
+  - [`config["Solver"]["Driven"]["AdaptivePoleExclusion"]`](../config/reference.md#config-solver-driven):
+    relative half-width of the frequency intervals around resonances of the PROM narrower
+    than them, which the search for the largest error skips once their poles have converged
+    to `"AdaptiveTol"` times this width. Within a few
+    linewidths of a weakly coupled resonance with a quality factor of millions or more, the
+    PROM error cannot be reduced below `"AdaptiveTol"`, and samples there only restart the
+    count of `"AdaptiveConvergenceMemory"`. The excluded resonances are listed in the log,
+    and output frequencies within them are still checked. `0.0`, the default, searches the
+    whole band. With adaptive mesh refinement, the samples that the exclusion avoids are also
+    missing from the error indicator, which changes the refinement path: the option suits
+    adaptive sweeps without refinement, or with `"AdaptiveIndicatorSamples"`.
+  - [`config["Solver"]["Driven"]["AdaptiveIndicatorSamples"]`](../config/reference.md#config-solver-driven):
+    with adaptive mesh refinement, the number of frequencies of the sweep (uniformly spaced,
+    from the first to the last one) at which the error indicator is computed from the PROM
+    after the sampling, instead of from the full-order samples. The samples follow the
+    greedy search, whose choices change with round-off, and so does an indicator averaged
+    over them: with fixed frequencies, the refinement no longer depends on the sample set,
+    including with `"AdaptivePoleExclusion"`. The fixed frequencies under-weight the
+    resonances narrower than their spacing, and the refinement then does not converge those
+    modes (see `"AdaptiveIndicatorMaxQ"`). The error indicator norm of each adaptation
+    iteration, which `config["Model"]["Refinement"]["Tol"]` is compared with, is then the
+    root mean square over these frequencies, which can be well below the one over the
+    full-order samples (which sit on the resonances). `0`, the default, uses the samples.
+  - [`config["Solver"]["Driven"]["AdaptiveIndicatorMaxQ"]`](../config/reference.md#config-solver-driven):
+    with `"AdaptiveIndicatorSamples"`, also computes the error indicator at the resonances
+    of the PROM in the band with a quality factor below this value: the poles whose
+    eigenvectors satisfy the full-order equations to `1e-2` relative to the size of their
+    terms (the projection also has spurious poles, which change with the samples and leave
+    residuals of order one). Each weighs as much as the fixed frequencies together: a single
+    field among theirs does not drive the refinement. The fixed frequencies only weigh a
+    resonance narrower than their spacing when one of them falls within a few linewidths.
+    Weakly coupled resonances, of larger quality factors, satisfy the full-order equations
+    only when the sampling happens to visit them, which would make the indicator depend on
+    the samples again: keep the value well below their quality factors, e.g. `1e5` when they
+    are `1e6` and more. Modes which the PROM does not resolve (residual above `1e-2`) are not
+    refined either. `0.0`, the default, adds none.
 
 `"AdaptiveTol"` controls an error criterion on the finite-element electric-field solution,
 not a strict relative-error bound on every derived output. For example, a scattering

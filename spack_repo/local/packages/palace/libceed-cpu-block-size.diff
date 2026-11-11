@@ -1,0 +1,62 @@
+diff --git a/backends/opt/ceed-opt-operator.c b/backends/opt/ceed-opt-operator.c
+index fd1f4c94..432fe884 100644
+--- a/backends/opt/ceed-opt-operator.c
++++ b/backends/opt/ceed-opt-operator.c
+@@ -151,7 +151,7 @@ static int CeedOperatorSetup_Opt(CeedOperator op) {
+   bool                is_setup_done;
+   Ceed                ceed;
+   Ceed_Opt           *ceed_impl;
+-  CeedInt             Q, num_input_fields, num_output_fields;
++  CeedInt             Q, num_elem, num_input_fields, num_output_fields;
+   CeedQFunctionField *qf_input_fields, *qf_output_fields;
+   CeedQFunction       qf;
+   CeedOperatorField  *op_input_fields, *op_output_fields;
+@@ -169,7 +169,8 @@ static int CeedOperatorSetup_Opt(CeedOperator op) {
+   CeedCallBackend(CeedQFunctionIsIdentity(qf, &impl->is_identity_qf));
+   CeedCallBackend(CeedOperatorGetFields(op, &num_input_fields, &op_input_fields, &num_output_fields, &op_output_fields));
+   CeedCallBackend(CeedQFunctionGetFields(qf, NULL, &qf_input_fields, NULL, &qf_output_fields));
+-  const CeedInt block_size = ceed_impl->block_size;
++  CeedCallBackend(CeedOperatorGetNumElements(op, &num_elem));
++  const CeedInt block_size = CeedOptOperatorBlockSize(ceed_impl->block_size, num_elem);
+ 
+   // Allocate
+   CeedCallBackend(CeedCalloc(num_input_fields + num_output_fields, &impl->block_rstr));
+@@ -403,7 +404,7 @@ static int CeedOperatorApplyAdd_Opt(CeedOperator op, CeedVector in_vec, CeedVect
+   CeedCallBackend(CeedDestroy(&ceed));
+   CeedCallBackend(CeedOperatorGetData(op, &impl));
+   CeedCallBackend(CeedOperatorGetNumElements(op, &num_elem));
+-  const CeedInt block_size = ceed_impl->block_size;
++  const CeedInt block_size = CeedOptOperatorBlockSize(ceed_impl->block_size, num_elem);
+   const CeedInt num_blocks = (num_elem / block_size) + !!(num_elem % block_size);
+ 
+   // Restriction only operator
+@@ -482,7 +483,7 @@ static inline int CeedOperatorLinearAssembleQFunctionCore_Opt(CeedOperator op, b
+   CeedCallBackend(CeedOperatorGetQFunction(op, &qf));
+   CeedCallBackend(CeedOperatorGetFields(op, &num_input_fields, &op_input_fields, &num_output_fields, &op_output_fields));
+   CeedCallBackend(CeedQFunctionGetFields(qf, NULL, &qf_input_fields, NULL, &qf_output_fields));
+-  const CeedInt       block_size = ceed_impl->block_size;
++  const CeedInt       block_size = CeedOptOperatorBlockSize(ceed_impl->block_size, num_elem);
+   const CeedInt       num_blocks = (num_elem / block_size) + !!(num_elem % block_size);
+   CeedVector          l_vec      = impl->qf_l_vec;
+   CeedElemRestriction block_rstr = impl->qf_block_rstr;
+diff --git a/backends/opt/ceed-opt.h b/backends/opt/ceed-opt.h
+index a1b67a58..43d552ee 100644
+--- a/backends/opt/ceed-opt.h
++++ b/backends/opt/ceed-opt.h
+@@ -15,6 +15,16 @@ typedef struct {
+   CeedInt block_size;
+ } Ceed_Opt;
+ 
++// Element block size of an operator of the blocked backends: operators with many elements use larger blocks, which amortize the
++// per-block work (restrictions, QFunction calls) and widen the GEMMs of the basis contractions; the last block is padded, so
++// operators with few elements keep the blocks of the backend
++#define CEED_OPT_LARGE_BLOCK_SIZE 32
++#define CEED_OPT_LARGE_BLOCK_MIN_ELEMENTS 512
++
++static inline CeedInt CeedOptOperatorBlockSize(CeedInt block_size, CeedInt num_elem) {
++  return (block_size > 1 && num_elem >= CEED_OPT_LARGE_BLOCK_MIN_ELEMENTS) ? CEED_OPT_LARGE_BLOCK_SIZE : block_size;
++}
++
+ typedef struct {
+   CeedScalar *colo_grad_1d;
+ } CeedBasis_Opt;

@@ -28,6 +28,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-2d-submesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
@@ -38,9 +39,13 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmode.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-localreorder.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-gmresprobe.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-gmshreader.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
@@ -50,16 +55,24 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-meshtables.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-ncinterpolation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-perfprobes.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-perfstats.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-perftallies.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-phasereference.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-solverstats.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-sliverpatch.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
@@ -246,6 +259,16 @@ install(
   RENAME CTestTestfile.cmake
 )
 
+# Every MPI case runs through this launcher, which gives each mpiexec its own Open
+# MPI shared-memory backing directory: Open MPI derives the segment file names
+# from a 16-bit hash of the launcher PID, so concurrent cases under `ctest -j`
+# can otherwise share segments (crashes, hangs, MPI_Init failures).
+set(PALACE_TEST_LAUNCHER ${CMAKE_CURRENT_SOURCE_DIR}/mpi_test_launcher.sh)
+install(
+  PROGRAMS ${PALACE_TEST_LAUNCHER}
+  DESTINATION share/palace/test
+)
+
 # Serial tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "serial-"
@@ -265,7 +288,7 @@ catch_discover_tests(unit-tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "mpi-"
   TEST_SPEC "[Parallel]~[Regression]~[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${PALACE_TEST_LAUNCHER} ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
     PROCESSORS ${PALACE_TESTS_PROCESSORS}
@@ -281,7 +304,7 @@ catch_discover_tests(unit-tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "regression-"
   TEST_SPEC "[Regression]~[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${PALACE_TEST_LAUNCHER} ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS regression
@@ -300,7 +323,7 @@ catch_discover_tests(unit-tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "long-"
   TEST_SPEC "[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${PALACE_TEST_LAUNCHER} ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS long

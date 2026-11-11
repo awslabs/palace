@@ -8,11 +8,19 @@
 #include <memory>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
 {
+
+namespace ceed
+{
+
+struct ElementMatrixCombination;
+
+}  // namespace ceed
 
 //
 // A parallel operator represented by RAP constructed through the actions of R, A, and P,
@@ -45,14 +53,34 @@ private:
   // Optional assembled true-dof term added to RAP, with the essential true dofs eliminated.
   std::unique_ptr<mfem::HypreParMatrix> B;
 
+  // Single-precision approximation of the local operator, and the operator applying it
+  // (see UseSinglePrecision).
+  class SinglePrecisionOperator;
+  std::unique_ptr<Operator> A_single, op_single;
+
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
   Vector &GetTestLVector() const;
+  void MultWith(const Operator &local, const Vector &x, Vector &y) const;
+  void AddMultWith(const Operator &local, const Vector &x, Vector &y, double a) const;
 
   ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
               const FiniteElementSpace &trial_fespace,
               const FiniteElementSpace &test_fespace, bool test_restrict);
+
+  // Products with the prolongation of the space of a square operator with the essential
+  // true dofs eliminated (see FiniteElementSpace::GetMaskedProlongation), or nullptr when
+  // the prolongation is not a hypre::HypreProlongation.
+  mutable const hypre::MaskedProlongation *masked_P = nullptr;
+  const hypre::MaskedProlongation *GetMaskedProlongation() const;
+
+  // Forward applications of local operators of element matrices directly on the true dofs
+  // and the extra dofs of the masked prolongation (see ceed::AddMultMapped), and their
+  // extra-dof vectors. Returns false (doing nothing) when not applicable.
+  mutable Vector mapped_x, mapped_y;
+  bool MappedMult(const Operator &local, const Vector &x, Vector &y, bool add,
+                  double a) const;
 
 public:
   // Construct the parallel operator, inheriting ownership of the local operator.
@@ -119,6 +147,19 @@ public:
     return std::move(RAP);
   }
 
+  // Assemble a single-precision approximation of the local operator (see
+  // ceed::CreateSinglePrecisionOperator), for forward applications whose input and result
+  // tolerate a relative error of about 1e-7, such as the search directions of Chebyshev
+  // smoothers. Requires a square operator. Returns the bytes of its new element matrices on
+  // this process (zero if the local operator has no such approximation).
+  std::size_t UseSinglePrecision();
+
+  // The operator applying the single-precision approximation of the local operator with
+  // the prolongation, restriction, essential boundary conditions and assembled terms of
+  // this operator in forward applications (transposes are exact), or nullptr if there is
+  // none (see UseSinglePrecision).
+  const Operator *GetSinglePrecisionOperator() const { return op_single.get(); }
+
   void AssembleDiagonal(Vector &diag) const override;
 
   void Mult(const Vector &x, Vector &y) const override;
@@ -151,15 +192,34 @@ private:
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
 
+  // Single-precision approximation of the local operator, and the operator applying it
+  // (see UseSinglePrecision).
+  class SinglePrecisionOperator;
+  std::unique_ptr<ComplexOperator> A_single, op_single;
+
+  // Diagonal returned by AssembleDiagonal, if set (see SetAssembledDiagonal).
+  std::unique_ptr<ComplexVector> assembled_diag;
+
   // Helper methods for operator application.
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
   ComplexVector &GetTestLVector() const;
+  void MultWith(const ComplexOperator &local, const ComplexVector &x,
+                ComplexVector &y) const;
+  void AddMultWith(const ComplexOperator &local, const ComplexVector &x, ComplexVector &y,
+                   std::complex<double> a) const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      const Operator *pAr, const Operator *pAi,
                      const FiniteElementSpace &trial_fespace,
                      const FiniteElementSpace &test_fespace, bool test_restrict);
+
+  // See ParOperator::GetMaskedProlongation and ParOperator::MappedMult.
+  mutable const hypre::MaskedProlongation *masked_P = nullptr;
+  const hypre::MaskedProlongation *GetMaskedProlongation() const;
+  mutable ComplexVector mapped_x, mapped_y;
+  bool MappedMult(const ComplexOperator &local, const ComplexVector &x, ComplexVector &y,
+                  bool add, double a) const;
 
 public:
   // Construct the complex-valued parallel operator from the separate real and imaginary
@@ -214,6 +274,30 @@ public:
   // Get the diagonal policy that was most recently used. If there are no essential dofs,
   // and thus no valid policy, will error.
   Operator::DiagonalPolicy GetDiagonalPolicy() const;
+
+  // Assemble a single-precision approximation of the local operator (see
+  // ceed::CreateSinglePrecisionOperator), for forward applications whose input and result
+  // tolerate a relative error of about 1e-7, such as the search directions of Chebyshev
+  // smoothers. Requires a square operator. Returns the bytes of its new element matrices on
+  // this process (zero if the local operator has no such approximation), and optionally
+  // the number of local imaginary terms which the approximation leaves out. With a
+  // combination of terms of which the local operator is the sum, the element matrices are
+  // formed from those of the terms where possible (see ceed::ElementMatrixTerms).
+  std::size_t UseSinglePrecision(int *dropped = nullptr,
+                                 const ceed::ElementMatrixCombination *comb = nullptr);
+
+  // The operator applying the single-precision approximation of the local operator with
+  // the prolongation, restriction and essential boundary conditions of this operator in
+  // forward applications (transposes are exact), or nullptr if there is none (see
+  // UseSinglePrecision).
+  const ComplexOperator *GetSinglePrecisionOperator() const { return op_single.get(); }
+
+  // Return the given diagonal (with the eliminated essential true dofs) from
+  // AssembleDiagonal instead of assembling it, for a diagonal known to be the same.
+  void SetAssembledDiagonal(ComplexVector &&diag)
+  {
+    assembled_diag = std::make_unique<ComplexVector>(std::move(diag));
+  }
 
   void AssembleDiagonal(ComplexVector &diag) const override;
 

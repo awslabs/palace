@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
@@ -51,6 +52,19 @@ struct CeedGeomFactorData
   // contains every element, in which case the full strided restriction is used.
   CeedElemRestriction geom_data_restr;
   CeedElemRestriction active_geom_data_restr = nullptr;
+
+  // For affine simplex elements on host backends, the geometry factors {attr, |J|,
+  // adj(J)^T / |J|} once per element (unit weight), stored as [element][component] (for a
+  // part, those of all elements of the full list). Null otherwise.
+  CeedVector affine_geom_data = nullptr;
+
+  // For element types with both affine and non-affine elements (on curved meshes), the
+  // data of the affine (part = 1) and the non-affine (part = 2) elements, for operators
+  // which treat them separately. Each part has its own active subset and geometry factor
+  // restrictions, and positions gives the positions of its elements in the full list.
+  std::vector<CeedGeomFactorData> parts;
+  int part = 0;
+  std::vector<int> positions;
 
   CeedElemRestriction GetGeomDataRestriction(CeedElementSubset subset) const
   {
@@ -98,6 +112,12 @@ private:
   //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
+
+  // Geometry factor data of affine simplex elements for a given number of points per
+  // element with unit weights (see GetCeedAffineGeomFactorData).
+  mutable std::unordered_map<
+      Ceed, std::map<std::tuple<mfem::Geometry::Type, int, int>, ceed::CeedGeomFactorData>>
+      affine_geom_data;
 
   // Interior boundary sides for broken spaces (see fem/brokenspace.hpp), cached per sorted
   // attribute list (error estimator, broken solution space) and valid for the mesh object
@@ -217,6 +237,15 @@ public:
 
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
+
+  // Geometry factor data of the affine simplex elements of the given data (from
+  // GetCeedGeomFactorData, or one of its parts), the same at each of num_qpts points per
+  // element with unit weights, for operators with bases from ceed::InitReducedBasis.
+  // Returns nullptr if the elements are not all affine simplices (or the backend does not
+  // use host memory).
+  const ceed::CeedGeomFactorData *
+  GetCeedAffineGeomFactorData(Ceed ceed, mfem::Geometry::Type geom,
+                              const ceed::CeedGeomFactorData &data, int num_qpts) const;
 
   // Configure the process-local libCEED attributes in the shared lossy-domain and
   // active-boundary element sets. The sets must be configured before geometry data is

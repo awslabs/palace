@@ -5,6 +5,7 @@
 #define PALACE_UTILS_IODATA_HPP
 
 #include <sstream>
+#include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
@@ -76,6 +77,16 @@ public:
   // MPI.
   void NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh);
 };
+
+// Whether eigenmode simulations choose the complex-valued coarse solve at setup (without an
+// explicit Solver.Linear.ComplexCoarseSolve) with the coarse-level sparse direct solver
+// type (see GeometricMultigridSolver). Only for the solvers whose memory with the
+// complex-valued matrix is predicted reliably enough: the others keep the real-valued
+// approximation.
+bool ChoosesComplexCoarseSolve(LinearSolver type);
+
+// For tests: choose it with these solvers instead (empty restores the default).
+void SetComplexCoarseSolversForTesting(std::vector<LinearSolver> types);
 
 }  // namespace palace
 

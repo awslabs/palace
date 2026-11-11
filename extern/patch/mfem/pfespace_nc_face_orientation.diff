@@ -1,0 +1,44 @@
+Rows of the conforming interpolation which a process receives for the DOFs of a shared face
+of a nonconforming mesh are mapped with the inverse of the relative face orientation
+(GetFaceOrientation is the orientation of the receiving face relative to the sender, the DOF
+orderings map the DOFs of a face seen with an orientation to the face DOFs). Only rotations
+differ (triangle orientations 2 and 4, quadrilateral 2 and 6).
+
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -3370,7 +3370,13 @@
+          else if (ent == 2)
+          {
+             geom = pncmesh->GetFaceGeometry(id.index);
+-            const int fo = pncmesh->GetFaceOrientation(id.index);
++            // The face orientation is that of this rank's face relative to the face of
++            // the sender (the lower rank), while the DOF orderings below map the DOFs of
++            // a face seen with an orientation to the DOFs of the face itself: the
++            // received DOFs map to ours with the inverse orientation (which differs for
++            // the rotations, orientations 2 and 4 of a triangle and 2 and 6 of a quad).
++            const int fo = Geometry::GetInverseOrientation(
++                              geom, pncmesh->GetFaceOrientation(id.index));
+             if (varOrder)
+             {
+                MFEM_ASSERT(geom == Geometry::SQUARE,
+@@ -3481,7 +3487,8 @@
+             // Extract the next dof too, and apply any dof order transformation
+             // expected.
+             const MeshId &next_id = ids[++i];
+-            const int fo = pncmesh->GetFaceOrientation(next_id.index);
++            const int fo = Geometry::GetInverseOrientation(
++                              geom, pncmesh->GetFaceOrientation(next_id.index));
+             ind = fec->DofOrderForOrientation(geom, fo);
+             edof = bin_io::read<int>(stream);
+             order_i = bin_io::read<int>(stream);
+@@ -3518,10 +3525,6 @@
+             const real_t *T =
+                ND_DofTransformation::GetFaceTransform(fo).GetData();
+ 
+-            MFEM_ASSERT(fo != 2 &&
+-                        fo != 4, "This code branch is ambiguous for face orientations 2 and 4."
+-                        " Please report this mesh for further testing.\n");
+-
+             first_row.AddRow(initial_first_row, T[0] - 1.0);   // (0,0)
+             first_row.AddRow(initial_second_row, T[2]);        // (0,1)
+             second_row.AddRow(initial_first_row, T[1]);        // (1,0)

@@ -18,6 +18,135 @@
 namespace palace
 {
 
+void FiniteElementSpace::PrepareProlongation(const Operator *P) const
+{
+  // A HypreParMatrix prolongation (for nonconforming meshes, and for Nedelec spaces on
+  // tetrahedra) is applied forward and transposed in every operator application. On the
+  // host, hypre::HypreProlongation performs the same floating-point operations as hypre,
+  // faster (most rows are identity rows).
+  prolongation_prepared = true;
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    return;
+  }
+  // A conforming prolongation can apply real and imaginary parts with one exchange.
+  if (const auto *cP = dynamic_cast<const mfem::ConformingProlongationOperator *>(P))
+  {
+    fast_conforming_prolongation = std::make_unique<ConformingProlongation>(*cP);
+    return;
+  }
+  const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P);
+  if (!hP)
+  {
+    return;
+  }
+  fast_prolongation = std::make_unique<hypre::HypreProlongation>(*hP);
+}
+
+void RestrictionRuns::Mult(const Vector &ly, Vector &ty) const
+{
+  const double *X = ly.HostRead();
+  double *Y = ty.HostWrite();
+  for (std::size_t r = 0; r < len.size(); r++)
+  {
+    const double *__restrict__ Xr = X + col[r];
+    double *__restrict__ Yr = Y + row[r];
+    for (int k = 0; k < len[r]; k++)
+    {
+      Yr[k] = 0.0 + Xr[k];
+    }
+  }
+}
+
+void RestrictionRuns::MultTranspose(const Vector &ty, Vector &ly) const
+{
+  const double *X = ty.HostRead();
+  double *Y = ly.HostWrite();
+  int l = 0;
+  for (std::size_t r = 0; r < len.size(); r++)
+  {
+    std::fill(Y + l, Y + col[r], 0.0);
+    const double *__restrict__ Xr = X + row[r];
+    double *__restrict__ Yr = Y + col[r];
+    for (int k = 0; k < len[r]; k++)
+    {
+      Yr[k] = 0.0 + Xr[k];
+    }
+    l = col[r] + len[r];
+  }
+  std::fill(Y + l, Y + width, 0.0);
+}
+
+const RestrictionRuns *FiniteElementSpace::GetRestrictionRuns() const
+{
+  if (restriction_prepared)
+  {
+    return restriction_runs.get();
+  }
+  restriction_prepared = true;
+  const mfem::SparseMatrix *R = GetRestrictionMatrix();
+  if (!R || mfem::Device::Allows(mfem::Backend::DEVICE_MASK) || !R->Finalized())
+  {
+    return nullptr;
+  }
+  const int *I = R->HostReadI(), *J = R->HostReadJ();
+  const double *A = R->HostReadData();
+  const int height = R->Height(), width = R->Width();
+  std::vector<std::array<int, 2>> entries(height);
+  for (int i = 0; i < height; i++)
+  {
+    if (I[i + 1] - I[i] != 1 || A[I[i]] != 1.0)
+    {
+      return nullptr;
+    }
+    entries[i] = {J[I[i]], i};
+  }
+  std::sort(entries.begin(), entries.end());
+  auto runs = std::make_unique<RestrictionRuns>();
+  runs->height = height;
+  runs->width = width;
+  for (int k = 0; k < height; k++)
+  {
+    const auto [j, i] = entries[k];
+    if (k > 0 && entries[k - 1][0] == j)
+    {
+      return nullptr;  // A column with two entries
+    }
+    if (!runs->len.empty() && runs->col.back() + runs->len.back() == j &&
+        runs->row.back() + runs->len.back() == i)
+    {
+      runs->len.back()++;
+    }
+    else
+    {
+      runs->row.push_back(i);
+      runs->col.push_back(j);
+      runs->len.push_back(1);
+    }
+  }
+  restriction_runs = std::move(runs);
+  return restriction_runs.get();
+}
+
+const hypre::MaskedProlongation *
+FiniteElementSpace::GetMaskedProlongation(const mfem::Array<int> &dofs) const
+{
+  const auto *hP = dynamic_cast<const hypre::HypreProlongation *>(GetProlongationMatrix());
+  if (!hP)
+  {
+    return nullptr;
+  }
+  for (const auto &mP : masked_prolongations)
+  {
+    if (&mP->GetProlongation() == hP && mP->Matches(dofs))
+    {
+      return mP.get();
+    }
+  }
+  masked_prolongations.push_back(std::make_unique<hypre::MaskedProlongation>(*hP, dofs));
+  return masked_prolongations.back().get();
+}
+
 CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
 {
   auto it = basis.find(ceed);
@@ -31,6 +160,31 @@ CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom)
   return basis_map.emplace(geom, BuildCeedBasis(*this, ceed, geom)).first->second;
 }
 
+CeedBasis FiniteElementSpace::GetCeedReducedBasis(Ceed ceed, mfem::Geometry::Type geom,
+                                                  bool values) const
+{
+  auto &bases = values ? reduced_basis : reduced_deriv_basis;
+  auto it = bases.find(ceed);
+  MFEM_ASSERT(it != bases.end(), "Unknown Ceed context in GetCeedReducedBasis!");
+  auto &basis_map = it->second;
+  auto basis_it = basis_map.find(geom);
+  if (basis_it != basis_map.end())
+  {
+    return basis_it->second;
+  }
+  const mfem::FiniteElement *fe = GetFEColl().FiniteElementForGeometry(geom);
+  if (!fe)
+  {
+    fe = GetFEColl().TraceFiniteElementForGeometry(geom);
+  }
+  CeedBasis val = nullptr;
+  if (fe && !ceed::InitReducedBasis(*fe, values, Get().GetVDim(), ceed, &val))
+  {
+    val = nullptr;
+  }
+  return basis_map.emplace(geom, val).first->second;
+}
+
 CeedElemRestriction
 FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                            const ceed::CeedGeomFactorData &data,
@@ -40,7 +194,12 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                           data.active_indices.size() < data.indices.size();
   MFEM_ASSERT(!use_active || !data.active_indices.empty(),
               "Empty active subset in GetCeedElemRestriction!");
-  auto &restr_map = use_active ? active_restr : restr;
+  // The parts of the element list of a geometry type (see ceed::CeedGeomFactorData) have
+  // their own restrictions.
+  MFEM_ASSERT(data.part >= 0 && data.part <= 2, "Invalid geometry data part!");
+  auto &restr_map = data.part ? (use_active ? part_active_restr[data.part - 1]
+                                            : part_restr[data.part - 1])
+                              : (use_active ? active_restr : restr);
   auto it = restr_map.find(ceed);
   MFEM_ASSERT(it != restr_map.end(), "Unknown Ceed context in GetCeedElemRestriction!");
   auto &geom_restr = it->second;
@@ -128,12 +287,16 @@ CeedElemRestriction FiniteElementSpace::GetInterpRangeCeedElemRestriction(
 
 void FiniteElementSpace::ResetCeedObjects()
 {
-  for (auto &[ceed, basis_map] : basis)
+  for (auto *bases : {&basis, &reduced_basis, &reduced_deriv_basis})
   {
-    for (auto &[key, val] : basis_map)
+    for (auto &[ceed, basis_map] : *bases)
     {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&val));
+      for (auto &[key, val] : basis_map)
+      {
+        PalaceCeedCall(ceed, CeedBasisDestroy(&val));
+      }
     }
+    bases->clear();
   }
   auto DestroyRestrictions = [](auto &restrictions)
   {
@@ -147,9 +310,15 @@ void FiniteElementSpace::ResetCeedObjects()
   };
   DestroyRestrictions(restr);
   DestroyRestrictions(active_restr);
+  for (int part = 0; part < 2; part++)
+  {
+    DestroyRestrictions(part_restr[part]);
+    DestroyRestrictions(part_active_restr[part]);
+    part_restr[part].clear();
+    part_active_restr[part].clear();
+  }
   DestroyRestrictions(interp_restr);
   DestroyRestrictions(interp_range_restr);
-  basis.clear();
   restr.clear();
   active_restr.clear();
   interp_restr.clear();
@@ -158,8 +327,15 @@ void FiniteElementSpace::ResetCeedObjects()
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
     basis.emplace(ceed, ceed::GeometryObjectMap<CeedBasis>());
+    reduced_basis.emplace(ceed, ceed::GeometryObjectMap<CeedBasis>());
+    reduced_deriv_basis.emplace(ceed, ceed::GeometryObjectMap<CeedBasis>());
     restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     active_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
+    for (int part = 0; part < 2; part++)
+    {
+      part_restr[part].emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
+      part_active_restr[part].emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
+    }
     interp_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     interp_range_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
   }

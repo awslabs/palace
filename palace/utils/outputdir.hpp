@@ -12,6 +12,7 @@
 #include "communication.hpp"
 #include "filesystem.hpp"
 #include "iodata.hpp"
+#include "perfstats.hpp"
 #include "timer.hpp"
 
 namespace palace
@@ -96,7 +97,10 @@ inline void ApplyOnEachNodeFilesystem(MPI_Comm comm, const std::string &operatio
   {
     apply_here();
   }
-  Mpi::Barrier(comm);
+  {
+    perf::ScopedTally t(perf::RegisterPhaseTally("Wait/IO/NodeFilesystem"));
+    Mpi::Barrier(comm);
+  }
 
   MPI_Comm node_comm = MPI_COMM_NULL;
   MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
@@ -183,36 +187,64 @@ inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
 // With compress = true the file is written through mfem::ofgzstream, which gzip-compresses
 // the bytes when MFEM is built with zlib (MFEM_USE_ZLIB) and writes them verbatim
 // otherwise.
+// Write a file (optionally gzip-compressed) from the calling process only, without any MPI
+// communication. Throws on filesystem errors.
+template <typename Func>
+inline void WriteOutputFile(const fs::path &path, Func &&write_func, bool compress = false)
+{
+  fs::remove_all(path);
+  if (compress)
+  {
+#if defined(MFEM_USE_ZLIB)
+    // Compress with the fastest zlib level instead of mfem::ofgzstream's default level (6):
+    // large files like the adapted mesh are written by the root process while all others
+    // wait, and level 1 is several times faster for slightly larger files.
+    std::ofstream file(path, std::ios_base::binary);
+    if (!file.is_open())
+    {
+      throw fs::filesystem_error("Could not open output file", path,
+                                 std::make_error_code(std::errc::io_error));
+    }
+    {
+      zstr::ostreambuf buf(file.rdbuf(), std::size_t(1) << 20, Z_BEST_SPEED);
+      std::ostream stream(&buf);
+      stream.exceptions(std::ios_base::badbit);
+      write_func(stream);
+    }
+    file.close();
+    if (file.fail())
+    {
+      throw fs::filesystem_error("Could not write output file", path,
+                                 std::make_error_code(std::errc::io_error));
+    }
+#else
+    mfem::ofgzstream stream(path.string(), true);
+    write_func(stream);
+#endif
+    return;
+  }
+  std::ofstream stream(path);
+  if (!stream.is_open())
+  {
+    throw fs::filesystem_error("Could not open output file", path,
+                               std::make_error_code(std::errc::io_error));
+  }
+  write_func(stream);
+  stream.close();
+  if (stream.fail())
+  {
+    throw fs::filesystem_error("Could not write output file", path,
+                               std::make_error_code(std::errc::io_error));
+  }
+}
+
 template <typename Func>
 inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func,
                                 bool compress = false)
 {
   BlockTimer bt(Timer::IO);
-  ApplyOnRootFilesystem(
-      comm, fmt::format("Writing output file \"{}\"", path.string()),
-      [&]()
-      {
-        fs::remove_all(path);
-        if (compress)
-        {
-          mfem::ofgzstream stream(path.string(), true);
-          write_func(stream);
-          return;
-        }
-        std::ofstream stream(path);
-        if (!stream.is_open())
-        {
-          throw fs::filesystem_error("Could not open output file", path,
-                                     std::make_error_code(std::errc::io_error));
-        }
-        write_func(stream);
-        stream.close();
-        if (stream.fail())
-        {
-          throw fs::filesystem_error("Could not write output file", path,
-                                     std::make_error_code(std::errc::io_error));
-        }
-      });
+  ApplyOnRootFilesystem(comm, fmt::format("Writing output file \"{}\"", path.string()),
+                        [&]() { WriteOutputFile(path, write_func, compress); });
 }
 
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)

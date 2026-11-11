@@ -17,13 +17,303 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added `Model.LocalReorder`, which numbers the elements of each process along a Hilbert
+    curve through their centroids once the mesh is partitioned (one curve through the whole
+    mesh, so that the order does not depend on the partition). The edges, faces and degrees
+    of freedom, numbered in the order of the elements, become local in space, which reduces
+    the cost of each linear solver iteration, mostly in the smoothers of geometric
+    multigrid. Unlike `Model.ReorderElements`, it has no serial cost and keeps the partition
+    and, with nonconforming adaptive mesh refinement, the refined meshes: the root elements
+    of the refinement tree are numbered along the curve with their vertex orders, which
+    define how they are refined, so that the refined and rebalanced meshes are ordered as
+    well, and the rebalancing numbers the elements in the order of the input mesh, which
+    keeps its partitions. A probe on the boundary between elements takes the value in the
+    element first in the order of the input mesh among those containing it. Results change
+    by round-off: the faces take their orientation from the element first in the new order,
+    which changes the basis of the face degrees of freedom but not the global phase of
+    eigenvectors (see the eigenvector phase convention under Interface Changes). Conforming
+    meshes refined after their distribution (conformal adaptive or parallel uniform
+    refinement, where the marking of tetrahedra for refinement depends on the local edge
+    order), conforming meshes with curved nodes, and nonconforming input meshes (such as
+    saved adapted meshes) keep their element order. [PR TBD].
+  - Added `config["Solver"]["Driven"]["AdaptiveIndicatorSamples"]`: with adaptive mesh
+    refinement, an adaptive frequency sweep can compute the error indicator from its
+    reduced-order model at this number of fixed frequencies of the sweep, uniformly spaced,
+    instead of from its full-order samples. The samples follow the greedy search for the
+    largest reduced-order model error, whose choices change with round-off, and so did the
+    marked elements. With fixed frequencies, the marking no longer depends on the sample
+    set, which also makes `"AdaptivePoleExclusion"` safe with refinement. The fixed
+    frequencies under-weight the resonances narrower than their spacing, which the
+    refinement then does not converge, and the indicator norm compared with
+    `config["Model"]["Refinement"]["Tol"]` becomes their root mean square. The default `0`
+    uses the full-order samples. [PR TBD].
+  - Added `config["Solver"]["Driven"]["AdaptiveIndicatorMaxQ"]`: with
+    `"AdaptiveIndicatorSamples"`, the error indicator for adaptive mesh refinement is also
+    computed at the resonances of the reduced-order model in the band of the sweep with a
+    quality factor below this value, which uniformly spaced frequencies only weigh when one
+    falls within a few linewidths. The resonances are the poles whose eigenvectors satisfy
+    the full-order equations to `1e-2` relative to the size of their terms, and each weighs
+    as much as the fixed frequencies together. Keep it well below the quality factors of
+    weakly coupled modes, which the reduced-order model resolves only when the sampling
+    visits them. The default `0.0` adds none. [PR TBD].
+  - Added `Solver.Linear.AMSSmoothIts`, the number of smoothing sweeps on the Nédélec space
+    in each AMS iteration when AMS is the coarse solver of geometric multigrid. It defaults
+    to 8 when `Solver.Linear.AMSSingularOperator` is enabled (by default, magnetostatic
+    simulations without superconductor boundaries), which reduces the number of linear
+    solver iterations, and to `Solver.Linear.MGSmoothIts` otherwise, as before.
+    [PR 1159](https://github.com/awslabs/palace/pull/1159).
+  - Added `config["Solver"]["Driven"]["CoarseReuseTol"]`: frequency sweeps can reuse the
+    coarse-level sparse direct factorization of the multigrid preconditioner for frequencies
+    within this relative distance of the frequency where it was computed, instead of
+    factoring the coarse level for every frequency. Solves still converge to the linear
+    solver tolerance; a solve which needs 50% more iterations than with new factorizations
+    factors the coarse level again and continues. If the option is omitted, uniform sweeps
+    reuse factorizations within `0.05` and adaptive sweeps do not (`0.0`): their samples are
+    rarely that close, and a different coarse solve can change which samples the greedy
+    selection picks. An explicit value applies to both sweep types, and `0.0` disables
+    reuse. Preconditioners other than geometric multigrid are not affected. [PR TBD].
+  - Added `config["Solver"]["Linear"]["MGAuxiliarySmoothOrder"]`, the polynomial order of
+    the Chebyshev smoother in the auxiliary (gradient) space of the distributive relaxation
+    smoother of geometric multigrid. If omitted, it is the order of the smoother of the
+    primary space, as before, except with `Solver.Linear.ComplexCoarseSolve`, where it is
+    `max(2 p, 4)` for solution order `p`: there, the lower order needs no more linear solver
+    iterations and makes each iteration cheaper. [PR TBD].
+  - The mesh information printed for the initial and every refined mesh includes the numbers
+    of tetrahedra whose minimum dihedral angle is below 5, 2 and 1 degrees, and the smallest
+    angle, if any: such slivers can slow down the convergence of the iterative linear
+    solvers (see `Solver.Linear.MGSliverAngle`). [PR TBD].
+
 #### Interface Changes
 
+  - Reworked the performance report in `palace.json` (new `SchemaVersion` 2). Every
+    `iterationX/palace.json` of an adaptive run now describes that iteration alone, as if it
+    were a separate simulation (times, counts and peak memory restart at each iteration, and
+    the work between iterations is charged to the iteration using the new mesh), and a
+    `Cumulative` block holds the totals over all iterations so far. `ElapsedTime` keys are
+    now the timer names (for example `KSP_COARSE_SOLVE` instead of `CoarseSolve`, which made
+    `Setup`, `Solve` and `Construction` ambiguous); `Durations` holds the average over MPI
+    processes instead of the root process's value, with `Min`, `Max` and `MaxRank` maps next
+    to it. `LinearSolver/TotalSolves` and `TotalIts` now count all main linear solves of the
+    iteration rather than those of the last solver object, and other solvers (for example
+    the divergence-free projection and the error estimator) are reported under
+    `LinearSolver/<Role>`. New rows `Startup`, `Coarse Setup` (coarse solver setup and
+    factorization, previously part of `Coarse Solve`, or of `Setup` for MUMPS) and
+    `Adapted Mesh Output` (previously part of `Rebalancing`) appear in the log and in
+    `palace.json`, together with inclusive tallies (multigrid levels, smoothers, Krylov
+    operator and orthogonalization, halo exchanges, reductions and waits), solver counters,
+    resolved solver choices and memory attribution. The log tables keep their layout. An
+    opt-in check of the coarse solve residual is enabled with
+    `config["Problem"]["Verbose"] >= 2` or the `PALACE_PERF_VERIFY` environment variable.
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
     several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-2-0
     [PR 1148](https://github.com/awslabs/palace/pull/1148).
+  - The global phase of the eigenvectors of eigenmode simulations is fixed by the projection
+    of the electric field on a smooth reference field defined on the bounding box of the
+    mesh (`∫ w ⋅ E dΩ` real and positive, see the reference documentation) instead of the
+    mean of the degrees of freedom, which depended on the orientations of the edges and
+    faces of the mesh, on the order of the elements and on the number of processes. The
+    eigenvectors of lossless modes are real, with a definite sign. Relative to previous
+    versions, this changes the phases of port voltages and currents, the phases of fluxes
+    and field outputs, and the signs of the external coupling rates (`κ_ext`) and of signed
+    energy participation ratios of eigenmodes: all gauge choices (Q, `|κ_ext|`, energies and
+    participation magnitudes are unchanged), which now no longer depend on the numbering of
+    the mesh or on the number of processes, except within degenerate eigenspaces and when
+    the mean of the degrees of freedom is used as a fallback (with a warning, when the
+    projections on both reference fields are negligible). [PR TBD].
+  - `config["Model"]["LocalReorder"]` defaults to true: the elements of each process are
+    numbered along a Hilbert curve once the mesh is partitioned (see `Model.LocalReorder`
+    under New Features), which reduces the cost of each linear solver iteration with the
+    partition, the elements and their refinement unchanged. Results change by round-off,
+    except for probes at points on the boundary between elements (a vertex, an edge or a
+    face), which take the value in the element first in the order of the input mesh: this
+    can be another element than before, so that the probed values of fields which are
+    discontinuous there (such as the normal electric field at a material interface) can
+    change by O(1). Set `"LocalReorder": false` for the previous numbering and probes. [PR
+    TBD].
+  - Geometric multigrid solves exactly on the patches of degenerate tetrahedra of the
+    complex-valued operators of driven and eigenmode simulations (new
+    `Solver.Linear.MGSliverAngle`, default `-1`: tetrahedra with a minimum dihedral angle
+    below 2 degrees, and none for the real-valued operators of electrostatic, magnetostatic
+    and transient simulations; `0` disables it). Slivers have basis functions close to
+    linearly dependent: the Chebyshev smoothers, with their diagonal scaling, cannot correct
+    their local modes, and these can dominate the number of linear solver iterations. On
+    every level above the coarsest, the true dofs of the mesh entities incident to the
+    vertices of each sliver form a patch, also across processes (new
+    `Solver.Linear.MGSliverLayers`: `1`, or `0` for its own entities; by default `-1`, the
+    former unless their dense solves are expensive compared with the smoothing of the level,
+    else none), and an exact solve with the dense block of the level operator on each patch
+    precedes the coarse-grid correction, with the residual updated. A level whose patches
+    would hold more than 1% of its true dofs keeps no patch solves, with a warning. The
+    patch solves are not available with OpenMP or device backends, and a warning reports
+    meshes with slivers whose patch solves such a backend disables. Meshes without slivers
+    are not affected; on meshes with slivers, eigenmode simulations can need far fewer
+    linear solver iterations. [PR TBD].
+  - The `"Default"` option of `config["Solver"]["Linear"]["ColumnOrdering"]`, also its
+    default, now uses the parallel PT-Scotch ordering (below) for `"Type": "STRUMPACK"`
+    built with PT-Scotch for matrices of at least 50000 rows on more than one process, and
+    otherwise (fewer than 50000 rows or one process), sequential METIS, as before. Results
+    with STRUMPACK change at the solver tolerance: use `"ColumnOrdering": "METIS"` to keep
+    the previous ordering. `"Type": "STRUMPACK-MP"` is not affected: as before, it ignores
+    `"ColumnOrdering"` and the STRUMPACK compression options (it always orders with METIS
+    and does not compress). [PR TBD].
+  - `config["Solver"]["Linear"]["EstimatorTol"]`, the relative tolerance of the flux
+    projection solves of the error estimator, defaults to the smaller of `1e-4` and 0.01
+    times the refinement tolerance `config["Model"]["Refinement"]["Tol"]`, but not less than
+    `1e-10`, instead of `1e-6`, for all simulation types: `1e-4` for the default refinement
+    tolerance of `1e-2` (an explicit value always applies). The flux projection solves need
+    far fewer iterations, while adaptive mesh refinement marks the same elements, up to
+    elements at the marking threshold, as long as the relative error indicator is well above
+    the tolerance. Very accurate solutions, whose indicator norm is within about an order of
+    magnitude of `"EstimatorTol"`, need a tighter tolerance (for example `1e-8` or `1e-10`):
+    the error of the projections adds about `"EstimatorTol"` to the indicator. Set
+    `"EstimatorTol": 1.0e-6` for the previous behavior. [PR TBD].
+  - The `"ParMETIS"` option of `config["Solver"]["Linear"]["ColumnOrdering"]` is now a
+    deprecated alias for `"METIS"`, since *Palace* no longer depends on ParMETIS.
+    SchemaVer 5-0-0 [PR 1130](https://github.com/awslabs/palace/pull/1130).
+  - The flux-recovery error estimator now only runs by default when adaptive mesh refinement
+    uses it (`Model.Refinement.MaxIts` > 0, except for transient simulations). Simulations
+    without AMR no longer write `error-indicators.csv` or the `Indicator` field, and skip
+    the estimator setup and the per-solve flux projections, which took a large fraction of
+    the run time and memory of some simulations. Set the new
+    `Solver.Linear.AlwaysComputeErrorEstimation` to `true` to compute the error indicator
+    without AMR. [PR 1128](https://github.com/awslabs/palace/pull/1128).
+  - The error estimator also no longer runs after the last refinement allowed by
+    `Model.Refinement.MaxIts`, whose error indicator marked nothing: the final iteration of
+    such a simulation does not write `error-indicators.csv` or the `Indicator` field, and
+    the AMR summary reports its indicator norm as not computed, followed by the last
+    computed one (of the mesh before the last refinement). Whether the final mesh satisfies
+    `Model.Refinement.Tol` is then not checked; `Solver.Linear.AlwaysComputeErrorEstimation`
+    computes the indicator of the final mesh and writes its `error-indicators.csv` as
+    before. [PR TBD].
+  - Adaptive frequency sweeps now start the HDM solve at each sampled frequency from the
+    PROM solution there (with `"InitialGuess": true`, they used to start from the solution
+    at the previous sample), and `config["Solver"]["Linear"]["InitialGuess"]` now defaults
+    to `true` for all driven simulations. This reduces the linear solver iterations of the
+    offline phase. The results of adaptive sweeps change, and so can the number and the
+    frequencies of the samples: with an `"AdaptiveTol"` tighter than the accuracy of the
+    linear solves, a sweep can now converge instead of sampling up to
+    `"AdaptiveMaxSamples"`. Set `"InitialGuess": false` to restore the previous behavior.
+    [PR 1126](https://github.com/awslabs/palace/pull/1126).
+  - Driven simulations apply the system matrix through the finest level of the multigrid
+    preconditioner and no longer assemble it separately for uniform sweeps, reducing CPU
+    time by 1–5% and peak memory by up to 6%.
+    [PR 980](https://github.com/awslabs/palace/pull/980).
+  - GMRES and FGMRES now stop when the residual norm decreased by less than 0.1% over the
+    last 100 iterations, instead of iterating to `config["Solver"]["Linear"]["MaxIts"]`: the
+    solve has then reached the accuracy attainable for the preconditioned system (for
+    example near high-Q resonances of driven simulations, or with a tolerance near the
+    round-off floor), and further iterations would not change the solution. The new
+    `config["Solver"]["Linear"]["StagnationIts"]` (`0` disables the test) and
+    `"StagnationTol"` control the test. [PR TBD].
+  - Without `config["Solver"]["Linear"]["MGSmoothOrder"]`, eigenmode simulations of solution
+    order 2 use Chebyshev smoothers of order 8 instead of 4 on the multigrid levels whose
+    shifted operator is nearly positive semi-definite, as estimated at setup by a few
+    Lanczos iterations on the Jacobi-scaled real part. Higher orders reduce the linear
+    solver iterations of nearly definite problems but not of strongly indefinite ones, which
+    keep order 4. The multigrid preconditioner keeps the raised orders unless a short GMRES
+    probe at setup (with the whole multigrid cycle from a random vector, alternating the two
+    orders and stopped once the prediction is clear, after at most 20 iterations of each, or
+    40 when the prediction is then close to the threshold) predicts that they need more than
+    25% more iterations than order 4: with Floquet periodic and absorbing boundaries, the
+    real-valued coarse solve approximates the complex operator poorly, and order 8 would
+    increase the linear solver iterations instead. [PR TBD].
+  - Without `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, the STRUMPACK coarse-level
+    solver of the multigrid preconditioner of eigenmode simulations can factorize the
+    complex-valued coarse matrix instead of its real-valued approximation (the sum of the
+    real and imaginary parts). At setup, if 10 iterations of GMRES on the coarse level
+    preconditioned by the approximation do not reduce the residual below `1e-4`, for example
+    with Floquet periodic or absorbing boundaries, the complex-valued matrix is factorized
+    too, and kept if short GMRES probes with the whole multigrid cycle, as for the Chebyshev
+    orders, predict that it needs at least 1.5 times fewer iterations than the approximation
+    at the raised and at the base Chebyshev orders: this can reduce the linear solver
+    iterations several times. The complex-valued factorization keeps about three times the
+    memory of the real-valued one and peaks higher, more so with the later factorizations of
+    nonlinear eigenvalue solves, and its setup takes several times longer. It is not tried
+    if it is estimated not to fit, with a reserve for the later allocations, in the memory
+    available to the process (the available memory of the node or the headroom of its memory
+    control group), or if that is unknown; limits enforced without control groups and shared
+    nodes are not seen. Its setup prints its estimate first and stops the simulation on a
+    failure, with a hint to set `"ComplexCoarseSolve": false`. The choice is reused for the
+    later shifts and adaptive mesh refinement iterations while the coarse level changes by
+    at most a factor of 1.5. With the complex-valued coarse solve, the auxiliary space
+    smoothers use the order `max(2 p, 4)`, as with an explicit `"ComplexCoarseSolve": true`.
+    This applies on Linux to STRUMPACK on the host with fourth-kind Chebyshev smoothers;
+    SuperLU and MUMPS coarse solvers, other simulation types and wave port mode solvers keep
+    the real-valued approximation unless `"ComplexCoarseSolve": true` is given. SchemaVer
+    6-0-0 [PR TBD].
+  - `config["Solver"]["Linear"]["GSOrthogonalization"]` now defaults to `"CGS2"` instead of
+    `"MGS"`, and with `"CGS2"` GMRES and FGMRES reorthogonalize each Krylov basis vector one
+    iteration late (classical Gram-Schmidt with delayed reorthogonalization), in the same
+    two passes over the basis as the first projection of the next vector and with one global
+    reduction per iteration, instead of the `k + 1` reductions and `2 k` passes over basis
+    vectors of MGS against `k` basis vectors. The iteration counts do not change and the
+    basis stays orthogonal to round-off, while the orthogonalization of long unrestarted
+    solves is much faster. The SLEPc eigenvalue solvers also use CGS2 by default. The CGS
+    variants of GMRES, FGMRES and the reduced-order model basis make one pass over the basis
+    for all inner products and one for all updates. [PR TBD].
+  - With adaptive mesh refinement, the eigenvalue solve of each adaptation iteration can
+    start from the eigenvectors of the previous one, transferred to the refined and
+    rebalanced mesh (new `Solver.Eigenmode.WarmStart`, default `true`), which needs fewer
+    linear solves. The warm start is skipped when the previous solve converged within its
+    first Krylov cycle, which it cannot shorten, and the first Krylov cycle of a
+    warm-started solve uses 1e-2 times the linear solver tolerance (not below 1e-12): the
+    eigenvalues of the eigenpairs converging in that cycle are set by its first linear
+    solves. [PR TBD].
+  - The tolerance of the linear solves of the SLEPc Krylov-Schur solver can be relaxed as
+    the requested eigenpairs converge (new `Solver.Eigenmode.LinearSolverRelaxation`,
+    default `0`, off), bounded by the separation of each requested eigenvalue from the
+    others and by its distance into the transformed spectrum. A solve is repeated without
+    relaxation if it leaves fewer converged eigenpairs than requested, accepted a requested
+    eigenpair whose Ritz value did not settle between restarts, or leaves one with a
+    backward error above twice the tolerance times `max(1, |λ - σ| / |σ|)` for the shift σ
+    (about the factor by which the residuals of the linear solves enter it); a relaxed
+    linear solve which converges falsely is repeated with the strict tolerance. With it,
+    `eig.csv` and the other outputs list only the `N` requested eigenpairs, instead of all
+    converged ones. [PR TBD].
+  - For problems with damping, the eigenvalue search excludes strongly damped modes with
+    quality factor below `Solver.Eigenmode.MinQ` (new, default `0.54`) and growing modes
+    with `|Q|` < 10, which could stall the convergence of the others. With
+    `Problem.Verbose` >= 1, the log reports how many Ritz values of the last iteration lie
+    outside of the search region, and how many of them converged. The default subspace
+    dimension `Solver.Eigenmode.MaxSize` of the SLEPc solver is `max(3 N, N + 28)`, instead
+    of `max(2 N, N + 15)`, for `N` ≥ 6 when `MinQ` is enabled. [PR TBD].
+  - The new `Solver.Eigenmode.IntermediateTol` and
+    `Solver.Eigenmode.IntermediateLinearSolverTol` (default: the final tolerances) set
+    looser eigenvalue and linear solver tolerances for the adaptation iterations before the
+    last one, whose eigenvectors only drive the mesh refinement. The computed eigenvalues
+    change within the solver tolerances. [PR TBD].
+  - With adaptive mesh refinement, the shift of the shift-and-invert spectral transformation
+    of each adaptation iteration after the first moves from the target into the band of the
+    requested eigenvalues of the previous one (new `Solver.Eigenmode.AdaptiveShift`, default
+    `true`), 0.45 of the way to the farthest of them, clear of them and of clusters of close
+    ones: the modes below the target, which shift-and-invert at the target makes the most
+    dominant ones, are then less dominant than every requested mode, which are found with
+    fewer restarts, and the errors of the linear solves enter the eigenvalues far from the
+    target much less amplified. The search, and the tolerance as a relative error of the
+    eigenvalues, do not change. Adaptation iterations after the first need fewer linear
+    solves (the shift stays at the target after a solve which converged within two restarts
+    there). A solve whose shift is above the middle of the target and the farthest requested
+    eigenvalue (modes entering the requested set lowered it) is repeated once with the shift
+    from the eigenvalues found, else (or with fewer converged eigenpairs than requested)
+    with the shift at the target. More converged eigenpairs beyond `N` can be reported. [PR
+    TBD].
+  - The linear solves after the first one of each eigenvalue solve can be deflated with the
+    harmonic Ritz vectors of the preconditioned operator closest to zero, from the Krylov
+    subspace of the first solve (new `Solver.Eigenmode.LinearSolverDeflation`, the number of
+    vectors, default `0`, off): the later solves use a two-level (A-DEF1) deflated
+    preconditioner, which removes the eigenvalues near zero of the multigrid-preconditioned
+    shifted operator that slow down GMRES. With `-1`, each eigenvalue solve deflates the
+    harmonic Ritz values of magnitude below 0.25 (at most 64, possibly none) if GMRES for
+    the projected operator predicts a gain at the measured cost of the deflation, solves
+    without deflation verify the gain (or stop the deflation), and while it pays the vectors
+    of the values below 0.5 and then 1, from the same first solve, are tried when the model
+    predicts more gain and kept if they pay more. The deflation basis is stored in single
+    precision on CPUs. Deflation is opt-in: it can shift the eigenvalues of modes far from
+    the shift by more than the tolerance, which their backward errors do not show. [PR TBD].
 
 #### Performance Improvements
 
@@ -77,6 +367,345 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
+  - The Krylov-Schur eigenvalue solver of eigenmode simulations tests convergence after
+    every step of the Arnoldi factorization of a cycle, instead of only after the full
+    subspace of `Solver.Eigenmode.MaxSize` vectors, and ends each cycle after the first as
+    soon as the requested eigenpairs converge and their Ritz values have settled to the
+    tolerance since the previous check, for subspaces of up to 128 vectors (SLEPc patch
+    `extern/patch/slepc/patch_krylovschur_check_interval.diff`,
+    `EPSKrylovSchurSetCheckInterval`; builds against an unpatched SLEPc keep the
+    end-of-cycle test). The last cycle of an eigenvalue solve of several cycles, as those of
+    the adaptation iterations, extended its subspace to `MaxSize` vectors, one linear solve
+    each, however early its eigenpairs converged; they now meet the same tolerance with
+    fewer linear solves. A check costs a dense eigensolve of the small projected problem,
+    which outweighs the linear solves it saves with larger subspaces: they keep the
+    end-of-cycle test. A check does not end the first cycle, nor a cycle while two of the
+    converged eigenvalues are within a relative distance of 1e-6 of each other: the other
+    copies of a multiple eigenvalue (as with symmetries) enter the Krylov subspace only
+    through rounding errors, after more steps, so such cycles keep the end-of-cycle test.
+    The wave port mode solvers keep the end-of-cycle test. The problem setup guide describes
+    degenerate eigenvalues and the PETSc option `-eps_krylovschur_check_interval 0`, which
+    keeps the end-of-cycle test. [PR TBD].
+  - The HDM solves of adaptive frequency sweeps start from zero instead of the PROM solution
+    when the true residual of the PROM solution is at least half the norm of the right-hand
+    side, the bound of the true residual check of GMRES: on multiscale models with many
+    lumped ports, such initial guesses have residuals dominated by stiff rows which the
+    preconditioned residual does not see, so that the solve from the guess fails the check
+    and is solved again from zero. The check costs two inner products; the solves from the
+    other PROM solutions are unchanged. [PR TBD].
+  - The serial preprocessing of large meshes on the processes holding the serial mesh is
+    faster, for the same preprocessed mesh: Gmsh 2.2 meshes (ASCII or binary, first-order
+    elements, no periodicity) are read by a memory-mapped parser instead of MFEM's reader,
+    the first-order nodes of a linear mesh are added once its topology is final, a mesh read
+    without nodes is finalized once, with the refinement marking, the interior boundary
+    cracking searches the element connectivity through a per-element array of face
+    neighbors, and the root process extracts and writes the parts of the mesh distribution
+    with one thread per process of its node, while the other processes wait without
+    spinning. Added an MFEM patch with hash-indexed `DSTable` and `STable3D` and the
+    element-to-element table built by counting, for the edge, face and element tables of
+    meshes with tens of millions of elements. The environment variable `PALACE_GMSH_FAST=0`
+    reads every Gmsh mesh with MFEM, and `PALACE_SETUP_THREADS` sets the number of threads
+    of the root process for the mesh distribution. [PR TBD].
+  - The serial mesh preprocessing of the processes holding the serial mesh (the root, or one
+    process per node) uses one thread per process of the node for the connectivity search
+    and the edge marking of the interior boundary cracking, and for the edge lengths and the
+    marking of the tetrahedra for refinement, while the other processes wait without
+    spinning. The preprocessed mesh is unchanged. [PR TBD].
+  - Nonconforming adaptive mesh refinement no longer builds the whole serial mesh on every
+    process: for a conforming input mesh, one process per node sends the root elements of
+    the nonconforming mesh, from which every process builds the parallel mesh, and the
+    curved nodes of its own elements; for a nonconforming input mesh (a restart from an
+    adapted mesh), the refinement tree is replayed in parallel and the mesh is rebalanced to
+    the serial partitioning. Added an MFEM patch which gives ghost indices only to the edges
+    and faces of the ghost elements of nonconforming meshes. This lowers the memory of the
+    mesh distribution and of restarts from large adapted meshes several times, for the same
+    parallel mesh. [PR TBD].
+  - With glibc, the memory freed after the mesh distribution and before each adaptive solve
+    is returned to the system (`malloc_trim`), which lowers the resident memory of the
+    processes. [PR TBD].
+  - Nonconforming meshes are now rebalanced with a PT-Scotch partition of the element
+    adjacency graph, instead of MFEM's split of the refinement tree leaves into equal
+    chunks, which fragmented the subdomains over the AMR iterations. Processes have fewer
+    neighbors, more of them on the same node, and exchange less data after a rebalance.
+    [PR 1130](https://github.com/awslabs/palace/pull/1130).
+  - Adapted meshes saved with `config["Model"]["Refinement"]["SaveAdaptMesh"]` are
+    compressed with the fastest zlib level, for slightly larger files, and written in a
+    background thread when a CPU of the root process's node is idle. [PR TBD].
+  - The root process writes an adapted nonconforming simplex mesh with linear nodes from the
+    gathered refinement tree, instead of building the serial parallel mesh and its nodal
+    space, for the same file. With nonconforming adaptive mesh refinement, the processes
+    which read the serial mesh, one per node, read it at the same time instead of after the
+    root. [PR TBD].
+  - Faster writing of the adapted mesh saved with
+    `config["Model"]["Refinement"]["SaveAdaptMesh"]` when no CPU of the root process's node
+    is idle, as with one MPI process per core: threads on the CPUs of the other processes of
+    the node, which wait without spinning meanwhile, format and compress the mesh file in
+    independent chunks that form one gzip stream, and the gathering of the nonconforming
+    mesh on the root process no longer prunes it. The decompressed file is unchanged. [PR
+    TBD].
+  - Added a STRUMPACK patch which lowers the memory of each process of the distributed
+    sparse direct solver: the fill-reducing permutation is kept once per node in an MPI-3
+    shared memory window, with the sequential and the parallel PT-Scotch orderings, and no
+    arrays of the global matrix dimension are kept on every process. This lowers the memory
+    per process of large coarse solves at high process counts; the shared memory windows
+    need a `/dev/shm` large enough for the permutation, and the environment variable
+    `STRUMPACK_SHARED_PERM=0` keeps it on every process instead (`STRUMPACK_MEMORY_VERIFY`
+    checks the map of the rows to the fronts). [PR TBD].
+  - Added an MFEM patch with which the parallel conforming interpolation of a finite element
+    space on a nonconforming mesh stores rows only for the ghost DOFs it references, instead
+    of for every ghost DOF of the coarse mesh replicated on every process. This removes a
+    large transient of the memory of every finite element space build or update on adapted
+    meshes. [PR TBD].
+  - On CPUs, every volume and boundary operator assembles its quadrature data, and data
+    which is constant on each element up to the quadrature weight (affine elements with
+    elementwise constant coefficients) is stored once per element instead of once per
+    quadrature point, which lowers the memory of the partially assembled operators. [PR
+    TBD].
+  - Eigenmode simulations release the eigenvalue solver, the linear solver, the
+    preconditioner, the divergence-free projection and the system matrices before
+    postprocessing and error estimation, and construct the error estimator after the
+    eigenvalue solve, so that postprocessing and error estimation no longer add to the peak
+    memory of the solve. [PR TBD].
+  - Complex operators also apply the libCEED operators of their real or imaginary part
+    without a partner in the other part, and the H1 diffusion operators, in one packed pass
+    for both parts, so that the fine and auxiliary space operators of the multigrid
+    preconditioners of driven and eigenmode simulations use the packed fast path. [PR TBD].
+  - On CPUs, small libCEED operators on simplices (single-component H1 and boundary
+    operators, and real square operators) are applied through dense element matrices instead
+    of partial assembly when this moves fewer bytes. The element matrices are assembled on a
+    copy of the operator, and again after in-place updates of its inputs. [PR TBD].
+  - On affine simplices with elementwise constant coefficients, H(curl) and H(div) operators
+    use an exact quadrature rule with fewer points, the dimension of the polynomial space,
+    with the basis represented in an orthonormal polynomial basis, and the geometry factors
+    of affine elements are computed once per element. The exactness is verified at setup;
+    otherwise the default rule is used. [PR TBD].
+  - Products with HypreParMatrix prolongations on the host apply their identity rows as
+    copies, their transpose through a gathered copy, and the real and imaginary parts of
+    complex vectors in one pass with one halo exchange, with the same results as hypre, and
+    complex operators apply the prolongation of conforming spaces to their real and
+    imaginary parts with one halo exchange. [PR TBD].
+  - The Chebyshev smoothers of the geometric multigrid preconditioner update the iterate in
+    the same pass over memory as the next search direction. Results are unchanged. [PR TBD].
+  - The element-assembled terms of CPU operators are applied by a kernel which processes
+    four rows of the element matrices at a time, and their element matrices are assembled
+    over chunks of elements, which bounds the temporary memory of the assembly. [PR TBD].
+  - On CPUs, the Chebyshev smoothers of the geometric multigrid preconditioner of frequency
+    domain and transient simulations apply the operator of each multigrid level to their
+    search directions through single-precision copies of its element matrices, with the
+    orientations of the Nédélec restrictions folded in and the real and imaginary parts
+    applied in one pass, and the auxiliary space operators of the distributive relaxation
+    smoother store their element matrices in single precision. The arithmetic stays in
+    double precision, and the residuals of the smoothed iterates, the coarsest level and the
+    system matrix are unchanged, so the preconditioner only changes at the level of
+    single-precision rounding. Imaginary volume terms below that level relative to the real
+    part, for example a small dielectric loss tangent, are left out of these applications.
+    With unchanged linear solver iterations, this shortens the multigrid V-cycle where the
+    smoothers are bound by their operator applications (orders 3 and 4). The element
+    matrices take additional memory and setup time (about 5 kB and 0.2 ms per tetrahedron at
+    order 3, 16 kB and 0.5 ms at order 4). Setting the new
+    `config["Solver"]["Linear"]["MGSmoothSinglePrecision"]` (default `true`) to `false`
+    disables it. [PR TBD].
+  - With GMRES and FGMRES, the distributive relaxation smoother of the geometric multigrid
+    preconditioner no longer computes the residual of its iterate between the Chebyshev
+    smoother of the primary space and the auxiliary space correction: the auxiliary space
+    correction of the pre-smoother uses the residual before the last Chebyshev step, and the
+    first Chebyshev step of the post-smoother the residual before the auxiliary space
+    correction. This saves two of the four double-precision operator applications per
+    multigrid level and V-cycle, which makes the V-cycle faster (also without
+    single-precision smoothing), while the linear solver iterations change little. As the
+    preconditioner is no longer symmetric, CG and MINRES instead update these residuals
+    through the single-precision operator applications of the smoothers, for the same
+    smoother up to rounding. Since single-precision rounding of the curl-curl element
+    matrices does not preserve their null space, each multigrid level measures the relative
+    error of the single-precision operator on the range of the discrete gradient when its
+    operators are set, and keeps exact residuals where it exceeds 0.1, as on meshes with
+    elements much smaller than the wavelength. Driven and transient simulations also measure
+    the error on the auxiliary space, scaled by the inverse diagonal of its operator, which
+    large terms of the operator on gradients (such as the inductance of impedance
+    boundaries, or lumped ports) do not hide: where it exceeds 100, as at low frequencies,
+    the residual projected on the auxiliary space is computed exactly. The errors and the
+    residuals used are reported per level in the `Chebyshev` entries of the linear solver in
+    `palace.json`. The new `config["Solver"]["Linear"]["MGAuxiliaryResidual"]` (`"Lagged"`,
+    `"Updated"`, or `"Exact"` for the previous behavior; `"Default"` picks by Krylov solver)
+    selects them. [PR TBD].
+  - The Chebyshev and Jacobi smoothers use the exact diagonal of the partially assembled
+    operators of all multigrid levels. Previously, on adapted (nonconforming) meshes, the
+    diagonal was approximated with the absolute values of the constraint weights of the
+    hanging dofs, which overweights their masters and leaves out the couplings between the
+    constrained dofs of each element, and for Nédélec spaces of order p > 1 on tetrahedra
+    and prisms, libCEED approximated the diagonal of the face dofs with the absolute values
+    of their orientation transforms. The exact diagonal is assembled from the libCEED
+    assembled QFunction, forming only the element matrix entries it needs, with the
+    communication of the transpose of the prolongation. This reduces the number of linear
+    solver iterations of eigenmode simulations on adapted meshes, most at orders 3 and 4,
+    and slightly on conforming meshes, for a diagonal assembly of a small fraction of the
+    solve time. [PR TBD].
+  - The discrete interpolators of the multigrid smoothers and the transfer operators between
+    multigrid levels apply the restriction to the true dofs of their range (a selection of
+    local dofs) as copies of contiguous runs instead of a sparse matrix product, with the
+    same results. On adapted meshes, the restriction and its transpose were a large part of
+    the local work of these operators. [PR TBD].
+  - Square operators with eliminated essential boundary conditions apply the prolongation of
+    their space to the input with zeros at the essential true dofs without forming a copy of
+    it, and their `AddMult` adds the restriction of the result to the output directly
+    instead of through a temporary vector, with the same results. On adapted meshes, the
+    products with the prolongation and its transpose, with these copies, took a large part
+    of the operator applications of the multigrid preconditioner. [PR TBD].
+  - The prolongation of a nonconforming space stores its constraint coefficients as 16-bit
+    indices into a table of their distinct values (at most a few thousand on adapted meshes)
+    instead of one double per entry, which reduces the memory streamed by the hanging-dof
+    rows of its products and of the products with its transpose, with the same results. [PR
+    TBD].
+  - Operators whose local action consists of element matrices, such as the single-precision
+    approximations applied to the search directions of the Chebyshev smoothers and the
+    element-assembled auxiliary-space operators of the distributive relaxation smoothers,
+    gather the element coefficients directly from the true dofs and from the values of the
+    other local dofs of the prolongation (hanging, ghost and essential dofs), and add their
+    results the same way, instead of forming local vectors around the element products, with
+    the same results. With the three previous changes, the multigrid preconditioner with
+    Nédélec elements of order 3 and 4 is substantially faster on adapted meshes, with the
+    same results. [PR TBD].
+  - Added libCEED patches for faster partially assembled operators on CPUs: the blocked CPU
+    backends, among them the default `/cpu/self/xsmm/blocked`, apply operators with at least
+    512 elements to blocks of 32 elements instead of 8 (smaller operators keep blocks of 8),
+    the LIBXSMM backend keeps the kernels of each basis contraction instead of looking them
+    up at every call, the bases of simplices contract all components of their vector values
+    at the quadrature points (gradients, curls, H(curl) and H(div) interpolation) in one
+    matrix product, and the restrictions of H(curl) and H(div) spaces skip the terms of
+    their orientation transforms that are zero on every element. On Graviton4 with one MPI
+    process per core, partially assembled operators on tetrahedra apply 10% to 20% faster at
+    orders 3 and 4 and 25% to 35% faster at order 2. Results change at round-off level: the
+    larger element blocks change the order in which the contributions of the elements
+    sharing a degree of freedom are summed. [PR TBD].
+  - Frequency sweeps (uniform and adaptive) no longer assemble the exact diagonals of the
+    multigrid levels of the preconditioner at every frequency: from the second frequency on,
+    they are combined from the diagonals of the stiffness, damping and mass terms, assembled
+    once, as the diagonal is linear in the coefficients of the terms. The diagonals agree to
+    round-off. Problems with frequency-dependent boundary conditions or Floquet periodicity
+    assemble them at every frequency, as before. [PR TBD].
+  - With single-precision multigrid smoothing
+    (`config["Solver"]["Linear"]["MGSmoothSinglePrecision"]`, the default), frequency sweeps
+    likewise form the single-precision element matrices of the smoothers of the levels above
+    the coarsest from those of the stiffness, damping and mass terms, assembled once with
+    their diagonals, instead of assembling them at every frequency. The element matrices
+    then carry the single-precision rounding of the terms instead of that of their sum,
+    which changes the iterates of the linear solver at the level of that rounding. The
+    element matrices of the terms take about twice the memory of those of the smoothers. [PR
+    TBD].
+  - Faster STRUMPACK solve phase, which is applied once per Krylov iteration when STRUMPACK
+    is the coarse or the only solver: the elimination tree is mapped to processes by factor
+    memory instead of factorization flops, which balances the solve; added STRUMPACK patches
+    that store the inverses of the separator blocks of the distributed fronts so their
+    triangular solves become matrix products (selective inversion, only for blocks with a
+    1-norm condition number below 9e10: the nearly singular blocks of driven problems at low
+    frequency keep the backward stable triangular solves), stream the local factors once for
+    a few right-hand sides, and use a PBLAS block size of 128 in the superbuild. Results
+    change at round-off level. The environment variables `STRUMPACK_SI_MAX_COND` and
+    `STRUMPACK_SI_VERBOSE` set the condition number limit of the inversion and report its
+    decisions. [PR TBD].
+  - Added `config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"]` for the selective
+    inversion above, which adds to the time of each factorization and saves time in each
+    solve: by default it is used for eigenmode, boundary mode, and transient simulations,
+    whose factorizations serve many solves, and not for driven, electrostatic, and
+    magnetostatic simulations, where a factorization serves the Krylov solve of one
+    frequency or of the sources (driven sweeps were slightly faster without it, also when
+    the coarse factorization is reused across frequencies). [PR TBD].
+  - Added a STRUMPACK patch that balances its solve phase further: the factor memory mapping
+    of the elimination tree also counts a fixed cost per front, so that a subtree of very
+    many small fronts (for example a nearly disconnected region of the mesh) is not left to
+    one or a few processes, and where a few processes share a subtree they are split between
+    the two child subtrees so that the largest work per process is minimal, instead of by
+    rounding the proportional share. The solve also no longer traverses the local subtrees
+    to size its workspace in every solve. Results change at round-off level. The environment
+    variables `STRUMPACK_PM_FRONT_COST`, `STRUMPACK_PM_DP` and `STRUMPACK_PM_MINMAX` tune
+    the mapping. [PR TBD].
+  - STRUMPACK (`"Type": "STRUMPACK"`) built with PT-Scotch now computes its default column
+    ordering (the default `config["Solver"]["Linear"]["ColumnOrdering"]`) in parallel,
+    instead of with METIS on a single process, whose time grows with the size of the matrix
+    while the other processes wait and which gathers the whole graph on that process.
+    PT-Scotch computes the distributed separators on at most 256 processes (the environment
+    variable `STRUMPACK_PTSCOTCH_NPROCS` sets their number) and METIS orders the subgraph of
+    each process. The fill-in matches that of METIS, and ordering a coarse problem with tens
+    of millions of unknowns on thousands of processes takes seconds instead of minutes, once
+    per factorization (each adaptive mesh refinement iteration). The parallel ordering is
+    used from 50000 rows on (see Interface Changes): small matrices on few processes, such
+    as those of the wave port mode problems, which are factorized at each exact port solve,
+    are ordered faster by METIS. [PR TBD].
+  - Added a hypre patch, a prototype for
+    [hypre-space/hypre#1654](https://github.com/hypre-space/hypre/issues/1654), with which
+    AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
+    processes during the solve and runs the additive Pi-space corrections concurrently.
+    These levels have few rows per process and are latency bound at high process counts. The
+    AMS preconditioner also flags a zero initial guess as zero. Results agree up to the
+    summation order. [PR 1154](https://github.com/awslabs/palace/pull/1154).
+  - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the multigrid
+    preconditioner of the divergence-free projection, instead of one. Its V-cycle is latency
+    bound at high process counts, and the shorter hierarchy makes it faster.
+    [PR 1149](https://github.com/awslabs/palace/pull/1149).
+  - Added SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#250](https://github.com/xiaoyeli/superlu_dist/pull/250),
+    [xiaoyeli/superlu_dist#251](https://github.com/xiaoyeli/superlu_dist/pull/251),
+    [xiaoyeli/superlu_dist#252](https://github.com/xiaoyeli/superlu_dist/pull/252) and
+    [xiaoyeli/superlu_dist#253](https://github.com/xiaoyeli/superlu_dist/pull/253), which
+    lower the communication cost of SuperLU_DIST as the coarse solver at high process
+    counts: point-to-point exchanges of only the nonempty messages instead of dense
+    all-to-all collectives in the symbolic factorization and in the final permutation of the
+    solution, a static schedule reused by refactorizations with the same sparsity pattern,
+    cached row indices for the redistributions of the right-hand side, which on several
+    nodes go through one process per node, the matrix values for MC64 gathered on one
+    process only, and fewer barriers in the triangular solves. Results are unchanged.
+    [PR 1162](https://github.com/awslabs/palace/pull/1162).
+  - Solved the divergence-free projection of the result of each shift-and-invert linear
+    solve of the eigenmode solver to a relative tolerance of 10⁻³ (or
+    `config["Solver"]["Linear"]["DivFreeTol"]`, if larger), as the second projection of the
+    linearized quadratic problem, unless the target is far below the eigenfrequencies (see
+    the bug fix for spurious eigenpairs at such targets). For a projected basis the
+    right-hand side of the solve is divergence-free, so the divergence of its result only
+    comes from the error of the linear solve, which the projection previously reduced to
+    machine precision: on fine geometric features this took several times the iterations of
+    the second projection. `"DivFreeTol"` remains the tolerance for the starting vectors.
+    [PR TBD].
+  - Added an entity-block Jacobi preconditioner for the flux recovery of the error
+    estimator: the true degrees of freedom of each edge, face, and element interior form a
+    dense block of the mass matrix, which corrects the near linear dependence of the
+    high-order basis functions of an entity on anisotropic elements. It replaces Jacobi in
+    CPU builds without OpenMP, with `config["Solver"]["Linear"]["EstimatorMG"]` false and a
+    partially assembled mass matrix, for H(div) and H(curl) recovery spaces of order
+    (`config["Solver"]["Order"]`) two and three on meshes made of tetrahedra, prisms, or
+    both, or of triangles, and of order four on meshes made only of tetrahedra or only of
+    triangles. The conjugate gradient iterations of the recovery drop by a factor of 1.4
+    to 2.9 on isotropic meshes and of 2 to 5.6 on strongly anisotropic tetrahedra, also on
+    nonconforming meshes. They stop on the residual norm of Jacobi preconditioning, so that
+    the recovered flux at a given `EstimatorTol` is about as accurate as with Jacobi: its
+    error in the mass norm is within about a factor of two of that with Jacobi. The other
+    cases (GPUs, OpenMP, hexahedra, pyramids, quadrilaterals, other orders, H1 and L2
+    recovery spaces) keep Jacobi. [PR TBD].
+  - Applied the entity-block Jacobi preconditioner of the error estimator's flux recovery
+    through the upper triangles of its symmetric inverse blocks, which halves the memory
+    traffic of its applications: on fourth-order tetrahedra, the preconditioner of a complex
+    recovery is applied 1.3 to 1.5 times faster, with the same iterations. The
+    preconditioner is the same, up to rounding. [PR TBD].
+  - Started each flux recovery of the error estimator after the first one on a mesh (for the
+    next frequency sample, terminal or mode) from the closest combination of the previous
+    recovered fluxes in the mass norm, so that the initial error is never larger than from
+    zero: the last 20 fluxes in driven simulations, whose span approximates the new flux as
+    the frequency samples of an adaptive sweep span the solution, and the last one
+    otherwise. This reduces the conjugate gradient iterations of the recovery in frequency
+    sweeps, with the same stopping criterion. [PR TBD].
+  - Adaptive frequency sweeps can skip, in the search for the largest error of the
+    reduced-order model, its resonances narrower than the new
+    `config["Solver"]["Driven"]["AdaptivePoleExclusion"]` (relative half-width, default `0`,
+    off; for example `1e-4`), once their poles have converged to `"AdaptiveTol"` times this
+    width. Within a few linewidths of a weakly coupled mode with a quality factor of `1e6`
+    to `1e11`, the error stays of order one whatever the number of samples, while the error
+    indicator is largest at every resolved pole: sweeps kept sampling such modes, and each
+    of these samples restarted the count of `"AdaptiveConvergenceMemory"`, which made the
+    number of samples erratic. With the exclusion, sweeps over bands with such modes need
+    fewer samples, for the same S-parameters. The excluded resonances are listed in the log,
+    and frequencies of the sweep within them are still searched. With adaptive mesh
+    refinement, the excluded samples are also missing from the error indicator, which then
+    changes the refinement path and can end on a coarser mesh, so the exclusion is opt-in:
+    it suits adaptive sweeps without refinement. [PR TBD].
 
 #### Bug Fixes
 
@@ -122,13 +751,108 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tables (rounded to their printed precision) were compared exactly with the recomputed
     ones.
     [PR 1088](https://github.com/awslabs/palace/pull/1088).
+  - Adaptive frequency sweeps no longer abort with
+    `Linearly dependent vector added to PROM basis` when the real or imaginary part of an
+    HDM solution started from the PROM solution is already in the span of the reduced basis
+    to round-off, for example the small imaginary part of a nearly lossless problem: only
+    the independent part is added to the basis, with a warning. A sample which adds no
+    direction still aborts. [PR TBD].
+  - Adaptive frequency sweeps no longer stop with a false convergence of GMRES at
+    frequencies close to a resonance when the solution is accurate: the left-preconditioned
+    residual can weigh the components of the residual by many orders of magnitude, and an
+    initial guess such as the PROM solution of an HDM sample leaves residual components
+    which the preconditioned residual does not see. A solve from a nonzero initial guess
+    whose true residual check fails is now solved again from zero. If the check still fails,
+    the solution is continued with right preconditioning, which minimizes the true residual:
+    if the continuation satisfies the check within a relative distance of 10⁻⁴ of the
+    solution, the solution is kept, else (an unstable preconditioner moves it by about its
+    norm) the false convergence still stops the simulation. Solves which pass the check are
+    unchanged. [PR TBD].
+  - GMRES with left preconditioning (the default) and a multigrid preconditioner (geometric
+    multigrid, AMS or BoomerAMG) now checks the true residual of a solve which converged on
+    the preconditioned residual: the simulation stops with an error if the true residual is
+    not reduced below 0.5 (or 10⁷ times the tolerance) of the norm of the right-hand side,
+    instead of continuing with an invalid solution (false convergence, as with an unstable
+    preconditioner). The check costs one operator application per linear solve. [PR TBD].
+  - Fixed wrong results of simulations on nonconforming meshes (adaptive mesh refinement, or
+    restarts from an adapted mesh) of order 4 and above on tetrahedra (3 and above on
+    hexahedra, 2 and above for the Nédélec space), when a face shared by two processes has a
+    rotated relative orientation, which only meshes with inverted or tangled elements have:
+    the conforming interpolation of its DOFs was permuted on one of the processes. Whether a
+    mesh partitioning cuts such a face is a matter of chance; in eigenmode simulations,
+    GMRES then reported convergence in a few iterations and the eigenpairs were invalid
+    (with large backward errors). An MFEM patch fixes it. [PR TBD].
+  - The SLEPc Krylov-Schur eigenvalue solver (linear problems, and quadratic ones with
+    `config["Solver"]["Eigenmode"]["PEPLinear"]`) no longer accepts an eigenpair whose Ritz
+    value just appeared: the error estimate cannot see the error of the linear solves, which
+    could leave eigenvalues several times `config["Solver"]["Eigenmode"]["Tol"]` off, for
+    example after the Ritz values outside of the `"MinQ"` search region were purged, or in
+    warm-started adaptation iterations which converged in their first Krylov cycle. An
+    eigenpair now converges only once the nearest Ritz value of the previous restart is
+    within a relative distance of `Tol`, or of up to 10⁻³ and a tenth of the distance to the
+    second nearest one, except in the first Krylov cycle of a solve without warm start; one
+    which does not settle within two more restarts converges on its error estimate. This
+    takes up to one more restart per solve, and fewer eigenpairs beyond the requested `N`
+    converge, so `eig.csv` can list fewer of them (the requested ones are unaffected). [PR
+    TBD].
+  - With `config["Solver"]["Linear"]["GSOrthogonalization"]` `"CGS2"` (the default), the
+    SLEPc eigenvalue solvers flagged a breakdown of the Krylov basis whenever the second
+    Gram-Schmidt pass reduced the norm of a new basis vector at all, instead of below 1/√2
+    of its norm after the first pass. Near an invariant subspace, as after a warm start of
+    an adaptive mesh refinement iteration, the solve then stopped with `DIVERGED_BREAKDOWN`
+    and the simulation with fewer converged eigenpairs than requested. [PR TBD].
+  - Fixed spurious eigenpairs, converged with small backward errors, and gradient components
+    in the eigenvectors of eigenmode simulations with a target far below the
+    eigenfrequencies (for example, a target of 0.5 GHz for modes at 15 GHz without damping,
+    or of 0.015 GHz for modes at 12 to 16 GHz with damping). Gradients are eigenvectors of
+    the shift-and-invert operator which it amplifies r = |λ - σ| / |σ| times more than an
+    eigenvector with eigenvalue λ, for the shift σ, and the divergence-free projections of
+    the linear solve results to a relative tolerance τ leave about τ of their gradient
+    components, which grow in the Krylov basis as τ r approaches 1. These projections used τ
+    = 10⁻³ (the second one of the quadratic problem since PR 1138, all of them since the
+    change above). The eigenvalue solver now keeps τ r <= 0.1 for the requested eigenvalues,
+    checked after each restart for the wanted Ritz values and before the solve for the
+    eigenvalues of the previous adaptation iteration: otherwise the solve stops at the end
+    of its Krylov cycle, without further linear solves, and is repeated with τ = 0.01 / r,
+    also below `config["Solver"]["Linear"]["DivFreeTol"]`, at most twice, and a warning
+    follows a solve whose last repeat still has τ r > 0.1. With damping, r is about the
+    ratio of the eigenfrequencies to the target, without damping its square, so τ = 10⁻³ is
+    kept for targets down to about 100 times below the eigenfrequencies with damping and 10
+    times without. [PR TBD].
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
+    the solves after the matrix values change when STRUMPACK compression is enabled
+    (`Solver.Linear.STRUMPACKCompressionType` other than `"None"`) and the reordering is
+    reused (`Solver.Linear.ReorderingReuse`, the default). With the STRUMPACK patch of
+    [PR 1143](https://github.com/awslabs/palace/pull/1143), these solves could abort with an
+    MPI error at high process counts, or give a poor preconditioner which needs more linear
+    solver iterations. [PR 1164](https://github.com/awslabs/palace/pull/1164).
 
 #### Build system
 
-  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
-    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
-    the only sparse direct solver failed.
+  - The superbuild now always builds the dependencies which *Palace* links directly.
+    Previously, configuring with cuDSS as the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
+  - *Palace* no longer depends on ParMETIS, and depends on PT-Scotch instead. The superbuild
+    builds PT-Scotch 7.0.18, and builds SuperLU_DIST, STRUMPACK, and MUMPS with METIS alone.
+    SuperLU_DIST is patched to keep its METIS column ordering, also its default ordering,
+    without ParMETIS. From version 0.20, the Spack package depends on `scotch` instead of
+    `parmetis`, and leaves the use of ParMETIS by the sparse direct solvers to their own
+    variants. *Palace* links ParMETIS only for sparse direct solvers built with it, given
+    `PARMETIS_DIR`. The containers are built without ParMETIS.
+    [PR 1130](https://github.com/awslabs/palace/pull/1130).
+  - The superbuild patches the PT-Scotch ordering of STRUMPACK (above), and from
+    version 0.20 the Spack package depends on `strumpack+scotch` with the same
+    patch. *Palace* no longer requests `MPI_THREAD_MULTIPLE` for STRUMPACK with PT-Scotch,
+    which does not need it, only for STRUMPACK with SLATE. Unless `SCOTCH_PTHREAD_NUMBER` or
+    `SCOTCH_DETERMINISTIC` are set, *Palace* sets them so that the orderings run on one
+    thread per process and are reproducible, also with a Scotch built with threads. [PR
+    TBD].
+  - The Spack package of `palace@develop` applies the dependency patches of the superbuild,
+    in its order, and requires the versions of the dependencies which these patches are made
+    against where they are not upstream, so that a later version cannot build without them:
+    hypre 3.2.0 or 3.2.1, MFEM 4.10.0, libCEED 1.0.1, which a local libceed package adds,
+    and SLEPc 3.26.0. [PR TBD].
 
 ## [0.19.0] - 2026-11-02
 

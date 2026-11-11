@@ -7,6 +7,7 @@
 #include <complex>
 #include <cstddef>
 #include <memory>
+#include <type_traits>
 #include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -56,6 +57,13 @@ inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V,
 namespace internal
 {
 
+// Whether the fused kernels LocalMultiDot and MultiSubtract apply to these types.
+template <typename VecType, typename ScalarType>
+inline constexpr bool fused_gs_v =
+    (std::is_same_v<VecType, Vector> && std::is_same_v<ScalarType, double>) ||
+    (std::is_same_v<VecType, ComplexVector> &&
+     std::is_same_v<ScalarType, std::complex<double>>);
+
 template <typename VecType, typename ScalarType, typename Project>
 inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, std::size_t m, bool refine,
@@ -66,12 +74,23 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
   {
     return;
   }
+  auto subtract = [&V, m, &w](const ScalarType *h)
+  {
+    if constexpr (fused_gs_v<VecType, ScalarType>)
+    {
+      MultiSubtract(V, static_cast<int>(m), w, h, 1.0);
+    }
+    else
+    {
+      for (std::size_t j = 0; j < m; j++)
+      {
+        w.Add(-h[j], V[j]);
+      }
+    }
+  };
   project(w, H);
   Mpi::GlobalSum(m, H, comm);
-  for (std::size_t j = 0; j < m; j++)
-  {
-    w.Add(-H[j], V[j]);
-  }
+  subtract(H);
   if (refine)
   {
     std::vector<ScalarType> dH(m);
@@ -80,8 +99,8 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
     for (std::size_t j = 0; j < m; j++)
     {
       H[j] += dH[j];
-      w.Add(-dH[j], V[j]);
     }
+    subtract(dH.data());
   }
 }
 
@@ -93,14 +112,23 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
                                    ScalarType *H, std::size_t m, bool refine = false,
                                    const InnerProductW &dot_op = {})
 {
-  internal::OrthogonalizeColumnCGS(comm, V, w, H, m, refine,
-                                   [&V, m, &dot_op](const VecType &x, ScalarType *h)
-                                   {
-                                     for (std::size_t j = 0; j < m; j++)
-                                     {
-                                       h[j] = dot_op(x, V[j]);  // Local inner product
-                                     }
-                                   });
+  internal::OrthogonalizeColumnCGS(
+      comm, V, w, H, m, refine,
+      [&V, m, &dot_op](const VecType &x, ScalarType *h)
+      {
+        if constexpr (std::is_same_v<InnerProductW, IdentityInnerProduct> &&
+                      internal::fused_gs_v<VecType, ScalarType>)
+        {
+          LocalMultiDot(V, static_cast<int>(m), x, nullptr, h, nullptr);
+        }
+        else
+        {
+          for (std::size_t j = 0; j < m; j++)
+          {
+            h[j] = dot_op(x, V[j]);  // Local inner product
+          }
+        }
+      });
 }
 
 // Operator-weighted CGS needs only one application of W per pass because w is unchanged
@@ -112,17 +140,25 @@ inline void OrthogonalizeColumnWeightedCGS(MPI_Comm comm, const std::vector<VecT
                                            const WeightOperator &W, VecType &work,
                                            bool refine = false)
 {
-  internal::OrthogonalizeColumnCGS(comm, V, w, H, m, refine,
-                                   [&V, m, &W, &work](const VecType &x, ScalarType *h)
-                                   {
-                                     work.SetSize(x.Size());
-                                     work.UseDevice(x.UseDevice());
-                                     W.Mult(x, work);
-                                     for (std::size_t j = 0; j < m; j++)
-                                     {
-                                       h[j] = LocalDot(work, V[j]);
-                                     }
-                                   });
+  internal::OrthogonalizeColumnCGS(
+      comm, V, w, H, m, refine,
+      [&V, m, &W, &work](const VecType &x, ScalarType *h)
+      {
+        work.SetSize(x.Size());
+        work.UseDevice(x.UseDevice());
+        W.Mult(x, work);
+        if constexpr (internal::fused_gs_v<VecType, ScalarType>)
+        {
+          LocalMultiDot(V, static_cast<int>(m), work, nullptr, h, nullptr);
+        }
+        else
+        {
+          for (std::size_t j = 0; j < m; j++)
+          {
+            h[j] = LocalDot(work, V[j]);
+          }
+        }
+      });
 }
 
 template <typename VecType, typename ScalarType,

@@ -430,7 +430,37 @@ The `BlockTimer` constructor accepts a `count` parameter (default `true`). When 
 exclude certain sections of code from a `BlockTimer`.
 
 Per-phase memory data is also saved to `palace.json` under the `PeakMemoryGrowthMegabytes`
-and `PeakNodeMemoryGrowthMegabytes` keys, alongside the existing `ElapsedTime` data.
+and `PeakNodeMemoryGrowthMegabytes` keys, alongside the `ElapsedTime` data.
+
+### Performance report in `palace.json`
+
+The report (`SchemaVersion` 2, implemented in `utils/perfstats.hpp`) is reduced across MPI
+processes once per report, in `BlockTimer::Finalize`, with no other synchronization. For
+adaptive mesh refinement, each `iterationX/palace.json` describes that iteration only:
+`BlockTimer::StartIteration` restarts all times, counts and tallies and resets the peak RSS
+(through `/proc/self/clear_refs` where available, otherwise the peak is estimated from the
+current RSS at the iteration boundaries). The `Cumulative` block holds sums over iterations
+for times and counts and the maximum for peak memory. The log's "Elapsed Time Report" table
+holds the totals over iterations so far, while the "Peak Memory" table is per iteration.
+
+  - `ElapsedTime`: per exclusive timer row (keys are `Timer::names`), `Durations` (average
+    over processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
+    measurements which do not interrupt the timer rows and may overlap each other; each
+    names the row it is measured within as `Parent`, and must never be added to the rows.
+    Phase tallies (`perf::RegisterPhaseTally`), such as `Halo/P` or `Reduce`, are also
+    split by the active row into `<name>/<ROW>`.
+  - Counters (`perf::RegisterCounter`) are written at their path, for example
+    `LinearSolver/<Role>/...`, reduced across processes as a sum, minimum, maximum or
+    `{Min, Avg, Max, MaxRank}`.
+  - Information set with `perf::SetInfo` (resolved solver choices) is written as is.
+
+Solver roles (`perf::ScopedRole`, `BaseKspSolver` role) keep the statistics of nested
+solvers apart from the main linear solver. Tallies use host clocks, so on GPU builds they
+measure kernel launches unless the measured region synchronizes.
+
+When comparing with earlier versions: the former "Coarse Solve" row is now "Coarse Setup" plus
+"Coarse Solve", and the former "Rebalancing" row is "Adapted Mesh Output" plus
+"Rebalancing".
 
 ### Interpreting memory data
 

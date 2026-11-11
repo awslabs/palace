@@ -278,6 +278,61 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   CHECK(rel_err < 1.0e-8);
 }
 
+// The driven solvers apply the system operator through the finest level of the
+// preconditioner plus the matrix-free wave-port modal correction W (see
+// SpaceOperator::GetSystemOperator). It must match the system operator assembled from the
+// fixed operators and GetExtraSystemOperator, whose sparse wave-port boundary mass is part
+// of the preconditioner.
+TEST_CASE("WavePortOperator-SystemOperatorFromPreconditioner",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  // A complex, unshifted preconditioner. This is the default with a sparse direct coarse
+  // solver, but not with AMS.
+  iodata.solver.linear.pc_mat_real = false;
+  iodata.solver.linear.pc_mat_shifted = 0;
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  REQUIRE(space_op.GetNDSpaces().GetNumLevels() > 1);
+
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const std::complex<double> a0(1.0, 0.0), a1(0.0, omega), a2(-omega * omega, 0.0);
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+  REQUIRE(A2);
+  auto A_ref = space_op.GetSystemMatrix(a0, a1, a2, K.get(), C.get(), M.get(), A2.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
+  auto A = space_op.GetSystemOperator(omega, *P);
+  REQUIRE(A);
+
+  // The modal correction alone, to check that the comparison would see it go missing.
+  auto W = space_op.GetWavePortOp().GetModalCorrectionOperator(
+      omega, space_op.GetNDSpace(), space_op.GetNDDbcTDofLists().back());
+  REQUIRE(W);
+
+  ComplexVector x(A->Width()), y_ref(A->Height()), y(A->Height()), y_W(A->Height());
+  x.UseDevice(true);
+  y_ref.UseDevice(true);
+  y.UseDevice(true);
+  y_W.UseDevice(true);
+  linalg::SetRandom(comm, x);
+  A_ref->Mult(x, y_ref);
+  A->Mult(x, y);
+  W->Mult(x, y_W);
+  linalg::AXPY(std::complex<double>(-1.0, 0.0), y_ref, y);
+  const double diff = linalg::Norml2(comm, y);
+  const double norm_ref = linalg::Norml2(comm, y_ref);
+  const double norm_W = linalg::Norml2(comm, y_W);
+  CAPTURE(diff, norm_ref, norm_W);
+  REQUIRE(norm_W > 0.0);
+  CHECK(diff <= 1.0e-10 * norm_ref);
+  CHECK(diff <= 1.0e-6 * norm_W);
+}
+
 // The complex-ω (eigenmode) correction reconstructs n×H with full complex kₙ; the real-ω
 // (driven) correction uses Re{kₙ} and lets the sparse mass carry the Im{kₙ} attenuation. So
 // at ω=ω0 they differ by the mode attenuation a≈|Im{kₙ0}|/|Re{kₙ0}|. Check the relative

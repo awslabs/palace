@@ -11,6 +11,14 @@
 namespace palace::ceed
 {
 
+// Whether all operators assemble their quadrature data, instead of reading the geometry
+// factors at the quadrature points: on CPU backends. See BilinearForm::PartialAssemble.
+bool AssembleAllQuadratureData();
+
+// Whether quadrature data which is the same at all points of an element (up to the
+// quadrature weight) is stored once per element: on CPU backends.
+bool UsePerElementQuadratureData();
+
 // Evaluation modes for CeedOperator fields for various integrators.
 enum EvalMode : unsigned int
 {

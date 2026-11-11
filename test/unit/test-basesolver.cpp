@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <fstream>
+#include <iterator>
+#include <limits>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "test-helpers.hpp"
@@ -38,6 +43,7 @@ class TestSolver : public BaseSolver
 {
 public:
   using BaseSolver::BaseSolver;
+  using BaseSolver::ComputeErrorEstimation;
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &) const override
   {
@@ -133,6 +139,27 @@ mfem::Mesh BuildNCPrismMesh()
 }
 
 }  // namespace
+
+TEST_CASE("ComputeErrorEstimation follows AMR unless forced", "[basesolver][Serial]")
+{
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  const TestSolver solver(iodata, /*root=*/false);
+  for (auto type : {ProblemType::ELECTROSTATIC, ProblemType::TRANSIENT})
+  {
+    iodata.problem.type = type;
+    iodata.model.refinement.max_it = 0;
+    iodata.solver.linear.always_error_estimation = false;
+    CHECK_FALSE(solver.ComputeErrorEstimation());
+    iodata.solver.linear.always_error_estimation = true;
+    CHECK(solver.ComputeErrorEstimation());
+
+    // Transient simulations do not support AMR.
+    iodata.model.refinement.max_it = 2;
+    iodata.solver.linear.always_error_estimation = false;
+    CHECK(solver.ComputeErrorEstimation() == (type != ProblemType::TRANSIENT));
+  }
+}
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SaveIteration moves files and leaves symlinks", "[basesolver][Serial]")
@@ -331,6 +358,79 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_FALSE(fs::is_symlink(mesh_file));
   CHECK(ReadFile(mesh_file) != first_mesh);
   CHECK(ReadFile(temp_dir / "iteration1" / saved_mesh) == first_mesh);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh writes the adapted mesh as mfem::Mesh::Print",
+                 "[basesolver][Serial][Parallel]")
+{
+  // The adapted mesh is formatted and compressed by threads in independent chunks: the
+  // decompressed file must be the text of mfem::Mesh::Print of the serial mesh gathered on
+  // the root, for nonconforming meshes with linear nodes (written from the gathered
+  // refinement hierarchy) and with curved nodes (written from the gathered mesh), with any
+  // number of items per chunk.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  const int items = GENERATE(0, 7);
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 2, mfem::Element::TETRAHEDRON);
+  serial_mesh.SetCurvature(order);
+  serial_mesh.EnsureNCMesh(true);
+  for (int level = 0; level < 2; level++)
+  {
+    mfem::Array<int> refs;
+    for (int i = 0; i < serial_mesh.GetNE(); i += 4)
+    {
+      refs.Append(i);
+    }
+    serial_mesh.GeneralRefinement(refs, 1);  // 1 => nonconforming
+  }
+  REQUIRE(serial_mesh.Nonconforming());
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+
+  // Reference: the serial mesh gathered on the root, written sequentially.
+  std::string reference;
+  {
+    mfem::ParMesh smesh(*parallel_mesh);
+    mfem::Array<int> partition(parallel_mesh->GetNE());
+    partition = 0;
+    smesh.Rebalance(partition);
+    if (Mpi::Root(comm))
+    {
+      std::ostringstream os;
+      os << std::scientific;
+      os.precision(std::numeric_limits<double>::max_digits10);
+      smesh.Mesh::Print(os);
+      reference = os.str();
+    }
+  }
+
+  // Write in the foreground (the background writer prints sequentially).
+  auto &settings = mesh::GetMeshOutputTestSettings();
+  settings.foreground = true;
+  settings.chunk_items = static_cast<std::size_t>(items);
+  mesh::RebalanceMesh(iodata, parallel_mesh);
+  settings = {};
+
+  if (Mpi::Root(comm))
+  {
+#if defined(MFEM_USE_ZLIB)
+    const auto saved = temp_dir / "model.meshgz";
+#else
+    const auto saved = temp_dir / "model.mesh";
+#endif
+    mfem::ifgzstream is(saved.string());
+    std::string text((std::istreambuf_iterator<char>(is)),
+                     std::istreambuf_iterator<char>());
+    CHECK(text.size() == reference.size());
+    CHECK(text == reference);
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

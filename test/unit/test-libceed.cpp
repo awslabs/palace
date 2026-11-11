@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -22,7 +23,10 @@
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
+#include "fem/libceed/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/chebyshev.hpp"
+#include "linalg/distrelaxation.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
@@ -616,10 +620,15 @@ void TestCeedOperatorMultAgree(MPI_Comm comm, const Operator &op_test,
   TestVectorAgree(d_ref, d_test);
 }
 
+// The operator of domain integrators assembled over the shared subset covers exactly its
+// active elements, without a copy of the geometry data: sub-operators which read the
+// geometry factors refer to the Mesh-owned full geometry vector through the matching subset
+// restriction, and those with assembled quadrature data (on CPUs, see
+// ceed::AssembleAllQuadratureData) do not read the geometry factors at all.
 void TestCeedOperatorUsesSharedGeometry(MPI_Comm comm, const Mesh &mesh,
                                         const ceed::Operator &op)
 {
-  long long num_fields = 0;
+  long long count[3] = {0, 0, 0};  // Sub-operators, their elements, active elements
   for (std::size_t i = 0; i < op.Size(); i++)
   {
     // The mesh caches geometry data by the Palace-owned Ceed contexts, not by the delegate
@@ -630,12 +639,30 @@ void TestCeedOperatorUsesSharedGeometry(MPI_Comm comm, const Mesh &mesh,
     PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op[i], &num_sub_ops));
     PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op[i], &sub_ops));
     const auto &geom_data = mesh.GetCeedGeomFactorData(ceed);
+    for (const auto &[geom, data] : geom_data)
+    {
+      if (mfem::Geometry::Dimension[geom] == mesh.Dimension())
+      {
+        count[2] += data.active_indices.size();
+      }
+    }
     for (CeedInt j = 0; j < num_sub_ops; j++)
     {
+      CeedInt num_elem;
+      PalaceCeedCall(ceed, CeedOperatorGetNumElements(sub_ops[j], &num_elem));
+      count[0]++;
+      count[1] += num_elem;
+
       CeedOperatorField field;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[j], "geom_data", &field));
+      if (!field)
+      {
+        PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[j], "q_data", &field));
+        REQUIRE(field != nullptr);
+        continue;
+      }
       CeedVector field_vec;
       CeedElemRestriction field_restr;
-      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[j], "geom_data", &field));
       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
       PalaceCeedCall(ceed, CeedOperatorFieldGetElemRestriction(field, &field_restr));
 
@@ -653,11 +680,11 @@ void TestCeedOperatorUsesSharedGeometry(MPI_Comm comm, const Mesh &mesh,
       REQUIRE(matching_data != nullptr);
       CHECK(field_restr ==
             matching_data->GetGeomDataRestriction(ceed::CeedElementSubset::Active));
-      num_fields++;
     }
   }
-  Mpi::GlobalSum(1, &num_fields, comm);
-  REQUIRE(num_fields > 0);
+  Mpi::GlobalSum(3, count, comm);
+  REQUIRE(count[0] > 0);
+  CHECK(count[1] == count[2]);
 }
 
 // Assemble the same integrators over the full mesh and the shared lossy/active subsets, and
@@ -1976,6 +2003,69 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
   RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
 
+TEST_CASE("libCEED Reduced Bases", "[libCEED][Serial][Parallel]")
+{
+  // Domain integrators of H(curl) and H(div) spaces on affine simplices use bases with
+  // fewer points than the default quadrature (also on the affine elements of a curved
+  // mesh). The partially assembled operators agree with the fully assembled ones, which use
+  // the default quadrature, to rounding.
+  auto mesh_file = GENERATE("fichera-tet.mesh", "fichera-mixed-p2.mesh");
+  auto order = GENERATE(1, 2, 3, 4);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = false;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  INFO("Mesh: " << mesh_file << ", order: " << order);
+
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto TestReducedBases = [&](BilinearForm &a)
+  {
+    a.AssembleQuadratureData();
+    auto op = a.PartialAssemble();
+    auto mat = a.FullAssemble(false);
+    Vector x(op->Width()), y(op->Height()), y_ref(op->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    linalg::SetRandom(comm, x);
+    op->Mult(x, y);
+    mat->Mult(x, y_ref);
+    y -= y_ref;
+    REQUIRE(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, y_ref));
+  };
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), rt_fespace(mesh, &rt_fec);
+  SECTION("Curl-Curl + Mass Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+    TestReducedBases(a);
+  }
+  SECTION("Curl-Curl Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlIntegrator>(MQ);
+    TestReducedBases(a);
+  }
+  SECTION("H(div) Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
+    TestReducedBases(a);
+  }
+  SECTION("Div-Div + Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<DivDivMassIntegrator>(Q, MQ);
+    TestReducedBases(a);
+  }
+}
+
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
 // configures when running on CPU, including the boundary terms contributed by absorbing and
 // impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
@@ -2529,14 +2619,13 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // Volume and boundary leaves without an imaginary partner are packed (or element
+  // assembled) as well, so the fine and H1 auxiliary operators all use the fast path.
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
+  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  if (!partial_lossy)
-  {
-    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
-  }
+  REQUIRE(!IsOriginalComplexWrapper(local));
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2617,7 +2706,7 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   }
 }
 
-TEST_CASE("libCEED packed complex unsupported input fallbacks",
+TEST_CASE("libCEED packed complex input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
   if (!PackedTestBackend())
@@ -2674,7 +2763,12 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  REQUIRE(IsOriginalComplexWrapper(*actual));
+  // Non-tensor H1 bases and real-only inputs are element assembled or packed;
+  // tensor-product bases, dof multiplicity, and unassembled vector quadrature data keep the
+  // original action. On CPUs, operators assemble their quadrature data anyway, unless
+  // disabled (see ceed::AssembleAllQuadratureData).
+  const bool assembled = qdata || ceed::AssembleAllQuadratureData();
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !assembled));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
 }
@@ -2702,6 +2796,764 @@ TEST_CASE("libCEED packed complex empty local operators",
     expected = 0.0;
     actual->Mult(x, result);
     CheckPackedResult(result, expected);
+  }
+}
+
+namespace
+{
+
+// Relative difference, over all processes, of a single-precision result from its
+// double-precision reference.
+double RelativeDifference(const ComplexVector &actual, const ComplexVector &expected)
+{
+  ComplexVector diff(expected);
+  diff.AXPY(-1.0, actual);
+  return linalg::Norml2(Mpi::World(), diff) / linalg::Norml2(Mpi::World(), expected);
+}
+
+double RelativeDifference(const Vector &actual, const Vector &expected)
+{
+  Vector diff(expected);
+  diff.Add(-1.0, actual);
+  return linalg::Norml2(Mpi::World(), diff) / linalg::Norml2(Mpi::World(), expected);
+}
+
+// The rounding of the element matrices to single precision gives relative errors of a few
+// 1e-8 per entry: the approximation must be that close to the reference, and not closer
+// than double-precision rounding (the single-precision path was used).
+constexpr double single_min = 1.0e-11, single_max = 6.0e-7;
+
+}  // namespace
+
+TEST_CASE("libCEED single-precision operator approximation",
+          "[libCEED][SinglePrecision][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Single-precision application requires one CPU CEED context and one thread");
+  }
+  const auto [name, mesh_file, ref_levels, order, imag_scale, boundary, subset,
+              dropped_expected] =
+      GENERATE(table<const char *, const char *, int, int, double, bool, bool, bool>(
+          {{"p1 lossy tetrahedra", "fichera-tet.mesh", 0, 1, 0.19, false, false, false},
+           {"p3 lossy tetrahedra with boundary terms", "fichera-tet.mesh", 0, 3, 0.19, true,
+            false, false},
+           {"p2 lossy subset of tetrahedra", "fichera-tet.mesh", 0, 2, 0.19, false, true,
+            false},
+           {"p2 negligible loss with boundary terms", "fichera-tet.mesh", 0, 2, 1.0e-9,
+            true, false, true},
+           {"p2 mixed elements with a hexahedral remainder", "fichera-mixed-p2.mesh", 0, 2,
+            0.19, false, false, false},
+           // More elements per process than the element matrices of one assembly chunk.
+           {"p4 lossy tetrahedra assembled in chunks", "fichera-tet.mesh", 2, 4, 0.19,
+            false, false, false}}));
+  CAPTURE(name);
+  PackedIntegrationSettings settings(order);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath(mesh_file), ref_levels, false);
+  if (ref_levels > 0 && Mpi::Size(Mpi::World()) <= 2)
+  {
+    // A chunk holds the double-precision element matrices of 1188 p4 tetrahedra.
+    int ne = mesh.GetNE();
+    Mpi::GlobalMin(1, &ne, Mpi::World());
+    CHECK(ne > 1188);
+  }
+  mfem::ND_FECollection fec(order, 3);
+  FiniteElementSpace fespace(mesh, &fec);
+  auto real_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto imag_mass = subset ? BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 2, 1.0)
+                          : BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
+  auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  real_mass *= -0.71;
+  imag_mass *= imag_scale;
+  real_curl *= 1.37;
+  bdr_mass *= 0.23;
+  if (subset)
+  {
+    std::vector<int> lossy_attr;
+    imag_mass.AddNonzeroAttributes(lossy_attr);
+    mesh.SetCeedActiveAttributes(std::move(lossy_attr), {});
+  }
+  auto Assemble = [&](bool imag)
+  {
+    BilinearForm a(fespace);
+    if (subset)
+    {
+      a.SkipZeroCoefficientElements();
+    }
+    if (!imag)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(real_curl, real_mass);
+      if (boundary)
+      {
+        a.AddBoundaryIntegrator<VectorFEMassIntegrator>(bdr_mass);
+      }
+    }
+    else
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(imag_mass);
+      if (boundary)
+      {
+        a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(bdr_curl, bdr_mass);
+      }
+    }
+    a.AssembleQuadratureData();
+    return a.PartialAssemble();
+  };
+  auto ref_real = Assemble(false), ref_imag = Assemble(true);
+  ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
+  // As for the multigrid levels, the original operator packs its leaves first.
+  auto local = ceed::CreateComplexOperator(Assemble(false), Assemble(true), fespace);
+  std::size_t bytes;
+  int dropped;
+  auto approx = ceed::CreateSinglePrecisionOperator(local->Real(), local->Imag(), fespace,
+                                                    &bytes, &dropped);
+  REQUIRE(approx);
+  REQUIRE(bytes > 0);
+  long long num_dropped = dropped;
+  Mpi::GlobalSum(1, &num_dropped, Mpi::World());
+  if (dropped_expected)
+  {
+    REQUIRE(num_dropped > 0);
+  }
+  else
+  {
+    REQUIRE(num_dropped == 0);
+  }
+
+  ComplexVector x(approx->Width()), y(approx->Height()), expected(approx->Height()),
+      initial(approx->Height());
+  x.Real().Randomize(17);
+  x.Imag().Randomize(53);
+  initial.Real().Randomize(29);
+  initial.Imag().Randomize(97);
+  reference.Mult(x, expected);
+  approx->Mult(x, y);
+  const double error = RelativeDifference(y, expected);
+  CAPTURE(error);
+  CHECK(error > single_min);
+  CHECK(error < single_max);
+
+  // AddMult with a complex coefficient.
+  const std::complex<double> a{-0.7, 0.23};
+  y = initial;
+  approx->AddMult(x, y, a);
+  ComplexVector target(initial);
+  target.AXPY(a, expected);
+  CHECK(RelativeDifference(y, target) < single_max);
+
+  // The real part alone.
+  auto approx_real = ceed::CreateSinglePrecisionOperator(local->Real(), nullptr, fespace);
+  REQUIRE(approx_real);
+  ComplexWrapperOperator reference_real(ref_real.get(), nullptr);
+  reference_real.Mult(x, expected);
+  approx_real->Mult(x, y);
+  const double error_real = RelativeDifference(y, expected);
+  CAPTURE(error_real);
+  CHECK(error_real > single_min);
+  CHECK(error_real < single_max);
+
+  // The approximation follows in-place updates of the quadrature data.
+  ScalePackedTestQData(dynamic_cast<const ceed::Operator &>(*local->Real()), -1.13);
+  ScalePackedTestQData(*ref_real, -1.13);
+  reference.Mult(x, expected);
+  approx->Mult(x, y);
+  CHECK(RelativeDifference(y, expected) < single_max);
+}
+
+TEST_CASE("libCEED single-precision approximation of parallel operators",
+          "[libCEED][SinglePrecision][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Single-precision application requires one CPU CEED context and one thread");
+  }
+  const int order = GENERATE(2, 3);
+  CAPTURE(order);
+  PackedIntegrationSettings settings(order);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath("fichera-tet.mesh"), 0, false);
+  auto mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto loss = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  loss *= 0.05;
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  auto Assemble = [&](bool imag)
+  {
+    BilinearForm a(nd_fespace);
+    if (imag)
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
+    }
+    else
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(curl, mass);
+    }
+    a.AssembleQuadratureData();
+    return a.PartialAssemble();
+  };
+
+  SECTION("Real H(curl) operator")
+  {
+    ParOperator reference(Assemble(false), nd_fespace), actual(Assemble(false), nd_fespace);
+    REQUIRE(!reference.GetSinglePrecisionOperator());
+    REQUIRE(actual.UseSinglePrecision() > 0);
+    const auto *single = actual.GetSinglePrecisionOperator();
+    REQUIRE(single);
+    Vector x(actual.Width()), y(actual.Height()), expected(actual.Height());
+    x.Randomize(7);
+    reference.Mult(x, expected);
+    // The operator itself stays exact.
+    actual.Mult(x, y);
+    CHECK(RelativeDifference(y, expected) < 1.0e-14);
+    single->Mult(x, y);
+    const double error = RelativeDifference(y, expected);
+    CAPTURE(error);
+    CHECK(error > single_min);
+    CHECK(error < single_max);
+    y = 1.0;
+    single->AddMult(x, y, -0.5);
+    expected *= -0.5;
+    expected += 1.0;
+    CHECK(RelativeDifference(y, expected) < single_max);
+  }
+
+  SECTION("Real H1 operator with element-assembled leaves")
+  {
+    // Element-assembled leaves are applied through their own (double-precision) element
+    // matrices, which leaves nothing for a single-precision approximation.
+    auto h1_mass = BuildCoefficient(mesh, false, CoeffType::Scalar);
+    BilinearForm a(h1_fespace);
+    a.AddDomainIntegrator<DiffusionMassIntegrator>(mass, h1_mass);
+    ParOperator actual(a.PartialAssemble(), h1_fespace);
+    CHECK(actual.UseSinglePrecision() == 0);
+    CHECK(!actual.GetSinglePrecisionOperator());
+  }
+
+  SECTION("Complex operator and Chebyshev smoothers")
+  {
+    ComplexParOperator reference(Assemble(false), Assemble(true), nd_fespace),
+        actual(Assemble(false), Assemble(true), nd_fespace);
+    const auto &bdr_attr = mesh.Get().bdr_attributes;
+    mfem::Array<int> bdr_marker(bdr_attr.Size() ? bdr_attr.Max() : 0), tdofs;
+    bdr_marker = 0;
+    if (bdr_marker.Size())
+    {
+      bdr_marker[0] = 1;
+    }
+    nd_fespace.GetEssentialTrueDofs(bdr_marker, tdofs);
+    reference.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+    actual.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+    int dropped;
+    REQUIRE(actual.UseSinglePrecision(&dropped) > 0);
+    CHECK(dropped == 0);
+    const auto *single = actual.GetSinglePrecisionOperator();
+    REQUIRE(single);
+    ComplexVector x(actual.Width()), y(actual.Height()), expected(actual.Height()),
+        y0(actual.Height());
+    x.Real().Randomize(11);
+    x.Imag().Randomize(13);
+    y0.Real().Randomize(19);
+    y0.Imag().Randomize(23);
+    reference.Mult(x, expected);
+    single->Mult(x, y);
+    const double error = RelativeDifference(y, expected);
+    CAPTURE(error);
+    CHECK(error > single_min);
+    CHECK(error < single_max);
+
+    // The smoothers apply the single-precision approximation to their search directions
+    // only. Each application perturbs the polynomial by about the rounding of the element
+    // matrices, so the smoothed results agree to about the polynomial order times that.
+    for (bool fourth : {true, false})
+    {
+      CAPTURE(fourth);
+      constexpr int smooth_order = 4;
+      std::unique_ptr<Solver<ComplexOperator>> smoother_ref, smoother;
+      for (auto *s : {&smoother_ref, &smoother})
+      {
+        if (fourth)
+        {
+          *s = std::make_unique<ChebyshevSmoother<ComplexOperator>>(Mpi::World(), 1,
+                                                                    smooth_order, 1.0);
+        }
+        else
+        {
+          *s = std::make_unique<ChebyshevSmoother1stKind<ComplexOperator>>(
+              Mpi::World(), 1, smooth_order, 1.0, 0.0);
+        }
+      }
+      smoother_ref->SetOperator(reference);
+      smoother->SetOperator(actual);
+      if (fourth)
+      {
+        CHECK(!static_cast<ChebyshevSmoother<ComplexOperator> &>(*smoother_ref)
+                   .UsesSinglePrecision());
+        CHECK(static_cast<ChebyshevSmoother<ComplexOperator> &>(*smoother)
+                  .UsesSinglePrecision());
+      }
+      for (bool guess : {false, true})
+      {
+        CAPTURE(guess);
+        smoother_ref->SetInitialGuess(guess);
+        smoother->SetInitialGuess(guess);
+        expected = y0;
+        y = y0;
+        smoother_ref->Mult(x, expected);
+        smoother->Mult(x, y);
+        const double smooth_error = RelativeDifference(y, expected);
+        CAPTURE(smooth_error);
+        CHECK(smooth_error > single_min);
+        CHECK(smooth_error < smooth_order * single_max);
+      }
+    }
+  }
+}
+
+TEST_CASE("Smoother residual updates", "[libCEED][SinglePrecision][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Single-precision application requires one CPU CEED context and one thread");
+  }
+  const int order = GENERATE(2, 3);
+  const bool single = GENERATE(false, true);
+  CAPTURE(order, single);
+  PackedIntegrationSettings settings(order);
+  auto mesh = Initialize(Mpi::World(), TestMeshPath("fichera-tet.mesh"), 0, false);
+  auto mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto loss = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  loss *= 0.05;
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  auto Assemble = [&](FiniteElementSpace &fespace, bool imag)
+  {
+    BilinearForm a(fespace);
+    if (&fespace == &h1_fespace)
+    {
+      // The auxiliary space operator Gᵀ A G.
+      a.AddDomainIntegrator<DiffusionIntegrator>(imag ? loss : mass);
+    }
+    else if (imag)
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
+    }
+    else
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(curl, mass);
+    }
+    a.AssembleQuadratureData();
+    return a.PartialAssemble();
+  };
+  ComplexParOperator A(Assemble(nd_fespace, false), Assemble(nd_fespace, true), nd_fespace),
+      A_G(Assemble(h1_fespace, false), Assemble(h1_fespace, true), h1_fespace);
+  const auto &bdr_attr = mesh.Get().bdr_attributes;
+  mfem::Array<int> bdr_marker(bdr_attr.Size() ? bdr_attr.Max() : 0), nd_tdofs, h1_tdofs;
+  bdr_marker = 0;
+  if (bdr_marker.Size())
+  {
+    bdr_marker[0] = 1;
+  }
+  nd_fespace.GetEssentialTrueDofs(bdr_marker, nd_tdofs);
+  h1_fespace.GetEssentialTrueDofs(bdr_marker, h1_tdofs);
+  A.SetEssentialTrueDofs(nd_tdofs, Operator::DIAG_ONE);
+  A_G.SetEssentialTrueDofs(h1_tdofs, Operator::DIAG_ONE);
+  if (single)
+  {
+    REQUIRE(A.UseSinglePrecision() > 0);
+  }
+  const auto &G = nd_fespace.GetDiscreteInterpolator(h1_fespace);
+
+  // Smoothed results agree to rounding, which is single-precision rounding for the
+  // single-precision applications (amplified by about the polynomial order). Updated
+  // residuals carry the rounding errors of the updates, relative to the initial residual.
+  constexpr int smooth_order = 4;
+  const double tol = single ? smooth_order * single_max : 1.0e-11;
+  const int n = A.Height();
+  ComplexVector x(n), y0(n), y(n), r(n), y_ref(n), r_ref(n), z(n), phi(A_G.Height());
+  x.Real().Randomize(11);
+  x.Imag().Randomize(13);
+  y0.Real().Randomize(19);
+  y0.Imag().Randomize(23);
+  phi.Real().Randomize(29);
+  phi.Imag().Randomize(31);
+  linalg::SetSubVector(phi, h1_tdofs, 0.0);
+  G.Mult(phi.Real(), z.Real());
+  G.Mult(phi.Imag(), z.Imag());
+  auto Residual = [&](const ComplexVector &y, ComplexVector &res)
+  {
+    A.Mult(y, res);
+    linalg::AXPBY(1.0, x, -1.0, res);
+  };
+  // Difference of an updated residual from the recomputed one, relative to the residual of
+  // the initial guess.
+  auto ResidualDifference =
+      [&](const ComplexVector &res, const ComplexVector &res_ref, bool guess)
+  {
+    ComplexVector diff(res_ref), res0(n);
+    diff.AXPY(-1.0, res);
+    if (guess)
+    {
+      Residual(y0, res0);
+    }
+    else
+    {
+      res0 = x;
+    }
+    return linalg::Norml2(Mpi::World(), diff) / linalg::Norml2(Mpi::World(), res0);
+  };
+
+  SECTION("Chebyshev smoothers")
+  {
+    for (bool fourth : {true, false})
+    {
+      CAPTURE(fourth);
+      std::unique_ptr<Solver<ComplexOperator>> smoother;
+      if (fourth)
+      {
+        smoother = std::make_unique<ChebyshevSmoother<ComplexOperator>>(Mpi::World(), 1,
+                                                                        smooth_order, 1.0);
+      }
+      else
+      {
+        smoother = std::make_unique<ChebyshevSmoother1stKind<ComplexOperator>>(
+            Mpi::World(), 1, smooth_order, 1.0, 0.0);
+      }
+      smoother->SetOperator(A);
+      REQUIRE(smoother->UpdatesResidual());
+      for (bool guess : {false, true})
+      {
+        CAPTURE(guess);
+        // The residual output leaves the result unchanged.
+        smoother->SetInitialGuess(guess);
+        y_ref = y0;
+        smoother->SetResidual(false, false);
+        smoother->Mult2(x, y_ref, r_ref);
+        y = y0;
+        smoother->SetResidual(false, true);
+        smoother->Mult2(x, y, r);
+        CHECK(RelativeDifference(y, y_ref) == 0.0);
+        Residual(y, r_ref);
+        const double res_error = ResidualDifference(r, r_ref, guess);
+        CAPTURE(res_error);
+        CHECK(res_error < tol);
+      }
+
+      // A residual input replaces the computed residual of the initial guess.
+      smoother->SetInitialGuess(true);
+      smoother->SetResidual(false, false);
+      y_ref = y0;
+      smoother->Mult2(x, y_ref, r_ref);
+      y = y0;
+      Residual(y, r);
+      smoother->SetResidual(true, false);
+      smoother->Mult2(x, y, r);
+      CHECK(RelativeDifference(y, y_ref) == 0.0);
+
+      // A pending correction is added to the iterate and to the updated residual.
+      y = y0;
+      Residual(y, r);
+      smoother->SetResidual(true, true, &z);
+      smoother->Mult2(x, y, r);
+      Residual(y, r_ref);
+      const double pending_error = ResidualDifference(r, r_ref, true);
+      CAPTURE(pending_error);
+      CHECK(pending_error < tol);
+      smoother->SetResidual(false, false);
+    }
+  }
+
+  SECTION("Distributive relaxation smoother")
+  {
+    auto Smoother = [&](MultigridAuxiliaryResidual residual)
+    {
+      auto smoother = std::make_unique<DistRelaxationSmoother<ComplexOperator>>(
+          Mpi::World(), G, 1, 1, smooth_order, 1.0, 0.0, true, 0, -1, residual);
+      smoother->SetOperators(A, A_G);
+      return smoother;
+    };
+    auto exact = Smoother(MultigridAuxiliaryResidual::EXACT),
+         updated = Smoother(MultigridAuxiliaryResidual::UPDATED),
+         lagged = Smoother(MultigridAuxiliaryResidual::LAGGED);
+
+    // The independent parts of the smoothers, for the lagged residuals.
+    ChebyshevSmoother<ComplexOperator> C_k(Mpi::World(), 1, smooth_order, 1.0),
+        C_km1(Mpi::World(), 1, smooth_order - 1, 1.0),
+        B_G(Mpi::World(), 1, smooth_order, 1.0);
+    C_k.SetOperator(A);
+    C_km1.SetOperator(A);
+    B_G.SetOperator(A_G);
+    B_G.SetInitialGuess(false);
+    ComplexVector x_G(A_G.Height()), y_G(A_G.Height()), y_k(n);
+    auto AuxiliaryCorrection = [&](const ComplexVector &res, ComplexVector &corr)
+    {
+      G.MultTranspose(res.Real(), x_G.Real());
+      G.MultTranspose(res.Imag(), x_G.Imag());
+      linalg::SetSubVector(x_G, h1_tdofs, 0.0);
+      B_G.Mult(x_G, y_G);
+      G.Mult(y_G.Real(), corr.Real());
+      G.Mult(y_G.Imag(), corr.Imag());
+    };
+    const double tol_lagged = single ? tol : 1.0e-10;
+
+    for (bool transpose : {false, true})
+    {
+      for (bool guess : {false, true})
+      {
+        CAPTURE(transpose, guess);
+        auto Apply = [&](const Solver<ComplexOperator> &smoother, ComplexVector &y)
+        {
+          y = y0;
+          if (transpose)
+          {
+            smoother.MultTranspose2(x, y, r);
+          }
+          else
+          {
+            smoother.Mult2(x, y, r);
+          }
+        };
+        exact->SetInitialGuess(guess);
+        updated->SetInitialGuess(guess);
+        lagged->SetInitialGuess(guess);
+        Apply(*exact, y_ref);
+
+        // The updated residuals reproduce the smoother.
+        Apply(*updated, y);
+        const double smooth_error = RelativeDifference(y, y_ref);
+        CAPTURE(smooth_error);
+        CHECK(smooth_error < tol);
+
+        // The lagged residuals: Mult computes the auxiliary space correction from the
+        // residual of the first k - 1 steps of the 4th-kind Chebyshev smoother C_k (those
+        // of C_{k-1}), MultTranspose the first step of C_k from the residual before the
+        // auxiliary space correction (both from the residual of the initial guess).
+        Apply(*lagged, y);
+        y_ref = y0;
+        if (transpose)
+        {
+          if (guess)
+          {
+            Residual(y_ref, r_ref);
+          }
+          else
+          {
+            y_ref = 0.0;
+            r_ref = x;
+          }
+          AuxiliaryCorrection(r_ref, z);
+          C_k.SetResidual(true, false, &z);
+          C_k.Mult2(x, y_ref, r_ref);
+          C_k.SetResidual(false, false);
+        }
+        else
+        {
+          C_k.SetInitialGuess(guess);
+          C_km1.SetInitialGuess(guess);
+          y_k = y0;
+          C_k.Mult(x, y_k);
+          C_km1.Mult(x, y_ref);
+          Residual(y_ref, r_ref);
+          AuxiliaryCorrection(r_ref, z);
+          y_ref = y_k;
+          y_ref += z;
+        }
+        const double lagged_error = RelativeDifference(y, y_ref);
+        CAPTURE(lagged_error);
+        CHECK(lagged_error < tol_lagged);
+
+        // The lagged residuals change the smoother, by much less than its correction here.
+        Apply(*exact, y_ref);
+        y_k = y_ref;
+        if (guess)
+        {
+          y_k -= y0;
+        }
+        y -= y_ref;
+        const double lagged_change =
+            linalg::Norml2(Mpi::World(), y) / linalg::Norml2(Mpi::World(), y_k);
+        CAPTURE(lagged_change);
+        CHECK(lagged_change > tol);
+        CHECK(lagged_change < 0.05);
+      }
+    }
+  }
+
+  SECTION("Exact residuals at low frequencies")
+  {
+    // With a mass part far below the single-precision rounding of the curl-curl part (low
+    // frequencies, small k h), the residual updates through the single-precision operator
+    // are inaccurate on the auxiliary space corrections, and the smoother keeps exact
+    // residuals. Without single precision, it keeps the requested ones.
+    auto mass_lf = mass, loss_lf = loss;
+    mass_lf *= 1.0e-9;
+    loss_lf *= 1.0e-9;
+    auto AssembleLowFrequency = [&](FiniteElementSpace &fespace, bool imag)
+    {
+      BilinearForm a(fespace);
+      if (&fespace == &h1_fespace)
+      {
+        a.AddDomainIntegrator<DiffusionIntegrator>(imag ? loss_lf : mass_lf);
+      }
+      else if (imag)
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>(loss_lf);
+      }
+      else
+      {
+        a.AddDomainIntegrator<CurlCurlMassIntegrator>(curl, mass_lf);
+      }
+      a.AssembleQuadratureData();
+      return a.PartialAssemble();
+    };
+    ComplexParOperator A_lf(AssembleLowFrequency(nd_fespace, false),
+                            AssembleLowFrequency(nd_fespace, true), nd_fespace),
+        A_G_lf(AssembleLowFrequency(h1_fespace, false),
+               AssembleLowFrequency(h1_fespace, true), h1_fespace);
+    A_lf.SetEssentialTrueDofs(nd_tdofs, Operator::DIAG_ONE);
+    A_G_lf.SetEssentialTrueDofs(h1_tdofs, Operator::DIAG_ONE);
+    if (single)
+    {
+      REQUIRE(A_lf.UseSinglePrecision() > 0);
+    }
+    for (auto residual :
+         {MultigridAuxiliaryResidual::UPDATED, MultigridAuxiliaryResidual::LAGGED})
+    {
+      DistRelaxationSmoother<ComplexOperator> smoother(Mpi::World(), G, 1, 1, smooth_order,
+                                                       1.0, 0.0, true, 0, -1, residual);
+      smoother.SetOperators(A, A_G);
+      const double error = smoother.GetGradientError();
+      smoother.SetOperators(A_lf, A_G_lf);
+      const double error_lf = smoother.GetGradientError();
+      CAPTURE(error, error_lf);
+      CHECK(smoother.GetAuxiliaryResidual() ==
+            (single ? MultigridAuxiliaryResidual::EXACT : residual));
+      if (single)
+      {
+        CHECK(error < 1.0e-3);
+        CHECK(error_lf > 1.0);
+      }
+      else
+      {
+        CHECK(error == 0.0);
+        CHECK(error_lf == 0.0);
+      }
+
+      // The residuals are resolved again for each operator.
+      smoother.SetOperators(A, A_G);
+      CHECK(smoother.GetAuxiliaryResidual() == residual);
+    }
+  }
+
+  SECTION("Exact residuals at low frequencies with large boundary terms")
+  {
+    // A large term on gradients, such as the inductive term of an impedance boundary (which
+    // does not depend on the frequency), dominates the norms of the operator on gradients,
+    // so the single-precision error on the gradients away from it (the rounding of the
+    // curl-curl part against the small mass part) is negligible in the global norms. In the
+    // auxiliary space scaled by the diagonal of the auxiliary space operator it is not, and
+    // the smoother computes the residual for the auxiliary space correction of Mult
+    // exactly.
+    auto mass_lf = mass, loss_lf = loss;
+    mass_lf *= 1.0e-12;
+    loss_lf *= 1.0e-12;
+    auto bdr = BuildCoefficient(mesh, true, CoeffType::Matrix);
+    bdr *= 1.0e2;
+    auto AssembleBoundary = [&](FiniteElementSpace &fespace, bool imag)
+    {
+      BilinearForm a(fespace);
+      if (&fespace == &h1_fespace)
+      {
+        a.AddDomainIntegrator<DiffusionIntegrator>(imag ? loss_lf : mass_lf);
+        if (!imag)
+        {
+          a.AddBoundaryIntegrator<DiffusionIntegrator>(bdr);
+        }
+      }
+      else if (imag)
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>(loss_lf);
+      }
+      else
+      {
+        a.AddDomainIntegrator<CurlCurlMassIntegrator>(curl, mass_lf);
+        a.AddBoundaryIntegrator<VectorFEMassIntegrator>(bdr);
+      }
+      a.AssembleQuadratureData();
+      return a.PartialAssemble();
+    };
+    ComplexParOperator A_bdr(AssembleBoundary(nd_fespace, false),
+                             AssembleBoundary(nd_fespace, true), nd_fespace),
+        A_G_bdr(AssembleBoundary(h1_fespace, false), AssembleBoundary(h1_fespace, true),
+                h1_fespace);
+    A_bdr.SetEssentialTrueDofs(nd_tdofs, Operator::DIAG_ONE);
+    A_G_bdr.SetEssentialTrueDofs(h1_tdofs, Operator::DIAG_ONE);
+    if (single)
+    {
+      REQUIRE(A_bdr.UseSinglePrecision() > 0);
+    }
+    for (auto residual :
+         {MultigridAuxiliaryResidual::UPDATED, MultigridAuxiliaryResidual::LAGGED})
+    {
+      DistRelaxationSmoother<ComplexOperator> smoother(Mpi::World(), G, 1, 1, smooth_order,
+                                                       1.0, 0.0, true, 0, -1, residual);
+      smoother.SetOperators(A_bdr, A_G_bdr);
+      const double error = smoother.GetGradientError(),
+                   error_aux = smoother.GetAuxiliaryGradientError();
+      CAPTURE(error, error_aux);
+      CHECK(smoother.GetAuxiliaryResidual() == residual);
+      CHECK(smoother.GetExactAuxiliaryInput() == single);
+      if (single)
+      {
+        // The global error alone would keep the requested residuals everywhere.
+        CHECK(error < 1.0e-3);
+        CHECK(error_aux > 100.0);
+      }
+      else
+      {
+        CHECK(error == 0.0);
+        CHECK(error_aux == 0.0);
+      }
+
+      // Without the auxiliary space check (eigenmode simulations), the global error alone
+      // keeps the requested residuals.
+      {
+        DistRelaxationSmoother<ComplexOperator> global(Mpi::World(), G, 1, 1, smooth_order,
+                                                       1.0, 0.0, true, 0, -1, residual);
+        global.SetAuxiliaryGradientCheck(false);
+        global.SetOperators(A_bdr, A_G_bdr);
+        CHECK(global.GetAuxiliaryResidual() == residual);
+        CHECK(!global.GetExactAuxiliaryInput());
+        CHECK(global.GetAuxiliaryGradientError() < 0.0);
+        CHECK(global.GetGradientError() == error);
+        global.SetAuxiliaryGradientCheck(true);
+        CHECK(global.GetExactAuxiliaryInput() == single);
+      }
+
+      // Mult with the exact residual for the auxiliary space correction is the smoother
+      // with exact residuals, up to the rounding of the single-precision applications.
+      if (single)
+      {
+        DistRelaxationSmoother<ComplexOperator> exact(Mpi::World(), G, 1, 1, smooth_order,
+                                                      1.0, 0.0, true, 0, -1,
+                                                      MultigridAuxiliaryResidual::EXACT);
+        exact.SetOperators(A_bdr, A_G_bdr);
+        ComplexVector y1(n), y2(n), r1(n), r2(n);
+        y1 = 0.0;
+        y2 = 0.0;
+        smoother.SetInitialGuess(false);
+        exact.SetInitialGuess(false);
+        smoother.Mult2(x, y1, r1);
+        exact.Mult2(x, y2, r2);
+        y1.AXPY(-1.0, y2);
+        CHECK(linalg::Norml2(Mpi::World(), y1) <=
+              1.0e-12 * linalg::Norml2(Mpi::World(), y2));
+      }
+    }
   }
 }
 
@@ -2813,6 +3665,540 @@ TEST_CASE("CPU complex preconditioner benchmark",
 // omit the elements outside that union (BilinearForm::SkipZeroCoefficientElements). Those
 // contributions are exactly 0.0, so the operator action, its transpose and its diagonal
 // must match assembly over all elements to backend rounding (see TestVectorAgree).
+// The largest difference of two distributed vectors relative to the largest entry of the
+// second.
+double MaxRelativeDifference(const Vector &x, const Vector &y, MPI_Comm comm)
+{
+  Vector diff(x);
+  diff -= y;
+  double norms[2] = {diff.Normlinf(), y.Normlinf()};
+  Mpi::GlobalMax(2, norms, comm);
+  return norms[0] / std::max(norms[1], std::numeric_limits<double>::min());
+}
+
+TEST_CASE("Exact diagonals of parallel operators",
+          "[libCEED][ExactDiagonal][Serial][Parallel]")
+{
+  // ParOperator::AssembleDiagonal of partially assembled operators equals the diagonal of
+  // their parallel assembly Pᵀ A P to rounding: on nonconforming meshes, whose prolongation
+  // P has fractional constraint weights, and for the curl orientation transforms of
+  // non-tensor H(curl) spaces of order p > 1, with boundary terms, essential boundary
+  // conditions, complex operators and assembled local matrices. The approximation |P|ᵀ dₗ,
+  // with the diagonal dₗ of libCEED, does not.
+  const std::string mesh_file =
+      GENERATE("fichera-tet.mesh", "fichera-hex.mesh", "fichera-mixed-p2.mesh");
+  const bool amr = GENERATE(false, true);
+  const int order = GENERATE(1, 2, 3, 4);
+  CAPTURE(mesh_file, amr, order);
+  PackedIntegrationSettings settings(order);
+  MPI_Comm comm = Mpi::World();
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, amr);
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  const bool nd_approximate =
+      amr || (order > 1 && !mfem::UsesTensorBasis(nd_fespace.Get()) &&
+              mesh_file != "fichera-hex.mesh");
+  constexpr double tol = 1.0e-12;
+
+  // Essential true dofs on the first boundary attribute.
+  auto EssentialTrueDofs = [&](const FiniteElementSpace &fespace)
+  {
+    const auto &bdr_attr = mesh.Get().bdr_attributes;
+    mfem::Array<int> bdr_marker(bdr_attr.Size() ? bdr_attr.Max() : 0), tdofs;
+    bdr_marker = 0;
+    if (bdr_marker.Size())
+    {
+      bdr_marker[0] = 1;
+    }
+    fespace.GetEssentialTrueDofs(bdr_marker, tdofs);
+    return tdofs;
+  };
+
+  // Diagonal of ParOperator, of its parallel assembly, and the approximation.
+  auto Diagonals = [&](std::unique_ptr<Operator> &&A, std::unique_ptr<Operator> &&A_ref,
+                       const FiniteElementSpace &fespace, Vector &d, Vector &d_ref,
+                       Vector &d_approx)
+  {
+    auto tdofs = EssentialTrueDofs(fespace);
+    ParOperator op(std::move(A), fespace), op_ref(std::move(A_ref), fespace);
+    op.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+    op_ref.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+    d.SetSize(op.Height());
+    d_ref.SetSize(op.Height());
+    d_approx.SetSize(op.Height());
+    d.UseDevice(true);
+    d_ref.UseDevice(true);
+    d_approx.UseDevice(true);
+    op.AssembleDiagonal(d);
+    Vector lx(fespace.GetVSize());
+    lx.UseDevice(true);
+    op.LocalOperator().AssembleDiagonal(lx);
+    const Operator *P = fespace.GetProlongationMatrix();
+    const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P);
+    if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+    {
+      hP = &fP->GetMatrix();
+    }
+    if (hP)
+    {
+      hP->AbsMultTranspose(1.0, lx, 0.0, d_approx);
+    }
+    else
+    {
+      P->MultTranspose(lx, d_approx);
+    }
+    linalg::SetSubVector(d_approx, tdofs, 1.0);
+    op_ref.ParallelAssemble().AssembleDiagonal(d_ref);
+  };
+  // The approximation is known to be inexact (approximate > 0), exact (approximate < 0) or
+  // either (approximate = 0, as for the prolongations of parallel non-tensor H(curl) spaces
+  // of order p > 1, which can have several entries per row for the dofs of shared faces).
+  auto Check = [&](std::unique_ptr<Operator> &&A, std::unique_ptr<Operator> &&A_ref,
+                   const FiniteElementSpace &fespace, int approximate)
+  {
+    Vector d, d_ref, d_approx;
+    Diagonals(std::move(A), std::move(A_ref), fespace, d, d_ref, d_approx);
+    const double error = MaxRelativeDifference(d, d_ref, comm),
+                 error_approx = MaxRelativeDifference(d_approx, d_ref, comm);
+    CAPTURE(error, error_approx);
+    CHECK(error < tol);
+    if (approximate > 0)
+    {
+      CHECK(error_approx > 1.0e-6);
+    }
+    else if (approximate < 0)
+    {
+      CHECK(error_approx < tol);
+    }
+  };
+
+  SECTION("H(curl) curl-curl + mass with boundary mass")
+  {
+    auto Assemble = [&]()
+    {
+      BilinearForm a(nd_fespace);
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>();
+      return a.PartialAssemble();
+    };
+    Check(Assemble(), Assemble(), nd_fespace, nd_approximate ? 1 : 0);
+  }
+
+  SECTION("H1 diffusion + mass with boundary mass")
+  {
+    auto Assemble = [&]()
+    {
+      BilinearForm a(h1_fespace);
+      a.AddDomainIntegrator<DiffusionMassIntegrator>(MQ, Q);
+      a.AddBoundaryIntegrator<MassIntegrator>();
+      return a.PartialAssemble();
+    };
+    Check(Assemble(), Assemble(), h1_fespace, amr ? 1 : -1);
+  }
+
+  SECTION("Assembled local H(curl) matrix")
+  {
+    auto Assemble = [&]() -> std::unique_ptr<Operator>
+    {
+      BilinearForm a(nd_fespace);
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+      auto op = a.PartialAssemble();
+      return BilinearForm::FullAssemble(*op, false);
+    };
+    // The diagonal of an assembled local matrix is exact, so only the prolongation makes a
+    // difference.
+    Check(Assemble(), Assemble(), nd_fespace, amr ? 1 : 0);
+  }
+
+  SECTION("Complex H(curl) operator")
+  {
+    auto AssembleReal = [&]()
+    {
+      BilinearForm a(nd_fespace);
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+      return a.PartialAssemble();
+    };
+    auto AssembleImag = [&]()
+    {
+      BilinearForm a(nd_fespace);
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>();
+      return a.PartialAssemble();
+    };
+    auto tdofs = EssentialTrueDofs(nd_fespace);
+    ComplexParOperator op(AssembleReal(), AssembleImag(), nd_fespace);
+    op.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+    ComplexVector d(op.Height());
+    d.UseDevice(true);
+    op.AssembleDiagonal(d);
+    for (bool imag : {false, true})
+    {
+      ParOperator op_ref(imag ? AssembleImag() : AssembleReal(), nd_fespace);
+      op_ref.SetEssentialTrueDofs(tdofs, imag ? Operator::DIAG_ZERO : Operator::DIAG_ONE);
+      Vector d_ref(op.Height());
+      d_ref.UseDevice(true);
+      op_ref.ParallelAssemble().AssembleDiagonal(d_ref);
+      const double error = MaxRelativeDifference(imag ? d.Imag() : d.Real(), d_ref, comm);
+      CAPTURE(imag, error);
+      CHECK(error < tol);
+    }
+  }
+}
+
+TEST_CASE("Restriction runs", "[libCEED][Prolongation][Serial][Parallel]")
+{
+  // FiniteElementSpace::GetRestrictionRuns gives the products with the restriction matrix
+  // of the space (a unit entry per true dof) of mfem::SparseMatrix bitwise.
+  const std::string mesh_file =
+      GENERATE("fichera-tet.mesh", "fichera-hex.mesh", "fichera-mixed-p2.mesh");
+  const bool amr = GENERATE(false, true);
+  const int order = GENERATE(1, 3);
+  CAPTURE(mesh_file, amr, order);
+  MPI_Comm comm = Mpi::World();
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, amr);
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  auto Bitwise = [comm](const Vector &u, const Vector &v)
+  {
+    int diff = (u.Size() != v.Size()) ||
+               (u.Size() > 0 &&
+                std::memcmp(u.HostRead(), v.HostRead(), u.Size() * sizeof(double)) != 0);
+    Mpi::GlobalMax(1, &diff, comm);
+    return diff == 0;
+  };
+  for (const auto *fespace : {&nd_fespace, &h1_fespace})
+  {
+    const auto *R = fespace->GetRestrictionRuns();
+    int has = (R != nullptr);
+    Mpi::GlobalMin(1, &has, comm);
+    REQUIRE(has == 1);
+    const auto *Rm = fespace->GetRestrictionMatrix();
+    const int n = fespace->GetTrueVSize(), m = fespace->GetVSize();
+    Vector lx(m), tx(n), ty(n), ty_ref(n), ly(m), ly_ref(m);
+    lx.Randomize(1);
+    tx.Randomize(2);
+    Rm->Mult(lx, ty_ref);
+    R->Mult(lx, ty);
+    CHECK(Bitwise(ty, ty_ref));
+    Rm->MultTranspose(tx, ly_ref);
+    R->MultTranspose(tx, ly);
+    CHECK(Bitwise(ly, ly_ref));
+  }
+}
+
+TEST_CASE("Masked prolongation products", "[libCEED][Prolongation][Serial][Parallel]")
+{
+  // hypre::MaskedProlongation gives the products with the prolongation around an operator
+  // with essential true dofs bitwise: P x̃ for x̃ = x with zeros at the essential true dofs,
+  // and y + a ỹ for ỹ = Pᵀ x with zeros or given values there, for one and two vectors.
+  // ParOperator and ComplexParOperator use them: AddMult equals y + a Mult bitwise.
+  const std::string mesh_file =
+      GENERATE("fichera-tet.mesh", "fichera-hex.mesh", "fichera-mixed-p2.mesh");
+  const bool amr = GENERATE(false, true);
+  const int order = GENERATE(1, 3);
+  CAPTURE(mesh_file, amr, order);
+  PackedIntegrationSettings settings(order);
+  MPI_Comm comm = Mpi::World();
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, amr);
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  auto Bitwise = [comm](const Vector &u, const Vector &v)
+  {
+    int diff = (u.Size() != v.Size()) ||
+               (u.Size() > 0 &&
+                std::memcmp(u.HostRead(), v.HostRead(), u.Size() * sizeof(double)) != 0);
+    Mpi::GlobalMax(1, &diff, comm);
+    return diff == 0;
+  };
+  auto EssentialTrueDofs = [&](const FiniteElementSpace &fespace)
+  {
+    const auto &bdr_attr = mesh.Get().bdr_attributes;
+    mfem::Array<int> bdr_marker(bdr_attr.Size() ? bdr_attr.Max() : 0), tdofs;
+    bdr_marker = 0;
+    if (bdr_marker.Size())
+    {
+      bdr_marker[0] = 1;
+    }
+    fespace.GetEssentialTrueDofs(bdr_marker, tdofs);
+    return tdofs;
+  };
+
+  SECTION("Prolongation products")
+  {
+    for (const auto *fespace : {&nd_fespace, &h1_fespace})
+    {
+      const auto *hP =
+          dynamic_cast<const hypre::HypreProlongation *>(fespace->GetProlongationMatrix());
+      int has = (hP != nullptr);
+      Mpi::GlobalMin(1, &has, comm);
+      if (!has)
+      {
+        continue;
+      }
+      const auto tdofs = EssentialTrueDofs(*fespace);
+      hypre::MaskedProlongation mP(*hP, tdofs);
+      CHECK(mP.Matches(tdofs));
+      const int n = fespace->GetTrueVSize(), m = fespace->GetVSize();
+      Vector xr(n), xi(n), txr(n), txi(n), lr(m), li(m), lr2(m), li2(m);
+      xr.Randomize(1);
+      xi.Randomize(2);
+      txr = xr;
+      txi = xi;
+      linalg::SetSubVector(txr, tdofs, 0.0);
+      linalg::SetSubVector(txi, tdofs, 0.0);
+      hP->Mult(txr, lr);
+      mP.Mult(xr, lr2);
+      CHECK(Bitwise(lr, lr2));
+      hP->Mult(txr, txi, lr, li);
+      mP.Mult(xr, xi, lr2, li2);
+      CHECK(Bitwise(lr, lr2));
+      CHECK(Bitwise(li, li2));
+      lr.Randomize(3);
+      li.Randomize(4);
+      for (const double a : {-1.0, -0.7, 2.5})
+      {
+        for (const bool one : {false, true})
+        {
+          CAPTURE(a, one);
+          Vector tyr(n), tyi(n), yr(n), yi(n), yr_ref(n), yi_ref(n);
+          yr.Randomize(5);
+          yi.Randomize(6);
+          yr_ref = yr;
+          yi_ref = yi;
+          hP->MultTranspose(lr, tyr);
+          linalg::SetSubVector(tyr, tdofs, 0.0);
+          if (one)
+          {
+            linalg::SetSubVector(tyr, tdofs, xr);
+          }
+          yr_ref.Add(a, tyr);
+          mP.AddMultTranspose(lr, yr, a, one ? &xr : nullptr);
+          CHECK(Bitwise(yr, yr_ref));
+          yr_ref = yr;
+          hP->MultTranspose(lr, li, tyr, tyi);
+          linalg::SetSubVector(tyr, tdofs, 0.0);
+          linalg::SetSubVector(tyi, tdofs, 0.0);
+          if (one)
+          {
+            linalg::SetSubVector(tyr, tdofs, xr);
+            linalg::SetSubVector(tyi, tdofs, xi);
+          }
+          ComplexVector::AXPY(a, tyr, tyi, yr_ref, yi_ref);
+          mP.AddMultTranspose(lr, li, yr, yi, a, one ? &xr : nullptr, one ? &xi : nullptr);
+          CHECK(Bitwise(yr, yr_ref));
+          CHECK(Bitwise(yi, yi_ref));
+        }
+      }
+    }
+  }
+
+  SECTION("Operator applications")
+  {
+    auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+    auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+    auto Assemble = [&](bool imag)
+    {
+      BilinearForm a(nd_fespace);
+      if (imag)
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
+      }
+      else
+      {
+        a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+      }
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>();
+      return a.PartialAssemble();
+    };
+    const auto tdofs = EssentialTrueDofs(nd_fespace);
+    const int n = nd_fespace.GetTrueVSize();
+    for (const auto policy : {Operator::DIAG_ONE, Operator::DIAG_ZERO})
+    {
+      CAPTURE(policy);
+      ParOperator op(Assemble(false), nd_fespace);
+      op.SetEssentialTrueDofs(tdofs, policy);
+      Vector x(n), y(n), y_ref(n), z(n);
+      x.Randomize(1);
+      y.Randomize(2);
+      y_ref = y;
+      op.Mult(x, z);
+      y_ref.Add(-0.7, z);
+      op.AddMult(x, y, -0.7);
+      CHECK(Bitwise(y, y_ref));
+
+      ComplexParOperator cop(Assemble(false), Assemble(true), nd_fespace);
+      cop.SetEssentialTrueDofs(tdofs, policy);
+      ComplexVector cx(n), cy(n), cy_ref(n), cz(n);
+      cx.Real().Randomize(3);
+      cx.Imag().Randomize(4);
+      cy.Real().Randomize(5);
+      cy.Imag().Randomize(6);
+      cy_ref = cy;
+      cop.Mult(cx, cz);
+      cy_ref.AXPY(-0.7, cz);
+      cop.AddMult(cx, cy, -0.7);
+      CHECK(Bitwise(cy.Real(), cy_ref.Real()));
+      CHECK(Bitwise(cy.Imag(), cy_ref.Imag()));
+    }
+  }
+
+  SECTION("Mapped element applications")
+  {
+    if (!PackedTestBackend())
+    {
+      SKIP("Element-assembled application requires one CPU CEED context and one thread");
+    }
+    // Operators whose local action consists of element matrices are applied without
+    // L-vectors (see ceed::AddMultMapped): the results equal the products with the
+    // prolongation and the local operator on the L-vectors bitwise.
+    auto mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+    auto curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+    auto loss = BuildCoefficient(mesh, false, CoeffType::Matrix);
+    loss *= 0.05;
+    auto AssembleND = [&](bool imag)
+    {
+      BilinearForm a(nd_fespace);
+      if (imag)
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
+      }
+      else
+      {
+        a.AddDomainIntegrator<CurlCurlMassIntegrator>(curl, mass);
+      }
+      a.AssembleQuadratureData();
+      return a.PartialAssemble();
+    };
+    auto scalar = BuildCoefficient(mesh, false, CoeffType::Scalar);
+    auto AssembleH1 = [&](bool imag)
+    {
+      BilinearForm a(h1_fespace);
+      if (imag)
+      {
+        a.AddDomainIntegrator<MassIntegrator>(scalar);
+      }
+      else
+      {
+        a.AddDomainIntegrator<DiffusionMassIntegrator>(curl, scalar);
+      }
+      return a.PartialAssemble();
+    };
+    // y = Pᵀ A P x̃ (with x̃ = x zeroed and y set at the essential true dofs, as DIAG_ONE)
+    // on the L-vectors.
+    auto Explicit = [&](const FiniteElementSpace &fespace, const mfem::Array<int> &tdofs,
+                        const Operator &local, const Vector &x, Vector &y)
+    {
+      const Operator *P = fespace.GetProlongationMatrix();
+      Vector tx(x), lx(fespace.GetVSize()), ly(fespace.GetVSize());
+      linalg::SetSubVector(tx, tdofs, 0.0);
+      P->Mult(tx, lx);
+      local.Mult(lx, ly);
+      P->MultTranspose(ly, y);
+      linalg::SetSubVector(y, tdofs, x);
+    };
+    auto ExplicitComplex = [&](const FiniteElementSpace &fespace,
+                               const mfem::Array<int> &tdofs, const ComplexOperator &local,
+                               const ComplexVector &x, ComplexVector &y)
+    {
+      const Operator *P = fespace.GetProlongationMatrix();
+      ComplexVector tx(x), lx(fespace.GetVSize()), ly(fespace.GetVSize());
+      linalg::SetSubVector(tx, tdofs, 0.0);
+      P->Mult(tx.Real(), lx.Real());
+      P->Mult(tx.Imag(), lx.Imag());
+      local.Mult(lx, ly);
+      P->MultTranspose(ly.Real(), y.Real());
+      P->MultTranspose(ly.Imag(), y.Imag());
+      linalg::SetSubVector(y, tdofs, x);
+    };
+    // Element assembly applies to the simplex leaves (single-precision H(curl), H1).
+    for (const bool nd : {true, false})
+    {
+      if (mesh_file != "fichera-tet.mesh")
+      {
+        break;
+      }
+      CAPTURE(nd);
+      const auto &fespace = nd ? nd_fespace : h1_fespace;
+      const auto tdofs = EssentialTrueDofs(fespace);
+      const int n = fespace.GetTrueVSize();
+
+      // Real operator: the single-precision approximation (H(curl)) or the element-
+      // assembled operator itself (H1).
+      ParOperator op(nd ? AssembleND(false) : AssembleH1(false), fespace);
+      op.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+      std::unique_ptr<Operator> local32;
+      if (nd)
+      {
+        REQUIRE(op.UseSinglePrecision() > 0);
+        local32 = ceed::CreateSinglePrecisionOperator(op.LocalOperator());
+        REQUIRE(local32);
+      }
+      const Operator &local = nd ? *local32 : op.LocalOperator();
+      const Operator &applied = nd ? *op.GetSinglePrecisionOperator() : op;
+      int mapped = ceed::SupportsMapped(local);
+      Mpi::GlobalMin(1, &mapped, comm);
+      CHECK(mapped == 1);
+      Vector x(n), y(n), y_ref(n), z(n);
+      x.Randomize(1);
+      Explicit(fespace, tdofs, local, x, y_ref);
+      applied.Mult(x, y);
+      CHECK(Bitwise(y, y_ref));
+      z.Randomize(2);
+      y = z;
+      y_ref = z;
+      Vector t(n);
+      Explicit(fespace, tdofs, local, x, t);
+      y_ref.Add(-0.7, t);
+      applied.AddMult(x, y, -0.7);
+      CHECK(Bitwise(y, y_ref));
+
+      // Complex operator.
+      ComplexParOperator cop(nd ? AssembleND(false) : AssembleH1(false),
+                             nd ? AssembleND(true) : AssembleH1(true), fespace);
+      cop.SetEssentialTrueDofs(tdofs, Operator::DIAG_ONE);
+      std::unique_ptr<ComplexOperator> clocal32;
+      if (nd)
+      {
+        REQUIRE(cop.UseSinglePrecision() > 0);
+        clocal32 = ceed::CreateSinglePrecisionOperator(cop.LocalOperator().Real(),
+                                                       cop.LocalOperator().Imag(), fespace);
+        REQUIRE(clocal32);
+      }
+      const ComplexOperator &clocal = nd ? *clocal32 : cop.LocalOperator();
+      const ComplexOperator &capplied = nd ? *cop.GetSinglePrecisionOperator() : cop;
+      int cmapped = ceed::SupportsMapped(clocal);
+      Mpi::GlobalMin(1, &cmapped, comm);
+      CAPTURE(cmapped);
+      ComplexVector cx(n), cy(n), cy_ref(n), cz(n), ct(n);
+      cx.Real().Randomize(3);
+      cx.Imag().Randomize(4);
+      ExplicitComplex(fespace, tdofs, clocal, cx, cy_ref);
+      capplied.Mult(cx, cy);
+      CHECK(Bitwise(cy.Real(), cy_ref.Real()));
+      CHECK(Bitwise(cy.Imag(), cy_ref.Imag()));
+      cz.Real().Randomize(5);
+      cz.Imag().Randomize(6);
+      cy = cz;
+      cy_ref = cz;
+      ExplicitComplex(fespace, tdofs, clocal, cx, ct);
+      cy_ref.AXPY(-0.7, ct);
+      capplied.AddMult(cx, cy, -0.7);
+      CHECK(Bitwise(cy.Real(), cy_ref.Real()));
+      CHECK(Bitwise(cy.Imag(), cy_ref.Imag()));
+      if (nd)
+      {
+        // The single-precision approximation of H(curl) operators is mapped.
+        CHECK(cmapped == 1);
+      }
+    }
+  }
+}
+
 TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parallel][GPU]")
 {
   auto mesh_file = GENERATE("star-tri.mesh", "fichera-mixed-p2.mesh");
@@ -2936,30 +4322,52 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
       TestCeedOperatorMultAgree(comm, *ops_skip[l], *ops_ref[l]);
     }
   }
-  SECTION("Reconfiguration After Geometry Data")
-  {
-    // Mesh levels retained across adaptive refinement iterations keep their geometry data
-    // and are reconfigured with the same sets by every new SpaceOperator: a no-op. Changing
-    // the sets after geometry data exists is a programming error and is rejected.
-    BilinearForm a(nd_fespace);
-    a.SkipZeroCoefficientElements();
-    a.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
-    auto op = a.PartialAssemble();
-    REQUIRE(op);
-    const auto lossy_attr = mesh.GetCeedActiveAttributes(false);
-    const auto active_bdr_attr = mesh.GetCeedActiveAttributes(true);
-    REQUIRE_NOTHROW(mesh.SetCeedActiveAttributes(lossy_attr, active_bdr_attr));
-    REQUIRE(mesh.GetCeedActiveAttributes(false) == lossy_attr);
-    REQUIRE(mesh.GetCeedActiveAttributes(true) == active_bdr_attr);
-    // Any other valid set: drop the first attribute, or use attribute 1 if the set is
-    // empty.
-    std::vector<int> other_attr(
-        lossy_attr.empty() ? std::vector<int>{1}
-                           : std::vector<int>(lossy_attr.begin() + 1, lossy_attr.end()));
-    REQUIRE(other_attr != lossy_attr);
-    REQUIRE_THROWS(mesh.SetCeedActiveAttributes(other_attr, active_bdr_attr));
-    REQUIRE(mesh.GetCeedActiveAttributes(false) == lossy_attr);
-  }
+}
+
+// Mesh levels retained across adaptive refinement iterations keep their geometry data and
+// are reconfigured with the same sets by every new SpaceOperator: a no-op. Changing the
+// sets after geometry data exists is a programming error and is rejected. Kept apart from
+// the element skipping test above, since the rejection aborts in builds of MFEM without
+// exceptions.
+TEST_CASE("libCEED Element Sets After Geometry Data", "[libCEED][Serial][Parallel][GPU]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath("fichera-mixed-p2.mesh"), 0, false);
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  BilinearForm::pa_order_threshold = 1;
+
+  auto Q = BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 2, 2.0);
+  auto Q_bdr = BuildZeroOutsideCoefficient(mesh.MaxCeedBdrAttribute(), 3, 5.0);
+  std::vector<int> lossy_attr, active_bdr_attr;
+  Q.AddNonzeroAttributes(lossy_attr);
+  Q_bdr.AddNonzeroAttributes(active_bdr_attr);
+  std::sort(lossy_attr.begin(), lossy_attr.end());
+  lossy_attr.erase(std::unique(lossy_attr.begin(), lossy_attr.end()), lossy_attr.end());
+  mesh.SetCeedActiveAttributes(lossy_attr, active_bdr_attr);
+
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  BilinearForm a(nd_fespace);
+  a.SkipZeroCoefficientElements();
+  a.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
+  auto op = a.PartialAssemble();
+  REQUIRE(op);
+  lossy_attr = mesh.GetCeedActiveAttributes(false);
+  active_bdr_attr = mesh.GetCeedActiveAttributes(true);
+  REQUIRE_NOTHROW(mesh.SetCeedActiveAttributes(lossy_attr, active_bdr_attr));
+  REQUIRE(mesh.GetCeedActiveAttributes(false) == lossy_attr);
+  REQUIRE(mesh.GetCeedActiveAttributes(true) == active_bdr_attr);
+  // Any other valid set: drop the first attribute, or use attribute 1 if the set is empty.
+  std::vector<int> other_attr(
+      lossy_attr.empty() ? std::vector<int>{1}
+                         : std::vector<int>(lossy_attr.begin() + 1, lossy_attr.end()));
+  REQUIRE(other_attr != lossy_attr);
+  REQUIRE_THROWS(mesh.SetCeedActiveAttributes(other_attr, active_bdr_attr));
+  REQUIRE(mesh.GetCeedActiveAttributes(false) == lossy_attr);
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")

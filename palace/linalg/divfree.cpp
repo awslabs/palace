@@ -3,6 +3,7 @@
 
 #include "divfree.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
@@ -13,6 +14,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -49,6 +51,9 @@ DivFreeSolver<VecType>::DivFreeSolver(
     int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
+  perf::ScopedRole role("DivFree");
+  perf_projections =
+      perf::RegisterCounter(perf::LinearSolverPath("DivFree", "Projections"));
 
   // If no boundaries on the mesh have been marked, add a single degree of freedom
   // constraint so the system for the projection is not singular. This amounts to enforcing
@@ -116,9 +121,11 @@ DivFreeSolver<VecType>::DivFreeSolver(
   }
   Grad = &nd_fespace.GetDiscreteInterpolator(h1_fespaces.GetFinestFESpace());
 
-  // The system matrix for the projection is real and SPD.
+  // The system matrix for the projection is real and SPD. As the coarse solver of
+  // multigrid, the AMG solve is a small problem whose V-cycle is latency bound in parallel:
+  // a second level of aggressive coarsening shortens the hierarchy.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
+      std::make_unique<BoomerAmgSolver>(1, 1, (h1_fespaces.GetNumLevels() > 1) ? 2 : 1, 0));
   amg->SetDropSmallEntries(false);
   std::unique_ptr<Solver<OperType>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
@@ -142,7 +149,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc), "DivFree");
   ksp->SetOperators(*M, *M);
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
@@ -155,6 +162,7 @@ template <typename VecType>
 void DivFreeSolver<VecType>::Mult(VecType &y) const
 {
   BlockTimer bt(Timer::DIV_FREE);
+  perf::Add(perf_projections, 1);
 
   // Compute the divergence of y.
   if constexpr (std::is_same_v<VecType, ComplexVector>)
@@ -193,6 +201,12 @@ void DivFreeSolver<VecType>::Mult(VecType &y, double tol) const
   ksp->SetRelTol(tol);
   Mult(y);
   ksp->SetRelTol(tol0);
+}
+
+template <typename VecType>
+double DivFreeSolver<VecType>::GetTol() const
+{
+  return ksp->GetRelTol();
 }
 
 template class DivFreeSolver<Vector>;

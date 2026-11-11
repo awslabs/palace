@@ -6,6 +6,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "linalg/strumpack.hpp"
 #include "utils/communication.hpp"
 
@@ -154,7 +155,7 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   A.Mult(x_ex, b);
 
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                            0.0, 0, 0, false, 0);
+                            0.0, 0, 0, false, true, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);
@@ -182,6 +183,78 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   CHECK(err[0] <= 1.0e-12 * nrm);
   CHECK(err[1] <= 1.0e-12 * nrm);
   CHECK(err[2] <= 1.0e-12 * nrm);
+}
+
+// A small matrix on many processes, as the coarse matrix of a multigrid hierarchy built by
+// uniform refinement of a small mesh: the separator tree of the column ordering has fewer
+// leaves than processes, so only some processes get a subgraph and a local tree. The two
+// assignments must agree for every ordering (the sequential METIS ordering of a matrix with
+// fewer than P / 2 leaves failed in the symbolic factorization). Exercised on 4 or more
+// processes.
+TEST_CASE("StrumpackSolver small matrices on many processes",
+          "[strumpack][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int P = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const auto reorder =
+      GENERATE(SymbolicFactorization::METIS, SymbolicFactorization::AMD,
+               SymbolicFactorization::PTSCOTCH, SymbolicFactorization::DEFAULT);
+  for (int m = 2; m <= 20; m++)
+  {
+    // Five-point Laplacian on an m x m grid, at least one row on every process.
+    const HYPRE_BigInt N = m * m;
+    if (N < P)
+    {
+      continue;
+    }
+    INFO("Grid " << m << " x " << m << ", ordering " << static_cast<int>(reorder));
+    const HYPRE_BigInt first = (N * rank) / P, last = (N * (rank + 1)) / P;
+    const int n_loc = static_cast<int>(last - first);
+    std::vector<int> I(n_loc + 1, 0);
+    std::vector<HYPRE_BigInt> J;
+    std::vector<double> data;
+    for (HYPRE_BigInt i = first; i < last; i++)
+    {
+      const HYPRE_BigInt ix = i % m, iy = i / m;
+      const HYPRE_BigInt cols[5] = {i - m, i - 1, i, i + 1, i + m};
+      const bool stored[5] = {iy > 0, ix > 0, true, ix < m - 1, iy < m - 1};
+      for (int k = 0; k < 5; k++)
+      {
+        if (stored[k])
+        {
+          J.push_back(cols[k]);
+          data.push_back((k == 2) ? 4.0 : -1.0);
+        }
+      }
+      I[i - first + 1] = static_cast<int>(J.size());
+    }
+    HYPRE_BigInt row_starts[2] = {first, last};
+    mfem::HypreParMatrix A(comm, n_loc, N, N, I.data(), J.data(), data.data(), row_starts,
+                           row_starts);
+
+    mfem::HypreParVector x_ex(A), b(A), x(A);
+    for (int i = 0; i < n_loc; i++)
+    {
+      const double t = static_cast<double>(first + i) / static_cast<double>(N);
+      x_ex(i) = std::cos(5.0 * t) + t;
+    }
+    A.Mult(x_ex, b);
+    StrumpackSolver strumpack(comm, reorder, SparseCompression::NONE, 0.0, 0, 0, false,
+                              true, 0);
+    strumpack.SetOperator(A);
+    x = 0.0;
+    strumpack.Mult(b, x);
+
+    double err = 0.0, nrm = 0.0;
+    for (int i = 0; i < n_loc; i++)
+    {
+      err = std::max(err, std::abs(x(i) - x_ex(i)));
+      nrm = std::max(nrm, std::abs(x_ex(i)));
+    }
+    Mpi::GlobalMax(1, &err, comm);
+    Mpi::GlobalMax(1, &nrm, comm);
+    CHECK(err <= 1.0e-12 * nrm);
+  }
 }
 
 }  // namespace palace

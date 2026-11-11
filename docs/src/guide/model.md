@@ -34,6 +34,70 @@ at 1. They do not need to be contiguous in the mesh file. Throughout the configu
 file, the `"Attributes"` keyword is used to indicate which domain or boundary attributes
 are relevant to the material properties or boundary conditions being specified.
 
+## Mesh quality
+
+Degenerate tetrahedra slow down the iterative linear solvers: slivers, whose four vertices
+are nearly coplanar (minimum dihedral angles of a few degrees or less), and needles, which
+are much longer than they are wide. The basis functions of such an element are close to
+linearly dependent, the smoothers of geometric multigrid cannot correct its local modes, and
+every linear solve needs more iterations. A small fraction of such elements in a large
+mesh can cause a large part of the iterations of a linear solve, and even a few slivers
+can matter.
+
+After the mesh information of the initial mesh and of every refined mesh, *Palace* reports
+the tetrahedra with a minimum dihedral angle below 5 degrees, if there are any, with the
+numbers below 2 and 1 degrees and the smallest angle in degrees:
+
+```
+ Tetrahedra with a minimum dihedral angle below 5 degrees: 1520 (214 below 2, 37 below 1, smallest 0.412)
+```
+
+This line is informational: the simulation proceeds, and for driven and eigenmode
+simulations the patch solves described below remove much of the cost of the slivers.
+Removing slivers and needles in the mesh generator helps every simulation type and solver.
+
+### Optimizing meshes generated with Gmsh
+
+[Gmsh](https://gmsh.info) can improve the quality of tetrahedral meshes after generating
+them. In the Gmsh script of a model (the options and functions are the same in the Python
+and Julia APIs):
+
+  - Keep the default optimization of tetrahedral meshes (`Mesh.Optimize`, on by default),
+    and add Netgen's optimizer with `gmsh.option.setNumber("Mesh.OptimizeNetgen", 1)`
+    before `gmsh.model.mesh.generate(3)`, or with `gmsh.model.mesh.optimize("Netgen")`
+    after it. `Mesh.OptimizeThreshold` (default `0.3`) is the quality below which
+    tetrahedra are optimized: a larger value optimizes more of them.
+  - For high-order (curved) meshes, also optimize after `gmsh.model.mesh.setOrder(p)`, for
+    example with `gmsh.option.setNumber("Mesh.HighOrderOptimize", 2)` (elastic smoothing
+    and optimization) or `gmsh.model.mesh.optimize("HighOrder")`, which untangle invalid
+    curved elements and improve distorted ones.
+  - Optimization cannot remove the slivers which the geometry forces, such as in thin
+    layers, between nearly coincident surfaces, or at small features next to large
+    elements. Remove these in the geometry or with mesh size fields, and check the line
+    above again for the new mesh.
+
+### Sliver patch solves
+
+For the complex-valued operators of frequency domain driven and eigenmode simulations,
+geometric multigrid also solves exactly, with dense factorizations, on small patches of the
+degrees of freedom around the tetrahedra with a minimum dihedral angle below
+[`config["Solver"]["Linear"]["MGSliverAngle"]`](../config/reference.md#config-solver-linear-mgsliverangle)
+(2 degrees by default), on every level above the coarsest. This removes most of the extra
+iterations of the slivers at a small cost. The setup reports the patches of each level, for
+example:
+
+```
+  Level 1 (p = 2): 152 patches with 38410 true dofs (largest 1124, 2961 on other processes) for 214 slivers
+   Patch layers: 1 (patch work ratio 0.62)
+```
+
+A level gets no patch solves when they would be expensive compared with its smoothing
+(see
+[`config["Solver"]["Linear"]["MGSliverLayers"]`](../config/reference.md#config-solver-linear-mgsliverlayers)),
+and the patch solves are off for the real-valued operators of electrostatic, magnetostatic
+and transient simulations, whose iterations they do not reduce. They also do not treat
+needles.
+
 ## Mesh refinement
 
 Refinement of the input mesh file can be performed using levels of global uniform refinement

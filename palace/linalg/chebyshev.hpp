@@ -7,6 +7,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -19,6 +20,30 @@ namespace palace
 // Reference: Phillips and Fischer, Optimal Chebyshev smoothers and one-sided V-cycles,
 //            arXiv:2210.03179v1 (2022).
 //
+// If a maximum polynomial order larger than the order is given, the order is raised to it
+// at setup when the operator is nearly positive semi-definite. Higher orders reduce the
+// iteration count for such operators but amplify the error components with negative
+// eigenvalues of indefinite ones (for example K - ω² M at large ω h). The multigrid solver
+// checks the raised orders against the whole cycle (see GeometricMultigridSolver).
+//
+// The operator is applied to the search directions of the polynomial recurrence through
+// its single-precision approximation when it has one (see
+// ParOperator::GetSinglePrecisionOperator): these applications tolerate a relative error
+// of about 1e-7, which only perturbs the polynomial. The residuals of the iterate, which
+// can have large components near the null space of the operator after a coarse grid
+// correction (for example for the shifted operators of frequency domain problems), are
+// computed with the operator itself, unless the caller provides the residual of the
+// initial guess (see Solver::SetResidual). On request, the residual of the result is
+// updated through one more application to the last search direction, and a pending
+// correction of the initial guess is applied together with the first search direction.
+// Both smoothers apply it in the same way.
+//
+
+// The operator for the applications to search directions: the single-precision
+// approximation of a parallel operator when it has one, otherwise the operator itself.
+const Operator &GetDirectionOperator(const Operator &op);
+const ComplexOperator &GetDirectionOperator(const ComplexOperator &op);
+
 template <OperatorType OperType>
 class ChebyshevSmoother : public Solver<OperType>
 {
@@ -28,11 +53,13 @@ private:
   // MPI communicator associated with the solver operator and vectors.
   MPI_Comm comm;
 
-  // Number of smoother iterations and polynomial order.
-  const int pc_it, order;
+  // Number of smoother iterations, polynomial order, and range of the polynomial order.
+  const int pc_it, min_order, max_order;
+  int order;
 
-  // System matrix (not owned).
-  const OperType *A;
+  // System matrix (not owned), and the operator for the applications to the search
+  // directions (A or its single-precision approximation).
+  const OperType *A, *A_dir;
 
   // Inverse diagonal scaling of the operator (real-valued for now).
   VecType dinv;
@@ -44,13 +71,35 @@ private:
   // the next operator starts.
   VecType lambda_vec;
 
-  // Temporary vector for smoother application.
-  mutable VecType d, r;
+  // Temporary vectors for smoother application.
+  mutable VecType d, r, dz;
+
+  // Performance tally id for the operator applications.
+  int perf_op = -1;
 
 public:
-  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
+  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
+                    int max_poly_order = 0);
 
   void SetOperator(const OperType &op) override;
+
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override
+  {
+    perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
+  }
+
+  // Polynomial order in use (chosen during SetOperator when a maximum order is given), and
+  // the order given at construction, which SetOperator raises.
+  int GetOrder() const { return order; }
+  int GetBaseOrder() const { return min_order; }
+  double GetMaxEigenvalue() const { return lambda_max; }
+  bool UsesSinglePrecision() const { return A_dir != A; }
+  const VecType &GetInverseDiagonal() const { return dinv; }
+
+  // Set the polynomial order, for example to match the order chosen by another smoother.
+  void SetOrder(int poly_order);
+
+  bool UpdatesResidual() const override { return true; }
 
   void Mult(const VecType &x, VecType &y) const override
   {
@@ -98,8 +147,9 @@ private:
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
-  // System matrix (not owned).
-  const OperType *A;
+  // System matrix (not owned), and the operator for the applications to the search
+  // directions (A or its single-precision approximation).
+  const OperType *A, *A_dir;
 
   // Inverse diagonal scaling of the operator (real-valued for now).
   VecType dinv;
@@ -112,14 +162,28 @@ private:
   // the next operator starts.
   VecType lambda_vec;
 
-  // Temporary vector for smoother application.
-  mutable VecType d, r;
+  // Temporary vectors for smoother application.
+  mutable VecType d, r, dz;
+
+  // Performance tally id for the operator applications.
+  int perf_op = -1;
 
 public:
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
                            double sf_min);
 
   void SetOperator(const OperType &op) override;
+
+  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override
+  {
+    perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
+  }
+  int GetOrder() const { return order; }
+  double GetMaxEigenvalue() const { return theta + delta; }
+  bool UsesSinglePrecision() const { return A_dir != A; }
+  const VecType &GetInverseDiagonal() const { return dinv; }
+
+  bool UpdatesResidual() const override { return true; }
 
   void Mult(const VecType &x, VecType &y) const override
   {

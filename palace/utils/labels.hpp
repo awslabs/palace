@@ -146,6 +146,16 @@ enum class MultigridCoarsening : char
   LOGARITHMIC
 };
 
+// Residuals between the primary and auxiliary space smoothers of the distributive
+// relaxation smoother for multigrid.
+enum class MultigridAuxiliaryResidual : char
+{
+  DEFAULT,
+  EXACT,
+  UPDATED,
+  LAGGED
+};
+
 // Preconditioning side.
 enum class PreconditionerSide : char
 {
@@ -167,7 +177,6 @@ enum class SymbolicFactorization : char
 {
   DEFAULT,
   METIS,
-  PARMETIS,
   SCOTCH,
   PTSCOTCH,
   PORD,

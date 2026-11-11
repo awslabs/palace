@@ -1,0 +1,680 @@
+diff --git a/src/SparseSolverBase.cpp b/src/SparseSolverBase.cpp
+index 55a66b9e..d6e28610 100644
+--- a/src/SparseSolverBase.cpp
++++ b/src/SparseSolverBase.cpp
+@@ -337,6 +337,11 @@ namespace strumpack {
+     if (!is_symmetric(opts_)){
+       equil_ = matrix()->equilibration();
+       matrix()->equilibrate(equil_);
++      // The column scaling (global length for distributed matrices) is only used
++      // for COLUMN/BOTH equilibration
++      if (equil_.type == EquilibrationType::NONE ||
++          equil_.type == EquilibrationType::ROW)
++        std::vector<typename RealType<scalar_t>::value_type>().swap(equil_.C);
+     }
+     if (opts_.verbose() && is_root_)
+       std::cout << "# matrix equilibration, r_cond = "
+diff --git a/src/sparse/CSRMatrixMPI.cpp b/src/sparse/CSRMatrixMPI.cpp
+index 2d24458d..d395abde 100644
+--- a/src/sparse/CSRMatrixMPI.cpp
++++ b/src/sparse/CSRMatrixMPI.cpp
+@@ -40,6 +40,8 @@
+ #include "AWPMCombBLAS.hpp"
+ #endif
+ 
++#include <unordered_map>
++
+ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t>
+@@ -398,7 +400,7 @@ namespace strumpack {
+    */
+   template<typename scalar_t,typename integer_t> CSRGraph<integer_t>
+   CSRMatrixMPI<scalar_t,integer_t>::get_sub_graph
+-  (const std::vector<integer_t>& perm,
++  (const integer_t* perm,
+    const std::vector<std::pair<integer_t,integer_t>>& graph_ranges) const {
+     auto rank = comm_.rank();
+     auto P = comm_.size();
+@@ -794,7 +796,7 @@ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t> Equilibration<scalar_t>
+   CSRMatrixMPI<scalar_t,integer_t>::equilibration() const {
+-    Equil_t eq(lrows_, n_);
++    Equil_t eq(lrows_, 0);  // column scaling C is allocated only if used
+     if (!n_) return eq;
+     real_t small = blas::lamch<real_t>('S');
+     real_t big = 1. / small;
+@@ -821,31 +823,68 @@ namespace strumpack {
+     for (integer_t r=0; r<lrows_; r++)
+       eq.R[r] = 1. / std::min(std::max(eq.R[r], small), big);
+     eq.rcond = std::max(rmin, small) / std::min(rmax, big);
+-    // cannot use openmp here
+-    for (integer_t r=0; r<lrows_; r++) {
+-      for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
+-        auto indj = ind_[j];
+-        eq.C[indj] = std::max(eq.C[indj], std::abs(val_[j]) * eq.R[r]);
++    // Column maxima: each rank reduces the columns it owns (block-row distribution
++    // dist_), partial maxima of other columns are sent to their owners (sparse exchange),
++    // instead of an MPI_Allreduce over a vector of the global dimension on every rank.
++    // Same values (max is exact); the global vector is built only if columns are scaled.
++    std::vector<real_t> Cloc(lrows_, 0.);
++    {
++      auto P = comm_.size();
++      std::unordered_map<integer_t,real_t> part;
++      for (integer_t r=0; r<lrows_; r++)
++        for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
++          auto indj = ind_[j];
++          auto v = std::abs(val_[j]) * eq.R[r];
++          if (indj >= brow_ && indj < brow_ + lrows_)
++            Cloc[indj-brow_] = std::max(Cloc[indj-brow_], v);
++          else {
++            auto it = part.emplace(indj, v).first;
++            it->second = std::max(it->second, v);
++          }
++        }
++      std::vector<std::vector<integer_t>> sidx(P);
++      std::vector<std::vector<real_t>> sval(P);
++      for (auto& kv : part) {
++        int p = std::upper_bound(dist_.begin(), dist_.end(), kv.first) - dist_.begin() - 1;
++        sidx[p].push_back(kv.first);
++        sval[p].push_back(kv.second);
+       }
++      part.clear();
++      auto ridx = comm_.all_to_all_v(sidx);
++      auto rval = comm_.all_to_all_v(sval);
++      for (std::size_t k=0; k<ridx.size(); k++)
++        Cloc[ridx[k]-brow_] = std::max(Cloc[ridx[k]-brow_], rval[k]);
+     }
+-    comm_.all_reduce(eq.C, MPI_MAX);
+-    mM = std::minmax_element(eq.C.begin(), eq.C.end());
++    mM = std::minmax_element(Cloc.begin(), Cloc.end());
+     real_t cmin = lrows_ ? *(mM.first) : std::numeric_limits<real_t>::max();
+     real_t cmax = lrows_ ? *(mM.second) : 0;
+     cmin = comm_.all_reduce(cmin, MPI_MIN);
+     cmax = comm_.all_reduce(cmax, MPI_MAX);
+     if (cmin == 0.) {
+-      for (integer_t i=0; i<n_; i++)
+-        if (eq.C[i] == 0.) {
+-          eq.info = n_+i+1;
+-          return eq;
+-        }
++      integer_t first = n_;
++      for (integer_t i=0; i<lrows_; i++)
++        if (Cloc[i] == 0.) { first = brow_ + i; break; }
++      first = comm_.all_reduce(first, MPI_MIN);
++      eq.info = n_+first+1;
++      return eq;
+     }
+ #pragma omp parallel for
+-    for (integer_t i=0; i<n_; i++)
+-      eq.C[i] = 1. / std::min(std::max(eq.C[i], small), big);
++    for (integer_t i=0; i<lrows_; i++)
++      Cloc[i] = 1. / std::min(std::max(Cloc[i], small), big);
+     eq.ccond = std::max(cmin, small) / std::min(cmax, big);
+     eq.set_type();
++    if (eq.type == EquilibrationType::COLUMN ||
++        eq.type == EquilibrationType::BOTH) {
++      auto P = comm_.size();
++      std::vector<int> cnt(P), dsp(P);
++      for (int p=0; p<P; p++) {
++        cnt[p] = int(dist_[p+1] - dist_[p]);
++        dsp[p] = int(dist_[p]);
++      }
++      eq.C.resize(n_);
++      MPI_Allgatherv(Cloc.data(), int(lrows_), mpi_type<real_t>(), eq.C.data(),
++                     cnt.data(), dsp.data(), mpi_type<real_t>(), comm_.comm());
++    }
+     return eq;
+   }
+ 
+diff --git a/src/sparse/CSRMatrixMPI.hpp b/src/sparse/CSRMatrixMPI.hpp
+index 8014553b..49659034 100644
+--- a/src/sparse/CSRMatrixMPI.hpp
++++ b/src/sparse/CSRMatrixMPI.hpp
+@@ -154,6 +154,12 @@ namespace strumpack {
+ 
+     CSRGraph<integer_t>
+     get_sub_graph(const std::vector<integer_t>& perm,
++                  const std::vector<std::pair<integer_t,integer_t>>&
++                  graph_ranges) const {
++      return get_sub_graph(perm.data(), graph_ranges);
++    }
++    CSRGraph<integer_t>
++    get_sub_graph(const integer_t* perm,
+                   const std::vector<std::pair<integer_t,integer_t>>&
+                   graph_ranges) const;
+ 
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 67cfd5b3..38b862bd 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -37,6 +37,9 @@
+ #include "fronts/Front.hpp"
+ #include "fronts/FrontMPI.hpp"
+ 
++#include <cstdlib>
++#include <iostream>
++
+ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t> MPI_Datatype
+@@ -132,9 +135,9 @@ namespace strumpack {
+   EliminationTreeMPIDist<scalar_t,integer_t>::get_sparse_mapped_destination
+   (const CSRMPI_t& A, integer_t oi, integer_t oj,
+    integer_t i, integer_t j, bool duplicate_fronts) const {
+-    auto fi = row_pfront_[i];
++    auto fi = row_pfront(i);
+     if (fi < 0) return std::make_tuple(-fi-1, 1, 1);
+-    auto fj = row_pfront_[j];
++    auto fj = row_pfront(j);
+     if (fj < 0) return std::make_tuple(-fj-1, 1, 1);
+     constexpr auto B = DistM_t::default_MB;
+     int pfront =
+@@ -209,8 +212,8 @@ namespace strumpack {
+     row_owner_.assign(n_loc, -1);
+ #pragma omp parallel for
+     for (std::size_t r=0; r<n_loc; r++) {
+-      std::size_t pr = nd_.perm()[r+lo];
+-      auto rf = row_pfront_[pr];
++      std::size_t pr = nd_.perm_data()[r+lo];
++      auto rf = row_pfront(pr);
+       if (rf < 0)
+         row_owner_[r] = -rf-1;
+       else {
+@@ -223,15 +226,39 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> void
+   EliminationTreeMPIDist<scalar_t,integer_t>::find_row_front
+   (const CSRMPI_t& A) {
+-    row_pfront_.resize(A.size());
++    std::vector<std::tuple<integer_t,integer_t,int>> iv;
+     for (int p=0; p<P_; p++) // local separators
+-      for (integer_t r=subtree_ranges_[p].first;
+-           r<subtree_ranges_[p].second; r++)
+-        row_pfront_[r] = -p-1;
++      if (subtree_ranges_[p].first < subtree_ranges_[p].second)
++        iv.emplace_back(subtree_ranges_[p].first, subtree_ranges_[p].second, -p-1);
+     for (std::size_t i=0; i<all_pfronts_.size(); i++) {
+       auto& f = all_pfronts_[i];
+-      for (integer_t r=f.sep_begin; r<f.sep_end; r++)
+-        row_pfront_[r] = i;
++      if (f.sep_begin < f.sep_end) iv.emplace_back(f.sep_begin, f.sep_end, int(i));
++    }
++    std::sort(iv.begin(), iv.end());
++    rpf_lo_.clear();
++    rpf_val_.clear();
++    integer_t cur = 0;
++    for (auto& t : iv) {
++      if (std::get<0>(t) > cur) { rpf_lo_.push_back(cur); rpf_val_.push_back(0); }
++      rpf_lo_.push_back(std::get<0>(t));
++      rpf_val_.push_back(std::get<2>(t));
++      cur = std::max(cur, std::get<1>(t));
++    }
++    if (cur < A.size() || rpf_lo_.empty()) { rpf_lo_.push_back(cur); rpf_val_.push_back(0); }
++    const char* ve = std::getenv("STRUMPACK_MEMORY_VERIFY");
++    if (ve && std::atoi(ve)) {
++      std::vector<int> ref(A.size());
++      for (int p=0; p<P_; p++)
++        for (integer_t r=subtree_ranges_[p].first; r<subtree_ranges_[p].second; r++)
++          ref[r] = -p-1;
++      for (std::size_t i=0; i<all_pfronts_.size(); i++)
++        for (integer_t r=all_pfronts_[i].sep_begin; r<all_pfronts_[i].sep_end; r++)
++          ref[r] = i;
++      long long bad = 0;
++      for (integer_t r=0; r<A.size(); r++) if (ref[r] != row_pfront(r)) bad++;
++      bad = comm_.all_reduce(bad, MPI_SUM);
++      if (!rank_) std::cout << "# row_pfront interval table mismatches: " << bad
++                            << " (" << rpf_lo_.size() << " intervals)" << std::endl;
+     }
+   }
+ 
+@@ -280,7 +307,7 @@ namespace strumpack {
+         scnts[row_owner_[r]]++;
+     else {
+       for (integer_t r=0; r<m; r++) {
+-        int pf = row_pfront_[nd_.perm()[r+lo]];
++        int pf = row_pfront(nd_.perm_data()[r+lo]);
+         if (pf < 0) scnts[row_owner_[r]] += n;
+         else {
+           auto& f = all_pfronts_[pf];
+@@ -295,7 +322,7 @@ namespace strumpack {
+     for (int p=1; p<P_; p++)
+       pp[p] = sdispls[p] = sdispls[p-1] + scnts[p-1];
+     if (n == 1) {
+-      const auto perm = nd_.perm().data() + lo;
++      const auto perm = nd_.perm_data() + lo;
+       for (integer_t r=0; r<m; r++) {
+         auto k = pp[row_owner_[r]]++;
+         sbuf[k] = {perm[r], 0, x(r,0)};
+@@ -305,8 +332,8 @@ namespace strumpack {
+     } else {
+       for (integer_t r=0; r<m; r++) {
+         auto destr = row_owner_[r];
+-        auto permr = nd_.perm()[r+lo];
+-        int pf = row_pfront_[permr];
++        auto permr = nd_.perm_data()[r+lo];
++        int pf = row_pfront(permr);
+         if (pf < 0)
+           for (integer_t c=0; c<n; c++) {
+             auto k = pp[destr]++;
+@@ -383,8 +410,8 @@ namespace strumpack {
+     sp.out_src_off.resize(rsize);
+     for (integer_t r=local_range_.first; r<local_range_.second; r++) {
+       auto dest = std::upper_bound
+-        (dist.begin(), dist.end(), nd_.iperm()[r])-dist.begin()-1;
+-      auto permgr = nd_.iperm()[r];
++        (dist.begin(), dist.end(), nd_.iperm_data()[r])-dist.begin()-1;
++      auto permgr = nd_.iperm_data()[r];
+       for (integer_t c=0; c<n; c++) {
+         auto k = pp[dest]++;
+         auto& xrc = Xloc(r,c);
+@@ -397,7 +424,7 @@ namespace strumpack {
+       if (xdist[i].lcols() == 0) continue;
+       auto slo = local_pfronts_[i].sep_begin;
+       for (int r=0; r<xdist[i].lrows(); r++) {
+-        auto permgr = nd_.iperm()[xdist[i].rowl2g(r) + slo];
++        auto permgr = nd_.iperm_data()[xdist[i].rowl2g(r) + slo];
+         auto dest = std::upper_bound
+           (dist.begin(), dist.end(), permgr)-dist.begin()-1;
+         for (int c=0; c<xdist[i].lcols(); c++) {
+diff --git a/src/sparse/EliminationTreeMPIDist.hpp b/src/sparse/EliminationTreeMPIDist.hpp
+index 6fb3d086..02c57802 100644
+--- a/src/sparse/EliminationTreeMPIDist.hpp
++++ b/src/sparse/EliminationTreeMPIDist.hpp
+@@ -31,6 +31,8 @@
+ 
+ #include <cstddef>
+ #include <map>
++#include <algorithm>
++#include <tuple>
+ 
+ #include "EliminationTreeMPI.hpp"
+ #include "PropMapSparseMatrix.hpp"
+@@ -102,7 +104,14 @@ namespace strumpack {
+      * vector of size A.size(), storing for each row, to which front
+      * it belongs.
+      */
+-    std::vector<int> row_pfront_;
++    // Row (permuted index) -> front: -p-1 for the local subtree of rank p, else
++    // the index in all_pfronts_; stored as sorted intervals instead of an array of size n
++    std::vector<integer_t> rpf_lo_;
++    std::vector<int> rpf_val_;
++    int row_pfront(integer_t r) const {
++      auto it = std::upper_bound(rpf_lo_.begin(), rpf_lo_.end(), r);
++      return rpf_val_[(it - rpf_lo_.begin()) - 1];
++    }
+     void find_row_front(const CSRMPI_t& A);
+ 
+     /**
+diff --git a/src/sparse/PropMapSparseMatrix.cpp b/src/sparse/PropMapSparseMatrix.cpp
+index 7e6effdd..fe4845c8 100644
+--- a/src/sparse/PropMapSparseMatrix.cpp
++++ b/src/sparse/PropMapSparseMatrix.cpp
+@@ -60,7 +60,7 @@ namespace strumpack {
+     std::vector<std::tuple<int,int,int>> dest(Ampi.local_nnz());
+     std::vector<std::size_t> scnts(P);
+     integer_t lrows = Ampi.local_rows();
+-    auto perm = nd.perm();
++    const integer_t* perm = nd.perm_data();
+     auto Aptr = Ampi.ptr();
+     auto Aind = Ampi.ind();
+     auto Aval = Ampi.val();
+diff --git a/src/sparse/ordering/MatrixReordering.cpp b/src/sparse/ordering/MatrixReordering.cpp
+index 7f706b19..cfcb2cb4 100644
+--- a/src/sparse/ordering/MatrixReordering.cpp
++++ b/src/sparse/ordering/MatrixReordering.cpp
+@@ -66,6 +66,11 @@ namespace strumpack {
+     : perm_(n), iperm_(n) {
+   }
+ 
++  template<typename scalar_t,typename integer_t>
++  MatrixReordering<scalar_t,integer_t>::MatrixReordering(integer_t n, bool alloc)
++    : perm_(alloc ? n : 0), iperm_(alloc ? n : 0) {
++  }
++
+   template<typename scalar_t,typename integer_t>
+   MatrixReordering<scalar_t,integer_t>::~MatrixReordering() {}
+ 
+diff --git a/src/sparse/ordering/MatrixReordering.hpp b/src/sparse/ordering/MatrixReordering.hpp
+index c921f695..a45865b6 100644
+--- a/src/sparse/ordering/MatrixReordering.hpp
++++ b/src/sparse/ordering/MatrixReordering.hpp
+@@ -51,6 +51,8 @@ namespace strumpack {
+ 
+   public:
+     MatrixReordering(integer_t  n);
++    // Does not allocate perm_/iperm_ (MatrixReorderingMPI allocates on demand)
++    MatrixReordering(integer_t  n, bool alloc);
+ 
+     virtual ~MatrixReordering();
+ 
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
+index 351a2351..bc76eb73 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -53,16 +53,85 @@
+ // #include "spectral/SpectralReordering.hpp"
+ 
+ 
++#include <cstdlib>
++#include <algorithm>
++
+ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t>
+   MatrixReorderingMPI<scalar_t,integer_t>::MatrixReorderingMPI
+   (integer_t n, const MPIComm& c)
+-    : MatrixReordering<scalar_t,integer_t>(n), comm_(&c), dsep_leaf_(-1) {
++    : MatrixReordering<scalar_t,integer_t>(n, false), comm_(&c), n_(n),
++      dsep_leaf_(-1) {
++  }
++
++  template<typename scalar_t,typename integer_t> bool
++  MatrixReorderingMPI<scalar_t,integer_t>::use_shared_perm
++  (const Opts_t& opts) const {
++    if (opts.compression() != CompressionType::NONE) return false;
++    const char* e = std::getenv("STRUMPACK_SHARED_PERM");
++    return !(e && std::atoi(e) == 0);
++  }
++
++  template<typename scalar_t,typename integer_t> void
++  MatrixReorderingMPI<scalar_t,integer_t>::free_shared_perm() {
++    if (shm_win_ != MPI_WIN_NULL) {
++      int fin = 0;
++      MPI_Finalized(&fin);
++      if (!fin) {
++        MPI_Win_unlock_all(shm_win_);
++        MPI_Win_free(&shm_win_);
++        MPI_Comm_free(&shm_comm_);
++      }
++      shm_win_ = MPI_WIN_NULL;
++      shm_comm_ = MPI_COMM_NULL;
++      shm_perm_ = shm_iperm_ = nullptr;
++    }
++  }
++
++  /**
++   * Collective. On entry rank 0 holds perm_ (size n). Allocates one window of 2n
++   * integers per node (on the node leader = lowest rank of the node), rank 0 broadcasts
++   * perm to the other node leaders, each leader computes iperm, and all ranks of the node
++   * read through shm_perm_/shm_iperm_. The private vectors are released.
++   */
++  template<typename scalar_t,typename integer_t> void
++  MatrixReorderingMPI<scalar_t,integer_t>::share_perm() {
++    free_shared_perm();
++    auto comm = comm_->comm();
++    int rank = comm_->rank(), lrank;
++    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &shm_comm_);
++    MPI_Comm_rank(shm_comm_, &lrank);
++    MPI_Comm leaders;
++    MPI_Comm_split(comm, lrank == 0 ? 0 : MPI_UNDEFINED, rank, &leaders);
++    MPI_Aint bytes = lrank == 0 ? MPI_Aint(2) * MPI_Aint(n_) * MPI_Aint(sizeof(integer_t)) : 0;
++    integer_t* base = nullptr;
++    MPI_Win_allocate_shared(bytes, sizeof(integer_t), MPI_INFO_NULL, shm_comm_, &base, &shm_win_);
++    MPI_Aint qsize;
++    int qdisp;
++    MPI_Win_shared_query(shm_win_, 0, &qsize, &qdisp, &base);
++    MPI_Win_lock_all(MPI_MODE_NOCHECK, shm_win_);
++    shm_perm_ = base;
++    shm_iperm_ = base + n_;
++    if (lrank == 0) {
++      if (rank == 0) std::copy(perm_.begin(), perm_.end(), shm_perm_);
++      const integer_t chunk = integer_t(1) << 28;
++      for (integer_t off=0; off<n_; off+=chunk)
++        MPI_Bcast(shm_perm_+off, int(std::min(chunk, n_-off)), mpi_type<integer_t>(), 0, leaders);
++      for (integer_t i=0; i<n_; i++) shm_iperm_[shm_perm_[i]] = i;
++      MPI_Comm_free(&leaders);
++    }
++    MPI_Win_sync(shm_win_);
++    MPI_Barrier(shm_comm_);
++    MPI_Win_sync(shm_win_);
++    std::vector<integer_t>().swap(perm_);
++    std::vector<integer_t>().swap(iperm_);
+   }
+ 
+   template<typename scalar_t,typename integer_t>
+-  MatrixReorderingMPI<scalar_t,integer_t>::~MatrixReorderingMPI() {}
++  MatrixReorderingMPI<scalar_t,integer_t>::~MatrixReorderingMPI() {
++    free_shared_perm();
++  }
+ 
+   template<typename scalar_t,typename integer_t> int
+   MatrixReorderingMPI<scalar_t,integer_t>::nested_dissection
+@@ -71,6 +140,9 @@ namespace strumpack {
+     if (!is_parallel(opts.reordering_method())) {
+       auto rank = comm_->rank();
+       auto P = comm_->size();
++      const bool shared = use_shared_perm(opts);
++      if (!shared || !rank) ensure_perm_alloc();
++      else free_shared_perm();
+       auto Aseq = A.gather_graph();
+       SeparatorTree<integer_t> global_sep_tree;
+       if (Aseq) { // only root
+@@ -129,8 +201,11 @@ namespace strumpack {
+         Aseq.reset();
+         global_sep_tree.check();
+       }
+-      comm_->broadcast(perm_);
+-      comm_->broadcast(iperm_);
++      if (shared) share_perm();
++      else {
++        comm_->broadcast(perm_);
++        comm_->broadcast(iperm_);
++      }
+       integer_t nbsep;
+       if (!rank) nbsep = global_sep_tree.separators();
+       comm_->broadcast(nbsep);
+@@ -141,10 +216,18 @@ namespace strumpack {
+       tree_ = global_sep_tree.toptree(P);
+       ltree_.check();
+       tree_.check();
+-      for (std::size_t i=0; i<perm_.size(); i++)
+-        iperm_[perm_[i]] = i;
++      if (!shared)
++        for (std::size_t i=0; i<perm_.size(); i++)
++          iperm_[perm_[i]] = i;
+       get_local_graphs(A);
+     } else {
++      free_shared_perm();
++      // PT-Scotch: the permutation is gathered on rank 0 and then stored
++      // once per node (share_perm), as for the sequential orderings, instead of
++      // on every process
++      const bool shared = use_shared_perm(opts) &&
++        opts.reordering_method() == ReorderingStrategy::PTSCOTCH;
++      if (!shared || !comm_->rank()) ensure_perm_alloc();
+       switch (opts.reordering_method()) {
+       case ReorderingStrategy::GEOMETRIC: {
+         if (nx*ny*nz*components != A.size()) {
+@@ -183,7 +266,7 @@ namespace strumpack {
+         // No MPI_THREAD_MULTIPLE needed: Scotch only uses threads with MPI
+         // when the MPI library provides it.
+         tree_ = ptscotch_nested_dissection
+-          (A, comm_->comm(), true, perm_, opts);
++          (A, comm_->comm(), true, perm_, opts, shared);
+ #else
+         std::cerr << "ERROR: STRUMPACK was not configured with Scotch support"
+                   << std::endl;
+@@ -198,6 +281,7 @@ namespace strumpack {
+       default: assert(true);
+       }
+       tree_.check();
++      if (shared) share_perm();
+       // ParMETIS and PT-Scotch: the local trees are built from the
+       // subgraphs assigned by get_local_graphs, which may spread them
+       const bool local_trees =
+@@ -218,6 +302,8 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> int
+   MatrixReorderingMPI<scalar_t,integer_t>::set_permutation
+   (const Opts_t& opts, const CSRMPI_t& A, const int* p, int base) {
++    free_shared_perm();
++    ensure_perm_alloc();
+     auto n = perm_.size();
+     assert(A.size() == integer_t(n));
+     if (base == 0) std::copy(p, p+n, perm_.data());
+@@ -309,8 +395,8 @@ namespace strumpack {
+     }
+     sub_graph_range = sub_graph_ranges[rank];
+     dist_sep_range = dist_sep_ranges[rank];
+-    my_sub_graph = A.get_sub_graph(perm_, sub_graph_ranges);
+-    my_dist_sep = A.get_sub_graph(perm_, dist_sep_ranges);
++    my_sub_graph = A.get_sub_graph(perm_data(), sub_graph_ranges);
++    my_dist_sep = A.get_sub_graph(perm_data(), dist_sep_ranges);
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+@@ -362,13 +448,30 @@ namespace strumpack {
+     // position k of the subgraph of process p moves to post_p[k-lo_p]. The
+     // local orderings are gathered in chunks, which bounds the receive buffer
+     // instead of holding another permutation of size n.
+-    for (integer_t i=0; i<n; i++) iperm_[perm_[i]] = i;
++    // With node-shared storage (share_perm) only the node leaders write
++    // it, and its inverse is already consistent.
++    const bool shared = shm_perm_ != nullptr;
++    int lrank = 0;
++    if (shared) MPI_Comm_rank(shm_comm_, &lrank);
++    const bool writer = !shared || lrank == 0;
++    integer_t* gperm = shared ? shm_perm_ : perm_.data();
++    integer_t* giperm = shared ? shm_iperm_ : iperm_.data();
++    if (!shared)
++      for (integer_t i=0; i<n; i++) giperm[gperm[i]] = i;
+     std::vector<int> rcnts(P), displs(P);
+     std::size_t maxcnt = 0;
+     for (int p=0; p<P; p++)
+       maxcnt = std::max(maxcnt, std::size_t(sub_graph_ranges[p].second -
+                                             sub_graph_ranges[p].first));
+-    const std::size_t chunk = std::max(maxcnt, std::size_t(1) << 23);
++    const std::size_t chunk =
++      std::max(maxcnt, std::size_t(1) << (shared ? 21 : 23));
++    if (shared) {
++      // the other processes of the node may still read it (get_local_graphs),
++      // and the gathers below need not wait for those that send nothing
++      MPI_Win_sync(shm_win_);
++      MPI_Barrier(shm_comm_);
++      MPI_Win_sync(shm_win_);
++    }
+     std::vector<integer_t> buf;
+     for (int p0=0; p0<P; ) {
+       int p1 = p0;
+@@ -388,14 +491,44 @@ namespace strumpack {
+       MPI_Allgatherv
+         (post.data(), rcnts[rank], mpi_type<integer_t>(), buf.data(),
+          rcnts.data(), displs.data(), mpi_type<integer_t>(), comm_->comm());
+-      for (int p=p0; p<p1; p++) {
+-        auto plo = sub_graph_ranges[p].first;
+-        for (int t=0; t<rcnts[p]; t++)
+-          perm_[iperm_[plo+t]] = buf[displs[p]+t];
+-      }
++      if (writer)
++        for (int p=p0; p<p1; p++) {
++          auto plo = sub_graph_ranges[p].first;
++          for (int t=0; t<rcnts[p]; t++)
++            gperm[giperm[plo+t]] = buf[displs[p]+t];
++        }
+       p0 = p1;
+     }
+-    for (integer_t i=0; i<n; i++) iperm_[perm_[i]] = i;
++    std::vector<integer_t>().swap(buf);
++    if (writer)
++      for (integer_t i=0; i<n; i++) giperm[gperm[i]] = i;
++    if (shared) {
++      MPI_Win_sync(shm_win_);
++      MPI_Barrier(shm_comm_);
++      MPI_Win_sync(shm_win_);
++      const char* ve = std::getenv("STRUMPACK_MEMORY_VERIFY");
++      if (ve && std::atoi(ve)) {
++        // the node copies must be the same permutation everywhere
++        long long bad = 0;
++        unsigned long long cs[2] = {~0ULL, 0ULL};
++        if (writer) {
++          unsigned long long h = 0;
++          for (integer_t i=0; i<n; i++) {
++            if (gperm[i] < 0 || gperm[i] >= n || giperm[gperm[i]] != i) bad++;
++            h = h * 1000003ULL + (unsigned long long)gperm[i];
++          }
++          cs[0] = cs[1] = h;
++        }
++        bad = comm_->all_reduce(bad, MPI_SUM);
++        unsigned long long mn, mx;
++        MPI_Allreduce(&cs[0], &mn, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, comm_->comm());
++        MPI_Allreduce(&cs[1], &mx, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm_->comm());
++        if (comm_->is_root())
++          std::cout << "# node-shared PT-Scotch permutation: " << bad
++                    << " bad inverse entries, node copies "
++                    << (mn == mx ? "identical" : "DIFFER") << std::endl;
++      }
++    }
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.hpp b/src/sparse/ordering/MatrixReorderingMPI.hpp
+index 94b604b9..34d97067 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.hpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.hpp
+@@ -133,8 +133,24 @@ namespace strumpack {
+ 
+     const SeparatorTree<integer_t>& ltree() const { return ltree_; }
+ 
++    /** Permutation and inverse (node-shared storage when available) */
++    const integer_t* perm_data() const
++    { return shm_perm_ ? shm_perm_ : perm_.data(); }
++    const integer_t* iperm_data() const
++    { return shm_iperm_ ? shm_iperm_ : iperm_.data(); }
++
+   private:
+     const MPIComm* comm_;
++    integer_t n_ = 0;
++    MPI_Comm shm_comm_ = MPI_COMM_NULL;
++    MPI_Win shm_win_ = MPI_WIN_NULL;
++    integer_t *shm_perm_ = nullptr, *shm_iperm_ = nullptr;
++    void ensure_perm_alloc() {
++      if (integer_t(perm_.size()) != n_) { perm_.resize(n_); iperm_.resize(n_); }
++    }
++    bool use_shared_perm(const Opts_t& opts) const;
++    void share_perm();
++    void free_shared_perm();
+     SeparatorTree<integer_t> ltree_;
+ 
+     /**
+diff --git a/src/sparse/ordering/PTScotchReordering.hpp b/src/sparse/ordering/PTScotchReordering.hpp
+index 21b48319..49153c5b 100644
+--- a/src/sparse/ordering/PTScotchReordering.hpp
++++ b/src/sparse/ordering/PTScotchReordering.hpp
+@@ -172,7 +172,8 @@ namespace strumpack {
+   ptscotch_nested_dissection(const CSRMatrixMPI<scalar_t,integer_t>& A,
+                              MPI_Comm comm, bool build_tree,
+                              std::vector<integer_t>& perm,
+-                             const SPOptions<scalar_t>& opts) {
++                             const SPOptions<scalar_t>& opts,
++                             bool root_only=false) {
+     // Same random sequence for every ordering, independent of earlier calls
+     // to Scotch in the application.
+     SCOTCH_randomReset();
+@@ -285,17 +286,23 @@ namespace strumpack {
+     std::vector<SCOTCH_Num>().swap(gptr);
+     std::vector<SCOTCH_Num>().swap(gind);
+     {
+-      // every process gets the whole permutation
++      // every process gets the whole permutation (or only rank 0, root_only)
+       std::vector<int> rcnts(P), displs(P);
+       for (int p=0; p<P; p++) {
+         int g0 = (p / k) * k, g1 = std::min(P, g0 + k);
+         rcnts[p] = (p == g0) ? int(A.dist(g1) - A.dist(g0)) : 0;
+         displs[p] = int(A.dist(g0));
+       }
+-      MPI_Allgatherv
+-        (local_order.data(), rcnts[rank], mpi_type<integer_t>(),
+-         perm.data(), rcnts.data(), displs.data(), mpi_type<integer_t>(),
+-         comm);
++      if (root_only)
++        MPI_Gatherv
++          (local_order.data(), rcnts[rank], mpi_type<integer_t>(),
++           perm.data(), rcnts.data(), displs.data(), mpi_type<integer_t>(),
++           0, comm);
++      else
++        MPI_Allgatherv
++          (local_order.data(), rcnts[rank], mpi_type<integer_t>(),
++           perm.data(), rcnts.data(), displs.data(), mpi_type<integer_t>(),
++           comm);
+     }
+     if (k > 1) {
+       if (build_tree) {

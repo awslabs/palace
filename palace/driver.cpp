@@ -19,6 +19,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/perfprobes.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -28,6 +29,7 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 {
   const bool world_root = Mpi::Root(comm);
   const int world_size = Mpi::Size(comm);
+  perf::SetVerification(iodata.problem.verbose);
 
   std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
   {
@@ -80,16 +82,7 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 
   solver->SolveEstimateMarkRefine(mesh);
 
-  auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
-  auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
-  Mpi::Print(comm, "\n");
-  memory_reporting::PrintMemoryUsage(comm, peak_mem);
-  memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
-  BlockTimer::Finalize(comm);
-  BlockTimer::Print(comm);
-  solver->SaveMetadata(BlockTimer::GlobalTimer());
-  solver->SaveMetadata(peak_mem);
-  solver->SaveMetadata(peak_node_mem);
+  solver->ReportPerformance(comm);
   Mpi::Print(comm, "\n");
 }
 

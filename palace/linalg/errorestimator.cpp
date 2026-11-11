@@ -4,7 +4,11 @@
 #include "errorestimator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <type_traits>
+#include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -12,6 +16,7 @@
 #include "fem/libceed/integrator.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/densematrix.hpp"
+#include "linalg/entityjacobi.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -20,6 +25,8 @@
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 PalacePragmaDiagnosticPush
@@ -67,12 +74,27 @@ auto BuildLevelParOperator(std::unique_ptr<Operator> &&a, const FiniteElementSpa
 
 template <OperatorType OperType>
 auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
-                           int max_it, int print, bool use_mg)
+                           int max_it, int print, bool use_mg, const Operator *m_loc)
 {
-  // The system matrix for the projection is real, SPD and diagonally dominant.
+  // The system matrix for the projection is real and SPD. For high-order H(div) and H(curl)
+  // spaces, the basis functions of each mesh entity are close to linearly dependent on
+  // anisotropic elements, so without multigrid, the partially assembled mass matrix is
+  // preconditioned with its entity blocks where supported.
+  perf::ScopedRole role("Estimator");
   std::unique_ptr<Solver<OperType>> pc;
-  if (!use_mg)
+  const Vector *dinv = nullptr;
+  const auto &fespace = fespaces.GetFinestFESpace();
+  const auto *m_ceed = dynamic_cast<const ceed::Operator *>(m_loc);
+  if (!use_mg && m_ceed && EntityBlockJacobiSolver<OperType>::Supported(fespace))
   {
+    perf::SetInfo("LinearSolver/Estimator/Preconditioner", "EntityBlockJacobi");
+    auto ebj = std::make_unique<EntityBlockJacobiSolver<OperType>>(*m_ceed, fespace);
+    dinv = &ebj->GetInverseDiagonal();
+    pc = std::move(ebj);
+  }
+  else if (!use_mg)
+  {
+    perf::SetInfo("LinearSolver/Estimator/Preconditioner", "Jacobi");
     // The CG iterates do not depend on a scaling of the preconditioner, so no damping (and
     // no eigenvalue estimate for it) is needed.
     pc = std::make_unique<JacobiSmoother<OperType>>(fespaces.GetFinestFESpace().GetComm(),
@@ -80,8 +102,10 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   }
   else
   {
-    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, true, 0);
+    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, 1, 0);
     amg->SetStrengthThresh(0.8);  // More coarsening to save memory
+    perf::SetInfo("LinearSolver/Estimator/Preconditioner",
+                  (fespaces.GetNumLevels() > 1) ? "GMG-AMG" : "AMG");
     if (fespaces.GetNumLevels() > 1)
     {
       const int mg_smooth_order = 2;  // Smooth order independent of FE space order
@@ -99,17 +123,22 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   auto pcg =
       std::make_unique<CgSolver<OperType>>(fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
+  // With the residual norm of the entity blocks, the recovered flux at a given tolerance is
+  // up to two orders of magnitude less accurate than with Jacobi on very flat elements, so
+  // the stopping test keeps the residual norm of Jacobi preconditioning.
+  pcg->SetJacobiStoppingNorm(dinv);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
-  return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+  return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc),
+                                                   "Estimator");
 }
 
 // Construct a single-level view of the finest space of the hierarchy, which is broken
 // (discontinuous) across the interior boundaries formed by the given boundary attributes.
 // Returns nullptr when the mesh has no such interior boundaries. Without the coarser
-// levels, the projection on a broken space uses Jacobi preconditioning also when multigrid
-// is requested, rather than assembling the high-order mass matrix for AMG.
+// levels, the projection on a broken space uses single-level preconditioning also when
+// multigrid is requested, rather than assembling the high-order mass matrix for AMG.
 std::unique_ptr<FiniteElementSpaceHierarchy>
 BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
                          const std::vector<int> &crack_attr_list)
@@ -137,15 +166,19 @@ template <typename VecType>
 FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
                                       const FiniteElementSpaceHierarchy &smooth_fespaces,
                                       const FiniteElementSpace &rhs_fespace, double tol,
-                                      int max_it, int print, bool use_mg)
+                                      int max_it, int print, bool use_mg, int num_prev)
+  : comm(smooth_fespaces.GetFinestFESpace().GetComm()), max_prev(std::max(num_prev, 0))
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
+  perf::ScopedMemoryProbe probe("Estimator/Construction");
+  perf::ScopedRole role("Estimator");
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
   // Detect scalar FE spaces (H1, L2) vs vector FE spaces (ND, RT) based on map type.
   const int dim = smooth_fespace.Dimension();
   const auto map_type = smooth_fespace.GetFEColl().GetMapType(dim);
   const bool scalar_flux =
       (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL);
+  const Operator *m_loc = nullptr;
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(smooth_fespace);
@@ -159,7 +192,9 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
     }
     if (!use_mg)
     {
-      M = BuildLevelParOperator<OperType>(m.Assemble(skip_zeros), smooth_fespace);
+      auto m_op = m.Assemble(skip_zeros);
+      m_loc = m_op.get();
+      M = BuildLevelParOperator<OperType>(std::move(m_op), smooth_fespace);
     }
     else
     {
@@ -188,7 +223,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
   }
-  ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg);
+  ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg, m_loc);
   ksp->SetOperators(*M, *M);
   rhs.SetSize(smooth_fespace.GetTrueVSize());
   rhs.UseDevice(true);
@@ -200,9 +235,106 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
   MFEM_ASSERT(x.Size() == Flux->Width() && y.Size() == rhs.Size(),
               "Invalid vector dimensions for FluxProjector::Mult!");
-  // Mpi::Print(" Computing smooth flux recovery (projection) for error estimation\n");
+  // Start from the closest combination y₀ = Y c of the last solutions Y to the solution in
+  // the M-norm, (Yᴴ M Y) c = Yᴴ M y = Yᴴ b, with the pseudo-inverse of the Gram matrix
+  // (consecutive solutions can be nearly linearly dependent): the initial error is never
+  // larger than with a zero initial guess, and CG keeps its stopping criterion relative to
+  // the norm of b.
   Flux->Mult(x, rhs);
+  const int k = std::min(num_solves, max_prev);
+  bool guess = false;
+  if (k > 0)
+  {
+    std::vector<double> h(2 * k);
+    for (int i = 0; i < k; i++)
+    {
+      const std::complex<double> d = linalg::LocalDot(rhs, Y[i]);  // Y_iᴴ b
+      h[2 * i] = d.real();
+      h[2 * i + 1] = d.imag();
+    }
+    Mpi::GlobalSum(2 * k, h.data(), comm);
+    Eigen::MatrixXcd Gk(k, k);
+    Eigen::VectorXcd hk(k);
+    for (int j = 0; j < k; j++)
+    {
+      for (int i = 0; i < k; i++)
+      {
+        Gk(i, j) = G[i + j * max_prev];
+      }
+      hk(j) = {h[2 * j], h[2 * j + 1]};
+    }
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> eig(Gk);
+    const auto &lambda = eig.eigenvalues();
+    const double lambda_max = lambda.maxCoeff();
+    if (eig.info() == Eigen::Success && lambda_max > 0.0 && std::isfinite(lambda_max))
+    {
+      Eigen::VectorXcd t = eig.eigenvectors().adjoint() * hk;
+      for (int i = 0; i < k; i++)
+      {
+        t(i) = (lambda(i) > 1.0e-12 * lambda_max) ? t(i) / lambda(i) : 0.0;
+      }
+      const Eigen::VectorXcd c = eig.eigenvectors() * t;
+      guess = c.allFinite();
+      if (guess)
+      {
+        y = 0.0;
+        for (int i = 0; i < k; i++)
+        {
+          if constexpr (std::is_same_v<VecType, ComplexVector>)
+          {
+            y.Add(c(i), Y[i]);
+          }
+          else
+          {
+            y.Add(c(i).real(), Y[i]);
+          }
+        }
+      }
+    }
+  }
+  ksp->SetInitialGuess(guess);
   ksp->Mult(rhs, y);
+  if (max_prev == 0)
+  {
+    return;
+  }
+
+  // Store the solution in place of the oldest one when the buffer is full, and update the
+  // Gram matrix with one product by M (rhs is free as workspace). A non-finite solution is
+  // not stored.
+  if (Y.empty())
+  {
+    Y.resize(max_prev);
+    G.assign(std::size_t(max_prev) * max_prev, 0.0);
+  }
+  const int s = num_solves % max_prev, n = std::min(num_solves + 1, max_prev);
+  M->Mult(y, rhs);
+  std::vector<double> g(2 * n);
+  for (int i = 0; i < n; i++)
+  {
+    const std::complex<double> d = linalg::LocalDot(rhs, (i == s) ? y : Y[i]);
+    g[2 * i] = d.real();
+    g[2 * i + 1] = d.imag();
+  }
+  Mpi::GlobalSum(2 * n, g.data(), comm);
+  if (!std::all_of(g.begin(), g.end(), [](double v) { return std::isfinite(v); }))
+  {
+    return;
+  }
+  if (Y[s].Size() != y.Size())
+  {
+    Y[s].SetSize(y.Size());
+    Y[s].UseDevice(true);
+  }
+  Y[s] = y;
+  for (int i = 0; i < n; i++)
+  {
+    // G(i, s) = Y_iᴴ M y and G(s, i) its conjugate, with G(s, s) = yᴴ M y real.
+    const std::complex<double> gis(g[2 * i], (i == s) ? 0.0 : g[2 * i + 1]);
+    G[i + s * max_prev] = gis;
+    G[s + i * max_prev] = std::conj(gis);
+  }
+  num_solves++;
 }
 
 namespace
@@ -218,6 +350,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // (recovery) and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
+  perf::ScopedMemoryProbe probe("Estimator/Estimation");
   projector.Mult(F, G);
   if constexpr (std::is_same_v<VecType, ComplexVector>)
   {
@@ -310,7 +443,7 @@ template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
+    bool use_mg, const std::vector<int> &crack_attr_list, int num_prev)
   : broken_rt_fespaces(BuildBrokenRecoverySpace(rt_fespaces, crack_attr_list)),
     nd_fespace(nd_fespace),
     rt_fespace(broken_rt_fespaces ? broken_rt_fespaces->GetFinestFESpace()
@@ -318,7 +451,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetPermittivityReal()),
               broken_rt_fespaces ? *broken_rt_fespaces : rt_fespaces, nd_fespace, tol,
-              max_it, print, use_mg && !broken_rt_fespaces),
+              max_it, print, use_mg && !broken_rt_fespaces, num_prev),
     integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
     E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
 {
@@ -435,7 +568,7 @@ template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
     FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
+    bool use_mg, const std::vector<int> &crack_attr_list, int num_prev)
   : broken_nd_fespaces(BuildBrokenRecoverySpace(nd_fespaces, crack_attr_list)),
     rt_fespace(rt_fespace),
     nd_fespace(broken_nd_fespaces ? broken_nd_fespaces->GetFinestFESpace()
@@ -443,7 +576,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetCurlCurlInvPermeability()),
               broken_nd_fespaces ? *broken_nd_fespaces : nd_fespaces, rt_fespace, tol,
-              max_it, print, use_mg && !broken_nd_fespaces),
+              max_it, print, use_mg && !broken_nd_fespaces, num_prev),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
 {
@@ -572,11 +705,11 @@ template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
+    bool use_mg, const std::vector<int> &crack_attr_list, int num_prev)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg, crack_attr_list),
+                   use_mg, crack_attr_list, num_prev),
     curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
-                   use_mg, crack_attr_list)
+                   use_mg, crack_attr_list, num_prev)
 {
 }
 
@@ -603,11 +736,11 @@ BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
     FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
+    bool use_mg, const std::vector<int> &crack_attr_list, int num_prev)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg, crack_attr_list),
+                   use_mg, crack_attr_list, num_prev),
     curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg,
-                   crack_attr_list)
+                   crack_attr_list, num_prev)
 {
 }
 

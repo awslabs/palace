@@ -107,6 +107,9 @@ jobs:
 
           # CI-specific settings stay out of the developer environment.
           spack -e . repo add --scope="env:$(pwd)" "$(pwd)/spack_repo/local"
+          # Keep ParMETIS out of CI because of its license: the solvers are built
+          # without it, and concretization fails if anything needs it.
+          spack -e . config add "packages:parmetis:buildable:false"
           spack -e . mirror add --type binary --unsigned \
             --oci-username-variable GITHUB_USER \
             --oci-password-variable GITHUB_TOKEN \

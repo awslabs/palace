@@ -23,10 +23,14 @@ class StrumpackSolverBase : public StrumpackSolverType
 private:
   MPI_Comm comm;
 
+  // Whether the column ordering is the default one, chosen from the matrix size.
+  bool default_reorder;
+
 public:
   StrumpackSolverBase(MPI_Comm comm, SymbolicFactorization reorder,
                       SparseCompression compression, double lr_tol, int butterfly_l,
-                      int lossy_prec, bool reorder_reuse, int print);
+                      int lossy_prec, bool reorder_reuse, bool selective_inversion,
+                      int print);
 
   StrumpackSolverBase(const IoData &iodata, MPI_Comm comm, int print)
     : StrumpackSolverBase(comm, iodata.solver.linear.sym_factorization,
@@ -34,7 +38,8 @@ public:
                           iodata.solver.linear.strumpack_lr_tol,
                           iodata.solver.linear.strumpack_butterfly_l,
                           iodata.solver.linear.strumpack_lossy_precision,
-                          iodata.solver.linear.reorder_reuse, print)
+                          iodata.solver.linear.reorder_reuse,
+                          iodata.solver.linear.strumpack_selective_inversion > 0, print)
   {
   }
 

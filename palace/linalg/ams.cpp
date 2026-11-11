@@ -199,6 +199,12 @@ void HypreAmsSolver::InitializeSolver()
   }
 
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
+#if defined(HYPRE_AMS_AMG_REDIST)
+  // Gather the coarse levels of the auxiliary space AMG hierarchies with few rows per
+  // process onto fewer processes during the solve (same hierarchies and V-cycles, results
+  // agree up to the summation order): they are otherwise dominated by message latency.
+  HYPRE_AMSSetAMGRedistTarget(ams, 2048);
+#endif
   HYPRE_AMSSetAlphaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                               interp_type, Pmax);
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
@@ -228,6 +234,20 @@ void HypreAmsSolver::InitializeSolver()
     HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
     HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
   }
+}
+
+void HypreAmsSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const
+{
+#if defined(HYPRE_AMS_ZERO_GUESS_FLAG)
+  // Only valid if hypre_AMSSolve maintains the flag (the relaxation skips the exchange of a
+  // vector flagged as zero).
+  if (!iterative_mode)
+  {
+    x.HypreWrite();
+    hypre_ParVectorSetZeros(x);
+  }
+#endif
+  mfem::HypreSolver::Mult(b, x);
 }
 
 void HypreAmsSolver::SetOperator(const Operator &op)

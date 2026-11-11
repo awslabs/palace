@@ -6,12 +6,14 @@
 #if defined(PALACE_WITH_SLEPC)
 
 #include <algorithm>
+#include <cmath>
 #include <petsc.h>
 #include <slepc.h>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
 #include "linalg/nleps.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/solverstats.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -169,7 +171,130 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
   }
 }
 
+PetscErrorCode __eps_region_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                    PetscScalar *eigr, PetscScalar *eigi, PetscReal *errest,
+                                    PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  PetscReal tol;
+  PetscCall(EPSGetTolerances(eps, &tol, nullptr));
+  static_cast<SlepcEigenvalueSolver *>(ctx)->CountRegionExcluded(tol, eigr, eigi, errest,
+                                                                 static_cast<int>(nest));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __pep_region_monitor(PEP pep, PetscInt its, PetscInt nconv,
+                                    PetscScalar *eigr, PetscScalar *eigi, PetscReal *errest,
+                                    PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  PetscReal tol;
+  PetscCall(PEPGetTolerances(pep, &tol, nullptr));
+  static_cast<SlepcEigenvalueSolver *>(ctx)->CountRegionExcluded(tol, eigr, eigi, errest,
+                                                                 static_cast<int>(nest));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __eps_relaxation_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                        PetscScalar *eigr, PetscScalar *eigi,
+                                        PetscReal *errest, PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  PetscInt nev;
+  PetscCall(EPSGetDimensions(eps, &nev, nullptr, nullptr));
+  static_cast<SlepcEPSSolverBase *>(ctx)->UpdateLinearSolverTol(
+      static_cast<int>(nconv), static_cast<int>(nev), eigr, eigi, errest,
+      static_cast<int>(nest));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __eps_divfree_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                     PetscScalar *eigr, PetscScalar *eigi,
+                                     PetscReal *errest, PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  PetscInt nev;
+  PetscCall(EPSGetDimensions(eps, &nev, nullptr, nullptr));
+  static_cast<SlepcEPSSolverBase *>(ctx)->CheckDivFreeTol(static_cast<int>(nev), eigr, eigi,
+                                                          static_cast<int>(nest));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
+                                      PetscReal res, PetscReal *errest, void *ctx)
+{
+  // The error estimate relative to the eigenvalue (as EPS_CONV_REL; converted to the
+  // eigenvalue with a target apart from the shift), for a Ritz value which also settled
+  // since the previous restart.
+  PetscFunctionBeginUser;
+  PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
+  auto *solver = static_cast<SlepcEPSSolverBase *>(ctx);
+  *errest *= solver->GetTargetErrorScale(eigr);
+  solver->CheckRitzValue(eigr, errest);
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __eps_stopping_test(EPS eps, PetscInt its, PetscInt max_it, PetscInt nconv,
+                                   PetscInt nev, EPSConvergedReason *reason, void *ctx)
+{
+  // SLEPc's default stopping test, which also ends a convergence check of the Ritz values,
+  // and stops a solve to be repeated with a smaller divergence-free projection tolerance.
+  PetscFunctionBeginUser;
+  PetscCall(EPSStoppingBasic(eps, its, max_it, nconv, nev, reason, nullptr));
+  auto *solver = static_cast<SlepcEPSSolverBase *>(ctx);
+  solver->EndRitzValueCheck();
+  if (solver->StopForDivFreeTol())
+  {
+    *reason = EPS_CONVERGED_USER;
+  }
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+// Whether the relative tolerance tol of the divergence-free projection of the
+// shift-and-invert linear solve results is too large for the largest ratio
+// r = |λ - σ| / |σ| of the wanted eigenvalues λ for the shift σ, and the tolerance which
+// then replaces it (GetDivFreeSolveTol). Gradients are eigenvectors for λ = 0, so the
+// shift-and-invert operator amplifies them r times more than a wanted eigenvector. A
+// projection to the relative tolerance tol leaves about tol times the gradient components
+// of each result, which the next operator application amplifies r times more than the
+// wanted components: the gradient components of the Krylov basis stay negligible only for
+// tol r << 1, and from tol r ~ 1 on they pollute the Ritz values, which then converge to
+// spurious eigenpairs with small backward errors. A tolerance is kept while tol r <= 0.1;
+// otherwise it becomes 0.01 / r, with a margin for Ritz values which move farther from σ,
+// also below the tolerance of the projector (Solver.Linear.DivFreeTol), which only sets
+// the starting one if larger than 1e-3.
+bool DivFreeTolTooLarge(double tol, double r)
+{
+  constexpr double max_product = 0.1;
+  return tol * r > max_product;
+}
+
+double GetDivFreeSolveTol(double tol, double r)
+{
+  constexpr double product = 0.01;
+  return DivFreeTolTooLarge(tol, r) ? product / r : tol;
+}
+
 }  // namespace
+
+void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
+{
+  // For λ = iω, the quality factor of a damped mode Q = |ω| / (2 Im{ω}) >= q_min if
+  // Re{ω} / (2 Im{ω}) = Im{λ} / (-2 Re{λ}) >= (q_min² - 1/4)^½. Growing modes (Re{λ} > 0)
+  // are kept for |Q| >= q_grow, which includes lossless modes computed with a small error
+  // of either sign. The region is a trapezoid from Im{λ} = s up to far above any eigenvalue
+  // near the target.
+  MFEM_VERIFY(s > 0.0 && q_min > 0.5,
+              "Invalid target or minimum quality factor for the eigenvalue region!");
+  constexpr double q_grow = 10.0;
+  const PetscReal a = 0.5 / std::sqrt(q_min * q_min - 0.25);
+  const PetscReal b = 0.5 / std::sqrt(q_grow * q_grow - 0.25);
+  const PetscReal h = 1.0e3 * std::max(PetscReal(1.0), s);
+  PetscScalar v[4] = {PetscScalar(-a * s, s), PetscScalar(b * s, s), PetscScalar(b * h, h),
+                      PetscScalar(-a * h, h)};
+  PalacePetscCall(RGSetType(rg, RGPOLYGON));
+  PalacePetscCall(RGPolygonSetVertices(rg, 4, v, nullptr));
+}
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
 {
@@ -202,7 +327,8 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 {
   sinvert = false;
   region = true;
-  sigma = 0.0;
+  sigma = tau = 0.0;
+  has_tau = st_shift_set = false;
   gamma = delta = 1.0;
 
   opInv = nullptr;
@@ -213,6 +339,9 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
   v0 = nullptr;
 
   cl_custom = false;
+  q_min = 0.0;
+  q_region = q_region_monitor = false;
+  q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
 }
 
 SlepcEigenvalueSolver::~SlepcEigenvalueSolver()
@@ -262,8 +391,30 @@ void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
   }
   PalacePetscCall(STSetTransform(st, PETSC_TRUE));
   PalacePetscCall(STSetMatMode(st, ST_MATMODE_SHELL));
-  sigma = s;  // Wait until solve time to call EPS/PEPSetTarget
+  sigma = tau = s;  // Wait until solve time to call EPS/PEPSetTarget
+  has_tau = false;
   sinvert = true;
+}
+
+void SlepcEigenvalueSolver::SetTarget(std::complex<double> t)
+{
+  MFEM_VERIFY(sinvert && SupportsTarget(),
+              "A target apart from the shift requires the shift-and-invert spectral "
+              "transformation of a solver which supports it!");
+  tau = t;
+  has_tau = (tau != sigma);
+}
+
+PetscReal SlepcEigenvalueSolver::GetTargetErrorScale(PetscScalar theta) const
+{
+  if (!has_tau || theta == 0.0)
+  {
+    return 1.0;
+  }
+  // λ - σ = 1 / θ in the scaled variables of the solver.
+  const PetscScalar l = sigma / gamma + 1.0 / theta;
+  const PetscReal a = PetscAbsScalar(l);
+  return (a > 0.0) ? std::max(PetscReal(1.0), 1.0 / (PetscAbsScalar(theta) * a)) : 1.0;
 }
 
 void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
@@ -284,8 +435,45 @@ void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
       type = BV_ORTHOG_CGS;
       refine = BV_ORTHOG_REFINE_ALWAYS;
     }
-    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, 1.0, BV_ORTHOG_BLOCK_GS));
+    // With refinement, a breakdown (linear dependence) is flagged when the second pass
+    // reduces the norm below eta times that after the first one: eta = 1 would flag
+    // almost every vector of a nearly invariant Krylov space (for example after a warm
+    // start), so use the default eta = 1/√2.
+    PalacePetscCall(
+        BVSetOrthogonalization(bv, type, refine, PETSC_DETERMINE, BV_ORTHOG_BLOCK_GS));
   }
+}
+
+void SlepcEigenvalueSolver::CountRegionExcluded(PetscReal tol, const PetscScalar *eigr,
+                                                const PetscScalar *eigi,
+                                                const PetscReal *errest, int nest)
+{
+  // The region applies to the back-transformed eigenvalues (as in the sorting criterion of
+  // the solver).
+  ST st = GetST();
+  RG rg = GetRG();
+  q_region_count[0] = nest;
+  q_region_count[1] = q_region_count[2] = 0;
+  for (int i = 0; i < nest; i++)
+  {
+    PetscScalar er = eigr[i], ei = eigi[i];
+    PetscInt inside;
+    PalacePetscCall(STBackTransform(st, 1, &er, &ei));
+    PalacePetscCall(RGCheckInside(rg, 1, &er, &ei, &inside));
+    if (inside < 0)
+    {
+      q_region_count[1]++;
+      q_region_count[2] += (errest[i] < tol);
+    }
+  }
+}
+
+void SlepcEigenvalueSolver::PrintRegionExcluded() const
+{
+  Mpi::Print(GetComm(),
+             " Search region Q >= {:.3g}: {:d} of {:d} Ritz values outside in the last "
+             "iteration ({:d} with error estimates below the tolerance)\n",
+             q_min, q_region_count[1], q_region_count[0], q_region_count[2]);
 }
 
 void SlepcEigenvalueSolver::Customize()
@@ -303,11 +491,12 @@ void SlepcEigenvalueSolver::Customize()
   }
 
   // Configure the region based on the given target if necessary.
+  q_region = false;
   if (sinvert && region)
   {
-    if (PetscImaginaryPart(sigma) == 0.0)
+    if (PetscImaginaryPart(tau) == 0.0)
     {
-      PetscReal sr = PetscRealPart(sigma);
+      PetscReal sr = PetscRealPart(tau);
       if (sr > 0.0)
       {
         ConfigureRG(GetRG(), sr / gamma, mfem::infinity(), -mfem::infinity(),
@@ -319,10 +508,15 @@ void SlepcEigenvalueSolver::Customize()
                     mfem::infinity());
       }
     }
-    else if (PetscRealPart(sigma) == 0.0)
+    else if (PetscRealPart(tau) == 0.0)
     {
-      PetscReal si = PetscImaginaryPart(sigma);
-      if (si > 0.0)
+      PetscReal si = PetscImaginaryPart(tau);
+      if (si > 0.0 && q_min > 0.5)
+      {
+        ConfigureQualityFactorRegion(GetRG(), si / gamma, q_min);
+        q_region = true;
+      }
+      else if (si > 0.0)
       {
         ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), si / gamma,
                     mfem::infinity());
@@ -406,6 +600,8 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
     }
   }
   A0 = A1 = nullptr;
+  relax_c = relax_lin_tol = relax_theta_max = 0.0;
+  relax_monitor = false;
 }
 
 SlepcEPSSolverBase::~SlepcEPSSolverBase()
@@ -413,6 +609,17 @@ SlepcEPSSolverBase::~SlepcEPSSolverBase()
   PalacePetscCall(EPSDestroy(&eps));
   PalacePetscCall(MatDestroy(&A0));
   PalacePetscCall(MatDestroy(&A1));
+  PalacePetscCall(VecDestroy(&v_init));
+}
+
+void SlepcEPSSolverBase::SaveInitialSpace(Vec v)
+{
+  if (!v_init)
+  {
+    PalacePetscCall(VecDuplicate(v, &v_init));
+  }
+  PalacePetscCall(VecCopy(v, v_init));
+  has_init = true;
 }
 
 void SlepcEPSSolverBase::SetNumModes(int num_eig, int num_vec)
@@ -537,14 +744,36 @@ void SlepcEPSSolverBase::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(ToPetscVec(v, v0));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  SaveInitialSpace(is[0]);
+}
+
+void SlepcEPSSolverBase::ResetInitialSpace()
+{
+  if (has_init)
+  {
+    Vec is[1] = {v_init};
+    PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  }
 }
 
 void SlepcEPSSolverBase::Customize()
 {
   SlepcEigenvalueSolver::Customize();
-  PalacePetscCall(EPSSetTarget(eps, sigma / gamma));
+  PalacePetscCall(EPSSetTarget(eps, tau / gamma));
+  if (has_tau || st_shift_set)
+  {
+    // The target only sets the default shift of the spectral transformation.
+    PalacePetscCall(STSetShift(GetST(), sigma / gamma));
+    st_shift_set = true;
+  }
   if (!cl_custom)
   {
+#if defined(SLEPC_HAVE_EPS_KRYLOVSCHUR_CHECK_INTERVAL)
+    // Convergence checks within the Krylov-Schur cycles (SLEPc patch, see
+    // SetConvergenceCheckInterval); command-line options
+    // (-eps_krylovschur_check_interval) override it.
+    PalacePetscCall(EPSKrylovSchurSetCheckInterval(eps, check_interval));
+#endif
     PalacePetscCall(EPSSetFromOptions(eps));
     if (print > 0)
     {
@@ -555,15 +784,317 @@ void SlepcEPSSolverBase::Customize()
   }
 }
 
+void SlepcEPSSolverBase::CheckRitzValue(PetscScalar theta, PetscReal *errest)
+{
+  // SLEPc's error estimate for a Ritz pair (θ, z) of the transformed problem assumes exact
+  // applications of the spectral transformation, so it does not see the error of iterative
+  // linear solves in the Ritz value, which can exceed the tolerance by orders of magnitude
+  // for an eigenpair converging as its Ritz value appears: after a restart which purged the
+  // Ritz values outside of the search region, or in the first Krylov cycle of a
+  // warm-started solve. A Ritz value with an error estimate below the tolerance converges
+  // only if the nearest Ritz value of the previous restart is the same eigenpair: within a
+  // relative distance max(Tol, min(1e-3, 0.1 d₂)) of it, for the relative distance d₂ of
+  // the second nearest one. Otherwise (or without a previous restart, except in the first
+  // Krylov cycle of a solve which is not warm-started) its error estimate becomes that
+  // relative distance, unless it was kept unconverged for that reason at the two previous
+  // restarts already. The convergence test is called at each restart for every unconverged
+  // Ritz value, in order (EPSSetTrackAll), and only those before the first unconverged one
+  // converge. For well-separated Ritz values the distance allowed is 1e-3: the test holds
+  // back the Ritz values which just appeared, not ones which move slowly between restarts.
+  constexpr double max_distance = 1.0e-3, max_fraction = 0.1;
+  constexpr int max_unsettled = 2;
+  PetscInt its;
+  PalacePetscCall(EPSGetIterationNumber(eps, &its));
+  if (its != ritz_its)
+  {
+    ritz_its = its;
+    ritz_prev.swap(ritz_last);
+    ritz_last.clear();
+    ritz_curr.clear();
+    ritz_blocked = false;
+  }
+  PetscReal tol;
+  PalacePetscCall(EPSGetTolerances(eps, &tol, nullptr));
+  int unsettled = 0;
+  if (*errest < tol && (its > 1 || warm_start))
+  {
+    PetscReal d1 = mfem::infinity(), d2 = mfem::infinity();
+    int count = 0;
+    for (const auto &[theta_prev, count_prev] : ritz_prev)
+    {
+      const PetscReal d = PetscAbsScalar(theta - theta_prev);
+      if (d < d1)
+      {
+        d2 = d1;
+        d1 = d;
+        count = count_prev;
+      }
+      else if (d < d2)
+      {
+        d2 = d;
+      }
+    }
+    const PetscReal a = PetscAbsScalar(theta);
+    d1 /= a;
+    d2 /= a;
+    if (d1 > std::max(static_cast<double>(tol), std::min(max_distance, max_fraction * d2)))
+    {
+      if (count < max_unsettled)
+      {
+        *errest = std::min(d1, PetscReal(1.0));
+        unsettled = count + 1;
+        ritz_num_delayed += !ritz_blocked;
+      }
+      else
+      {
+        if (!ritz_blocked)
+        {
+          ritz_num_unsettled++;
+          ritz_unsettled.push_back(theta);
+        }
+      }
+    }
+  }
+  ritz_blocked = ritz_blocked || !(*errest < tol);
+  ritz_curr.emplace_back(theta, unsettled);
+}
+
+void SlepcEPSSolverBase::EndRitzValueCheck()
+{
+  ritz_last.swap(ritz_curr);
+  ritz_curr.clear();
+  ritz_blocked = false;
+}
+
+void SlepcEPSSolverBase::UpdateLinearSolverTol(int nconv, int nev, const PetscScalar *eigr,
+                                               const PetscScalar *eigi,
+                                               const PetscReal *errest, int nest)
+{
+  // Smallest relaxed tolerance over the wanted unconverged eigenpairs, from their error
+  // estimates, the ratio of the largest transformed eigenvalue so far to theirs, and their
+  // relative separation from the other Ritz values.
+  PetscReal eig_tol;
+  PalacePetscCall(EPSGetTolerances(eps, &eig_tol, nullptr));
+  for (int i = 0; i < nest; i++)
+  {
+    relax_theta_max = std::max(relax_theta_max, SlepcAbsEigenvalue(eigr[i], eigi[i]));
+  }
+  double tol = mfem::infinity(), r_max = 0.0, ratio_max = 1.0;
+  for (int k = nconv; k < std::min(nev, nest); k++)
+  {
+    const PetscReal theta = SlepcAbsEigenvalue(eigr[k], eigi[k]);
+    PetscReal gap = mfem::infinity();
+    for (int j = 0; j < nest; j++)
+    {
+      if (j != k)
+      {
+        gap = std::min(gap, SlepcAbsEigenvalue(eigr[j] - eigr[k], eigi[j] - eigi[k]));
+      }
+    }
+    const double rel_gap = (theta > 0.0) ? gap / theta : 0.0;
+    const double ratio = (theta > 0.0) ? relax_theta_max / theta : mfem::infinity();
+    tol = std::min(tol, GetRelaxedLinearSolverTol(relax_c, eig_tol, relax_lin_tol,
+                                                  errest[k], ratio, rel_gap));
+    r_max = std::max(r_max, static_cast<double>(errest[k]));
+    ratio_max = std::max(ratio_max, ratio);
+  }
+  if (!(tol < mfem::infinity()) || relax_suspend)
+  {
+    tol = relax_lin_tol;
+  }
+  relax_max_used = std::max(relax_max_used, tol);
+  if (tol != opInv->GetRelTol())
+  {
+    opInv->SetRelTol(tol);
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(),
+                 " Linear solver tolerance {:.3e} (wanted error estimates <= {:.3e}, "
+                 "eigenvalue ratio <= {:.1f})\n",
+                 tol, r_max, ratio_max);
+    }
+  }
+}
+
+void SlepcEPSSolverBase::CheckDivFreeTol(int nev, const PetscScalar *eigr,
+                                         const PetscScalar *eigi, int nest)
+{
+  // The gradients have the transformed eigenvalue -1 / σ, so the ratio |λ - σ| / |σ| of a
+  // Ritz value θ of the transformed problem is 1 / (|θ| |σ|), in the scaled variables. Once
+  // the ratio of a wanted one requires a smaller tolerance (see GetDivFreeSolveTol), the
+  // solve stops at the end of the next Krylov cycle, which skips its linear solves, unless
+  // it is the last one allowed. The maximum over the processes makes the decision the
+  // same on all of them.
+  if (divfree_stop > 0.0)
+  {
+    return;
+  }
+  const PetscReal s = PetscAbsScalar(sigma) / gamma;
+  double r = 0.0;
+  for (int k = 0; k < std::min(nev, nest); k++)
+  {
+    const PetscReal theta = SlepcAbsEigenvalue(eigr[k], eigi[k]);
+    r = std::max(r, (theta * s > 0.0) ? 1.0 / (theta * s) : mfem::infinity());
+  }
+  Mpi::GlobalMax(1, &r, GetComm());
+  divfree_ratio = std::max(divfree_ratio, r);
+  divfree_ratio_last = r;
+  if (!divfree_final && DivFreeTolTooLarge(divfree_tol, r))
+  {
+    divfree_stop = r;
+  }
+}
+
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
 
-  // Solve the eigenvalue problem.
+  // Solve the eigenvalue problem. With the linear solver relaxation, a monitor updates the
+  // linear solver tolerance after each restart from the error estimates of all Ritz values
+  // (EPSSetTrackAll, which does not change the convergence test), and the tolerance is
+  // restored after the solve.
   PetscInt num_conv;
   Customize();
+  relax_lin_tol = opInv->GetRelTol();
+  relax_theta_max = 0.0;
+  // With a tighter tolerance for the first Krylov cycle, the monitor restores the linear
+  // solver tolerance (or the relaxed one) after the first restart.
+  const bool first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < relax_lin_tol);
+  if ((relax_c > 0.0 || first_cycle) && !relax_monitor)
+  {
+    PalacePetscCall(EPSMonitorSet(eps, __eps_relaxation_monitor, (void *)this, nullptr));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
+    relax_monitor = true;
+  }
+  if (q_region && print > 0 && !q_region_monitor)
+  {
+    PalacePetscCall(EPSMonitorSet(eps, __eps_region_monitor, (void *)this, nullptr));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
+    q_region_monitor = true;
+  }
+  q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
+
+  // Tolerance of the divergence-free projection of the linear solve results: 1e-3 (or the
+  // one of the projector, if larger), or a smaller one if the eigenvalue estimates require
+  // it, and a monitor checks it against the wanted Ritz values after each restart (see
+  // CheckDivFreeTol and GetDivFreeSolveTol).
+  const bool divfree_check = (opProj && sinvert);
+  if (divfree_check && !divfree_monitor)
+  {
+    PalacePetscCall(EPSMonitorSet(eps, __eps_divfree_monitor, (void *)this, nullptr));
+    divfree_monitor = true;
+  }
+  PetscInt divfree_nev;
+  PalacePetscCall(EPSGetDimensions(eps, &divfree_nev, nullptr, nullptr));
+  auto GetDivFreeRatio = [this](std::complex<double> l)
+  {
+    const std::complex<double> s(sigma);
+    return (std::abs(s) > 0.0) ? std::abs(l - s) / std::abs(s) : mfem::infinity();
+  };
+  divfree_tol = opProj ? std::max(opProj->GetTol(), 1.0e-3) : 1.0e-3;
+  divfree_stop = divfree_ratio = divfree_ratio_last = 0.0;
+  divfree_repeats = 0;
+  divfree_final = false;
+  if (divfree_check && !divfree_estimates.empty())
+  {
+    const std::size_t n = std::min(divfree_estimates.size(), std::size_t(divfree_nev));
+    double r = 0.0;
+    for (std::size_t i = 0; i < n; i++)
+    {
+      r = std::max(r, GetDivFreeRatio(divfree_estimates[i]));
+    }
+    const double tol0 = divfree_tol;
+    divfree_tol = GetDivFreeSolveTol(divfree_tol, r);
+    if (divfree_tol < tol0)
+    {
+      Mpi::Print(GetComm(),
+                 " Divergence-free projection tolerance {:.1e} for the linear solve "
+                 "results (eigenvalue estimates at |λ - σ| / |σ| <= {:.3g})\n",
+                 divfree_tol, r);
+    }
+  }
+  PalacePetscCall(
+      EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
+  PalacePetscCall(
+      EPSSetStoppingTestFunction(eps, __eps_stopping_test, (void *)this, nullptr));
+  PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
+  ritz_prev.clear();
+  ritz_last.clear();
+  ritz_curr.clear();
+  ritz_unsettled.clear();
+  ritz_its = -1;
+  ritz_num_delayed = ritz_num_unsettled = 0;
+  relax_max_used = relax_lin_tol;
+  relax_suspend = false;
+  // A relaxed linear solve which converges falsely is repeated at the strict tolerance.
+  opInv->SetFallbackRelTol((relax_c > 0.0) ? relax_lin_tol : 0.0);
+  if (first_cycle)
+  {
+    opInv->SetRelTol(first_cycle_tol);
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), " Linear solver tolerance {:.3e} for the first Krylov cycle\n",
+                 first_cycle_tol);
+    }
+  }
+
+  // A solve stopped by the divergence-free projection check is repeated from the same
+  // initial space with the tolerance for the ratio |λ - σ| / |σ| which stopped it, at most
+  // twice: the second repeat also takes the tolerance of the projector
+  // (Solver.Linear.DivFreeTol) if smaller, and is not stopped (see the warning at the end
+  // of the solve). Returns the number of iterations of the stopped solves.
+  auto RepeatForDivFreeTol = [&]()
+  {
+    constexpr int max_repeats = 2;
+    PetscInt stopped_its = 0;
+    while (divfree_stop > 0.0)
+    {
+      PetscInt its;
+      PalacePetscCall(EPSGetIterationNumber(eps, &its));
+      stopped_its += its;
+      const double r = divfree_stop;
+      divfree_repeats++;
+      divfree_final = (divfree_repeats >= max_repeats);
+      divfree_tol = GetDivFreeSolveTol(divfree_tol, r);
+      if (divfree_final)
+      {
+        divfree_tol = std::min(divfree_tol, opProj->GetTol());
+      }
+      Mpi::Print(GetComm(),
+                 "\n Repeating the eigenvalue solve with the divergence-free projection "
+                 "tolerance {:.1e} (wanted Ritz values at |λ - σ| / |σ| = {:.3g} after "
+                 "{:d} restart{})\n",
+                 divfree_tol, r, its, (its == 1) ? "" : "s");
+      if (has_init)
+      {
+        Vec is[1] = {v_init};
+        PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+      }
+      ritz_prev.clear();
+      ritz_last.clear();
+      ritz_curr.clear();
+      ritz_unsettled.clear();
+      ritz_its = -1;
+      ritz_num_delayed = ritz_num_unsettled = 0;
+      relax_theta_max = 0.0;
+      relax_max_used = relax_lin_tol;
+      divfree_stop = divfree_ratio = divfree_ratio_last = 0.0;
+      opInv->SetRelTol(first_cycle ? first_cycle_tol : relax_lin_tol);
+      PalacePetscCall(EPSSolve(eps));
+    }
+    return stopped_its;
+  };
   PalacePetscCall(EPSSolve(eps));
+  const PetscInt divfree_its = RepeatForDivFreeTol();
+  opInv->SetRelTol(relax_lin_tol);
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
+  {
+    PetscInt num_it, num_req;
+    PalacePetscCall(EPSGetIterationNumber(eps, &num_it));
+    PalacePetscCall(EPSGetDimensions(eps, &num_req, nullptr, nullptr));
+    perf::RecordEigenSolve(opInv->GetRole(), static_cast<int>(num_it + divfree_its),
+                           static_cast<int>(num_conv), static_cast<int>(num_req));
+  }
   if (print > 0)
   {
     Mpi::Print(GetComm(), "\n");
@@ -572,11 +1103,167 @@ int SlepcEPSSolverBase::Solve()
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
                opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+    if (q_region && q_region_monitor)
+    {
+      PrintRegionExcluded();
+    }
+    PrintRitzValueChecks();
   }
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
+
+  // A solve with relaxed linear solves is repeated from the same initial space with the
+  // strict linear solver tolerance if fewer eigenpairs than requested converged, if a
+  // requested eigenpair was accepted with a Ritz value which did not settle between
+  // restarts (see CheckRitzValue), or if one has a backward error above twice the tolerance
+  // scaled by |λ - σ| / |σ|. The gap-aware bound of the relaxation keeps the error of the
+  // others at the level of the strict solves, whose backward errors themselves can exceed
+  // the tolerance several times.
+  if (relax_c > 0.0 && relax_max_used > relax_lin_tol)
+  {
+    PetscInt nev;
+    PetscReal eig_tol;
+    PalacePetscCall(EPSGetDimensions(eps, &nev, nullptr, nullptr));
+    PalacePetscCall(EPSGetTolerances(eps, &eig_tol, nullptr));
+    PetscInt num_unsettled = 0;
+    double worst = 0.0;
+    for (PetscInt i = 0; i < std::min(nev, num_conv); i++)
+    {
+      // The backward error of strict solves grows with the distance of the eigenvalue from
+      // the shift relative to the shift (the residuals of the linear solves enter the
+      // residual of the eigenpair amplified by about |λ - σ| / |σ|): only a backward error
+      // beyond twice that times the tolerance is a sign of relaxed solves gone wrong.
+      const std::complex<double> l = GetEigenvalue(static_cast<int>(i));
+      const double amplification =
+          (std::abs(sigma) > 0.0)
+              ? std::max(1.0, std::abs(l - std::complex<double>(sigma)) / std::abs(sigma))
+              : 1.0;
+      worst = std::max(worst, GetError(static_cast<int>(i), ErrorType::BACKWARD) /
+                                  (amplification * eig_tol));
+    }
+    constexpr double max_error = 2.0;
+    if (num_conv >= nev && !ritz_unsettled.empty())
+    {
+      PetscScalar target;
+      PalacePetscCall(EPSGetTarget(eps, &target));
+      for (PetscInt i = 0; i < nev; i++)
+      {
+        PetscScalar l;
+        PalacePetscCall(EPSGetEigenvalue(eps, i, &l, nullptr));
+        const PetscScalar theta = 1.0 / (l - target);
+        for (const auto &theta_k : ritz_unsettled)
+        {
+          if (PetscAbsScalar(theta - theta_k) <= 1.0e-8 * PetscAbsScalar(theta_k))
+          {
+            num_unsettled++;
+            break;
+          }
+        }
+      }
+    }
+    if (num_conv < nev || num_unsettled > 0 || worst > max_error)
+    {
+      Mpi::Print(GetComm(),
+                 " Repeating the eigenvalue solve with the linear solver tolerance {:.1e} "
+                 "(after relaxed linear solves, {})\n",
+                 relax_lin_tol,
+                 (num_conv < nev)
+                     ? fmt::format("{:d} of {:d} eigenpairs converged", num_conv, nev)
+                 : (num_unsettled > 0)
+                     ? fmt::format("{:d} requested eigenpair{} not settled", num_unsettled,
+                                   (num_unsettled == 1) ? "" : "s")
+                     : fmt::format("backward error {:.1f} times the tolerance scaled by "
+                                   "|λ - σ| / |σ|",
+                                   worst));
+      if (has_init)
+      {
+        Vec is[1] = {v_init};
+        PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+      }
+      const int mult0 = opInv->NumTotalMult(), it0 = opInv->NumTotalMultIterations();
+      relax_suspend = true;
+      ritz_prev.clear();
+      ritz_last.clear();
+      ritz_curr.clear();
+      ritz_unsettled.clear();
+      ritz_its = -1;
+      ritz_num_delayed = ritz_num_unsettled = 0;
+      if (first_cycle)
+      {
+        opInv->SetRelTol(first_cycle_tol);
+      }
+      PalacePetscCall(EPSSolve(eps));
+      RepeatForDivFreeTol();
+      relax_suspend = false;
+      opInv->SetRelTol(relax_lin_tol);
+      PalacePetscCall(EPSGetConverged(eps, &num_conv));
+      if (print > 0)
+      {
+        Mpi::Print(GetComm(), "\n");
+        PalacePetscCall(EPSConvergedReasonView(eps, PETSC_VIEWER_STDOUT_(GetComm())));
+        Mpi::Print(GetComm(),
+                   " Total number of linear systems solved: {:d}\n"
+                   " Total number of linear solver iterations: {:d}\n",
+                   opInv->NumTotalMult() - mult0, opInv->NumTotalMultIterations() - it0);
+        PrintRitzValueChecks();
+      }
+      RescaleEigenvectors(num_conv);
+    }
+  }
+  opInv->SetFallbackRelTol(0.0);
+  if (divfree_check)
+  {
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(),
+                 " Divergence-free projection tolerance {:.1e} for the linear solve "
+                 "results (wanted Ritz values at |λ - σ| / |σ| <= {:.3g})\n",
+                 divfree_tol, divfree_ratio);
+    }
+    if (DivFreeTolTooLarge(divfree_tol, divfree_ratio_last))
+    {
+      // Only the last solve allowed can end with a tolerance too large for its eigenvalues.
+      Mpi::Warning(GetComm(),
+                   "The divergence-free projection tolerance {:.1e} of the eigenvalue "
+                   "solve is too large for its wanted eigenvalues at |λ - σ| / |σ| = "
+                   "{:.3g} (after {:d} repeated solves): gradient components may pollute "
+                   "the eigenpairs!\nDecrease "
+                   "config[\"Solver\"][\"Linear\"][\"DivFreeTol\"], or move the target "
+                   "closer to the eigenvalues.\n",
+                   divfree_tol, divfree_ratio_last, divfree_repeats);
+    }
+    if (num_conv > 0)
+    {
+      divfree_estimates.clear();
+      for (PetscInt i = 0; i < std::min(divfree_nev, num_conv); i++)
+      {
+        divfree_estimates.push_back(GetEigenvalue(static_cast<int>(i)));
+      }
+    }
+  }
   return static_cast<int>(num_conv);
+}
+
+void SlepcEPSSolverBase::PrintRitzValueChecks() const
+{
+  if (ritz_num_delayed > 0 || ritz_num_unsettled > 0)
+  {
+    Mpi::Print(GetComm(),
+               " Convergence delayed {:d} time{} for Ritz values not settled since the "
+               "previous restart{}\n",
+               ritz_num_delayed, (ritz_num_delayed == 1) ? "" : "s",
+               (ritz_num_unsettled > 0)
+                   ? fmt::format(" ({:d} accepted unsettled)", ritz_num_unsettled)
+                   : "");
+  }
+}
+
+int SlepcEPSSolverBase::GetNumIterations() const
+{
+  PetscInt num_it;
+  PalacePetscCall(EPSGetIterationNumber(eps, &num_it));
+  return static_cast<int>(num_it);
 }
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
@@ -816,6 +1503,26 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(ToPetscVec(v, v0, 0, 2));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  SaveInitialSpace(is[0]);
+}
+
+void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
+                                                 const ComplexVector &v_lambda)
+{
+  MFEM_VERIFY(
+      A0 && A1,
+      "Must call SetOperators before using SetInitialSpace for SLEPc eigenvalue solver!");
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  // The second block of the eigenvectors of the linearization is (λ / γ) x.
+  ComplexVector v2(v_lambda);
+  v2 *= 1.0 / gamma;
+  PalacePetscCall(ToPetscVec(v, v2, v0));
+  Vec is[1] = {v0};
+  PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  SaveInitialSpace(is[0]);
 }
 
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
@@ -1023,6 +1730,7 @@ void SlepcPEPSolverBase::SetInitialSpace(const ComplexVector &v)
 void SlepcPEPSolverBase::Customize()
 {
   SlepcEigenvalueSolver::Customize();
+  MFEM_VERIFY(!has_tau, "PEP solvers do not support a target apart from the shift!");
   PalacePetscCall(PEPSetTarget(pep, sigma / gamma));
   if (!cl_custom)
   {
@@ -1043,8 +1751,22 @@ int SlepcPEPSolverBase::Solve()
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
+  if (q_region && print > 0 && !q_region_monitor)
+  {
+    PalacePetscCall(PEPMonitorSet(pep, __pep_region_monitor, (void *)this, nullptr));
+    PalacePetscCall(PEPSetTrackAll(pep, PETSC_TRUE));
+    q_region_monitor = true;
+  }
+  q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
   PalacePetscCall(PEPSolve(pep));
   PalacePetscCall(PEPGetConverged(pep, &num_conv));
+  {
+    PetscInt num_it, num_req;
+    PalacePetscCall(PEPGetIterationNumber(pep, &num_it));
+    PalacePetscCall(PEPGetDimensions(pep, &num_req, nullptr, nullptr));
+    perf::RecordEigenSolve(opInv->GetRole(), static_cast<int>(num_it),
+                           static_cast<int>(num_conv), static_cast<int>(num_req));
+  }
   if (print > 0)
   {
     Mpi::Print(GetComm(), "\n");
@@ -1053,6 +1775,10 @@ int SlepcPEPSolverBase::Solve()
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
                opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+    if (q_region && q_region_monitor)
+    {
+      PrintRegionExcluded();
+    }
   }
 
   // Compute and store the eigenpair residuals.
@@ -1270,7 +1996,7 @@ void SlepcNEPSolverBase::SetMaxIter(int max_it)
 
 void SlepcNEPSolverBase::SetShiftInvert(std::complex<double> s, bool precond)
 {
-  sigma = s;  // Wait until solve time to call NEPSetTarget
+  sigma = tau = s;  // Wait until solve time to call NEPSetTarget
   sinvert = false;
 }
 
@@ -1390,6 +2116,13 @@ int SlepcNEPSolverBase::Solve()
   Customize();
   PalacePetscCall(NEPSolve(nep));
   PalacePetscCall(NEPGetConverged(nep, &num_conv));
+  {
+    PetscInt num_it, num_req;
+    PalacePetscCall(NEPGetIterationNumber(nep, &num_it));
+    PalacePetscCall(NEPGetDimensions(nep, &num_req, nullptr, nullptr));
+    perf::RecordEigenSolve(opInv->GetRole(), static_cast<int>(num_it),
+                           static_cast<int>(num_conv), static_cast<int>(num_req));
+  }
   if (print > 0)
   {
     Mpi::Print(GetComm(), "\n");
@@ -1722,6 +2455,13 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
+  if (ctx->divfree_stop > 0.0)
+  {
+    // The solve stops at the end of the Krylov cycle, to be repeated with a smaller
+    // divergence-free projection tolerance: skip its remaining linear solves.
+    PetscCall(VecCopy(x, y));
+    PetscFunctionReturn(PETSC_SUCCESS);
+  }
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)
@@ -1734,9 +2474,7 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
   }
   if (ctx->opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-    ctx->opProj->Mult(ctx->y1);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    ctx->opProj->Mult(ctx->y1, ctx->divfree_tol);
   }
   PetscCall(ToPetscVec(ctx->y1, y));
 
@@ -1819,6 +2557,12 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
+  if (ctx->divfree_stop > 0.0)
+  {
+    // The solve stops at the end of the Krylov cycle (see __pc_apply_EPS).
+    PetscCall(VecCopy(x, y));
+    PetscFunctionReturn(PETSC_SUCCESS);
+  }
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   if (!ctx->sinvert)
   {
@@ -1846,9 +2590,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
-      ctx->opProj->Mult(ctx->y2);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+      ctx->opProj->Mult(ctx->y2, ctx->divfree_tol);
     }
 
     ctx->y1.AXPBYPCZ(ctx->gamma / ctx->sigma, ctx->y2, -ctx->gamma / ctx->sigma, ctx->x1,
@@ -1857,9 +2599,9 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
     {
       // Without this projection, gradients are eigenvectors with λ = 0, which dominate the
       // targeted eigenvalues when these are farther from σ than σ from 0. The divergence of
-      // y1 is already at round-off for a projected basis, so a loose relative tolerance
-      // suffices to keep it from growing.
-      ctx->opProj->Mult(ctx->y1, 1.0e-3);
+      // y1 only comes from those of y2 and of the projected basis, and the tolerance is the
+      // same as for y2 (see GetDivFreeSolveTol).
+      ctx->opProj->Mult(ctx->y1, ctx->divfree_tol);
     }
   }
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));

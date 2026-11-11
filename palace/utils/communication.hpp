@@ -5,6 +5,7 @@
 #define PALACE_UTILS_COMMUNICATION_HPP
 
 #include <algorithm>
+#include <chrono>
 #include <complex>
 #include <cstdint>
 #include <limits>
@@ -16,6 +17,14 @@
 
 namespace palace
 {
+
+namespace perf::detail
+{
+
+// Record a blocking reduction in the performance report (defined in commstats.cpp).
+void AddReduction(double seconds, std::size_t bytes);
+
+}  // namespace perf::detail
 
 namespace mpi
 {
@@ -248,7 +257,11 @@ public:
   template <typename T>
   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)
   {
+    const auto t0 = std::chrono::steady_clock::now();
     MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm);
+    perf::detail::AddReduction(
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(),
+        len * sizeof(T));
   }
 
   // Global minimum (in-place, result is broadcast to all processes).

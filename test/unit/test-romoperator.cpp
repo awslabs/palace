@@ -1,7 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <complex>
 #include <numbers>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -178,6 +181,148 @@ TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
   REQUIRE(z_max.size() == 1);
   CHECK(z_max[0] >= z0);
   CHECK(z_max[0] <= z1);
+}
+
+TEST_CASE("MinimalRationalInterpolation-Exclude", "[romoperator][Serial]")
+{
+  // Function with poles at 1 + i/10 and -1.2 + i/10 sampled at four points. The poles are
+  // not symmetric, so that the error estimate has a single maximum instead of a tie between
+  // z and -z, which rounding would break differently on different processors.
+  MinimalRationalInterpolation mri(5);
+  for (double x : {-2.0, -0.5, 0.5, 2.0})
+  {
+    const auto f = 1.0 / (x - std::complex<double>(1.0, 0.1)) +
+                   1.0 / (x + std::complex<double>(1.2, -0.1));
+    std::vector<std::complex<double>> tmp = {f, x * f};
+    ComplexVector u(tmp.size());
+    u.Set(tmp.data(), tmp.size(), false);
+    mri.AddSolutionSample(x, u, Mpi::World(), Orthogonalization::MGS);
+  }
+  const double z_max = mri.FindMaxError(1)[0];
+  CHECK((z_max > -2.0 && z_max < 2.0));
+
+  // Excluding the neighborhood of the maximum moves it elsewhere, unless a candidate point
+  // in the excluded interval is given.
+  const std::vector<std::pair<double, double>> exclude = {{z_max - 0.3, z_max + 0.3}};
+  const double z_ex = mri.FindMaxError(1, exclude, {})[0];
+  CHECK((z_ex < exclude[0].first || z_ex > exclude[0].second));
+  CHECK(mri.FindMaxError(1, exclude, {z_max})[0] == z_max);
+
+  // Without exclusion and candidates the search is unchanged, and excluding everything
+  // falls back to the full search.
+  CHECK(mri.FindMaxError(1, {}, {})[0] == z_max);
+  CHECK(mri.FindMaxError(1, {{-10.0, 10.0}}, {})[0] == z_max);
+}
+
+TEST_CASE("QuadraticEigenvalues", "[romoperator][Serial]")
+{
+  // Diagonal pencil: k + iω c - ω² m = 0, ω = (i c ± √(4 k m - c²)) / (2 m) for each entry.
+  const std::vector<double> k = {4.0, 9.0e6, 1.0}, c = {0.4, 3.0, 0.0}, m = {1.0, 1.0, 2.0};
+  auto Check = [&](const std::vector<std::complex<double>> &eig, double m_imag)
+  {
+    REQUIRE(eig.size() == 2 * k.size());
+    for (std::size_t i = 0; i < k.size(); i++)
+    {
+      const std::complex<double> mi(m[i], m_imag);
+      const auto d = std::sqrt(std::complex<double>(4.0 * k[i]) * mi - c[i] * c[i]);
+      const std::complex<double> ic(0.0, c[i]);
+      for (const auto &w : {(ic + d) / (2.0 * mi), (ic - d) / (2.0 * mi)})
+      {
+        const auto it =
+            std::ranges::min_element(eig, [&](const auto &a, const auto &b)
+                                     { return std::abs(a - w) < std::abs(b - w); });
+        CHECK(std::abs(*it - w) < 1.0e-10 * std::abs(w));
+      }
+    }
+  };
+  Eigen::MatrixXcd K = Eigen::MatrixXcd::Zero(3, 3), C = K, M = K;
+  for (int i = 0; i < 3; i++)
+  {
+    K(i, i) = k[i];
+    C(i, i) = c[i];
+    M(i, i) = m[i];
+  }
+  Check(QuadraticEigenvalues(K, &C, M), 0.0);  // Real, M SPD
+  const Eigen::MatrixXcd C0 = Eigen::MatrixXcd::Zero(3, 3);
+  const auto eig_0 = QuadraticEigenvalues(K, nullptr, M),
+             eig_c0 = QuadraticEigenvalues(K, &C0, M);
+  REQUIRE(eig_0.size() == eig_c0.size());
+  for (std::size_t i = 0; i < eig_0.size(); i++)
+  {
+    CHECK(std::abs(eig_0[i] - eig_c0[i]) <= 1.0e-12 * std::abs(eig_0[i]));
+  }
+  for (int i = 0; i < 3; i++)
+  {
+    M(i, i) += std::complex<double>(0.0, 1.0e-3);  // Complex: generalized eigenproblem
+  }
+  Check(QuadraticEigenvalues(K, &C, M), 1.0e-3);
+}
+
+TEST_CASE("NarrowPoleIntervals", "[romoperator][Serial]")
+{
+  const double w = 1.0e-4;
+  // Poles at 2 (narrow, converged), 3 (narrow, moved since the previous poles), 4 (broad),
+  // 7 (narrow, converged, outside of the band), and two overlapping narrow converged ones
+  // at 6.
+  const std::vector<std::complex<double>> poles = {{2.0, 1.0e-6}, {3.0, 1.0e-6},
+                                                   {4.0, 1.0e-2}, {7.0, 1.0e-6},
+                                                   {6.0, 1.0e-6}, {6.0001, 1.0e-6}};
+  const std::vector<std::complex<double>> prev = {{2.0 + 1.0e-5, 1.0e-6}, {3.01, 1.0e-6},
+                                                  {4.0, 1.0e-2},          {7.0, 1.0e-6},
+                                                  {6.0, 1.0e-6},          {6.0001, 1.0e-6}};
+  const auto intervals = NarrowPoleIntervals(poles, prev, 1.0, 6.5, w, 1.0);
+  REQUIRE(intervals.size() == 2);
+  CHECK_THAT(intervals[0].first, Catch::Matchers::WithinRel(2.0 * (1.0 - w), 1.0e-9));
+  CHECK_THAT(intervals[0].second, Catch::Matchers::WithinRel(2.0 * (1.0 + w), 1.0e-9));
+  CHECK_THAT(intervals[1].first, Catch::Matchers::WithinRel(6.0 * (1.0 - w), 1.0e-9));
+  CHECK_THAT(intervals[1].second, Catch::Matchers::WithinRel(6.0001 * (1.0 + w), 1.0e-9));
+  CHECK(NarrowPoleIntervals(poles, {}, 1.0, 10.0, w, 1.0).empty());
+  CHECK(NarrowPoleIntervals(poles, poles, 1.0, 10.0, 0.0, 1.0).empty());
+
+  // The pole at 2 moved by 5e-6 |p|: not converged for tol = 1e-3 (tol w |p| = 2e-7).
+  const auto strict = NarrowPoleIntervals(poles, prev, 1.0, 6.5, w, 1.0e-3);
+  REQUIRE(strict.size() == 1);
+  CHECK_THAT(strict[0].first, Catch::Matchers::WithinRel(6.0 * (1.0 - w), 1.0e-9));
+}
+
+TEST_CASE("ResonanceIndices", "[romoperator][Serial]")
+{
+  // Q = |p| / (2 |Im p|): about 500 at 3, 5 at 1 and 1e6 at 2. The poles at 0.5 and -3 are
+  // outside of the band, and the lossless one at 3.2 has an infinite Q.
+  const std::vector<std::complex<double>> poles = {
+      {3.0, 3.0e-3}, {2.0, 1.0e-6}, {1.0, 0.1}, {0.5, 0.1}, {-3.0, 3.0e-3}, {3.2, 0.0}};
+  using Indices = std::vector<std::size_t>;
+  CHECK(ResonanceIndices(poles, 0.8, 3.5, 1.0e3) == Indices{0, 2});
+  CHECK(ResonanceIndices(poles, 0.8, 3.5, 1.0e7) == Indices{0, 1, 2});
+  CHECK(ResonanceIndices(poles, 1.0, 3.0, 1.0e3) == Indices{0, 2});
+  CHECK(ResonanceIndices(poles, 0.8, 3.5, 4.0).empty());
+  CHECK(ResonanceIndices(poles, 0.8, 3.5, 0.0).empty());
+}
+
+TEST_CASE("QuadraticEigenpairs", "[romoperator][Serial]")
+{
+  // A dense complex pencil: the eigenvalues are those of QuadraticEigenvalues, and each
+  // eigenpair satisfies (K + iωC − ω²M) x = 0.
+  Eigen::MatrixXcd K(3, 3), C(3, 3), M(3, 3);
+  K << 4.0, 1.0, 0.0, 1.0, 9.0, 2.0, 0.0, 2.0, 16.0;
+  K(0, 2) = K(2, 0) = std::complex<double>(0.0, 0.5);
+  C << 0.1, 0.0, 0.05, 0.0, 0.2, 0.0, 0.05, 0.0, 0.3;
+  M << 2.0, 0.5, 0.0, 0.5, 1.0, 0.1, 0.0, 0.1, 1.5;
+  const auto [eig, X] = QuadraticEigenpairs(K, &C, M);
+  const auto eig_ref = QuadraticEigenvalues(K, &C, M);
+  REQUIRE(eig.size() == 6);
+  REQUIRE(X.cols() == 6);
+  for (std::size_t i = 0; i < eig.size(); i++)
+  {
+    const std::complex<double> w = eig[i];
+    const Eigen::VectorXcd x = X.col(static_cast<Eigen::Index>(i));
+    const Eigen::VectorXcd r =
+        K * x + std::complex<double>(0.0, 1.0) * w * (C * x) - w * w * (M * x);
+    CHECK(r.norm() <= 1.0e-10 * ((K * x).norm() + std::abs(w) * (C * x).norm() +
+                                 std::norm(w) * (M * x).norm()));
+    CHECK(std::ranges::any_of(eig_ref, [&](const auto &v)
+                              { return std::abs(v - w) <= 1.0e-10 * std::abs(w); }));
+  }
 }
 
 // TODO: Do some more basic RomOperator Ctor Checks
@@ -838,6 +983,143 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
 
   prom_op.UpdatePROM(u, "vec_0");
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
+}
+
+// A sample whose real part is already in the reduced basis (as a solve started from the
+// PROM solution can return) only adds its imaginary part.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-PartialDependence",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", true},
+                                    {"MinFreq", 2.0},
+                                    {"MaxFreq", 32.0},
+                                    {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  ComplexVector u, v;
+  u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  u.Real().Randomize(42);
+  u.Imag().Randomize(43);
+  prom_op.UpdatePROM(u, "vec_0");
+  const auto n = prom_op.GetReducedDimension();
+  CHECK(n == 2);
+
+  v.SetSize(u.Size());
+  v.UseDevice(true);
+  v.Real() = u.Imag();
+  v.Real() *= 2.0;
+  v.Imag().Randomize(44);
+  prom_op.UpdatePROM(v, "vec_1");
+  CHECK(prom_op.GetReducedDimension() == n + 1);
+}
+
+// With initial guesses, SolveHDM starts the Krylov solver from the given vector. A guess
+// which already solves the system comes back unchanged and would add no new direction to
+// the PROM basis, so SolveHDM then solves again from zero.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-ExactInitialGuess",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  const bool initial_guess = GENERATE(true, false);
+
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {{"Type", "Default"},
+                                    {"KSPType", "GMRES"},
+                                    {"MaxIts", 200},
+                                    {"Tol", 1.0e-8},
+                                    {"InitialGuess", initial_guess}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  const auto &ksp = prom_op.GetLinearSolver();
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega = sample_f[sample_f.size() / 2];
+
+  ComplexVector u(space_op.GetNDSpace().GetTrueVSize()),
+      v(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  v.UseDevice(true);
+
+  // A zero initial guess is solved once.
+  u = 0.0;
+  int num_mult = ksp.NumTotalMult();
+  prom_op.SolveHDM(1, omega, u);
+  CHECK(ksp.NumTotalMult() == num_mult + 1);
+  const double norm_u = linalg::Norml2(world_comm, u);
+  REQUIRE(norm_u > 0.0);
+
+  // Starting from the solution, the solver returns it unchanged and the system is solved
+  // again from zero (without initial guesses, the guess is ignored).
+  v = u;
+  num_mult = ksp.NumTotalMult();
+  prom_op.SolveHDM(1, omega, v);
+  CHECK(ksp.NumTotalMult() == num_mult + (initial_guess ? 2 : 1));
+  linalg::AXPY(-1.0, u, v);
+  CHECK(linalg::Norml2(world_comm, v) <= 1.0e-12 * norm_u);
 }
 
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection

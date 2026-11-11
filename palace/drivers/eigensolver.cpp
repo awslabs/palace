@@ -3,17 +3,23 @@
 
 #include "eigensolver.hpp"
 
+#include <array>
+#include <cmath>
 #include <complex>
 #include <numbers>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/fieldtransfer.hpp"
 #include "fem/mesh.hpp"
+#include "fem/phasereference.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
+#include "linalg/gmg.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/nleps.hpp"
 #include "linalg/operator.hpp"
@@ -31,6 +37,86 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// Starting vector from the eigenpairs (λᵢ, xᵢ) of the previous adaptation iteration, with
+// xᵢ given as the real and imaginary parts of the stored fields 2i and 2i + 1: v = Σᵢ wᵢ xᵢ
+// and v_lambda = Σᵢ wᵢ λᵢ xᵢ, with weights of unit norm (for each xᵢ) and deterministic
+// phases, so that no eigenvector cancels from the combination, and a component of the
+// default starting vector r of relative weight eta in v for eigenvectors not found in the
+// previous iteration. Returns the number of eigenvectors used.
+int GetWarmStartVector(const VectorFieldTransfer &prev_eigenvectors,
+                       const std::vector<std::complex<double>> &prev_eigenvalues,
+                       SpaceOperator &space_op, const ComplexVector &r, double eta,
+                       ComplexVector &v, ComplexVector &v_lambda)
+{
+  auto &nd_fespace = space_op.GetNDSpace().Get();
+  const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector x(n);
+  x.UseDevice(true);
+  v.SetSize(n);
+  v.UseDevice(true);
+  v_lambda.SetSize(n);
+  v_lambda.UseDevice(true);
+  v = 0.0;
+  v_lambda = 0.0;
+  int num_used = 0;
+  for (std::size_t i = 0; i < prev_eigenvalues.size(); i++)
+  {
+    prev_eigenvectors.GetField(2 * i, nd_fespace, x.Real());
+    prev_eigenvectors.GetField(2 * i + 1, nd_fespace, x.Imag());
+    linalg::SetSubVector(x, dbc_tdof_list, 0.0);
+    const double norm = linalg::Norml2(space_op.GetComm(), x);
+    if (norm > 0.0)
+    {
+      // Phases from the golden ratio sequence.
+      const double phase =
+          2.0 * std::numbers::pi * std::fmod(0.5 * (std::sqrt(5.0) - 1.0) * i, 1.0);
+      const std::complex<double> w = std::polar(1.0 / norm, phase);
+      v.AXPY(w, x);
+      v_lambda.AXPY(w * prev_eigenvalues[i], x);
+      num_used++;
+    }
+  }
+  if (eta > 0.0 && num_used > 0)
+  {
+    const double norm_r = linalg::Norml2(space_op.GetComm(), r);
+    if (norm_r > 0.0)
+    {
+      v.AXPY(eta * linalg::Norml2(space_op.GetComm(), v) / norm_r, r);
+    }
+  }
+  return num_used;
+}
+
+}  // namespace
+
+EigenSolver::EigenSolver(const IoData &iodata, bool root, int size, int num_thread,
+                         const char *git_tag)
+  : BaseSolver(iodata, root, size, num_thread, git_tag)
+{
+}
+
+EigenSolver::~EigenSolver() = default;
+
+void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
+{
+  if (!prev_eigenvectors)
+  {
+    return;
+  }
+  if (prev_eigenvectors->GetParMesh() != &mesh.Get())
+  {
+    // The mesh object was replaced.
+    prev_eigenvectors.reset();
+    prev_eigenvalues.clear();
+    return;
+  }
+  prev_eigenvectors->Update();
+}
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -274,14 +360,73 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, scale);
     }
   }
-  eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+  // Adaptation iterations before the last one, whose eigenvectors only drive the mesh
+  // refinement, can use looser tolerances. The last iteration is known in advance from
+  // Model.Refinement.MaxIts and MaxSize. When the error indicator stops the adaptation
+  // instead, SolveEstimateMarkRefine repeats the solve with the final tolerances.
+  const auto &eigenmode = iodata.solver.eigenmode;
+  const auto &refinement = iodata.model.refinement;
+  const bool use_amr = (refinement.max_it > 0);
+  const bool final_solve =
+      !use_amr || final_amr_solve_ ||
+      (refinement.max_size > 0 && space_op.GlobalTrueVSize() > refinement.max_size);
+  intermediate_solve =
+      !final_solve && (eigenmode.intermediate_tol > eigenmode.tol ||
+                       eigenmode.intermediate_linear_tol > iodata.solver.linear.tol);
+  const double eig_tol = intermediate_solve ? eigenmode.intermediate_tol : eigenmode.tol;
+  const double lin_tol =
+      intermediate_solve ? eigenmode.intermediate_linear_tol : iodata.solver.linear.tol;
+  if (intermediate_solve)
+  {
+    Mpi::Print(" Intermediate adaptation iteration: eigenvalue solver tolerance {:.1e}, "
+               "linear solver tolerance {:.1e}\n",
+               eig_tol, lin_tol);
+  }
+  eigen->SetNumModes(eigenmode.n, eigenmode.max_size);
   const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
-                         ? iodata.solver.eigenmode.linear_tol
-                         : iodata.solver.eigenmode.tol;
+                         ? std::max(eigenmode.linear_tol, eig_tol)
+                         : eig_tol;
   eigen->SetTol(tol);
-  eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
+  eigen->SetMaxIter(eigenmode.max_it);
+  // Each step of the shift-and-invert Krylov iteration costs a linear solve: test
+  // convergence after every step instead of only at the end of each cycle, so that a solve
+  // converging in its first cycle no longer costs MaxSize linear solves (SLEPc
+  // Krylov-Schur, patched). Each check solves the dense projected problem, whose cost grows
+  // as the cube of the subspace size: large subspaces keep the end-of-cycle test.
+  constexpr int max_check_subspace_size = 128;
+  eigen->SetConvergenceCheckInterval((eigenmode.max_size <= max_check_subspace_size) ? 1
+                                                                                     : 0);
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
+
+  // Restrict the search to the quality factors of physical modes, and relax the tolerance
+  // of the linear solves as the wanted eigenpairs converge (SLEPc Krylov-Schur solver for
+  // linear or linearized quadratic problems).
+  const bool slepc_eps =
+      (type == EigenSolverBackend::SLEPC && nonlinear_type != NonlinearEigenSolver::SLP &&
+       (!(C || has_A2) || eigenmode.pep_linear));
+  const bool relax_linear_solves = slepc_eps && eigenmode.linear_relaxation > 0.0;
+  if (type == EigenSolverBackend::SLEPC && nonlinear_type != NonlinearEigenSolver::SLP &&
+      (C || has_A2) && eigenmode.min_q > 0.5)
+  {
+    Mpi::Print(" Eigenvalue search excludes modes with Q < {:.3g}\n", eigenmode.min_q);
+    eigen->SetMinQualityFactor(eigenmode.min_q);
+  }
+  if (eigenmode.linear_deflation > 0)
+  {
+    Mpi::Print(" Linear solver deflation with {:d} harmonic Ritz vectors\n",
+               eigenmode.linear_deflation);
+  }
+  else if (eigenmode.linear_deflation < 0)
+  {
+    Mpi::Print(" Linear solver deflation: automatic\n");
+  }
+  if (relax_linear_solves)
+  {
+    Mpi::Print(" Linear solver tolerance relaxation with c = {:.1e}\n",
+               eigenmode.linear_relaxation);
+    eigen->SetLinearSolverRelaxation(eigenmode.linear_relaxation);
+  }
 
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
@@ -324,25 +469,70 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
-  // projected appropriately.
-  if (iodata.solver.eigenmode.init_v0)
+  // projected appropriately. With adaptive mesh refinement, it combines the eigenvectors of
+  // the previous iteration, with a small component of the constant or random vector.
+  if (eigenmode.init_v0)
   {
     ComplexVector v0;
-    if (iodata.solver.eigenmode.init_v0_const)
+    if (eigenmode.init_v0_const)
     {
-      Mpi::Print(" Using constant starting vector\n");
       space_op.GetConstantInitialVector(v0);
     }
     else
     {
-      Mpi::Print(" Using random starting vector\n");
       space_op.GetRandomInitialVector(v0);
     }
-    if (divfree)
+    // A warm start cannot save restarts when the previous solve converged within its first
+    // Krylov cycle, whose dimension does not depend on the start vector: keep the default
+    // start vector then (the Ritz values of a warm-started solve converging in its first
+    // cycle are dominated by the error of its first linear solves).
+    int num_warm = 0;
+    const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
+                                                     space_op.GetNDSpace().GetParMesh());
+    if (warm_start && prev_num_its == 1)
     {
-      divfree->Mult(v0);
+      Mpi::Print(
+          " Previous adaptation iteration converged within one Krylov cycle: no warm "
+          "start\n");
     }
-    eigen->SetInitialSpace(v0);  // Copies the vector
+    else if (warm_start)
+    {
+      constexpr double eta = 1.0e-3;
+      ComplexVector v, v_lambda;
+      num_warm = GetWarmStartVector(*prev_eigenvectors, prev_eigenvalues, space_op, v0, eta,
+                                    v, v_lambda);
+      if (num_warm > 0)
+      {
+        Mpi::Print(
+            " Using starting vector from {:d} eigenvectors of the previous adaptation "
+            "iteration\n",
+            num_warm);
+        if (divfree)
+        {
+          divfree->Mult(v);
+          divfree->Mult(v_lambda);
+        }
+        eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
+
+        // The eigenpairs converging in the first Krylov cycle have Ritz values dominated by
+        // the error of the first linear solves, applied to the start vector: solve these
+        // with a 100 times smaller tolerance (not below 1e-12, where that error is
+        // negligible).
+        eigen->SetFirstCycleLinearSolverTol(
+            std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
+        eigen->SetWarmStart(true);
+      }
+    }
+    if (num_warm == 0)
+    {
+      Mpi::Print(" Using {} starting vector\n",
+                 eigenmode.init_v0_const ? "constant" : "random");
+      if (divfree)
+      {
+        divfree->Mult(v0);
+      }
+      eigen->SetInitialSpace(v0);  // Copies the vector
+    }
 
     // Debug
     // const auto &Grad = space_op.GetGradMatrix();
@@ -352,80 +542,201 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();
   }
+  prev_eigenvectors.reset();
+  prev_eigenvalues.clear();
+
+  // Shift of the spectral transformation: the target, or with adaptive mesh refinement
+  // (Solver.Eigenmode.AdaptiveShift) a shift inside the band of the requested eigenvalues
+  // of the previous adaptation iteration (see GetEigenvalueShift), with the eigenvalue
+  // search (sorting criterion and region) still relative to the target. A solve which
+  // converged within two Krylov restarts with the shift at the target, as few as a
+  // warm-started one needs, keeps it there.
+  constexpr double shift_fraction = 0.45;
+  double shift = target;
+  if (eigenmode.adaptive_shift && eigen->SupportsTarget() && slepc_eps && !has_A2 &&
+      static_cast<int>(prev_shift_eigenvalues.size()) >= eigenmode.n &&
+      (prev_shifted || prev_shift_its > 2))
+  {
+    shift = GetEigenvalueShift(target, prev_shift_eigenvalues, eigenmode.n, shift_fraction);
+  }
+  if (!prev_shift_eigenvalues.empty())
+  {
+    // The eigenvalues of the previous adaptation iteration estimate the wanted ones.
+    std::vector<std::complex<double>> estimates;
+    for (const auto &l : prev_shift_eigenvalues)
+    {
+      estimates.push_back((!has_C && !has_A2) ? -l * l : l);
+    }
+    eigen->SetEigenvalueEstimates(estimates);
+  }
+  prev_shift_eigenvalues.clear();
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
-  // closest to the specified target, σ.
+  // closest to the specified target, σ, and set up the linear solver required for solving
+  // systems involving the shifted operator (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during
+  // the eigenvalue solve. The preconditioner for complex linear systems is constructed
+  // from a real approximation to the complex system matrix.
+  std::unique_ptr<ComplexOperator> A, A2_shift, P;
+  std::unique_ptr<ComplexKspSolver> ksp;
+
+  // The choice of the coarse solve of the multigrid preconditioner, made at any setup of
+  // the linear solver, is kept for the later shifts and adaptation iterations.
+  auto KeepCoarseChoice = [&]()
   {
-    const double f_target =
-        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
-        (2 * std::numbers::pi);
-    Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
-  }
-  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    // Search for eigenvalues closest to λ = iσ.
-    eigen->SetShiftInvert(1i * target);
-    if (nonlinear_type == NonlinearEigenSolver::SLP)
+    const auto *gmg = ksp ? dynamic_cast<const GeometricMultigridSolver<ComplexOperator> *>(
+                                ksp->GetPreconditioner())
+                          : nullptr;
+    if (gmg && gmg->GetCoarseSolveChoice())
     {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
+      coarse_choice = std::make_shared<CoarseSolveChoice>(*gmg->GetCoarseSolveChoice());
+    }
+  };
+  auto ConfigureShiftInvert = [&](double s)
+  {
+    const double f_s = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(s) /
+                       (2 * std::numbers::pi);
+    if (s != target)
+    {
+      const double f_target =
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
+          (2 * std::numbers::pi);
+      Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e}), target {:.3e} GHz ({:.3e})\n",
+                 f_s, s, f_target, target);
     }
     else
     {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+      Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_s, s);
     }
-  }
-  else
-  {
-    // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target);
-    if (type == EigenSolverBackend::ARPACK)
+    if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
     {
-      // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
-      // will be a large-magnitude positive real number for an eigenvalue μ with frequency
-      // close to but below the target σ².
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+      // Search for eigenvalues closest to λ = iσ.
+      eigen->SetShiftInvert(1i * s);
+      if (s != target)
+      {
+        eigen->SetTarget(1i * target);
+      }
+      if (nonlinear_type == NonlinearEigenSolver::SLP)
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
+      }
+      else
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+      }
     }
     else
     {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
+      // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
+      eigen->SetShiftInvert(s * s);
+      if (s != target)
+      {
+        eigen->SetTarget(target * target);
+      }
+      if (type == EigenSolverBackend::ARPACK)
+      {
+        // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
+        // will be a large-magnitude positive real number for an eigenvalue μ with
+        // frequency close to but below the target σ².
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+      }
+      else
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
+      }
     }
-  }
+    KeepCoarseChoice();
+    ksp.reset();
+    P.reset();
+    A.reset();
+    if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+    {
+      // Invert the same W-aware polynomial used by the seed eigensolver.
+      A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
+                                   Kp.get(), Cp.get(), Mp.get());
+    }
+    else
+    {
+      // SLP applies the exact nonlinear operator at the target; linear problems have no
+      // A2.
+      if (!A2_shift)
+      {
+        A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
+                                                                 : std::move(A2);
+      }
+      A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * s, -s * s + 0.0i, K.get(), C.get(),
+                                   M.get(), A2_shift.get());
+    }
+    P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * s, -s * s + 0.0i,
+                                                          s + 0.0i);
+    ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                             &space_op.GetH1Spaces());
+    auto *gmg =
+        dynamic_cast<GeometricMultigridSolver<ComplexOperator> *>(ksp->GetPreconditioner());
+    if (gmg && coarse_choice)
+    {
+      gmg->SetCoarseSolveChoice(*coarse_choice);
+    }
+    ksp->SetOperators(*A, *P);
+    KeepCoarseChoice();
+    ksp->SetRelTol(lin_tol);
+    ksp->SetDeflation(eigenmode.linear_deflation);
+    eigen->SetLinearSolver(*ksp);
+  };
+  ConfigureShiftInvert(shift);
 
-  // Set up the linear solver required for solving systems involving the shifted operator
-  // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
-  // preconditioner for complex linear systems is constructed from a real approximation
-  // to the complex system matrix.
-  std::unique_ptr<ComplexOperator> A;
-  std::unique_ptr<ComplexOperator> A2_shift;
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
-  {
-    // Invert the same W-aware polynomial used by the seed eigensolver.
-    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
-                                 Cp.get(), Mp.get());
-  }
-  else
-  {
-    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
-    A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
-                                                             : std::move(A2);
-    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
-                                 C.get(), M.get(), A2_shift.get());
-  }
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
-  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
-                                                &space_op.GetH1Spaces());
-  ksp->SetOperators(*A, *P);
-  eigen->SetLinearSolver(*ksp);
-
-  // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  // Structures for storing and reducing the results of error estimation (the estimator
+  // itself is constructed after the eigenvalue solve, once the solver objects have been
+  // released).
+  std::optional<FluxErrorEstimator<ComplexVector>> estimator;
   ErrorIndicator indicator;
 
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
+  bool shift_repeated = false;
+  while (shift != target)
+  {
+    // The modes nearer to the target than the farthest accepted one were at least as
+    // dominant in the transformed operator as the accepted ones if the shift is at most in
+    // the middle of the target and that eigenvalue. Otherwise (modes entering the requested
+    // set lowered it), repeat the solve once with the shift from the eigenvalues just found
+    // if it is lower, else (or with fewer converged eigenpairs than requested) with the
+    // shift at the target.
+    std::vector<std::complex<double>> lambda;
+    for (int i = 0; i < num_conv; i++)
+    {
+      const auto l = eigen->GetEigenvalue(i);
+      lambda.push_back((!has_C && !has_A2) ? 1i * std::sqrt(l) : l);
+    }
+    if (CheckEigenvalueShift(target, shift, lambda, eigenmode.n))
+    {
+      break;
+    }
+    double new_shift = target;
+    if (num_conv >= eigenmode.n && !shift_repeated)
+    {
+      new_shift = GetEigenvalueShift(target, lambda, eigenmode.n, shift_fraction);
+    }
+    shift = (new_shift < shift) ? new_shift : target;
+    shift_repeated = true;
+    Mpi::Print("\n Repeating the eigenvalue solve with σ = {:.3e} GHz ({})\n",
+               iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(shift) /
+                   (2 * std::numbers::pi),
+               (num_conv < eigenmode.n)
+                   ? fmt::format("{:d} of {:d} eigenpairs converged", num_conv, eigenmode.n)
+                   : "the requested modes were not the dominant ones for the shift");
+    {
+      BlockTimer bt_construct(Timer::CONSTRUCT);
+      ConfigureShiftInvert(shift);
+    }
+    eigen->ResetInitialSpace();
+    Mpi::Print("\n");
+    num_conv = eigen->Solve();
+  }
+  const int num_its = eigen->GetNumIterations();
+  prev_shift_its = num_its;
+  prev_shifted = (shift != target);
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
@@ -441,7 +752,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), std::move(eigen),
                                                   num_conv, iodata.problem.verbose,
                                                   iodata.solver.eigenmode.refine_nonlinear);
-    qn->SetTol(iodata.solver.eigenmode.tol);
+    qn->SetTol(eig_tol);
     qn->SetMaxIter(iodata.solver.eigenmode.nonlinear_max_it);
     if (C)
     {
@@ -468,69 +779,106 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   BlockTimer bt2(Timer::POSTPRO);
-  SaveMetadata(*ksp);
 
   // Calculate and record the error indicators, and postprocess the results.
-  Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
-  const int num_requested = iodata.solver.eigenmode.n;
-  const int num_report = num_conv;
-  MFEM_VERIFY(num_report >= num_requested, "Eigenmode solve only found "
-                                               << num_report << " modes when "
-                                               << num_requested << " were requested!");
+  Mpi::Print("\n{}\n", ComputeErrorEstimation()
+                           ? "Computing solution error estimates and performing "
+                             "postprocessing"
+                           : "Performing postprocessing");
+  const int num_requested = eigenmode.n;
+  MFEM_VERIFY(num_conv >= num_requested, "Eigenmode solve only found "
+                                             << num_conv << " modes when " << num_requested
+                                             << " were requested!");
+  // The relaxation of the linear solver tolerance only targets the requested eigenpairs, so
+  // further converged ones can be less accurate and are not reported then (the quasi-Newton
+  // solver of the hybrid approach refines every eigenpair).
+  const bool report_requested =
+      relax_linear_solves && !(has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID);
+  const int num_report = report_requested ? std::min(num_requested, num_conv) : num_conv;
+
+  // Keep all converged eigenpairs for the starting vector of the next adaptation iteration.
+  // They follow the refinement and rebalancing of nonconforming meshes, which are modified
+  // in place.
+  const bool store_eigenpairs = !final_solve && eigenmode.warm_start && eigenmode.init_v0 &&
+                                space_op.GetNDSpace().GetParMesh().Nonconforming();
+  const int num_eig = store_eigenpairs ? num_conv : num_report;
   if (!KM)
   {
     // Normalize every converged eigenvector with respect to the mass matrix (unit electric
     // field energy) even if they are not computed to be orthogonal with respect to it.
     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
-    eigen->RescaleEigenvectors(num_report);
+    eigen->RescaleEigenvectors(num_eig);
   }
-  std::vector<std::complex<double>> eigenvalues(num_report);
+  std::vector<std::complex<double>> eigenvalues(num_eig);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
-  const bool stage_eigenvectors = post_op.WillWriteFields();
-  // Field output can construct large libCEED visualization operators. Only in that case,
-  // stage the converged eigenvectors in host memory so the eigensolver and matrices can
-  // release their device allocations before postprocessing.
-  std::vector<std::vector<std::complex<double>>> eigenvectors;
-  if (stage_eigenvectors)
-  {
-    eigenvectors.assign(num_report, std::vector<std::complex<double>>(Curl.Width()));
-  }
+  // Stage the converged eigenvectors in host memory so that the eigensolver, linear solver,
+  // preconditioner and matrices release their memory before postprocessing and error
+  // estimation, which then do not add to the peak memory of the solve.
+  std::vector<std::vector<std::complex<double>>> eigenvectors(
+      num_eig, std::vector<std::complex<double>>(Curl.Width()));
   ComplexVector E(Curl.Width());
   E.UseDevice(true);
-  for (int i = 0; i < num_report; i++)
+  for (int i = 0; i < num_eig; i++)
   {
     eigenvalues[i] = eigen->GetEigenvalue(i);
-    errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (stage_eigenvectors)
+    prev_shift_eigenvalues.push_back((!has_C && !has_A2) ? 1i * std::sqrt(eigenvalues[i])
+                                                         : eigenvalues[i]);
+    if (i < num_report)
     {
-      eigen->GetEigenvector(i, E);
-      E.Get(eigenvectors[i].data(), E.Size(), false);
+      errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+      errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
     }
+    eigen->GetEigenvector(i, E);
+    E.Get(eigenvectors[i].data(), E.Size(), false);
   }
 
-  if (stage_eigenvectors)
-  {
-    eigen.reset();
-    KM.reset();
-    ksp.reset();
-    P.reset();
-    A.reset();
-    divfree.reset();
-    Kp.reset();
-    Cp.reset();
-    Mp.reset();
-    A2_0.reset();
-    A2_1.reset();
-    A2_2.reset();
-    A2.reset();
-    interp_op.reset();
-    K.reset();
-    C.reset();
-    M.reset();
-  }
+  eigen.reset();
+  KM.reset();
+  KeepCoarseChoice();
+  ksp.reset();
+  P.reset();
+  A.reset();
+  divfree.reset();
+  Kp.reset();
+  Cp.reset();
+  Mp.reset();
+  A2_0.reset();
+  A2_1.reset();
+  A2_2.reset();
+  A2.reset();
+  interp_op.reset();
+  K.reset();
+  C.reset();
+  M.reset();
   Mpi::Print("\n");
+
+  if (store_eigenpairs)
+  {
+    prev_eigenvectors = std::make_unique<VectorFieldTransfer>(
+        space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
+    prev_eigenvalues = eigenvalues;
+    prev_num_its = num_its;
+  }
+  auto StoreEigenvector = [&](const ComplexVector &x)
+  {
+    if (store_eigenpairs)
+    {
+      prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), x.Real());
+      prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), x.Imag());
+    }
+  };
+
+  // Error estimator, constructed once the solver objects have been released.
+  if (ComputeErrorEstimation())
+  {
+    estimator.emplace(space_op, iodata);
+  }
+
+  // Eigenvector phase independent of the basis, the element order and the partition, and
+  // the number of eigenvectors which took it from each reference (the fallbacks warn).
+  const PhaseReference phase_ref(space_op.GetNDSpace());
+  std::array<int, PhaseReference::num_fields + 1> num_ref = {};
 
   for (int i = 0; i < num_report; i++)
   {
@@ -551,15 +899,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    if (stage_eigenvectors)
+    E.Set(eigenvectors[i].data(), E.Size(), false);
+    if (const int ref = phase_ref.Normalize(E); ref >= 0)
     {
-      E.Set(eigenvectors[i].data(), E.Size(), false);
+      num_ref[ref]++;
     }
-    else
-    {
-      eigen->GetEigenvector(i, E);
-    }
-    linalg::NormalizePhase(space_op.GetComm(), E);
+    StoreEigenvector(E);
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
@@ -573,10 +918,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
-    if (i < num_requested)
+    if (estimator && i < num_requested)
     {
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
+  }
+  for (int i = num_report; i < num_eig; i++)
+  {
+    E.Set(eigenvectors[i].data(), E.Size(), false);
+    StoreEigenvector(E);
+  }
+  if (const int num_fallback = num_ref[1] + num_ref[PhaseReference::num_fields];
+      num_fallback > 0)
+  {
+    Mpi::Warning(space_op.GetComm(),
+                 "The projection on the first phase reference field is negligible for {:d} "
+                 "of {:d} eigenvectors: {:d} took the phase of the second reference field "
+                 "and {:d} that of the mean of the degrees of freedom, which depends on "
+                 "the numbering of the mesh and on the number of processes.",
+                 num_fallback, num_report, num_ref[1], num_ref[PhaseReference::num_fields]);
   }
   post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};

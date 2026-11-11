@@ -67,20 +67,22 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"Tol", linear.tol},
                 {"MaxIts", linear.max_it},
                 {"MaxSize", linear.max_size},
+                {"StagnationIts", linear.stagnation_it},
+                {"StagnationTol", linear.stagnation_tol},
                 {"InitialGuess", static_cast<bool>(linear.initial_guess)},
                 {"MGMaxLevels", linear.mg_max_levels},
                 {"MGCoarsenType", ToString(linear.mg_coarsening)},
                 {"MGUseMesh", linear.mg_use_mesh},
                 {"MGCycleIts", linear.mg_cycle_it},
                 {"MGSmoothIts", linear.mg_smooth_it},
-                {"MGSmoothOrder", linear.mg_smooth_order},
                 {"MGSmoothEigScaleMax", linear.mg_smooth_sf_max},
                 {"MGSmoothEigScaleMin", linear.mg_smooth_sf_min},
                 {"MGSmoothChebyshev4th", linear.mg_smooth_cheby_4th},
+                {"MGSmoothSinglePrecision", linear.mg_smooth_single},
+                {"MGAuxiliaryResidual", ToString(linear.mg_aux_residual)},
                 {"MGAuxiliarySmoother", static_cast<bool>(linear.mg_smooth_aux)},
                 {"PCMatReal", linear.pc_mat_real},
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},
-                {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
                 {"ReorderingReuse", linear.reorder_reuse},
                 {"PCSide", ToString(linear.pc_side)},
@@ -89,18 +91,36 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"STRUMPACKCompressionTol", linear.strumpack_lr_tol},
                 {"STRUMPACKLossyPrecision", linear.strumpack_lossy_precision},
                 {"STRUMPACKButterflyLevels", linear.strumpack_butterfly_l},
+                {"STRUMPACKSelectiveInversion",
+                 static_cast<bool>(linear.strumpack_selective_inversion)},
                 {"SuperLU3DCommunicator", linear.superlu_3d},
                 {"AMSVectorInterpolation", linear.ams_vector_interp},
                 {"AMSSingularOperator", static_cast<bool>(linear.ams_singular_op)},
                 {"LondonPCShift", linear.london_pc_shift},
                 {"AMGAggressiveCoarsening", static_cast<bool>(linear.amg_agg_coarsen)},
                 {"AMSMaxIts", linear.ams_max_it},
+                {"AMSSmoothIts", linear.ams_smooth_it},
                 {"DivFreeTol", linear.divfree_tol},
                 {"DivFreeMaxIts", linear.divfree_max_it},
                 {"EstimatorTol", linear.estimator_tol},
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
+                {"AlwaysComputeErrorEstimation", linear.always_error_estimation},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});
+  if (!linear.complex_coarse_check)
+  {
+    // Otherwise, the coarse solve is chosen at runtime and stays unspecified.
+    ApplyEntries(j_linear, {{"ComplexCoarseSolve", linear.complex_coarse_solve}});
+  }
+  if (linear.mg_smooth_order_aux > 0)
+  {
+    ApplyEntries(j_linear, {{"MGAuxiliarySmoothOrder", linear.mg_smooth_order_aux}});
+  }
+  if (linear.mg_smooth_order_max == linear.mg_smooth_order)
+  {
+    // Otherwise, the order is chosen at runtime and stays unspecified.
+    ApplyEntries(j_linear, {{"MGSmoothOrder", linear.mg_smooth_order}});
+  }
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)
@@ -116,6 +136,13 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
                          {"Scaling", eigenmode.scale},
                          {"StartVector", eigenmode.init_v0},
                          {"StartVectorConstant", eigenmode.init_v0_const},
+                         {"WarmStart", eigenmode.warm_start},
+                         {"AdaptiveShift", eigenmode.adaptive_shift},
+                         {"LinearSolverRelaxation", eigenmode.linear_relaxation},
+                         {"LinearSolverDeflation", eigenmode.linear_deflation},
+                         {"MinQ", eigenmode.min_q},
+                         {"IntermediateTol", eigenmode.intermediate_tol},
+                         {"IntermediateLinearSolverTol", eigenmode.intermediate_linear_tol},
                          {"MassOrthogonal", eigenmode.mass_orthog},
                          {"NonlinearType", ToString(eigenmode.nonlinear_type)},
                          {"RefineNonlinear", eigenmode.refine_nonlinear},
@@ -155,6 +182,10 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                           {"AdaptiveTol", driven.adaptive_tol},
                           {"AdaptiveMaxSamples", driven.adaptive_max_size},
                           {"AdaptiveConvergenceMemory", driven.adaptive_memory},
+                          {"AdaptivePoleExclusion", driven.adaptive_pole_exclusion},
+                          {"AdaptiveIndicatorSamples", driven.adaptive_indicator_samples},
+                          {"AdaptiveIndicatorMaxQ", driven.adaptive_indicator_max_q},
+                          {"CoarseReuseTol", driven.coarse_reuse_tol},
                           {"AdaptiveGSOrthogonalization",
                            ToString(driven.adaptive_solver_gs_orthog_type)},
                           {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
@@ -203,6 +234,7 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                          {"MakeSimplex", model.make_simplex},
                          {"MakeHexahedral", model.make_hex},
                          {"ReorderElements", model.reorder_elements},
+                         {"LocalReorder", model.local_reorder},
                          {"CleanUnusedElements", model.clean_unused_elements},
                          {"RefineCrackElements", model.refine_crack_elements},
                          {"CrackDisplacementFactor", model.crack_displ_factor},

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
+#include <numeric>
 #include <utility>
 #include <ceed/backend.h>
 #include "fem/brokenspace.hpp"
@@ -225,6 +227,135 @@ auto GetElementAttributes(const std::vector<int> &indices,
   return std::make_pair(std::move(active_indices), std::move(elem_attr));
 }
 
+// Positions of the affine elements of a mesh with second-order nodes: elements whose edge
+// nodes are the midpoints of their vertices, to the rounding of the node coordinates.
+std::vector<int> GetAffineElementPositions(const mfem::GridFunction &mesh_nodes,
+                                           mfem::Geometry::Type geom,
+                                           const std::vector<int> &indices)
+{
+  const mfem::FiniteElementSpace &fespace = *mesh_nodes.FESpace();
+  const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
+  if (!dynamic_cast<const mfem::H1_FECollection *>(fespace.FEColl()) || !fe ||
+      fe->GetOrder() != 2)
+  {
+    return {};
+  }
+  const int dim = mfem::Geometry::Dimension[geom], num_dofs = fe->GetDof(),
+            space_dim = fespace.GetVDim();
+  const mfem::IntegrationRule &nodes = fe->GetNodes();
+  mfem::Array<int> vdofs;
+  mfem::Vector x;
+  std::vector<int> affine;
+  for (std::size_t k = 0; k < indices.size(); k++)
+  {
+    fespace.GetElementVDofs(indices[k], vdofs);
+    mesh_nodes.GetSubVector(vdofs, x);
+    double dev = 0.0;
+    for (int i = dim + 1; i < num_dofs; i++)
+    {
+      const mfem::IntegrationPoint &ip = nodes.IntPoint(i);
+      const double xi[3] = {ip.x, ip.y, ip.z};
+      for (int d = 0; d < space_dim; d++)
+      {
+        double x_affine = x(d * num_dofs);
+        for (int v = 1; v <= dim; v++)
+        {
+          x_affine += xi[v - 1] * (x(v + d * num_dofs) - x(d * num_dofs));
+        }
+        dev = std::max(dev, std::abs(x(i + d * num_dofs) - x_affine));
+      }
+    }
+    if (dev <= 64.0 * std::numeric_limits<double>::epsilon() * x.Normlinf())
+    {
+      affine.push_back(static_cast<int>(k));
+    }
+  }
+  return affine;
+}
+
+// Geometry data for the elements at the given positions in the full list of the data, with
+// restrictions into its geometry factor vectors.
+ceed::CeedGeomFactorData GetGeometryDataPart(Ceed ceed,
+                                             const ceed::CeedGeomFactorData &data, int part,
+                                             std::vector<int> &&positions,
+                                             CeedVector affine_geom_data, CeedInt num_qpts)
+{
+  ceed::CeedGeomFactorData p;
+  p.dim = data.dim;
+  p.space_dim = data.space_dim;
+  p.part = part;
+  p.positions = std::move(positions);
+  p.indices.reserve(p.positions.size());
+  for (auto i : p.positions)
+  {
+    p.indices.push_back(data.indices[i]);
+  }
+  if (!data.active_indices.empty())
+  {
+    // The active subset of the part, as positions in its own list.
+    auto active = data.active_indices.begin();
+    for (std::size_t k = 0; k < p.positions.size(); k++)
+    {
+      while (active != data.active_indices.end() && *active < p.positions[k])
+      {
+        ++active;
+      }
+      if (active != data.active_indices.end() && *active == p.positions[k])
+      {
+        p.active_indices.push_back(static_cast<int>(k));
+      }
+    }
+  }
+  p.geom_data = nullptr;
+  PalaceCeedCall(ceed, CeedVectorReferenceCopy(data.geom_data, &p.geom_data));
+  if (affine_geom_data)
+  {
+    PalaceCeedCall(ceed, CeedVectorReferenceCopy(affine_geom_data, &p.affine_geom_data));
+  }
+  CeedInt geom_data_size, layout[3];
+  CeedSize length;
+  PalaceCeedCall(
+      ceed, CeedElemRestrictionGetNumComponents(data.geom_data_restr, &geom_data_size));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(data.geom_data_restr, &length));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(data.geom_data_restr, layout));
+  auto CreateRestriction = [&](const std::vector<int> &elements, CeedElemRestriction *restr)
+  {
+    std::vector<CeedInt> offsets(elements.size() * num_qpts);
+    for (std::size_t k = 0; k < elements.size(); k++)
+    {
+      const CeedInt elem_offset = p.positions[elements[k]] * layout[2];
+      for (CeedInt q = 0; q < num_qpts; q++)
+      {
+        offsets[k * num_qpts + q] = elem_offset + q * layout[0];
+      }
+    }
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, elements.size(), num_qpts,
+                                                   geom_data_size, layout[1], length,
+                                                   CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                   offsets.data(), restr));
+  };
+  std::vector<int> all(p.positions.size());
+  std::iota(all.begin(), all.end(), 0);
+  CreateRestriction(all, &p.geom_data_restr);
+  if (!p.active_indices.empty() && p.active_indices.size() < p.indices.size())
+  {
+    CreateRestriction(p.active_indices, &p.active_geom_data_restr);
+  }
+  return p;
+}
+
+void DestroyGeometryData(Ceed ceed, ceed::CeedGeomFactorData &data)
+{
+  PalaceCeedCall(ceed, CeedVectorDestroy(&data.geom_data));
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&data.geom_data_restr));
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&data.active_geom_data_restr));
+  PalaceCeedCall(ceed, CeedVectorDestroy(&data.affine_geom_data));
+  for (auto &part : data.parts)
+  {
+    DestroyGeometryData(ceed, part);
+  }
+}
+
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
                           std::vector<int> &active_indices,
                           const mfem::GridFunction &mesh_nodes, const Vector &elem_attr)
@@ -297,6 +428,88 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
                                  attr_basis, elem_attr_vec, data.geom_data,
                                  data.geom_data_restr);
+
+  // The geometry factors of affine simplices are the same at all points, so they are also
+  // computed once per element (at the first point of a rule, with unit weight) for
+  // operators with bases from ceed::InitReducedBasis. On curved meshes, the elements whose
+  // geometry factors are the same at all points (to rounding) are affine.
+  const mfem::FiniteElement *mesh_fe =
+      mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+  if (!mesh_fe)
+  {
+    mesh_fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(geom);
+  }
+  CeedMemType mem_type;
+  PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem_type));
+  if (mem_type == CEED_MEM_HOST && mesh_fe && num_elem > 0 &&
+      (geom == mfem::Geometry::SEGMENT || geom == mfem::Geometry::TRIANGLE ||
+       geom == mfem::Geometry::TETRAHEDRON))
+  {
+    std::vector<int> affine;
+    if (mesh_fe->GetOrder() == 1)
+    {
+      affine.resize(num_elem);
+      std::iota(affine.begin(), affine.end(), 0);
+    }
+    else
+    {
+      affine = (data.dim == mesh.Dimension())
+                   ? GetAffineElementPositions(mesh_nodes, geom, data.indices)
+                   : std::vector<int>();
+    }
+    if (!affine.empty())
+    {
+      const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, 0);
+      const mfem::DofToQuad &maps = mesh_fe->GetDofToQuad(ir, mfem::DofToQuad::FULL);
+      const mfem::IntegrationPoint &ip = ir.IntPoint(0);
+      const CeedScalar q_ref[3] = {ip.x, ip.y, ip.z}, q_weight = 1.0;
+      CeedBasis affine_mesh_basis, affine_attr_basis;
+      PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, ceed::GetCeedTopology(geom),
+                                             mesh_fespace.GetVDim(), maps.ndof, 1,
+                                             maps.Bt.GetData(), maps.Gt.GetData(), q_ref,
+                                             &q_weight, &affine_mesh_basis));
+      ceed::InitConstantLineBasis(ceed, 1, 1, &affine_attr_basis);
+      const CeedSize affine_length = static_cast<CeedSize>(num_elem) * geom_data_size;
+      const CeedInt affine_strides[3] = {1, 1, geom_data_size};
+      CeedVector affine_data;
+      CeedElemRestriction affine_restr;
+      PalaceCeedCall(ceed, CeedVectorCreate(ceed, affine_length, &affine_data));
+      PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1,
+                                                            geom_data_size, affine_length,
+                                                            affine_strides, &affine_restr));
+      ceed::AssembleCeedGeometryData(ceed, mesh_restr, affine_mesh_basis, mesh_nodes_vec,
+                                     attr_restr, affine_attr_basis, elem_attr_vec,
+                                     affine_data, affine_restr);
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&affine_restr));
+      PalaceCeedCall(ceed, CeedBasisDestroy(&affine_mesh_basis));
+      PalaceCeedCall(ceed, CeedBasisDestroy(&affine_attr_basis));
+      if (affine.size() == num_elem)
+      {
+        data.affine_geom_data = affine_data;
+      }
+      else
+      {
+        std::vector<int> curved;
+        curved.reserve(num_elem - affine.size());
+        for (std::size_t i = 0, k = 0; i < num_elem; i++)
+        {
+          if (k < affine.size() && affine[k] == static_cast<int>(i))
+          {
+            k++;
+          }
+          else
+          {
+            curved.push_back(static_cast<int>(i));
+          }
+        }
+        data.parts.push_back(
+            GetGeometryDataPart(ceed, data, 1, std::move(affine), affine_data, num_qpts));
+        data.parts.push_back(
+            GetGeometryDataPart(ceed, data, 2, std::move(curved), nullptr, num_qpts));
+        PalaceCeedCall(ceed, CeedVectorDestroy(&affine_data));
+      }
+    }
+  }
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
@@ -386,6 +599,64 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   return geom_data_map;
 }
 
+const ceed::CeedGeomFactorData *
+Mesh::GetCeedAffineGeomFactorData(Ceed ceed, mfem::Geometry::Type geom,
+                                  const ceed::CeedGeomFactorData &data, int num_qpts) const
+{
+  if (!data.affine_geom_data)
+  {
+    return nullptr;
+  }
+  auto map_it = affine_geom_data.find(ceed);
+  MFEM_ASSERT(map_it != affine_geom_data.end(),
+              "Unknown Ceed context in GetCeedAffineGeomFactorData!");
+  auto &affine_map = map_it->second;
+  const auto key = std::make_tuple(geom, data.part, num_qpts);
+  auto affine_it = affine_map.find(key);
+  if (affine_it != affine_map.end())
+  {
+    return &affine_it->second;
+  }
+
+  // Every point of an element reads the element's geometry factors (the vector has those
+  // of all elements of the full list).
+  ceed::CeedGeomFactorData affine;
+  affine.dim = data.dim;
+  affine.space_dim = data.space_dim;
+  affine.part = data.part;
+  affine.indices = data.indices;
+  affine.active_indices = data.active_indices;
+  affine.geom_data = nullptr;
+  PalaceCeedCall(ceed, CeedVectorReferenceCopy(data.affine_geom_data, &affine.geom_data));
+  const CeedInt geom_data_size = 2 + data.space_dim * data.dim;
+  CeedSize length;
+  PalaceCeedCall(ceed, CeedVectorGetLength(data.affine_geom_data, &length));
+  auto CreateRestriction = [&](const std::vector<int> *elements, std::size_t num_elem,
+                               CeedElemRestriction *restr)
+  {
+    std::vector<CeedInt> offsets(num_elem * num_qpts);
+    for (std::size_t k = 0; k < num_elem; k++)
+    {
+      const int i = elements ? (*elements)[k] : static_cast<int>(k);
+      const CeedInt offset = (data.part ? data.positions[i] : i) * geom_data_size;
+      for (int q = 0; q < num_qpts; q++)
+      {
+        offsets[k * num_qpts + q] = offset;
+      }
+    }
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                             ceed, num_elem, num_qpts, geom_data_size, 1, length,
+                             CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(), restr));
+  };
+  CreateRestriction(nullptr, data.indices.size(), &affine.geom_data_restr);
+  if (!data.active_indices.empty() && data.active_indices.size() < data.indices.size())
+  {
+    CreateRestriction(&data.active_indices, data.active_indices.size(),
+                      &affine.active_geom_data_restr);
+  }
+  return &affine_map.emplace(key, std::move(affine)).first->second;
+}
+
 void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
                                    std::vector<int> active_bdr_attr_)
 {
@@ -422,16 +693,25 @@ void Mesh::ResetCeedObjects()
   {
     for (auto &[key, val] : geom_data_map)
     {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.active_geom_data_restr));
+      DestroyGeometryData(ceed, val);
+    }
+  }
+  for (auto &[ceed, affine_map] : affine_geom_data)
+  {
+    for (auto &[key, val] : affine_map)
+    {
+      DestroyGeometryData(ceed, val);
     }
   }
   geom_data.clear();
+  affine_geom_data.clear();
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
     geom_data.emplace(ceed, ceed::GeometryObjectMap<ceed::CeedGeomFactorData>());
+    affine_geom_data.emplace(
+        ceed,
+        std::map<std::tuple<mfem::Geometry::Type, int, int>, ceed::CeedGeomFactorData>());
   }
 }
 

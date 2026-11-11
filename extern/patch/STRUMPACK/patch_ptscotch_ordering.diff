@@ -1,0 +1,538 @@
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -180,11 +180,8 @@
+       }
+       case ReorderingStrategy::PTSCOTCH: {
+ #if defined(STRUMPACK_USE_PTSCOTCH)
+-        int thread_level;
+-        MPI_Query_thread(&thread_level);
+-        if (thread_level != MPI_THREAD_MULTIPLE && comm_->is_root())
+-          std::cerr << "WARNING: MPI_THREAD_MULTIPLE might be required for PTSCOTCH"
+-                    << std::endl;
++        // No MPI_THREAD_MULTIPLE needed: Scotch only uses threads with MPI
++        // when the MPI library provides it.
+         tree_ = ptscotch_nested_dissection
+           (A, comm_->comm(), true, perm_, opts);
+ #else
+@@ -201,10 +198,17 @@
+       default: assert(true);
+       }
+       tree_.check();
+-      get_local_graphs(A);
+-      if (opts.reordering_method() == ReorderingStrategy::PARMETIS ||
+-          opts.reordering_method() == ReorderingStrategy::PTSCOTCH)
+-        build_local_tree(A);
++      // ParMETIS and PT-Scotch: the local trees are built from the
++      // subgraphs assigned by get_local_graphs, which may spread them
++      const bool local_trees =
++        opts.reordering_method() == ReorderingStrategy::PARMETIS ||
++        opts.reordering_method() == ReorderingStrategy::PTSCOTCH;
++      get_local_graphs(A, local_trees);
++      if (local_trees)
++        // PT-Scotch only computes the distributed separators, the subgraphs
++        // of the processes are ordered with METIS
++        build_local_tree
++          (opts, A, opts.reordering_method() == ReorderingStrategy::PTSCOTCH);
+       ltree_.check();
+     }
+     nested_dissection_print(opts, A.nnz());
+@@ -266,26 +270,41 @@
+ 
+   template<typename scalar_t,typename integer_t> void
+   MatrixReorderingMPI<scalar_t,integer_t>::get_local_graphs
+-  (const CSRMPI_t& A) {
++  (const CSRMPI_t& A, bool spread_leaves) {
+     auto P = comm_->size();
+     auto rank = comm_->rank();
+-    sub_graph_ranges.resize(P);
+-    dist_sep_ranges.resize(P);
++    sub_graph_ranges.assign(P, std::make_pair(integer_t(0), integer_t(0)));
++    dist_sep_ranges.assign(P, std::make_pair(integer_t(0), integer_t(0)));
+     proc_dist_sep.resize(tree_.separators());
++    // With fewer leaves than processes (parallel ordering on a subset of the
++    // processes), spread the leaves and distributed separators over the
++    // processes instead of giving them to the first ones. Only when the
++    // local trees are built from this assignment (build_local_tree): the
++    // other orderings give leaf k to process k (SeparatorTree::subtree).
++    integer_t stride = 1;
++    if (spread_leaves) {
++      integer_t nleaves = 0;
++      for (integer_t sep=0; sep<tree_.separators(); sep++)
++        if (tree_.is_leaf(sep)) nleaves++;
++      stride = std::max(integer_t(1),
++                        integer_t(P) / std::max(integer_t(1), nleaves));
++    }
+     for (integer_t sep=0, p_local=0, p_dist=0;
+          sep<tree_.separators(); sep++) {
+       if (tree_.is_leaf(sep)) {
+         // sep is a leaf, so it is the local graph of proces p
+-        if (p_local == rank) dsep_leaf_ = sep;
+-        sub_graph_ranges[p_local] =
++        auto p = p_local++ * stride;
++        if (p == rank) dsep_leaf_ = sep;
++        sub_graph_ranges[p] =
+           std::make_pair(tree_.sizes[sep], tree_.sizes[sep+1]);
+-        proc_dist_sep[sep] = p_local++;
++        proc_dist_sep[sep] = p;
+       } else {
+         // sep was computed using distributed nested dissection,
+-        // assign it to process p_dist
+-        dist_sep_ranges[p_dist] =
++        // assign it to process p
++        auto p = p_dist++ * stride;
++        dist_sep_ranges[p] =
+           std::make_pair(tree_.sizes[sep], tree_.sizes[sep+1]);
+-        proc_dist_sep[sep] = p_dist++;
++        proc_dist_sep[sep] = p;
+       }
+     }
+     sub_graph_range = sub_graph_ranges[rank];
+@@ -296,49 +315,87 @@
+ 
+   template<typename scalar_t,typename integer_t> void
+   MatrixReorderingMPI<scalar_t,integer_t>::build_local_tree
+-  (const CSRMPI_t& A) {
++  (const Opts_t& opts, const CSRMPI_t& A, bool metis_leaves) {
+     auto P = comm_->size();
+     auto rank = comm_->rank();
+     auto n = A.size();
+     auto sub_n = my_sub_graph.size();
+-    auto sub_etree =
+-      spsymetree(my_sub_graph.ptr(), my_sub_graph.ptr()+1,
+-                 my_sub_graph.ind(), sub_n, sub_graph_range.first);
++    const auto lo = sub_graph_range.first, hi = sub_graph_range.second;
+     std::vector<integer_t> iwork(sub_n), post(sub_n);
+-    auto seps = separators_from_etree(sub_etree, post);
+-    for (integer_t i = 0; i < sub_n; ++i) {
+-      const auto parent = sub_etree[i];
+-      iwork[post[i]] =
+-        (parent >= 0 && parent < sub_n) ? post[parent] : sub_n;
++    if (sub_n == 0) {
++      // no subgraph on this process (ordering on fewer processes)
++      ltree_ = SeparatorTree<integer_t>(0);
++    } else if (metis_leaves && sub_n > 1) {
++      // Order the subgraph with METIS nested dissection, as the sequential
++      // METIS ordering does for the whole graph (incl. the amalgamation of
++      // the separator tree).
++      std::vector<integer_t> lptr(sub_n+1), lind;
++      lind.reserve(my_sub_graph.ptr(sub_n));
++      lptr[0] = 0;
++      for (integer_t i=0; i<sub_n; i++) {
++        for (auto j=my_sub_graph.ptr(i); j<my_sub_graph.ptr(i+1); j++) {
++          auto c = my_sub_graph.ind()[j];
++          if (c >= lo && c < hi) lind.push_back(c - lo);
++        }
++        lptr[i+1] = lind.size();
+       }
+-      for (integer_t i = 0; i < sub_n; ++i) {
+-      sub_etree[i] = iwork[i];
+-    }
+-    ltree_ = SeparatorTree<integer_t>(seps);
+-    for (integer_t i=0; i<sub_n; i++) {
+-      iwork[post[i]] = i;
+-      post[i] += sub_graph_range.first;
++      std::vector<integer_t> lperm(sub_n), liperm(sub_n);
++      ltree_ = metis_nested_dissection
++        (sub_n, lptr.data(), lind.data(), lperm, liperm, opts);
++      for (integer_t i=0; i<sub_n; i++) {
++        iwork[lperm[i]] = i;
++        post[i] = lperm[i] + lo;
++      }
++    } else {
++      auto sub_etree =
++        spsymetree(my_sub_graph.ptr(), my_sub_graph.ptr()+1,
++                   my_sub_graph.ind(), sub_n, lo);
++      auto seps = separators_from_etree(sub_etree, post);
++      ltree_ = SeparatorTree<integer_t>(seps);
++      for (integer_t i=0; i<sub_n; i++) {
++        iwork[post[i]] = i;
++        post[i] += lo;
++      }
+     }
+-    my_sub_graph.permute_local
+-      (post, iwork, sub_graph_range.first, sub_graph_range.second);
+-    std::vector<integer_t> gpost(n);
+-    std::iota(gpost.begin(), gpost.end(), 0);
+-    std::unique_ptr<int[]> rcnts(new int[2*P]);
+-    auto displs = rcnts.get() + P;
+-    for (int p=0; p<P; p++) {
+-      rcnts[p] = sub_graph_ranges[p].second - sub_graph_ranges[p].first;
+-      displs[p] = sub_graph_ranges[p].first;
++    my_sub_graph.permute_local(post, iwork, lo, hi);
++    // Update the global permutation with the local orderings: the vertex at
++    // position k of the subgraph of process p moves to post_p[k-lo_p]. The
++    // local orderings are gathered in chunks, which bounds the receive buffer
++    // instead of holding another permutation of size n.
++    for (integer_t i=0; i<n; i++) iperm_[perm_[i]] = i;
++    std::vector<int> rcnts(P), displs(P);
++    std::size_t maxcnt = 0;
++    for (int p=0; p<P; p++)
++      maxcnt = std::max(maxcnt, std::size_t(sub_graph_ranges[p].second -
++                                            sub_graph_ranges[p].first));
++    const std::size_t chunk = std::max(maxcnt, std::size_t(1) << 23);
++    std::vector<integer_t> buf;
++    for (int p0=0; p0<P; ) {
++      int p1 = p0;
++      std::size_t tot = 0;
++      while (p1 < P) {
++        std::size_t c = sub_graph_ranges[p1].second - sub_graph_ranges[p1].first;
++        if (tot + c > chunk) break;
++        tot += c;
++        p1++;
++      }
++      for (int p=0; p<P; p++) {
++        rcnts[p] = (p >= p0 && p < p1) ?
++          int(sub_graph_ranges[p].second - sub_graph_ranges[p].first) : 0;
++        displs[p] = (p == 0) ? 0 : displs[p-1] + rcnts[p-1];
++      }
++      buf.resize(tot);
++      MPI_Allgatherv
++        (post.data(), rcnts[rank], mpi_type<integer_t>(), buf.data(),
++         rcnts.data(), displs.data(), mpi_type<integer_t>(), comm_->comm());
++      for (int p=p0; p<p1; p++) {
++        auto plo = sub_graph_ranges[p].first;
++        for (int t=0; t<rcnts[p]; t++)
++          perm_[iperm_[plo+t]] = buf[displs[p]+t];
++      }
++      p0 = p1;
+     }
+-    MPI_Allgatherv
+-      (post.data(), rcnts[rank], mpi_type<integer_t>(), gpost.data(),
+-       rcnts.get(), displs, mpi_type<integer_t>(), comm_->comm());
+-    for (integer_t i=0; i<n; i++)
+-      iperm_[perm_[i]] = i;
+-    for (integer_t i=0; i<n; i++)
+-      perm_[gpost[i]] = iperm_[i];
+-    for (integer_t i=0; i<n; i++)
+-      iperm_[perm_[i]] = i;
+-    std::swap(perm_, iperm_);
++    for (integer_t i=0; i<n; i++) iperm_[perm_[i]] = i;
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+--- a/src/sparse/ordering/MatrixReorderingMPI.hpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.hpp
+@@ -143,8 +143,9 @@
+      */
+     integer_t dsep_leaf_;
+ 
+-    void get_local_graphs(const CSRMPI_t& Ampi);
+-    void build_local_tree(const CSRMPI_t& Ampi);
++    void get_local_graphs(const CSRMPI_t& Ampi, bool spread_leaves=false);
++    void build_local_tree(const Opts_t& opts, const CSRMPI_t& Ampi,
++                          bool metis_leaves);
+     void nested_dissection_print(const SPOptions<scalar_t>& opts,
+                                  integer_t nnz) const;
+ 
+--- a/src/sparse/ordering/PTScotchReordering.hpp
++++ b/src/sparse/ordering/PTScotchReordering.hpp
+@@ -30,7 +30,10 @@
+ #define PT_SCOTCH_REORDERING_HPP
+ 
+ #include <ptscotch.h>
++#include <algorithm>
+ #include <cassert>
++#include <cstdlib>
++#include <string>
+ #include <type_traits>
+ 
+ #include "sparse/CSRMatrixMPI.hpp"
+@@ -54,46 +57,49 @@
+     return SCOTCH_dgraphOrderPerm(graph, ordeptr, order.data());
+   }
+ 
++  /**
++   * Strategy for the parallel nested dissection. Only the distributed
++   * separators are computed by PT-Scotch ("osq=s": the subgraph of each
++   * process is left unordered), the subgraphs are ordered with METIS
++   * afterwards (see MatrixReorderingMPI::build_local_tree). The separators
++   * are found with the parallel multilevel method, a multi-sequential
++   * multilevel separator (with band FM refinement) of the coarsest graph,
++   * and band FM refinement during uncoarsening, with a 20% imbalance
++   * tolerance as METIS.
++   */
+   inline std::string get_ptscotch_strategy_string(int stratpar) {
+     std::stringstream strategy_string;
+-    // switch (stratnum) {
+-    // case 1:  // based on a string from MUMPS, only performs nested-dissection for log(P) levels
+-    //   strategy_string <<
+-    //  "n{"           // nested dissection
+-    //  "ole=s,"    // "simple" parallel ordering strategy for each distributed leaf of parallel separator tree
+-    //  "ose=s,"    // "simple" parallel ordering strategy for each distributed separator of the separator tree
+-    //  "osq=s,"    // "simple" sequential ordering on centralized subgraphs, after n-d has gone far enough that subgraph is on 1 process
+-    //  "sep=m{"    // use parallel vertex multi-level method to find new separators
+-    //  "asc=b{width=3,strat=q{strat=f}},"   // use band method to refine distr vert seps after uncoarsening:
+-    //  "low=q{strat=h},"                    // use multi-sequential method to compute sep of coarsest graph
+-    //  "vert=1000,"                         // threshold minimum size under which graph is no longer coarsened
+-    //  "dvert=100,"                         // avg number of vert for proc under which the folding process is performed during coarsening
+-    //  "dlevl=0"                            // minimum level after which duplication is allowed in folding process
+-    //  "}"
+-    //  "}"; break;
+-    // case 2:
+-
+-    // default:  // perform nested dissection all the way down
+-    //   // TODO stop when separator smaller than stratpar!
+     strategy_string <<
+-      "n{"           // nested dissection
+-      "ole=s,"    // "simple" parallel ordering strategy for each distributed leaf of parallel separator tree
+-      "ose=s,"    // "simple" parallel ordering strategy for each distributed separator of the separator tree
+-      "osq=n{ole=s,ose=s,sep=g},"    // nested-dissection ordering on centralized subgraphs with Gibbs-Poole-Stockmeyer to find seps
+-      "sep=m{"                       // use parallel vertex multi-level method to find new separators
+-      "asc=b{width=3,strat=q{strat=f}}," // use band method to refine distr vert seps after uncoarsening:
+-      "low=q{strat=h},"                  // use multi-sequential method to compute sep of coarsest graph
+-      "vert=1000,"                       // threshold minimum size under which graph is no longer coarsened
+-      "dvert=100,"                       // avg number of vert for proc under which the folding process is performed during coarsening
+-      "dlevl=0"                          // minimum level after which duplication is allowed in folding process
++      "n{"                               // nested dissection
++      "ole=s,"                           // simple ordering of distributed leaves
++      "ose=s,"                           // simple ordering of distributed separators
++      "osq=s,"                           // centralized subgraphs: ordered later with METIS
++      "sep=m{"                           // parallel multilevel vertex separators
++      "asc=b{width=3,strat=q{strat=f{bal=0.2}}}," // band FM refinement while uncoarsening
++      "low=q{strat=m{vert=120,low=h{pass=10}," // multi-sequential multilevel separator of
++      "asc=b{width=3,bnd=f{bal=0.2},org=h{pass=10}f{bal=0.2}}}}," // the coarsest graph
++      "vert=10000,"                      // coarsen down to 10000 vertices
++      "dvert=100"                        // fold when fewer than 100 vertices per process
+       "}"
+       "}";
+-    // break;
+-    // }
+     return strategy_string.str();
+   }
+ 
+   /**
++   * Number of processes for the parallel nested dissection of a graph with
++   * n vertices on P processes. The cost of PT-Scotch grows with the number
++   * of processes (about linearly beyond a few hundred), while the subgraphs
++   * left to METIS and to the symbolic factorization grow as n/np, so the
++   * ordering runs on at most 256 processes. Environment variable
++   * STRUMPACK_PTSCOTCH_NPROCS overrides it.
++   */
++  inline int ptscotch_nprocs(long long /*n*/, int P) {
++    if (auto s = std::getenv("STRUMPACK_PTSCOTCH_NPROCS"))
++      if (*s) return std::max(1, std::min(P, std::atoi(s)));
++    return std::min(P, 256);
++  }
++
++  /**
+    * Take a ptscotch tree for the distributed part of nested-dissection
+    * and make a regular binary tree.
+    *
+@@ -167,94 +173,140 @@
+                              MPI_Comm comm, bool build_tree,
+                              std::vector<integer_t>& perm,
+                              const SPOptions<scalar_t>& opts) {
+-    auto local_rows = A.local_rows();
++    // Same random sequence for every ordering, independent of earlier calls
++    // to Scotch in the application.
++    SCOTCH_randomReset();
++    const int P = mpi_nprocs(comm), rank = mpi_rank(comm);
++    // Order on np processes: groups of k consecutive ranks merge their rows
++    // on the first rank of the group.
++    const int np = ptscotch_nprocs(A.size(), P);
++    const int k = (P + np - 1) / np;
++    const bool leader = (rank % k == 0);
++    const integer_t local_rows = A.local_rows();
+     auto ptr = A.ptr();
+     auto ind = A.ind();
+-    std::vector<SCOTCH_Num> ptr_nodiag(local_rows+1),
+-      ind_nodiag(ptr[local_rows]);
+-    integer_t nnz_nodiag = 0;
+-    ptr_nodiag[0] = 0;
++    std::vector<SCOTCH_Num> gptr(local_rows+1), gind;
++    gind.reserve(ptr[local_rows]);
++    gptr[0] = 0;
+     for (integer_t i=0; i<local_rows; i++) { // remove diagonal elements
+       for (integer_t j=ptr[i]; j<ptr[i+1]; j++)
+-        if (ind[j]!=i+A.begin_row()) ind_nodiag[nnz_nodiag++] = ind[j];
+-      ptr_nodiag[i+1] = nnz_nodiag;
+-    } // ptr_nodiag will now point locally, ind_nodiag still has
+-      // global column/row indices
+-
+-    SCOTCH_Dgraph graph;
+-    int ierr = SCOTCH_dgraphInit(&graph, comm);
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to initialize the graph."
+-                << std::endl;
+-    ierr = SCOTCH_dgraphBuild
+-      (&graph, 0, local_rows, local_rows, ptr_nodiag.data(),
+-       &ptr_nodiag[1], NULL, NULL, nnz_nodiag, nnz_nodiag,
+-       ind_nodiag.data(), NULL, NULL);
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to build the graph."
+-                << std::endl;
+-    assert(SCOTCH_dgraphCheck(&graph) == 0);
+-    SCOTCH_Strat strategy;
+-    ierr = SCOTCH_stratInit(&strategy);
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to initialize the strategy."
+-                << std::endl;
+-    ierr = SCOTCH_stratDgraphOrder
+-      (&strategy, get_ptscotch_strategy_string(opts.nd_param()).c_str());
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to create the reordering strategy."
+-                << std::endl;
+-    SCOTCH_Dordering ordeptr;
+-    ierr = SCOTCH_dgraphOrderInit(&graph, &ordeptr);
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to initialize the reordering."
+-                << std::endl;
+-    ierr = SCOTCH_dgraphOrderCompute(&graph, &ordeptr, &strategy);
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to compute the reordering."
+-                << std::endl;
+-    std::vector<integer_t> local_order(local_rows);
+-    ierr = WRAPPER_SCOTCH_dgraphOrderPerm
+-      (&graph, &ordeptr, local_order);
+-    if (ierr)
+-      std::cerr << "# ERROR: PTScotch failed to retrieve the reordering."
+-                << std::endl;
+-
+-    auto P = mpi_nprocs(comm);
+-    {
+-      std::unique_ptr<int[]> rcnts(new int[2*P]);
+-      auto displs = rcnts.get() + P;
+-      for (int p=0; p<P; p++) {
+-        rcnts[p] = A.dist(p+1) - A.dist(p);
+-        // need to copy because displs needs to be 'int'
+-        displs[p] = A.dist(p);
+-      }
+-      MPI_Allgatherv
+-        (local_order.data(), local_rows, mpi_type<integer_t>(),
+-         perm.data(), rcnts.get(), displs, mpi_type<integer_t>(), comm);
++        if (ind[j]!=i+A.begin_row()) gind.push_back(ind[j]);
++      gptr[i+1] = gind.size();
++    } // gptr points locally, gind has global column/row indices
++    SCOTCH_Num grows = local_rows;
++    MPI_Comm scomm = comm, gcomm = MPI_COMM_NULL;
++    if (k > 1) {
++      MPI_Comm_split(comm, rank / k, rank, &gcomm);
++      MPI_Comm_split(comm, leader ? 0 : MPI_UNDEFINED, rank, &scomm);
++      int gs;
++      MPI_Comm_size(gcomm, &gs);
++      long long cnt[2] = {(long long)local_rows, (long long)gind.size()};
++      std::vector<long long> all(2*gs);
++      MPI_Gather(cnt, 2, MPI_LONG_LONG, all.data(), 2, MPI_LONG_LONG, 0, gcomm);
++      std::vector<int> rc(gs), rd(gs), ec(gs), ed(gs);
++      long long nr = 0, ne = 0;
++      if (leader)
++        for (int q=0; q<gs; q++) {
++          rc[q] = int(all[2*q]);   rd[q] = int(nr); nr += all[2*q];
++          ec[q] = int(all[2*q+1]); ed[q] = int(ne); ne += all[2*q+1];
++        }
++      std::vector<SCOTCH_Num> len(local_rows), glen(nr), mind(ne);
++      for (integer_t i=0; i<local_rows; i++) len[i] = gptr[i+1] - gptr[i];
++      MPI_Gatherv(len.data(), int(local_rows), mpi_type<SCOTCH_Num>(),
++                  glen.data(), rc.data(), rd.data(), mpi_type<SCOTCH_Num>(),
++                  0, gcomm);
++      MPI_Gatherv(gind.data(), int(gind.size()), mpi_type<SCOTCH_Num>(),
++                  mind.data(), ec.data(), ed.data(), mpi_type<SCOTCH_Num>(),
++                  0, gcomm);
++      gind.swap(mind);
++      gptr.assign(nr+1, 0);
++      for (long long i=0; i<nr; i++) gptr[i+1] = gptr[i] + glen[i];
++      grows = nr;
+     }
++    std::vector<integer_t> local_order(leader ? grows : 0);
+     SeparatorTree<integer_t> sep_tree;
+-    if (build_tree) {
+-      // get info about the distributed levels of nested-dissection
+-      integer_t dist_nr_sep = SCOTCH_dgraphOrderCblkDist(&graph, &ordeptr);
++    integer_t nbsep = 0;
++    if (leader) {
++      const SCOTCH_Num gnnz = gind.size();
++      SCOTCH_Dgraph graph;
++      int ierr = SCOTCH_dgraphInit(&graph, scomm);
+       if (ierr)
+-        std::cerr << "# ERROR: PTScotch failed to build the separator tree."
++        std::cerr << "# ERROR: PTScotch failed to initialize the graph."
+                   << std::endl;
+-      std::vector<SCOTCH_Num> ptscotch_dist_tree(dist_nr_sep),
+-        ptscotch_dist_sizes(dist_nr_sep);
+-      ierr = SCOTCH_dgraphOrderTreeDist
+-        (&graph, &ordeptr, ptscotch_dist_tree.data(),
+-         ptscotch_dist_sizes.data());
++      ierr = SCOTCH_dgraphBuild
++        (&graph, 0, grows, grows, gptr.data(), &gptr[1], NULL, NULL,
++         gnnz, gnnz, gind.data(), NULL, NULL);
+       if (ierr)
+-        std::cerr << "# ERROR: PTScotch failed to build the separator tree."
++        std::cerr << "# ERROR: PTScotch failed to build the graph."
+                   << std::endl;
+-      // build separator tree for distributed nested dissection part
+-      sep_tree = sep_tree_from_ptscotch_nd_tree<integer_t>
+-        (ptscotch_dist_tree, ptscotch_dist_sizes);
++      assert(SCOTCH_dgraphCheck(&graph) == 0);
++      SCOTCH_Strat strategy;
++      ierr = SCOTCH_stratInit(&strategy);
++      if (ierr)
++        std::cerr << "# ERROR: PTScotch failed to initialize the strategy."
++                  << std::endl;
++      ierr = SCOTCH_stratDgraphOrder
++        (&strategy, get_ptscotch_strategy_string(opts.nd_param()).c_str());
++      if (ierr)
++        std::cerr << "# ERROR: PTScotch failed to create the reordering strategy."
++                  << std::endl;
++      SCOTCH_Dordering ordeptr;
++      ierr = SCOTCH_dgraphOrderInit(&graph, &ordeptr);
++      if (ierr)
++        std::cerr << "# ERROR: PTScotch failed to initialize the reordering."
++                  << std::endl;
++      ierr = SCOTCH_dgraphOrderCompute(&graph, &ordeptr, &strategy);
++      if (ierr)
++        std::cerr << "# ERROR: PTScotch failed to compute the reordering."
++                  << std::endl;
++      ierr = WRAPPER_SCOTCH_dgraphOrderPerm(&graph, &ordeptr, local_order);
++      if (ierr)
++        std::cerr << "# ERROR: PTScotch failed to retrieve the reordering."
++                  << std::endl;
++      if (build_tree) {
++        // get info about the distributed levels of nested-dissection
++        integer_t dist_nr_sep = SCOTCH_dgraphOrderCblkDist(&graph, &ordeptr);
++        std::vector<SCOTCH_Num> ptscotch_dist_tree(dist_nr_sep),
++          ptscotch_dist_sizes(dist_nr_sep);
++        ierr = SCOTCH_dgraphOrderTreeDist
++          (&graph, &ordeptr, ptscotch_dist_tree.data(),
++           ptscotch_dist_sizes.data());
++        if (ierr)
++          std::cerr << "# ERROR: PTScotch failed to build the separator tree."
++                    << std::endl;
++        sep_tree = sep_tree_from_ptscotch_nd_tree<integer_t>
++          (ptscotch_dist_tree, ptscotch_dist_sizes);
++        nbsep = sep_tree.separators();
++      }
++      SCOTCH_dgraphOrderExit(&graph, &ordeptr);
++      SCOTCH_dgraphExit(&graph);
++      SCOTCH_stratExit(&strategy);
+     }
+-    SCOTCH_dgraphOrderExit(&graph, &ordeptr);
+-    SCOTCH_dgraphExit(&graph);
+-    SCOTCH_stratExit(&strategy);
++    std::vector<SCOTCH_Num>().swap(gptr);
++    std::vector<SCOTCH_Num>().swap(gind);
++    {
++      // every process gets the whole permutation
++      std::vector<int> rcnts(P), displs(P);
++      for (int p=0; p<P; p++) {
++        int g0 = (p / k) * k, g1 = std::min(P, g0 + k);
++        rcnts[p] = (p == g0) ? int(A.dist(g1) - A.dist(g0)) : 0;
++        displs[p] = int(A.dist(g0));
++      }
++      MPI_Allgatherv
++        (local_order.data(), rcnts[rank], mpi_type<integer_t>(),
++         perm.data(), rcnts.data(), displs.data(), mpi_type<integer_t>(),
++         comm);
++    }
++    if (k > 1) {
++      if (build_tree) {
++        // the tree is known on the ordering processes, incl. rank 0
++        MPI_Bcast(&nbsep, 1, mpi_type<integer_t>(), 0, comm);
++        if (!leader) sep_tree = SeparatorTree<integer_t>(nbsep);
++        MPI_Bcast(sep_tree.sizes, 4*nbsep+1, mpi_type<integer_t>(), 0, comm);
++      }
++      if (leader) MPI_Comm_free(&scomm);
++      MPI_Comm_free(&gcomm);
++    }
+     return sep_tree;
+   }
+ 

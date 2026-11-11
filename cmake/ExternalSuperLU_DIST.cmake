@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(SUPERLU_DEPENDENCIES parmetis)
+set(SUPERLU_DEPENDENCIES metis)
 
 set(SUPERLU_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SUPERLU_OPTIONS
@@ -21,9 +21,9 @@ list(APPEND SUPERLU_OPTIONS
   "-Denable_single=ON"
   "-Denable_complex16=ON"
   "-Denable_python=OFF"
-  "-DTPL_ENABLE_PARMETISLIB=ON"
-  "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-  "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
+  "-DTPL_ENABLE_PARMETISLIB=OFF"
+  "-DTPL_ENABLE_METISLIB=ON"
+  "-DTPL_METIS_LIBRARIES=${METIS_LIBRARIES}"
   "-DTPL_ENABLE_COMBBLASLIB=OFF"
 )
 
@@ -104,9 +104,37 @@ list(APPEND SUPERLU_OPTIONS
 string(REPLACE ";" "; " SUPERLU_OPTIONS_PRINT "${SUPERLU_OPTIONS}")
 message(STATUS "SUPERLU_OPTIONS: ${SUPERLU_OPTIONS_PRINT}")
 
-# Fix column permutations
+# Enable the METIS ordering without ParMETIS
 set(SUPERLU_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_metis.diff"
+)
+
+# Lower the communication cost of the symbolic factorization, of refactorizations with
+# the same sparsity pattern, and of repeated solves
+# (https://github.com/xiaoyeli/superlu_dist/pull/250,
+# https://github.com/xiaoyeli/superlu_dist/pull/251,
+# https://github.com/xiaoyeli/superlu_dist/pull/252,
+# https://github.com/xiaoyeli/superlu_dist/pull/253)
+include(PatchHelpers)
+download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
+  superlu_dist_pr250.diff
+  "https://github.com/xiaoyeli/superlu_dist/commit/e349e08c7ebd16e7dd932d9ffb0e13081f225fa9.diff"
+  46c1cf726cebd589971c2337e54af5aa0fab21667f120a766865aea940448c02
+)
+download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
+  superlu_dist_pr251.diff
+  "https://github.com/xiaoyeli/superlu_dist/compare/317342a2ea12dd003817090ac0870037c334b91e...a2eb138450ca24ec2b9756f24d136054dc23eadf.diff"
+  b20fa2513e2ce4048f6741b0289771ffd5ebadee41903dcb95b9ec0d42310614
+)
+download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
+  superlu_dist_pr252.diff
+  "https://github.com/xiaoyeli/superlu_dist/compare/a2eb138450ca24ec2b9756f24d136054dc23eadf...a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0.diff"
+  5c3b08d6445aedb9aa4cedc3e4603353a4f0657912382ea1170a837a285f2292
+)
+download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
+  superlu_dist_pr253.diff
+  "https://github.com/xiaoyeli/superlu_dist/compare/a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0...06024a25396a8316054a879e1d77b053d90dc9fd.diff"
+  89cb71b071893b58637bbdc5ef969787b478642a4170944b4615436ef86e6479
 )
 
 include(ExternalProject)
@@ -119,7 +147,10 @@ ExternalProject_Add(superlu_dist
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/superlu_dist-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${SUPERLU_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${SUPERLU_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SUPERLU_OPTIONS}"
   TEST_COMMAND      ""
 )

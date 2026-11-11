@@ -3,10 +3,18 @@
 
 #include "rap.hpp"
 
+#include <algorithm>
 #include <array>
+#include <functional>
+#include <typeinfo>
+#include <vector>
 
 #include "fem/bilinearform.hpp"
+#include "fem/libceed/operator.hpp"
 #include "linalg/hypre.hpp"
+#include "utils/communication.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -14,12 +22,284 @@ namespace palace
 namespace
 {
 
+// Inclusive tallies for the parallel prolongation P and its transpose in forward operator
+// applications (local work plus the halo exchange inside them).
+int HaloTallyP()
+{
+  static const int id = perf::RegisterPhaseTally("Halo/P");
+  return id;
+}
+
+int HaloTallyPT()
+{
+  static const int id = perf::RegisterPhaseTally("Halo/PT");
+  return id;
+}
+
+const hypre::MaskedProlongation *GetMasked(const hypre::MaskedProlongation *&masked_P,
+                                           const FiniteElementSpace &trial_fespace,
+                                           const FiniteElementSpace &test_fespace,
+                                           bool use_R,
+                                           const mfem::Array<int> &dbc_tdof_list)
+{
+  if (&trial_fespace != &test_fespace || use_R)
+  {
+    return nullptr;
+  }
+  if (!masked_P ||
+      static_cast<const Operator *>(&masked_P->GetProlongation()) !=
+          trial_fespace.GetProlongationMatrix() ||
+      !masked_P->Matches(dbc_tdof_list))
+  {
+    masked_P = trial_fespace.GetMaskedProlongation(dbc_tdof_list);
+  }
+  return masked_P;
+}
+
+// Apply the prolongation (or its transpose) of a space to the real and imaginary parts of a
+// complex vector, at once when possible.
+void ProlongationMult(const FiniteElementSpace &fespace, const Vector &xr, const Vector &xi,
+                      Vector &yr, Vector &yi)
+{
+  const Operator *P = fespace.GetProlongationMatrix();
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    fP->Mult(xr, xi, yr, yi);
+    return;
+  }
+  if (const auto *cP = dynamic_cast<const ConformingProlongation *>(P))
+  {
+    cP->Mult(xr, xi, yr, yi);
+    return;
+  }
+  P->Mult(xr, yr);
+  P->Mult(xi, yi);
+}
+
+void ProlongationMultTranspose(const FiniteElementSpace &fespace, const Vector &xr,
+                               const Vector &xi, Vector &yr, Vector &yi)
+{
+  const Operator *P = fespace.GetProlongationMatrix();
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    fP->MultTranspose(xr, xi, yr, yi);
+    return;
+  }
+  if (const auto *cP = dynamic_cast<const ConformingProlongation *>(P))
+  {
+    cP->MultTranspose(xr, xi, yr, yi);
+    return;
+  }
+  P->MultTranspose(xr, yr);
+  P->MultTranspose(xi, yi);
+}
+
 // A += B for an assembled square operator, keeping the diagonal entry first in each row.
 void AddToAssembled(std::unique_ptr<mfem::HypreParMatrix> &A, const mfem::HypreParMatrix &B)
 {
   A.reset(mfem::ParAdd(A.get(), &B));
   hypre_ParCSRMatrixSetNumNonzeros(*A);
   hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*A));
+}
+
+// The diagonal of a local operator in L-vector coordinates, and its entries between coupled
+// L-dofs (see ceed::AssembleExactDiagonal), for libCEED operators and assembled local
+// matrices (whose diagonal is always exact). Returns false for other operators.
+bool AssembleLocalExactDiagonal(const Operator &A, const std::vector<char> *coupled,
+                                bool exact_local, Vector &d,
+                                const std::function<void(int, int, double)> &add_entry)
+{
+  if (const auto *cA = dynamic_cast<const ceed::Operator *>(&A))
+  {
+    return ceed::AssembleExactDiagonal(*cA, coupled, exact_local, d, add_entry);
+  }
+  if (const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(&A))
+  {
+    hypre_CSRMatrix *mat = *sA, *host = nullptr;
+    if (hypre_CSRMatrixMemoryLocation(mat) != HYPRE_MEMORY_HOST)
+    {
+      host = hypre_CSRMatrixClone_v2(mat, 1, HYPRE_MEMORY_HOST);
+      mat = host;
+    }
+    const HYPRE_Int n = hypre_CSRMatrixNumRows(mat);
+    const HYPRE_Int *I = hypre_CSRMatrixI(mat), *J = hypre_CSRMatrixJ(mat);
+    const double *a = hypre_CSRMatrixData(mat);
+    d.SetSize(n);
+    double *dd = d.HostWrite();
+    for (HYPRE_Int i = 0; i < n; i++)
+    {
+      dd[i] = 0.0;
+      for (HYPRE_Int k = I[i]; k < I[i + 1]; k++)
+      {
+        const HYPRE_Int j = J[k];
+        if (j == i)
+        {
+          dd[i] += a[k];
+        }
+        else if (coupled && (*coupled)[i] && (*coupled)[j])
+        {
+          add_entry(i, j, a[k]);
+        }
+      }
+    }
+    if (host)
+    {
+      hypre_CSRMatrixDestroy(host);
+    }
+    return true;
+  }
+  return false;
+}
+
+// The exact diagonal of Pᵀ A P for a prolongation P assembled as a HypreParMatrix (as on
+// nonconforming meshes), whose rows (L-dofs) can have several entries and whose columns
+// (true dofs) can be shared by several rows of a process. With
+//   (Pᵀ A P)ⱼⱼ = Σₖ Qₖⱼ,  Qₖⱼ = Pₖⱼ (Pₖⱼ Aₖₖ + Σₗ≠ₖ Aₖₗ Pₗⱼ),
+// a matrix with the sparsity of P, the diagonal is Qᵀ 1 (with the communication of Pᵀ). The
+// sums over l ≠ k are nonzero only for "coupled" L-dofs, whose row has several entries or
+// shares a column with another row of the process, and only through the entries Aₖₗ between
+// coupled L-dofs (the elements with at least two coupled L-dofs). Returns false if the
+// local operator is not supported.
+bool AssembleProlongatedDiagonal(const Operator &A, const mfem::HypreParMatrix &P,
+                                 bool exact_local, Vector &lx, Vector &diag)
+{
+  P.HostRead();
+  hypre_ParCSRMatrix *hP = P;
+  const hypre_CSRMatrix *Pd = hypre_ParCSRMatrixDiag(hP), *Po = hypre_ParCSRMatrixOffd(hP);
+  const HYPRE_Int n = hypre_CSRMatrixNumRows(Pd), nd = hypre_CSRMatrixNumCols(Pd),
+                  no = hypre_CSRMatrixNumCols(Po);
+  MFEM_VERIFY(n == lx.Size(), "Prolongation and local operator size mismatch!");
+  const HYPRE_Int *di = hypre_CSRMatrixI(Pd), *dj = hypre_CSRMatrixJ(Pd),
+                  *oi = hypre_CSRMatrixI(Po), *oj = hypre_CSRMatrixJ(Po);
+  const double *da = hypre_CSRMatrixData(Pd), *oa = hypre_CSRMatrixData(Po);
+  auto OffdBegin = [&](HYPRE_Int k) { return oi ? oi[k] : 0; };
+  auto OffdEnd = [&](HYPRE_Int k) { return oi ? oi[k + 1] : 0; };
+
+  // References of the columns (local true dofs, then off-diagonal ones) by rows with one
+  // entry and by rows with several entries, and the coupled rows: 2 for rows with several
+  // entries or sharing their column with another row with one entry, 1 for rows with one
+  // entry sharing their column only with rows with several entries. Two L-dofs whose
+  // supports intersect are coupled, and at least one of them is marked 2.
+  auto RowSize = [&](HYPRE_Int k)
+  { return (di[k + 1] - di[k]) + (OffdEnd(k) - OffdBegin(k)); };
+  auto SingleColumn = [&](HYPRE_Int k)
+  { return (di[k + 1] > di[k]) ? dj[di[k]] : nd + oj[OffdBegin(k)]; };
+  std::vector<int> refs_single(static_cast<std::size_t>(nd) + no, 0),
+      refs_multi(refs_single.size(), 0);
+  for (HYPRE_Int k = 0; k < n; k++)
+  {
+    auto &refs = (RowSize(k) > 1) ? refs_multi : refs_single;
+    for (HYPRE_Int p = di[k]; p < di[k + 1]; p++)
+    {
+      refs[dj[p]]++;
+    }
+    for (HYPRE_Int p = OffdBegin(k); p < OffdEnd(k); p++)
+    {
+      refs[nd + oj[p]]++;
+    }
+  }
+  std::vector<char> coupled(n, 0);
+  std::vector<int> start(n + 1, 0);
+  bool any = false;
+  for (HYPRE_Int k = 0; k < n; k++)
+  {
+    const HYPRE_Int nnz = RowSize(k);
+    char c = (nnz > 1) ? 2 : 0;
+    if (nnz == 1)
+    {
+      const HYPRE_Int j = SingleColumn(k);
+      c = (refs_single[j] > 1) ? 2 : (refs_multi[j] > 0) ? 1 : 0;
+    }
+    coupled[k] = c;
+    any = any || c;
+    start[k + 1] = start[k] + (c ? nnz : 0);
+  }
+
+  // Supports of the coupled rows sorted by column, with the position of each entry in the
+  // values of P (diagonal block, then off-diagonal block).
+  struct Entry
+  {
+    int col;
+    double val;
+    int slot;
+  };
+  const HYPRE_Int nnz_d = di[n];
+  std::vector<Entry> support(start[n]);
+  for (HYPRE_Int k = 0; k < n; k++)
+  {
+    if (!coupled[k])
+    {
+      continue;
+    }
+    Entry *e = support.data() + start[k];
+    for (HYPRE_Int p = di[k]; p < di[k + 1]; p++)
+    {
+      *e++ = {static_cast<int>(dj[p]), da[p], static_cast<int>(p)};
+    }
+    for (HYPRE_Int p = OffdBegin(k); p < OffdEnd(k); p++)
+    {
+      *e++ = {static_cast<int>(nd + oj[p]), oa[p], static_cast<int>(nnz_d + p)};
+    }
+    std::sort(support.data() + start[k], e,
+              [](const Entry &a, const Entry &b) { return a.col < b.col; });
+  }
+  std::vector<double> cross(static_cast<std::size_t>(nnz_d) + (oi ? oi[n] : 0), 0.0);
+  auto AddEntry = [&](int r, int c, double v)
+  {
+    // Σₗ≠ₖ Aₖₗ Pₗⱼ for the common columns j of rows r = k and c = l.
+    const Entry *a = support.data() + start[r], *a_end = support.data() + start[r + 1];
+    const Entry *b = support.data() + start[c], *b_end = support.data() + start[c + 1];
+    while (a != a_end && b != b_end)
+    {
+      if (a->col < b->col)
+      {
+        a++;
+      }
+      else if (b->col < a->col)
+      {
+        b++;
+      }
+      else
+      {
+        cross[a->slot] += v * b->val;
+        a++;
+        b++;
+      }
+    }
+  };
+  // The product with Q is collective: fall back on every process if the local operator of
+  // any is not supported.
+  MPI_Comm comm = hypre_ParCSRMatrixComm(hP);
+  bool supported =
+      AssembleLocalExactDiagonal(A, any ? &coupled : nullptr, exact_local, lx, AddEntry);
+  Mpi::GlobalAnd(1, &supported, comm);
+  if (!supported)
+  {
+    return false;
+  }
+  // Q on the sparsity of P, and the diagonal Qᵀ 1.
+  const double *d = lx.HostRead();
+  mfem::HypreParMatrix Q(P);
+  Q.HostReadWrite();
+  hypre_ParCSRMatrix *hQ = Q;
+  double *qd = hypre_CSRMatrixData(hypre_ParCSRMatrixDiag(hQ));
+  double *qo = hypre_CSRMatrixData(hypre_ParCSRMatrixOffd(hQ));
+  for (HYPRE_Int k = 0; k < n; k++)
+  {
+    for (HYPRE_Int p = di[k]; p < di[k + 1]; p++)
+    {
+      qd[p] = da[p] * (da[p] * d[k] + cross[p]);
+    }
+    for (HYPRE_Int p = OffdBegin(k); p < OffdEnd(k); p++)
+    {
+      qo[p] = oa[p] * (oa[p] * d[k] + cross[nnz_d + p]);
+    }
+  }
+  Vector ones(n);
+  ones.UseDevice(true);
+  ones = 1.0;
+  Q.MultTranspose(1.0, ones, 0.0, diag);
+  return true;
 }
 
 }  // namespace
@@ -33,6 +313,17 @@ ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
     diag_policy(DiagonalPolicy::DIAG_ONE), RAP(nullptr)
 {
   MFEM_VERIFY(A, "Cannot construct ParOperator from an empty matrix!");
+  // Owned square libCEED operators may apply small simplex leaves through their element
+  // matrices (CPU only, decided by the operator).
+  if (auto *ceed_A = dynamic_cast<ceed::Operator *>(data_A.get()))
+  {
+    if (&trial_fespace == &test_fespace &&
+        (typeid(*ceed_A) == typeid(ceed::Operator) ||
+         typeid(*ceed_A) == typeid(ceed::SymmetricOperator)))
+    {
+      ceed_A->UseElementAssembly();
+    }
+  }
 }
 
 ParOperator::ParOperator(std::unique_ptr<Operator> &&A,
@@ -46,6 +337,97 @@ ParOperator::ParOperator(const Operator &A, const FiniteElementSpace &trial_fesp
                          const FiniteElementSpace &test_fespace, bool test_restrict)
   : ParOperator(nullptr, &A, trial_fespace, test_fespace, test_restrict)
 {
+}
+
+const hypre::MaskedProlongation *ParOperator::GetMaskedProlongation() const
+{
+  return GetMasked(masked_P, trial_fespace, test_fespace, use_R, dbc_tdof_list);
+}
+
+bool ParOperator::MappedMult(const Operator &local, const Vector &x, Vector &y, bool add,
+                             double a) const
+{
+  // The same operations as the products with P, the local operator on the L-vectors and
+  // Pᵀ, without forming the L-vectors (see ceed::AddMultMapped).
+  const auto *mP = GetMaskedProlongation();
+  if (!mP || B || x.HostRead() == y.HostRead() || !ceed::SupportsMapped(local))
+  {
+    return false;
+  }
+  const int nx = mP->NumExtra();
+  mapped_x.SetSize(nx);
+  mapped_y.SetSize(nx);
+  auto &ty = test_fespace.GetTVector<Vector>();
+  Vector &yt = add ? ty : y;
+  {
+    perf::ScopedTally t(HaloTallyP());
+    mP->ExtraMult(x, mapped_x);
+  }
+  yt = 0.0;
+  mapped_y = 0.0;
+  ceed::AddMultMapped(local, {mP->LocalDofMap().data(), mP->Key()}, x.HostRead(),
+                      mapped_x.HostRead(), yt.HostReadWrite(), mapped_y.HostReadWrite());
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    mP->TransposeComplete(yt, mapped_y);
+  }
+  if (dbc_tdof_list.Size())
+  {
+    if (diag_policy == DiagonalPolicy::DIAG_ONE)
+    {
+      linalg::SetSubVector(yt, dbc_tdof_list, x);
+    }
+    else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
+    {
+      linalg::SetSubVector(yt, dbc_tdof_list, 0.0);
+    }
+  }
+  if (add)
+  {
+    y.Add(a, yt);
+  }
+  return true;
+}
+
+class ParOperator::SinglePrecisionOperator : public Operator
+{
+private:
+  const ParOperator &op;
+
+public:
+  SinglePrecisionOperator(const ParOperator &op) : Operator(op.Height(), op.Width()), op(op)
+  {
+  }
+
+  void Mult(const Vector &x, Vector &y) const override { op.MultWith(*op.A_single, x, y); }
+
+  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override
+  {
+    op.AddMultWith(*op.A_single, x, y, a);
+  }
+
+  void MultTranspose(const Vector &x, Vector &y) const override { op.MultTranspose(x, y); }
+
+  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override
+  {
+    op.AddMultTranspose(x, y, a);
+  }
+};
+
+std::size_t ParOperator::UseSinglePrecision()
+{
+  MFEM_VERIFY(&trial_fespace == &test_fespace && !use_R,
+              "Single-precision approximation requires a square ParOperator!");
+  std::size_t bytes = 0;
+  if (!A_single && !RAP)
+  {
+    A_single = ceed::CreateSinglePrecisionOperator(*A, &bytes);
+    if (A_single)
+    {
+      op_single = std::make_unique<SinglePrecisionOperator>(*this);
+    }
+  }
+  return bytes;
 }
 
 void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
@@ -118,6 +500,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   {
     return *RAP;
   }
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::PARALLEL));
 
   // Build the square or rectangular assembled HypreParMatrix.
   const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(A);
@@ -205,23 +588,44 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
     RAP->AssembleDiagonal(diag);
     return;
   }
+  perf::ScopedTally t(perf::AssemblyTally(perf::AssemblyKind::DIAGONAL));
 
-  // For an AMR mesh, a convergent diagonal is assembled with |P|ᵀ dₗ, where |P| has
-  // entry-wise absolute values of the conforming prolongation operator.
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "Diagonal assembly is only available for square ParOperator!");
   auto &lx = trial_fespace.GetLVector<Vector>();
-  A->AssembleDiagonal(lx);
-
-  // Parallel assemble and eliminate essential true dofs.
   const Operator *P = test_fespace.GetProlongationMatrix();
-  if (const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P))
+  const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P);
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
   {
-    hP->AbsMultTranspose(1.0, lx, 0.0, diag);
+    hP = &fP->GetMatrix();
   }
-  else
+
+  // The exact diagonal of Pᵀ A P: for a prolongation assembled as a HypreParMatrix (as on
+  // nonconforming meshes) through its entries, otherwise (each L-dof a copy of one true
+  // dof) as Pᵀ dₗ with the exact local diagonal dₗ.
+  bool exact = false;
+  if (hP)
+  {
+    exact = AssembleProlongatedDiagonal(*A, *hP, true, lx, diag);
+  }
+  else if (AssembleLocalExactDiagonal(*A, nullptr, true, lx, {}))
   {
     P->MultTranspose(lx, diag);
+    exact = true;
+  }
+  if (!exact)
+  {
+    // For an AMR mesh, a convergent diagonal is assembled with |P|ᵀ dₗ, where |P| has
+    // entry-wise absolute values of the conforming prolongation operator.
+    A->AssembleDiagonal(lx);
+    if (hP)
+    {
+      hP->AbsMultTranspose(1.0, lx, 0.0, diag);
+    }
+    else
+    {
+      P->MultTranspose(lx, diag);
+    }
   }
 
   // Eliminate essential true dofs.
@@ -247,6 +651,11 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
 
 void ParOperator::Mult(const Vector &x, Vector &y) const
 {
+  MultWith(*A, x, y);
+}
+
+void ParOperator::MultWith(const Operator &local, const Vector &x, Vector &y) const
+{
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ParOperator::Mult!");
   if (RAP)
@@ -255,24 +664,39 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
     return;
   }
 
+  if (MappedMult(local, x, y, false, 0.0))
+  {
+    return;
+  }
+  const auto *mP = GetMaskedProlongation();
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<Vector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    perf::ScopedTally t(HaloTallyP());
+    if (mP)
+    {
+      mP->Mult(x, lx);
+    }
+    else if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<Vector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
+    }
+    else
+    {
+      trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    }
   }
 
   // Apply the operator on the L-vector.
-  A->Mult(lx, ly);
+  local.Mult(lx, ly);
 
-  RestrictionMatrixMult(ly, y);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, y);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == DiagonalPolicy::DIAG_ONE)
@@ -337,6 +761,12 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
 
 void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
 {
+  AddMultWith(*A, x, y, a);
+}
+
+void ParOperator::AddMultWith(const Operator &local, const Vector &x, Vector &y,
+                              const double a) const
+{
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ParOperator::AddMult!");
   if (RAP)
@@ -345,37 +775,61 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     return;
   }
 
+  if (MappedMult(local, x, y, true, a))
+  {
+    return;
+  }
+  const auto *mP = GetMaskedProlongation();
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<Vector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    perf::ScopedTally t(HaloTallyP());
+    if (mP)
+    {
+      mP->Mult(x, lx);
+    }
+    else if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<Vector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      trial_fespace.GetProlongationMatrix()->Mult(tx, lx);
+    }
+    else
+    {
+      trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+    }
   }
 
   // Apply the operator on the L-vector.
-  A->Mult(lx, ly);
+  local.Mult(lx, ly);
 
-  auto &ty = test_fespace.GetTVector<Vector>();
-  RestrictionMatrixMult(ly, ty);
-  if (dbc_tdof_list.Size())
+  if (mP)
   {
-    if (diag_policy == DiagonalPolicy::DIAG_ONE)
-    {
-      linalg::SetSubVector(ty, dbc_tdof_list, x);
-    }
-    else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
-    {
-      linalg::SetSubVector(ty, dbc_tdof_list, 0.0);
-    }
+    perf::ScopedTally t(HaloTallyPT());
+    mP->AddMultTranspose(ly, y, a,
+                         (diag_policy == DiagonalPolicy::DIAG_ONE) ? &x : nullptr);
   }
-  y.Add(a, ty);
+  else
+  {
+    auto &ty = test_fespace.GetTVector<Vector>();
+    {
+      perf::ScopedTally t(HaloTallyPT());
+      RestrictionMatrixMult(ly, ty);
+    }
+    if (dbc_tdof_list.Size())
+    {
+      if (diag_policy == DiagonalPolicy::DIAG_ONE)
+      {
+        linalg::SetSubVector(ty, dbc_tdof_list, x);
+      }
+      else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
+      {
+        linalg::SetSubVector(ty, dbc_tdof_list, 0.0);
+      }
+    }
+    y.Add(a, ty);
+  }
   if (B)
   {
     B->Mult(a, x, 1.0, y);
@@ -437,7 +891,14 @@ void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
   }
   else
   {
-    test_fespace.GetRestrictionMatrix()->Mult(ly, ty);
+    if (const auto *R = test_fespace.GetRestrictionRuns())
+    {
+      R->Mult(ly, ty);
+    }
+    else
+    {
+      test_fespace.GetRestrictionMatrix()->Mult(ly, ty);
+    }
   }
 }
 
@@ -449,7 +910,14 @@ void ParOperator::RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) c
   }
   else
   {
-    test_fespace.GetRestrictionMatrix()->MultTranspose(ty, ly);
+    if (const auto *R = test_fespace.GetRestrictionRuns())
+    {
+      R->MultTranspose(ty, ly);
+    }
+    else
+    {
+      test_fespace.GetRestrictionMatrix()->MultTranspose(ty, ly);
+    }
   }
 }
 
@@ -501,6 +969,126 @@ ComplexParOperator::ComplexParOperator(const Operator *Ar, const Operator *Ai,
 {
 }
 
+const hypre::MaskedProlongation *ComplexParOperator::GetMaskedProlongation() const
+{
+  return GetMasked(masked_P, trial_fespace, test_fespace, use_R, dbc_tdof_list);
+}
+
+bool ComplexParOperator::MappedMult(const ComplexOperator &local, const ComplexVector &x,
+                                    ComplexVector &y, bool add, double a) const
+{
+  // See ParOperator::MappedMult.
+  const auto *mP = GetMaskedProlongation();
+  if (!mP || x.Real().HostRead() == y.Real().HostRead() || !ceed::SupportsMapped(local))
+  {
+    return false;
+  }
+  const int nx = mP->NumExtra();
+  mapped_x.SetSize(nx);
+  mapped_y.SetSize(nx);
+  auto &ty = test_fespace.GetTVector<ComplexVector>();
+  ComplexVector &yt = add ? ty : y;
+  {
+    perf::ScopedTally t(HaloTallyP());
+    mP->ExtraMult(x.Real(), x.Imag(), mapped_x.Real(), mapped_x.Imag());
+  }
+  yt = 0.0;
+  mapped_y = 0.0;
+  ceed::AddMultMapped(local, {mP->LocalDofMap().data(), mP->Key()}, x.Real().HostRead(),
+                      x.Imag().HostRead(), mapped_x.Real().HostRead(),
+                      mapped_x.Imag().HostRead(), yt.Real().HostReadWrite(),
+                      yt.Imag().HostReadWrite(), mapped_y.Real().HostReadWrite(),
+                      mapped_y.Imag().HostReadWrite());
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    mP->TransposeComplete(yt.Real(), yt.Imag(), mapped_y.Real(), mapped_y.Imag());
+  }
+  if (dbc_tdof_list.Size())
+  {
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
+    {
+      linalg::SetSubVector(yt, dbc_tdof_list, x);
+    }
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
+    {
+      linalg::SetSubVector(yt, dbc_tdof_list, 0.0);
+    }
+  }
+  if (add)
+  {
+    y.AXPY(a, yt);
+  }
+  return true;
+}
+
+class ComplexParOperator::SinglePrecisionOperator : public ComplexOperator
+{
+private:
+  const ComplexParOperator &op;
+
+public:
+  SinglePrecisionOperator(const ComplexParOperator &op)
+    : ComplexOperator(op.Height(), op.Width()), op(op)
+  {
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    op.MultWith(*op.A_single, x, y);
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    op.AddMultWith(*op.A_single, x, y, a);
+  }
+
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    op.MultTranspose(x, y);
+  }
+
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    op.MultHermitianTranspose(x, y);
+  }
+
+  void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                        const std::complex<double> a = 1.0) const override
+  {
+    op.AddMultTranspose(x, y, a);
+  }
+
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override
+  {
+    op.AddMultHermitianTranspose(x, y, a);
+  }
+};
+
+std::size_t
+ComplexParOperator::UseSinglePrecision(int *dropped,
+                                       const ceed::ElementMatrixCombination *comb)
+{
+  MFEM_VERIFY(&trial_fespace == &test_fespace && !use_R,
+              "Single-precision approximation requires a square ComplexParOperator!");
+  std::size_t bytes = 0;
+  if (dropped)
+  {
+    *dropped = 0;
+  }
+  if (!A_single)
+  {
+    A_single = ceed::CreateSinglePrecisionOperator(A->Real(), A->Imag(), trial_fespace,
+                                                   &bytes, dropped, comb);
+    if (A_single)
+    {
+      op_single = std::make_unique<SinglePrecisionOperator>(*this);
+    }
+  }
+  return bytes;
+}
+
 void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                               Operator::DiagonalPolicy policy)
 {
@@ -536,6 +1124,11 @@ Operator::DiagonalPolicy ComplexParOperator::GetDiagonalPolicy() const
 void ComplexParOperator::AssembleDiagonal(ComplexVector &diag) const
 {
   diag.UseDevice(true);
+  if (assembled_diag)
+  {
+    diag = *assembled_diag;
+    return;
+  }
   diag = 0.0;
   if (RAPr)
   {
@@ -549,29 +1142,48 @@ void ComplexParOperator::AssembleDiagonal(ComplexVector &diag) const
 
 void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
 {
+  MultWith(*A, x, y);
+}
+
+void ComplexParOperator::MultWith(const ComplexOperator &local, const ComplexVector &x,
+                                  ComplexVector &y) const
+{
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexParOperator::Mult!");
 
+  if (MappedMult(local, x, y, false, 0.0))
+  {
+    return;
+  }
+  const auto *mP = GetMaskedProlongation();
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<ComplexVector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    perf::ScopedTally t(HaloTallyP());
+    if (mP)
+    {
+      mP->Mult(x.Real(), x.Imag(), lx.Real(), lx.Imag());
+    }
+    else if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<ComplexVector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      ProlongationMult(trial_fespace, tx.Real(), tx.Imag(), lx.Real(), lx.Imag());
+    }
+    else
+    {
+      ProlongationMult(trial_fespace, x.Real(), x.Imag(), lx.Real(), lx.Imag());
+    }
   }
 
   // Apply the operator on the L-vector.
-  A->Mult(lx, ly);
+  local.Mult(lx, ly);
 
-  RestrictionMatrixMult(ly, y);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, y);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -607,8 +1219,7 @@ void ComplexParOperator::MultTranspose(const ComplexVector &x, ComplexVector &y)
   // Apply the operator on the L-vector.
   A->MultTranspose(ly, lx);
 
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), y.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), y.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), y.Real(), y.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -645,8 +1256,7 @@ void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
   // Apply the operator on the L-vector.
   A->MultHermitianTranspose(ly, lx);
 
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), y.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), y.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), y.Real(), y.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -663,30 +1273,57 @@ void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
 void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
                                  const std::complex<double> a) const
 {
+  AddMultWith(*A, x, y, a);
+}
+
+void ComplexParOperator::AddMultWith(const ComplexOperator &local, const ComplexVector &x,
+                                     ComplexVector &y, const std::complex<double> a) const
+{
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexParOperator::AddMult!");
 
+  if (a.imag() == 0.0 && MappedMult(local, x, y, true, a.real()))
+  {
+    return;
+  }
+  const auto *mP = GetMaskedProlongation();
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
-  if (dbc_tdof_list.Size())
   {
-    auto &tx = trial_fespace.GetTVector<ComplexVector>();
-    tx = x;
-    linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
-  }
-  else
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    perf::ScopedTally t(HaloTallyP());
+    if (mP)
+    {
+      mP->Mult(x.Real(), x.Imag(), lx.Real(), lx.Imag());
+    }
+    else if (dbc_tdof_list.Size())
+    {
+      auto &tx = trial_fespace.GetTVector<ComplexVector>();
+      tx = x;
+      linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
+      ProlongationMult(trial_fespace, tx.Real(), tx.Imag(), lx.Real(), lx.Imag());
+    }
+    else
+    {
+      ProlongationMult(trial_fespace, x.Real(), x.Imag(), lx.Real(), lx.Imag());
+    }
   }
 
   // Apply the operator on the L-vector.
-  A->Mult(lx, ly);
+  local.Mult(lx, ly);
 
+  if (mP && a.imag() == 0.0)
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    const bool one = (diag_policy == Operator::DiagonalPolicy::DIAG_ONE);
+    mP->AddMultTranspose(ly.Real(), ly.Imag(), y.Real(), y.Imag(), a.real(),
+                         one ? &x.Real() : nullptr, one ? &x.Imag() : nullptr);
+    return;
+  }
   auto &ty = test_fespace.GetTVector<ComplexVector>();
-  RestrictionMatrixMult(ly, ty);
+  {
+    perf::ScopedTally t(HaloTallyPT());
+    RestrictionMatrixMult(ly, ty);
+  }
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -725,8 +1362,7 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
   A->MultTranspose(ly, lx);
 
   auto &tx = trial_fespace.GetTVector<ComplexVector>();
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), tx.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), tx.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), tx.Real(), tx.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -765,8 +1401,7 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
   A->MultHermitianTranspose(ly, lx);
 
   auto &tx = trial_fespace.GetTVector<ComplexVector>();
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), tx.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), tx.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), tx.Real(), tx.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -786,13 +1421,20 @@ void ComplexParOperator::RestrictionMatrixMult(const ComplexVector &ly,
 {
   if (!use_R)
   {
-    test_fespace.GetProlongationMatrix()->MultTranspose(ly.Real(), ty.Real());
-    test_fespace.GetProlongationMatrix()->MultTranspose(ly.Imag(), ty.Imag());
+    ProlongationMultTranspose(test_fespace, ly.Real(), ly.Imag(), ty.Real(), ty.Imag());
   }
   else
   {
-    test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), ty.Real());
-    test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), ty.Imag());
+    if (const auto *R = test_fespace.GetRestrictionRuns())
+    {
+      R->Mult(ly.Real(), ty.Real());
+      R->Mult(ly.Imag(), ty.Imag());
+    }
+    else
+    {
+      test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), ty.Real());
+      test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), ty.Imag());
+    }
   }
 }
 
@@ -801,13 +1443,20 @@ void ComplexParOperator::RestrictionMatrixMultTranspose(const ComplexVector &ty,
 {
   if (!use_R)
   {
-    test_fespace.GetProlongationMatrix()->Mult(ty.Real(), ly.Real());
-    test_fespace.GetProlongationMatrix()->Mult(ty.Imag(), ly.Imag());
+    ProlongationMult(test_fespace, ty.Real(), ty.Imag(), ly.Real(), ly.Imag());
   }
   else
   {
-    test_fespace.GetRestrictionMatrix()->MultTranspose(ty.Real(), ly.Real());
-    test_fespace.GetRestrictionMatrix()->MultTranspose(ty.Imag(), ly.Imag());
+    if (const auto *R = test_fespace.GetRestrictionRuns())
+    {
+      R->MultTranspose(ty.Real(), ly.Real());
+      R->MultTranspose(ty.Imag(), ly.Imag());
+    }
+    else
+    {
+      test_fespace.GetRestrictionMatrix()->MultTranspose(ty.Real(), ly.Real());
+      test_fespace.GetRestrictionMatrix()->MultTranspose(ty.Imag(), ly.Imag());
+    }
   }
 }
 

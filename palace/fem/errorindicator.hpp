@@ -23,18 +23,18 @@ protected:
   // refinement and coarsening.
   Vector local;
 
-  // Number of samples.
-  int n;
+  // Number of samples (the sum of their weights).
+  double n;
 
 public:
-  ErrorIndicator(Vector &&local) : local(std::move(local)), n(1)
+  ErrorIndicator(Vector &&local) : local(std::move(local)), n(1.0)
   {
     this->local.UseDevice(true);
   }
-  ErrorIndicator() : n(0) { local.UseDevice(true); }
+  ErrorIndicator() : n(0.0) { local.UseDevice(true); }
 
-  // Add an indicator to the running total.
-  void AddIndicator(const Vector &indicator);
+  // Add an indicator to the running total, counted as weight samples.
+  void AddIndicator(const Vector &indicator, double weight = 1.0);
 
   // Return the local error indicator.
   const auto &Local() const { return local; }

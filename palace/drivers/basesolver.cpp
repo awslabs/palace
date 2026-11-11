@@ -22,6 +22,8 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -32,7 +34,10 @@ using json = nlohmann::json;
 void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
   BlockTimer bt(Timer::IO);
-  Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
+  {
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/SaveIteration", Timer::IO));
+    Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
+  }
   auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
   auto rel_step = step_output.filename();
   auto operation =
@@ -162,6 +167,13 @@ const char *GeometryKey(mfem::Geometry::Type geom)
   }
 }
 
+// Transient simulations do not support adaptive mesh refinement.
+bool UseAMR(const IoData &iodata)
+{
+  return iodata.model.refinement.max_it > 0 &&
+         iodata.problem.type != ProblemType::TRANSIENT;
+}
+
 // Returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
@@ -213,18 +225,20 @@ void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
   iodata.NondimensionalizeInputs(smesh);
 }
 
+bool BaseSolver::ComputeErrorEstimation() const
+{
+  return iodata.solver.linear.always_error_estimation ||
+         (UseAMR(iodata) && !final_amr_solve_);
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = [&]()
+  if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
   {
-    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
-    {
-      Mpi::Warning("AMR is not currently supported for transient simulations!\n");
-      return false;
-    }
-    return (refinement.max_it > 0);
-  }();
+    Mpi::Warning("AMR is not currently supported for transient simulations!\n");
+  }
+  const bool use_amr = UseAMR(iodata);
   if (use_amr && mesh.size() > 1)
   {
     Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
@@ -238,6 +252,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   MFEM_VERIFY(solve_converged_,
               "Initial solve did not converge; no converged result to fall back on!");
   double err = indicators.Norml2(comm);
+  bool err_computed = ComputeErrorEstimation();
+
+  // Indicator norm and global unknowns of the last solve which computed the error
+  // indicator, reported when the final solve does not compute it.
+  double err_last = err;
+  auto ntdof_last = ntdof;
 
   // Record the initial solve as iteration 1 (matching the "iteration01" archive
   // subdirectory written for adaptive runs).
@@ -261,17 +281,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   int it = 0;
   while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
-    // Print timing summary.
+    // Print timing summary and write this iteration's performance record; everything
+    // from here on is charged to the next iteration.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");
-    BlockTimer::Finalize(comm);
-    BlockTimer::Print(comm);
-    auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
-    auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
-    memory_reporting::PrintMemoryUsage(comm, peak_mem);
-    memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
-    SaveMetadata(BlockTimer::GlobalTimer());
-    SaveMetadata(peak_mem);
-    SaveMetadata(peak_node_mem);
+    ReportPerformance(comm);
+    BlockTimer::StartIteration();
 
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
@@ -301,6 +315,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
           " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
           glob_marked_elements, glob_elements, 100 * marked_error,
           refinement.update_fraction);
+      perf::Set("Problem/AMR/MarkedElements", glob_marked_elements);
       return marked_elements;
     }(indicators);
 
@@ -309,6 +324,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      UpdateAfterMeshChange(*mesh.back());
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
@@ -319,6 +335,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Optionally rebalance and write the adapted mesh to file.
     {
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
+      perf::Set("Problem/AMR/ImbalanceRatio", ratio_pre);
       if (ratio_pre > refinement.maximum_imbalance)
       {
         int min_elem, max_elem;
@@ -326,11 +343,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         Mpi::GlobalMin(1, &min_elem, comm);
         Mpi::GlobalMax(1, &max_elem, comm);
         const auto ratio_post = double(max_elem) / min_elem;
+        perf::Set("Problem/AMR/RebalancedImbalanceRatio", ratio_post);
         Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
                    "(new ratio = {:.3f})\n",
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
       }
       mesh.back()->Update();
+      UpdateAfterMeshChange(*mesh.back());
     }
 
     // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
@@ -349,9 +368,14 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // newly-refined mesh so the evolution of mesh quality under AMR is visible.
     mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
 
+    // Release the memory freed by the previous solve and the mesh adaptation before the
+    // next solve.
+    memory_reporting::TrimHeap();
+
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     const auto prev_ntdof = ntdof;
+    final_amr_solve_ = (it >= refinement.max_it);
     std::tie(indicators, ntdof) = Solve(mesh);
     if (!solve_converged_)
     {
@@ -366,6 +390,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       break;
     }
     err = indicators.Norml2(comm);
+    err_computed = ComputeErrorEstimation();
+    if (err_computed)
+    {
+      err_last = err;
+      ntdof_last = ntdof;
+    }
 
     // Record that this AMR iteration has completed; the Solve above has already written all
     // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
@@ -374,13 +404,45 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     SaveAdaptationIteration(it + 1);
   }
 
-  Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
-             " Indicator norm = {:.3e}, global unknowns = {:d}\n"
-             " Max. iterations = {:d}, tol. = {:.3e}{}\n",
-             it, (it == 1 ? "" : "s"), err, ntdof, refinement.max_it, refinement.tol,
-             (refinement.max_size > 0
-                  ? ", max. size = " + std::to_string(refinement.max_size)
-                  : ""));
+  // Adaptation stopped after a solve with tolerances meant for intermediate iterations:
+  // solve again on the final mesh with the final ones.
+  if (use_amr && solve_converged_ && SolvedWithIntermediateTolerances())
+  {
+    Mpi::Print("\nRepeating the solve on the final mesh with the tolerances of the final "
+               "adaptation iteration...\n");
+    final_amr_solve_ = true;
+    std::tie(indicators, ntdof) = Solve(mesh);
+    MFEM_VERIFY(solve_converged_, "Solve on the final mesh did not converge!");
+    if (ComputeErrorEstimation())
+    {
+      err = indicators.Norml2(comm);
+    }
+  }
+
+  // Complete the background write of the last adapted mesh, if any.
+  mesh::FinishMeshOutput();
+
+  if (use_amr)
+  {
+    // The error indicator of the solve after the last allowed refinement is computed only
+    // on request: report the last computed one instead.
+    const std::string err_str =
+        err_computed ? fmt::format("{:.3e}", err)
+                     : std::string("not computed (see AlwaysComputeErrorEstimation)");
+    const std::string err_last_str =
+        err_computed ? std::string()
+                     : fmt::format(" Indicator norm before the last refinement = {:.3e}, "
+                                   "global unknowns = {:d}\n",
+                                   err_last, ntdof_last);
+    Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
+               " Indicator norm = {}, global unknowns = {:d}\n{}"
+               " Max. iterations = {:d}, tol. = {:.3e}{}\n",
+               it, (it == 1 ? "" : "s"), err_str, ntdof, err_last_str, refinement.max_it,
+               refinement.tol,
+               (refinement.max_size > 0
+                    ? ", max. size = " + std::to_string(refinement.max_size)
+                    : ""));
+  }
 }
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
@@ -392,6 +454,15 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
   for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
   {
     ndofs[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
+  }
+  if (perf::Verification())
+  {
+    std::vector<long> tdofs(fespaces.GetNumLevels());
+    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
+    {
+      tdofs[l] = fespaces.GetFESpaceAtLevel(l).GetTrueVSize();
+    }
+    perf::RecordPartitionHash(fespace.GetParMesh(), tdofs);
   }
   if (root)
   {
@@ -448,59 +519,26 @@ void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
   }
 }
 
-template <typename SolverType>
-void BaseSolver::SaveMetadata(const SolverType &ksp) const
+void BaseSolver::ReportPerformance(MPI_Comm comm) const
 {
+  BlockTimer::Finalize(comm);
+  const auto &res = perf::GetResults();
+  auto ToMemoryStats = [](const char *label, const perf::Stats &s)
+  {
+    return memory_reporting::MemoryStats{label, static_cast<long>(s.min),
+                                         static_cast<long>(s.max), static_cast<long>(s.sum),
+                                         s.avg};
+  };
+  Mpi::Print(comm, "\n");
+  memory_reporting::PrintMemoryUsage(comm,
+                                     ToMemoryStats("peak per-rank", res.cum_peak_mem));
+  memory_reporting::PrintMemoryUsage(comm,
+                                     ToMemoryStats("peak per-node", res.cum_peak_node_mem));
+  BlockTimer::Print(comm);
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
-    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIterations();
-    WriteMetadata(post_dir, meta);
-  }
-}
-
-void BaseSolver::SaveMetadata(const Timer &timer) const
-{
-  if (root)
-  {
-    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-    auto red = BlockTimer::GetReductions();
-
-    json meta = LoadMetadata(post_dir);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
-    {
-      std::string key(Timer::descriptions[i]);
-      std::erase_if(key, isspace);
-      meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
-      meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));
-      meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
-      meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
-      meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = red.node_mem.min[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
-    }
-    WriteMetadata(post_dir, meta);
-  }
-}
-
-void BaseSolver::SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const
-{
-  if (root)
-  {
-    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-    json meta = LoadMetadata(post_dir);
-
-    // Determine key name based on whether this is per-node or per-rank stats
-    std::string key = (peak_memory.label.find("per-node") != std::string::npos)
-                          ? "PeakNodeMemoryMegabytes"
-                          : "PeakMemoryMegabytes";
-
-    meta[key]["Min"] = peak_memory.min * to_mb;
-    meta[key]["Max"] = peak_memory.max * to_mb;
-    meta[key]["Average"] = peak_memory.avg * to_mb;
-    meta[key]["Total"] = peak_memory.sum * to_mb;
+    perf::WriteJson(meta);
     WriteMetadata(post_dir, meta);
   }
 }
@@ -514,8 +552,5 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
     WriteMetadata(post_dir, meta);
   }
 }
-
-template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
-template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 
 }  // namespace palace

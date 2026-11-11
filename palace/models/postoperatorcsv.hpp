@@ -476,6 +476,10 @@ public:
   void PrintErrorIndicator(bool is_root,
                            const ErrorIndicator::SummaryStatistics &indicator_stats);
 
+  // Remove the indicator file of a previous solve in the same output directory (an earlier
+  // AMR iteration) when no indicator is computed.
+  void RemoveErrorIndicator(bool is_root);
+
   // "Delayed ctor" so that PostOperator can call it once it is fully constructed.
   // Set-up all files to be called from post_op.
   void InitializeCSVDataCollection(const PostOperator<solver_t> &post_op);

@@ -21,6 +21,8 @@
 #   PALACE_TEST_OMP_THREADS    OpenMP threads per process  (default 1)
 #   PALACE_TEST_LINEAR_SOLVER  Solver.Linear.Type override (default: case JSON)
 #   PALACE_TEST_DEVICE         MFEM device, e.g. cuda      (default: cpu)
+#   PALACE_TEST_LAUNCHER       command prefix per case     (default: installed
+#                              share/palace/test/mpi_test_launcher.sh)
 #
 # Each case reserves PALACE_TEST_NUMPROC * PALACE_TEST_OMP_THREADS CTest slots
 # (PROCESSORS) and runs with OMP_NUM_THREADS pinned to the same thread count, so
@@ -33,6 +35,22 @@ endif()
 find_program(_palace_mpiexec NAMES mpirun mpiexec)
 if(NOT _palace_mpiexec)
   set(_palace_mpiexec mpirun)
+endif()
+
+# Launcher that gives each case its own Open MPI shared-memory backing directory
+# (see mpi_test_launcher.sh): PALACE_TEST_LAUNCHER if set, else the one installed
+# in <prefix>/share/palace/test of the palace-unit-tests binary (also when this
+# file is copied elsewhere). Without it, cases run as before.
+set(_palace_launcher "$ENV{PALACE_TEST_LAUNCHER}")
+if(NOT _palace_launcher)
+  get_filename_component(_palace_bin_real "${_palace_bin}" REALPATH)
+  foreach(_bin IN ITEMS "${_palace_bin}" "${_palace_bin_real}")
+    get_filename_component(_dir "${_bin}" DIRECTORY)
+    set(_cand "${_dir}/../share/palace/test/mpi_test_launcher.sh")
+    if(NOT _palace_launcher AND EXISTS "${_cand}")
+      set(_palace_launcher "${_cand}")
+    endif()
+  endforeach()
 endif()
 
 set(_palace_np "$ENV{PALACE_TEST_NUMPROC}")
@@ -83,7 +101,7 @@ function(_palace_register spec label)
   string(REGEX MATCHALL "<Name>[^<]*</Name>" _names "${_xml}")
   foreach(_tag IN LISTS _names)
     string(REGEX REPLACE "<Name>(.*)</Name>" "\\1" _case "${_tag}")
-    add_test("${label}-${_case}"
+    add_test("${label}-${_case}" ${_palace_launcher}
       "${_palace_mpiexec}" "-n" "${_palace_np}" "${_palace_bin}" "${_case}" ${_palace_args})
     set_tests_properties("${label}-${_case}" PROPERTIES
       LABELS "${label}"

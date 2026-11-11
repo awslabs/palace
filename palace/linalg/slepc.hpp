@@ -16,6 +16,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -40,6 +42,12 @@ namespace slepc
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[]);
 void Initialize();
 void Finalize();
+
+// Configure the region of the eigenvalues λ = iω (scaled) of a quadratic eigenvalue problem
+// searched for above the shift-and-invert target λ = i s, s > 0: Im{λ} >= s and quality
+// factors Q = |ω| / (2 Im{ω}) >= q_min > 0.5 for damped modes (Re{λ} < 0) and |Q| >= 10 for
+// growing ones (Re{λ} > 0).
+void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min);
 
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic
@@ -88,9 +96,10 @@ protected:
   // Variables for scaling, from Higham et al., IJNME 2008.
   PetscReal gamma, delta;
 
-  // Parameters defining the spectral transformation.
-  PetscScalar sigma;
-  bool sinvert, region;
+  // Parameters defining the spectral transformation: the shift σ, and the target τ of the
+  // eigenvalue search (sorting criterion and search region), which is σ unless set apart.
+  PetscScalar sigma, tau;
+  bool sinvert, region, has_tau, st_shift_set;
 
   // Storage for computed residual norms and eigenvector normalizations.
   std::unique_ptr<PetscReal[]> res, xscale;
@@ -114,6 +123,17 @@ protected:
 
   // Boolean to handle SetFromOptions calls.
   mutable bool cl_custom;
+
+  // Minimum quality factor of the eigenvalues searched for (see SetMinQualityFactor),
+  // whether the search region for it is configured, and, with printing, the Ritz values of
+  // the last iteration: their number, those outside of the region, and those outside with
+  // an error estimate below the tolerance (see CountRegionExcluded).
+  double q_min;
+  bool q_region, q_region_monitor;
+  int q_region_count[3];
+
+  // Print the Ritz values counted outside of the quality-factor region.
+  void PrintRegionExcluded() const;
 
   // Customize object with command line options set.
   virtual void Customize();
@@ -159,6 +179,16 @@ public:
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
 
+  // Set the target of the eigenvalue search apart from the shift (after SetShiftInvert).
+  void SetTarget(std::complex<double> t) override;
+
+  // Factor converting the relative error estimate of a Ritz value θ of the transformed
+  // problem, a relative error of λ - σ = 1 / θ, into one for the eigenvalue λ, with a
+  // target apart from the shift: max(1, |λ - σ| / |λ|). An accepted eigenvalue then has a
+  // relative error estimate below the tolerance, as with σ = τ (|λ - τ| < |λ| for all λ in
+  // the search region).
+  PetscReal GetTargetErrorScale(PetscScalar theta) const;
+
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
 
@@ -167,6 +197,14 @@ public:
 
   // Configure the basis vectors object associated with the eigenvalue solver.
   void SetOrthogonalization(bool mgs, bool cgs2);
+
+  void SetMinQualityFactor(double q) override { q_min = q; }
+
+  // Count the nest current Ritz values of the transformed problem outside of the search
+  // region, and those among them with an error estimate below tol (called by the
+  // eigensolver monitor at every iteration).
+  void CountRegionExcluded(PetscReal tol, const PetscScalar *eigr, const PetscScalar *eigi,
+                           const PetscReal *errest, int nest);
 
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;
@@ -202,6 +240,59 @@ protected:
   // Shell matrices for the generalized eigenvalue problem.
   Mat A0, A1;
 
+  // Constant for the relaxation of the linear solver tolerance (see
+  // SetLinearSolverRelaxation), the linear solver tolerance outside of the relaxation, the
+  // largest transformed eigenvalue estimate of the solve, and whether the monitor updating
+  // the tolerance is installed.
+  double relax_c, relax_lin_tol, relax_theta_max;
+  bool relax_monitor;
+
+  // Largest linear solver tolerance of the last solve, whether the relaxation is suspended
+  // (strict tolerance, for a repeated solve), and a copy of the initial space vector.
+  double relax_max_used = 0.0;
+  bool relax_suspend = false;
+
+  // Linear solver tolerance of the first Krylov cycle (see SetFirstCycleLinearSolverTol).
+  double first_cycle_tol = 0.0;
+
+  // For the convergence test (see CheckRitzValue): the Ritz values of the transformed
+  // problem at the previous restart, at the last completed convergence check and at the
+  // current one (a Krylov-Schur cycle can test convergence several times, see
+  // EndRitzValueCheck), each with the number of consecutive restarts at which it was kept
+  // unconverged, the Ritz values accepted although they did not settle, the iteration of
+  // the current restart, whether an unconverged Ritz value was already tested at the
+  // current check, and the numbers of convergences delayed and of eigenpairs accepted with
+  // a changing Ritz value in the last solve.
+  std::vector<std::pair<PetscScalar, int>> ritz_prev, ritz_last, ritz_curr;
+  std::vector<PetscScalar> ritz_unsettled;
+  PetscInt ritz_its = -1;
+  bool ritz_blocked = false;
+  int ritz_num_delayed = 0, ritz_num_unsettled = 0;
+
+  // Whether the start vector of the next solve is a warm start (see SetWarmStart).
+  bool warm_start = false;
+
+  // Krylov-Schur steps between convergence checks (see SetConvergenceCheckInterval).
+  int check_interval = 0;
+  Vec v_init = nullptr;
+  bool has_init = false;
+
+  // Relative tolerance of the divergence-free projection of the shift-and-invert solve
+  // results (see CheckDivFreeTol), the ratio |λ - σ| / |σ| of the wanted Ritz values which
+  // stops the current solve to repeat it with a smaller tolerance (0 while it continues),
+  // the largest such ratio of the current solve and that of its last restart, the number
+  // of solves repeated for it, whether the current solve is the last one allowed (it is
+  // not stopped), whether the monitor checking it is installed, and the eigenvalue
+  // estimates for the next solve (see SetEigenvalueEstimates).
+  double divfree_tol = 1.0e-3, divfree_stop = 0.0, divfree_ratio = 0.0,
+         divfree_ratio_last = 0.0;
+  int divfree_repeats = 0;
+  bool divfree_final = false, divfree_monitor = false;
+  std::vector<std::complex<double>> divfree_estimates;
+
+  // Keep a copy of the initial space vector, for a repeated solve.
+  void SaveInitialSpace(Vec v);
+
   void Customize() override;
 
 public:
@@ -222,11 +313,57 @@ public:
 
   void SetWhichEigenpairs(WhichType type) override;
 
+  bool SupportsTarget() const override { return true; }
+
   void SetProblemType(ProblemType type) override;
 
   void SetType(Type type) override;
 
   void SetInitialSpace(const ComplexVector &v) override;
+
+  void ResetInitialSpace() override;
+
+  void SetLinearSolverRelaxation(double c) override { relax_c = c; }
+
+  void SetFirstCycleLinearSolverTol(double tol) override { first_cycle_tol = tol; }
+
+  void SetWarmStart(bool warm) override { warm_start = warm; }
+
+  void SetConvergenceCheckInterval(int k) override { check_interval = k; }
+
+  void SetEigenvalueEstimates(const std::vector<std::complex<double>> &lambda) override
+  {
+    divfree_estimates = lambda;
+  }
+
+  // Update the error estimate of the Ritz value theta of the transformed problem at the
+  // current restart (called by the convergence test, after SLEPc's relative estimate).
+  void CheckRitzValue(PetscScalar theta, PetscReal *errest);
+
+  // End a convergence check (called by the stopping test after the convergence tests of a
+  // check): the Ritz values of the last check of a Krylov-Schur cycle are the ones present
+  // at its restart.
+  void EndRitzValueCheck();
+
+  // Print the number of convergences delayed for Ritz values not settled in the last solve.
+  void PrintRitzValueChecks() const;
+
+  int GetNumIterations() const override;
+
+  // Update the linear solver tolerance from the nest current Ritz values of the transformed
+  // problem and their error estimates, of which the first nconv have converged and the
+  // first nev are wanted (called by the eigensolver monitor after each restart).
+  void UpdateLinearSolverTol(int nconv, int nev, const PetscScalar *eigr,
+                             const PetscScalar *eigi, const PetscReal *errest, int nest);
+
+  // Check the tolerance of the divergence-free projection of the solve results against the
+  // nest current Ritz values of the transformed problem, of which the first nev are wanted
+  // (called by the eigensolver monitor after each restart).
+  void CheckDivFreeTol(int nev, const PetscScalar *eigr, const PetscScalar *eigi, int nest);
+
+  // Whether the solve stops at the end of the current Krylov cycle, to be repeated with a
+  // smaller tolerance of the divergence-free projection (see CheckDivFreeTol).
+  bool StopForDivFreeTol() const { return divfree_stop > 0.0; }
 
   int Solve() override;
 
@@ -259,6 +396,8 @@ public:
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
+  using SlepcEPSSolverBase::divfree_stop;
+  using SlepcEPSSolverBase::divfree_tol;
 
 private:
   // Operator norms for scaling.
@@ -292,6 +431,8 @@ public:
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
+  using SlepcEPSSolverBase::divfree_stop;
+  using SlepcEPSSolverBase::divfree_tol;
 
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
@@ -316,6 +457,9 @@ public:
   void SetBMat(const Operator &B) override;
 
   void SetInitialSpace(const ComplexVector &v) override;
+
+  void SetInitialSpaceBlocks(const ComplexVector &v,
+                             const ComplexVector &v_lambda) override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
 };

@@ -1,0 +1,123 @@
+diff --git a/src/sparse/fronts/FrontDense.cpp b/src/sparse/fronts/FrontDense.cpp
+index c9bc4b2f..4b281918 100644
+--- a/src/sparse/fronts/FrontDense.cpp
++++ b/src/sparse/fronts/FrontDense.cpp
+@@ -285,6 +285,90 @@ namespace strumpack {
+     return err_code;
+   }
+ 
++  namespace {
++    // Kernels for the solve phase with a small number of right-hand
++    // sides (n <= 4), all matrices column major. They stream the
++    // factor once (BLAS gemm/trsm with n = 2 typically pack it).
++
++    // C(m x n) += alpha * A(m x k) * B(k x n)
++    template<typename scalar_t> void small_gemm
++    (std::size_t m, std::size_t n, std::size_t k, scalar_t alpha,
++     const scalar_t* A, std::size_t lda, const scalar_t* B, std::size_t ldb,
++     scalar_t* C, std::size_t ldc) {
++      std::size_t c = 0;
++      for (; c+2<=n; c+=2) {
++        const scalar_t *B0 = B + c*ldb, *B1 = B0 + ldb;
++        scalar_t *C0 = C + c*ldc, *C1 = C0 + ldc;
++        std::size_t j = 0;
++        for (; j+2<=k; j+=2) {
++          const scalar_t b00 = alpha*B0[j], b10 = alpha*B0[j+1],
++            b01 = alpha*B1[j], b11 = alpha*B1[j+1];
++          const scalar_t *a0 = A + j*lda, *a1 = a0 + lda;
++#pragma omp simd
++          for (std::size_t i=0; i<m; i++) {
++            const scalar_t ai0 = a0[i], ai1 = a1[i];
++            C0[i] += ai0*b00 + ai1*b10;
++            C1[i] += ai0*b01 + ai1*b11;
++          }
++        }
++        for (; j<k; j++) {
++          const scalar_t b0 = alpha*B0[j], b1 = alpha*B1[j];
++          const scalar_t *a0 = A + j*lda;
++#pragma omp simd
++          for (std::size_t i=0; i<m; i++) {
++            C0[i] += a0[i]*b0;
++            C1[i] += a0[i]*b1;
++          }
++        }
++      }
++      for (; c<n; c++) {
++        const scalar_t *B0 = B + c*ldb;
++        scalar_t *C0 = C + c*ldc;
++        for (std::size_t j=0; j<k; j++) {
++          const scalar_t b0 = alpha*B0[j];
++          const scalar_t *a0 = A + j*lda;
++#pragma omp simd
++          for (std::size_t i=0; i<m; i++) C0[i] += a0[i]*b0;
++        }
++      }
++    }
++
++    // B(m x n) = inv(L) B, L unit lower triangular (LU factor storage)
++    template<typename scalar_t> void small_trsm_lower_unit
++    (std::size_t m, std::size_t n, const scalar_t* L, std::size_t lda,
++     scalar_t* B, std::size_t ldb) {
++      for (std::size_t c=0; c<n; c++) {
++        scalar_t* Bc = B + c*ldb;
++        for (std::size_t j=0; j<m; j++) {
++          const scalar_t x = Bc[j];
++          if (x == scalar_t(0.)) continue;
++          const scalar_t* Lj = L + j*lda;
++#pragma omp simd
++          for (std::size_t i=j+1; i<m; i++) Bc[i] -= Lj[i]*x;
++        }
++      }
++    }
++
++    // B(m x n) = inv(U) B, U upper triangular, non-unit diagonal
++    template<typename scalar_t> void small_trsm_upper
++    (std::size_t m, std::size_t n, const scalar_t* U, std::size_t lda,
++     scalar_t* B, std::size_t ldb) {
++      for (std::size_t c=0; c<n; c++) {
++        scalar_t* Bc = B + c*ldb;
++        for (std::size_t j=m; j-->0; ) {
++          if (Bc[j] == scalar_t(0.)) continue;
++          Bc[j] /= U[j+j*lda];
++          const scalar_t x = Bc[j];
++          const scalar_t* Uj = U + j*lda;
++#pragma omp simd
++          for (std::size_t i=0; i<j; i++) Bc[i] -= Uj[i]*x;
++        }
++      }
++    }
++
++    constexpr std::size_t small_nrhs = 4;
++  }
++
+   template<typename scalar_t,typename integer_t> void
+   FrontDense<scalar_t,integer_t>::fwd_solve_phase2
+   (DenseM_t& b, DenseM_t& bupd, int etree_level, int task_depth) const {
+@@ -296,6 +380,13 @@ namespace strumpack {
+         if (dim_upd())
+           gemv(Trans::N, scalar_t(-1.), F21_, bloc,
+                scalar_t(1.), bupd, task_depth);
++      } else if (b.cols() <= small_nrhs) {
++        small_trsm_lower_unit
++          (dim_sep(), b.cols(), F11_.data(), F11_.ld(), bloc.data(), bloc.ld());
++        if (dim_upd())
++          small_gemm(dim_upd(), b.cols(), dim_sep(), scalar_t(-1.),
++                     F21_.data(), F21_.ld(), bloc.data(), bloc.ld(),
++                     bupd.data(), bupd.ld());
+       } else {
+         trsm(Side::L, UpLo::L, Trans::N, Diag::U,
+              scalar_t(1.), F11_, bloc, task_depth);
+@@ -316,6 +407,13 @@ namespace strumpack {
+           gemv(Trans::N, scalar_t(-1.), F12_, yupd,
+                scalar_t(1.), yloc, task_depth);
+         trsv(UpLo::U, Trans::N, Diag::N, F11_, yloc, task_depth);
++      } else if (y.cols() <= small_nrhs) {
++        if (dim_upd())
++          small_gemm(dim_sep(), y.cols(), dim_upd(), scalar_t(-1.),
++                     F12_.data(), F12_.ld(), yupd.data(), yupd.ld(),
++                     yloc.data(), yloc.ld());
++        small_trsm_upper
++          (dim_sep(), y.cols(), F11_.data(), F11_.ld(), yloc.data(), yloc.ld());
+       } else {
+         if (dim_upd())
+           gemm(Trans::N, Trans::N, scalar_t(-1.), F12_, yupd,

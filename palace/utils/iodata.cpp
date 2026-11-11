@@ -14,6 +14,8 @@
 #include <stack>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -422,6 +424,19 @@ void IoData::CheckConfiguration()
     // WavePortPEC (boundaries.auxpec) is also supported: it only affects the per-port
     // cross-section eigenvalue problem (forces the port submesh outer rim to PEC) and
     // does not change the parent FE system, so synthesis works correctly with it.
+
+    // The fixed error indicator frequencies only apply to adaptive sweeps which compute the
+    // error indicator.
+    if (!solver.driven.indicator_indices.empty() &&
+        (solver.driven.adaptive_tol <= 0.0 ||
+         (model.refinement.max_it <= 0 && !solver.linear.always_error_estimation)))
+    {
+      Mpi::Warning(
+          "\"AdaptiveIndicatorSamples\" and \"AdaptiveIndicatorMaxQ\" are ignored: "
+          "they only apply to adaptive frequency sweeps (\"AdaptiveTol\" > 0) which "
+          "compute the error indicator (adaptive mesh refinement or "
+          "\"AlwaysComputeErrorEstimation\")!\n");
+    }
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
@@ -603,25 +618,64 @@ void IoData::CheckConfiguration()
       solver.linear.krylov_solver = KrylovSolver::GMRES;
     }
   }
+  if (solver.linear.mg_aux_residual == MultigridAuxiliaryResidual::DEFAULT)
+  {
+    // Lagged residuals save operator applications in the distributive relaxation smoother
+    // but make the multigrid preconditioner nonsymmetric, so the symmetric Krylov solvers
+    // use updated residuals instead.
+    solver.linear.mg_aux_residual = (solver.linear.krylov_solver == KrylovSolver::CG ||
+                                     solver.linear.krylov_solver == KrylovSolver::MINRES)
+                                        ? MultigridAuxiliaryResidual::UPDATED
+                                        : MultigridAuxiliaryResidual::LAGGED;
+  }
   if (solver.linear.max_size < 0)
   {
     solver.linear.max_size = solver.linear.max_it;
   }
+  solver.eigenmode.intermediate_linear_tol =
+      (solver.eigenmode.intermediate_linear_tol < 0.0)
+          ? solver.linear.tol
+          : std::max(solver.eigenmode.intermediate_linear_tol, solver.linear.tol);
   if (solver.linear.initial_guess < 0)
   {
-    if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == ProblemType::TRANSIENT ||
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::TRANSIENT ||
         problem.type == ProblemType::ELECTROSTATIC ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, electrostatics, or magnetostatics.
+      // Default true for driven (adaptive frequency sweeps start each HDM solve from the
+      // PROM solution), transient, electrostatic, and magnetostatic simulations.
       solver.linear.initial_guess = 1;
     }
     else
     {
       solver.linear.initial_guess = 0;
     }
+  }
+  if (solver.linear.estimator_tol < 0.0)
+  {
+    // The error of the flux projections adds about the tolerance to the relative error
+    // indicator: keep it two orders of magnitude below the refinement tolerance, so that
+    // the indicator can reach it (1e-4 for the default Model.Refinement.Tol 1e-2), but not
+    // below 1e-10, where the projections would be solved to round-off.
+    solver.linear.estimator_tol =
+        std::max(1.0e-10, std::min(1.0e-4, 1.0e-2 * model.refinement.tol));
+  }
+  if (solver.driven.coarse_reuse_tol < 0.0)
+  {
+    // Default 0.05 for uniform frequency sweeps, and no reuse for adaptive sweeps: their
+    // samples are rarely that close, and a different coarse solve can change which
+    // samples the greedy selection picks.
+    solver.driven.coarse_reuse_tol = (solver.driven.adaptive_tol > 0.0) ? 0.0 : 0.05;
+  }
+  if (solver.linear.strumpack_selective_inversion < 0)
+  {
+    // The inverses add to the cost of each factorization and pay off only over many solves
+    // with it: eigenvalue solves and time steps, not the Krylov solve of one frequency or
+    // source.
+    solver.linear.strumpack_selective_inversion =
+        (problem.type == ProblemType::EIGENMODE ||
+         problem.type == ProblemType::BOUNDARYMODE ||
+         problem.type == ProblemType::TRANSIENT);
   }
   if (solver.linear.mg_max_levels < 0)
   {
@@ -681,6 +735,32 @@ void IoData::CheckConfiguration()
   if (solver.linear.mg_smooth_order < 0)
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
+
+    // For second-order eigenmode problems, use a higher smoothing order on multigrid
+    // levels where the shifted operator turns out to be nearly positive semi-definite.
+    if (solver.order == 2 && solver.linear.mg_smooth_cheby_4th &&
+        problem.type == ProblemType::EIGENMODE)
+    {
+      solver.linear.mg_smooth_order_max = 8;
+    }
+  }
+  solver.linear.mg_smooth_order_max =
+      std::max(solver.linear.mg_smooth_order_max, solver.linear.mg_smooth_order);
+  if (problem.type != ProblemType::EIGENMODE || solver.device != Device::CPU ||
+      !solver.linear.mg_smooth_cheby_4th || !ChoosesComplexCoarseSolve(solver.linear.type))
+  {
+    // The runtime choice of the complex-valued coarse solve is for eigenmode simulations
+    // with a sparse direct coarse solver on the host (its memory is checked against the
+    // host memory, see ChoosesComplexCoarseSolve) and fourth-kind Chebyshev smoothers: the
+    // others use the real-valued approximation unless ComplexCoarseSolve is given.
+    solver.linear.complex_coarse_check = false;
+  }
+  if (solver.linear.mg_smooth_order_aux <= 0 && solver.linear.complex_coarse_solve)
+  {
+    // With the exact complex coarse solve, the auxiliary (gradient) space smoother does not
+    // need a higher order than max(2 p, 4): this makes the iterations cheaper at equal
+    // counts. With the real-valued coarse approximation, it follows the primary order.
+    solver.linear.mg_smooth_order_aux = std::max(2 * solver.order, 4);
   }
   // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
   // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet
@@ -728,6 +808,14 @@ void IoData::CheckConfiguration()
   {
     solver.linear.ams_max_it = solver.order;
   }
+  if (solver.linear.ams_smooth_it < 0)
+  {
+    // For singular curl-curl operators, the outer iteration count depends strongly on the
+    // smoothing on the coarse Nedelec space, which is cheap compared to the auxiliary
+    // space corrections.
+    solver.linear.ams_smooth_it =
+        solver.linear.ams_singular_op ? 8 : solver.linear.mg_smooth_it;
+  }
   if (solver.linear.mg_cycle_it < 0)
   {
     if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
@@ -743,15 +831,24 @@ void IoData::CheckConfiguration()
     }
   }
   if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
-      solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
+      (problem.type == ProblemType::EIGENMODE) &&
       (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||
        (!boundaries.farfield.empty() && boundaries.farfield.order > 1)))
   {
     // Do not reuse the sparsity pattern for nonlinear eigenmode simulations with complex
     // coarse preconditioners when dropping small entries. In those cases, the sparsity
     // pattern of the first preconditioner (purely real coefficients) will be different from
-    // subsequent preconditioners with complex coefficients.
-    solver.linear.reorder_reuse = false;
+    // subsequent preconditioners with complex coefficients. A complex-valued coarse solve
+    // chosen at setup follows the same rule.
+    if (solver.linear.complex_coarse_solve)
+    {
+      solver.linear.reorder_reuse = false;
+    }
+    solver.linear.complex_coarse_reorder_reuse = false;
+  }
+  else
+  {
+    solver.linear.complex_coarse_reorder_reuse = solver.linear.reorder_reuse;
   }
 
   // EigenSolverBackend::DEFAULT and TimeSteppingScheme::DEFAULT are header-level
@@ -950,6 +1047,31 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   Mpi::Print("\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
              units.GetScaleFactor<Units::ValueType::LENGTH>(),
              units.GetScaleFactor<Units::ValueType::TIME>());
+}
+
+namespace
+{
+
+// The coarse-level solvers which choose the complex-valued coarse solve at setup. SuperLU
+// and MUMPS are not listed: the peak of their factorizations depends on the serial or
+// replicated work of their orderings, which the memory estimate does not model.
+const std::vector<LinearSolver> complex_coarse_solvers = {LinearSolver::STRUMPACK,
+                                                          LinearSolver::STRUMPACK_MP};
+std::vector<LinearSolver> complex_coarse_solvers_for_testing;
+
+}  // namespace
+
+bool ChoosesComplexCoarseSolve(LinearSolver type)
+{
+  const auto &types = complex_coarse_solvers_for_testing.empty()
+                          ? complex_coarse_solvers
+                          : complex_coarse_solvers_for_testing;
+  return std::find(types.begin(), types.end(), type) != types.end();
+}
+
+void SetComplexCoarseSolversForTesting(std::vector<LinearSolver> types)
+{
+  complex_coarse_solvers_for_testing = std::move(types);
 }
 
 }  // namespace palace

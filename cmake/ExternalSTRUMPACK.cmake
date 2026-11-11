@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(STRUMPACK_DEPENDENCIES scalapack parmetis)
+set(STRUMPACK_DEPENDENCIES scalapack metis scotch)
 # if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
 #   list(APPEND STRUMPACK_DEPENDENCIES slate)
 # endif()
@@ -159,16 +159,17 @@ list(APPEND STRUMPACK_OPTIONS
   "-DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}"
   "-DCMAKE_Fortran_FLAGS=${CMAKE_Fortran_FLAGS}"
   "-DSTRUMPACK_USE_MPI=ON"
-  "-DTPL_ENABLE_PARMETIS=ON"
+  "-DTPL_ENABLE_PARMETIS=OFF"
   "-DTPL_METIS_LIBRARIES=${METIS_LIBRARIES}"
   "-DTPL_METIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
-  "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-  "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
-  "-DTPL_ENABLE_SCOTCH=OFF"
-  "-DTPL_ENABLE_PTSCOTCH=OFF"
+  "-DTPL_ENABLE_SCOTCH=ON"
+  "-DTPL_ENABLE_PTSCOTCH=ON"
+  "-DTPL_SCOTCH_PREFIX=${CMAKE_INSTALL_PREFIX}"
+  "-DTPL_PTSCOTCH_PREFIX=${CMAKE_INSTALL_PREFIX}"
   "-DTPL_ENABLE_COMBBLAS=OFF"
   "-DTPL_ENABLE_PAPI=OFF"
   "-DTPL_SCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}"
+  "-DSTRUMPACK_PBLAS_BLOCKSIZE=128"
 )
 if(PALACE_WITH_STRUMPACK_BUTTERFLYPACK)
   list(APPEND STRUMPACK_OPTIONS
@@ -286,6 +287,41 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   strumpack_pr163.diff
   "https://github.com/pghysels/STRUMPACK/commit/4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff"
   4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1
+)
+# Reset the caches of the solve phase when the separators are reordered, which happens
+# again with compression when the matrix values are updated
+# (https://github.com/pghysels/STRUMPACK/pull/164)
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr164.diff
+  "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff"
+  4d561698fc2d19c31953ccd91e7df90daf89aedbf6434e016a283b9f7dff7b9a
+)
+
+# Faster solve phase for few right-hand sides: selective inversion of the well-conditioned
+# distributed fronts (matrix products instead of blocked triangular solves), streaming
+# kernels for the local fronts, and a configurable PBLAS block size
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_selective_inversion.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_solve_kernels.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_pblas_blocksize.diff"
+)
+
+# Parallel column ordering: PT-Scotch computes the distributed separators on a subset of
+# the processes and METIS orders the subgraph of each process, instead of METIS on a single
+# process for the whole matrix
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_ptscotch_ordering.diff"
+)
+
+# Per-process memory of the distributed solver: the fill-reducing permutation stored once per
+# node (sequential and PT-Scotch orderings), no arrays of the global matrix dimension per process
+list(APPEND STRUMPACK_PATCH_FILES "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_memory.diff")
+
+# Balance of the solve phase: the factor memory mapping of the elimination tree also counts
+# a cost per front, the processes of a subtree are split to minimize the largest work per
+# process (instead of rounding the proportional share), and no subtree traversals per solve
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_solve_balance.diff"
 )
 
 include(ExternalProject)

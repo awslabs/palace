@@ -179,7 +179,29 @@ a nonlinear eigenvalue problem is solved:
 
 where the matrix ``\bm{A}_2`` represents the nonlinear frequency-dependent boundary conditions.
 
-The eigenmodes are normalized such that they have unit norm and their mean phase is a positive real number.
+The eigenmodes are normalized such that they have unit norm. Their global phase, which the
+eigenvalue problem leaves free, is fixed by the projection of the electric field on a fixed
+smooth reference field ``\bm{w}``: each eigenvector is multiplied by the phase factor which makes
+
+```math
+\int_\Omega \bm{w}\cdot\bm{E}\,dV
+```
+
+real and positive, so that the eigenvector of a lossless mode is real, with a definite sign. The
+reference fields are defined in the coordinates ``\bm{\xi}\in[-1,1]^d`` of the axis-aligned
+bounding box of the mesh. The first, ``\bm{w}_1``, has in each component one product of
+coordinates ``\prod_{k\in t}\xi_k`` (with fixed coefficients) for every subset ``t`` of the
+coordinates, so that modes which are symmetric or antisymmetric under the reflections
+``\xi_k\to-\xi_k`` all have a projection on it. The second, a product of sines and cosines of the
+coordinates, is used when the projection on ``\bm{w}_1`` is negligible, at most ``10^{-6}`` times
+the product of the Euclidean norms of the vectors of degrees of freedom of ``\bm{E}`` and of the
+linear form of ``\bm{w}_1``, and the phase of the mean of the degrees of freedom when both
+projections are; a warning is printed when either fallback is used. Except for the mean of the
+degrees of freedom, this convention does not depend on the numbering of the degrees of freedom,
+on the orientations of the edges and faces of the mesh, on the order of the elements, or on the
+number of processes: the phases of port voltages and currents, and the signs of the external
+coupling rates and of signed energy participation ratios, are reproducible. Within a degenerate
+eigenspace, the eigenvectors themselves depend on the eigenvalue solver.
 
 ## Lumped ports and wave ports
 
@@ -515,6 +537,12 @@ that, the interpolation suggests the next sample from an error indicator that ca
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
 
+The HDM solve at a selected frequency starts from the PROM solution there when
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear)
+is enabled (the default), so fewer linear solver iterations are needed as the PROM
+improves. If the PROM solution already meets the tolerance of the linear solver, the HDM
+is solved again from zero, so that the sample still adds a new direction to the basis.
+
 ### Convergence criterion
 
 At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM
@@ -534,6 +562,16 @@ related to, but not the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
+
+The tolerance of the linear solver
+([`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear)) bounds the
+relative residual of the HDM solution, not its error, which can be much larger. Near the
+accuracy of the HDM solve, ``\varepsilon`` no longer measures the PROM error alone. When the
+HDM solve starts from zero (`"InitialGuess": false`), ``\varepsilon`` includes the error of
+the HDM solve, and can stay above an `"AdaptiveTol"` tighter than this accuracy until
+`"AdaptiveMaxSamples"` is reached. When it starts from the PROM solution, ``\varepsilon``
+measures the correction of the linear solver to the PROM solution, and can fall below such a
+tolerance.
 
 The indicator is also not a mathematical certificate of the maximum error over the entire
 frequency interval. The convergence memory mitigates accidental early termination when one
@@ -841,6 +879,37 @@ density. On element ``K``, we have
 where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
 orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
 discretized by Nédélec and Raviart-Thomas elements, respectively.
+
+The projections are computed by preconditioned conjugate gradient solves to the relative
+tolerance
+[`config["Solver"]["Linear"]["EstimatorTol"]`](config/reference.md#config-solver-linear-estimatortol)
+(by default `1e-4`, or 0.01 times
+[`config["Model"]["Refinement"]["Tol"]`](config/reference.md#config-model-refinement-tol)
+when that is below `1e-2`, but not less than `1e-10`). The indicator is relative to the
+energy of the solution, and the error of the solves adds about `"EstimatorTol"` to it. When
+the indicator norm is well above the tolerance, the elements marked for refinement are the
+same as with tighter tolerances, up to elements at the marking threshold. Very accurate
+solutions, such as high-order solutions of smooth problems, can have an indicator norm
+within an order of magnitude of the tolerance or below it: the indicator then measures the
+error of the projections rather than the discretization error. For example, for a
+two-dimensional cavity eigenmode with an indicator norm of `2e-8` at order 4, the computed
+indicator norm is about 4000 times too large at the default tolerance and still 40 times too
+large at `1e-6`, and the refinement follows the noise of the projections; at order 3
+(indicator norm `3e-6`), it is 20 times too large at `1e-4` and accurate to 3% at `1e-6`.
+For such solutions, use a tolerance well below the expected indicator norm, such as `1e-8`
+or `1e-10`.
+
+By default, the error indicator is only computed when AMR is enabled, that is when
+[`config["Model"]["Refinement"]["MaxIts"]`](config/reference.md#config-model-refinement-maxits)
+is positive. To report it for a simulation without AMR, set
+[`config["Solver"]["Linear"]["AlwaysComputeErrorEstimation"]`](config/reference.md#config-solver-linear-alwayscomputeerrorestimation)
+to `true`. With AMR, the indicator is not computed for the solve after the last refinement
+allowed by `"MaxIts"`, which ends the adaptation whatever its value: that iteration writes
+no `error-indicators.csv`, and the AMR summary of the log reports the last computed indicator
+norm (that of the mesh before the last refinement) instead. Whether the final mesh satisfies
+[`config["Model"]["Refinement"]["Tol"]`](config/reference.md#config-model-refinement-tol) is
+then not checked; with `"AlwaysComputeErrorEstimation"`, the final iteration computes the
+indicator and writes `error-indicators.csv` too.
 
 ## Far-field extraction
 

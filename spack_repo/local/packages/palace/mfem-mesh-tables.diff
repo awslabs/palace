@@ -1,0 +1,536 @@
+diff -ru a/general/stable3d.cpp b/general/stable3d.cpp
+--- a/general/stable3d.cpp
++++ b/general/stable3d.cpp
+@@ -13,6 +13,9 @@
+ #include "error.hpp"
+ #include "stable3d.hpp"
+ 
++#include <algorithm>
++#include <vector>
++
+ using namespace std;
+ 
+ namespace mfem
+@@ -20,17 +23,45 @@
+ 
+ STable3D::STable3D (int nr)
+ {
+-   int i;
+-
+    Size = nr;
+-   Rows = new STable3DNode *[nr];
+-   for (i = 0; i < nr; i++)
++   NElem = 0;
++   // A table of the faces of a tetrahedral mesh has about 12 entries per vertex
++   // (row): start with a load factor below 1/2 for it.
++   LogCapacity = 4;
++   while ((std::size_t(1) << LogCapacity) < 16 * std::size_t(nr > 0 ? nr : 1))
+    {
+-      Rows[i] = NULL;
++      LogCapacity++;
+    }
+-   NElem = 0;
++   const std::size_t cap = std::size_t(1) << LogCapacity;
++   Slots = new Slot[cap];
++   for (std::size_t i = 0; i < cap; i++)
++   {
++      Slots[i].Row = -1;
++   }
+ }
+ 
++void STable3D::Grow()
++{
++   const std::size_t old_cap = std::size_t(1) << LogCapacity;
++   Slot *old_slots = Slots;
++   LogCapacity++;
++   const std::size_t cap = std::size_t(1) << LogCapacity;
++   Slots = new Slot[cap];
++   for (std::size_t i = 0; i < cap; i++)
++   {
++      Slots[i].Row = -1;
++   }
++   for (std::size_t i = 0; i < old_cap; i++)
++   {
++      const Slot &s = old_slots[i];
++      if (s.Row >= 0)
++      {
++         Find(s.Row, s.Column, s.Floor) = s;
++      }
++   }
++   delete [] old_slots;
++}
++
+ inline void Sort3 (int &r, int &c, int &f)
+ {
+    int t;
+@@ -63,50 +94,37 @@
+ 
+ int STable3D::Push (int r, int c, int f)
+ {
+-   STable3DNode *node;
+-
+    MFEM_ASSERT(r != c && c != f && f != r,
+                "STable3D::Push : r = " << r << ", c = " << c << ", f = " << f);
+ 
+    Sort3 (r, c, f);
+ 
+-   for (node = Rows[r]; node != NULL; node = node->Prev)
++   Slot &s = Find(r, c, f);
++   if (s.Row >= 0)
+    {
+-      if (node->Column == c)
+-         if (node->Floor == f)
+-         {
+-            return node->Number;
+-         }
++      return s.Number;
+    }
+-
+-#ifdef MFEM_USE_MEMALLOC
+-   node = NodesMem.Alloc ();
+-#else
+-   node = new STable3DNode;
+-#endif
+-   node->Column = c;
+-   node->Floor  = f;
+-   node->Number = NElem;
+-   node->Prev   = Rows[r];
+-   Rows[r] = node;
+-
++   s.Row = r;
++   s.Column = c;
++   s.Floor = f;
++   s.Number = NElem;
+    NElem++;
++   // Keep the load factor at most 1/2.
++   if (2 * std::size_t(NElem) > (std::size_t(1) << LogCapacity))
++   {
++      Grow();
++   }
+    return (NElem-1);
+ }
+ 
+ int STable3D::operator() (int r, int c, int f) const
+ {
+-   STable3DNode *node;
+-
+    Sort3 (r, c, f);
+ 
+-   for (node = Rows[r]; node != NULL; node = node->Prev)
++   const Slot &s = Find(r, c, f);
++   if (s.Row >= 0)
+    {
+-      if (node->Column == c)
+-         if (node->Floor == f)
+-         {
+-            return node->Number;
+-         }
++      return s.Number;
+    }
+ 
+    MFEM_ABORT("(r,c,f) = (" << r << "," << c << "," << f << ")");
+@@ -116,8 +134,6 @@
+ 
+ int STable3D::Index (int r, int c, int f) const
+ {
+-   STable3DNode *node;
+-
+    if (r >= Size)
+    {
+       return -1;
+@@ -125,16 +141,8 @@
+ 
+    Sort3 (r, c, f);
+ 
+-   for (node = Rows[r]; node != NULL; node = node->Prev)
+-   {
+-      if (node->Column == c)
+-         if (node->Floor == f)
+-         {
+-            return node->Number;
+-         }
+-   }
+-
+-   return -1;
++   const Slot &s = Find(r, c, f);
++   return (s.Row >= 0) ? s.Number : -1;
+ }
+ 
+ int STable3D::Push4 (int r, int c, int f, int t)
+@@ -190,38 +198,29 @@
+ 
+ STable3D::~STable3D ()
+ {
+-#ifdef MFEM_USE_MEMALLOC
+-   // NodesMem.Clear();  // this is done implicitly
+-#else
+-   for (int i = 0; i < Size; i++)
+-   {
+-      STable3DNode *aux, *node_p = Rows[i];
+-      while (node_p != NULL)
+-      {
+-         aux = node_p;
+-         node_p = node_p->Prev;
+-         delete aux;
+-      }
+-   }
+-#endif
+-   delete [] Rows;
++   delete [] Slots;
+ }
+ 
+ void STable3D::Print(std::ostream & os) const
+ {
++   // Entries by row, and in each row from the last pushed to the first.
++   const std::size_t cap = std::size_t(1) << LogCapacity;
++   std::vector<Slot> entries;
++   entries.reserve(NElem);
++   for (std::size_t i = 0; i < cap; i++)
++   {
++      if (Slots[i].Row >= 0) { entries.push_back(Slots[i]); }
++   }
++   std::sort(entries.begin(), entries.end(), [](const Slot &a, const Slot &b)
++   { return (a.Row != b.Row) ? (a.Row < b.Row) : (a.Number > b.Number); });
+    os << NElem << endl;
+-   for (int row = 0; row < Size; row++)
++   for (const Slot &e : entries)
+    {
+-      STable3DNode *node_p = Rows[row];
+-      while (node_p != NULL)
+-      {
+-         os << row
+-            << ' ' << node_p->Column
+-            << ' ' << node_p->Floor
+-            << ' ' << node_p->Number
+-            << endl;
+-         node_p = node_p->Prev;
+-      }
++      os << e.Row
++         << ' ' << e.Column
++         << ' ' << e.Floor
++         << ' ' << e.Number
++         << endl;
+    }
+ }
+ 
+diff -ru a/general/stable3d.hpp b/general/stable3d.hpp
+--- a/general/stable3d.hpp
++++ b/general/stable3d.hpp
+@@ -14,33 +14,56 @@
+ 
+ #include "mem_alloc.hpp"
+ #include "../general/globals.hpp"
++#include <cstddef>
++#include <cstdint>
+ 
+ namespace mfem
+ {
+ 
+-class STable3DNode
+-{
+-public:
+-   STable3DNode *Prev;
+-   int Column, Floor, Number;
+-};
+-
+-/** @brief Symmetric 3D Table stored as an array of rows each of which has a
+-    stack of column, floor, number nodes. The number of the node is assigned by
+-    counting the nodes from zero as they are pushed into the table. Diagonals of
+-    any kind are not allowed so the row, column and floor must all be different
+-    for each node. Only one node is stored for all 6 symmetric entries that are
+-    indexable by unique triplets of row, column, and floor. */
++/** @brief Symmetric 3D Table storing the unique triplets of row, column, and
++    floor. The number of an entry is assigned by counting the entries from zero
++    as they are pushed into the table. Diagonals of any kind are not allowed so
++    the row, column and floor must all be different for each entry. Only one
++    entry is stored for all 6 symmetric entries that are indexable by unique
++    triplets of row, column, and floor. The entries are kept in an open
++    addressing hash table: the lookups of large tables, such as the faces of a
++    mesh with tens of millions of elements, take a few memory accesses instead
++    of a traversal of the entries of a row. */
+ class STable3D
+ {
+ private:
+    int Size, NElem;
+-   STable3DNode **Rows;
+ 
+-#ifdef MFEM_USE_MEMALLOC
+-   MemAlloc <STable3DNode, 1024> NodesMem;
+-#endif
++   /// Hash table slot; Row < 0 for an empty slot.
++   struct Slot { int Row, Column, Floor, Number; };
++   Slot *Slots;
++   int LogCapacity;
+ 
++   /// First slot to probe for the sorted triplet (r, c, f).
++   inline std::size_t Hash(int r, int c, int f) const
++   {
++      std::uint64_t k = (std::uint64_t(std::uint32_t(r)) << 32) | std::uint32_t(c);
++      k = (k ^ (std::uint64_t(std::uint32_t(f)) * 0xC2B2AE3D27D4EB4FULL)) *
++          0x9E3779B97F4A7C15ULL;
++      return std::size_t(k >> (64 - LogCapacity));
++   }
++
++   /// Slot of the sorted triplet (r, c, f), or the empty slot where it belongs.
++   inline Slot &Find(int r, int c, int f) const
++   {
++      const std::size_t mask = (std::size_t(1) << LogCapacity) - 1;
++      std::size_t i = Hash(r, c, f);
++      while (Slots[i].Row >= 0 &&
++             (Slots[i].Row != r || Slots[i].Column != c || Slots[i].Floor != f))
++      {
++         i = (i + 1) & mask;
++      }
++      return Slots[i];
++   }
++
++   /// Double the number of slots.
++   void Grow();
++
+ public:
+    /// Construct the table with a total of 'nr' rows.
+    explicit STable3D (int nr);
+@@ -73,6 +96,9 @@
+    void Print(std::ostream &out = mfem::out) const;
+ 
+    ~STable3D ();
++
++   STable3D(const STable3D &) = delete;
++   STable3D &operator=(const STable3D &) = delete;
+ };
+ 
+ }
+diff -ru a/general/table.cpp b/general/table.cpp
+--- a/general/table.cpp
++++ b/general/table.cpp
+@@ -618,20 +618,53 @@
+    }
+    NumRows = nrows;
+    NumEntries = 0;
++   // A table of the edges of a tetrahedral mesh has about 7 entries per vertex
++   // (row): start with a load factor below the maximum for it.
++   LogCapacity = 4;
++   while ((std::size_t(1) << LogCapacity) < 10 * std::size_t(nrows > 0 ? nrows : 1))
++   {
++      LogCapacity++;
++   }
++   const std::size_t cap = std::size_t(1) << LogCapacity;
++   Slots = new Slot[cap];
++   for (std::size_t i = 0; i < cap; i++)
++   {
++      Slots[i].N = NULL;
++   }
+ }
+ 
++void DSTable::Grow()
++{
++   const std::size_t old_cap = std::size_t(1) << LogCapacity;
++   Slot *old_slots = Slots;
++   LogCapacity++;
++   const std::size_t cap = std::size_t(1) << LogCapacity;
++   Slots = new Slot[cap];
++   for (std::size_t i = 0; i < cap; i++)
++   {
++      Slots[i].N = NULL;
++   }
++   for (std::size_t i = 0; i < old_cap; i++)
++   {
++      const Slot &s = old_slots[i];
++      if (s.N)
++      {
++         FindSlot(s.Row, s.Column) = s;
++      }
++   }
++   delete [] old_slots;
++}
++
+ int DSTable::Push_(int r, int c)
+ {
+    MFEM_ASSERT(r >= 0 && r < NumRows,
+                "Row out of bounds: r = " << r << ", NumRows = " << NumRows);
+-   Node *n;
+-   for (n = Rows[r]; n != NULL; n = n->Prev)
++   Slot &s = FindSlot(r, c);
++   if (s.N)
+    {
+-      if (n->Column == c)
+-      {
+-         return (n->Index);
+-      }
++      return (s.N->Index);
+    }
++   Node *n;
+ #ifdef MFEM_USE_MEMALLOC
+    n = NodesMem.Alloc ();
+ #else
+@@ -641,6 +674,14 @@
+    n->Index  = NumEntries;
+    n->Prev   = Rows[r];
+    Rows[r]   = n;
++   s.Row = r;
++   s.Column = c;
++   s.N = n;
++   // Keep the load factor at most 0.7.
++   if (10 * (std::size_t(NumEntries) + 1) > 7 * (std::size_t(1) << LogCapacity))
++   {
++      Grow();
++   }
+    return (NumEntries++);
+ }
+ 
+@@ -651,14 +692,8 @@
+    {
+       return (-1);
+    }
+-   for (Node *n = Rows[r]; n != NULL; n = n->Prev)
+-   {
+-      if (n->Column == c)
+-      {
+-         return (n->Index);
+-      }
+-   }
+-   return (-1);
++   const Slot &s = FindSlot(r, c);
++   return s.N ? s.N->Index : -1;
+ }
+ 
+ DSTable::~DSTable()
+@@ -678,6 +713,7 @@
+    }
+ #endif
+    delete [] Rows;
++   delete [] Slots;
+ }
+ 
+ }
+diff -ru a/general/table.hpp b/general/table.hpp
+--- a/general/table.hpp
++++ b/general/table.hpp
+@@ -19,6 +19,8 @@
+ #include "globals.hpp"
+ #include <ostream>
+ #include <istream>
++#include <cstddef>
++#include <cstdint>
+ 
+ namespace mfem
+ {
+@@ -257,6 +259,32 @@
+    MemAlloc <Node, 1024> NodesMem;
+ #endif
+ 
++   /** Open addressing hash table of the entries (row, column) -> node, so that
++       a lookup in a large table takes a few memory accesses instead of a
++       traversal of the nodes of the row. Slots with N == NULL are empty. */
++   struct Slot { int Row, Column; Node *N; };
++   Slot *Slots;
++   int LogCapacity;
++
++   inline std::size_t Hash(int r, int c) const
++   {
++      const std::uint64_t k =
++         ((std::uint64_t(std::uint32_t(r)) << 32) | std::uint32_t(c)) *
++         0x9E3779B97F4A7C15ULL;
++      return std::size_t(k >> (64 - LogCapacity));
++   }
++   inline Slot &FindSlot(int r, int c) const
++   {
++      const std::size_t mask = (std::size_t(1) << LogCapacity) - 1;
++      std::size_t i = Hash(r, c);
++      while (Slots[i].N && (Slots[i].Row != r || Slots[i].Column != c))
++      {
++         i = (i + 1) & mask;
++      }
++      return Slots[i];
++   }
++   void Grow();
++
+    int Push_(int r, int c);
+    int Index(int r, int c) const;
+ 
+@@ -269,6 +297,9 @@
+    int operator()(int a, int b) const
+    { return ((a <= b) ? Index(a, b) : Index(b, a)); }
+    ~DSTable();
++
++   DSTable(const DSTable &) = delete;
++   DSTable &operator=(const DSTable &) = delete;
+ 
+    class RowIterator
+    {
+diff -ru a/mesh/mesh.cpp b/mesh/mesh.cpp
+--- a/mesh/mesh.cpp
++++ b/mesh/mesh.cpp
+@@ -8552,28 +8552,60 @@
+    // Note that, for ParNCMeshes, faces_info will contain also the ghost faces
+    MFEM_ASSERT(faces_info.Size() >= GetNumFaces(), "faces were not generated!");
+ 
+-   Array<Connection> conn;
+-   conn.Reserve(2*faces_info.Size());
+-
++   // The rows are the neighbors of each element across its faces (ghost neighbors of a
++   // ParNCMesh are numbered from NumOfElements), sorted and without duplicates: the rows
++   // are filled by counting (each row has a few entries) instead of sorting all the
++   // element pairs of the mesh.
++   const int ne = NumOfElements;
++   int *I = new int[ne + 1];
++   for (int i = 0; i <= ne; i++) { I[i] = 0; }
+    for (int i = 0; i < faces_info.Size(); i++)
+    {
+       const FaceInfo &fi = faces_info[i];
+       if (fi.Elem2No >= 0)
+       {
+-         conn.Append(Connection(fi.Elem1No, fi.Elem2No));
+-         conn.Append(Connection(fi.Elem2No, fi.Elem1No));
++         I[fi.Elem1No + 1]++;
++         I[fi.Elem2No + 1]++;
+       }
+       else if (fi.Elem2Inf >= 0)
+       {
+-         int nbr_elem_idx = NumOfElements - 1 - fi.Elem2No;
+-         conn.Append(Connection(fi.Elem1No, nbr_elem_idx));
+-         conn.Append(Connection(nbr_elem_idx, fi.Elem1No));
++         I[fi.Elem1No + 1]++;  // The ghost element has no row
+       }
+    }
+-
+-   conn.Sort();
+-   conn.Unique();
+-   el_to_el = new Table(NumOfElements, conn);
++   for (int i = 0; i < ne; i++) { I[i + 1] += I[i]; }
++   int *J = new int[I[ne]];
++   {
++      Array<int> pos(ne);
++      for (int i = 0; i < ne; i++) { pos[i] = I[i]; }
++      for (int i = 0; i < faces_info.Size(); i++)
++      {
++         const FaceInfo &fi = faces_info[i];
++         if (fi.Elem2No >= 0)
++         {
++            J[pos[fi.Elem1No]++] = fi.Elem2No;
++            J[pos[fi.Elem2No]++] = fi.Elem1No;
++         }
++         else if (fi.Elem2Inf >= 0)
++         {
++            J[pos[fi.Elem1No]++] = NumOfElements - 1 - fi.Elem2No;
++         }
++      }
++   }
++   // Sort each row and remove duplicates, compacting the rows (I[i + 1] is read before
++   // it is overwritten with the compacted end of row i).
++   for (int i = 0, k = 0, start = 0; i < ne; i++)
++   {
++      const int end = I[i + 1], row = k;
++      std::sort(J + start, J + end);
++      for (int j = start; j < end; j++)
++      {
++         if (k == row || J[k - 1] != J[j]) { J[k++] = J[j]; }
++      }
++      start = end;
++      I[i + 1] = k;
++   }
++   el_to_el = new Table;
++   el_to_el->SetIJ(I, J, ne);
+ 
+    return *el_to_el;
+ }

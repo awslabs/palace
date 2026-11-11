@@ -7,7 +7,9 @@
 #include <cmath>
 #include <type_traits>
 #include <mfem/general/forall.hpp>
+#include "linalg/solverstats.hpp"
 #include "utils/device.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -39,6 +41,7 @@ bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
 
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
+  perf::ScopedTally t(perf::LambdaMaxTally());
   // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
   // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
   // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
@@ -57,6 +60,7 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 
 double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
 {
+  perf::ScopedTally t(perf::LambdaMaxTally());
   if (A.IsReal())
   {
     MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),

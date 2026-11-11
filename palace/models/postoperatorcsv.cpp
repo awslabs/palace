@@ -1721,6 +1721,16 @@ void PostOperatorCSV<solver_t>::PrintErrorIndicator(
 }
 
 template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::RemoveErrorIndicator(bool is_root)
+{
+  if (is_root)
+  {
+    std::error_code ec;
+    fs::remove(post_dir / "error-indicators.csv", ec);
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     const PostOperator<solver_t> &post_op)
 {

@@ -18,6 +18,124 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
+For problems with damping, the eigenvalue solver does not search for strongly damped modes,
+with quality factors below
+[`config["Solver"]["Eigenmode"]["MinQ"]`](../config/reference.md#config-solver-eigenmode-minq),
+whose slow convergence would delay the other modes. Optionally, the tolerance of the linear
+solves is relaxed as the requested modes converge
+([`config["Solver"]["Eigenmode"]["LinearSolverRelaxation"]`](../config/reference.md#config-solver-eigenmode-linearsolverrelaxation)),
+and only the requested number of modes is reported. The linear solves after the first one
+of each eigenvalue solve can be deflated with the harmonic Ritz vectors closest to zero of
+the preconditioned operator from the first solve
+([`config["Solver"]["Eigenmode"]["LinearSolverDeflation"]`](../config/reference.md#config-solver-eigenmode-linearsolverdeflation)),
+which removes the eigenvalues that slow down the convergence of GMRES. It is off by
+default: deflation can shift the eigenvalues of modes far from the shift by more than the
+tolerance. With adaptive mesh refinement, the
+eigenvalue solver of each adaptation iteration starts from the modes of the previous
+iteration
+([`config["Solver"]["Eigenmode"]["WarmStart"]`](../config/reference.md#config-solver-eigenmode-warmstart)),
+with the shift of the shift-and-invert spectral transformation moved from the target into
+the band of their frequencies
+([`config["Solver"]["Eigenmode"]["AdaptiveShift"]`](../config/reference.md#config-solver-eigenmode-adaptiveshift)),
+and the iterations before the last one can use looser tolerances
+([`config["Solver"]["Eigenmode"]["IntermediateTol"]`](../config/reference.md#config-solver-eigenmode-intermediatetol)).
+
+The coarse-level sparse direct solver of the multigrid preconditioner factorizes by default a
+real-valued approximation of the complex-valued coarse operator, the sum of its real and
+imaginary parts. Unless
+[`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear-complexcoarsesolve)
+is set, eigenmode simulations on Linux whose coarse-level solver is STRUMPACK on the host, with
+fourth-kind Chebyshev smoothers (the default), check this approximation at the setup of the
+preconditioner with a short GMRES probe on the coarse level. When the approximation is poor,
+for example with Floquet periodic boundaries
+([`config["Boundaries"]["Periodic"]["FloquetWaveVector"]`](../config/reference.md#config-boundaries-periodic-floquetwavevector))
+or absorbing boundaries
+([`config["Boundaries"]["Absorbing"]`](../config/reference.md#config-boundaries-absorbing)),
+they also factorize the complex-valued coarse matrix, compare short GMRES probes with the whole
+multigrid cycle, and keep the complex-valued coarse solve if it is predicted to need at least
+1.5 times fewer linear solver iterations than the real-valued one: this can reduce the
+iterations several times. With SuperLU or MUMPS, whose memory with the complex-valued matrix is
+harder to predict, set `"ComplexCoarseSolve": true` to use it.
+
+The complex-valued factorization keeps about 1.5 (SuperLU, MUMPS) to 3 (STRUMPACK) times the
+memory of the real-valued one, peaks higher during the factorization (several times the memory
+of the real-valued setup, more with SuperLU and MUMPS than with STRUMPACK), grows with the later
+factorizations of nonlinear eigenvalue solves, and its setup takes several times longer. The
+automatic choice does not try it if it is estimated not to fit, with a reserve for the later
+allocations, in the memory available to the process (the available memory of the node, or less
+in a memory-limited control group), or if that is unknown (for example off Linux). Limits
+enforced without control groups (for example by the polling of a scheduler) and other jobs
+sharing the node are not seen. The setup of the complex-valued coarse solve then holds both
+factorizations, and prints its estimate first: a failure in it stops the simulation, and if
+the simulation runs out of memory there, set `"ComplexCoarseSolve": false`. The choice is
+reused for the later shifts and adaptive mesh refinement iterations of the simulation while
+the size of the coarse level changes by at most a factor of 1.5. Set
+`"ComplexCoarseSolve": false` to keep the real-valued approximation, for example when memory
+is tight.
+
+If
+[`config["Solver"]["Linear"]["MGSmoothOrder"]`](../config/reference.md#config-solver-linear-mgsmoothorder)
+is not set, eigenmode simulations of solution order 2 use Chebyshev smoothers of order 8 instead
+of 4 on the multigrid levels whose shifted operator is nearly positive semi-definite,
+unless a short GMRES probe with the multigrid preconditioner at setup predicts that order 8
+needs more linear solver iterations than order 4. This can happen when the coarse-grid
+correction is a poor approximation, for example with the real-valued coarse solve of a
+complex operator that it approximates poorly.
+
+Geometries with symmetries, such as a circular cylinder or a square box, have degenerate
+eigenvalues, shared by several modes. The Krylov-Schur eigenvalue solver builds its subspace
+from a single starting vector, which in exact arithmetic contains only one mode of each set
+of degenerate modes: the others enter the subspace only through rounding errors and the
+errors of the iterative linear solves, after more iterations. An eigenvalue solve can then
+return one mode of a degenerate set and the next distinct mode in place of the others, most
+likely for a degenerate set at the end of the requested modes, depending on the number of
+processes. *Palace* tests the convergence after each step of the Krylov-Schur iteration
+(for subspaces of up to 128 vectors,
+[`config["Solver"]["Eigenmode"]["MaxSize"]`](../config/reference.md#config-solver-eigenmode-maxsize))
+and ends each cycle after the first as soon as the requested modes have converged, which
+saves linear solves but leaves fewer iterations for the missing modes to appear than the test at
+the end of each cycle of SLEPc; a cycle is not ended early either while two of the converged
+eigenvalues are within a relative distance of ``10^{-6}`` of each other. For models with
+symmetries, request more modes than needed with
+[`config["Solver"]["Eigenmode"]["N"]`](../config/reference.md#config-solver-eigenmode-n), so
+that the degenerate modes of interest are not the last ones, and check the multiplicities of
+the computed eigenvalues. To test the convergence only at the end of each cycle, set the
+PETSc option `-eps_krylovschur_check_interval 0`, for example with the environment variable
+`PETSC_OPTIONS="-eps_krylovschur_check_interval 0"` for all processes
+(`mpirun -x PETSC_OPTIONS ...` with Open MPI).
+
+!!! warning "Linear solver deflation"
+
+    `"LinearSolverDeflation"` is opt-in, with a fixed number of vectors `k` or with `-1`
+    for its automatic choice. Check its results against a run without deflation before
+    relying on it:
+
+      - **Accuracy.** Deflated solves can shift the eigenvalues of modes far from the shift
+        of the spectral transformation by more than the tolerance, and their backward
+        errors do not show it. The automatic mode changes the results even when it ends up
+        deflating nothing.
+      - **When it helps.** The deflation removes a few eigenvalues of the preconditioned
+        operator close to zero which persist over the linear solves of an eigenvalue solve:
+        typically from many requested modes in a dense part of the spectrum near the
+        target, from strongly damped port modes, or from degenerate tetrahedra. Without the
+        sliver patch solves of geometric multigrid
+        ([`config["Solver"]["Linear"]["MGSliverAngle"]`](../config/reference.md#config-solver-linear-mgsliverangle)),
+        a fixed `k` of 16 to 64 can save a large part of the iterations of the deflated
+        solves. These patch solves, on by default for eigenmode simulations, already remove
+        the slow directions of slivers: with them, deflation saves less, mostly on models
+        with many modes near the target.
+      - **When it does not.** The deflation does not pay when the small eigenvalues of the
+        preconditioned operator form a broad cluster rather than a few outliers, when most
+        linear solves of the eigenvalue solve belong to its first Krylov cycle, or when the
+        slow directions are those of modes which converge early. Its cost per iteration,
+        `k` more inner products (one global reduction) and `2 k` more vector updates, can
+        then make the solves slower, in particular with small problem sizes per process.
+      - **Memory.** The basis takes `2 k` vectors of the size of the problem, in single
+        precision on CPUs, per eigenvalue solve.
+      - **Interactions.** Deflation is only used with GMRES with left preconditioning, and
+        the deflated solves start from a zero initial guess. The basis is computed again
+        for each eigenvalue solve, for example after each adaptive mesh refinement.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the
@@ -56,6 +174,17 @@ that the approximate low-cost model is reliably accurate relative to the high-di
 model within the frequency band of interest. This is particularly useful for
 fine-resolution sweeps containing many sample points, where it can yield a significant
 speedup over the default strategy.
+
+With a geometric multigrid preconditioner, the linear solver of a uniform sweep reuses the
+sparse direct factorization of the coarse level for the frequencies within 5% of the
+frequency where it was computed, instead of factoring the coarse level again for every
+frequency
+([`config["Solver"]["Driven"]["CoarseReuseTol"]`](../config/reference.md#config-solver-driven-coarsereusetol)).
+The solves still converge to the linear solver tolerance. Adaptive sweeps factor the coarse
+level for every sample unless `"CoarseReuseTol"` is set: their samples are rarely that close
+to each other, and a different coarse solve can change which samples the adaptive sampling
+selects. An explicit value applies to both kinds of sweeps, so `"CoarseReuseTol": 0.0` turns
+the reuse off for uniform sweeps too.
 
 Port scattering parameters, or S-parameters, are postprocessed for the column of the
 scattering matrix corresponding to the driven port index automatically for this simulation

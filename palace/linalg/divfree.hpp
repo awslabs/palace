@@ -51,6 +51,9 @@ private:
   // Linear solver for the projected linear system (Gᵀ M G) y = x.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
+  // Counter id for the number of projections.
+  int perf_projections;
+
   // Workspace objects for solver application.
   mutable VecType psi, rhs;
 
@@ -67,6 +70,9 @@ public:
 
   // Same, with relative tolerance tol for the solve instead of the one set at construction.
   void Mult(VecType &y, double tol) const;
+
+  // Relative tolerance set at construction.
+  double GetTol() const;
 
   void Mult(const VecType &x, VecType &y) const
   {

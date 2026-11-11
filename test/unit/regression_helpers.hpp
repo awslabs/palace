@@ -77,6 +77,10 @@ struct RegressionOptions
   bool gridfunction_fields = false;
   SolverOverridePolicy linear_solver_policy = SolverOverridePolicy::UseGlobalOverride;
   SolverOverridePolicy eigen_solver_policy = SolverOverridePolicy::UseGlobalOverride;
+  // Set Solver.Linear.AlwaysComputeErrorEstimation for cases whose config does not set it,
+  // so the error-indicators.csv references of cases without AMR keep testing the estimator.
+  // false runs with the Palace default (estimator only for AMR).
+  bool always_error_estimation = true;
   // Custom per-file checks keyed by relative path under postpro/ (e.g.
   // "farfield-rE.csv", "iteration1/port-S.csv").
   std::unordered_map<std::string, CustomCheck> custom_checks;

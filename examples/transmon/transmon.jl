@@ -127,8 +127,11 @@ function generate_transmon(;
     config_name = splitext(basename(config_filename))[1]
     config["Problem"]["Output"] = joinpath("postpro", config_name)
 
-    # AMR.
+    # AMR. Without it, still report the error indicator (used in the documentation).
     config["Model"]["Refinement"]["MaxIts"] = amr_iterations
+    if amr_iterations == 0
+        config["Solver"]["Linear"]["AlwaysComputeErrorEstimation"] = true
+    end
 
     # Set tight tolerances for reproducible results (important for CI/testing).
     config["Solver"]["Eigenmode"]["Tol"] = 1e-8

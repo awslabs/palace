@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-0",
+  "$id": "urn:palace:schema:6-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -87,6 +87,12 @@
           "type": "boolean",
           "description": "Reorder mesh elements to improve cache efficiency.",
           "default": false,
+          "x-palace-advanced": true
+        },
+        "LocalReorder": {
+          "type": "boolean",
+          "description": "Number the elements of each process along a Hilbert curve through their centroids (one curve through the whole mesh) once the mesh is partitioned, for the cache efficiency of the operators: the edges, faces and degrees of freedom follow the element order. Unlike `ReorderElements`, this keeps the partition (also of the rebalanced adapted meshes) and the refinement of nonconforming adapted meshes, and has no serial cost. Probes on the boundary between elements take the value in the element first in the order of the input mesh. Results change by round-off (the global phase of eigenvectors does not depend on the element order). Conforming meshes refined after their distribution (`Refinement.Nonconformal` false with adaptive refinement, or `Refinement.UniformLevels`), conforming meshes with curved (high-order) nodes, and nonconforming input meshes (such as saved adapted meshes) keep their element order. For driven problems using p-multigrid with an AMS coarse solver, the reordering can increase the number of linear solver iterations; set `\"LocalReorder\": false` if this happens.",
+          "default": true,
           "x-palace-advanced": true
         },
         "CleanUnusedElements": {
@@ -1427,12 +1433,12 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` includes the complex terms in the real-valued preconditioner. This override affects only this wave port and does not change the full 3D system preconditioner.",
+          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) if given (the real-valued approximation if it is omitted: the wave port solvers do not choose it at setup) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` includes the complex terms in the real-valued preconditioner. This override affects only this wave port and does not change the full 3D system preconditioner.",
           "x-palace-advanced": true
         },
         "EigenTol": {
           "type": "number",
-          "description": "Tolerance for the eigenvalue solver used in the wave port boundary mode analysis.",
+          "description": "Tolerance for the eigenvalue solver used in the wave port boundary mode analysis. In adaptive frequency sweeps, it also sets the acceptance tolerance of the reduced model of the port modes used at the output frequencies (the larger of 10 times this tolerance and the smaller of `1e-4` and 0.01 times [`/Solver/Driven/AdaptiveTol`](@ref config-solver-driven-adaptivetol)): a port mode of the reduced model with a larger residual is computed again by the eigenvalue solver. The phases of the S-parameters and of the port voltages and currents need this accuracy: with the default `1e-6`, the port modes of a lossless line can be inaccurate at some output frequencies, which shifts the phases of the transmission coefficients there by up to tenths of a degree. For accurate phases, set `1e-8`, at a moderate cost in adaptive sweeps with many output frequencies; `1e-10` makes the eigenvalue solver compute most port modes at the output frequencies, which can make such sweeps noticeably slower.",
           "exclusiveMinimum": 0.0,
           "default": 1e-06,
           "x-palace-advanced": true
@@ -2316,6 +2322,28 @@
         }
       ]
     },
+    "MultigridAuxiliaryResidual": {
+      "type": "string",
+      "default": "Default",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use `\"Updated\"` with the symmetric Krylov solvers (CG and MINRES), for which the preconditioner must stay symmetric, and `\"Lagged\"` otherwise."
+        },
+        {
+          "const": "Exact",
+          "description": "Compute the residual of the iterate with the operator of the level."
+        },
+        {
+          "const": "Updated",
+          "description": "Update the residual through the operator applications of the Chebyshev smoother and to the auxiliary space correction, in single precision with `\"MGSmoothSinglePrecision\"`. The smoother is unchanged up to rounding."
+        },
+        {
+          "const": "Lagged",
+          "description": "Compute the auxiliary space correction of the pre-smoother from the residual before the last Chebyshev step, and the first Chebyshev step of the post-smoother from the residual before the auxiliary space correction. This saves two operator applications per level and V-cycle, but the multigrid preconditioner is no longer symmetric."
+        }
+      ]
+    },
     "PreconditionerSide": {
       "type": "string",
       "oneOf": [
@@ -2338,7 +2366,7 @@
       "oneOf": [
         {
           "const": "Default",
-          "description": "Use the sparse direct solver's default column ordering."
+          "description": "Use the parallel PT-Scotch ordering for `\"STRUMPACK\"` built with PT-Scotch and matrices of at least 50000 rows on more than one process (distributed separators on at most 256 processes, METIS for the subgraph of each process), and the sparse direct solver's default column ordering otherwise."
         },
         {
           "const": "METIS",
@@ -2346,7 +2374,8 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Deprecated: same as `\"METIS\"`, since *Palace* no longer depends on ParMETIS.",
+          "x-palace-deprecated": true
         },
         {
           "const": "Scotch",
@@ -2431,12 +2460,12 @@
         },
         "MaxSize": {
           "type": "integer",
-          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 N, N + 15)`.",
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(3 \u00d7 N, N + 28)` for `N` \u2265 6 with the SLEPc solver and [`\"MinQ\"`](@ref config-solver-eigenmode-minq) > 0.5, which keeps the strongly damped Ritz values that a larger subspace captures from stalling the convergence, except with the `\"SLP\"` nonlinear solver, and `max(2 \u00d7 N, N + 15)` otherwise.",
           "exclusiveMinimum": 0
         },
         "N": {
           "type": "integer",
-          "description": "Number of eigenvalues to compute.",
+          "description": "Number of eigenvalues to compute. The SLEPc solver often converges more eigenpairs, which are written to `eig.csv` as well, except with the relaxation of the linear solver tolerance (see [`\"LinearSolverRelaxation\"`](@ref config-solver-eigenmode-linearsolverrelaxation)).",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -2471,6 +2500,51 @@
           "type": "boolean",
           "description": "Use a constant start vector instead of a random one.",
           "default": false,
+          "x-palace-advanced": true
+        },
+        "WarmStart": {
+          "type": "boolean",
+          "description": "For adaptive mesh refinement, start the eigenvalue solver of each adaptation iteration from the eigenvectors of the previous one: the start vector combines them, transferred to the refined and rebalanced mesh, with a small component of the random (or constant) start vector. Only used with [`\"StartVector\"`](@ref config-solver-eigenmode-startvector) and nonconformal refinement ([`/Model/Refinement/Nonconformal`](@ref config-model-refinement-nonconformal)). The eigenvectors are kept in a discontinuous vector L2 space between the iterations. The warm start is skipped when the previous solve converged within its first Krylov cycle, and the linear solves of the first Krylov cycle of a warm-started solve use `1e-2` times [`/Solver/Linear/Tol`](@ref config-solver-linear-tol) (not below `1e-12`).",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "AdaptiveShift": {
+          "type": "boolean",
+          "description": "For adaptive mesh refinement, move the shift of the shift-and-invert spectral transformation of each adaptation iteration after the first from the target into the band of the requested eigenvalues of the previous iteration: to `0.45` times the distance from the target to the farthest requested eigenvalue, moved down to the middle of the interval between consecutive eigenvalues when it lies within a quarter of that interval from one of them, and further down to the first interval at least half as wide as the mean spacing of the requested eigenvalues. The search is still for the modes nearest above [`\"Target\"`](@ref config-solver-eigenmode-target), which are then the dominant ones of the transformed operator, while the modes below the target, which shift-and-invert at the target makes the most dominant ones, are less dominant than all of them, so that fewer restarts are needed, and the errors of the linear solves enter the eigenvalues far from the target less amplified. The shift stays at the target after a solve which converged within two restarts with it there, as few as a warm-started solve needs. The error estimates are converted to relative errors of the eigenvalues for the convergence test. If the shift is above the middle of the target and the farthest requested eigenvalue found (modes entering the requested set lowered it), the solve is repeated once with the shift from the eigenvalues found, else (or if fewer eigenpairs than requested converge) with the shift at the target. Only used by the SLEPc Krylov-Schur solver for linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear), without frequency-dependent boundary conditions.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "LinearSolverRelaxation": {
+          "type": "number",
+          "description": "Constant `c` for relaxing the tolerance of the linear solves as the requested eigenpairs converge (inexact shift-and-invert): after each restart of the SLEPc Krylov-Schur solver, the relative tolerance of the linear solver becomes the smallest `c' \u00d7 Tol / r` over the requested eigenpairs not converged yet, with `r` the error estimate of the eigenpair and `c' = min(c, 0.01 gap / ratio)`, where `gap` is the relative distance of its transformed eigenvalue to the nearest other one and `ratio` that of the largest transformed eigenvalue to its own, bounded by [`/Solver/Linear/Tol`](@ref config-solver-linear-tol) from below and by `1e-4` from above. A solve which ends with fewer converged eigenpairs than requested, with a requested eigenpair accepted although its Ritz value did not settle between restarts, or with a requested eigenpair whose backward error exceeds `2 Tol max(1, |\u03bb - \u03c3| / |\u03c3|)` for the shift `\u03c3` (the residuals of the linear solves enter that of an eigenpair amplified by about `|\u03bb - \u03c3| / |\u03c3|`), is repeated without relaxation. Only the `N` requested eigenpairs are then written to `eig.csv`, since further converged eigenpairs can be less accurate. `0` disables the relaxation. Only used by the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
+          "minimum": 0.0,
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "LinearSolverDeflation": {
+          "type": "integer",
+          "description": "Number of vectors `k` with which the shift-and-invert linear solves are deflated: the first linear solve of each eigenvalue solve provides the `k` harmonic Ritz vectors of the preconditioned operator with the eigenvalues closest to zero, which form the basis `W` of the two-level (A-DEF1) deflation `P r = B (r - A W E\u207b\u00b9 W\u1d34 r) + W E\u207b\u00b9 W\u1d34 r`, `E = W\u1d34 A W`, of the preconditioner `B` for the later solves. The multigrid preconditioner of shifted Maxwell operators maps a few directions (for example modes close to the target, or high-frequency components which the smoother does not reach) to eigenvalues close to or below zero, which slow down GMRES. The basis takes `2 k` vectors of memory (in single precision on CPUs), and each linear solver iteration `k` more inner products (one global reduction) and `2 k` more vector updates. `-1` chooses the vectors for each eigenvalue solve: only harmonic Ritz values of magnitude below 0.25 are deflated at first (at most 64, possibly none), and only if GMRES for the projected preconditioned operator predicts that the deflation saves at least 5% at its measured cost; a solve without deflation after 8 and then every 32 deflated solves verifies the gain (the deflation stops, or goes back to fewer vectors, if it finds none), and while the deflation pays, the vectors of the values below 0.5 and then 1 from the same first solve are tried (when the model predicts at least 10% fewer iterations with them), each set kept if it saves more than 3% over the previous one on the same right-hand side. `0` disables the deflation (the default: deflation can shift the eigenvalues of modes far from the shift by more than the tolerance, which their backward errors do not show). Only used with GMRES with left preconditioning.",
+          "minimum": -1,
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "MinQ": {
+          "type": "number",
+          "description": "Minimum quality factor `Q = |\u03c9| / (2 Im{\u03c9})` of the eigenmodes searched for in problems with damping: strongly damped modes with lower `Q`, and growing modes with `|Q|` < 10, are excluded from the search region, so that their Ritz values, which converge slowly, cannot stall the convergence of the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver.",
+          "minimum": 0.0,
+          "default": 0.54,
+          "x-palace-advanced": true
+        },
+        "IntermediateTol": {
+          "type": "number",
+          "description": "Relative convergence tolerance for the eigenvalue solver in the adaptation iterations before the last one, whose eigenvectors only drive the mesh refinement (see [`/Model/Refinement`](@ref config-model-refinement)). The last iteration, known from [`/Model/Refinement/MaxIts`](@ref config-model-refinement-maxits) and [`/Model/Refinement/MaxSize`](@ref config-model-refinement-maxsize), uses [`\"Tol\"`](@ref config-solver-eigenmode-tol); when the error indicator ends the adaptation earlier ([`/Model/Refinement/Tol`](@ref config-model-refinement-tol)), the solve is repeated on the final mesh with the final tolerances. The results of the intermediate iterations (written with [`/Model/Refinement/SaveAdaptIterations`](@ref config-model-refinement-saveadaptiterations)) are only as accurate as these tolerances. Looser tolerances can change the refinement slightly, and therefore the final mesh and results. If omitted, Palace uses `\"Tol\"`, and values below it have no effect. See also [`\"IntermediateLinearSolverTol\"`](@ref config-solver-eigenmode-intermediatelinearsolvertol).",
+          "exclusiveMinimum": 0.0,
+          "x-palace-advanced": true
+        },
+        "IntermediateLinearSolverTol": {
+          "type": "number",
+          "description": "Relative tolerance of the linear solver in the adaptation iterations before the last one, see [`\"IntermediateTol\"`](@ref config-solver-eigenmode-intermediatetol). If omitted, Palace uses [`/Solver/Linear/Tol`](@ref config-solver-linear-tol), and values below it have no effect.",
+          "exclusiveMinimum": 0.0,
           "x-palace-advanced": true
         },
         "MassOrthogonal": {
@@ -2613,6 +2687,32 @@
           "description": "Number of consecutive samples satisfying the error tolerance required to declare convergence of the adaptive sampling algorithm.",
           "exclusiveMinimum": 0,
           "default": 2
+        },
+        "AdaptivePoleExclusion": {
+          "type": "number",
+          "description": "Relative half-width `w` of the frequency intervals that adaptive sampling excludes from its search for the frequency with the largest error of the reduced-order model: the intervals `[(1 - w) f, (1 + w) f]` around the real part `f` of each pole of the reduced-order model narrower than them (quality factor above `1 / (2 w)`), once it has converged: moved since the previous sample by less than [`\"AdaptiveTol\"`](@ref config-solver-driven-adaptivetol) times the half-width. Within a resonance much narrower than the sampling of the sweep, such as a weakly coupled mode of quality factor `1e6` to `1e11`, the reduced-order model error cannot be reduced below [`\"AdaptiveTol\"`](@ref config-solver-driven-adaptivetol), and samples there only restart the count of [`\"AdaptiveConvergenceMemory\"`](@ref config-solver-driven-adaptiveconvergencememory). The frequencies of the sweep in the excluded intervals are still searched. Only used for reduced-order models without frequency-dependent boundary conditions (such as wave ports or surface conductivity). `0.0` disables the exclusion. Off by default (`0`): with adaptive mesh refinement, the excluded samples are also missing from the error indicator, which changes the refinement path, unless [`\"AdaptiveIndicatorSamples\"`](@ref config-solver-driven-adaptiveindicatorsamples) computes it at fixed frequencies.",
+          "minimum": 0.0,
+          "exclusiveMaximum": 0.1,
+          "default": 0.0
+        },
+        "AdaptiveIndicatorSamples": {
+          "type": "integer",
+          "description": "With adaptive mesh refinement, the number of frequencies of the sweep, uniformly spaced in the sample index from the first to the last one, at which the adaptive frequency sweep computes the error indicator from the reduced-order model after its sampling, instead of from its full-order samples. The full-order samples follow the greedy search for the largest reduced-order model error, whose choices change with round-off (process count, build), and the indicator of the refinement, which averages the error over them, changes with them: with fixed frequencies, the marked elements no longer depend on the sample set, and [`\"AdaptivePoleExclusion\"`](@ref config-solver-driven-adaptivepoleexclusion) does not change the refinement either. The reduced-order model solutions are within [`\"AdaptiveTol\"`](@ref config-solver-driven-adaptivetol) of the full-order ones. The cost is one error estimate per frequency and excitation, as for each full-order sample otherwise. The fixed frequencies under-weight the resonances narrower than their spacing, and the refinement then does not converge those modes (see [`\"AdaptiveIndicatorMaxQ\"`](@ref config-solver-driven-adaptiveindicatormaxq)). The error indicator norm of each adaptation iteration, which the refinement [`\"Tol\"`](@ref config-model-refinement-tol) is compared with, is then the root mean square over these frequencies, which can be well below the one over the full-order samples (which sit on the resonances). `0`, the default, uses the full-order samples.",
+          "minimum": 0,
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "AdaptiveIndicatorMaxQ": {
+          "type": "number",
+          "description": "With [`\"AdaptiveIndicatorSamples\"`](@ref config-solver-driven-adaptiveindicatorsamples) greater than `0`, the error indicator is also computed at the resonances of the reduced-order model in the band of the sweep with a quality factor below this value. The fixed frequencies only weigh a resonance narrower than their spacing when one of them falls within a few linewidths. Weakly coupled resonances, of larger quality factors, satisfy the full-order equations only when the sampling happens to visit them, which would make the indicator depend on the samples again: keep the value well below their quality factors, e.g. `1e5` when they are `1e6` and more. The resonances are the poles of the reduced-order model whose eigenvectors satisfy the full-order equations to `1e-2` relative to the size of their terms (the projection also has spurious poles, which change with the samples and leave residuals of order one). Each weighs in the indicator as much as the fixed frequencies together: a single field among theirs does not drive the refinement. The candidates are listed in the log with their residuals; the poles are not computed with frequency-dependent boundary conditions (wave or Floquet ports, second-order farfield, surface conductivity or rational surface impedance boundaries), for which the log warns. `0.0`, the default, adds none.",
+          "minimum": 0.0,
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "CoarseReuseTol": {
+          "type": "number",
+          "description": "Relative frequency distance within which the linear solver of a frequency sweep reuses the coarse-level sparse direct factorization of the multigrid preconditioner computed at an earlier frequency, instead of factoring the coarse level again. A solve with a reused factorization still converges to [`/Linear/Tol`](@ref config-solver-linear-tol); when it needs 50% more iterations than the solve at the factored frequency, the coarse level is factored again and the solve continues. Only used when the preconditioner is geometric multigrid with more than one level (see [`/Linear/MGMaxLevels`](@ref config-solver-linear-mgmaxlevels)). An explicit value applies to both uniform and adaptive sweeps, and `0.0` disables reuse. If omitted, Palace uses `0.05` for uniform sweeps and `0.0` for adaptive sweeps ([`\"AdaptiveTol\"`](@ref config-solver-driven-adaptivetol) > 0), whose samples are rarely that close and whose choice of samples a different coarse solve can change.",
+          "minimum": 0.0
         },
         "AdaptiveGSOrthogonalization": {
           "$ref": "#/$defs/Orthogonalization",
@@ -2972,9 +3072,23 @@
           "description": "Maximum Krylov space size for GMRES/FGMRES. If omitted, Palace uses [`MaxIts`](@ref config-solver-linear-maxits).",
           "exclusiveMinimum": 0
         },
+        "StagnationIts": {
+          "type": "integer",
+          "description": "GMRES/FGMRES stop when the residual norm decreased by less than the relative fraction [`StagnationTol`](@ref config-solver-linear-stagnationtol) over the last `StagnationIts` iterations: the solve has reached the accuracy attainable for the preconditioned system, and further iterations would not change the solution. `0` disables the test.",
+          "minimum": 0,
+          "default": 100,
+          "x-palace-advanced": true
+        },
+        "StagnationTol": {
+          "type": "number",
+          "description": "Relative residual decrease over [`StagnationIts`](@ref config-solver-linear-stagnationits) iterations below which GMRES/FGMRES stop.",
+          "minimum": 0.0,
+          "default": 1.0e-3,
+          "x-palace-advanced": true
+        },
         "InitialGuess": {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "description": "Use the previous solution as an initial guess for the iterative solver. For adaptive frequency sweeps, the initial guess of each sampled solve is the reduced-order model solution at that frequency. If omitted, Palace enables this for driven simulations, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels": {
@@ -3010,7 +3124,12 @@
         },
         "MGSmoothOrder": {
           "type": "integer",
-          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
+          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`, except when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"` and the solution order is 2: then, order 8 is used on multigrid levels whose shifted operator is estimated at setup to be nearly positive semi-definite. Order 8 is not used if a short GMRES probe with the multigrid preconditioner at setup predicts that it needs more iterations than the base order.",
+          "exclusiveMinimum": 0
+        },
+        "MGAuxiliarySmoothOrder": {
+          "type": "integer",
+          "description": "Polynomial smoothing order in the auxiliary (gradient) space of the distributive relaxation smoother for geometric multigrid, which is used with [`\"MGAuxiliarySmoother\"`](@ref config-solver-linear-mgauxiliarysmoother). If omitted, Palace uses `max(2 \u00d7 solution order, 4)` with [`ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve), where this order needs no more linear solver iterations than the order of the primary space smoother and makes each iteration cheaper, and the order of the primary space smoother (see [`\"MGSmoothOrder\"`](@ref config-solver-linear-mgsmoothorder)) otherwise.",
           "exclusiveMinimum": 0
         },
         "MGSmoothEigScaleMax": {
@@ -3033,6 +3152,33 @@
           "default": true,
           "x-palace-advanced": true
         },
+        "MGSmoothSinglePrecision": {
+          "type": "boolean",
+          "description": "For frequency domain and transient simulations on CPUs, apply the operator of each geometric multigrid level to the search directions of its Chebyshev smoother through single-precision element matrices, and store the element matrices of the auxiliary space operators in single precision. The residuals of the smoothed iterates are computed in double precision, as are the coarsest level and the system matrix, so the preconditioner changes at the level of single-precision rounding. Imaginary volume terms below single-precision accuracy relative to the real part, such as dielectric loss tangents below `1e-6`, are left out of the single-precision applications. The element matrices take additional memory and setup time (about 5 kB and 0.2 ms per tetrahedron at order 3, 16 kB and 0.5 ms at order 4).",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "MGAuxiliaryResidual": {
+          "$ref": "#/$defs/MultigridAuxiliaryResidual",
+          "description": "Residuals of the iterates between the primary and auxiliary space smoothers of the distributive relaxation smoother (see `\"MGAuxiliarySmoother\"`).",
+          "x-palace-advanced": true
+        },
+        "MGSliverAngle": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 90.0,
+          "description": "Tetrahedra with a minimum dihedral angle below this value (in degrees) are treated as slivers by geometric multigrid: on every level above the coarsest, the true dofs of the mesh entities around each sliver (see `\"MGSliverLayers\"`) form a patch, and an exact solve with the dense block of the level operator on each patch precedes the coarse-grid correction. The Chebyshev smoothers, with their diagonal scaling, cannot correct the local modes of a degenerate element, which can then dominate the number of linear solver iterations. Meshes without slivers are not affected. `0.0` disables the patch solves. A negative value (the default) uses 2 degrees for the complex-valued operators of frequency domain driven and eigenmode simulations, and no patch solves for the real-valued operators of electrostatic, magnetostatic and transient simulations (whose conjugate gradient iterations they do not reduce). Larger thresholds can select anisotropic elements, which do not slow down the smoothers, at the cost of many patch solves.",
+          "default": -1.0,
+          "x-palace-advanced": true
+        },
+        "MGSliverLayers": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 1,
+          "description": "Extent of the sliver patches of `\"MGSliverAngle\"`: `1` for the mesh entities incident to the vertices of the sliver, `0` for its own edges, faces and interior, `-1` for the former unless their dense solves are expensive compared with the smoothing of the multigrid level (on a process, the sum of the squared patch sizes above 12 times its number of true dofs times the order of the Chebyshev smoother, as for large merged clusters of slivers), and no patch solves on the level otherwise.",
+          "default": -1,
+          "x-palace-advanced": true
+        },
         "PCMatReal": {
           "type": "boolean",
           "description": "When `true`, builds the preconditioner for frequency domain problems using a real-valued approximation of the system matrix. Always used on the coarsest multigrid level regardless of this setting.",
@@ -3044,8 +3190,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
-          "default": false
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation (the sum of the real and imaginary parts). If omitted, eigenmode simulations on Linux whose coarse-level solver is `\"STRUMPACK\"` on the host, with fourth-kind Chebyshev smoothers, use the approximation unless, at the setup of the multigrid preconditioner, a short GMRES probe on the coarse level finds it to be a poor approximation of the complex-valued coarse operator and a short GMRES probe with the whole multigrid cycle predicts that the complex-valued matrix needs at least 1.5 times fewer iterations: they then factorize the complex-valued matrix, which keeps about three times the memory of the real-valued factorization and peaks higher. It is not tried if it is estimated not to fit in the memory available to the process, or if that is unknown. The choice is reused for the later shifts and adaptive mesh refinement iterations. Other simulations and coarse-level solvers (`\"SuperLU\"`, `\"MUMPS\"`) use the approximation unless this is `true`."
         },
         "DropSmallEntries": {
           "type": "boolean",
@@ -3064,12 +3209,12 @@
         },
         "ColumnOrdering": {
           "$ref": "#/$defs/SymbolicFactorization",
-          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace uses the sparse direct solver's default ordering.",
+          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace orders `\"STRUMPACK\"` problems of at least 50000 rows in parallel when STRUMPACK is built with PT-Scotch (PT-Scotch separators on at most 256 processes, METIS for the subgraph of each process) and otherwise uses the sparse direct solver's default ordering. `\"STRUMPACK-MP\"` ignores it and always orders with METIS.",
           "x-palace-advanced": true
         },
         "STRUMPACKCompressionType": {
           "$ref": "#/$defs/SparseCompression",
-          "description": "STRUMPACK compression type.",
+          "description": "STRUMPACK compression type. `\"STRUMPACK-MP\"` ignores it and does not compress.",
           "x-palace-advanced": true
         },
         "STRUMPACKCompressionTol": {
@@ -3091,6 +3236,11 @@
           "description": "Number of butterfly levels for STRUMPACK HODLR compression.",
           "minimum": 0,
           "default": 1,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKSelectiveInversion": {
+          "type": "boolean",
+          "description": "Store the inverses of the separator blocks of the distributed fronts of STRUMPACK (selective inversion), so that the solves with a factorization use matrix products instead of distributed triangular solves; blocks with a 1-norm condition number above 9e10 keep their triangular solves. The inverses add about 10-30% to the time of each factorization and pay off only over many solves with it. If omitted, Palace enables this for eigenmode, boundary mode, and transient simulations, and disables it for driven, electrostatic, and magnetostatic simulations, where each factorization serves the Krylov solve of one frequency or of the sources. Has an effect only with a STRUMPACK built with Palace's selective inversion patch (superbuild or Spack), and none with `\"STRUMPACK-MP\"`, which never applies the selective inversion.",
           "x-palace-advanced": true
         },
         "SuperLU3DCommunicator": {
@@ -3126,6 +3276,11 @@
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
         },
+        "AMSSmoothIts": {
+          "type": "integer",
+          "description": "Number of smoothing sweeps on the Nédélec space in each AMS iteration when AMS is the coarse solver of geometric multigrid (`\"MGMaxLevels\"` > 1). If omitted, Palace uses 8 when [`\"AMSSingularOperator\"`](@ref config-solver-linear-amssingularoperator) is enabled (by default, magnetostatic simulations without superconductor boundaries) and [`\"MGSmoothIts\"`](@ref config-solver-linear-mgsmoothits) otherwise.",
+          "exclusiveMinimum": 0
+        },
         "DivFreeTol": {
           "type": "number",
           "description": "Relative tolerance for divergence-free cleaning used in the eigenmode simulation type. Ignored when a nonzero Floquet wave vector is specified or when a nonzero [LondonDepth](@ref config-domains-materials-londondepth) is used.",
@@ -3140,9 +3295,8 @@
         },
         "EstimatorTol": {
           "type": "number",
-          "description": "Relative tolerance for the flux projection solve used in the error estimate calculation.",
-          "minimum": 0.0,
-          "default": 1e-06
+          "description": "Relative tolerance for the flux projection solve used in the error estimate calculation. The error of the projections adds about this much to the error indicator, which is relative to the energy of the solution, so the tolerance must be well below the indicator norms that matter: adaptive mesh refinement then marks the same elements as with tighter tolerances, up to elements at the marking threshold. If omitted, Palace uses the smaller of `1e-4` and 0.01 times [`/Model/Refinement/Tol`](@ref config-model-refinement-tol), but not less than `1e-10`: that is `1e-4` for the default refinement tolerance `1e-2`, so that the indicator can reach the refinement tolerance unless that is below about `1e-9`. Very accurate solutions (for example of high order on smooth problems), whose indicator norm is within about an order of magnitude of the tolerance, need a tighter value, such as `1e-8` or `1e-10`: the indicator then measures the error of the projections instead of the discretization error.",
+          "minimum": 0.0
         },
         "EstimatorMaxIts": {
           "type": "integer",
@@ -3152,13 +3306,18 @@
         },
         "EstimatorMG": {
           "type": "boolean",
-          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi. The flux recovery on meshes with uncracked interior boundaries with boundary conditions, which is discontinuous across them, always uses Jacobi.",
+          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver. When `false`, and always for the flux recovery on meshes with uncracked interior boundaries with boundary conditions, which is discontinuous across them, the solver uses an entity-block Jacobi preconditioner in CPU builds without OpenMP when the mass matrix is partially assembled (see [PartialAssemblyOrder](@ref config-solver-partialassemblyorder)), for H(div) and H(curl) recovery spaces of [Order](@ref config-solver-order) two and three on meshes made of tetrahedra, prisms, or both, or of triangles, and of order four on meshes made only of tetrahedra or only of triangles, and Jacobi otherwise.",
+          "default": false
+        },
+        "AlwaysComputeErrorEstimation": {
+          "type": "boolean",
+          "description": "When `true`, computes the flux-recovery error indicator after each solve even without adaptive mesh refinement, and writes it to `error-indicators.csv` and to the `Indicator` (ParaView) or `indicator` (grid function) field of the final output. Adaptive mesh refinement ([`/Model/Refinement/MaxIts`](@ref config-model-refinement-maxits) > 0, except for transient simulations, which do not support it) computes it for every solve except the one after the last refinement allowed by `MaxIts`, which ends the adaptation whatever its value; `true` computes it there as well, so that the final mesh is checked against [`/Model/Refinement/Tol`](@ref config-model-refinement-tol).",
           "default": false
         },
         "GSOrthogonalization": {
           "$ref": "#/$defs/Orthogonalization",
-          "description": "Gram-Schmidt variant used to orthogonalize vectors in Krylov subspace methods and other parts of the solver.",
-          "default": "MGS"
+          "description": "Gram-Schmidt variant used to orthogonalize vectors in Krylov subspace methods and other parts of the solver. With `\"CGS2\"`, GMRES and FGMRES reorthogonalize each basis vector one iteration late, in the same two passes over the basis as the first projection of the next vector, with one global reduction per iteration.",
+          "default": "CGS2"
         }
       }
     }

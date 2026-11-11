@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_ERROR_ESTIMATOR_HPP
 #define PALACE_LINALG_ERROR_ESTIMATOR_HPP
 
+#include <complex>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -47,13 +48,29 @@ private:
   // Workspace object for solver application.
   mutable VecType rhs;
 
+  MPI_Comm comm;
+
+  // The last solutions Y, at most max_prev of them in a ring buffer, and their Gram matrix
+  // G = Yᴴ M Y (column-major, max_prev x max_prev). The number of solutions stored is the
+  // same on all processes, since Mult is collective.
+  int max_prev;
+  mutable std::vector<VecType> Y;
+  mutable std::vector<std::complex<double>> G;
+  mutable int num_solves = 0;
+
 public:
   FluxProjector(const MaterialPropertyCoefficient &coeff,
                 const FiniteElementSpaceHierarchy &smooth_fespaces,
                 const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
-                bool use_mg);
+                bool use_mg, int num_prev = 1);
 
+  // Projects the flux x into y. Each projection after the first starts from the closest
+  // combination of the last num_prev solutions to the new one in the M-norm, which is never
+  // worse than a zero initial guess.
   void Mult(const VecType &x, VecType &y) const;
+
+  // Cumulative number of linear solver iterations.
+  int NumTotalMultIterations() const { return ksp->NumTotalMultIterations(); }
 };
 
 // Forward declarations for friend access.
@@ -92,7 +109,7 @@ public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                          FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it,
                          int print, bool use_mg,
-                         const std::vector<int> &crack_attr_list = {});
+                         const std::vector<int> &crack_attr_list = {}, int num_prev = 1);
 
   // Compute elemental error indicators given the electric field as a vector of true dofs,
   // and fold into an existing indicator. The indicators are nondimensionalized using the
@@ -131,7 +148,7 @@ public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
                          FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
                          int print, bool use_mg,
-                         const std::vector<int> &crack_attr_list = {});
+                         const std::vector<int> &crack_attr_list = {}, int num_prev = 1);
 
   // Compute elemental error indicators given the magnetic flux density as a vector of true
   // dofs, and fold into an existing indicator. The indicators are nondimensionalized using
@@ -155,7 +172,8 @@ public:
                                   FiniteElementSpaceHierarchy &nd_fespaces,
                                   FiniteElementSpaceHierarchy &rt_fespaces, double tol,
                                   int max_it, int print, bool use_mg,
-                                  const std::vector<int> &crack_attr_list = {});
+                                  const std::vector<int> &crack_attr_list = {},
+                                  int num_prev = 1);
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
@@ -172,13 +190,11 @@ private:
   CurlFluxErrorEstimator<VecType> curl_estimator;
 
 public:
-  BoundaryModeFluxErrorEstimator(const MaterialOperator &mat_op,
-                                 FiniteElementSpaceHierarchy &nd_fespaces,
-                                 FiniteElementSpaceHierarchy &rt_fespaces,
-                                 FiniteElementSpace &curl_fespace,
-                                 FiniteElementSpaceHierarchy &h1_fespaces, double tol,
-                                 int max_it, int print, bool use_mg,
-                                 const std::vector<int> &crack_attr_list = {});
+  BoundaryModeFluxErrorEstimator(
+      const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
+      FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
+      FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
+      bool use_mg, const std::vector<int> &crack_attr_list = {}, int num_prev = 1);
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;

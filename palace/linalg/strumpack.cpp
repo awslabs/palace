@@ -3,7 +3,12 @@
 
 #include "strumpack.hpp"
 
+#include <type_traits>
+
 #if defined(MFEM_USE_STRUMPACK)
+
+#include <StrumpackConfig.hpp>
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -40,8 +45,10 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
-  : StrumpackSolverType(comm), comm(comm)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse,
+    bool selective_inversion, int print)
+  : StrumpackSolverType(comm), comm(comm),
+    default_reorder(reorder == SymbolicFactorization::DEFAULT)
 {
   // Configure the solver.
   this->SetPrintFactorStatistics(print > 1);
@@ -55,9 +62,6 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
       // this->SetReorderingStrategy(strumpack::ReorderingStrategy::AND);
       break;
-    case SymbolicFactorization::PARMETIS:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
-      break;
     case SymbolicFactorization::SCOTCH:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
       break;
@@ -70,8 +74,11 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       break;
     case SymbolicFactorization::RCM:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::RCM);
-    case SymbolicFactorization::PORD:
+      break;
     case SymbolicFactorization::DEFAULT:
+      // Chosen from the matrix size in SetOperator.
+      break;
+    case SymbolicFactorization::PORD:
       // Should have good default.
       break;
   }
@@ -111,6 +118,24 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // else
   {
     this->DisableGPU();
+  }
+
+  if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
+  {
+    // The solve phase is applied once per Krylov iteration and is bound by the slowest
+    // process: map the elimination tree to processes by factor memory (what the solve
+    // reads) rather than by factorization flops.
+    this->solver_->options().set_proportional_mapping(
+        strumpack::ProportionalMapping::FACTOR_MEMORY);
+#if defined(STRUMPACK_HAS_SELECTIVE_INVERSION)
+    // Store the inverses of the distributed separator blocks so that the distributed
+    // triangular solves become matrix products (latency bound at scale); ill-conditioned
+    // blocks keep their triangular solves.
+    if (selective_inversion)
+    {
+      this->solver_->options().enable_selective_inversion();
+    }
+#endif
   }
 }
 
@@ -156,6 +181,20 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
   }
   mfem::STRUMPACKRowLocMatrix A(comm, n_loc_int, first_row, glob_n, glob_n, II.HostRead(),
                                 J, data, false);
+#endif
+#if defined(STRUMPACK_USE_PTSCOTCH)
+  if (default_reorder)
+  {
+    // Parallel nested dissection (PT-Scotch distributed separators on at most 256
+    // processes, METIS for the subgraph of each process; see
+    // extern/patch/STRUMPACK/patch_ptscotch_ordering.diff) instead of METIS on a single
+    // process, whose time grows with the matrix size while the other processes wait. Small
+    // matrices on few processes, such as those of the wave port mode problems, which are
+    // factorized at each exact port solve, are ordered faster by METIS.
+    this->SetReorderingStrategy((Mpi::Size(comm) > 1 && glob_n >= 50000)
+                                    ? strumpack::ReorderingStrategy::PTSCOTCH
+                                    : strumpack::ReorderingStrategy::METIS);
+  }
 #endif
   StrumpackSolverType::SetOperator(A);
   hypre_CSRMatrixDestroy(csr);

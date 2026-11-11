@@ -1,0 +1,46 @@
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -2941,6 +2941,25 @@
+    }
+ };
+ 
++/** Rows of the parallel conforming interpolation for the local DOFs and for the
++    ghost DOFs which are actually referenced (masters of local DOFs, rows received
++    from neighbors). Ghost DOFs are numbered over all ghost entities of the
++    ParNCMesh, which include the coarse mesh replicated on every process, so a row
++    for each of them takes memory of the order of the global problem on every
++    process. */
++struct PMatrixRows
++{
++   std::vector<PMatrixRow> local;
++   std::unordered_map<int, PMatrixRow> ghost;
++
++   explicit PMatrixRows(int ndofs) : local(ndofs) {}
++
++   PMatrixRow &operator[](int dof)
++   {
++      return (dof < static_cast<int>(local.size())) ? local[dof] : ghost[dof];
++   }
++};
++
+ class NeighborOrderMessage : public VarMessage<VarMessageTag::NEIGHBOR_ORDER_VM>
+ {
+ public:
+@@ -4232,7 +4251,7 @@
+       *dof_tdof = -1;
+    }
+ 
+-   std::vector<PMatrixRow> pmatrix(total_dofs);
++   PMatrixRows pmatrix(ndofs);
+ 
+    const bool bynodes = (ordering == Ordering::byNODES);
+    const int vdim_factor = bynodes ? 1 : vdim;
+@@ -4561,7 +4580,7 @@
+    }
+    else if (P_)
+    {
+-      *P_ = MakeVDimHypreMatrix(pmatrix, ndofs, num_true_dofs,
++      *P_ = MakeVDimHypreMatrix(pmatrix.local, ndofs, num_true_dofs,
+                                 dof_offs, tdof_offs);
+    }
+ 

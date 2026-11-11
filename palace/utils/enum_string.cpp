@@ -112,6 +112,12 @@ PALACE_ENUM_STRING_DEFINE(MultigridCoarsening,
                           {{MultigridCoarsening::LINEAR, "Linear"},
                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})
 
+PALACE_ENUM_STRING_DEFINE(MultigridAuxiliaryResidual,
+                          {{MultigridAuxiliaryResidual::DEFAULT, "Default"},
+                           {MultigridAuxiliaryResidual::EXACT, "Exact"},
+                           {MultigridAuxiliaryResidual::UPDATED, "Updated"},
+                           {MultigridAuxiliaryResidual::LAGGED, "Lagged"}})
+
 PALACE_ENUM_STRING_DEFINE(PreconditionerSide, {{PreconditionerSide::DEFAULT, "Default"},
                                                {PreconditionerSide::RIGHT, "Right"},
                                                {PreconditionerSide::LEFT, "Left"}})
@@ -119,7 +125,7 @@ PALACE_ENUM_STRING_DEFINE(PreconditionerSide, {{PreconditionerSide::DEFAULT, "De
 PALACE_ENUM_STRING_DEFINE(SymbolicFactorization,
                           {{SymbolicFactorization::DEFAULT, "Default"},
                            {SymbolicFactorization::METIS, "METIS"},
-                           {SymbolicFactorization::PARMETIS, "ParMETIS"},
+                           {SymbolicFactorization::METIS, "ParMETIS"},  // Deprecated alias
                            {SymbolicFactorization::SCOTCH, "Scotch"},
                            {SymbolicFactorization::PTSCOTCH, "PTScotch"},
                            {SymbolicFactorization::PORD, "PORD"},

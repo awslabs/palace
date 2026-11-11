@@ -204,12 +204,6 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
     "-DMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
     "-DHYPRE_DIR=${CMAKE_INSTALL_PREFIX}"
   )
-  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    list(APPEND MFEM_OPTIONS
-      "-DParMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-      "-DParMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
-    )
-  endif()
 
   # HYPRE is built with cusparse, curand (or HIP counterparts), and these are added to
   # HYPRE_LIBRARIES by the MFEM CMake build. However, this ignores the include directories
@@ -278,7 +272,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure SuperLU_DIST
   if(PALACE_WITH_SUPERLU)
-    set(SUPERLU_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI")
+    set(SUPERLU_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI")
     set(SUPERLU_REQUIRED_LIBRARIES)
     if(PALACE_WITH_OPENMP)
       list(APPEND SUPERLU_REQUIRED_PACKAGES "OpenMP")
@@ -306,8 +300,19 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure STRUMPACK
   if(PALACE_WITH_STRUMPACK)
-    set(STRUMPACK_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran")
+    set(STRUMPACK_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran")
     set(STRUMPACK_REQUIRED_LIBRARIES ${SCALAPACK_LIBRARIES} ${STRUMPACK_MUMPS_GFORTRAN_LIBRARY})
+    # STRUMPACK is built with the Scotch and PT-Scotch orderings
+    include(GNUInstallDirs)
+    if(BUILD_SHARED_LIBS)
+      set(_SCOTCH_LIB_SUFFIX ${CMAKE_SHARED_LIBRARY_SUFFIX})
+    else()
+      set(_SCOTCH_LIB_SUFFIX ${CMAKE_STATIC_LIBRARY_SUFFIX})
+    endif()
+    foreach(_SCOTCH_LIB IN ITEMS ptscotch ptscotcherr scotch scotcherr)
+      list(APPEND STRUMPACK_REQUIRED_LIBRARIES
+        ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/lib${_SCOTCH_LIB}${_SCOTCH_LIB_SUFFIX})
+    endforeach()
     if(NOT "${STRUMPACK_EXTRA_LIBRARIES}" STREQUAL "")
       list(PREPEND STRUMPACK_REQUIRED_LIBRARIES ${STRUMPACK_EXTRA_LIBRARIES})
     endif()
@@ -333,7 +338,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure MUMPS
   if(PALACE_WITH_MUMPS)
-    set(MUMPS_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
+    set(MUMPS_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
     if(PALACE_WITH_OPENMP)
       list(APPEND MUMPS_REQUIRED_PACKAGES "OpenMP")
     endif()
@@ -375,7 +380,6 @@ else()
   # to add any additional dependency libraries.
   set(PALACE_MFEM_DEPS
     "METIS"
-    "ParMETIS"
     "HYPRE"
     "SuperLUDist"
     "STRUMPACK"
@@ -520,7 +524,28 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456
 )
 
+# Hash-indexed DSTable and STable3D: the edge and face tables of meshes with tens of millions
+# of elements (FinalizeTopology, refinement marking) take a few memory accesses per lookup
+# instead of a traversal of the entries of a row.
+list(APPEND MFEM_PATCH_FILES "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_tables.diff")
+
+# A ParNCMesh holds all root elements on every process: give ghost indices only to the
+# edges and faces of the ghost elements (and to their slaves and masters), so that the
+# arrays over the ghost entities and DOFs of nonconforming meshes and finite element spaces
+# do not grow with the number of root elements. Made against the upstream-patched sources.
+list(APPEND MFEM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_ncmesh_ghost_entities.diff")
+
 include(ExternalProject)
+# Local patches, applied after the upstream ones: store rows of the parallel conforming
+# interpolation only for the referenced ghost DOFs of nonconforming meshes (the ghost DOF
+# numbering covers the coarse mesh replicated on every process).
+list(APPEND MFEM_PATCH_FILES "${CMAKE_SOURCE_DIR}/extern/patch/mfem/pfespace_ghost_rows.diff")
+# Rows of the conforming interpolation received for the DOFs of a shared face of a
+# nonconforming mesh use the inverse of the relative face orientation (rotated faces).
+list(APPEND MFEM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/pfespace_nc_face_orientation.diff")
+
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_MFEM_URL}

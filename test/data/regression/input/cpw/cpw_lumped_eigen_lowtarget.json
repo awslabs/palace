@@ -1,0 +1,149 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/lumped_eigen_lowtarget"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_lumped_0.msh",
+    "L0": 1.0e-6,  // μm
+    "Refinement":
+    {
+      "UniformLevels": 0
+    }
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Air
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],  // Sapphire
+        "Permeability": [0.99999975, 0.99999975, 0.99999979],
+        "Permittivity": [9.3, 9.3, 11.5],
+        "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
+        "MaterialAxes": [[0.8, 0.6, 0.0], [-0.6, 0.8, 0.0], [0.0, 0.0, 1.0]]
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [2]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "Impedance":
+    [
+      {
+        "Attributes": [13],  // Metal trace, kinetic inductance
+        "Ls": 1.0e-13
+      }
+    ],
+    "Absorbing":
+    {
+      "Attributes": [4],
+      "Order": 1
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "R": 56.02,  // Ω, 2-element uniform
+        "Elements":
+        [
+          {
+            "Attributes": [5],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [9],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 2,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [6],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [10],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 3,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [7],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [11],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 4,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [8],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [12],
+            "Direction": "-Y"
+          }
+        ]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      // A target about 1000 times below the eigenfrequencies (12-16 GHz): the
+      // divergence-free projection of the shift-and-invert solves must then be tighter
+      // than its default relative tolerance of 1e-3, or gradient components pollute the
+      // Krylov basis and spurious eigenpairs converge. MinQ excludes the mode at
+      // 12.45 + 28.18i GHz (Q = 0.547), which converges slowly and only in some runs.
+      "N": 2,
+      "Tol": 1.0e-6,
+      "Target": 0.015,
+      "MinQ": 0.6,
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 1000
+    }
+  }
+}

@@ -108,6 +108,18 @@ endif()
 string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")
 message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
 
+# Patches for the CPU backends: element blocks of 32 instead of 8 for operators with at
+# least 512 elements in the blocked backends, LIBXSMM kernels kept by each tensor
+# contraction instead of dispatched at every call, one contraction for all quadrature
+# components of single-component non-tensor bases, and curl-oriented restrictions without
+# the terms of their transforms that are zero on every element
+set(LIBCEED_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/libceed/patch_cpu_block_size.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/libceed/patch_xsmm_kernel_cache.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/libceed/patch_nontensor_contraction.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/libceed/patch_curl_oriented_restriction.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(libCEED
   DEPENDS           ${LIBCEED_DEPENDENCIES}
@@ -118,6 +130,10 @@ ExternalProject_Add(libCEED
   PREFIX            ${CMAKE_BINARY_DIR}/extern/libCEED-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${LIBCEED_PATCH_FILES}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install

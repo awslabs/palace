@@ -16,6 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/brokenspace.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
@@ -24,7 +25,12 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
+#include "linalg/entityjacobi.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/hypre.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/jacobi.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -41,6 +47,17 @@ namespace
 constexpr int crack_attr = 7;
 constexpr double x_crack = 0.5;
 constexpr double x_sheet = 0.25;  // Second interior boundary, for tests with two of them
+
+// The HypreParMatrix of a prolongation, also when it is applied with
+// hypre::HypreProlongation.
+const mfem::HypreParMatrix *GetHypreParMatrix(const Operator *P)
+{
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    return &fP->GetMatrix();
+  }
+  return dynamic_cast<const mfem::HypreParMatrix *>(P);
+}
 
 // Unit cube mesh of hexahedra for x < x_crack and pyramids for x > x_crack (each hexahedron
 // split into six pyramids with their apex at its center).
@@ -1051,15 +1068,14 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
     // vectors are valid before the products (only on the host, or only on the device with
     // stale contents).
     const Operator &P = *fespace.GetProlongationMatrix();
-    const auto *bP = dynamic_cast<const mfem::HypreParMatrix *>(&P);
+    const auto *bP = GetHypreParMatrix(&P);
     REQUIRE(bP);
     CHECK(bP == fespace.Dof_TrueDof_Matrix());
     CHECK(bP->GetGlobalNumRows() == fespace.GlobalVSize());
     CHECK(bP->GetGlobalNumCols() == fespace.GlobalTrueVSize());
     if (nonconforming)
     {
-      CHECK(dynamic_cast<const mfem::HypreParMatrix *>(
-                base_fespace.GetProlongationMatrix()) != nullptr);
+      CHECK(GetHypreParMatrix(base_fespace.GetProlongationMatrix()) != nullptr);
     }
     std::mt19937 gen(Mpi::Rank(comm) + 1);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
@@ -2299,6 +2315,307 @@ TEST_CASE("Interface dielectric energy on interior boundaries separating fields"
     const double legacy = LegacyIntegral(*Legacy, mesh.Get());
     CHECK_THAT(legacy, WithinRel(val, 1.0e-8) || WithinAbs(val, 1.0e-14));
   }
+}
+
+namespace
+{
+
+// Check the entity block Jacobi preconditioner B of the mass matrix M = Pᵀ A_loc P on the
+// given space against its definition: each block of B is the inverse of the block of the
+// globally assembled M (ParallelAssemble), and with a coefficient which makes every block
+// negative definite, B is the inverse diagonal. Also checks that B is SPD, its inverse
+// diagonal for the stopping norm is that of Jacobi, the complex application, and that PCG
+// converges to the solution in fewer iterations than with Jacobi by the given factor.
+// Returns the global number of blocks of a single true DOF and the maximum block size.
+std::array<HYPRE_BigInt, 2> CheckEntityBlockJacobi(const FiniteElementSpace &fespace,
+                                                   double min_gain)
+{
+  const auto comm = fespace.GetComm();
+  BilinearForm m(fespace);
+  m.AddDomainIntegrator<VectorFEMassIntegrator>();
+  auto m_loc = m.PartialAssemble();
+  ParOperator M(*m_loc, fespace);
+  EntityBlockJacobiSolver<Operator> B(*m_loc, fespace);
+  B.SetOperator(M);
+  const int n = fespace.GetTrueVSize();
+  const auto &block_ptr = B.GetBlockOffsets();
+  const auto &block_dofs = B.GetBlockDofs();
+  REQUIRE(block_dofs.size() == std::size_t(n));
+  std::vector<int> block(n, -1);
+  HYPRE_BigInt max_size = 0, num_single = 0;
+  for (std::size_t b = 0; b + 1 < block_ptr.size(); b++)
+  {
+    max_size = std::max<HYPRE_BigInt>(max_size, block_ptr[b + 1] - block_ptr[b]);
+    num_single += (block_ptr[b + 1] - block_ptr[b] == 1);
+    for (int k = block_ptr[b]; k < block_ptr[b + 1]; k++)
+    {
+      REQUIRE(block[block_dofs[k]] < 0);
+      block[block_dofs[k]] = static_cast<int>(b);
+    }
+  }
+  Mpi::GlobalSum(1, &num_single, comm);
+  Mpi::GlobalMax(1, &max_size, comm);
+  auto MaxAbs = [comm](const Vector &v)
+  {
+    double max = v.Normlinf();
+    Mpi::GlobalMax(1, &max, comm);
+    return max;
+  };
+
+  // Reference blocks S from the assembled global operator, including the contributions of
+  // the elements of other processes, and z = S x (blockwise).
+  ParOperator M_glob(*m_loc, fespace);
+  mfem::SparseMatrix S;
+  M_glob.ParallelAssemble().GetDiag(S);
+  std::mt19937 gen(Mpi::Rank(comm) + 1);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  Vector x(n), y(n), z(n), Bx(n), By(n), Bz(n);
+  for (int i = 0; i < n; i++)
+  {
+    x(i) = dist(gen);
+    y(i) = dist(gen);
+  }
+  z = 0.0;
+  for (int t = 0; t < n; t++)
+  {
+    for (int k = S.GetI()[t]; k < S.GetI()[t + 1]; k++)
+    {
+      if (block[S.GetJ()[k]] == block[t])
+      {
+        z(t) += S.GetData()[k] * x(S.GetJ()[k]);
+      }
+    }
+  }
+  B.Mult(z, Bz);
+  Bz -= x;
+  INFO("block inverse error " << MaxAbs(Bz) / MaxAbs(x));
+  CHECK(MaxAbs(Bz) <= 1.0e-7 * MaxAbs(x));
+
+  // With every block negative definite, B is the inverse diagonal.
+  {
+    const auto &mesh = fespace.GetMesh();
+    MaterialPropertyCoefficient neg_coeff(mesh.MaxCeedAttribute());
+    neg_coeff.AddMaterialProperty(mesh.GetCeedAttributes(1), -1.0);
+    BilinearForm m_neg(fespace);
+    m_neg.AddDomainIntegrator<VectorFEMassIntegrator>(neg_coeff);
+    EntityBlockJacobiSolver<Operator> B_neg(*m_neg.PartialAssemble(), fespace);
+    B_neg.Mult(x, Bz);
+    for (int t = 0; t < n; t++)
+    {
+      z(t) = x(t) / S(t, t);
+      Bz(t) += z(t);
+    }
+    CHECK(MaxAbs(Bz) <= 1.0e-14 * MaxAbs(z));
+  }
+
+  // The preconditioner is symmetric and positive definite, and its inverse diagonal is
+  // that of Jacobi.
+  B.Mult(x, Bx);
+  B.Mult(y, By);
+  CHECK_THAT(linalg::Dot(comm, x, By), WithinRel(linalg::Dot(comm, y, Bx), 1.0e-10));
+  CHECK(linalg::Dot(comm, x, Bx) > 0.0);
+  CHECK(linalg::Dot(comm, y, By) > 0.0);
+  JacobiSmoother<Operator> jacobi(comm, 1.0);
+  jacobi.SetOperator(M);
+  z = B.GetInverseDiagonal();
+  z -= *jacobi.GetHostRealScaling();
+  CHECK(MaxAbs(z) == 0.0);
+
+  // For complex vectors, the real and imaginary parts are preconditioned separately.
+  {
+    EntityBlockJacobiSolver<ComplexOperator> Bc(*m_loc, fespace);
+    ComplexParOperator Mc(m_loc.get(), nullptr, fespace);
+    Bc.SetOperator(Mc);
+    ComplexVector xc(n), Bxc(n);
+    xc.Real() = x;
+    xc.Imag() = y;
+    Bc.Mult(xc, Bxc);
+    Bxc.Real() -= Bx;
+    Bxc.Imag() -= By;
+    CHECK(linalg::Norml2(comm, Bxc) <=
+          1.0e-14 * std::hypot(linalg::Norml2(comm, Bx), linalg::Norml2(comm, By)));
+  }
+
+  // PCG converges to the solution (x, for the right-hand side M x), and in fewer iterations
+  // than with Jacobi preconditioning.
+  auto Solve = [&](const Solver<Operator> &pc, double tol, const Vector &b, Vector &u)
+  {
+    CgSolver<Operator> pcg(comm, 0);
+    pcg.SetOperator(M);
+    pcg.SetPreconditioner(pc);
+    pcg.SetRelTol(tol);
+    pcg.SetMaxIter(50000);
+    u.SetSize(n);
+    u = 0.0;
+    pcg.Mult(b, u);
+    CHECK(pcg.GetConverged());
+    return pcg.GetNumIterations();
+  };
+  Vector Mx(n), u;
+  M.Mult(x, Mx);
+  Solve(B, 1.0e-10, Mx, u);
+  Vector e(u), Me(n);
+  e -= x;
+  M.Mult(e, Me);
+  const double error = std::sqrt(linalg::Dot(comm, e, Me) / linalg::Dot(comm, x, Mx));
+  const int its_jac = Solve(jacobi, 1.0e-6, x, u);
+  const int its = Solve(B, 1.0e-6, x, u);
+  INFO(its << " vs. " << its_jac << " iterations, error " << error);
+  CHECK(error < 1.0e-6);
+  CHECK(min_gain * its < its_jac);
+  return {num_single, max_size};
+}
+
+}  // namespace
+
+TEST_CASE("Entity block Jacobi preconditioner",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // The error estimator projections solve with the H(curl) or H(div) mass matrix of a
+  // broken space, or of the unbroken space without interior boundaries, also on
+  // nonconforming meshes. On the anisotropic mesh, the basis functions of each entity are
+  // close to linearly dependent.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(2, 3);
+  const bool nonconforming = GENERATE(false, true);
+  const double z_scale = GENERATE(1.0, 1.0e-3);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto smesh = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON);
+  smesh.Transform(
+      [z_scale](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        y(2) *= z_scale;
+      });
+  if (nonconforming)
+  {
+    smesh.EnsureNCMesh(true);
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const std::vector<int> attr_list = {crack_attr};
+  if (nonconforming)
+  {
+    mesh.GetCrackSides(attr_list);
+    RefineWhere(mesh, [](const mfem::Vector &c)
+                { return std::abs(c(0) - x_crack) < 0.25 && c(1) < 0.5; });
+    mesh.Update();
+    REQUIRE(mesh::HasHangingEntities(mesh.Get()));
+  }
+  const bool host =
+      !mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK);
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  for (const mfem::FiniteElementCollection *fec :
+       std::vector<const mfem::FiniteElementCollection *>{&nd_fec, &rt_fec})
+  {
+    FiniteElementSpace base_fespace(mesh, fec);
+    FiniteElementSpace fespace(base_fespace, mesh.GetCrackSides(attr_list));
+    int max_versions = 1;
+    for (int v : fespace.GetBrokenProlongation()->num_versions)
+    {
+      max_versions = std::max(max_versions, v);
+    }
+    Mpi::GlobalMax(1, &max_versions, comm);
+    REQUIRE(max_versions > 1);
+    for (const FiniteElementSpace *space : {&base_fespace, &fespace})
+    {
+      INFO("order " << order << ", nonconforming " << nonconforming << ", z_scale "
+                    << z_scale << ", " << fec->Name() << ", broken " << space->IsBroken());
+      CHECK(EntityBlockJacobiSolver<Operator>::Supported(*space) == host);
+      if (!host)
+      {
+        continue;
+      }
+      const auto [num_single, max_size] =
+          CheckEntityBlockJacobi(*space, (z_scale < 1.0) ? 2.0 : 1.1);
+      INFO(num_single << " blocks of a single true DOF, maximum block size " << max_size);
+      CHECK(max_size == std::max({fec->DofForGeometry(mfem::Geometry::SEGMENT),
+                                  fec->DofForGeometry(mfem::Geometry::TRIANGLE),
+                                  fec->DofForGeometry(mfem::Geometry::TETRAHEDRON)}));
+      if (Mpi::Size(comm) == 1)
+      {
+        // Every true DOF has an unconstrained local L-DOF.
+        CHECK(num_single == 0);
+      }
+    }
+  }
+
+  // At first order, every entity has a single DOF.
+  mfem::ND_FECollection nd1_fec(1, 3);
+  mfem::RT_FECollection rt0_fec(0, 3);
+  CHECK_FALSE(
+      EntityBlockJacobiSolver<Operator>::Supported(FiniteElementSpace(mesh, &nd1_fec)));
+  CHECK_FALSE(
+      EntityBlockJacobiSolver<Operator>::Supported(FiniteElementSpace(mesh, &rt0_fec)));
+}
+
+TEST_CASE("Entity block Jacobi preconditioner on prisms and triangles",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::WEDGE, mfem::Element::TRIANGLE);
+  const int order = GENERATE(2, 3);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto smesh = MakeCrackedCubeMesh(4, type);
+  const int dim = smesh.Dimension();
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const std::vector<int> attr_list = {crack_attr};
+  const bool host =
+      !mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK);
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  for (const mfem::FiniteElementCollection *fec :
+       std::vector<const mfem::FiniteElementCollection *>{&nd_fec, &rt_fec})
+  {
+    FiniteElementSpace base_fespace(mesh, fec);
+    FiniteElementSpace fespace(base_fespace, mesh.GetCrackSides(attr_list));
+    for (const FiniteElementSpace *space : {&base_fespace, &fespace})
+    {
+      INFO("order " << order << ", " << fec->Name() << ", broken " << space->IsBroken());
+      CHECK(EntityBlockJacobiSolver<Operator>::Supported(*space) == host);
+      if (!host)
+      {
+        continue;
+      }
+      const auto [num_single, max_size] = CheckEntityBlockJacobi(*space, 1.1);
+      CHECK((Mpi::Size(comm) > 1 || num_single == 0));
+      CHECK(max_size <= 30);
+    }
+  }
+}
+
+TEST_CASE("Entity block Jacobi preconditioner supported spaces",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // Prisms from fourth order, simplices from fifth order, and meshes with hexahedra,
+  // pyramids or quadrilaterals use Jacobi.
+  const auto comm = MPI_COMM_WORLD;
+  auto Supported = [comm](mfem::Element::Type type, int order)
+  {
+    auto smesh = MakeCrackedCubeMesh(4, type);
+    auto part = Partition(smesh, Mpi::Size(comm));
+    auto mesh = MakeParMesh(comm, smesh, part);
+    mfem::ND_FECollection nd_fec(order, smesh.Dimension());
+    mfem::RT_FECollection rt_fec(order - 1, smesh.Dimension());
+    const bool nd =
+        EntityBlockJacobiSolver<Operator>::Supported(FiniteElementSpace(mesh, &nd_fec));
+    const bool rt =
+        EntityBlockJacobiSolver<Operator>::Supported(FiniteElementSpace(mesh, &rt_fec));
+    CHECK(nd == rt);
+    return nd;
+  };
+  const bool host =
+      !mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK);
+  CHECK(Supported(mfem::Element::TETRAHEDRON, 3) == host);
+  CHECK(Supported(mfem::Element::TETRAHEDRON, 4) == host);
+  CHECK(Supported(mfem::Element::TRIANGLE, 4) == host);
+  CHECK_FALSE(Supported(mfem::Element::TETRAHEDRON, 5));
+  CHECK_FALSE(Supported(mfem::Element::WEDGE, 4));
+  CHECK_FALSE(Supported(mfem::Element::HEXAHEDRON, 3));
+  CHECK_FALSE(Supported(mfem::Element::PYRAMID, 2));
+  CHECK_FALSE(Supported(mfem::Element::QUADRILATERAL, 3));
 }
 
 }  // namespace palace

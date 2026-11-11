@@ -407,6 +407,13 @@ IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
   {
     solver["Eigenmode"]["Type"] = eigen_solver;
   }
+
+  if (opts.always_error_estimation &&
+      !(solver.contains("Linear") &&
+        solver["Linear"].contains("AlwaysComputeErrorEstimation")))
+  {
+    solver["Linear"]["AlwaysComputeErrorEstimation"] = true;
+  }
   return IoData(std::move(config), /*print=*/false);
 }
 
@@ -497,6 +504,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   }
 
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
+  const double estimator_tol = iodata.solver.linear.estimator_tol;
   MakeOutputFolder(iodata, comm);
   const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
@@ -567,6 +575,16 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
         continue;
       }
 
+      // The flux projections of the error estimator converge to EstimatorTol, and the
+      // relative error indicator depends on the process count at about that level: compare
+      // it at ten times the tolerance at least.
+      if (std::filesystem::path(rel).filename() == "error-indicators.csv")
+      {
+        RegressionOptions indicator_opts = effective_opts;
+        indicator_opts.rtol = std::max(indicator_opts.rtol, 10.0 * estimator_tol);
+        CompareCSVFiles(a, r, indicator_opts);
+        continue;
+      }
       CompareCSVFiles(a, r, effective_opts);
     }
   }

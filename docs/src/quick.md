@@ -526,7 +526,7 @@ Notice the time slider at the top of the ParaView window:
 
   - Frame 0: First terminal activated (first sphere at unit potential)
   - Frame 1: Second terminal activated (second sphere at unit potential)
-  - Frame 99: Error estimates
+  - Frame 99: Mesh partitioning (and error estimates, when computed)
 
 You can save the visualization as an image with File → Save Screenshot, or save
 the entire ParaView state with File → Save State (allows reopening your complete

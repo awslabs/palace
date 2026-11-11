@@ -147,8 +147,39 @@ public:
                          Orthogonalization orthog_type);
   std::vector<double> FindMaxError(std::size_t N) const;
 
+  // As above, without the points in the sorted, disjoint intervals of exclude. The points
+  // in candidates are also searched, whether excluded or not.
+  std::vector<double> FindMaxError(std::size_t N,
+                                   const std::vector<std::pair<double, double>> &exclude,
+                                   const std::vector<double> &candidates) const;
+
   const auto &GetSamplePoints() const { return z; }
 };
+
+// Eigenvalues ω of the quadratic pencil K + iω C - ω² M (no C if C is nullptr), from the
+// companion linearization in s = iω.
+std::vector<std::complex<double>> QuadraticEigenvalues(const Eigen::MatrixXcd &K,
+                                                       const Eigen::MatrixXcd *C,
+                                                       const Eigen::MatrixXcd &M);
+
+// Intervals of relative half-width w around the real parts of the poles in [ω_min, ω_max]
+// which are narrower than the intervals (half linewidth |Im p| < w |p|) and converged: a
+// pole of prev_poles is within tol w |p|. Sorted, with overlapping intervals merged.
+std::vector<std::pair<double, double>>
+NarrowPoleIntervals(const std::vector<std::complex<double>> &poles,
+                    const std::vector<std::complex<double>> &prev_poles, double omega_min,
+                    double omega_max, double w, double tol);
+
+// Eigenvalues ω of the quadratic pencil K + iωC − ω²M, as QuadraticEigenvalues, and the
+// corresponding right eigenvectors (columns).
+std::pair<std::vector<std::complex<double>>, Eigen::MatrixXcd>
+QuadraticEigenpairs(const Eigen::MatrixXcd &K, const Eigen::MatrixXcd *C,
+                    const Eigen::MatrixXcd &M);
+
+// Indices of the poles in [ω_min, ω_max] with quality factor Q = |p| / (2 |Im p|) below
+// max_Q.
+std::vector<std::size_t> ResonanceIndices(const std::vector<std::complex<double>> &poles,
+                                          double omega_min, double omega_max, double max_Q);
 
 //
 // A class handling projection-based reduced order model (PROM) construction and use for
@@ -168,8 +199,9 @@ protected:
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
-  // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
-  //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
+  // - A2 stores the sparse part only (for PROM projection); the HDM system operator is
+  //   built locally in SolveHDM via SpaceOperator::GetSystemOperator, or from K, C, M and
+  //   GetExtraSystemOperator when the preconditioner cannot apply it.
   // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
   //   are cached before frequency-major online evaluation.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
@@ -265,8 +297,13 @@ protected:
   bool has_RHS1 = true;
   bool has_RHS2 = true;
 
-  // HDM linear system solver and preconditioner.
+  // HDM linear system solver and preconditioner, and whether it uses the given solution
+  // vector as initial guess.
   std::unique_ptr<ComplexKspSolver> ksp;
+  bool initial_guess = false;
+
+  // Reuse of the coarse factorization of the preconditioner across HDM solves.
+  CoarseReuse coarse_reuse;
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
@@ -535,7 +572,10 @@ public:
   // repeating HDM-scale projections.
   void PrepareOnlineExcitations();
 
-  // Assemble and solve the HDM at the specified frequency.
+  // Assemble and solve the HDM at the specified frequency. With initial guesses enabled, u
+  // is the initial guess. If the solver returns a nonzero initial guess unchanged (it
+  // already meets the tolerance), the system is solved again from zero, so that the
+  // solution adds a new direction to the PROM basis.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
@@ -571,6 +611,23 @@ public:
   {
     return mri.at(excitation_idx).FindMaxError(N);
   }
+  std::vector<double> FindMaxError(int excitation_idx, std::size_t N,
+                                   const std::vector<std::pair<double, double>> &exclude,
+                                   const std::vector<double> &candidates) const
+  {
+    return mri.at(excitation_idx).FindMaxError(N, exclude, candidates);
+  }
+
+  // Return the poles ω of the PROM, the eigenvalues of Kᵣ + iω Cᵣ - ω² Mᵣ, or nothing when
+  // the PROM has frequency-dependent boundary terms (A2(ω)), or no basis.
+  std::vector<std::complex<double>> ComputePoles() const;
+
+  // The poles of the PROM in [ω_min, ω_max] with a quality factor below max_Q, sorted, with
+  // the residual of their eigenvectors u = V y in the HDM equations relative to the size of
+  // their terms: ‖(K + iωC − ω²M) u‖ / (‖K u‖ + |ω| ‖C u‖ + |ω|² ‖M u‖). Nothing (nullopt)
+  // when ComputePoles cannot compute the poles.
+  std::optional<std::vector<std::pair<std::complex<double>, double>>>
+  ComputePoleResiduals(double omega_min, double omega_max, double max_Q) const;
 
   // Print PROM matrices to file include in input (SI) units.
   void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;

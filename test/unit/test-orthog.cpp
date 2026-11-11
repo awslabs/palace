@@ -440,3 +440,100 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
   CHECK_THAT(dot1.real(), WithinAbs(0.0, 1e-12));
   CHECK_THAT(dot1.imag(), WithinAbs(0.0, 1e-12));
 }
+
+TEMPLATE_TEST_CASE("Fused Gram-Schmidt kernels", "[orthog][Serial][Parallel]", Vector,
+                   ComplexVector)
+{
+  using VecType = TestType;
+  using ScalarType = std::conditional_t<std::is_same_v<VecType, ComplexVector>,
+                                        std::complex<double>, double>;
+  const int n = GENERATE(1, 37, 2 * 8192 + 5);
+  const int m = GENERATE(0, 1, 5);
+  CAPTURE(n, m);
+  MPI_Comm comm = Mpi::World();
+  std::vector<VecType> V(m + 2);
+  for (int j = 0; j < m + 2; j++)
+  {
+    V[j].SetSize(n);
+    V[j].UseDevice(true);
+    linalg::SetRandom(comm, V[j], j + 1);
+  }
+  VecType &x = V[m], &y = V[m + 1];
+  auto close = [](ScalarType a, ScalarType b, double scale)
+  { return std::abs(a - b) <= 1.0e-13 * scale; };
+  const double nx = std::sqrt(std::abs(linalg::LocalDot(x, x)));
+  const double ny = std::sqrt(std::abs(linalg::LocalDot(y, y)));
+
+  // Inner products with and without y.
+  std::vector<ScalarType> hx(m), hy(m), e(3), hx1(m), e1(3);
+  linalg::LocalMultiDot(V, m, x, &y, hx.data(), hy.data(), e.data());
+  linalg::LocalMultiDot(V, m, x, nullptr, hx1.data(), nullptr, e1.data());
+  for (int j = 0; j < m; j++)
+  {
+    const double nv = std::sqrt(std::abs(linalg::LocalDot(V[j], V[j])));
+    CHECK(close(hx[j], linalg::LocalDot(x, V[j]), nx * nv));
+    CHECK(close(hy[j], linalg::LocalDot(y, V[j]), ny * nv));
+    CHECK(close(hx1[j], hx[j], nx * nv));
+  }
+  CHECK(close(e[0], linalg::LocalDot(x, x), nx * nx));
+  CHECK(close(e[1], linalg::LocalDot(y, x), nx * ny));
+  CHECK(close(e[2], linalg::LocalDot(y, y), ny * ny));
+  CHECK(close(e1[0], e[0], nx * nx));
+
+  // Updates, against the vector operations.
+  ScalarType g = 0.3;
+  if constexpr (std::is_same_v<ScalarType, std::complex<double>>)
+  {
+    g = {0.3, -0.7};
+  }
+  // Size of the terms of the updates, for the rounding errors of different evaluation
+  // orders.
+  double sx = nx, sy = ny;
+  for (int j = 0; j < m; j++)
+  {
+    const double nv = std::sqrt(std::abs(linalg::LocalDot(V[j], V[j])));
+    sx += std::abs(hx[j]) * nv;
+    sy += std::abs(hy[j]) * nv;
+  }
+  sy += std::abs(g) * sx;
+  for (int variant = 0; variant < 3; variant++)
+  {
+    CAPTURE(variant);
+    VecType x0 = x, y0 = y, x1 = x, y1 = y;
+    double nrm2 = 0.0, ref = 0.0;
+    if (variant == 0)
+    {
+      // x = sx (x - V hx).
+      nrm2 = linalg::MultiSubtract(V, m, x0, hx.data(), 0.5);
+      for (int j = 0; j < m; j++)
+      {
+        x1.Add(-hx[j], V[j]);
+      }
+      x1 *= 0.5;
+      ref = std::real(linalg::LocalDot(x1, x1));
+    }
+    else
+    {
+      // x = sx (x - V hx) (or x = sx x) and y = sy (y - V hy - g x).
+      nrm2 = linalg::MultiSubtract(V, m, x0, (variant == 1) ? hx.data() : nullptr, 0.5, &y0,
+                                   hy.data(), g, 2.0);
+      for (int j = 0; variant == 1 && j < m; j++)
+      {
+        x1.Add(-hx[j], V[j]);
+      }
+      x1 *= 0.5;
+      for (int j = 0; j < m; j++)
+      {
+        y1.Add(-hy[j], V[j]);
+      }
+      y1.Add(-g, x1);
+      y1 *= 2.0;
+      ref = std::real(linalg::LocalDot(y1, y1));
+    }
+    x0 -= x1;
+    y0 -= y1;
+    CHECK(std::sqrt(std::abs(linalg::LocalDot(x0, x0))) <= 1.0e-14 * (1.0 + m) * sx);
+    CHECK(std::sqrt(std::abs(linalg::LocalDot(y0, y0))) <= 1.0e-14 * (1.0 + m) * sy);
+    CHECK_THAT(nrm2, WithinRel(ref, 1.0e-12) || WithinAbs(ref, 1.0e-300));
+  }
+}

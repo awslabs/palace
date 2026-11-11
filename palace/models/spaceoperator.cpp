@@ -10,6 +10,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/operator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/hypre.hpp"
@@ -21,6 +22,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
 
 namespace palace
@@ -36,7 +38,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
     pc_mat_amg(solver.linear.type == LinearSolver::AMS ||
                solver.linear.type == LinearSolver::BOOMER_AMG),
-    print_hdr(true), print_prec_hdr(true),
+    pc_single(solver.linear.mg_smooth_single), print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
@@ -959,27 +961,37 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   // W_scalar), which supplies the ∇ₜEₙ term the sparse mass drops so the port reproduces
   // the full modal n×H on its own mode. The sparse mass is retained here
   // (include_wave_ports=true) and also serves as the preconditioner's port block; the
-  // correction and the Floquet DtN are summed onto the sparse A2 via non-owning/owning
+  // correction and the Floquet DtN are summed onto the sparse A2 via an owning
   // SumComplexOperator.
   auto A2 = GetExtraSystemMatrix<ComplexOperator>(omega, diag_policy,
                                                   /*include_wave_ports=*/true);
+  auto WF = GetMatrixFreeExtraSystemOperator(omega);
+  if (!WF)
+  {
+    return A2;
+  }
+  if (!A2)
+  {
+    return WF;
+  }
+  return std::make_unique<SumComplexOperator>(std::move(A2), std::move(WF));
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetMatrixFreeExtraSystemOperator(double omega)
+{
   auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
                                                    nd_dbc_tdof_lists.back());
   auto F = floquet_port_op.GetExtraSystemOperator(omega);
-  std::unique_ptr<ComplexOperator> op;
-  auto add = [&op](std::unique_ptr<ComplexOperator> term)
+  if (!W)
   {
-    if (!term)
-    {
-      return;
-    }
-    op = op ? std::make_unique<SumComplexOperator>(std::move(op), std::move(term))
-            : std::move(term);
-  };
-  add(std::move(A2));
-  add(std::move(W));
-  add(std::move(F));
-  return op;
+    return F;
+  }
+  if (!F)
+  {
+    return W;
+  }
+  return std::make_unique<SumComplexOperator>(std::move(W), std::move(F));
 }
 
 std::unique_ptr<ComplexOperator>
@@ -1314,16 +1326,31 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   // data if the spaces correspond to the same mesh. When appropriate, we build the
   // preconditioner on all levels based on the actual complex-valued system matrix. The
   // coarse operator is always fully assembled.
-  if (print_prec_hdr)
-  {
-    Mpi::Print("\nAssembling multigrid hierarchy:\n");
-  }
+  //
+  // The driven solvers may apply the system operator through the finest level alone (see
+  // GetSystemOperator), without assembling K, C or M, so print the header here too.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
 
   const auto n_levels = GetNDSpaces().GetNumLevels();
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
+  // The level diagonals of frequency sweeps (see pc_term_diags) are combined from those
+  // of the terms from the second complex preconditioner on.
+  bool term_diags = false;
+  if constexpr (std::is_same_v<OperType, ComplexOperator> && std::is_same_v<A3Type, double>)
+  {
+    if (!pc_mat_real && UsePreconditionerTermDiagonals(a3) &&
+        ++num_complex_pc_assemblies >= 2)
+    {
+      if (pc_term_diags.empty())
+      {
+        AssemblePreconditionerTermDiagonals(a3);
+      }
+      term_diags = true;
+    }
+  }
   if (std::is_same_v<OperType, ComplexOperator> && !pc_mat_real)
   {
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);
@@ -1333,7 +1360,15 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec);
   }
 
+  // Print after the assembly, which may first solve and print the wave port modes at a new
+  // frequency.
+  if (print_prec_hdr)
+  {
+    Mpi::Print("\nAssembling multigrid hierarchy:\n");
+  }
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
+  std::size_t single_bytes = 0;
+  int single_dropped = 0;
   for (bool aux : {false, true})
   {
     for (std::size_t l = 0; l < n_levels; l++)
@@ -1363,9 +1398,78 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
           Mpi::Print("\n");
         }
       }
+      // From the second preconditioner of a frequency sweep on, the single-precision
+      // element matrices of the levels above the coarsest are formed from those of the
+      // terms (see AssemblePreconditionerTermDiagonals).
+      ceed::ElementMatrixCombination term_ea;
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        if (term_diags && l > 0)
+        {
+          term_ea.terms = aux ? pc_term_aux_ea[l] : pc_term_ea[l];
+          term_ea.coeff = {a0, a1, a2};
+        }
+      }
+      if (pc_single && aux && l > 0)
+      {
+        // The auxiliary space operators of the levels above the coarsest are only applied
+        // by the Chebyshev smoothers of the distributive relaxation smoother, from a zero
+        // initial guess, so all their applications are to search directions (see
+        // ChebyshevSmoother) and tolerate single-precision element matrices.
+        for (auto *b_l : {br_l.get(), bi_l.get()})
+        {
+          if (auto *ceed_b_l = dynamic_cast<ceed::Operator *>(b_l))
+          {
+            ceed_b_l->SetElementAssemblySinglePrecision(true);
+            if (term_ea.terms)
+            {
+              ceed_b_l->SetElementAssemblyTerms(term_ea, b_l == bi_l.get());
+            }
+          }
+        }
+      }
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        if (term_diags && l > 0)
+        {
+          // The diagonal a0 D0 + a1 D1 + a2 D2 of the terms, with the essential dofs
+          // eliminated as by DiagonalPolicy::DIAG_ONE.
+          const auto &D = aux ? pc_term_aux_diags[l] : pc_term_diags[l];
+          const std::complex<double> a[3] = {a0, a1, a2};
+          ComplexVector d(B_l->Height());
+          d.UseDevice(true);
+          d = 0.0;
+          for (int k = 0; k < 3; k++)
+          {
+            if (D[k].Size() > 0)
+            {
+              d.AXPY(a[k], D[k]);
+            }
+          }
+          linalg::SetSubVector(d.Real(), dbc_tdof_lists_l, 1.0);
+          linalg::SetSubVector(d.Imag(), dbc_tdof_lists_l, 0.0);
+          B_l->SetAssembledDiagonal(std::move(d));
+        }
+      }
+      if (pc_single && !aux && l > 0)
+      {
+        // The Chebyshev smoothers apply the level operators to their search directions
+        // through these approximations.
+        if constexpr (std::is_same_v<OperType, ComplexOperator>)
+        {
+          int dropped;
+          single_bytes +=
+              B_l->UseSinglePrecision(&dropped, term_ea.terms ? &term_ea : nullptr);
+          single_dropped += dropped;
+        }
+        else
+        {
+          single_bytes += B_l->UseSinglePrecision();
+        }
+      }
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));
@@ -1377,8 +1481,137 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     }
   }
 
+  if (pc_single)
+  {
+    const double single_mb = static_cast<double>(single_bytes) / (1024.0 * 1024.0);
+    perf::SetMax(perf::RegisterCounter("Memory/SinglePrecisionElementMatrices/Megabytes",
+                                       perf::Reduce::STATS, perf::Accumulate::MAX),
+                 single_mb);
+    if (print_prec_hdr)
+    {
+      double max_mb = single_mb;
+      Mpi::GlobalMax(1, &max_mb, GetComm());
+      Mpi::GlobalSum(1, &single_dropped, GetComm());
+      if (max_mb > 0.0)
+      {
+        Mpi::Print(" Single-precision smoother element matrices: {:.1f} MB per process "
+                   "(max){}\n",
+                   max_mb,
+                   (single_dropped > 0) ? ", negligible imaginary terms left out" : "");
+      }
+    }
+  }
   print_prec_hdr = false;
   return B;
+}
+
+bool SpaceOperator::UsePreconditionerTermDiagonals(double a3)
+{
+  // The diagonals are linear in (a0, a1, a2) unless the preconditioner has
+  // frequency-dependent boundary terms or Floquet periodicity terms.
+  MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+      dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      fbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  int linear = dfbr.empty() && dfbi.empty() && fbr.empty() && fbi.empty() &&
+               !mat_op.HasWaveVector() && !pc_mat_shifted &&
+               GetNDSpaces().GetNumLevels() > 1;
+  Mpi::GlobalMin(1, &linear, GetComm());
+  return linear;
+}
+
+void SpaceOperator::AssemblePreconditionerTermDiagonals(double a3)
+{
+  // The diagonals of the levels above the coarsest of the preconditioners of the three
+  // terms, with zero rows for the essential dofs, and with single-precision smoothing the
+  // element matrices of the terms which the smoothers of these levels element-assemble in
+  // single precision: those of the approximations of the Nédélec level operators (see
+  // ComplexParOperator::UseSinglePrecision) and of the auxiliary level operators
+  // themselves, whose complex operators element-assemble their parts for two right hand
+  // sides (see ceed::CreateComplexOperator).
+  const auto n_levels = GetNDSpaces().GetNumLevels();
+  pc_term_diags.assign(n_levels, {});
+  pc_term_aux_diags.assign(n_levels, {});
+  std::vector<std::shared_ptr<ceed::ElementMatrixTerms>> term_ea(n_levels),
+      term_aux_ea(n_levels);
+  if (pc_single)
+  {
+    for (std::size_t l = 1; l < n_levels; l++)
+    {
+      term_ea[l] = std::make_shared<ceed::ElementMatrixTerms>(true, 2);
+      term_aux_ea[l] = std::make_shared<ceed::ElementMatrixTerms>(false, 2);
+    }
+  }
+  for (int k = 0; k < 3; k++)
+  {
+    std::complex<double> a[3] = {0.0, 0.0, 0.0};
+    a[k] = 1.0;
+    std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
+        br_aux_vec(n_levels), bi_aux_vec(n_levels);
+    AssemblePreconditioner(a[0], a[1], a[2], a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);
+    for (bool aux : {false, true})
+    {
+      for (std::size_t l = 1; l < n_levels; l++)
+      {
+        auto &br_l = aux ? br_aux_vec[l] : br_vec[l];
+        auto &bi_l = aux ? bi_aux_vec[l] : bi_vec[l];
+        if (auto &terms = aux ? term_aux_ea[l] : term_ea[l])
+        {
+          terms->AddTerm(br_l.get(), bi_l.get());
+        }
+        if (!br_l && !bi_l)
+        {
+          continue;  // The term is absent (the same on all processes)
+        }
+        const auto &fespace_l =
+            aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
+        const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
+        ComplexParOperator B_l(std::move(br_l), std::move(bi_l), fespace_l);
+        B_l.SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ZERO);
+        auto &D = aux ? pc_term_aux_diags[l][k] : pc_term_diags[l][k];
+        D.SetSize(B_l.Height());
+        D.UseDevice(true);
+        B_l.AssembleDiagonal(D);
+      }
+    }
+  }
+  pc_term_ea.assign(term_ea.begin(), term_ea.end());
+  pc_term_aux_ea.assign(term_aux_ea.begin(), term_aux_ea.end());
+  if (pc_single)
+  {
+    std::size_t bytes = 0;
+    for (std::size_t l = 1; l < n_levels; l++)
+    {
+      bytes += term_ea[l]->Bytes() + term_aux_ea[l]->Bytes();
+    }
+    perf::SetMax(
+        perf::RegisterCounter("Memory/SinglePrecisionTermElementMatrices/Megabytes",
+                              perf::Reduce::STATS, perf::Accumulate::MAX),
+        static_cast<double>(bytes) / (1024.0 * 1024.0));
+  }
+}
+
+std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
+                                                                  const ComplexOperator &P)
+{
+  if (pc_mat_real || pc_mat_shifted || mat_op.HasWaveVector() ||
+      GetNDSpaces().GetNumLevels() < 2)
+  {
+    return {};
+  }
+  const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(&P);
+  MFEM_VERIFY(mg && mg->GetNumLevels() == GetNDSpaces().GetNumLevels(),
+              "GetSystemOperator requires the multigrid preconditioner from "
+              "GetPreconditionerMatrix!");
+
+  // AssemblePreconditioner adds the same AddExtraSystemBdrCoefficients(ω) terms, wave-port
+  // boundary mass included, as GetExtraSystemMatrix. Only the matrix-free terms are left.
+  auto A = std::make_unique<SumComplexOperator>(mg->GetFinestOperator());
+  if (auto WF = GetMatrixFreeExtraSystemOperator(omega))
+  {
+    A->AddOperator(std::move(WF));
+  }
+  return A;
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,

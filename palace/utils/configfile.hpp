@@ -178,6 +178,11 @@ public:
   // potentially increase memory coherency.
   bool reorder_elements = false;
 
+  // Number the local elements of each process along a Hilbert curve through their centroids
+  // after partitioning, for the locality of the degrees of freedom (which follow the
+  // element order), keeping the partition and the elements.
+  bool local_reorder = true;
+
   // Remove elements (along with any associated unattached boundary elements) from the mesh
   // which do not have any material properties specified.
   bool clean_unused_elements = true;
@@ -906,6 +911,10 @@ public:
   // Indices of frequency samples on which to save fields to disk.
   std::vector<std::size_t> save_indices;
 
+  // Indices of the frequency samples at which an adaptive sweep computes the error
+  // indicator for adaptive mesh refinement from the PROM (empty: from its HDM samples).
+  std::vector<std::size_t> indicator_indices;
+
   // Restart iteration for a partial sweep. 1-based indexing. So 1 <= restart <= nr_freq *
   // nr_excitations.
   std::size_t restart = 1;
@@ -918,6 +927,27 @@ public:
 
   // Memory required for adaptive sampling convergence.
   std::size_t adaptive_memory = 2;
+
+  // Relative half-width of the frequency intervals around the poles of the PROM narrower
+  // than it, which adaptive sampling excludes from the search for the maximum error once
+  // the pole has converged to AdaptiveTol times the half-width (0, the default, disables
+  // it).
+  double adaptive_pole_exclusion = 0.0;
+
+  // Number of frequencies of the sweep, uniformly spaced, at which an adaptive sweep
+  // computes the error indicator for adaptive mesh refinement from the PROM, instead of
+  // from its HDM samples (0, the default).
+  std::size_t adaptive_indicator_samples = 0;
+
+  // With adaptive_indicator_samples > 0, the error indicator is also computed at the
+  // resonances of the PROM in the band of the sweep with a quality factor below this value
+  // (0, the default: none).
+  double adaptive_indicator_max_q = 0.0;
+
+  // Relative frequency distance within which a frequency sweep reuses the coarse-level
+  // factorization of the preconditioner computed at an earlier frequency (0 disables it;
+  // negative: 0.05 for uniform sweeps and 0 for adaptive ones).
+  double coarse_reuse_tol = -1.0;
 
   // Gram-Schmidt orthogonalization used in PROM construction, separate from linear solver
   // orthogonalization option. Default to CGS2 for higher quality.
@@ -962,6 +992,34 @@ public:
   // Compute and set a starting vector for the eigenvalue solver.
   bool init_v0 = true;
   bool init_v0_const = false;
+
+  // For adaptive mesh refinement, compute the starting vector of each adaptation iteration
+  // from the eigenvectors of the previous one, transferred to the refined mesh.
+  bool warm_start = true;
+
+  // For adaptive mesh refinement, shift the shift-and-invert spectral transformation of
+  // each adaptation iteration from the target into the band of the requested eigenvalues of
+  // the previous one (SLEPc Krylov-Schur solver for linear or linearized problems only).
+  bool adaptive_shift = true;
+
+  // Constant c for relaxing the linear solver tolerance as the wanted eigenpairs converge
+  // (SLEPc Krylov-Schur solver only, 0 disables).
+  double linear_relaxation = 0.0;
+
+  // Number of harmonic Ritz vectors of the preconditioned operator, from the first linear
+  // solve of each eigenvalue solve, with which the later linear solves are deflated (0
+  // disables).
+  int linear_deflation = 0;
+
+  // Minimum quality factor of the eigenvalues searched for in problems with damping (SLEPc
+  // only, values ≤ 0.5 disable the restriction).
+  double min_q = 0.54;
+
+  // Eigenvalue and linear solver tolerances for the adaptation iterations before the last
+  // one, whose eigenvectors only drive the mesh refinement. A value < 0 will use the
+  // default (the eigenvalue and linear solver tolerances of the last iteration).
+  double intermediate_tol = -1.0;
+  double intermediate_linear_tol = -1.0;
 
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
@@ -1122,6 +1180,11 @@ public:
   // Maximum Krylov space dimension for GMRES/FGMRES iterative solvers.
   int max_size = -1;
 
+  // GMRES/FGMRES stop when the residual norm decreased by less than the relative fraction
+  // stagnation_tol over the last stagnation_it iterations (0 disables the test).
+  int stagnation_it = 100;
+  double stagnation_tol = 1.0e-3;
+
   // Reuse previous solution as initial guess for Krylov solvers.
   int initial_guess = -1;
 
@@ -1150,6 +1213,15 @@ public:
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = -1;
 
+  // Maximum order of polynomial smoothing for geometric multigrid. If larger than
+  // mg_smooth_order, it is used on levels whose operator is nearly positive semi-definite.
+  int mg_smooth_order_max = -1;
+
+  // Order of polynomial smoothing in the auxiliary (gradient) space of the distributive
+  // relaxation smoother for geometric multigrid. If not positive, the order chosen for the
+  // primary space is used.
+  int mg_smooth_order_aux = -1;
+
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
   // geometric multigrid.
   double mg_smooth_sf_max = 1.0;
@@ -1158,6 +1230,26 @@ public:
   // Smooth based on 4th-kind Chebyshev polynomials for geometric multigrid, otherwise
   // use standard 1st-kind polynomials.
   bool mg_smooth_cheby_4th = true;
+
+  // Use single-precision element matrices for the operator applications to the Chebyshev
+  // search directions on the geometric multigrid levels and for the auxiliary space
+  // operators (frequency domain and transient simulations, CPU only).
+  bool mg_smooth_single = true;
+
+  // Residuals between the primary and auxiliary space smoothers of the distributive
+  // relaxation smoother: computed with the operator, updated through the smoother
+  // applications, or lagged by one step of the Chebyshev smoother (see
+  // DistRelaxationSmoother).
+  MultigridAuxiliaryResidual mg_aux_residual = MultigridAuxiliaryResidual::DEFAULT;
+
+  // Exact solves on the patches of the tetrahedra with a minimum dihedral angle below this
+  // value (degrees) at the levels of geometric multigrid above the coarsest, together with
+  // the coarse-grid correction (0 disables them; negative: 2 degrees for complex-valued
+  // operators and 0 for real-valued ones), and the extent of the patches (1: the mesh
+  // entities incident to the vertices of the sliver, 0: its own entities, -1: the former
+  // unless they are expensive compared with the smoothing of the level, else none).
+  double mg_sliver_angle = -1.0;
+  int mg_sliver_layers = -1;
 
   // For frequency domain applications, precondition linear systems with a real-valued
   // approximation to the system matrix.
@@ -1170,6 +1262,13 @@ public:
   // For frequency domain applications, use the complex-valued system matrix in the sparse
   // direct solver.
   bool complex_coarse_solve = false;
+
+  // Without an explicit ComplexCoarseSolve, the multigrid preconditioner of eigenmode
+  // simulations checks the real-valued coarse approximation at setup and switches to the
+  // complex-valued system matrix if it is poor (see GeometricMultigridSolver), with the
+  // reordering reuse of an explicit complex-valued coarse solve.
+  bool complex_coarse_check = true;
+  bool complex_coarse_reorder_reuse = true;
 
   // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
   // solver.
@@ -1192,6 +1291,10 @@ public:
   double strumpack_lr_tol = 1.0e-3;
   int strumpack_lossy_precision = 16;
   int strumpack_butterfly_l = 1;
+
+  // Selective inversion of the distributed separator blocks of STRUMPACK. Default is -1
+  // (resolved per problem type in IoData).
+  int strumpack_selective_inversion = -1;
 
   // Option to enable 3D process grid for SuperLU_DIST solver.
   bool superlu_3d = false;
@@ -1217,25 +1320,34 @@ public:
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
 
+  // Number of smoothing sweeps on the Nedelec space in each AMS iteration, when AMS is the
+  // coarse solver of geometric multigrid.
+  int ams_smooth_it = -1;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 1000;
 
-  // Relative tolerance for solving linear systems in the error estimator.
-  double estimator_tol = 1.0e-6;
+  // Relative tolerance for solving linear systems in the error estimator (negative:
+  // max(1e-10, min(1e-4, 1e-2 Model.Refinement.Tol))).
+  double estimator_tol = -1.0;
 
   // Maximum number of iterations for solving linear systems in the error estimator.
   int estimator_max_it = 10000;
 
   // Use geometric multigrid + AMG for error estimator linear solver preconditioner (instead
-  // of just Jacobi).
+  // of entity-block Jacobi or Jacobi).
   bool estimator_mg = false;
+
+  // Compute the error indicator after each solve even without adaptive mesh refinement,
+  // which always computes it.
+  bool always_error_estimation = false;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
-  Orthogonalization gs_orthog = Orthogonalization::MGS;
+  Orthogonalization gs_orthog = Orthogonalization::CGS2;
 
   LinearSolverData() = default;
   LinearSolverData(const json &linear);

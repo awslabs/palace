@@ -5,9 +5,13 @@
 # Download and build third-party dependencies
 #
 
-# Add METIS/ParMETIS libraries
-message(STATUS "================ Configuring METIS/ParMETIS dependencies ===============")
+# Add METIS
+message(STATUS "===================== Configuring METIS dependency =====================")
 include(ExternalMETIS)
+
+# Add Scotch (for PT-Scotch)
+message(STATUS "==================== Configuring Scotch dependency =====================")
+include(ExternalScotch)
 
 # Add SuperLU_DIST
 if(PALACE_WITH_SUPERLU)

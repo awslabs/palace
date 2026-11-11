@@ -150,14 +150,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")
-        depends_on("mumps+metis+parmetis")
+        depends_on("mumps+metis")
+        depends_on("mumps+parmetis", when="@:0.19")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis")
+        depends_on("superlu-dist+parmetis", when="@:0.19")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -167,14 +168,18 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("+strumpack"):
         depends_on("fortran", type="build")
-        depends_on("strumpack+butterflypack+zfp+parmetis")
+        depends_on("strumpack+butterflypack+zfp")
+        depends_on("strumpack+parmetis", when="@:0.19")
+        depends_on("strumpack+scotch", when="@0.20:")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
     # The STRUMPACK version of the superbuild, with
-    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves and its
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, and the patches of the superbuild
+    # in its order (the PBLAS block size of 128 is set by the local strumpack package). Kept
     # off the `with` blocks so the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
@@ -185,15 +190,92 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
                 sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
                 when="@8.1.0",
-            )
+            ),
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "f94faa48ce857905ef68f2826d05d92218a66e26.diff",
+                sha256="4d561698fc2d19c31953ccd91e7df90daf89aedbf6434e016a283b9f7dff7b9a",
+                when="@8.1.0",
+            ),
+            # As extern/patch/STRUMPACK/patch_selective_inversion.diff,
+            # patch_solve_kernels.diff and patch_pblas_blocksize.diff: inverses of the
+            # separator blocks of the distributed fronts for their triangular solves,
+            # streaming solve kernels of the local fronts, and a configurable PBLAS block size
+            patch("strumpack-selective-inversion.diff", when="@8.1.0"),
+            patch("strumpack-solve-kernels.diff", when="@8.1.0"),
+            patch("strumpack-pblas-blocksize.diff", when="@8.1.0"),
+            # As extern/patch/STRUMPACK/patch_ptscotch_ordering.diff: parallel column
+            # ordering with PT-Scotch separators and METIS for the subgraph of each process
+            patch("strumpack-ptscotch-ordering.diff", when="@8.1.0+scotch"),
+            # As extern/patch/STRUMPACK/patch_memory.diff: node-shared fill-reducing
+            # permutation and no arrays of the global matrix dimension on every process
+            # (MPI-3 shared memory windows: do not cap /dev/shm below the permutation size);
+            # it extends the PT-Scotch ordering patch
+            patch("strumpack-memory.diff", when="@8.1.0+scotch"),
+            # As extern/patch/STRUMPACK/patch_solve_balance.diff: solve-phase mapping of the
+            # elimination tree with a cost per front and a min-max split of the processes
+            patch("strumpack-solve-balance.diff", when="@8.1.0"),
+        ],
+    )
+
+    # The SLEPc version of the superbuild, with extern/patch/slepc/
+    # patch_krylovschur_check_interval.diff: convergence checks within Krylov-Schur cycles
+    # (EPSKrylovSchurSetCheckInterval). Kept off the `with` blocks so the Palace variants are
+    # not folded into the patch condition.
+    depends_on(
+        "slepc@3.26.0",
+        when="@develop+slepc",
+        patches=[patch("slepc-krylovschur-check-interval.diff", when="@3.26.0")],
+    )
+
+    # The SuperLU_DIST version of the superbuild, with
+    # https://github.com/xiaoyeli/superlu_dist/pull/250,
+    # https://github.com/xiaoyeli/superlu_dist/pull/251,
+    # https://github.com/xiaoyeli/superlu_dist/pull/252 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
+    # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
+    # the Palace variants are not folded into the patch condition.
+    depends_on(
+        "superlu-dist@9.3.1",
+        when="@develop+superlu-dist",
+        patches=[
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/commit/"
+                "e349e08c7ebd16e7dd932d9ffb0e13081f225fa9.diff",
+                sha256="46c1cf726cebd589971c2337e54af5aa0fab21667f120a766865aea940448c02",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/compare/"
+                "317342a2ea12dd003817090ac0870037c334b91e..."
+                "a2eb138450ca24ec2b9756f24d136054dc23eadf.diff",
+                sha256="b20fa2513e2ce4048f6741b0289771ffd5ebadee41903dcb95b9ec0d42310614",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/compare/"
+                "a2eb138450ca24ec2b9756f24d136054dc23eadf..."
+                "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0.diff",
+                sha256="5c3b08d6445aedb9aa4cedc3e4603353a4f0657912382ea1170a837a285f2292",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://github.com/xiaoyeli/superlu_dist/compare/"
+                "a82aa0de4b0228feadb6d1e4ca9dc146f62b58c0..."
+                "06024a25396a8316054a879e1d77b053d90dc9fd.diff",
+                sha256="89cb71b071893b58637bbdc5ef969787b478642a4170944b4615436ef86e6479",
+                when="@9.3.1",
+            ),
         ],
     )
 
     # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
-    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
-    # the implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
-    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination). Kept off the
-    # `with` blocks so the Palace variants are not folded into the patch conditions.
+    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess), the
+    # implementation of https://github.com/hypre-space/hypre/pull/1652 with fixes
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination), and the
+    # AMS coarse-level agglomeration prototype for
+    # https://github.com/hypre-space/hypre/issues/1654. Kept off the `with` blocks so the
+    # Palace variants are not folded into the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -211,8 +293,20 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a",
                 when="@3.2.0:3.2.1",
             ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "bb09cfaffdcea9735c4e8f09a78c8cf5ed65a92a/extern/patch/hypre/"
+                "hypre_ams_coarse_agglomeration.diff",
+                sha256="2b209ceeea8cfb79cb0ebb482ef754f7dbc7365c6af4e06379d45abacf1994cf",
+                when="@3.2.0:3.2.1",
+            ),
         ],
     )
+
+    # The hypre patches above are made against hypre 3.2.0 (the version of the superbuild)
+    # and 3.2.1, and the AMS agglomeration prototype is not upstream: palace@develop requires
+    # these versions, so that a later hypre does not build without them.
+    depends_on("hypre@3.2.0:3.2.1", when="@develop")
 
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
@@ -246,7 +340,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # As of version 5.1.0, the PETSc fork of METIS provides a better mesh
     # partitioning.
     depends_on("metis+petsc_patches+gkrand")
-    depends_on("parmetis+petsc_patches")
+    depends_on("parmetis+petsc_patches", when="@:0.19")
+
+    with when("@0.20:"):
+        depends_on("scotch@7.0.7:+mpi~metis build_system=cmake")
+        depends_on("scotch+shared", when="+shared")
+        depends_on("scotch~shared", when="~shared")
+        depends_on("scotch+int64", when="+int64")
+        depends_on("scotch~int64", when="~int64")
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.15.0")
@@ -431,8 +532,26 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
                 when="@4.10:",
             ),
+            # As extern/patch/mfem/patch_mesh_tables.diff: hash-indexed DSTable and STable3D
+            # for the edge and face tables of large meshes
+            patch("mfem-mesh-tables.diff", when="@4.10.0"),
+            # As extern/patch/mfem/mfem_ncmesh_ghost_entities.diff: ghost indices only for the
+            # edges and faces of the ghost elements of nonconforming meshes
+            patch("mfem-ncmesh-ghost-entities.diff", when="@4.10.0"),
+            # As extern/patch/mfem/pfespace_ghost_rows.diff: rows of the parallel conforming
+            # interpolation only for the referenced ghost DOFs of nonconforming meshes
+            patch("mfem-pfespace-ghost-rows.diff", when="@4.10.0"),
+            # As extern/patch/mfem/pfespace_nc_face_orientation.diff: rows of the conforming
+            # interpolation received for the DOFs of a shared face of a nonconforming mesh
+            # use the inverse of the relative face orientation
+            patch("mfem-nc-face-orientation.diff", when="@4.10.0"),
         ],
     )
+
+    # The MFEM patches of the superbuild which are not upstream are made against MFEM
+    # 4.10.0, the version of the superbuild: palace@develop requires it, so that a later
+    # MFEM does not build without them.
+    depends_on("mfem@4.10.0", when="@develop")
 
     with when("@0.16:"):
         depends_on("mfem+shared", when="+shared")
@@ -485,6 +604,24 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
         depends_on("libceed~shared", when="~shared")
+
+    # The libCEED version of the superbuild (added by the local libceed package), with its
+    # patches for the CPU backends: element blocks of 32 for operators with at least 512
+    # elements in the blocked backends, LIBXSMM kernels kept by each tensor contraction, one
+    # contraction for all quadrature components of single-component non-tensor bases, and
+    # curl-oriented restrictions without the terms of their transforms that are zero on
+    # every element (as extern/patch/libceed/*.diff). Kept off the `with` blocks so the
+    # Palace variants are not folded into the patch conditions.
+    depends_on(
+        "libceed@1.0.1",
+        when="@develop",
+        patches=[
+            patch("libceed-cpu-block-size.diff", when="@1.0.1"),
+            patch("libceed-xsmm-kernel-cache.diff", when="@1.0.1"),
+            patch("libceed-nontensor-contraction.diff", when="@1.0.1"),
+            patch("libceed-curl-oriented-restriction.diff", when="@1.0.1"),
+        ],
+    )
 
     with when("+sundials @0.14:"):
         depends_on("sundials+mpi+lapack~examples~examples-install")
@@ -637,7 +774,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.spec.satisfies("+superlu-dist"):
                 args.append(self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix))
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
-            args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
+            if self.spec.satisfies("@0.20:"):
+                args.append(self.define("SCOTCH_DIR", self.spec["scotch"].prefix))
+                if self.spec.satisfies("^parmetis"):
+                    args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
+            else:
+                args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
         else:
             # Pass libraries down to the ExternalMFEM cmake file. Needed only

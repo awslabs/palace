@@ -8,3 +8,11 @@ from spack.package import *
 
 class Strumpack(BuiltinStrumpack):
     """STRUMPACK, in this repository so that Palace can apply its patches to it."""
+
+    def cmake_args(self):
+        args = super().cmake_args()
+        # The PBLAS block size of the superbuild, which the strumpack-pblas-blocksize.diff
+        # patch of Palace makes configurable (STRUMPACK uses 32 otherwise).
+        if self.spec.satisfies("@8.1.0"):
+            args.append(self.define("STRUMPACK_PBLAS_BLOCKSIZE", "128"))
+        return args

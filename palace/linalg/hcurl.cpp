@@ -12,6 +12,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/perfstats.hpp"
 
 namespace palace
 {
@@ -47,6 +48,7 @@ WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print)
 {
+  perf::ScopedRole role("HCurl");
   MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
   const auto n_levels = nd_fespaces.GetNumLevels();
@@ -113,7 +115,7 @@ WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
   pcg->SetRelTol(tol);
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc), "HCurl");
   ksp->SetOperators(*A, *A);
 }
 

@@ -12,11 +12,26 @@
 #include "fem/brokenspace.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/conformingprolongation.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
 {
+
+// A restriction matrix (true dofs x local dofs) whose rows have a single unit entry, as
+// runs ty[row + k] = ly[col + k] (sorted by column), for host products with the results of
+// mfem::SparseMatrix::Mult and MultTranspose (bitwise, up to the signs of zeros).
+struct RestrictionRuns
+{
+  std::vector<int> row, col, len;
+  int height = 0, width = 0;
+
+  // ty = R ly and ly = Rᵀ ty.
+  void Mult(const Vector &ly, Vector &ty) const;
+  void MultTranspose(const Vector &ty, Vector &ly) const;
+};
 
 //
 // Wrapper for MFEM's ParFiniteElementSpace class, with extensions for Palace.
@@ -34,11 +49,27 @@ private:
   // Members for constructing libCEED operators. active_restr caches the single shared
   // lossy-domain or active-boundary subset for each geometry type.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
+  mutable ceed::CeedObjectMap<CeedBasis> reduced_basis, reduced_deriv_basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, interp_restr,
       interp_range_restr;
+  mutable ceed::CeedObjectMap<CeedElemRestriction> part_restr[2], part_active_restr[2];
 
   // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
+
+  // Prolongation operator prepared for faster products on the host (when the prolongation
+  // is a HypreParMatrix), see PrepareProlongation.
+  mutable bool prolongation_prepared = false;
+  mutable std::unique_ptr<hypre::HypreProlongation> fast_prolongation;
+  mutable std::unique_ptr<ConformingProlongation> fast_conforming_prolongation;
+  void PrepareProlongation(const Operator *P) const;
+
+  // Restriction matrix prepared for faster products on the host, see GetRestrictionRuns.
+  mutable bool restriction_prepared = false;
+  mutable std::unique_ptr<RestrictionRuns> restriction_runs;
+
+  // Masked prolongations for lists of essential true dofs, see GetMaskedProlongation.
+  mutable std::vector<std::unique_ptr<hypre::MaskedProlongation>> masked_prolongations;
 
   // Members for discrete interpolators from an auxiliary space to a primal space.
   mutable const FiniteElementSpace *aux_fespace;
@@ -134,6 +165,13 @@ public:
   const auto &Get() const { return fespace; }
   auto &Get() { return fespace; }
 
+  // Prolongation of a broken space with its version true DOFs, or nullptr for a space which
+  // is not broken.
+  const fem::BrokenProlongationMatrix *GetBrokenProlongation() const
+  {
+    return broken ? &broken->P : nullptr;
+  }
+
   operator const mfem::ParFiniteElementSpace &() const { return Get(); }
   operator mfem::ParFiniteElementSpace &() { return Get(); }
 
@@ -160,7 +198,16 @@ public:
 
   const Operator *GetProlongationMatrix() const
   {
-    return broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+    const Operator *P = broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+    if (!prolongation_prepared)
+    {
+      PrepareProlongation(P);
+    }
+    if (fast_conforming_prolongation)
+    {
+      return fast_conforming_prolongation.get();
+    }
+    return fast_prolongation ? fast_prolongation.get() : P;
   }
 
   // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the
@@ -182,6 +229,16 @@ public:
     MFEM_VERIFY(!broken, "Restriction matrix is not available for a broken space!");
     return Get().GetRestrictionMatrix();
   }
+
+  // The restriction matrix as runs of unit entries for products on the host, or nullptr
+  // when it has other entries or the products run on a device.
+  const RestrictionRuns *GetRestrictionRuns() const;
+
+  // The products with the prolongation around operators with the given essential true
+  // dofs (see hypre::MaskedProlongation), shared by the operators of the space with the
+  // same list, or nullptr when the prolongation is not a hypre::HypreProlongation.
+  const hypre::MaskedProlongation *
+  GetMaskedProlongation(const mfem::Array<int> &dofs) const;
 
   bool IsBroken() const { return broken != nullptr; }
 
@@ -257,6 +314,11 @@ public:
 
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
+
+  // Return the basis object from ceed::InitReducedBasis for affine elements of the given
+  // geometry type, representing the values and derivatives (values = true) or only the
+  // derivatives of the basis functions, or nullptr if there is none.
+  CeedBasis GetCeedReducedBasis(Ceed ceed, mfem::Geometry::Type geom, bool values) const;
 
   // Return the element restriction object for the full element index list or the shared
   // active subset of the given geometry factor data.

@@ -133,6 +133,11 @@ set(SLEPC_OPTIONS
 string(REPLACE ";" "; " SLEPC_OPTIONS_PRINT "${SLEPC_OPTIONS}")
 message(STATUS "SLEPC_OPTIONS: ${SLEPC_OPTIONS_PRINT}")
 
+# Patches: convergence checks within Krylov-Schur cycles (EPSKrylovSchurSetCheckInterval)
+set(SLEPC_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/slepc/patch_krylovschur_check_interval.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(slepc
   DEPENDS             ${SLEPC_DEPENDENCIES}
@@ -143,6 +148,10 @@ ExternalProject_Add(slepc
   PREFIX              ${CMAKE_BINARY_DIR}/extern/slepc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${SLEPC_PATCH_FILES}"
   CONFIGURE_COMMAND   SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ./configure ${SLEPC_OPTIONS}
   BUILD_COMMAND       SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM}
   INSTALL_COMMAND     SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} install
