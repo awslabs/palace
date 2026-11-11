@@ -5,10 +5,29 @@
 
 #include <algorithm>
 #include <utility>
+#include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
+
+#if defined(MFEM_USE_STRUMPACK)
+#include <StrumpackSparseSolverMPIDist.hpp>
+#endif
 
 namespace palace
 {
+
+// The factorization of A_II, from its local rows (CSR with global columns, rows [off, off +
+// n) of n_glob, numbered by rank).
+class DirectSchurFactorization
+{
+public:
+  using T = std::complex<double>;
+  virtual ~DirectSchurFactorization() = default;
+  virtual void Factor(int n, HYPRE_BigInt off, HYPRE_BigInt n_glob,
+                      const std::vector<int> &ptr, const std::vector<HYPRE_BigInt> &col,
+                      const std::vector<T> &val) = 0;
+  // x = A_II^-1 b for nb local column-major blocks (collective).
+  virtual void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const = 0;
+};
 
 namespace
 {
@@ -20,17 +39,163 @@ constexpr int kII = 0, kIS = 1, kSS = 2;
 // that of its first solve).
 constexpr int kBatch = 32;
 
+#if defined(MFEM_USE_STRUMPACK)
+// STRUMPACK, in complex arithmetic, with the options of Palace's STRUMPACK solver and its
+// ordering reused when refactored.
+class StrumpackFactorization : public DirectSchurFactorization
+{
+public:
+  explicit StrumpackFactorization(MPI_Comm comm) : comm(comm), sp(comm, false)
+  {
+    auto &opt = sp.options();
+    opt.set_Krylov_solver(strumpack::KrylovSolver::DIRECT);
+    opt.set_matching(strumpack::MatchingJob::NONE);
+    opt.set_reordering_method(strumpack::ReorderingStrategy::METIS);
+    opt.set_compression(strumpack::CompressionType::NONE);
+    opt.set_verbose(false);
+  }
+
+  void Factor(int n, HYPRE_BigInt, HYPRE_BigInt, const std::vector<int> &ptr,
+              const std::vector<HYPRE_BigInt> &col, const std::vector<T> &val) override
+  {
+    n_loc = n;
+    cols.assign(col.begin(), col.end());
+    if (dist.empty())
+    {
+      const int nranks = Mpi::Size(comm);
+      std::vector<int> cnt(nranks);
+      MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+      dist.assign(nranks + 1, 0);
+      for (int r = 0; r < nranks; r++)
+      {
+        dist[r + 1] = dist[r] + cnt[r];
+      }
+      sp.set_distributed_csr_matrix(n, ptr.data(), cols.data(), val.data(), dist.data(),
+                                    true);
+      MFEM_VERIFY(sp.reorder() == strumpack::ReturnCode::SUCCESS,
+                  "STRUMPACK reordering failed!");
+    }
+    else
+    {
+      sp.update_matrix_values(n, ptr.data(), cols.data(), val.data(), dist.data(), true);
+    }
+    MFEM_VERIFY(sp.factor() == strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK factorization failed!");
+  }
+
+  void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const override
+  {
+    x.resize(b.size());
+    const int ld = std::max(n_loc, 1);
+    MFEM_VERIFY(sp.solve(nb, b.data(), ld, x.data(), ld) == strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK solve failed!");
+  }
+
+private:
+  MPI_Comm comm;
+  int n_loc = 0;
+  mutable strumpack::SparseSolverMPIDist<T, int> sp;
+  std::vector<int> dist, cols;
+};
+#elif defined(MFEM_USE_SUPERLU)
+// SuperLU_DIST, in the real equivalent form [Ar, Ai; Ai, -Ar] of A_II (local rows: those of
+// Ar, then of Ai, so that a local vector is [Re x; -Im x] for the solution x).
+class RealFormFactorization : public DirectSchurFactorization
+{
+public:
+  explicit RealFormFactorization(MPI_Comm comm)
+    : comm(comm), solver(std::make_unique<SuperLUSolver>(
+                      comm, SymbolicFactorization::DEFAULT, false, true, 0))
+  {
+  }
+
+  void Factor(int n, HYPRE_BigInt off, HYPRE_BigInt n_glob, const std::vector<int> &ptr,
+              const std::vector<HYPRE_BigInt> &col, const std::vector<T> &val) override
+  {
+    n_loc = n;
+    std::vector<double> re(val.size()), im(val.size());
+    for (std::size_t q = 0; q < val.size(); q++)
+    {
+      re[q] = val[q].real();
+      im[q] = val[q].imag();
+    }
+    HYPRE_BigInt part[2] = {off, off + n};
+    mfem::HypreParMatrix Ar(comm, n, n_glob, n_glob, ptr.data(), col.data(), re.data(),
+                            part, part);
+    mfem::HypreParMatrix Ai(comm, n, n_glob, n_glob, ptr.data(), col.data(), im.data(),
+                            part, part);
+    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+    mfem::Array2D<double> coef(2, 2);
+    blocks(0, 0) = blocks(1, 1) = &Ar;
+    blocks(0, 1) = blocks(1, 0) = &Ai;
+    coef(0, 0) = coef(0, 1) = coef(1, 0) = 1.0;
+    coef(1, 1) = -1.0;
+    A2.reset(mfem::HypreParMatrixFromBlocks(blocks, &coef));
+    solver->SetOperator(*A2);
+  }
+
+  void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const override
+  {
+    x.assign(static_cast<std::size_t>(n_loc) * nb, 0.0);
+    std::vector<Vector> xv(kBatch), yv(kBatch);
+    mfem::Array<const Vector *> X(kBatch);
+    mfem::Array<Vector *> Y(kBatch);
+    for (int k = 0; k < kBatch; k++)
+    {
+      xv[k].SetSize(2 * n_loc);
+      yv[k].SetSize(2 * n_loc);
+      X[k] = &xv[k];
+      Y[k] = &yv[k];
+    }
+    for (int c0 = 0; c0 < nb; c0 += kBatch)
+    {
+      const int m = std::min(kBatch, nb - c0);
+      for (int k = 0; k < kBatch; k++)
+      {
+        double *p = xv[k].HostWrite();
+        for (int i = 0; i < n_loc; i++)
+        {
+          const T v = (k < m) ? b[i + static_cast<std::size_t>(n_loc) * (c0 + k)] : T(0.0);
+          p[i] = v.real();
+          p[n_loc + i] = v.imag();
+        }
+      }
+      solver->ArrayMult(X, Y);
+      for (int k = 0; k < m; k++)
+      {
+        const double *p = yv[k].HostRead();
+        for (int i = 0; i < n_loc; i++)
+        {
+          x[i + static_cast<std::size_t>(n_loc) * (c0 + k)] = T(p[i], -p[n_loc + i]);
+        }
+      }
+    }
+  }
+
+private:
+  MPI_Comm comm;
+  int n_loc = 0;
+  std::unique_ptr<mfem::Solver> solver;
+  std::unique_ptr<mfem::HypreParMatrix> A2;
+};
+#endif
+
 }  // namespace
 
 DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                                      const std::vector<HYPRE_BigInt> &schur_vars,
-                                     std::vector<int> local_rows,
-                                     std::unique_ptr<mfem::Solver> &&direct_solver)
+                                     std::vector<int> local_rows)
   : comm(comm), rank(Mpi::Rank(comm)), n_loc(n_loc),
     n_schur(static_cast<int>(schur_vars.size())), rows(std::move(local_rows)),
-    val(std::move(A.val)), solver(std::move(direct_solver))
+    val(std::move(A.val))
 {
-  MFEM_VERIFY(solver, "DirectSchurSolver needs a sparse direct solver!");
+#if defined(MFEM_USE_STRUMPACK)
+  fact = std::make_unique<StrumpackFactorization>(comm);
+#elif defined(MFEM_USE_SUPERLU)
+  fact = std::make_unique<RealFormFactorization>(comm);
+#else
+  MFEM_ABORT("DirectSchurSolver needs STRUMPACK or SuperLU_DIST!");
+#endif
   MFEM_VERIFY(rows.size() == static_cast<std::size_t>(n_loc),
               "DirectSchurSolver needs the vector index of each local row!");
   const int nranks = Mpi::Size(comm);
@@ -221,29 +386,7 @@ void DirectSchurSolver::Distribute()
 void DirectSchurSolver::Factor()
 {
   Distribute();
-  {
-    // A_II in its real equivalent form [Ar, Ai; Ai, -Ar] (local rows: those of Ar, then of
-    // Ai, so that a local vector is [Re x; -Im x] for the solution x).
-    std::vector<double> re(ii_val.size()), im(ii_val.size());
-    for (std::size_t q = 0; q < ii_val.size(); q++)
-    {
-      re[q] = ii_val[q].real();
-      im[q] = ii_val[q].imag();
-    }
-    HYPRE_BigInt part[2] = {int_off, int_off + n_int};
-    mfem::HypreParMatrix Ar(comm, n_int, n_int_glob, n_int_glob, ii_ptr.data(),
-                            ii_col.data(), re.data(), part, part);
-    mfem::HypreParMatrix Ai(comm, n_int, n_int_glob, n_int_glob, ii_ptr.data(),
-                            ii_col.data(), im.data(), part, part);
-    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-    mfem::Array2D<double> coef(2, 2);
-    blocks(0, 0) = blocks(1, 1) = &Ar;
-    blocks(0, 1) = blocks(1, 0) = &Ai;
-    coef(0, 0) = coef(0, 1) = coef(1, 0) = 1.0;
-    coef(1, 1) = -1.0;
-    A2.reset(mfem::HypreParMatrixFromBlocks(blocks, &coef));
-  }
-  solver->SetOperator(*A2);
+  fact->Factor(n_int, int_off, n_int_glob, ii_ptr, ii_col, ii_val);
 
   // S = A_SS - A_SI A_II^-1 A_IS, for a batch of the Schur variables at a time.
   schur = std::move(ss_val);
@@ -284,40 +427,7 @@ std::vector<DirectSchurSolver::T> DirectSchurSolver::ReleaseSchur()
 void DirectSchurSolver::SolveInterior(const std::vector<T> &b, std::vector<T> &x,
                                       int nb) const
 {
-  x.assign(static_cast<std::size_t>(n_int) * nb, 0.0);
-  std::vector<Vector> xv(kBatch), yv(kBatch);
-  mfem::Array<const Vector *> X(kBatch);
-  mfem::Array<Vector *> Y(kBatch);
-  for (int k = 0; k < kBatch; k++)
-  {
-    xv[k].SetSize(2 * n_int);
-    yv[k].SetSize(2 * n_int);
-    X[k] = &xv[k];
-    Y[k] = &yv[k];
-  }
-  for (int c0 = 0; c0 < nb; c0 += kBatch)
-  {
-    const int m = std::min(kBatch, nb - c0);
-    for (int k = 0; k < kBatch; k++)
-    {
-      double *p = xv[k].HostWrite();
-      for (int i = 0; i < n_int; i++)
-      {
-        const T v = (k < m) ? b[i + static_cast<std::size_t>(n_int) * (c0 + k)] : T(0.0);
-        p[i] = v.real();
-        p[n_int + i] = v.imag();
-      }
-    }
-    solver->ArrayMult(X, Y);
-    for (int k = 0; k < m; k++)
-    {
-      const double *p = yv[k].HostRead();
-      for (int i = 0; i < n_int; i++)
-      {
-        x[i + static_cast<std::size_t>(n_int) * (c0 + k)] = T(p[i], -p[n_int + i]);
-      }
-    }
-  }
+  fact->Solve(b, x, nb);
 }
 
 void DirectSchurSolver::AddSchurProduct(const std::vector<T> &x, int nb, double sign,

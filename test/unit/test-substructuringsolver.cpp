@@ -33,8 +33,6 @@
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
-#include "linalg/strumpack.hpp"
-#include "linalg/superlu.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/materialoperator.hpp"
@@ -3232,15 +3230,8 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   {
     rows[i] = i;
   }
-  DirectSchurSolver solver(
-      comm, n_glob, static_cast<int>(rows.size()), std::move(coo), schur_vars, rows,
-#if defined(MFEM_USE_STRUMPACK)
-      std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
-                                        SparseCompression::NONE, 0.0, 1, 0, true, 0)
-#else
-      std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true, 0)
-#endif
-  );
+  DirectSchurSolver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo),
+                           schur_vars, rows);
   auto dist = [](const auto &a, const auto &b)
   { return (a - b).cwiseAbs().maxCoeff() / b.cwiseAbs().maxCoeff(); };
   for (int k = 0; k < 2; k++)

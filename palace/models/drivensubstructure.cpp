@@ -17,8 +17,6 @@
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
-#include "linalg/strumpack.hpp"
-#include "linalg/superlu.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -50,22 +48,6 @@ constexpr double kEnvironmentTol = 1.0e-10;
 // BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization is faster
 // than its full-rank one here, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
-#else
-// The sparse direct solver of the internal blocks of the sides without MUMPS, in Palace's
-// order of preference for frequency-domain problems.
-std::unique_ptr<mfem::Solver> MakeDirectSolver(MPI_Comm comm)
-{
-#if defined(MFEM_USE_STRUMPACK)
-  return std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
-                                           SparseCompression::NONE, 0.0, 1, 0, true, 0);
-#elif defined(MFEM_USE_SUPERLU)
-  return std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true,
-                                         0);
-#else
-  MFEM_ABORT("Driven substructuring requires a sparse direct solver!");
-  return nullptr;
-#endif
-}
 #endif
 
 // Free a vector's storage (v = {} empties it but keeps its capacity).
@@ -566,7 +548,7 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 #else
     side.schur = std::make_unique<SideSchurSolver>(
         space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
-        side.gamma_sys, side.rows, MakeDirectSolver(space_op.GetComm()));
+        side.gamma_sys, side.rows);
 #endif
     return;
   }

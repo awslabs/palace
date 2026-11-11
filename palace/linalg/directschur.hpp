@@ -13,12 +13,15 @@
 namespace palace
 {
 
+class DirectSchurFactorization;
+
 //
 // The Schur complement S = A_SS - A_SI A_II^-1 A_IS of a complex symmetric sparse matrix A
-// onto some of its variables (the Schur variables), with any sparse direct solver: A_II is
-// factored in its real equivalent form [Re A_II, Im A_II; Im A_II, -Re A_II], and S is
-// formed from one solve with A_II per Schur variable, in batches. It has the interface of
-// MumpsSchurSolverT, whose partial factorization gives S without the solves.
+// onto some of its variables (the Schur variables), with a sparse direct solver other than
+// MUMPS: A_II is factored by STRUMPACK or, without it, by SuperLU_DIST in its real
+// equivalent form [Re A_II, Im A_II; Im A_II, -Re A_II], and S is formed from one solve
+// with A_II per Schur variable, in batches. It has the interface of MumpsSchurSolverT,
+// whose partial factorization gives S without the solves.
 //
 class DirectSchurSolver
 {
@@ -35,12 +38,10 @@ public:
 
   // From the entries of an n_glob x n_glob matrix whose rows are numbered by rank (n_loc
   // local rows), the Schur variables (global 0-based indices, replicated, in their order in
-  // S), and rows: the local index of each local row in the vectors of the solves (-1 for a
-  // row of none). solver is a sparse direct solver, for the real equivalent form of A_II.
-  // Factors the matrix (collective).
+  // S; none for a plain factorization), and rows: the local index of each local row in the
+  // vectors of the solves (-1 for a row of none). Factors the matrix (collective).
   DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
-                    const std::vector<HYPRE_BigInt> &schur_vars, std::vector<int> rows,
-                    std::unique_ptr<mfem::Solver> &&solver);
+                    const std::vector<HYPRE_BigInt> &schur_vars, std::vector<int> rows);
   ~DirectSchurSolver();
 
   // The entries of the next Refactor, in the order of the input (to be overwritten).
@@ -84,8 +85,7 @@ private:
   std::vector<HYPRE_BigInt> ii_col;
   std::vector<T> ii_val, is_val, ss_val;
 
-  std::unique_ptr<mfem::Solver> solver;
-  std::unique_ptr<mfem::HypreParMatrix> A2;
+  std::unique_ptr<DirectSchurFactorization> fact;
   std::vector<T> schur, y_last;
   int reduced = 0;
 
