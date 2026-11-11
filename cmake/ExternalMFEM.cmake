@@ -527,13 +527,6 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392
 )
 
-# With Makefile generators, $(MAKE) passes the parent jobserver to the sub-make.
-if(CMAKE_GENERATOR MATCHES "Makefiles")
-  set(MFEM_TEST_MAKE_COMMAND "$(MAKE)")
-else()
-  set(MFEM_TEST_MAKE_COMMAND ${CMAKE_MAKE_PROGRAM})
-endif()
-
 include(ExternalProject)
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}
@@ -550,5 +543,5 @@ ExternalProject_Add(mfem
     git clean -fd &&
     git apply --exclude=CHANGELOG "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
-  TEST_COMMAND      ${MFEM_TEST_MAKE_COMMAND} ex1 ex1p
+  TEST_COMMAND      ${PALACE_MAKE_COMMAND} ex1 ex1p
 )
