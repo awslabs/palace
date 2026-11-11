@@ -30050,6 +30050,10 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   int tested_records = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
+  // Decision 1544 (the per-mode scaling audit): the root's patch table positions by
+  // global index, sorted once per pass at its first exclusion (each excluded record
+  // scanned the whole table: excluded x patches on the root).
+  std::vector<std::pair<int, std::size_t>> assignment_positions;
   for (const auto &record : records)
   {
     const bool floor_applied = record.normalization > record.amplitude;
@@ -30131,12 +30135,21 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
       excluded_claims += record.claim_length * mesh_coordinate_scale;
       excluded_cells += record.cell_length * mesh_coordinate_scale;
       // The root's patch table (the patches CSV) follows the exclusion.
-      for (auto &assignment : patch_assignments)
+      if (assignment_positions.empty())
       {
-        if (assignment.global_index == record.patch)
+        assignment_positions.reserve(patch_assignments.size());
+        for (std::size_t k = 0; k < patch_assignments.size(); k++)
         {
-          assignment.weight = 0.0;
+          assignment_positions.emplace_back(patch_assignments[k].global_index, k);
         }
+        std::sort(assignment_positions.begin(), assignment_positions.end());
+      }
+      for (auto it =
+               std::lower_bound(assignment_positions.begin(), assignment_positions.end(),
+                                std::pair<int, std::size_t>(record.patch, 0));
+           it != assignment_positions.end() && it->first == record.patch; ++it)
+      {
+        patch_assignments[it->second].weight = 0.0;
       }
     }
     if (record.max_ratio > max_ratio || max_patch < 0)
