@@ -424,7 +424,11 @@ simulation. It has three columns:
 
   - Per-Node: maximum growth on any single node for this phase.
   - Total: sum of growth across all nodes for this phase.
-  - Total HWM (High Water Mark): high-water mark growth at the end of this phase summed across all the nodes.
+  - Total HWM (High Water Mark): high-water mark at the end of this phase summed across all the nodes.
+
+Its first row, Baseline, is the peak RSS at the start of the iteration (of the process, for
+the first one), from which Total HWM grows: in the Total row, it is the peak RSS of the
+iteration summed across all the nodes.
 
 The `BlockTimer` constructor accepts a `count` parameter (default `true`). When `count` is
 `false`, both timing and memory tracking are disabled for that scope. This can be used to
@@ -524,7 +528,8 @@ order. The hook does not see calls bound inside a shared MFEM library on macOS (
 namespace) or those of the Fortran bindings of MPI (used by MUMPS and ARPACK).
 
 Solver roles (`perf::ScopedRole`, `BaseKspSolver` role) keep the statistics of nested
-solvers apart from the main linear solver. Tallies use host clocks, so on GPU builds they
+solvers apart from the main linear solver (`Main`, which is also the mode solver of a
+boundary mode problem; wave port mode solvers are `ModeEigen`). Tallies use host clocks, so on GPU builds they
 measure kernel launches unless the measured region synchronizes.
 
 When comparing with earlier versions: the former "Coarse Solve" row is now "Coarse Setup" plus

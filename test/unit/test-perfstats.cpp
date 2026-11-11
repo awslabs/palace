@@ -196,6 +196,29 @@ TEST_CASE("PerfStats Inconsistent Registration", "[perfstats][Parallel]")
   BlockTimer::Reset();
 }
 
+TEST_CASE("PerfStats Stale Counters Of Other Ranks", "[perfstats][Parallel]")
+{
+  // A counter registered on another process only is erased by the root as well, once it
+  // is no longer set.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  BlockTimer::Reset();
+  if (rank == np - 1)
+  {
+    perf::Set(perf::RegisterCounter("Test/LastRankOnly", perf::Reduce::MAX), 3.0);
+  }
+  BlockTimer::Finalize(comm);
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  CHECK(meta["Test"]["LastRankOnly"] == 3);
+  BlockTimer::StartIteration();
+  BlockTimer::Finalize(comm);
+  perf::WriteJson(meta);
+  CHECK(!meta.contains("Test"));
+  CHECK(meta["Cumulative"]["Test"]["LastRankOnly"] == 3);
+  BlockTimer::Reset();
+}
+
 TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();

@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <vector>
 #include <mfem.hpp>
@@ -167,6 +168,10 @@ private:
   // Owning BoundaryModeOperator for the 2D domain path (null for WavePort). Used for
   // accessing FE hierarchies + per-level DBC lists during p-multigrid preconditioning.
   BoundaryModeOperator *bmo = nullptr;
+
+  // Solver role for the performance report: the boundary mode problem's own solver is the
+  // main solver ("Main"), wave port mode solvers are nested ("ModeEigen").
+  std::string perf_role;
 
   // Complete frequency-parametric components shared by exact and reduced solves.
   std::unique_ptr<mode_assembly::ModeOperatorModel> mode_op_model;

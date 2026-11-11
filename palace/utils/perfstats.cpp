@@ -33,6 +33,7 @@ struct State
   int iteration = 1;
   json info = json::object();
   std::set<std::string> info_paths;
+  std::set<std::string> counter_paths;  // All counter paths written by the report so far
 
   // Peak memory bookkeeping (rank-local), see IterationPeakMemory.
   bool hwm_reset = false;
@@ -586,9 +587,16 @@ void WriteJson(json &meta, const json *error)
   {
     meta.erase(key);
   }
+  // Counters by the union over processes of their paths, now and when last written: a
+  // counter registered only on other processes is written by the root all the same.
+  state.counter_paths.insert(r.counter_paths.begin(), r.counter_paths.end());
   for (const auto &c : detail::registry.counters)
   {
-    ErasePath(meta, c.path);
+    state.counter_paths.insert(c.path);
+  }
+  for (const auto &p : state.counter_paths)
+  {
+    ErasePath(meta, p);
   }
   for (const auto &p : state.info_paths)
   {
@@ -1005,12 +1013,20 @@ void BlockTimer::Print(MPI_Comm comm)
   const auto &r = perf::GetResults();
   constexpr int w = 12;  // Data column width
   constexpr int h = 26;  // Left-hand side width
+  using Row = std::tuple<std::string, std::string, std::string>;
   auto Table = [&](const std::string &title, const std::string &col1,
-                   const std::string &col2, const std::string &col3, auto &&row_fn)
+                   const std::string &col2, const std::string &col3, auto &&row_fn,
+                   const Row *baseline = nullptr)
   {
     Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", title, h, col1, w, col2, w, col3,
                w);
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
+    if (baseline)
+    {
+      const auto &[v1, v2, v3] = *baseline;
+      Mpi::Print(comm, "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", "Baseline", h, v1, w, v2, w, v3,
+                 w);
+    }
     for (int i = 0; i < Timer::NUM_TIMINGS; i++)
     {
       if (r.cum.count[i].max > 0 || i == Timer::TOTAL)
@@ -1027,7 +1043,7 @@ void BlockTimer::Print(MPI_Comm comm)
   };
   auto TimeRow = [](const perf::TimerResults &t)
   {
-    return [&t](int i) -> std::tuple<std::string, std::string, std::string>
+    return [&t](int i) -> Row
     {
       return {fmt::format("{:.3f}", t.time[i].min), fmt::format("{:.3f}", t.time[i].max),
               fmt::format("{:.3f}", t.time[i].avg)};
@@ -1044,21 +1060,28 @@ void BlockTimer::Print(MPI_Comm comm)
   }
   Table("Elapsed Time Report (s)", "Min.", "Max.", "Avg.", TimeRow(r.cum));
 
-  // Memory table: per-node max, total across nodes, and cumulative total HWM, for this
-  // iteration.
-  double hwm = 0.0;
-  Table("Peak Memory", "Per-Node", "Total", "Total HWM",
-        [&](int i) -> std::tuple<std::string, std::string, std::string>
+  // Memory table for this iteration: per-node max and total across nodes of the peak RSS
+  // growth of each row, and the running total high-water mark across nodes, from the peak
+  // at the start of the iteration (Baseline) to the peak of the iteration (Total).
+  const auto &nb = r.node_mem_baseline;
+  double hwm = nb.sum;
+  const Row baseline = {memory_reporting::FormatBytes(nb.max),
+                        memory_reporting::FormatBytes(nb.sum),
+                        memory_reporting::FormatBytes(nb.sum)};
+  Table(
+      "Peak Memory", "Per-Node", "Total", "Total HWM",
+      [&](int i) -> Row
+      {
+        const auto &nm = r.iter.node_mem[i];
+        if (i != Timer::TOTAL)
         {
-          const auto &nm = r.iter.node_mem[i];
-          if (i != Timer::TOTAL)
-          {
-            hwm += nm.sum;
-          }
-          return {memory_reporting::FormatBytes(nm.max),
-                  memory_reporting::FormatBytes(nm.sum),
-                  memory_reporting::FormatBytes((i == Timer::TOTAL) ? nm.sum : hwm)};
-        });
+          hwm += nm.sum;
+        }
+        return {memory_reporting::FormatBytes(nm.max),
+                memory_reporting::FormatBytes(nm.sum),
+                memory_reporting::FormatBytes((i == Timer::TOTAL) ? nb.sum + nm.sum : hwm)};
+      },
+      &baseline);
 
   // This iteration alone, when it differs from the totals.
   if (r.iteration > 1)

@@ -116,6 +116,7 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
 
 void ModeEigenSolver::Init(MPI_Comm solver_comm)
 {
+  perf_role = bmo ? "Main" : "ModeEigen";
   nd_size = nd_fespace.GetTrueVSize();
   h1_size = h1_fespace.GetTrueVSize();
 
@@ -296,8 +297,9 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   else if (linear.pc_mat_real)
   {
-    ComplexWrapperOperator opP(opA->Real(), nullptr);
-    ksp->SetOperators(*opA, opP);
+    // Kept until the next solve: the coarse solver's verification checks apply it.
+    direct_pc_op = std::make_unique<ComplexWrapperOperator>(opA->Real(), nullptr);
+    ksp->SetOperators(*opA, *direct_pc_op);
   }
   else
   {
@@ -455,7 +457,7 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(
 
 void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 {
-  perf::ScopedRole role("ModeEigen");
+  perf::ScopedRole role(perf_role);
   // GMRES iterative solver preconditioned with a sparse direct solver.
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, verbose);
   gmres->SetInitialGuess(false);
@@ -557,12 +559,12 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         return {};
       }(),
       false, false, false, reorder_reuse);
-  ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc), "ModeEigen");
+  ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc), perf_role);
 }
 
 void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 {
-  perf::ScopedRole role("ModeEigen");
+  perf::ScopedRole role(perf_role);
   MFEM_VERIFY(bmo, "Multigrid linear solver requires BMO ctor (2D domain path)!");
   const int print = verbose - 1;
 
@@ -712,8 +714,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   krylov->SetMaxIter(linear.max_it);
   krylov->EnableTimer();
 
-  ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc),
-                                           "ModeEigen");
+  ksp =
+      std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc), perf_role);
 }
 
 std::unique_ptr<ComplexMultigridOperator>

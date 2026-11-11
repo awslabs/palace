@@ -36,6 +36,9 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfprobes.hpp"
+#include "utils/perfstats.hpp"
+#include "utils/timer.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -785,6 +788,47 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
           imp.Ls = 1.0e-8;
         });
   }
+}
+
+TEST_CASE("ModeEigenSolver solver statistics in the performance report",
+          "[boundarymodeoperator][perfstats][Serial]")
+{
+  // The boundary mode problem's solver is the main solver: its solves are the problem's
+  // LinearSolver/TotalSolves and its eigensolves are under EigenSolver, as before the
+  // solver roles, and its coarse solve is verified. Wave port mode solvers are nested.
+  auto Value = [](const std::string &path)
+  {
+    const auto &r = perf::GetResults();
+    for (std::size_t i = 0; i < r.counter_paths.size(); i++)
+    {
+      if (r.counter_paths[i] == path)
+      {
+        return (r.counter[i].n > 0) ? r.counter[i].max : -1.0;
+      }
+    }
+    return -1.0;
+  };
+
+  BlockTimer::Reset();
+  perf::SetVerification(2);
+  REQUIRE(SolveRectangularModesMultigrid(1, [](IoData &) {}).size() >= 1);
+  perf::SetVerification(0);
+  BlockTimer::Finalize(Mpi::World());
+  CHECK(Value("LinearSolver/TotalSolves") > 0.0);
+  CHECK(Value("LinearSolver/TotalIts") >= Value("LinearSolver/TotalSolves"));
+  CHECK(Value("EigenSolver/Solves") == 1.0);
+  CHECK(Value("LinearSolver/ModeEigen/Solves") == -1.0);
+  CHECK(Value("EigenSolver/ModeEigen/Solves") == -1.0);
+  CHECK(Value("Verification/CoarseSolve/Main/Checks") >= 1.0);
+
+  BlockTimer::Reset();
+  REQUIRE(SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, [](IoData &) {})
+              .num_converged >= 1);
+  BlockTimer::Finalize(Mpi::World());
+  CHECK(Value("LinearSolver/ModeEigen/Solves") > 0.0);
+  CHECK(Value("EigenSolver/ModeEigen/Solves") == 1.0);
+  CHECK(Value("LinearSolver/TotalSolves") == -1.0);
+  BlockTimer::Reset();
 }
 
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
