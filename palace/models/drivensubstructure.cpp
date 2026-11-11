@@ -50,6 +50,51 @@ constexpr double kEnvironmentTol = 1.0e-10;
 constexpr double kBlrTol = 1.0e-14;
 #endif
 
+using Factorization = SchurFactorization<std::complex<double>>;
+
+// The sparse direct solvers of a side, which condense it onto Γ (MUMPS's partial
+// factorization, else one solve per interface DOF), and of the coupled system online (as
+// for frequency domain problems), in these orders among those Palace is built with.
+LinearSolver SideSolver()
+{
+#if defined(MFEM_USE_MUMPS)
+  return LinearSolver::MUMPS;
+#elif defined(MFEM_USE_STRUMPACK)
+  return LinearSolver::STRUMPACK;
+#else
+  return LinearSolver::SUPERLU;
+#endif
+}
+
+LinearSolver CoupledSolver()
+{
+#if defined(MFEM_USE_STRUMPACK)
+  return LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+  return LinearSolver::SUPERLU;
+#else
+  return LinearSolver::MUMPS;
+#endif
+}
+
+// The factorization of a system by type, with its Schur complement onto schur_vars.
+std::unique_ptr<Factorization>
+MakeFactorization(LinearSolver type, MPI_Comm comm, HYPRE_BigInt n_glob,
+                  Factorization::Coo &&coo, const std::vector<HYPRE_BigInt> &schur_vars,
+                  const std::vector<int> &rows)
+{
+  const int n_loc = static_cast<int>(rows.size());
+#if defined(MFEM_USE_MUMPS)
+  if (type == LinearSolver::MUMPS)
+  {
+    return std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
+        comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, 0, true, false, rows);
+  }
+#endif
+  return std::make_unique<DirectSchurSolver>(comm, n_glob, n_loc, std::move(coo),
+                                             schur_vars, rows, type);
+}
+
 // Free a vector's storage (v = {} empties it but keeps its capacity).
 template <typename V>
 void Release(V &v)
@@ -539,17 +584,10 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 {
   if (!side.schur)
   {
-    SideSchurSolver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys),
-                             std::move(side.val)};
-#if defined(MFEM_USE_MUMPS)
-    side.schur = std::make_unique<SideSchurSolver>(
-        space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
-        side.gamma_sys, kBlrTol, 0, true, false, side.rows);
-#else
-    side.schur = std::make_unique<SideSchurSolver>(
-        space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
+    side.schur = MakeFactorization(
+        SideSolver(), space_op.GetComm(), side.n_sys,
+        {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
         side.gamma_sys, side.rows);
-#endif
     return;
   }
 
@@ -603,10 +641,7 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
   {
     Factor(region, omega);
   }
-  if (Mpi::Root(space_op.GetComm()))
-  {
-    S = env.schur->ReleaseSchur();
-  }
+  S = env.schur->ReleaseSchur();
   if (region_too)
   {
     FactorInterface();
@@ -639,7 +674,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
   if (!coupled)
   {
     Setup(region, omega);
-    CoupledSolver::Coo coo{std::move(region.irn_sys), std::move(region.jcn_sys),
+    Factorization::Coo coo{std::move(region.irn_sys), std::move(region.jcn_sys),
                            std::move(region.val)};
     coupled_region_entries = coo.val.size();
     add_schur(
@@ -649,15 +684,8 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
           coo.jcn.push_back(static_cast<int>(b + 1));
           coo.val.push_back(v);
         });
-#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_SUPERLU)
-    coupled = std::make_unique<CoupledSolver>(
-        comm, region.n_sys, static_cast<int>(region.rows.size()), std::move(coo),
-        std::vector<HYPRE_BigInt>{}, region.rows);
-#else
-    coupled = std::make_unique<CoupledSolver>(
-        comm, region.n_sys, static_cast<int>(region.rows.size()), std::move(coo),
-        std::vector<HYPRE_BigInt>{}, kBlrTol, 0, true, false, region.rows);
-#endif
+    coupled = MakeFactorization(CoupledSolver(), comm, region.n_sys, std::move(coo), {},
+                                region.rows);
   }
   else
   {
@@ -677,10 +705,10 @@ void DrivenSubstructure::FactorInterface()
 {
   // The interface system S_R + S_E, factored on rank 0 (LU: the symmetric factorization of
   // common LAPACKs is slower, despite its half of the operations).
+  T = region.schur->ReleaseSchur();
   if (Mpi::Root(space_op.GetComm()))
   {
     const int nG = InterfaceSize();
-    T = region.schur->ReleaseSchur();
     for (std::size_t k = 0; k < T.size(); k++)
     {
       T[k] += S[k];

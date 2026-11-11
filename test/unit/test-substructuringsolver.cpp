@@ -18,6 +18,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "fem/errorindicator.hpp"
@@ -3149,7 +3150,16 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   // unknown on the last rank (as by a wave port's modal term), with the Schur variables on
   // a face of the cube and every other entry passed by another rank than that of its row
   // (some split in two): the Schur complement and a condensed solve against dense ones,
-  // also after a refactorization with new values.
+  // also after a refactorization with new values, by STRUMPACK and by SuperLU_DIST.
+  std::vector<LinearSolver> types;
+#if defined(MFEM_USE_STRUMPACK)
+  types.push_back(LinearSolver::STRUMPACK);
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  types.push_back(LinearSolver::SUPERLU);
+#endif
+  const LinearSolver type = GENERATE_COPY(from_range(types));
+  CAPTURE(static_cast<int>(type));
   auto pmesh = MakeSplitCube(4);
   mfem::H1_FECollection fec(2, 3);
   mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
@@ -3343,7 +3353,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     rows[i] = i;
   }
   DirectSchurSolver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo),
-                           schur_vars, rows);
+                           schur_vars, rows, type);
   auto dist = [](const auto &a, const auto &b)
   { return (a - b).cwiseAbs().maxCoeff() / b.cwiseAbs().maxCoeff(); };
   for (int k = 0; k < 2; k++)

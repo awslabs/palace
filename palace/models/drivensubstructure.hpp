@@ -12,34 +12,14 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/schursolver.hpp"
 #include "linalg/vector.hpp"
 #include "models/waveportoperator.hpp"
 
 namespace palace
 {
 
-template <typename T>
-class MumpsSchurSolverT;
-class DirectSchurSolver;
 class SpaceOperator;
-
-// The factorization of a side with its Schur complement onto the interface: MUMPS's partial
-// factorization or, without MUMPS, one solve per interface DOF with another sparse direct
-// solver.
-#if defined(MFEM_USE_MUMPS)
-using SideSchurSolver = MumpsSchurSolverT<std::complex<double>>;
-#else
-using SideSchurSolver = DirectSchurSolver;
-#endif
-
-// The factorization of the region with S_E added on the interface online (one system,
-// without a Schur complement): STRUMPACK, SuperLU_DIST, then MUMPS, as for frequency domain
-// problems.
-#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_SUPERLU)
-using CoupledSolver = DirectSchurSolver;
-#else
-using CoupledSolver = MumpsSchurSolverT<std::complex<double>>;
-#endif
 
 //
 // Barycentric rational interpolation of a vector-valued function of the frequency from its
@@ -310,8 +290,8 @@ private:
   std::vector<HYPRE_BigInt> gamma_tdofs;
   std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
 
-  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), factored by
-  // MUMPS on the side's interior and Γ: the lower-triangle pattern and the entries of the
+  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), factored on
+  // the side's interior and Γ: the lower-triangle pattern and the entries of the
   // frequency-independent parts in pattern order (the assembled operators are not kept).
   struct Side
   {
@@ -332,7 +312,7 @@ private:
     // until factored.
     std::vector<int> irn_sys, jcn_sys;
     std::vector<std::complex<double>> val;
-    std::unique_ptr<SideSchurSolver> schur;
+    std::unique_ptr<SchurFactorization<std::complex<double>>> schur;
     // The rank-one modal terms g s sᵀ of the side's wave ports, bordering the system: an
     // extra unknown y per term after its n_dofs DOFs, on the last rank, with the entries
     // √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on its
@@ -347,7 +327,7 @@ private:
   bool solvable = false;  // the region is factored against the environment
   // Online: the region with S_E on Γ, factored as one system; its entries are the region's,
   // then (on rank 0) S_E's lower triangle.
-  std::unique_ptr<CoupledSolver> coupled;
+  std::unique_ptr<SchurFactorization<std::complex<double>>> coupled;
   std::size_t coupled_region_entries = 0;
   // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots (offline);
   // the environment's source condensation and the interface solution of the last Solve.

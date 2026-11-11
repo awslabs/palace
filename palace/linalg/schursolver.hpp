@@ -40,6 +40,41 @@ public:
 };
 
 //
+// A SchurSolver from the entries of the matrix, which it factors again with new values of
+// the same pattern, and which condenses right-hand sides onto the Schur variables and
+// expands their solutions.
+//
+template <typename T>
+class SchurFactorization : public SchurSolver<T>
+{
+public:
+  using typename SchurSolver<T>::VecType;
+
+  // Lower-triangle COO entries (1-based global indices) of the matrix.
+  struct Coo
+  {
+    std::vector<int> irn, jcn;
+    std::vector<T> val;
+  };
+
+  // The entries of the next Refactor, in the order of the input (to be overwritten).
+  virtual std::vector<T> &Values() = 0;
+
+  // Factor the entries in Values() (collective).
+  virtual void Refactor() = 0;
+
+  // Condensation of a batch of right-hand sides onto the Schur variables (collective):
+  // red = b_S - A_SI A_II^-1 b_I on rank 0 (n_schur x |B|, column-major). The next call
+  // must be Expand of the same batch.
+  virtual void Reduce(const std::vector<const VecType *> &B, std::vector<T> &red) = 0;
+
+  // Expansion of the batch of the last Reduce from the Schur part of its solution, u_S on
+  // rank 0 (n_schur x |X|, column-major): x_I = A_II^-1 (b_I - A_IS u_S) and x_S = u_S
+  // (collective).
+  virtual void Expand(const std::vector<T> &u, const std::vector<VecType *> &X) = 0;
+};
+
+//
 // The Schur complement from solves with A_II, one per Schur variable, in batches, by a
 // given solver of the internal problem (a factorization of A_II, or an iterative solver),
 // whose variables are the internal ones: the other rows of A are not used.

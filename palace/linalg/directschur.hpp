@@ -8,7 +8,9 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "linalg/schursolver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -18,57 +20,38 @@ class DirectSchurFactorization;
 //
 // The Schur complement S = A_SS - A_SI A_II^-1 A_IS of a complex symmetric sparse matrix A
 // onto some of its variables (the Schur variables), with a sparse direct solver other than
-// MUMPS: A_II is factored by STRUMPACK or, without it, by SuperLU_DIST in its real
-// equivalent form [Re A_II, Im A_II; Im A_II, -Re A_II], and S is formed from one solve
-// with A_II per Schur variable, in batches. It has the interface of MumpsSchurSolverT,
-// whose partial factorization gives S without the solves.
+// MUMPS: A_II is factored by STRUMPACK or by SuperLU_DIST in its real equivalent form
+// [Re A_II, Im A_II; Im A_II, -Re A_II], and S is formed from one solve with A_II per Schur
+// variable, in batches (MumpsSchurSolverT's partial factorization gives S without them).
+// The vectors of the solves are those of the rows, 0 outside them.
 //
-class DirectSchurSolver
+class DirectSchurSolver : public SchurFactorization<std::complex<double>>
 {
 public:
   using T = std::complex<double>;
 
-  // Lower-triangle COO entries (1-based global indices) of the matrix, as for
-  // MumpsSchurSolverT: each rank passes some of them, in any rows.
-  struct Coo
-  {
-    std::vector<int> irn, jcn;
-    std::vector<T> val;
-  };
-
   // From the entries of an n_glob x n_glob matrix whose rows are numbered by rank (n_loc
-  // local rows), the Schur variables (global 0-based indices, replicated, in their order in
-  // S; none for a plain factorization), and rows: the local index of each local row in the
-  // vectors of the solves (-1 for a row of none). Factors the matrix (collective).
+  // local rows), each rank passing some of them, in any rows, the Schur variables (global
+  // 0-based indices, replicated, in their order in S; none for a plain factorization), and
+  // rows: the local index of each local row in the vectors of the solves (-1 for a row of
+  // none). Factors the matrix with type (STRUMPACK or SUPERLU), collective.
   DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
-                    const std::vector<HYPRE_BigInt> &schur_vars, std::vector<int> rows);
-  ~DirectSchurSolver();
+                    const std::vector<HYPRE_BigInt> &schur_vars, std::vector<int> rows,
+                    LinearSolver type);
+  ~DirectSchurSolver() override;
 
-  // The entries of the next Refactor, in the order of the input (to be overwritten).
-  std::vector<T> &Values() { return val; }
+  std::vector<T> &Values() override { return val; }
 
-  // Factor the entries in Values() (collective).
-  void Refactor();
+  void Refactor() override;
 
-  // The dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric up to
-  // rounding), handed over (until the next factorization).
-  std::vector<T> ReleaseSchur();
+  std::vector<T> ReleaseSchur() override;
 
-  // Internal solves for a batch of vectors of the rows (collective): y_k solves A_II on the
-  // internal (non-Schur) variables, 0 on the Schur variables and outside the rows. y_k may
-  // alias x_k.
   void SolveInternal(const std::vector<const ComplexVector *> &X,
-                     const std::vector<ComplexVector *> &Y);
+                     const std::vector<ComplexVector *> &Y) override;
 
-  // Condensation of a batch of right-hand sides b (vectors of the rows) onto the Schur
-  // variables: red = b_S - A_SI A_II^-1 b_I on rank 0 (n_schur x |B|, column-major). The
-  // next call must be Expand of the same batch (collective).
-  void Reduce(const std::vector<const ComplexVector *> &B, std::vector<T> &red);
+  void Reduce(const std::vector<const ComplexVector *> &B, std::vector<T> &red) override;
 
-  // Expansion of the batch of the last Reduce from the Schur part of its solution, u_S on
-  // rank 0 (n_schur x |X|, column-major): x_I = A_II^-1 (b_I - A_IS u_S) and x_S = u_S, 0
-  // outside the rows (collective).
-  void Expand(const std::vector<T> &u, const std::vector<ComplexVector *> &X);
+  void Expand(const std::vector<T> &u, const std::vector<ComplexVector *> &X) override;
 
 private:
   MPI_Comm comm;

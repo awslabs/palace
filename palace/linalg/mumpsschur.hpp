@@ -31,21 +31,14 @@ namespace palace
 // (ZMUMPS) for a complex symmetric A = Ar + i Ai. The right-hand sides and solutions of the
 // solves stay distributed by rows; only the condensed (Schur) parts are on rank 0.
 template <typename T>
-class MumpsSchurSolverT : public SchurSolver<T>
+class MumpsSchurSolverT : public SchurFactorization<T>
 {
   static constexpr bool kComplex = !std::is_same_v<T, double>;
   using Struc = std::conditional_t<kComplex, ZMUMPS_STRUC_C, DMUMPS_STRUC_C>;
 
 public:
-  using typename SchurSolver<T>::VecType;
-
-  // Local lower-triangle COO entries (1-based global indices) of the local rows of an
-  // n_glob x n_glob symmetric matrix.
-  struct Coo
-  {
-    std::vector<MUMPS_INT> irn, jcn;
-    std::vector<T> val;
-  };
+  using typename SchurFactorization<T>::VecType;
+  using Coo = typename SchurFactorization<T>::Coo;
 
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
@@ -75,27 +68,20 @@ public:
 
   ~MumpsSchurSolverT() override;
 
-  // With refactor: the entries of the next Refactor in the order of the input (to be
-  // overwritten).
-  std::vector<T> &Values() { return val; }
+  // With refactor (the factorization releases the entries otherwise).
+  std::vector<T> &Values() override { return val; }
 
-  // Factor the entries in Values() with the sparsity pattern of the analysis (collective).
-  void Refactor();
+  // With the sparsity pattern and the ordering of the analysis.
+  void Refactor() override;
 
   std::vector<T> ReleaseSchur() override;
 
   void SolveInternal(const std::vector<const VecType *> &X,
                      const std::vector<VecType *> &Y) override;
 
-  // Condensation of a batch of right-hand sides onto the Schur variables (collective):
-  // red = b_S - A_SI A_II^-1 b_I on rank 0 (n_schur x |B|, column-major). The next call
-  // must be Expand of the same batch.
-  void Reduce(const std::vector<const VecType *> &B, std::vector<T> &red);
+  void Reduce(const std::vector<const VecType *> &B, std::vector<T> &red) override;
 
-  // Expansion of the batch of the last Reduce from the Schur part of its solution, u_S on
-  // rank 0 (n_schur x |X|, column-major): x_I = A_II^-1 (b_I - A_IS u_S), with u_S on the
-  // Schur variables (collective).
-  void Expand(const std::vector<T> &u, const std::vector<VecType *> &X);
+  void Expand(const std::vector<T> &u, const std::vector<VecType *> &X) override;
 
 private:
   void Init(const std::vector<HYPRE_BigInt> &schur_vars);

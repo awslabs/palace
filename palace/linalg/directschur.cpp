@@ -97,7 +97,9 @@ private:
   mutable strumpack::SparseSolverMPIDist<T, int> sp;
   std::vector<int> dist, cols;
 };
-#elif defined(MFEM_USE_SUPERLU)
+#endif
+
+#if defined(MFEM_USE_SUPERLU)
 // SuperLU_DIST, in the real equivalent form [Ar, Ai; Ai, -Ar] of A_II (local rows: those of
 // Ar, then of Ai, so that a local vector is [Re x; -Im x] for the solution x).
 class RealFormFactorization : public DirectSchurFactorization
@@ -184,18 +186,27 @@ private:
 
 DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                                      const std::vector<HYPRE_BigInt> &schur_vars,
-                                     std::vector<int> local_rows)
+                                     std::vector<int> local_rows, LinearSolver type)
   : comm(comm), rank(Mpi::Rank(comm)), n_loc(n_loc),
     n_schur(static_cast<int>(schur_vars.size())), rows(std::move(local_rows)),
     val(std::move(A.val))
 {
+  switch (type)
+  {
 #if defined(MFEM_USE_STRUMPACK)
-  fact = std::make_unique<StrumpackFactorization>(comm);
-#elif defined(MFEM_USE_SUPERLU)
-  fact = std::make_unique<RealFormFactorization>(comm);
-#else
-  MFEM_ABORT("DirectSchurSolver needs STRUMPACK or SuperLU_DIST!");
+    case LinearSolver::STRUMPACK:
+      fact = std::make_unique<StrumpackFactorization>(comm);
+      break;
 #endif
+#if defined(MFEM_USE_SUPERLU)
+    case LinearSolver::SUPERLU:
+      fact = std::make_unique<RealFormFactorization>(comm);
+      break;
+#endif
+    default:
+      MFEM_ABORT("DirectSchurSolver factors with STRUMPACK or SuperLU_DIST, and Palace is "
+                 "not built with the one requested!");
+  }
   MFEM_VERIFY(rows.size() == static_cast<std::size_t>(n_loc),
               "DirectSchurSolver needs the vector index of each local row!");
   const int nranks = Mpi::Size(comm);
