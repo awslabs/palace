@@ -177,6 +177,23 @@ inline MPI_Datatype DataType<ValueAndLoc<signed long int, signed int>>()
   return MPI_LONG_INT;
 }
 
+// The largest single MPI_Bcast of Mpi::BroadcastLarge, in BYTES. On the cluster MPI stack
+// of record (Open MPI 5.0.8 + libfabric-aws 2.6.0) one MPI_Bcast of INT_MAX or INT_MAX - 1
+// bytes segfaults in the transport while 2^30 bytes pass
+// (OI-NC-LOAD-BYTESTRING-ABOVE-2GIB-SEGFAULT), so the chunk is bounded in bytes, whatever
+// the element type. A compile-time constant on purpose: mpirun does not forward the
+// environment to remote nodes. A test-only build may lower it with
+// -DPALACE_BROADCAST_LARGE_CHUNK_BYTES=<bytes> to exercise many chunks.
+#if defined(PALACE_BROADCAST_LARGE_CHUNK_BYTES)
+inline constexpr std::int64_t BROADCAST_LARGE_CHUNK_BYTES =
+    PALACE_BROADCAST_LARGE_CHUNK_BYTES;
+#else
+inline constexpr std::int64_t BROADCAST_LARGE_CHUNK_BYTES = std::int64_t(1) << 28;
+#endif
+static_assert(BROADCAST_LARGE_CHUNK_BYTES > 0 &&
+                  BROADCAST_LARGE_CHUNK_BYTES <= (std::int64_t(1) << 28),
+              "BROADCAST_LARGE_CHUNK_BYTES must lie in (0, 2^28]!");
+
 }  // namespace mpi
 
 //
@@ -338,17 +355,25 @@ public:
   }
 
   // Global broadcast from root for buffers whose length may exceed INT_MAX (e.g. a
-  // serialized multi-GB mesh). Chunks the transfer to respect the int count limit of the
-  // classic MPI interface. The chunk length is exposed for testing the chunking logic
-  // with small buffers.
+  // serialized multi-GB mesh). Chunks the transfer so that no single MPI_Bcast carries
+  // more than mpi::BROADCAST_LARGE_CHUNK_BYTES bytes (which also respects the int count
+  // limit of the classic MPI interface). The chunk length in elements is exposed for
+  // testing the chunking logic with small buffers; it is capped at the byte bound.
+  template <typename T>
+  static constexpr std::int64_t BroadcastLargeChunk()
+  {
+    return std::max<std::int64_t>(1, mpi::BROADCAST_LARGE_CHUNK_BYTES /
+                                         static_cast<std::int64_t>(sizeof(T)));
+  }
   template <typename T>
   static void BroadcastLarge(std::int64_t len, T *buff, int root, MPI_Comm comm,
-                             std::int64_t max_chunk = std::numeric_limits<int>::max())
+                             std::int64_t max_chunk = BroadcastLargeChunk<T>())
   {
     MFEM_ASSERT(len >= 0 && max_chunk > 0, "Invalid BroadcastLarge lengths!");
-    for (std::int64_t offset = 0; offset < len; offset += max_chunk)
+    const std::int64_t chunk = std::min(max_chunk, BroadcastLargeChunk<T>());
+    for (std::int64_t offset = 0; offset < len; offset += chunk)
     {
-      const int n = static_cast<int>(std::min(max_chunk, len - offset));
+      const int n = static_cast<int>(std::min(chunk, len - offset));
       MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
     }
   }
