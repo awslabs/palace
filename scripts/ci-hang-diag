@@ -2,7 +2,7 @@
 # CI diagnostic: run the suspect unit tests repeatedly under several environments, and
 # capture the stacks of the test processes that hang.
 # Usage: ci-hang-diag OUTDIR TEST_DIR BUDGET_SECONDS MAX_REPS VARIANT...
-# Each VARIANT is NAME[:VAR=VALUE[,VAR=VALUE...]].
+# Each VARIANT is NAME[:VAR=VALUE[;VAR=VALUE...]].
 set -u
 out=$1; test_dir=$2; budget=$3; max_reps=$4; shift 4
 regex=${DIAG_REGEX:-'^mpi-ModeEigenSolver (guarded reduced|reduced model basis|takes the decaying|reduced rejection)'}
@@ -39,7 +39,7 @@ for variant in "$@"; do
   name=${variant%%:*}
   envs=()
   if [[ "$variant" == *:* ]]; then
-    IFS=',' read -r -a envs <<< "${variant#*:}"
+    IFS=';' read -r -a envs <<< "${variant#*:}"
   fi
   dir="$out/$name"; mkdir -p "$dir"
   echo "variant $name: ${envs[*]:-(none)}" | tee -a "$out/variants.txt"
