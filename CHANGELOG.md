@@ -391,6 +391,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigenmode postprocessing stalled there, OI-PATCH-ENERGY-CSV-QUADRATIC-ROOT-WRITER), and
     the conductor-consistency gate no longer scans the whole patch table per excluded patch;
     both are indexed once (decision 1544; the same bytes are written).
+  - The surface-response construction holds less replicated data per rank at its setup
+    peak (lane setupmem-impl, decision 1546): a rank other than the root builds the model
+    matrices only of the models its own patches reference, after the placement (the root
+    still builds every model: the records and the log are unchanged), and the placement
+    moves the configured patch list instead of copying it (the original values of the
+    fields it writes are kept in a side table for the readers of the original list);
+    two log-only memory-census instants are added inside the patch build. Results are
+    bitwise unchanged (the same functions of the same inputs; only where the originals
+    are read from changes).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
