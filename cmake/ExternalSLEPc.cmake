@@ -106,11 +106,22 @@ endif()
 string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
+# Shallow clones for tag or branch names, since the full histories are large (a commit hash
+# needs the full history)
+foreach(_pkg PETSC SLEPC)
+  if(EXTERN_${_pkg}_GIT_TAG MATCHES "^[0-9a-f]+$")
+    set(${_pkg}_GIT_SHALLOW FALSE)
+  else()
+    set(${_pkg}_GIT_SHALLOW TRUE)
+  endif()
+endforeach()
+
 include(ExternalProject)
 ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_PETSC_URL}
   GIT_TAG             ${EXTERN_PETSC_GIT_TAG}
+  GIT_SHALLOW         ${PETSC_GIT_SHALLOW}
   SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/petsc
   INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
   PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc-cmake
@@ -138,6 +149,7 @@ ExternalProject_Add(slepc
   DEPENDS             ${SLEPC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_SLEPC_URL}
   GIT_TAG             ${EXTERN_SLEPC_GIT_TAG}
+  GIT_SHALLOW         ${SLEPC_GIT_SHALLOW}
   SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/slepc
   INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
   PREFIX              ${CMAKE_BINARY_DIR}/extern/slepc-cmake

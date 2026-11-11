@@ -164,9 +164,15 @@ ExternalProject_Add(palace
   TEST_COMMAND      ""
 )
 
-# Add target for Palace unit tests
+# Add target for Palace unit tests. With Makefile generators, $(MAKE) passes the parent
+# jobserver to the sub-make (GNU make >= 4.3 otherwise builds it at -j1).
+if(CMAKE_GENERATOR MATCHES "Makefiles")
+  set(PALACE_TESTS_MAKE_COMMAND "$(MAKE)")
+else()
+  set(PALACE_TESTS_MAKE_COMMAND ${CMAKE_MAKE_PROGRAM})
+endif()
 ExternalProject_Add_Step(palace tests
-  COMMAND           ${CMAKE_MAKE_PROGRAM} unit-tests
+  COMMAND           ${PALACE_TESTS_MAKE_COMMAND} unit-tests
   COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
   DEPENDEES         install
   DEPENDERS         ""
