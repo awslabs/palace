@@ -24052,6 +24052,16 @@ void SurfaceResponseGeometry::RestoreReplicatedPatches(MPI_Comm comm) const
   impl.patches_local = false;
 }
 
+void SurfaceResponseGeometry::AdoptLocalPatches(std::vector<ResponsePatchData> &&local,
+                                                std::size_t global_count) const
+{
+  const Impl &impl = *this->impl;
+  impl.global_patch_count = global_count;
+  impl.config.patches = std::move(local);
+  impl.config.patches.shrink_to_fit();
+  impl.patches_local = true;
+}
+
 namespace
 {
 
@@ -30347,9 +30357,110 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   return records;
 }
 
+namespace
+{
+
+// setupmem S2 (decision 1546): the ORIGINAL values of every field the placement writes in
+// a placed patch: ApplyContinuationOwnership's clip (weight, quadrature weight, the cell,
+// the origin and the Maxwell anchors moved with it, the own-cell pre-image by ClipOwnCell /
+// ClipLongitudinalCell) and its foreign-edge domain drop (domain_weight); the
+// DomainBoundary passes (weight).
+struct PlacementOriginalFields
+{
+  double weight = 0.0;
+  double quadrature_weight = 0.0;
+  double domain_weight = 0.0;
+  std::array<double, 2> longitudinal_cell{};
+  std::array<double, 3> origin{};
+  std::array<std::array<double, 3>, 2> own_cell{};
+  std::vector<std::array<double, 3>> maxwell_conductor_anchors;
+};
+
+std::vector<PlacementOriginalFields>
+TakePlacementOriginalFields(const std::vector<ResponsePatchData> &patches)
+{
+  std::vector<PlacementOriginalFields> originals(patches.size());
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const auto &patch = patches[i];
+    auto &original = originals[i];
+    original.weight = patch.weight;
+    original.quadrature_weight = patch.provenance.quadrature_weight;
+    original.domain_weight = patch.domain_weight;
+    original.longitudinal_cell = patch.longitudinal_cell;
+    original.origin = patch.origin;
+    original.own_cell = patch.provenance.own_cell;
+    original.maxwell_conductor_anchors = patch.maxwell_conductor_anchors;
+  }
+  return originals;
+}
+
+// Exchanges the written fields of every patch with the side table: called in pairs, the
+// list holds the ORIGINAL values between the two calls and the placed values again after
+// the second (a swap moves the values, no arithmetic).
+void SwapPlacementOriginalFields(std::vector<ResponsePatchData> &patches,
+                                 std::vector<PlacementOriginalFields> &originals)
+{
+  MFEM_VERIFY(patches.size() == originals.size(),
+              "The placement's original-field table does not match the patch list!");
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    auto &patch = patches[i];
+    auto &original = originals[i];
+    std::swap(patch.weight, original.weight);
+    std::swap(patch.provenance.quadrature_weight, original.quadrature_weight);
+    std::swap(patch.domain_weight, original.domain_weight);
+    std::swap(patch.longitudinal_cell, original.longitudinal_cell);
+    std::swap(patch.origin, original.origin);
+    std::swap(patch.provenance.own_cell, original.own_cell);
+    patch.maxwell_conductor_anchors.swap(original.maxwell_conductor_anchors);
+  }
+}
+
+std::size_t PlacementOriginalFieldsBytes(const std::vector<PlacementOriginalFields> &table)
+{
+  std::size_t bytes = table.capacity() * sizeof(PlacementOriginalFields);
+  for (const auto &entry : table)
+  {
+    bytes += entry.maxwell_conductor_anchors.capacity() * sizeof(std::array<double, 3>);
+  }
+  return bytes;
+}
+
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+// TEST BUILDS ONLY (-DPALACE_RESPONSE_PLACEMENT_MOVE_CHECK): the list a reader of the
+// original patches sees equals the unplaced list, every field (PackPatch's exact form).
+void CheckOriginalPatchList(const std::vector<ResponsePatchData> &patches,
+                            const std::vector<ResponsePatchData> &unplaced,
+                            const char *where)
+{
+  MFEM_VERIFY(patches.size() == unplaced.size(), "PALACE_RESPONSE_PLACEMENT_MOVE_CHECK ("
+                                                     << where << "): " << patches.size()
+                                                     << " vs " << unplaced.size()
+                                                     << " patches!");
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    std::vector<double> a, b;
+    SurfaceResponseGeometry::PackPatch(a, i, patches[i]);
+    SurfaceResponseGeometry::PackPatch(b, i, unplaced[i]);
+    MFEM_VERIFY(a.size() == b.size() &&
+                    std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0,
+                "PALACE_RESPONSE_PLACEMENT_MOVE_CHECK ("
+                    << where << "): patch " << i
+                    << " differs from the unplaced list in a field!");
+  }
+  Mpi::Print(" PALACE_RESPONSE_PLACEMENT_MOVE_CHECK ({}): {:d} patches equal the unplaced "
+             "list field by field\n",
+             where, static_cast<int>(patches.size()));
+}
+#endif
+
+}  // namespace
+
 SurfaceResponseOperator::PlacementOwnership
 SurfaceResponseOperator::ApplyPlacementOwnership(
-    const ResponseCorrectionData &config, const std::unordered_map<int, int> &model_indices,
+    const ResponseCorrectionData &config, std::vector<ResponsePatchData> *movable_patches,
+    const std::unordered_map<int, int> &model_indices,
     const std::vector<std::vector<std::array<double, 3>>> &basis_points,
     double coordinate_scale, int dimension,
     const std::shared_ptr<const SurfaceResponseGeometry> &cached_geometry,
@@ -30395,7 +30506,59 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   // placement, read after the domain-boundary pass for the raw remainder (decision 922).
   std::vector<std::pair<std::size_t, std::size_t>> spatial_cluster_priority_pairs;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
-  std::vector<ResponsePatchData> placed_patches = config.patches;
+  // setupmem S2 (decision 1546): the caller's list itself when it is movable (written in
+  // place, returned moved), else a copy. Until the first write below (the continuation
+  // ownership) the placed list IS the configured one, so the readers of `config.patches`
+  // before it read the same values either way; after it they run inside a swap of the
+  // original-field table (SwapPlacementOriginalFields).
+  MFEM_VERIFY(!movable_patches || movable_patches == &config.patches,
+              "The placement's movable patch list is not the configuration's!");
+  std::vector<ResponsePatchData> copied_patches;
+  if (!movable_patches)
+  {
+    copied_patches = config.patches;
+  }
+  std::vector<ResponsePatchData> &placed_patches =
+      movable_patches ? *movable_patches : copied_patches;
+  // A shared geometry's list: this rank's local ORIGINAL patches (ReleaseReplicatedPatches'
+  // rule), taken before any write; adopted by the geometry when the list leaves below.
+  const bool moves_shared_list = movable_patches && cached_geometry &&
+                                 movable_patches == &cached_geometry->impl->config.patches;
+  const std::size_t unplaced_patch_count = placed_patches.size();
+  std::vector<ResponsePatchData> shared_local_patches;
+  if (moves_shared_list)
+  {
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    for (std::size_t patch_idx = static_cast<std::size_t>(rank);
+         patch_idx < placed_patches.size(); patch_idx += static_cast<std::size_t>(size))
+    {
+      shared_local_patches.push_back(placed_patches[patch_idx]);
+    }
+  }
+  std::vector<PlacementOriginalFields> original_fields;
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+  const std::vector<ResponsePatchData> unplaced_patches = config.patches;
+#endif
+  // Runs `read` with `config.patches` holding the ORIGINAL values (a no-op swap when the
+  // list is a copy or nothing was written yet).
+  auto WithOriginalPatches = [&](const char *where, auto &&read)
+  {
+    const bool swap = movable_patches && !original_fields.empty();
+    if (swap)
+    {
+      SwapPlacementOriginalFields(placed_patches, original_fields);
+    }
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+    CheckOriginalPatchList(config.patches, unplaced_patches, where);
+#else
+    (void)where;
+#endif
+    read();
+    if (swap)
+    {
+      SwapPlacementOriginalFields(placed_patches, original_fields);
+    }
+  };
   // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
   // weight 0 at construction and is skipped like a wholly owned cell.
   for (const auto &trim : config.corner_arm_trims)
@@ -30721,6 +30884,12 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     const auto partial_records = FindTranslationalStretchPartiallyInsideSpatialSupport(
         placed_patches, boxes, dimension,
         kSignatureParameterToleranceOverRadius * config.matching_radius);
+    // setupmem S2: the first write of the placed list follows; its original values of the
+    // written fields are kept from here (a moved list only).
+    if (movable_patches)
+    {
+      original_fields = TakePlacementOriginalFields(placed_patches);
+    }
     const ContinuationOwnership ownership = ApplyContinuationOwnership(
         placed_patches, boxes, dimension,
         kSignatureParameterToleranceOverRadius * config.matching_radius,
@@ -30738,11 +30907,16 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         spatially_owned_patches.insert(vertex.patch);
         vertex_coupon_exclusion_reasons.emplace(vertex.patch, "VertexOwnership");
       }
-      ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
-          DescribeTranslationalOwnershipRecords(records, boxes, config, coordinate_scale,
-                                                skipped, &ownership);
-      ownership_diagnostics["ContinuationOwnership"] =
-          DescribeContinuationOwnership(ownership, boxes, config, coordinate_scale);
+      WithOriginalPatches(
+          "the continuation-ownership records",
+          [&]()
+          {
+            ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
+                DescribeTranslationalOwnershipRecords(
+                    records, boxes, config, coordinate_scale, skipped, &ownership);
+            ownership_diagnostics["ContinuationOwnership"] =
+                DescribeContinuationOwnership(ownership, boxes, config, coordinate_scale);
+          });
       if (!records.empty())
       {
         Mpi::Warning(
@@ -30752,9 +30926,14 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       if (!partial_records.empty())
       {
-        ownership_diagnostics["TranslationalStretchesPartiallyInsideSpatialSupport"] =
-            DescribeTranslationalPartialStretchRecords(partial_records, boxes, config,
-                                                       coordinate_scale, &ownership);
+        WithOriginalPatches(
+            "the partial-stretch records",
+            [&]()
+            {
+              ownership_diagnostics["TranslationalStretchesPartiallyInsideSpatialSupport"] =
+                  DescribeTranslationalPartialStretchRecords(partial_records, boxes, config,
+                                                             coordinate_scale, &ownership);
+            });
         Mpi::Warning(fespace.GetComm(), "{}",
                      DescribeTranslationalPartialStretchWarning(
                          ownership_diagnostics
@@ -30905,8 +31084,13 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         geometry_ledger.Enforce(maxwell ? "Maxwell surface-response configuration"
                                         : "electrostatic surface-response configuration");
       }
-      ownership_diagnostics["DomainBoundaryExclusions"] =
-          DescribeDomainBoundaryExclusions(exclusions, config, coordinate_scale);
+      WithOriginalPatches("the DomainBoundary record",
+                          [&]()
+                          {
+                            ownership_diagnostics["DomainBoundaryExclusions"] =
+                                DescribeDomainBoundaryExclusions(exclusions, config,
+                                                                 coordinate_scale);
+                          });
       // F-DB-a (decisions 442 / 454): the excluded patches' raw claims are kept in the
       // corrected interface energies (GetDomainBoundaryPortions), never dropped.
       domain_boundary_portions = CollectDomainBoundaryPortions(
@@ -31032,8 +31216,23 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         ResponseMemoryCensus::Add(entries, "config.", config);
         ResponseMemoryCensus::Add(entries, *this);
         // The placement's own locals live at this instant.
-        entries.emplace_back("placement: placed_patches (the copy of config.patches)",
-                             ResponseMemoryCensus::Heap(placed_patches));
+        if (movable_patches)
+        {
+          // setupmem S2: the placed list IS config.patches (counted above).
+          entries.emplace_back(
+              "placement: placed_patches (config.patches moved in place; counted there)",
+              0.0);
+          entries.emplace_back("placement: the original-field side table (setupmem S2)",
+                               double(PlacementOriginalFieldsBytes(original_fields)));
+          entries.emplace_back(
+              "placement: the shared geometry's local original patches (setupmem S2)",
+              ResponseMemoryCensus::Heap(shared_local_patches));
+        }
+        else
+        {
+          entries.emplace_back("placement: placed_patches (the copy of config.patches)",
+                               ResponseMemoryCensus::Heap(placed_patches));
+        }
         entries.emplace_back("placement: the containment exclusions",
                              ResponseMemoryCensus::Heap(exclusions));
         entries.emplace_back("placement: spatial_supports + spatially_owned_patches",
@@ -31128,17 +31327,22 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           ownership_diagnostics["SpatialClusterPriority"]["WindowLength"].get<double>());
     }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
-    ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
-        DescribeCornerArmTrimExcludedCoupons(
-            config.corner_arm_trims, config,
-            [&](std::size_t patch_idx) -> std::optional<std::string>
-            {
-              const auto it = vertex_coupon_exclusion_reasons.find(patch_idx);
-              return it == vertex_coupon_exclusion_reasons.end()
-                         ? std::nullopt
-                         : std::optional<std::string>(it->second);
-            },
-            coordinate_scale);
+    WithOriginalPatches("the trimmed corners' excluded coupons",
+                        [&]()
+                        {
+                          ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
+                              DescribeCornerArmTrimExcludedCoupons(
+                                  config.corner_arm_trims, config,
+                                  [&](std::size_t patch_idx) -> std::optional<std::string>
+                                  {
+                                    const auto it =
+                                        vertex_coupon_exclusion_reasons.find(patch_idx);
+                                    return it == vertex_coupon_exclusion_reasons.end()
+                                               ? std::nullopt
+                                               : std::optional<std::string>(it->second);
+                                  },
+                                  coordinate_scale);
+                        });
     if (ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
     {
       Mpi::Warning(
@@ -31148,7 +31352,33 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
   }
-  return {std::move(placed_patches), std::move(spatially_owned_patches)};
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+  // TEST BUILDS ONLY: the moved list with its original fields swapped back is the unplaced
+  // list field by field (no unlisted field was written), and the shared geometry's local
+  // subset is the unplaced list's.
+  WithOriginalPatches("the end of the placement", []() {});
+  if (moves_shared_list)
+  {
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    std::vector<ResponsePatchData> expected;
+    for (std::size_t patch_idx = static_cast<std::size_t>(rank);
+         patch_idx < unplaced_patches.size(); patch_idx += static_cast<std::size_t>(size))
+    {
+      expected.push_back(unplaced_patches[patch_idx]);
+    }
+    CheckOriginalPatchList(shared_local_patches, expected, "the shared local patches");
+  }
+#endif
+  PlacementOwnership placement{std::move(placed_patches),
+                               std::move(spatially_owned_patches)};
+  if (moves_shared_list)
+  {
+    // The shared geometry keeps this rank's local originals until the next construction
+    // (C6); ReleaseReplicatedPatches finds them local.
+    cached_geometry->AdoptLocalPatches(std::move(shared_local_patches),
+                                       unplaced_patch_count);
+  }
+  return placement;
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -31186,6 +31416,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   std::optional<ResponseCorrectionData> automatic_config;
   std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
   const ResponseCorrectionData *config = &*request;
+  // setupmem S2: the same configuration when this constructor owns it (automatic), so
+  // that the placement moves its patch list instead of copying it; null for iodata's.
+  ResponseCorrectionData *movable_config = nullptr;
   if (request->IsAutomatic())
   {
     if (automatic_geometry && *automatic_geometry)
@@ -31196,7 +31429,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                   "Cannot reuse Maxwell surface-response geometry for electrostatics!");
       // C6: the full placed-patch list again (released after the previous construction).
       cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
-      config = &cached_geometry->impl->config;
+      config = movable_config = &cached_geometry->impl->config;
       automatic_statistics = cached_geometry->impl->statistics;
     }
     else
@@ -31261,11 +31494,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
             new SurfaceResponseGeometry(std::move(impl)));
         *automatic_geometry = cached_geometry;
-        config = &cached_geometry->impl->config;
+        config = movable_config = &cached_geometry->impl->config;
       }
       else
       {
-        config = &*automatic_config;
+        config = movable_config = &*automatic_config;
       }
     }
   }
@@ -31852,9 +32085,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         ownership_diagnostics["ConsistentMortar"]["WithZeroTraceIndices"].get<int>(),
         ownership_diagnostics["ConsistentMortar"]["WithoutBand"].get<int>());
   }
-  auto placement =
-      ApplyPlacementOwnership(*config, model_indices, basis_points, coordinate_scale,
-                              dimension, cached_geometry, setup_timing);
+  auto placement = ApplyPlacementOwnership(
+      *config, movable_config ? &movable_config->patches : nullptr, model_indices,
+      basis_points, coordinate_scale, dimension, cached_geometry, setup_timing);
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
@@ -32713,6 +32946,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   std::optional<ResponseCorrectionData> local_config;
   std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
   const ResponseCorrectionData *config_ptr = nullptr;
+  // setupmem S2: the configuration this function owns (always automatic here): the
+  // placement moves its patch list instead of copying it.
+  ResponseCorrectionData *movable_config = nullptr;
   const AutomaticResponseDiagnostics *diagnostics_ptr = nullptr;
   if (automatic_geometry && *automatic_geometry)
   {
@@ -32723,7 +32959,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
     // C6: the full placed-patch list again (released after the previous construction).
     cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
-    config_ptr = &cached_geometry->impl->config;
+    config_ptr = movable_config = &cached_geometry->impl->config;
     diagnostics_ptr = &*cached_geometry->impl->diagnostics;
     automatic_statistics = cached_geometry->impl->statistics;
   }
@@ -32759,12 +32995,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
           new SurfaceResponseGeometry(std::move(impl)));
       *automatic_geometry = cached_geometry;
-      config_ptr = &cached_geometry->impl->config;
+      config_ptr = movable_config = &cached_geometry->impl->config;
       diagnostics_ptr = &*cached_geometry->impl->diagnostics;
     }
     else
     {
-      config_ptr = &*local_config;
+      config_ptr = movable_config = &*local_config;
       diagnostics_ptr = &local_diagnostics;
     }
   }
@@ -33147,8 +33383,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // The placement sub-stamps under PALACE_RESPONSE_SETUP_TIMING (lane fix-response-memory
   // C2; the electrostatic constructor's rule): the default log is byte-identical.
   auto placement = ApplyPlacementOwnership(
-      config, model_indices, basis_points, coordinate_scale, dimension, cached_geometry,
-      std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
+      config, &movable_config->patches, model_indices, basis_points, coordinate_scale,
+      dimension, cached_geometry, std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
