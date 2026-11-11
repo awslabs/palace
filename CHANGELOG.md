@@ -44,6 +44,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
+    the latency of the distributed triangular solves of the solve phase for a few
+    right-hand sides, such as the real and imaginary parts of a complex vector. This
+    speeds up STRUMPACK as the coarse solver at high process counts. Results are
+    unchanged. [PR 1170](https://github.com/awslabs/palace/pull/1170).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
@@ -127,6 +133,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only the modes nearest to the target, and the reduced model is only used with a basis of
     at most `2√N` vectors for `N` port unknowns, beyond which exact port solves are cheaper.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Driven simulations apply the system matrix through the finest level of the multigrid
+    preconditioner and no longer assemble it separately for uniform sweeps, reducing CPU
+    time by 1–5% and peak memory by up to 6%.
+    [PR 980](https://github.com/awslabs/palace/pull/980).
 
 #### Bug Fixes
 
@@ -224,6 +234,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     return spurious eigenvalues near the target, with large backward errors; the default
     `"PEPLinear": true` is not affected.
     [PR 1068](https://github.com/awslabs/palace/pull/1068).
+  - Fixed the preconditioners of the linear solves of `"BoundaryMode"` simulations with
+    p-multigrid (`"MGMaxLevels"` greater than 1) or with `"PCMatReal"`, which left out loss
+    terms of the system matrix, such as the conductivity of conductors meshed as volumes or
+    the resistance of `"Impedance"` boundaries. Where these terms dominate the system
+    matrix, the linear solves of the eigenvalue solver did not converge, and the modes were
+    wrong. MUMPS now compresses the factorizations of boundary mode and wave port mode
+    solves only with `"STRUMPACKCompressionType": "BLR"`. SchemaVer 4-2-2
+    [PR 1178](https://github.com/awslabs/palace/pull/1178).
 
 #### Documentation
 
