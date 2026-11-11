@@ -127,6 +127,11 @@ private:
       geom_data_attr, geom_data_subset;
   void CheckSameElements(Ceed ceed, const std::vector<int> &attr_list) const;
 
+  // Depth of the mesh nodes into an extruded PML (see mesh::GetExtrudedPMLDepth), whose
+  // value and gradient are stored after the coordinates in the geometry factor data of
+  // given attributes.
+  mutable std::unique_ptr<mfem::ParGridFunction> pml_depth;
+
 public:
   template <typename... T>
   Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
@@ -246,6 +251,12 @@ public:
   // coordinates above. The shared element subsets do not apply to it.
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorDataSubset(Ceed ceed, const std::vector<int> &attr_list) const;
+
+  // Set the depth of the mesh nodes into an extruded PML, for the geometry factor data of
+  // given attributes (see GetCeedGeomFactorData), which it resets. Derived data of the
+  // mesh, like the geometry factor data, reset by Update.
+  void SetPMLDepth(std::unique_ptr<mfem::ParGridFunction> &&depth) const;
+  const mfem::ParGridFunction *GetPMLDepth() const { return pml_depth.get(); }
 
   // Configure the process-local libCEED attributes in the shared lossy-domain and
   // active-boundary element sets. The sets must be configured before geometry data is

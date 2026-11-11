@@ -52,10 +52,13 @@ struct CeedQFunctionInfo
 
 // Number of components of the geometry factor quadrature data {attr, w |J|, adj(J)ᵀ / |J|},
 // optionally followed by the physical coordinates of the quadrature points (only for 3D
-// domain elements, see Mesh::GetCeedGeomFactorData).
-constexpr CeedInt CeedGeometryDataSize(CeedInt space_dim, CeedInt dim, bool coords)
+// domain elements, see Mesh::GetCeedGeomFactorData), and then by the depth into an extruded
+// PML and its gradient.
+constexpr CeedInt CeedGeometryDataSize(CeedInt space_dim, CeedInt dim, bool coords,
+                                       bool depth = false)
 {
-  return 2 + space_dim * dim + (coords ? space_dim : 0);
+  return 2 + space_dim * dim + (coords ? space_dim : 0) +
+         (coords && depth ? 1 + space_dim : 0);
 }
 
 // Helper function to get the geometry space dimension.
@@ -67,14 +70,21 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
 // see Mesh::GetCeedGeomFactorData).
 bool CeedGeometryDataHasCoordinates(CeedElemRestriction geom_data_restr, CeedInt dim);
 
+// Whether the geometry factor quadrature data also stores the depth into an extruded PML
+// and its gradient, after the coordinates.
+bool CeedGeometryDataHasDepth(CeedElemRestriction geom_data_restr, CeedInt dim);
+
 // Assemble libCEED mesh geometry factor quadrature data for use in a partially assembled
 // libCEED operator. The quadrature point coordinates are included if the storage provided
-// for geom_data has room for them.
+// for geom_data has room for them, and the depth into an extruded PML and its gradient,
+// interpolated from the depth of the mesh nodes, if it is given.
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,
                               CeedVector elem_attr, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr);
+                              CeedElemRestriction geom_data_restr,
+                              CeedElemRestriction depth_restr = nullptr,
+                              CeedBasis depth_basis = nullptr, CeedVector depth = nullptr);
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
 // basis objects.

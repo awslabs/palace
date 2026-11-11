@@ -45,6 +45,12 @@ namespace pml
 // Faces are indexed {-x, +x, -y, +y, -z, +z}: face f is on axis f / 2 and on the positive
 // side if f % 2 == 1. All quantities are nondimensional.
 //
+// Alternatively, the PML regions of a block are extruded from a boundary of the mesh (see
+// mesh::ExtrudePML), and the stretch is along the rays of the extrusion from the closest
+// points on a core segment, with the profile of face 0, at the depth of each point into
+// the layer: the Jacobian J̃ of the stretch replaces S in the tensors (see
+// fem/qfunctions/coeff/pml_qf.h).
+//
 
 // Coordinate of the inner interface (the boundary with the physical region) and layer
 // thickness of each face. Faces with zero thickness are inactive.
@@ -55,10 +61,14 @@ struct LayerGeometry
 };
 
 // The coordinate stretch of the PML. element_size is the size of the PML elements normal to
-// each face, measured on the mesh.
+// each face, measured on the mesh. For an extruded PML, the profile is that of face 0,
+// along the rays from the closest points on the core, the segment from center[0] to
+// center[1] (a point if they are equal).
 struct Stretch
 {
   LayerGeometry geometry;
+  bool extruded = false;
+  std::array<std::array<double, 3>, 2> center{};
   std::array<double, 6> sigma_max{};
   std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
   std::array<double, 3> alpha_max{};
@@ -146,6 +156,13 @@ struct ContextHeader
 std::array<std::complex<double>, 3> EvaluateStretch(const Stretch &stretch,
                                                     const std::array<double, 3> &x,
                                                     std::complex<double> omega);
+
+// Jacobian J̃ of an extruded stretch (3 x 3, column-major) at the point x with the depth xi
+// into the layer and its gradient grad_xi, or with the magnitudes of the stretch factors.
+std::array<std::complex<double>, 9>
+EvaluateJacobian(const Stretch &stretch, const std::array<double, 3> &x, double xi,
+                 const std::array<double, 3> &grad_xi, std::complex<double> omega,
+                 bool magnitude = false);
 
 // Pack the QFunction context of a PML integrator (layout in fem/qfunctions/coeff/pml_qf.h),
 // with attr_background the background index of each (1-based) libCEED attribute (-1 for

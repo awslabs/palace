@@ -43,6 +43,10 @@ void AssemblePMLOperator(CeedQFunctionUser apply_qf, const char *apply_qf_loc,
   MFEM_VERIFY(CeedGeometryDataHasCoordinates(geom_data_restr, dim),
               "PML integrators require the quadrature point coordinates in the geometry "
               "factor data (see BilinearForm::AddDomainIntegratorOnAttributes)!");
+  MFEM_VERIFY(!PMLIsExtruded(static_cast<const CeedIntScalar *>(ctx)) ||
+                  CeedGeometryDataHasDepth(geom_data_restr, dim),
+              "The extruded PML requires the depth of the mesh nodes into the layer in the "
+              "geometry factor data (see Mesh::SetPMLDepth)!");
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
   info.q_data_cross = cross;

@@ -8,14 +8,16 @@
 
 // Geometry factor quadrature data {attr, w |J|, adj(J)ᵀ / |J|}, optionally followed by the
 // physical coordinates x of the quadrature points (used by QFunctions with spatially
-// varying coefficients, such as the PML material tensors).
-template <bool COORDS>
+// varying coefficients, such as the PML material tensors), and then by the depth ξ into an
+// extruded PML and its gradient ∇ξ = adj(J)ᵀ / |J| ∇_X ξ.
+template <bool COORDS, bool DEPTH = false>
 CEED_QFUNCTION_HELPER int
 f_build_geom_factor_33_impl(CeedInt Q, const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *qw = in[1], *J = in[2], *x = in[COORDS ? 3 : 2];
+  const CeedScalar *attr = in[0], *qw = in[1], *J = in[2], *x = in[COORDS ? 3 : 2],
+                   *xi = in[DEPTH ? 4 : 2], *grad_xi = in[DEPTH ? 5 : 2];
   CeedScalar *qd_attr = out[0], *qd_wdetJ = out[0] + Q, *qd_adjJt = out[0] + 2 * Q,
-             *qd_x = out[0] + 11 * Q;
+             *qd_x = out[0] + 11 * Q, *qd_xi = out[0] + 14 * Q;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -40,6 +42,19 @@ f_build_geom_factor_33_impl(CeedInt Q, const CeedScalar *const *in, CeedScalar *
       qd_x[i + Q * 1] = x[i + Q * 1];
       qd_x[i + Q * 2] = x[i + Q * 2];
     }
+    if (DEPTH)
+    {
+      const CeedScalar grad_xi_loc[3] = {grad_xi[i + Q * 0], grad_xi[i + Q * 1],
+                                         grad_xi[i + Q * 2]};
+      qd_xi[i] = xi[i];
+      for (CeedInt d = 0; d < 3; d++)
+      {
+        qd_xi[i + Q * (1 + d)] =
+            (adjJt_loc[d + 0] * grad_xi_loc[0] + adjJt_loc[d + 3] * grad_xi_loc[1] +
+             adjJt_loc[d + 6] * grad_xi_loc[2]) /
+            detJ;
+      }
+    }
   }
   return 0;
 }
@@ -55,6 +70,12 @@ CEED_QFUNCTION(f_build_geom_factor_coords_33)(void *, CeedInt Q,
                                               CeedScalar *const *out)
 {
   return f_build_geom_factor_33_impl<true>(Q, in, out);
+}
+
+CEED_QFUNCTION(f_build_geom_factor_depth_33)(void *, CeedInt Q, const CeedScalar *const *in,
+                                             CeedScalar *const *out)
+{
+  return f_build_geom_factor_33_impl<true, true>(Q, in, out);
 }
 
 #endif  // PALACE_LIBCEED_GEOM_33_QF_H

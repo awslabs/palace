@@ -157,6 +157,47 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
   }
   MFEM_VERIFY(std::isfinite(n_r), "No material found for the " << block << "!");
 
+  // Background material of each local libCEED attribute in a PML region.
+  MFEM_VERIFY(mu_inv.SizeI() == 3 && epsilon_real.SizeI() == 3 && epsilon_imag.SizeI() == 3,
+              "PML regions require 3D material tensors!");
+  const auto &loc_attr = mesh.GetCeedAttributes();
+  attr_background.assign(attr_mat.Size(), -1);
+  std::unordered_map<int, int> mat_background;
+  for (auto attr : attributes)
+  {
+    const auto it = loc_attr.find(attr);
+    if (it == loc_attr.end())
+    {
+      continue;
+    }
+    const int mat = attr_mat[it->second - 1];
+    MFEM_VERIFY(mat >= 0, "Missing material properties for PML attribute " << attr << "!");
+    auto [bg, inserted] =
+        mat_background.try_emplace(mat, static_cast<int>(backgrounds.size()));
+    if (inserted)
+    {
+      auto &b = backgrounds.emplace_back();
+      std::copy_n(mu_inv(mat).Data(), 9, b.mu_inv.begin());
+      std::copy_n(epsilon_real(mat).Data(), 9, b.epsilon_real.begin());
+      std::copy_n(epsilon_imag(mat).Data(), 9, b.epsilon_imag.begin());
+    }
+    attr_background[it->second - 1] = bg->second;
+  }
+
+  // The extrusion built the layer of an extruded PML, of known thickness and element size:
+  // the stretch is along its rays, at the depth of the mesh nodes into the layer.
+  if (data.IsExtruded())
+  {
+    const auto &ex = data.extrusion;
+    LayerGeometry geometry;
+    geometry.thickness[0] = ex.thickness;
+    stretch = BuildStretch(data, geometry, n_r, {ex.thickness / ex.layers}, fe_order);
+    stretch.extruded = true;
+    stretch.center = ex.center;
+    mesh.SetPMLDepth(mesh::GetExtrudedPMLDepth(pmesh, data));
+    return;
+  }
+
   // Bounding boxes of the PML regions of the block and of the non-PML (physical) region,
   // whose faces are the outer PML boundaries and the inner PML interfaces, respectively.
   // These are global reductions, called on all ranks.
@@ -283,33 +324,6 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
                                  "stretch is applied (check \"Direction\" and "
                                  "\"Thickness\")!");
   }
-
-  // Background material of each local libCEED attribute in a PML region.
-  MFEM_VERIFY(mu_inv.SizeI() == 3 && epsilon_real.SizeI() == 3 && epsilon_imag.SizeI() == 3,
-              "PML regions require 3D material tensors!");
-  const auto &loc_attr = mesh.GetCeedAttributes();
-  attr_background.assign(attr_mat.Size(), -1);
-  std::unordered_map<int, int> mat_background;
-  for (auto attr : attributes)
-  {
-    const auto it = loc_attr.find(attr);
-    if (it == loc_attr.end())
-    {
-      continue;
-    }
-    const int mat = attr_mat[it->second - 1];
-    MFEM_VERIFY(mat >= 0, "Missing material properties for PML attribute " << attr << "!");
-    auto [bg, inserted] =
-        mat_background.try_emplace(mat, static_cast<int>(backgrounds.size()));
-    if (inserted)
-    {
-      auto &b = backgrounds.emplace_back();
-      std::copy_n(mu_inv(mat).Data(), 9, b.mu_inv.begin());
-      std::copy_n(epsilon_real(mat).Data(), 9, b.epsilon_real.begin());
-      std::copy_n(epsilon_imag(mat).Data(), 9, b.epsilon_imag.begin());
-    }
-    attr_background[it->second - 1] = bg->second;
-  }
 }
 
 std::vector<CeedIntScalar> Layer::PackContext(const ContextHeader &header) const
@@ -342,6 +356,20 @@ void PackStretch(const Stretch &stretch, std::complex<double> omega, CeedIntScal
   ctx[7].second = omega.imag();
   CeedIntScalar *p = ctx + PALACE_PML_HEADER_SIZE;
   p[0].first = stretch.order;
+  if (stretch.extruded)
+  {
+    p[25].first = 1;
+    for (int c = 0; c < 3; c++)
+    {
+      p[26 + c].second = stretch.center[0][c];
+      p[29 + c].second = stretch.center[1][c];
+    }
+    p[32].second = stretch.geometry.thickness[0];
+    p[33].second = stretch.sigma_max[0];
+    p[34].second = stretch.kappa_max[0];
+    p[35].second = stretch.alpha_max[0];
+    return;
+  }
   for (int f = 0; f < 6; f++)
   {
     p[1 + f].second = stretch.geometry.inner[f];
@@ -366,6 +394,24 @@ std::array<std::complex<double>, 3> EvaluateStretch(const Stretch &stretch,
   CeedScalar s_re[3], s_im[3];
   PMLStretch(ctx.data(), x.data(), s_re, s_im);
   return {{{s_re[0], s_im[0]}, {s_re[1], s_im[1]}, {s_re[2], s_im[2]}}};
+}
+
+std::array<std::complex<double>, 9>
+EvaluateJacobian(const Stretch &stretch, const std::array<double, 3> &x, double xi,
+                 const std::array<double, 3> &grad_xi, std::complex<double> omega,
+                 bool magnitude)
+{
+  MFEM_VERIFY(stretch.extruded, "The Jacobian is only evaluated for an extruded stretch!");
+  std::array<CeedIntScalar, PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE> ctx{};
+  PackStretch(stretch, omega, ctx.data());
+  CeedScalar J_re[9], J_im[9];
+  PMLExtrudedJacobian(ctx.data(), x.data(), xi, grad_xi.data(), magnitude, J_re, J_im);
+  std::array<std::complex<double>, 9> J;
+  for (int k = 0; k < 9; k++)
+  {
+    J[k] = {J_re[k], J_im[k]};
+  }
+  return J;
 }
 
 void CheckStretchContinuity(const std::vector<Layer> &layers, const Mesh &mesh)
@@ -435,6 +481,18 @@ void CheckStretchContinuity(const std::vector<Layer> &layers, const Mesh &mesh)
     {
       continue;
     }
+    // The extruded stretch is one at the surface it is extruded from, the only interface of
+    // its layer with the physical region, and the layer cannot touch other PML blocks.
+    auto IsExtruded = [&layers](int k)
+    { return k >= 0 && layers[k].GetStretch().extruded; };
+    if (IsExtruded(k1) || IsExtruded(k2))
+    {
+      if (k1 >= 0 && k2 >= 0)
+      {
+        bad_attr = {std::min(attr1, attr2), std::max(attr1, attr2)};
+      }
+      continue;
+    }
     pmesh.GetFaceTransformation(f, &T);
     const auto geom = T.GetGeometryType();
     const mfem::IntegrationRule &vertices = *mfem::Geometries.GetVertices(geom);
@@ -486,6 +544,11 @@ void CheckStretchContinuity(const std::vector<Layer> &layers, const Mesh &mesh)
                     "line the whole face of the domain must be modeled with a lossy "
                     "material instead of a PML!");
     }
+    MFEM_VERIFY(!layers[LayerIndex(bad_attr[0])].GetStretch().extruded &&
+                    !layers[LayerIndex(bad_attr[1])].GetStretch().extruded,
+                "The extruded PML block of "
+                    << Region(bad_attr[0]) << " or " << Region(bad_attr[1])
+                    << " touches another PML block, which is not supported!");
     MFEM_ABORT("The PML stretch is discontinuous across the interface between "
                << Region(bad_attr[0]) << " and " << Region(bad_attr[1])
                << ": the PML blocks must have the same stretch on their interfaces (the "

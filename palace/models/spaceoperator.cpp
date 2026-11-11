@@ -211,7 +211,8 @@ void SpaceOperator::PrintPML(const Units &units) const
       {
         continue;
       }
-      Mpi::Print("  {}: thickness = {:.3e}, element size = {:.3e}, ", face_name[f],
+      Mpi::Print("  {}: thickness = {:.3e}, element size = {:.3e}, ",
+                 p.extruded ? "extruded" : face_name[f],
                  p.geometry.thickness[f] * length_scale, p.element_size[f] * length_scale);
       Mpi::Print("σ_max = {:.3e} S/m, theoretical reflection = {:.1e}\n",
                  sigma(p.sigma_max[f]), pml::TheoreticalReflection(p, f));

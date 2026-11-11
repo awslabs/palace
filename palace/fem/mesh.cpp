@@ -264,7 +264,7 @@ CeedElemRestriction CreateGeomDataSubsetRestriction(Ceed ceed,
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
                           std::vector<int> &active_indices,
                           const mfem::GridFunction &mesh_nodes, const Vector &elem_attr,
-                          bool coords)
+                          bool coords, const mfem::GridFunction *depth = nullptr)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
@@ -300,9 +300,11 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // (CEED_STRIDES_BACKEND, as for the assembled quadrature data). Backends whose E-vector
   // layout matches that layout (the GPU backends) then read the vector directly as the
   // E-vector of every operator instead of gathering a copy of it per operator at setup.
+  // The depth into an extruded PML and its gradient follow the coordinates.
   coords = coords && data.dim == 3 && data.space_dim == 3;
+  depth = coords ? depth : nullptr;
   const CeedInt geom_data_size =
-      ceed::CeedGeometryDataSize(data.space_dim, data.dim, coords);
+      ceed::CeedGeometryDataSize(data.space_dim, data.dim, coords, depth != nullptr);
   const CeedSize geom_data_length =
       static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size;
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, geom_data_length, &data.geom_data));
@@ -317,9 +319,25 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   }
 
   // Compute the required geometry factors at quadrature points.
+  CeedElemRestriction depth_restr = nullptr;
+  CeedBasis depth_basis = nullptr;
+  CeedVector depth_vec = nullptr;
+  if (depth)
+  {
+    depth_restr = FiniteElementSpace::BuildCeedElemRestriction(*depth->FESpace(), ceed,
+                                                               geom, data.indices);
+    depth_basis = FiniteElementSpace::BuildCeedBasis(*depth->FESpace(), ceed, geom);
+    ceed::InitCeedVector(*depth, ceed, &depth_vec);
+  }
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
                                  attr_basis, elem_attr_vec, data.geom_data,
-                                 data.geom_data_restr);
+                                 data.geom_data_restr, depth_restr, depth_basis, depth_vec);
+  if (depth)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&depth_vec));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&depth_restr));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&depth_basis));
+  }
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
@@ -334,7 +352,8 @@ auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
     const std::vector<int> &lossy_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
-    bool ceed_from_self, const std::vector<int> *attr_list = nullptr)
+    bool ceed_from_self, const std::vector<int> *attr_list = nullptr,
+    const mfem::GridFunction *depth = nullptr)
 {
   // With attr_list, only the domain elements of the given (sorted) attributes, with the
   // quadrature point coordinates and without the shared element subsets.
@@ -380,9 +399,9 @@ auto BuildCeedGeomFactorData(
       // restricted to given attributes.
       auto [active_indices, elem_attr] = GetElementAttributes(
           indices, GetCeedAttribute, attr_list ? no_active_attr : lossy_attr);
-      geom_data_map.emplace(geom,
-                            AssembleGeometryData(ceed, geom, indices, active_indices,
-                                                 *mesh.GetNodes(), elem_attr, coords));
+      geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
+                                                       *mesh.GetNodes(), elem_attr, coords,
+                                                       depth));
     }
   }
 
@@ -471,7 +490,7 @@ Mesh::GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const
   {
     *geom_data_map =
         BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, lossy_attr, active_bdr_attr,
-                                ceed, ceed_from_self, &attr_list);
+                                ceed, ceed_from_self, &attr_list, pml_depth.get());
     CheckSameElements(ceed, attr_list);
   }
   return **geom_data_map;
@@ -565,6 +584,13 @@ void Mesh::CheckSameElements(Ceed ceed, const std::vector<int> &attr_list) const
   }
 }
 
+void Mesh::SetPMLDepth(std::unique_ptr<mfem::ParGridFunction> &&depth) const
+{
+  MFEM_VERIFY(geom_data_attr.empty(), "The depth of the mesh nodes into the extruded PML "
+                                      "must be set before the geometry factor data!");
+  pml_depth = std::move(depth);
+}
+
 void Mesh::ResetCeedObjects()
 {
   for (auto &[ceed, geom_data_map] : geom_data)
@@ -629,6 +655,7 @@ void Mesh::Update()
   lossy_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
+  pml_depth.reset();
 }
 
 const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
