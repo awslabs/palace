@@ -341,17 +341,6 @@ runs:
 
         cd "$(spack -e . location -b palace)"
 
-        # Skip serial/mpi libCEED tests on CUDA builds due to umpire host memory
-        # allocation bug.
-        #
-        # TODO: Remove this when MFEM/Palace switches to using standard host
-        # allocation.
-        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          CTEST_EXCLUDE="--exclude-regex (serial|mpi)-.*libCEED"
-        else
-          CTEST_EXCLUDE=""
-        fi
-
         # Disable OpenMPI 5.x default CPU binding so MPI processes don't starve
         # OpenMP threads during parallel test execution. OpenMPI 5.x uses PRRTE,
         # so we set both the PRTE and legacy OMPI MCA variables for robustness.
@@ -362,7 +351,7 @@ runs:
         # [Regression] and [Long] cases (labels "regression" / "long")
         # run separately via ./.github/actions/run-regression-tests at
         # NUM_PROC_TEST; exclude them here so they don't run twice.
-        ctest -j $NUM_PROC_TEST --output-on-failure -LE "^(regression|long)$" $CTEST_EXCLUDE
+        ctest -j $NUM_PROC_TEST --output-on-failure -LE "^(regression|long)$"
 
         end_timer "Run Unit Tests"
 
