@@ -78,9 +78,8 @@ The mesh needs:
   - a total-field region ``T`` containing the scatterer, separated from the truncation of
     the domain by at least one layer of vacuum elements;
   - for the far field and the radar cross section, an interior closed surface
-    ([`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries)
-    with a `"Center"`) in the scattered-field region, outside of the elements which touch
-    ``S``. *Palace* stops with an error if the far-field surface touches the total-field
+    ([`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries))
+    in the scattered-field region, outside of the elements which touch ``S``. *Palace* stops with an error if the far-field surface touches the total-field
     region, where the far field would include the incident wave.
 
 Plane wave excitations are supported for driven simulations with a uniform frequency sweep.
