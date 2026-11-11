@@ -64,8 +64,10 @@ StrumpackComplexSolver::~StrumpackComplexSolver() = default;
 
 void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
 {
-  // Local rows of the complex-valued matrix (the sparsity pattern is assumed to be
-  // symmetric), and row distribution (assumed partition of the rows over the processes).
+  // Local rows of the complex-valued matrix, and row distribution (assumed partition of the
+  // rows over the processes). The sparsity pattern is not declared symmetric, as for
+  // StrumpackSolver: hypre's parallel matrix products can store explicit zeros without
+  // their transposes on small partitions, and STRUMPACK symmetrizes the pattern itself.
   ComplexLocalCSR csr(op);
   const int n_loc = csr.n_loc;
   MFEM_VERIFY(csr.n_glob <= std::numeric_limits<int>::max(),
@@ -87,13 +89,13 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
         comm, print > 1);
     ConfigureOptions(solver->options(), reorder, print);
     solver->set_distributed_csr_matrix(n_loc, I.data(), J.data(), V.data(), dist.data(),
-                                       true);
+                                       false);
     MFEM_VERIFY(solver->reorder() == strumpack::ReturnCode::SUCCESS,
                 "STRUMPACK reordering failed!");
   }
   else
   {
-    solver->update_matrix_values(n_loc, I.data(), J.data(), V.data(), dist.data(), true);
+    solver->update_matrix_values(n_loc, I.data(), J.data(), V.data(), dist.data(), false);
   }
   MFEM_VERIFY(solver->factor() == strumpack::ReturnCode::SUCCESS,
               "STRUMPACK factorization failed!");
