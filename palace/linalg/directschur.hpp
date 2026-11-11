@@ -54,6 +54,12 @@ public:
   // rounding), handed over (until the next factorization).
   std::vector<T> ReleaseSchur();
 
+  // Internal solves for a batch of vectors of the rows (collective): y_k solves A_II on the
+  // internal (non-Schur) variables, 0 on the Schur variables and outside the rows. y_k may
+  // alias x_k.
+  void SolveInternal(const std::vector<const ComplexVector *> &X,
+                     const std::vector<ComplexVector *> &Y);
+
   // Condensation of a batch of right-hand sides b (vectors of the rows) onto the Schur
   // variables: red = b_S - A_SI A_II^-1 b_I on rank 0 (n_schur x |B|, column-major). The
   // next call must be Expand of the same batch (collective).

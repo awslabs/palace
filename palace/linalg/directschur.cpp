@@ -430,6 +430,40 @@ void DirectSchurSolver::SolveInterior(const std::vector<T> &b, std::vector<T> &x
   fact->Solve(b, x, nb);
 }
 
+void DirectSchurSolver::SolveInternal(const std::vector<const ComplexVector *> &X,
+                                      const std::vector<ComplexVector *> &Y)
+{
+  const int nb = static_cast<int>(X.size());
+  std::vector<T> b(static_cast<std::size_t>(n_int) * nb, 0.0), x;
+  for (int k = 0; k < nb; k++)
+  {
+    const double *br = X[k]->Real().HostRead(), *bi = X[k]->Imag().HostRead();
+    for (int q = 0; q < n_loc; q++)
+    {
+      if (rows[q] >= 0 && int_row[q] >= 0)
+      {
+        b[int_row[q] + static_cast<std::size_t>(n_int) * k] = T(br[rows[q]], bi[rows[q]]);
+      }
+    }
+  }
+  SolveInterior(b, x, nb);
+  for (int k = 0; k < nb; k++)
+  {
+    ComplexVector &y = *Y[k];
+    y = 0.0;
+    double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
+    for (int q = 0; q < n_loc; q++)
+    {
+      if (rows[q] >= 0 && int_row[q] >= 0)
+      {
+        const T v = x[int_row[q] + static_cast<std::size_t>(n_int) * k];
+        yr[rows[q]] = v.real();
+        yi[rows[q]] = v.imag();
+      }
+    }
+  }
+}
+
 void DirectSchurSolver::AddSchurProduct(const std::vector<T> &x, int nb, double sign,
                                         T *y) const
 {

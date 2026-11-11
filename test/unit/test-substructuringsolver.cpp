@@ -3192,7 +3192,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   };
   std::vector<int> sch, in;
   Eigen::MatrixXcd S_ref;
-  Eigen::VectorXcd u_ref;
+  Eigen::VectorXcd u_ref, rhs_in;
   if (rank == 0)
   {
     std::vector<char> is_sch(n_glob, 0);
@@ -3223,6 +3223,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
       rhs(g) = xg[g];
     }
     u_ref = M.partialPivLu().solve(rhs);
+    rhs_in = rhs(in);
   }
 
   std::vector<int> rows(nt + (last ? 1 : 0), -1);
@@ -3265,6 +3266,17 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     {
       const Eigen::Map<const Eigen::VectorXcd> ym(yg.data(), static_cast<int>(n_dof));
       CHECK(dist(ym, u_ref.head(n_dof) / s) <= 1.0e-10);
+    }
+    solver.SolveInternal({&x}, {&y});
+    const auto zg = gather(y);
+    if (rank == 0)
+    {
+      Eigen::VectorXcd z = Eigen::VectorXcd::Zero(n_glob);
+      const Eigen::MatrixXcd Aii = M(in, in);
+      const Eigen::VectorXcd zi = Aii.partialPivLu().solve(rhs_in);
+      z(in) = zi;
+      const Eigen::Map<const Eigen::VectorXcd> zm(zg.data(), static_cast<int>(n_dof));
+      CHECK(dist(zm, z.head(n_dof) / s) <= 1.0e-10);
     }
   }
 }
