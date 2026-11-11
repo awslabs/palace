@@ -12,6 +12,7 @@
 #include <cmath>
 #include <complex>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -28,11 +29,13 @@
 namespace
 {
 
-// A 5 mm Lorentz slab between vacuum ports, with 37.5 mm vacuum on each side.
-// The CSV supplies the layout; the oracle is the normal-incidence Fresnel solution.
-palace::test::CustomCheck TestLorentzSlab()
+// A 5 mm slab of relative permittivity epsilon_r(f) (f in GHz) between vacuum ports, with
+// 37.5 mm vacuum on each side. The CSV supplies the layout; the oracle is the
+// normal-incidence Fresnel solution.
+palace::test::CustomCheck
+TestDielectricSlab(std::function<std::complex<double>(double)> epsilon_r)
 {
-  return [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  return [epsilon_r](palace::Table &actual, palace::Table &, const std::filesystem::path &)
   {
     REQUIRE(actual.n_rows() == 9);
     REQUIRE(actual.n_complete_rows() == 9);
@@ -44,8 +47,7 @@ palace::test::CustomCheck TestLorentzSlab()
       INFO("Frequency: " << frequency << " GHz");
       CHECK_THAT(actual[0].data[row], Catch::Matchers::WithinAbs(frequency, 1.0e-8));
       // Positive-time convention: passive permittivity has negative imaginary part.
-      const auto epsilon =
-          2.0 + 4.0 / (4.0 - frequency * frequency + imaginary * 0.2 * frequency);
+      const auto epsilon = epsilon_r(frequency);
       const auto index = std::sqrt(epsilon);
       const double k0 = 2.0 * std::numbers::pi * frequency * 1.0e9 / 299792458.0;
       const auto q = std::exp(-imaginary * k0 * index * 0.005);
@@ -1598,21 +1600,19 @@ TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
                                   "floquet_wave_dispersive", opts);
 }
 
-TEST_CASE("floquet_lorentz_slab_direct", "[Serial][Parallel][Regression]")
-{
-  palace::test::RegressionOptions opts;
-  opts.paraview_fields = false;
-  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
-  opts.custom_checks["port-floquet-S.csv"] = TestLorentzSlab();
-  palace::test::RunRegressionCase("dielectric_slab", "direct.json", "direct", opts);
-}
-
+// Adaptive sweep of a 5 mm slab with the Lorentz permittivity 2 + f0^2 / (f0^2 - f^2 +
+// i gamma f), f0 = 2 GHz and gamma = 0.2 GHz, between vacuum Floquet ports at normal
+// incidence. Nine frequencies from 1 to 3 GHz cross the resonance and the band of negative
+// real permittivity above it. At every frequency, sampled or not, the TE reflection and
+// transmission, with the vacuum phase to the ports, must match the Fresnel solution to
+// 1e-7, the cross-polarized TM outputs must vanish, and the absorption must match to 1e-8.
 TEST_CASE("floquet_lorentz_slab_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.paraview_fields = false;
   opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
-  opts.custom_checks["port-floquet-S.csv"] = TestLorentzSlab();
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(
+      [](double f) { return 2.0 + 4.0 / std::complex<double>(4.0 - f * f, 0.2 * f); });
   palace::test::RunRegressionCase("dielectric_slab", "adaptive.json", "adaptive", opts);
 }
 
