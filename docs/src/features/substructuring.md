@@ -246,10 +246,12 @@ voltage of a lumped port, would depend on both sides.
 
 !!! note
 
-    Driven substructuring factors the environment and the region with MUMPS, whose partial
-    factorization gives their Schur complements onto the interface directly. *Palace* built without
-    MUMPS uses SuperLU_DIST or STRUMPACK instead, with one solve per interface unknown: an order of
-    magnitude slower or more.
+    Offline, driven substructuring condenses the environment and the region with MUMPS, whose
+    partial factorization gives their Schur complements onto the interface directly. *Palace* built
+    without MUMPS uses STRUMPACK or SuperLU_DIST instead, with one solve per interface unknown: an
+    order of magnitude slower or more. Online, the region is factored with the Schur complement of
+    the environment as one sparse system, by STRUMPACK, SuperLU_DIST or MUMPS (preferred in this
+    order).
     Floquet ports and periodic boundaries (which make the system non-symmetric),
     `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
     supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model
