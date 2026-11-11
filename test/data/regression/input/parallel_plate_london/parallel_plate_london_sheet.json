@@ -1,0 +1,81 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/london_sheet"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/parallel_plate.msh",
+    "L0": 1.0e-6  // μm: slabs t = 0.2, gap d = 0.5, width W = 1, length ℓ = 4
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1, 3],  // The upper slab is replaced by the sheet below it
+        "Permeability": 1.0
+      },
+      {
+        "Attributes": [2],  // Lower slab superconducting
+        "Permeability": 1.0,
+        "LondonDepth": 0.2  // λ (μm)
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        },
+        {
+          "Index": 2,
+          "Attributes": [2]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 4]  // Slab ends at the source, and the shorted far end
+    },
+    "Superconductor":
+    [
+      {
+        "Attributes": [6],         // Upper conductor as a sheet on the face of the gap
+        "PenetrationDepth": 0.2,   // λ (μm)
+        "Thickness": 0.2           // t (μm)
+      }
+    ],
+    "SurfaceCurrent":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Direction": "+Z"  // Across the gap at the near end
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}
