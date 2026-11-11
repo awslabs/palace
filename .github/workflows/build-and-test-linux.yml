@@ -315,11 +315,16 @@ jobs:
           sudo apt-get install -y gdb > /dev/null
           source /opt/intel/oneapi/setvars.sh
           export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
-          scripts/ci-hang-diag diag palace-build/palace-build/test/unit 600 400 \
-            base \
-            mkl1:MKL_NUM_THREADS=1 \
-            cbwr:MKL_CBWR=AUTO,STRICT \
-            omp1:OMP_THREAD_LIMIT=1
+          scripts/ci-hang-diag diag palace-build/palace-build/test/unit 1500 600 fixed
+
+      - name: Run unit tests
+        if: needs.filter.outputs.test == 'true'
+        timeout-minutes: 15
+        run: |
+          source /opt/intel/oneapi/setvars.sh
+          export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
+          cd palace-build/palace-build/test/unit
+          ctest -j "$(nproc)" --output-on-failure -LE "^(regression|long)$"
 
       - name: Upload diagnostics
         if: always() && needs.filter.outputs.test == 'true'

@@ -468,18 +468,31 @@ bool WavePortReducedModel::SolveFromGram(
                   B_projection.cols() == n,
               "Invalid reduced affine mode-operator dimensions!");
 
-  Eigen::MatrixXcd Bq = B_projection, Aq = Ar;
+  // Solve the reduced eigenproblem on the root and broadcast it: the Ritz pairs decide the
+  // collective residual evaluations below, so all processes need the same ones, but a
+  // multithreaded LAPACK does not return bitwise identical results on all processes.
   Eigen::VectorXcd alpha(n), beta(n);
-  Eigen::MatrixXcd vl_dummy(1, 1), vr(n, n);
-  int ldvl = 1, ldvr = n, lwork = std::max(4 * n, 1), info = 0;
-  Eigen::VectorXcd work(lwork);
-  Eigen::VectorXd rwork(std::max(8 * n, 1));
-  char job_n = 'N', job_v = 'V';
-  rankcheck::Check(solver_comm, "zggev input B", Bq.data(), static_cast<int>(Bq.size()));
-  rankcheck::Check(solver_comm, "zggev input A", Aq.data(), static_cast<int>(Aq.size()));
-  zggev_(&job_n, &job_v, &n, Bq.data(), &n, Aq.data(), &n, alpha.data(), beta.data(),
-         vl_dummy.data(), &ldvl, vr.data(), &ldvr, work.data(), &lwork, rwork.data(),
-         &info);
+  Eigen::MatrixXcd vr(n, n);
+  int info = 0;
+  if (Mpi::Root(solver_comm))
+  {
+    Eigen::MatrixXcd Bq = B_projection, Aq = Ar;
+    Eigen::MatrixXcd vl_dummy(1, 1);
+    int ldvl = 1, ldvr = n, lwork = std::max(4 * n, 1);
+    Eigen::VectorXcd work(lwork);
+    Eigen::VectorXd rwork(std::max(8 * n, 1));
+    char job_n = 'N', job_v = 'V';
+    zggev_(&job_n, &job_v, &n, Bq.data(), &n, Aq.data(), &n, alpha.data(), beta.data(),
+           vl_dummy.data(), &ldvl, vr.data(), &ldvr, work.data(), &lwork, rwork.data(),
+           &info);
+  }
+  Mpi::Broadcast(1, &info, 0, solver_comm);
+  if (info == 0)
+  {
+    Mpi::Broadcast(n, alpha.data(), 0, solver_comm);
+    Mpi::Broadcast(n, beta.data(), 0, solver_comm);
+    Mpi::Broadcast(n * n, vr.data(), 0, solver_comm);
+  }
   rankcheck::Check(solver_comm, "zggev alpha", alpha.data(), n);
   rankcheck::Check(solver_comm, "zggev beta", beta.data(), n);
   rankcheck::Check(solver_comm, "zggev vr", vr.data(), static_cast<int>(vr.size()));

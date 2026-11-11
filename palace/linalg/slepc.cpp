@@ -158,6 +158,36 @@ inline void ConfigurePCShell(ST st, void *ctx, PetscErrorCode (*__pc_apply)(PC, 
   PalacePetscCall(PCShellSetApply(pc, __pc_apply));
 }
 
+// With a multithreaded BLAS/LAPACK, the projected problems that all processes solve
+// redundantly can differ across processes, which then take different convergence and
+// restart decisions and deadlock in the next collective call. Make all processes use the
+// solution of the first one instead.
+inline void SynchronizeDS(DS ds)
+{
+  PalacePetscCall(DSSetParallel(ds, DS_PARALLEL_SYNCHRONIZED));
+}
+
+inline void SynchronizeDS(EPS eps)
+{
+  DS ds;
+  PalacePetscCall(EPSGetDS(eps, &ds));
+  SynchronizeDS(ds);
+}
+
+inline void SynchronizeDS(PEP pep)
+{
+  DS ds;
+  PalacePetscCall(PEPGetDS(pep, &ds));
+  SynchronizeDS(ds);
+}
+
+inline void SynchronizeDS(NEP nep)
+{
+  DS ds;
+  PalacePetscCall(NEPGetDS(nep, &ds));
+  SynchronizeDS(ds);
+}
+
 inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscReal ui,
                         bool complement = false)
 {
@@ -392,6 +422,7 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
   : SlepcEigenvalueSolver(print)
 {
   PalacePetscCall(EPSCreate(comm, &eps));
+  SynchronizeDS(eps);
   PalacePetscCall(EPSSetOptionsPrefix(eps, prefix.c_str()));
   if (print > 0)
   {
@@ -874,6 +905,7 @@ SlepcPEPSolverBase::SlepcPEPSolverBase(MPI_Comm comm, int print, const std::stri
   : SlepcEigenvalueSolver(print)
 {
   PalacePetscCall(PEPCreate(comm, &pep));
+  SynchronizeDS(pep);
   PalacePetscCall(PEPSetOptionsPrefix(pep, prefix.c_str()));
   if (print > 0)
   {
@@ -1225,6 +1257,7 @@ SlepcNEPSolverBase::SlepcNEPSolverBase(MPI_Comm comm, int print, const std::stri
   : SlepcEigenvalueSolver(print)
 {
   PalacePetscCall(NEPCreate(comm, &nep));
+  SynchronizeDS(nep);
   PalacePetscCall(NEPSetOptionsPrefix(nep, prefix.c_str()));
   if (print > 0)
   {
@@ -1557,6 +1590,7 @@ void SlepcNEPSolver::SetOperatorsImpl(const ComplexOperator &K, const ComplexOpe
     PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
     PalacePetscCall(NEPSLPGetEPS(nep, &eps));
     PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
+    SynchronizeDS(eps);
     PalacePetscCall(KSPGetPC(ksp, &pc));
     PalacePetscCall(PCSetType(pc, PCSHELL));
     PalacePetscCall(PCShellSetContext(pc, (void *)this));
