@@ -8,8 +8,10 @@
 
 #if defined(MFEM_USE_MUMPS)
 
+#include <utility>
 #include <vector>
 #include <dmumps_c.h>
+#include "linalg/schursolver.hpp"
 #include "utils/labels.hpp"
 
 namespace palace
@@ -22,7 +24,7 @@ namespace palace
 // partial factorization instead of |Gamma| back-solves. The same factorization then solves
 // the internal problem (A_EE, the Schur variables fixed at 0), which serves every other
 // environment solve.
-class MumpsSchurSolver
+class MumpsSchurSolver : public SchurSolver<double>
 {
 public:
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
@@ -37,15 +39,12 @@ public:
                    bool serial = false,
                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
 
-  ~MumpsSchurSolver();
+  ~MumpsSchurSolver() override;
 
-  // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric).
-  const std::vector<double> &Schur() const { return schur; }
+  std::vector<double> ReleaseSchur() override { return std::move(schur); }
 
-  // Internal solves for a batch of parent true-DOF vectors (collective): y_k solves A_11 on
-  // the internal (non-Schur) variables, with 0 on the Schur variables. y_k may alias x_k.
   void SolveInternal(const std::vector<const mfem::Vector *> &X,
-                     const std::vector<mfem::Vector *> &Y);
+                     const std::vector<mfem::Vector *> &Y) override;
 
 private:
   void Check(const char *phase) const;

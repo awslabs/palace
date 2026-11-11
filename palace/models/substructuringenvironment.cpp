@@ -196,8 +196,7 @@ long long SubstructuringSolver::Impl::EnvDirectSize() const
   return env_glob;
 }
 
-#if defined(MFEM_USE_MUMPS)
-void SubstructuringSolver::Impl::MaterializeMumps()
+void SubstructuringSolver::Impl::MaterializePartial()
 {
   BlockTimer bt(Timer::KSP_SETUP);
   mfem::Array<int> other;
@@ -208,15 +207,10 @@ void SubstructuringSolver::Impl::MaterializeMumps()
       other.Append(i);
     }
   }
-  env_mumps = std::make_unique<MumpsSchurSolver>(
-      *EliminateToIdentity(Aenv(), other), InterfaceTrueDofs(),
-      iodata.solver.substructuring->factorization_tol, false,
-      iodata.solver.linear.sym_factorization);
-  // The Schur is symmetric (column-major == row-major): scatter its rows to their owners.
-  ScatterRows(env_mumps->Schur(), nG_global, S_rows);
-  env_built = true;
+  env_schur = substructuring::MakePartialFactorization(
+      iodata, *EliminateToIdentity(Aenv(), other), InterfaceTrueDofs(), env_partial);
+  env_built = (env_schur != nullptr);
 }
-#endif
 
 void SubstructuringSolver::Impl::EnsureEnv()
 {
@@ -228,6 +222,23 @@ void SubstructuringSolver::Impl::EnsureEnv()
   {
     BlockTimer bt(Timer::KSP_SETUP);
     BuildEnvSubmeshSolver();
+    env_schur = std::make_unique<BackSolveSchurSolver>(
+        Aenv(), InterfaceTrueDofs(),
+        [this](const std::vector<const mfem::Vector *> &X,
+               const std::vector<mfem::Vector *> &Y)
+        {
+          if (!env_parent_direct)
+          {
+            for (std::size_t k = 0; k < X.size(); k++)
+            {
+              ApplyAeeInvIterative(*X[k], *Y[k]);
+            }
+            return;
+          }
+          env_lu_parent->Mult(X, Y);  // the factor of [A_EE, 0; 0, I]
+          MaskToEnvInterior(Y);
+        },
+        kMaterializeBlock);
     env_built = true;
   }
 }
@@ -790,26 +801,14 @@ void SubstructuringSolver::Impl::ApplyAeeInvMulti(
   MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
   BlockTimer bt(Timer::KSP);
   MFEM_VERIFY(env_built, "Environment solver used before EnsureEnv()!");
-  if (!env_parent_direct && !EnvMumps())
-  {
-    for (std::size_t k = 0; k < X.size(); k++)
-    {
-      ApplyAeeInvIterative(*X[k], *Y[k]);
-    }
-    return;
-  }
-  // The MUMPS internal solve (Gamma held at 0) or the factor of [A_EE, 0; 0, I]: the
-  // output is masked to E.
-#if defined(MFEM_USE_MUMPS)
-  if (env_mumps)
-  {
-    env_mumps->SolveInternal(X, Y);
-  }
-  else
-#endif
-  {
-    env_lu_parent->Mult(X, Y);
-  }
+  // The internal solve (Gamma held at 0), masked to E.
+  env_schur->SolveInternal(X, Y);
+  MaskToEnvInterior(Y);
+}
+
+void SubstructuringSolver::Impl::MaskToEnvInterior(
+    const std::vector<mfem::Vector *> &Y) const
+{
   for (auto *y : Y)
   {
     double *yy = y->HostReadWrite();
@@ -826,15 +825,6 @@ void SubstructuringSolver::Impl::ApplyAeeInvMulti(
 void SubstructuringSolver::Impl::ApplyAeeInv(const mfem::Vector &x, mfem::Vector &y) const
 {
   ApplyAeeInvMulti({&x}, {&y});
-}
-
-bool SubstructuringSolver::Impl::EnvMumps() const
-{
-#if defined(MFEM_USE_MUMPS)
-  return env_mumps != nullptr;
-#else
-  return false;
-#endif
 }
 
 void SubstructuringSolver::Impl::ApplyAeeInvIterative(const mfem::Vector &x_parent,
@@ -862,7 +852,7 @@ void SubstructuringSolver::Impl::ApplyAeeInvIterative(const mfem::Vector &x_pare
   }
 }
 
-void SubstructuringSolver::Impl::MaterializeByBackSolves(bool with_sk)
+void SubstructuringSolver::Impl::MaterializeWithEnergy()
 {
   const int nG = nG_global, nloc = gamma_nloc, off = gamma_off;
   // Owned interface column -> local true DOF.
@@ -888,13 +878,10 @@ void SubstructuringSolver::Impl::MaterializeByBackSolves(bool with_sk)
   std::vector<const mfem::Vector *> X(B);
   std::vector<mfem::Vector *> Y(B);
   Vector ec(nloc), z(nloc);
-  std::vector<Vector> v(with_sk ? B : 0, Vector(nt));
-  if (with_sk)
-  {
-    SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
-    have_sk = true;
-  }
-  const mfem::HypreParMatrix &Dm = with_sk ? Denv() : Aenv();
+  std::vector<Vector> v(B, Vector(nt));
+  SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
+  have_sk = true;
+  const mfem::HypreParMatrix &Dm = Denv();
   std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
   for (int c0 = 0; c0 < nG; c0 += B)
   {
@@ -931,38 +918,35 @@ void SubstructuringSolver::Impl::MaterializeByBackSolves(bool with_sk)
             agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
       }
     }
-    if (with_sk)
+    // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]
+    // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).
+    for (int k = 0; k < nb; k++)
     {
-      // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]
-      // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).
-      for (int k = 0; k < nb; k++)
+      const int c = c0 + k;
+      t[k].Neg();
+      if (c >= off && c < off + nloc)
       {
-        const int c = c0 + k;
-        t[k].Neg();
-        if (c >= off && c < off + nloc)
-        {
-          t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;
-        }
-        Dm.Mult(t[k], v[k]);
-        const double *vk = v[k].HostRead();
-        for (int r = 0; r < nloc; r++)
-        {
-          agg[static_cast<std::size_t>(k) * nloc + r] = vk[col_to_dof[r]];
-        }
-        X[k] = &v[k];
-        Y[k] = &v[k];
+        t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;
       }
-      ApplyAeeInvMulti(X, Y);
-      for (int k = 0; k < nb; k++)
+      Dm.Mult(t[k], v[k]);
+      const double *vk = v[k].HostRead();
+      for (int r = 0; r < nloc; r++)
       {
-        R->Mult(v[k], z);
-        const double *zz = z.HostRead();
-        const int c = c0 + k;
-        for (int r = 0; r < nloc; r++)
-        {
-          const std::size_t q = static_cast<std::size_t>(r) * nG + c;
-          SK_rows[q] = S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
-        }
+        agg[static_cast<std::size_t>(k) * nloc + r] = vk[col_to_dof[r]];
+      }
+      X[k] = &v[k];
+      Y[k] = &v[k];
+    }
+    ApplyAeeInvMulti(X, Y);
+    for (int k = 0; k < nb; k++)
+    {
+      R->Mult(v[k], z);
+      const double *zz = z.HostRead();
+      const int c = c0 + k;
+      for (int r = 0; r < nloc; r++)
+      {
+        const std::size_t q = static_cast<std::size_t>(r) * nG + c;
+        SK_rows[q] = S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
       }
     }
   }

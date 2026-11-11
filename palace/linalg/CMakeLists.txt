@@ -31,6 +31,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/schursolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
