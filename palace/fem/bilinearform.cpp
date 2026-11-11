@@ -49,9 +49,18 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   }
 
   // Classify each integrator once, before the thread/geometry loops. An integrator outside
-  // the shared lossy-domain or active-boundary support union remains unrestricted; an empty
-  // support creates no sub-operator. The domain integrators restricted to the elements of
-  // given attributes are assembled separately below.
+  // the shared lossy-domain or active-boundary support union remains unrestricted, or is
+  // restricted to the elements of support_attr if its coefficients vanish outside of them;
+  // an empty support creates no sub-operator. The domain integrators restricted to the
+  // elements of given attributes are assembled separately below.
+  std::vector<int> support_loc_attr;
+  if (skip_zero_coeff_elems && !support_attr.empty())
+  {
+    const auto loc_attr = mesh.GetCeedAttributes(support_attr);
+    support_loc_attr.assign(loc_attr.begin(), loc_attr.end());
+    std::ranges::sort(support_loc_attr);
+  }
+  std::vector<bool> on_support(domain_integs.size(), false);
   auto GetIntegratorSubsets = [&](const auto &integs, bool use_bdr)
   {
     std::vector<std::optional<ceed::CeedElementSubset>> subsets;
@@ -81,10 +90,20 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
       else
       {
         const auto &active_attr = mesh.GetCeedActiveAttributes(use_bdr);
-        subsets.emplace_back(std::includes(active_attr.begin(), active_attr.end(),
-                                           attr_list->begin(), attr_list->end())
-                                 ? ceed::CeedElementSubset::Active
-                                 : ceed::CeedElementSubset::Full);
+        if (std::ranges::includes(active_attr, *attr_list))
+        {
+          subsets.emplace_back(ceed::CeedElementSubset::Active);
+        }
+        else if (!use_bdr && !support_attr.empty() &&
+                 std::ranges::includes(support_loc_attr, *attr_list))
+        {
+          subsets.emplace_back(std::nullopt);
+          on_support[i] = true;
+        }
+        else
+        {
+          subsets.emplace_back(ceed::CeedElementSubset::Full);
+        }
       }
     }
     return subsets;
@@ -147,6 +166,38 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
                           data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
           // Sub-operator owned by ceed::Operator.
           op->AddSubOperator(sub_op);
+        }
+      }
+    }
+
+    // Assemble the domain integrators restricted to the elements of support_attr, from the
+    // geometry factor data of all elements.
+    if (std::ranges::find(on_support, true) != on_support.end())
+    {
+      for (const auto &[geom, data] : mesh.GetCeedGeomFactorDataSubset(ceed, support_attr))
+      {
+        const auto trial_map_type =
+            trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+        const auto test_map_type =
+            test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+        CeedElemRestriction trial_restr =
+            trial_fespace.GetCeedElemRestriction(ceed, geom, data, support_attr);
+        CeedElemRestriction test_restr =
+            test_fespace.GetCeedElemRestriction(ceed, geom, data, support_attr);
+        CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
+        CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
+        for (std::size_t k = 0; k < domain_integs.size(); k++)
+        {
+          if (!on_support[k])
+          {
+            continue;
+          }
+          const auto &integ = domain_integs[k];
+          CeedOperator sub_op;
+          integ->SetMapTypes(trial_map_type, test_map_type);
+          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
+                          data.geom_data, data.geom_data_restr, &sub_op);
+          op->AddSubOperator(sub_op, nullptr, support_attr);  // Owned by ceed::Operator
         }
       }
     }

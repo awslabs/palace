@@ -57,6 +57,13 @@ private:
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
 
+  // With PML regions, the (global) domain attributes outside of them, on which the bulk
+  // material terms are assembled in the matrix-free operators (see
+  // BilinearForm::SetCoefficientSupport), and whether the levels of the preconditioner
+  // above the coarsest do too.
+  std::vector<int> bulk_attr;
+  bool pc_bulk_attr;
+
   // Perfect electrical conductor essential boundary condition attributes.
   mfem::Array<int> dbc_attr, aux_bdr_attr;
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, aux_bdr_tdof_lists;

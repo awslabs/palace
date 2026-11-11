@@ -1249,8 +1249,11 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     CeedElemRestriction restr_coarse;
     if (!attr_list.empty())
     {
-      const auto &geom_data =
-          fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed, attr_list).at(mfem_geom);
+      // Only the element list of the attributes is needed, as for the support of
+      // BilinearForm::SetCoefficientSupport, whose operators have no data with coordinates.
+      const auto &geom_data = fespace_coarse.GetMesh()
+                                  .GetCeedGeomFactorDataSubset(ceed, attr_list)
+                                  .at(mfem_geom);
       restr_coarse =
           fespace_coarse.GetCeedElemRestriction(ceed, mfem_geom, geom_data, attr_list);
     }

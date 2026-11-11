@@ -278,6 +278,35 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
         std::vector<int>(lossy_attr_l.begin(), lossy_attr_l.end()),
         std::vector<int>(active_bdr_attr_l.begin(), active_bdr_attr_l.end()));
   }
+
+  // The bulk material coefficients vanish on the PML regions (see
+  // MaterialOperator::GetBulkAttributeToMaterial), whose terms are separate integrators on
+  // their own elements, so the bulk terms of the matrix-free operators are assembled on the
+  // other elements only. The levels of the preconditioner above the coarsest do the same,
+  // except on CPU with lossy materials: their bulk terms with stored quadrature data are
+  // then packed with the lossy imaginary terms over the shared lossy subset of all elements
+  // (see ceed::CreateComplexOperator), which a restricted real term would prevent.
+  bulk_attr.clear();
+  if (mat_op.HasPML())
+  {
+    const auto &attributes = mat_op.GetMesh().Get().attributes;
+    for (auto attr : attributes)
+    {
+      if (std::ranges::none_of(mat_op.GetPMLLayers(),
+                               [attr](const auto &layer)
+                               {
+                                 return std::ranges::find(layer.GetAttributes(), attr) !=
+                                        layer.GetAttributes().end();
+                               }))
+      {
+        bulk_attr.push_back(attr);
+      }
+    }
+  }
+  int has_lossy = !lossy_global.empty();
+  Mpi::GlobalMax(1, &has_lossy, mat_op.GetMesh().GetComm());
+  pc_bulk_attr = !bulk_attr.empty() &&
+                 (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) || !has_lossy);
 }
 
 void SpaceOperator::CheckExcitations(ProblemType problem_type) const
@@ -653,13 +682,19 @@ auto AssembleOperator(
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
     bool skip_zeros = false, bool assemble_q_data = false,
-    const std::vector<PMLIntegrator> *pml = nullptr)
+    const std::vector<PMLIntegrator> *pml = nullptr,
+    const std::vector<int> *support = nullptr)
 {
   BilinearForm a(fespace);
   // System matrices are only ever applied matrix-free (their sums are assembled into
   // SumOperator, which has no sparse representation), so elements where a coefficient is
-  // exactly zero can be left out of the partially assembled operator.
+  // exactly zero can be left out of the partially assembled operator, as can the elements
+  // outside of the domain attributes support where the bulk coefficients vanish.
   a.SkipZeroCoefficientElements();
+  if (support)
+  {
+    a.SetCoefficientSupport(*support);
+  }
   AddIntegrators(a, df, f, dfb, fb, fp, frb, fpb, assemble_q_data, pml);
   return a.Assemble(skip_zeros);
 }
@@ -671,9 +706,11 @@ auto AssembleOperators(
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
     bool skip_zeros = false, bool assemble_q_data = false,
     const std::vector<PMLIntegrator> *pml = nullptr,
-    const std::vector<PMLIntegrator> *coarse_pml = nullptr)
+    const std::vector<PMLIntegrator> *coarse_pml = nullptr,
+    const std::vector<int> *support = nullptr)
 {
-  // The PML integrators of the coarse level are pml, or coarse_pml if given.
+  // The PML integrators of the coarse level are pml, or coarse_pml if given. The levels
+  // above the coarsest assemble the bulk terms on the elements of support only, if given.
   //
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
@@ -693,8 +730,12 @@ auto AssembleOperators(
     BilinearForm fine(fespaces.GetFinestFESpace());
     // Levels above the coarsest are only applied matrix-free (their smoothers use the
     // operator action and its diagonal), so elements where a coefficient is exactly zero
-    // can be left out.
+    // can be left out. The coarsest level keeps them, for its sparsity pattern.
     fine.SkipZeroCoefficientElements();
+    if (support)
+    {
+      fine.SetCoefficientSupport(*support);
+    }
     AddIntegrators(fine, df, f, dfb, fb, fp, frb, fpb, assemble_q_data, pml);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -710,7 +751,8 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
                           bool assemble_q_data = false,
-                          const std::vector<PMLIntegrator> *pml = nullptr)
+                          const std::vector<PMLIntegrator> *pml = nullptr,
+                          const std::vector<int> *support = nullptr)
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
@@ -722,6 +764,10 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
     fine.SkipZeroCoefficientElements();
+    if (support)
+    {
+      fine.SetCoefficientSupport(*support);
+    }
     AddAuxIntegrators(fine, f, fb, frb, assemble_q_data, pml);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -978,13 +1024,15 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   if (!empty[0])
   {
     kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, &fpb,
-                          skip_zeros, false, &pml_re);
+                          skip_zeros, false, &pml_re,
+                          bulk_attr.empty() ? nullptr : &bulk_attr);
   }
   if (!empty[1])
   {
     // Imaginary branch: periodic imaginary coefficient (fc) plus PML imag μ̃⁻¹ curl-curl.
     ki = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, nullptr,
-                          nullptr, skip_zeros, false, &pml_im);
+                          nullptr, skip_zeros, false, &pml_im,
+                          bulk_attr.empty() ? nullptr : &bulk_attr);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -1034,7 +1082,8 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   if (!empty[0])
   {
     cr = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, &frb, nullptr,
-                          skip_zeros, false, &pml_re);
+                          skip_zeros, false, &pml_re,
+                          bulk_attr.empty() ? nullptr : &bulk_attr);
   }
   if (!empty[1])
   {
@@ -1090,12 +1139,14 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   if (!empty[0])
   {
     mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr,
-                          nullptr, skip_zeros, false, &pml_re);
+                          nullptr, skip_zeros, false, &pml_re,
+                          bulk_attr.empty() ? nullptr : &bulk_attr);
   }
   if (!empty[1])
   {
     mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr,
-                          nullptr, skip_zeros, false, &pml_im);
+                          nullptr, skip_zeros, false, &pml_im,
+                          bulk_attr.empty() ? nullptr : &bulk_attr);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -1615,8 +1666,9 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
                       PMLFilter::FREQUENCY_DEPENDENT, omega, c, pml::TensorPart::ABS);
     }
     constexpr bool skip_zeros = false;
-    auto b = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr,
-                              nullptr, skip_zeros, false, &pml);
+    auto b =
+        AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, nullptr,
+                         skip_zeros, false, &pml, bulk_attr.empty() ? nullptr : &bulk_attr);
     return std::make_unique<ParOperator>(std::move(b), GetNDSpace());
   }
   const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
@@ -1855,17 +1907,21 @@ void SpaceOperator::AssemblePreconditioner(
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
                                skip_zeros, assemble_q_data, &pml_re,
-                               coarse_pml ? &(*coarse_pml)[0] : nullptr);
-    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
-                                      assemble_q_data, &aux_pml_re);
+                               coarse_pml ? &(*coarse_pml)[0] : nullptr,
+                               pc_bulk_attr ? &bulk_attr : nullptr);
+    br_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data,
+                             &aux_pml_re, pc_bulk_attr ? &bulk_attr : nullptr);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
                                skip_zeros, assemble_q_data, &pml_im,
-                               coarse_pml ? &(*coarse_pml)[1] : nullptr);
-    bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros,
-                                      assemble_q_data, &aux_pml_im);
+                               coarse_pml ? &(*coarse_pml)[1] : nullptr,
+                               pc_bulk_attr ? &bulk_attr : nullptr);
+    bi_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data,
+                             &aux_pml_im, pc_bulk_attr ? &bulk_attr : nullptr);
   }
   if (pml_block)
   {
@@ -1940,9 +1996,11 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data, &pml);
-    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
-                                      assemble_q_data, &aux_pml);
+                               nullptr, skip_zeros, assemble_q_data, &pml, nullptr,
+                               pc_bulk_attr ? &bulk_attr : nullptr);
+    br_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data,
+                             &aux_pml, pc_bulk_attr ? &bulk_attr : nullptr);
   }
 }
 

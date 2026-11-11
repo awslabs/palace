@@ -1289,6 +1289,94 @@ TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tenso
   }
 }
 
+TEST_CASE("SpaceOperator bulk terms on the support of their coefficients",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  // With BilinearForm::SetCoefficientSupport (all but the PML attributes), the bulk terms
+  // whose coefficients vanish on the PML are assembled on the other elements only. The
+  // levels of a p-multigrid hierarchy coarsened from them, with the stored PML terms, and
+  // the complex operators with the lossy imaginary terms on the shared lossy subset, must
+  // give the action and the diagonal of the same terms over all elements. A term with a
+  // coefficient on the PML too keeps every element.
+  const bool on_pml = GENERATE(false, true);
+  IntegrationSettingsGuard settings_guard;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  auto space_op = MakePMLSpaceOperator(mesh, false, 3, 3);
+  const auto &mat_op = space_op->GetMaterialOp();
+  const auto &layer = mat_op.GetPMLLayers()[0];
+  const auto &spaces = space_op->GetNDSpaces();
+  REQUIRE(spaces.GetNumLevels() == 3);
+  std::vector<int> support;
+  for (auto attr : mesh[0]->Get().attributes)
+  {
+    if (std::ranges::find(layer.GetAttributes(), attr) == layer.GetAttributes().end())
+    {
+      support.push_back(attr);
+    }
+  }
+  MaterialPropertyCoefficient muinv(mat_op.GetBulkAttributeToMaterial(),
+                                    mat_op.GetCurlCurlInvPermeability()),
+      eps(on_pml ? mat_op.GetAttributeToMaterial() : mat_op.GetBulkAttributeToMaterial(),
+          mat_op.GetPermittivityReal()),
+      loss(mat_op.GetBulkAttributeToMaterial(), mat_op.GetPermittivityImag());
+  pml::ContextHeader header;
+  header.c_muinv = 1.0;
+  header.c_eps = -4.0;
+  const auto ctx = layer.PackContext(header);
+  auto Assemble = [&](bool real, bool restrict)
+  {
+    BilinearForm a(spaces.GetFinestFESpace());
+    a.SkipZeroCoefficientElements();
+    if (restrict)
+    {
+      a.SetCoefficientSupport(support);
+    }
+    if (real)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv, eps);
+      if (!ctx.empty())
+      {
+        a.AddDomainIntegratorOnAttributes<CurlCurlMassPMLIntegrator>(
+            layer.GetAttributes(), ctx.data(), ctx.size() * sizeof(CeedIntScalar));
+      }
+    }
+    else
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
+    }
+    a.AssembleQuadratureData();
+    return a.Assemble(spaces, false, 1);
+  };
+  auto ar = Assemble(true, true), ai = Assemble(false, true);
+  const auto ar_ref = Assemble(true, false), ai_ref = Assemble(false, false);
+  MPI_Comm comm = space_op->GetComm();
+  for (std::size_t l = 0; l < ar.size(); l++)
+  {
+    INFO("level " << l + 1);
+    Vector d(ar[l]->Height()), d_ref(ar[l]->Height());
+    d.UseDevice(true);
+    d_ref.UseDevice(true);
+    ar[l]->AssembleDiagonal(d);
+    ar_ref[l]->AssembleDiagonal(d_ref);
+    CHECK_THAT(RelativeError(comm, d, d_ref), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    const ComplexWrapperOperator A_ref(ar_ref[l].get(), ai_ref[l].get());
+    const auto A = ceed::CreateComplexOperator(std::move(ar[l]), std::move(ai[l]),
+                                               spaces.GetFESpaceAtLevel(l + 1));
+    ComplexVector x(A->Width()), y(A->Height()), y_ref(A->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    x.Real().Randomize(42);
+    x.Imag().Randomize(43);
+    A->Mult(x, y);
+    A_ref.Mult(x, y_ref);
+    CHECK_THAT(RelativeError(comm, y.Real(), y_ref.Real()),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    CHECK_THAT(RelativeError(comm, y.Imag(), y_ref.Imag()),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+  }
+}
+
 // With a frequency dependent Floquet wave vector k = (ω / ω_ref) k_ref
 // ("FloquetReferenceFrequency"), the Floquet terms of the domain and of the second-order
 // absorbing boundary are split by their power of ω between the stiffness, damping, mass,
