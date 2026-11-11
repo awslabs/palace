@@ -373,8 +373,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - `Mpi::BroadcastLarge` now bounds every single `MPI_Bcast` it issues IN BYTES, by the
     compile-time constant `mpi::BROADCAST_LARGE_CHUNK_BYTES` = 2^28 bytes (the element count
     per call = that / `sizeof(T)`, at least 1; an explicit chunk is capped at it), instead of
-    INT_MAX elements. On Open MPI 5.0.8 + libfabric-aws 2.6.0 one broadcast of ~2^31 bytes
-    segfaults in the transport, so the restart from a nonconforming mesh whose serialized
+    INT_MAX elements. On Open MPI 5.0.8 + libfabric-aws 2.6.0 the broadcast of the mesh's
+    serialized text in chunks of up to INT_MAX `MPI_CHAR` elements (~2^31 bytes) segfaults in
+    the transport (one broadcast of 2^28 `MPI_DOUBLE` elements = 2^31 bytes passes; the
+    failing size is not located), so the restart from a nonconforming mesh whose serialized
     text exceeds 2^31 bytes crashed in the mesh distribution
     (OI-NC-LOAD-BYTESTRING-ABOVE-2GIB-SEGFAULT). Results are bitwise unchanged (the same
     bytes are delivered in the same order).
