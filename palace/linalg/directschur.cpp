@@ -4,6 +4,8 @@
 #include "directschur.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <numeric>
 #include <utility>
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
@@ -182,6 +184,208 @@ private:
 
 }  // namespace
 
+#if defined(MFEM_USE_STRUMPACK)
+// PROBE: the Schur complement from STRUMPACK's partial factorization of the whole matrix,
+// numbered with the Schur variables first (rows on rank 0), then A_II's rows.
+class StrumpackSchur
+{
+public:
+  using T = std::complex<double>;
+  StrumpackSchur(MPI_Comm comm, int ns, int ni, HYPRE_BigInt int_off,
+                 const std::vector<int> &ii_ptr, const std::vector<HYPRE_BigInt> &ii_col,
+                 const std::vector<int> &is_ptr, const std::vector<int> &is_col)
+    : comm(comm), rank(Mpi::Rank(comm)), ns(ns), ni(ni), ii_ptr(ii_ptr), is_ptr(is_ptr),
+      sp(comm, false)
+  {
+    auto &opt = sp.options();
+    opt.set_Krylov_solver(strumpack::KrylovSolver::DIRECT);
+    opt.set_matching(strumpack::MatchingJob::NONE);
+    opt.set_reordering_method(strumpack::ReorderingStrategy::METIS);
+    opt.set_compression(strumpack::CompressionType::NONE);
+    opt.set_verbose(false);
+    nloc = ((rank == 0) ? ns : 0) + ni;
+    const int nranks = Mpi::Size(comm);
+    std::vector<int> cnt(nranks);
+    MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    dist.assign(nranks + 1, 0);
+    for (int r = 0; r < nranks; r++)
+    {
+      dist[r + 1] = dist[r] + cnt[r];
+    }
+    // The A_SI pattern on rank 0, from the A_IS entries of all the ranks (A symmetric).
+    std::vector<long long> loc;
+    for (int i = 0; i < ni; i++)
+    {
+      for (int q = is_ptr[i]; q < is_ptr[i + 1]; q++)
+      {
+        loc.insert(loc.end(), {is_col[q], ns + int_off + i});
+      }
+    }
+    std::vector<int> rc(nranks), rd(nranks, 0);
+    const int m = static_cast<int>(loc.size());
+    MPI_Gather(&m, 1, MPI_INT, rc.data(), 1, MPI_INT, 0, comm);
+    std::vector<long long> all;
+    if (rank == 0)
+    {
+      for (int r = 1; r < nranks; r++)
+      {
+        rd[r] = rd[r - 1] + rc[r - 1];
+      }
+      all.resize(rd.back() + rc.back());
+    }
+    MPI_Gatherv(loc.data(), m, MPI_LONG_LONG, all.data(), rc.data(), rd.data(),
+                MPI_LONG_LONG, 0, comm);
+    for (auto &v : rc)
+    {
+      v /= 2;
+    }
+    for (auto &v : rd)
+    {
+      v /= 2;
+    }
+    si_cnt = rc;
+    si_dsp = rd;
+    // Local CSR: the Schur rows (rank 0), A_SS dense then A_SI, and A_II's rows, A_IS then
+    // A_II (columns ascending).
+    ptr.assign(nloc + 1, 0);
+    std::vector<std::vector<std::pair<long long, int>>> srow(rank == 0 ? ns : 0);
+    for (std::size_t e = 0; e < all.size() / 2; e++)
+    {
+      srow[all[2 * e]].push_back({all[2 * e + 1], static_cast<int>(e)});
+    }
+    si_slot.assign(all.size() / 2, 0);
+    for (int p = 0; p < ((rank == 0) ? ns : 0); p++)
+    {
+      for (int q = 0; q < ns; q++)
+      {
+        col.push_back(q);
+      }
+      std::sort(srow[p].begin(), srow[p].end());
+      for (const auto &[c, e] : srow[p])
+      {
+        si_slot[e] = static_cast<int>(col.size());
+        col.push_back(static_cast<int>(c));
+      }
+      ptr[p + 1] = static_cast<int>(col.size());
+    }
+    const int r0 = (rank == 0) ? ns : 0;
+    for (int i = 0; i < ni; i++)
+    {
+      for (int q = is_ptr[i]; q < is_ptr[i + 1]; q++)
+      {
+        col.push_back(is_col[q]);
+      }
+      for (int q = ii_ptr[i]; q < ii_ptr[i + 1]; q++)
+      {
+        col.push_back(static_cast<int>(ns + ii_col[q]));
+      }
+      ptr[r0 + i + 1] = static_cast<int>(col.size());
+    }
+  }
+
+  void Factor(const std::vector<T> &ii_val, const std::vector<T> &is_val,
+              const std::vector<T> &ss_val, std::vector<T> &schur)
+  {
+    val.assign(col.size(), 0.0);
+    std::vector<T> si;
+    if (rank == 0)
+    {
+      si.resize(si_slot.size());
+    }
+    MPI_Gatherv(is_val.data(), static_cast<int>(is_val.size()), MPI_C_DOUBLE_COMPLEX,
+                si.data(), si_cnt.data(), si_dsp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+    const int r0 = (rank == 0) ? ns : 0;
+    for (int p = 0; p < r0; p++)
+    {
+      for (int q = 0; q < ns; q++)
+      {
+        val[ptr[p] + q] = ss_val[p + static_cast<std::size_t>(ns) * q];
+      }
+    }
+    for (std::size_t e = 0; e < si.size(); e++)
+    {
+      val[si_slot[e]] = si[e];
+    }
+    for (int i = 0; i < ni; i++)
+    {
+      int k = ptr[r0 + i];
+      for (int q = is_ptr[i]; q < is_ptr[i + 1]; q++)
+      {
+        val[k++] = is_val[q];
+      }
+      for (int q = ii_ptr[i]; q < ii_ptr[i + 1]; q++)
+      {
+        val[k++] = ii_val[q];
+      }
+    }
+    if (first)
+    {
+      sp.set_distributed_csr_matrix(nloc, ptr.data(), col.data(), val.data(), dist.data(),
+                                    true);
+      std::vector<int> s(ns);
+      std::iota(s.begin(), s.end(), 0);
+      MFEM_VERIFY(sp.set_schur_variables(ns, s.data()) == strumpack::ReturnCode::SUCCESS,
+                  "STRUMPACK Schur variables failed!");
+      first = false;
+    }
+    else
+    {
+      sp.update_matrix_values(nloc, ptr.data(), col.data(), val.data(), dist.data(), true);
+    }
+    MFEM_VERIFY(sp.factor() == strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK factorization failed!");
+    strumpack::DenseMatrix<T> S;
+    MFEM_VERIFY(sp.get_schur_complement(S) == strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK Schur complement failed!");
+    schur.assign((rank == 0) ? static_cast<std::size_t>(ns) * ns : 0, 0.0);
+    for (int j = 0; j < ((rank == 0) ? ns : 0); j++)
+    {
+      for (int i = 0; i < ns; i++)
+      {
+        schur[i + static_cast<std::size_t>(ns) * j] = S(i, j);
+      }
+    }
+  }
+
+  // x = A_II^-1 b for nb blocks of A_II's local rows: the expansion of zero values of the
+  // Schur variables.
+  void SolveInterior(const std::vector<T> &b, std::vector<T> &x, int nb) const
+  {
+    const int r0 = (rank == 0) ? ns : 0, ld = std::max(nloc, 1);
+    std::vector<T> bf(static_cast<std::size_t>(ld) * nb, 0.0), xf(bf.size(), 0.0);
+    for (int k = 0; k < nb; k++)
+    {
+      std::copy(b.begin() + static_cast<std::size_t>(ni) * k,
+                b.begin() + static_cast<std::size_t>(ni) * (k + 1),
+                bf.begin() + static_cast<std::size_t>(ld) * k + r0);
+    }
+    MFEM_VERIFY(sp.schur_expand(nb, bf.data(), ld, xf.data(), ld) ==
+                    strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK Schur expansion failed!");
+    x.resize(static_cast<std::size_t>(ni) * nb);
+    for (int k = 0; k < nb; k++)
+    {
+      std::copy(xf.begin() + static_cast<std::size_t>(ld) * k + r0,
+                xf.begin() + static_cast<std::size_t>(ld) * k + r0 + ni,
+                x.begin() + static_cast<std::size_t>(ni) * k);
+    }
+  }
+
+private:
+  MPI_Comm comm;
+  int rank, ns, ni, nloc = 0;
+  const std::vector<int> &ii_ptr, &is_ptr;
+  std::vector<int> dist, ptr, col, si_cnt, si_dsp, si_slot;
+  std::vector<T> val;
+  bool first = true;
+  mutable strumpack::SparseSolverMPIDist<T, int> sp;
+};
+#else
+class StrumpackSchur
+{
+};
+#endif
+
 DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                                      const std::vector<HYPRE_BigInt> &schur_vars,
                                      std::vector<int> local_rows)
@@ -359,6 +563,15 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
   };
   pattern(ii, ii_ptr, ii_col);
   pattern(is, is_ptr, is_col);
+#if defined(MFEM_USE_STRUMPACK)
+  // PROBE: STRUMPACK's Schur complement interface, selected by the run directory.
+  if (n_schur > 0 &&
+      std::filesystem::current_path().string().find("_nativeschur_") != std::string::npos)
+  {
+    nat = std::make_unique<StrumpackSchur>(comm, n_schur, n_int, int_off, ii_ptr, ii_col,
+                                           is_ptr, is_col);
+  }
+#endif
   Factor();
 }
 
@@ -386,6 +599,13 @@ void DirectSchurSolver::Distribute()
 void DirectSchurSolver::Factor()
 {
   Distribute();
+#if defined(MFEM_USE_STRUMPACK)
+  if (nat)  // PROBE
+  {
+    nat->Factor(ii_val, is_val, ss_val, schur);
+    return;
+  }
+#endif
   fact->Factor(n_int, int_off, n_int_glob, ii_ptr, ii_col, ii_val);
 
   // S = A_SS - A_SI A_II^-1 A_IS, for a batch of the Schur variables at a time.
@@ -427,6 +647,13 @@ std::vector<DirectSchurSolver::T> DirectSchurSolver::ReleaseSchur()
 void DirectSchurSolver::SolveInterior(const std::vector<T> &b, std::vector<T> &x,
                                       int nb) const
 {
+#if defined(MFEM_USE_STRUMPACK)
+  if (nat)  // PROBE
+  {
+    nat->SolveInterior(b, x, nb);
+    return;
+  }
+#endif
   fact->Solve(b, x, nb);
 }
 

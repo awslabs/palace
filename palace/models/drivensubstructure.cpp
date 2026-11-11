@@ -537,11 +537,39 @@ void DrivenSubstructure::Fill(
 
 void DrivenSubstructure::Factor(Side &side, double omega)
 {
+  // PROBE: the time of each condensation, and "_once_" stops after the second of the
+  // environment.
+  static int env_count = 0;
+  const double t0 = MPI_Wtime();
+  struct Report
+  {
+    DrivenSubstructure &ds;
+    Side &side;
+    double t0;
+    ~Report()
+    {
+      MPI_Comm comm = ds.space_op.GetComm();
+      MPI_Barrier(comm);
+      const bool is_env = (&side == &ds.env);
+      if (Mpi::Root(comm))
+      {
+        std::printf("PROBE condense %s (%lld unknowns, %d interface): %.3f s\n",
+                    is_env ? "environment" : "region", static_cast<long long>(side.n_sys),
+                    ds.InterfaceSize(), MPI_Wtime() - t0);
+        std::fflush(stdout);
+      }
+      if (is_env && ++env_count == 2 &&
+          std::filesystem::current_path().string().find("_once_") != std::string::npos)
+      {
+        MPI_Abort(comm, 0);
+      }
+    }
+  } report{*this, side, t0};
   if (!side.schur)
   {
     SideSchurSolver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys),
                              std::move(side.val)};
-#if defined(MFEM_USE_MUMPS)
+#if 0  // PROBE: DirectSchurSolver also with MUMPS
     side.schur = std::make_unique<SideSchurSolver>(
         space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
         side.gamma_sys, kBlrTol, 0, true, false, side.rows);

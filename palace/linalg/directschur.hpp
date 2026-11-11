@@ -14,6 +14,7 @@ namespace palace
 {
 
 class DirectSchurFactorization;
+class StrumpackSchur;  // PROBE
 
 //
 // The Schur complement S = A_SS - A_SI A_II^-1 A_IS of a complex symmetric sparse matrix A
@@ -92,6 +93,7 @@ private:
   std::vector<T> ii_val, is_val, ss_val;
 
   std::unique_ptr<DirectSchurFactorization> fact;
+  std::unique_ptr<StrumpackSchur> nat;  // PROBE: STRUMPACK's Schur complement interface
   std::vector<T> schur, y_last;
   int reduced = 0;
 

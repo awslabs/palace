@@ -26,7 +26,7 @@ class SpaceOperator;
 // The factorization of a side with its Schur complement onto the interface: MUMPS's partial
 // factorization or, without MUMPS, one solve per interface DOF with another sparse direct
 // solver.
-#if defined(MFEM_USE_MUMPS)
+#if 0  // PROBE: DirectSchurSolver also with MUMPS
 using SideSchurSolver = MumpsSchurSolverT<std::complex<double>>;
 #else
 using SideSchurSolver = DirectSchurSolver;

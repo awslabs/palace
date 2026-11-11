@@ -193,6 +193,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b",
                 when="@8.1.0",
             ),
+            # PROBE: the Schur complement interface (dnpham23/STRUMPACK schur-complement,
+            # backported onto 8.1.0 with the patches above)
+            patch("strumpack_schur_8.1.0.patch", when="@8.1.0"),
         ],
     )
 

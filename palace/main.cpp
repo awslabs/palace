@@ -8,6 +8,14 @@
 #include <string_view>
 #include <vector>
 #include <mpi.h>
+// PROBE: memory variants selected by the run directory (the run label).
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#include <unistd.h>
+#endif
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "driver.hpp"
@@ -164,6 +172,46 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Devic
 
 int main(int argc, char *argv[])
 {
+#if defined(__linux__)
+  {
+    // PROBE: "_notunable_" re-executes without glibc.malloc.hugetlb in GLIBC_TUNABLES,
+    // "_nothp_" disables transparent huge pages for the process.
+    char buf[4096];
+    const std::string cwd = getcwd(buf, sizeof(buf)) ? buf : "";
+    if (cwd.find("_notunable_") != std::string::npos && !std::getenv("PALACE_PROBE_REEXEC"))
+    {
+      const char *t = std::getenv("GLIBC_TUNABLES");
+      const std::string tun = t ? t : "";
+      std::string out;
+      for (std::size_t pos = 0; pos <= tun.size();)
+      {
+        const std::size_t end = std::min(tun.find(':', pos), tun.size());
+        const std::string tok = tun.substr(pos, end - pos);
+        if (!tok.empty() && tok.rfind("glibc.malloc.hugetlb=", 0) != 0)
+        {
+          out += (out.empty() ? "" : ":") + tok;
+        }
+        pos = end + 1;
+      }
+      if (out.empty())
+      {
+        unsetenv("GLIBC_TUNABLES");
+      }
+      else
+      {
+        setenv("GLIBC_TUNABLES", out.c_str(), 1);
+      }
+      setenv("PALACE_PROBE_REEXEC", "1", 1);
+      execv("/proc/self/exe", argv);
+      std::perror("PROBE execv");
+    }
+    if (cwd.find("_nothp_") != std::string::npos)
+    {
+      prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+      setenv("PALACE_PROBE_NOTHP", "1", 1);
+    }
+  }
+#endif
   // Initialize MPI.
 #if defined(MFEM_USE_STRUMPACK) && \
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
