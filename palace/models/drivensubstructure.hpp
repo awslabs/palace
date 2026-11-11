@@ -20,7 +20,17 @@ namespace palace
 
 template <typename T>
 class MumpsSchurSolverT;
+class DirectSchurSolver;
 class SpaceOperator;
+
+// The factorization of a side with its Schur complement onto the interface: MUMPS's partial
+// factorization or, without MUMPS, one solve per interface DOF with another sparse direct
+// solver.
+#if defined(MFEM_USE_MUMPS)
+using SideSchurSolver = MumpsSchurSolverT<std::complex<double>>;
+#else
+using SideSchurSolver = DirectSchurSolver;
+#endif
 
 //
 // Barycentric rational interpolation of a vector-valued function of the frequency from its
@@ -312,7 +322,7 @@ private:
     // until factored.
     std::vector<int> irn_sys, jcn_sys;
     std::vector<std::complex<double>> val;
-    std::unique_ptr<MumpsSchurSolverT<std::complex<double>>> schur;
+    std::unique_ptr<SideSchurSolver> schur;
     // The rank-one modal terms g s sᵀ of the side's wave ports, bordering the system: an
     // extra unknown y per term after its n_dofs DOFs, on the last rank, with the entries
     // √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on its

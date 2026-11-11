@@ -854,8 +854,10 @@ void IoData::CheckConfiguration()
                boundaries.postpro.farfield.attributes.empty()),
           "Online or adaptive driven substructuring does not compute interface dielectric "
           "or far-field postprocessing yet!");
-#if !defined(MFEM_USE_MUMPS)
-      MFEM_ABORT("Driven substructuring requires MUMPS!");
+#if !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK)
+      MFEM_ABORT(
+          "Driven substructuring requires a sparse direct solver (MUMPS, SuperLU_DIST "
+          "or STRUMPACK)!");
 #endif
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)

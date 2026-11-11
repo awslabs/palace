@@ -13,9 +13,12 @@
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
+#include "linalg/directschur.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/strumpack.hpp"
+#include "linalg/superlu.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -35,13 +38,6 @@ extern "C"
 namespace palace
 {
 
-#if !defined(MFEM_USE_MUMPS)
-template <typename T>
-class MumpsSchurSolverT
-{
-};
-#endif
-
 namespace
 {
 
@@ -50,9 +46,27 @@ namespace
 // rounding only.
 constexpr double kEnvironmentTol = 1.0e-10;
 
+#if defined(MFEM_USE_MUMPS)
 // BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization is faster
 // than its full-rank one here, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
+#else
+// The sparse direct solver of the internal blocks of the sides without MUMPS, in Palace's
+// order of preference for frequency-domain problems.
+std::unique_ptr<mfem::Solver> MakeDirectSolver(MPI_Comm comm)
+{
+#if defined(MFEM_USE_STRUMPACK)
+  return std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
+                                           SparseCompression::NONE, 0.0, 1, 0, true, 0);
+#elif defined(MFEM_USE_SUPERLU)
+  return std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true,
+                                         0);
+#else
+  MFEM_ABORT("Driven substructuring requires a sparse direct solver!");
+  return nullptr;
+#endif
+}
+#endif
 
 // Free a vector's storage (v = {} empties it but keeps its capacity).
 template <typename V>
@@ -338,6 +352,7 @@ void DrivenSubstructure::Setup(Side &side, double omega)
 {
 #if defined(MFEM_USE_MUMPS)
   static_assert(std::is_same_v<MUMPS_INT, int>, "MUMPS_INT must be a 32-bit int!");
+#endif
   // The factored system is the side's interior and Γ, numbered by rank: the pinned DOFs
   // would be identity rows, and MUMPS's per-rank workspace grows with the system size.
   const auto &fes = space_op.GetNDSpace().Get();
@@ -492,7 +507,6 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   auto extra = ExtraParts(side, omega);
   side.extra = extra[0] || extra[1];
   Fill(side, omega, extra, terms, side.val);
-#endif
 }
 
 void DrivenSubstructure::Fill(
@@ -501,7 +515,6 @@ void DrivenSubstructure::Fill(
     const std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>> &terms,
     std::vector<std::complex<double>> &val) const
 {
-#if defined(MFEM_USE_MUMPS)
   const auto coef = Coefficients(omega);
   std::fill(val.begin(), val.end(), 0.0);
   for (int p = 0; p < 6; p++)
@@ -538,19 +551,23 @@ void DrivenSubstructure::Fill(
       val[q++] = -side.border;
     }
   }
-#endif
 }
 
 void DrivenSubstructure::Factor(Side &side, double omega)
 {
-#if defined(MFEM_USE_MUMPS)
-  using Solver = MumpsSchurSolverT<std::complex<double>>;
   if (!side.schur)
   {
-    Solver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)};
-    side.schur = std::make_unique<Solver>(
+    SideSchurSolver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys),
+                             std::move(side.val)};
+#if defined(MFEM_USE_MUMPS)
+    side.schur = std::make_unique<SideSchurSolver>(
         space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
         side.gamma_sys, kBlrTol, 0, true, false, side.rows);
+#else
+    side.schur = std::make_unique<SideSchurSolver>(
+        space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
+        side.gamma_sys, side.rows, MakeDirectSolver(space_op.GetComm()));
+#endif
     return;
   }
 
@@ -560,7 +577,6 @@ void DrivenSubstructure::Factor(Side &side, double omega)
               "The frequency-dependent part of a substructure operator changed!");
   Fill(side, omega, extra, ModalTerms(side, omega), side.schur->Values());
   side.schur->Refactor();
-#endif
 }
 
 MPI_Comm DrivenSubstructure::GetComm() const
@@ -586,9 +602,6 @@ std::vector<int> DrivenSubstructure::InterfaceIndex() const
 void DrivenSubstructure::Condense(double omega, bool region_too)
 {
   MFEM_VERIFY(!online, "An online substructure is condensed with a given S_E!");
-#if !defined(MFEM_USE_MUMPS)
-  MFEM_ABORT("Driven substructuring requires MUMPS!");
-#else
   if (!env.schur)
   {
     // The patterns first, so that the assembled operators are released before the
@@ -617,15 +630,11 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
     FactorInterface();
   }
   solvable = region_too;
-#endif
 }
 
 void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>> &&S_env)
 {
   MFEM_VERIFY(online, "An offline substructure condenses its own environment!");
-#if !defined(MFEM_USE_MUMPS)
-  MFEM_ABORT("Driven substructuring requires MUMPS!");
-#else
   if (!region.schur)
   {
     Setup(region, omega);
@@ -641,14 +650,12 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
   FactorInterface();
   Release(S);  // (only the factored interface system is needed online)
   solvable = true;
-#endif
 }
 
 void DrivenSubstructure::FactorInterface()
 {
   // The interface system S_R + S_E, factored on rank 0 (LU: the symmetric factorization of
   // common LAPACKs is slower, despite its half of the operations).
-#if defined(MFEM_USE_MUMPS)
   if (Mpi::Root(space_op.GetComm()))
   {
     const int nG = InterfaceSize();
@@ -662,7 +669,6 @@ void DrivenSubstructure::FactorInterface()
     zgetrf_(&nG, &nG, T.data(), &nG, T_piv.data(), &info);
     MFEM_VERIFY(info == 0, "Factorization of the interface system failed: info = " << info);
   }
-#endif
 }
 
 namespace
@@ -691,9 +697,6 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
                                std::vector<ComplexVector> &u,
                                const std::vector<std::complex<double>> *g_env)
 {
-#if !defined(MFEM_USE_MUMPS)
-  MFEM_ABORT("Driven substructuring requires MUMPS!");
-#else
   MFEM_VERIFY(solvable, "Condense (with the region) must be called before Solve!");
   MFEM_VERIFY(online == (g_env != nullptr),
               "The environment's source condensation is given online only!");
@@ -775,7 +778,6 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
       ui[i] = from_region ? yi[i] : (from_env ? wi[i] : 0.0);
     }
   }
-#endif
 }
 
 void DrivenSubstructure::AddReducedBasis(const std::vector<ComplexVector> &u)
@@ -1023,7 +1025,6 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
 {
   MFEM_VERIFY(!online && env.schur, "CondenseEnvironment needs the environment factor!");
   std::vector<std::complex<double>> red;
-#if defined(MFEM_USE_MUMPS)
   if (b.empty())
   {
     return red;  // (MUMPS rejects an empty batch)
@@ -1047,7 +1048,6 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
   {
     *xo = std::move(x);
   }
-#endif
   return red;
 }
 

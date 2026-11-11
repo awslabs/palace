@@ -3279,7 +3279,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
 }
 #endif
 
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
 
 namespace
 {
@@ -3316,7 +3316,6 @@ void RunDrivenSheetSquare(const std::filesystem::path &dir, const std::string &m
        {{"Order", 1},
         {"Device", "CPU"},
         {"Driven", {{"MinFreq", 1000.0}, {"MaxFreq", 2000.0}, {"FreqStep", 1000.0}}},
-        {"Linear", {{"Type", "MUMPS"}}},
         {"Substructuring",
          {{"Region", {{"Attributes", {1}}}},
           {"Environment", {{"Attributes", {2}}}},
@@ -3375,6 +3374,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                          }),
                     ContainsSubstring("The parameters of the environment's ports"));
 }
+
+#if defined(MFEM_USE_MUMPS)
 TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
           "[substructure][Serial][Parallel]")
 {
@@ -3562,6 +3563,7 @@ TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
     }
   }
 }
+#endif
 
 TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh",
           "[substructure][Serial][Parallel]")

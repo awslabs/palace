@@ -1651,7 +1651,7 @@ TEST_CASE("substructuring_magnetostatic_two_sided_end_swapped_region",
                                   "two_sided_end_swapped_online_region", opts);
 }
 
-#if defined(MFEM_USE_MUMPS)  // driven substructuring needs MUMPS
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
 
 // Driven substructuring with exact per-frequency condensation: lumped ports across two
 // holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one

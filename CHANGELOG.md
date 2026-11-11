@@ -46,8 +46,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     passivity, which online sweeps evaluate anywhere in its band, with the region reduced as
     in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
     region, on which online sweeps read and partition the region only. Runs on CPUs and
-    GPUs, with the factorizations on the CPU. Adds a driven example in
-    `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 4-3-1.
+    GPUs, with the factorizations on the CPU: by MUMPS, whose partial factorization gives
+    the condensed sides, or, without MUMPS, by SuperLU_DIST or STRUMPACK with one solve per
+    interface unknown. Adds a driven example in `examples/substructuring` (a 3 x 4 grid of
+    CPW resonators). SchemaVer 4-3-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
