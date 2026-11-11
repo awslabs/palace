@@ -39,15 +39,16 @@ namespace palace
 namespace substructuring
 {
 
-// Sparse direct solver for the environment and region factorizations: MUMPS, SuperLU_DIST
-// or STRUMPACK, in this order of preference (null without one).
+// Sparse direct solver for the environment and region factorizations: STRUMPACK, MUMPS or
+// SuperLU_DIST, in this order of preference (null without one). With MUMPS, its partial
+// factorization condenses the environment instead (MaterializeMumps).
 constexpr const char *kDirectSolverName =
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_STRUMPACK)
+    "STRUMPACK";
+#elif defined(MFEM_USE_MUMPS)
     "MUMPS";
 #elif defined(MFEM_USE_SUPERLU)
     "SuperLU_DIST";
-#elif defined(MFEM_USE_STRUMPACK)
-    "STRUMPACK";
 #else
     "";
 #endif
@@ -95,13 +96,13 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoD
                                                       [[maybe_unused]] MPI_Comm comm,
                                                       [[maybe_unused]] bool serial = false)
 {
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_STRUMPACK)
+  return std::make_unique<StrumpackSolver>(iodata, comm, 0);
+#elif defined(MFEM_USE_MUMPS)
   return std::make_unique<MumpsDirectSolver>(serial,
                                              iodata.solver.linear.sym_factorization);
 #elif defined(MFEM_USE_SUPERLU)
   return std::make_unique<SuperLUSolver>(iodata, comm, 0);
-#elif defined(MFEM_USE_STRUMPACK)
-  return std::make_unique<StrumpackSolver>(iodata, comm, 0);
 #else
   return nullptr;
 #endif
