@@ -17,8 +17,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "linalg/ksp.hpp"
-#include "linalg/operator.hpp"
-#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -110,15 +108,7 @@ Vector SolveManufactured(const IoData &iodata, LaplaceOperator &laplace_op,
     x.ParallelProject(X);
   }
 
-  // Same unwrapping as LaplaceOperator::GetExcitationVector: with multigrid the stiffness
-  // matrix is a MultigridOperator whose finest level holds the eliminated ParOperator.
-  const auto *mg_K = dynamic_cast<const MultigridOperator *>(K.get());
-  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
-                            : dynamic_cast<const ParOperator *>(K.get());
-  REQUIRE(PtAP_K);
-  PtAP_K->EliminateRHS(X, RHS);
-
-  ksp.Mult(RHS, X);
+  SolveEliminated(ksp, *K, X, RHS);
   return X;
 }
 

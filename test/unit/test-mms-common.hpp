@@ -12,6 +12,11 @@
 #include <string>
 
 #include <mfem.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
+#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 namespace palace::testing::mms
@@ -21,6 +26,27 @@ namespace palace::testing::mms
 inline double ConvergenceRate(double h0, double e0, double h1, double e1)
 {
   return std::log(e0 / e1) / std::log(h0 / h1);
+}
+
+// Apply the essential boundary conditions to a manufactured right-hand side and solve.
+// X holds the Dirichlet lift (zero for homogeneous data) on entry and the solution on exit.
+// With multigrid the stiffness matrix is a MultigridOperator whose finest level holds the
+// eliminated ParOperator, the same unwrapping as the production GetExcitationVector
+// methods. EliminateRHS folds -K_ib X_b into RHS and pins the essential dofs.
+//
+// KspSolver::Mult only warns when the Krylov solve stops at max_it, so convergence is
+// required here: otherwise an unconverged solution would surface as a misleading
+// discretization error (or silently skew a convergence rate).
+inline void SolveEliminated(KspSolver &ksp, const Operator &K, Vector &X, Vector &RHS)
+{
+  const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
+  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
+                            : dynamic_cast<const ParOperator *>(&K);
+  REQUIRE(PtAP_K);
+  PtAP_K->EliminateRHS(X, RHS);
+
+  ksp.Mult(RHS, X);
+  REQUIRE(ksp.GetConverged());
 }
 
 // Print one CSV row of convergence data when PALACE_MMS_REPORT is set, for plotting. Each
