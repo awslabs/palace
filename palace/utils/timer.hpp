@@ -139,6 +139,11 @@ private:
   double heap_query_time = 0.0, budget_query_time = 0.0;
   long heap_samples = 0, heap_skipped = 0;
 
+  // Largest RSS at the heap samples of the iteration taken while the peak RSS had not grown
+  // since the iteration start: a lower bound of the peak of the iteration, if the peak RSS
+  // of the process does not grow in it.
+  long rss_sampled = 0;
+
 public:
   Timer()
     : start_time(Now()), iteration_start_time(start_time), iteration_end_time(start_time),
@@ -278,6 +283,14 @@ public:
     }
     const long heap = QueryHeap(!force);
     heap_samples++;
+    if (last_memory <= iteration_start_memory)
+    {
+      const auto t0 = Now();
+      rss_sampled = std::max(rss_sampled, memory_reporting::GetCurrentMemory());
+      const double dt = Duration(Now() - t0).count();
+      heap_query_time += dt;
+      budget_query_time += force ? 0.0 : dt;
+    }
     const int to = heap_gap ? gap_idx : idx;
     heap_data[to] += heap - last_heap;
     heap_covered[to] += heap_pending[to];
@@ -308,15 +321,18 @@ public:
     return (heap_time[idx] > 0.0) ? heap_covered[idx] / heap_time[idx] : -1.0;
   }
 
-  // Heap queries of the current iteration: seconds (all queries, including forced samples
-  // and memory probes), samples taken and samples skipped.
+  // Largest RSS sampled in the current iteration while the peak RSS had not grown in it.
+  long RssSampled() const { return rss_sampled; }
+
+  // Heap queries of the current iteration: seconds (all queries, including forced samples,
+  // the RSS samples and memory probes), samples taken and samples skipped.
   double HeapQueryTime() const { return heap_query_time; }
   long HeapSamples() const { return heap_samples; }
   long HeapSkipped() const { return heap_skipped; }
 
   // Fold the current iteration into the cumulative totals and restart counting from zero.
   // The new iteration starts at the end of the previous one, so that iteration totals add
-  // up. The memory baseline is the peak RSS at the call (after any high-water mark reset).
+  // up. The memory baseline is the peak RSS at the call.
   void StartIteration()
   {
     for (int i = 0; i < NUM_TIMINGS; i++)
@@ -340,6 +356,7 @@ public:
     heap_gap = false;
     heap_query_time = 0.0;
     heap_samples = heap_skipped = 0;
+    rss_sampled = 0;
     iteration_start_heap = last_heap = QueryHeap();
   }
 };
@@ -445,8 +462,8 @@ public:
   // Whether Finalize has been called since the last Reset/StartIteration.
   static bool IsFinalized();
 
-  // Start a new reporting iteration (AMR): counts and times restart from zero and the peak
-  // memory is reset where supported. Totals are kept for the Cumulative report.
+  // Start a new reporting iteration (AMR): counts and times restart from zero. The peak RSS
+  // of the process is not reset. Totals are kept for the Cumulative report.
   static void StartIteration();
 
   // Clear all process-wide timing and reporting state. Used by palace::Run's callers to

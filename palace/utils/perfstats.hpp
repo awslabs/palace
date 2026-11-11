@@ -92,6 +92,9 @@ inline int MergeRow(int a, int b)
 
 inline Registry registry;
 
+// Serial number of the reporting iteration, unique over the process (also over Resets).
+inline long iteration_serial = 0;
+
 // Seconds this thread has spent blocked in communication: in the MPI_Wait family (requests
 // that had not completed yet, see commstats.cpp) and in Palace's blocking reductions.
 inline thread_local double comm_wait = 0.0;
@@ -363,13 +366,15 @@ struct Results
 {
   int iteration = 1;
   int num_nodes = 0;
-  bool hwm_reset = false;   // Whether the peak RSS was reset at the iteration start
-  TimerResults iter, cum;   // This iteration and iterations 1..N
+  int peak_lower_bound = 0;  // Processes whose peak of the iteration is only a lower bound
+  TimerResults iter, cum;    // This iteration and iterations 1..N
   Stats peak_mem, cur_mem;  // Per-rank peak (this iteration) and current RSS
   Stats peak_node_mem, cur_node_mem;
   Stats cum_peak_mem, cum_peak_node_mem;  // Max over iterations
   // Peak memory attribution: peak = baseline (peak RSS at the iteration start) + sum of the
-  // per-row growth + unattributed growth (outside any timer row).
+  // per-row growth + unattributed growth (outside any timer row). If the peak RSS of a
+  // process did not grow in the iteration, its peak is the lower bound of the RSS sampled
+  // instead, and it is all baseline.
   Stats mem_baseline, mem_unattributed, node_mem_baseline, node_mem_unattributed;
   // Heap in use (allocator statistics, see memory_reporting::GetHeapMemory): growth per
   // row, at the iteration start (baseline), outside any row (unattributed) and at the end

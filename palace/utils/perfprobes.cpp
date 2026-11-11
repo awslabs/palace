@@ -98,22 +98,41 @@ void MemoryProbe::Stop()
   used = true;
 }
 
-void MemoryProbe::Record(std::string_view name)
+MemoryProbeCounters::MemoryProbeCounters(std::string_view name)
+{
+  const std::string base = "Memory/" + std::string(name);
+  auto Max = [&base](const char *field)
+  { return RegisterCounter(base + field, Reduce::STATS, Accumulate::MAX); };
+  persistent = Max("/PersistentMegabytes");
+  growth = Max("/PeakGrowthMegabytes");
+  transient = Max("/TransientMegabytes");
+  heap = Max("/HeapPersistentMegabytes");
+  events = RegisterCounter(base + "/Events", Reduce::MAX, Accumulate::SUM);
+}
+
+void MemoryProbe::Record(const MemoryProbeCounters &c)
 {
   if (!used)
   {
     return;
   }
-  const std::string base = "Memory/" + std::string(name);
-  auto Max = [&](const char *field, double v)
-  { SetMax(RegisterCounter(base + field, Reduce::STATS, Accumulate::MAX), v * to_mb); };
-  Max("/PersistentMegabytes", persistent);
-  Max("/PeakGrowthMegabytes", growth);
-  Max("/TransientMegabytes", transient);
-  Max("/HeapPersistentMegabytes", heap);
-  Add(RegisterCounter(base + "/Events", Reduce::MAX, Accumulate::SUM), 1.0);
+  SetMax(c.persistent, persistent * to_mb);
+  SetMax(c.growth, growth * to_mb);
+  SetMax(c.transient, transient * to_mb);
+  SetMax(c.heap, heap * to_mb);
+  Add(c.events, 1.0);
   persistent = growth = transient = heap = 0.0;
   used = false;
+}
+
+bool MemoryProbeSite::Sample()
+{
+  if (iteration == detail::iteration_serial)
+  {
+    return false;
+  }
+  iteration = detail::iteration_serial;
+  return true;
 }
 
 int AssemblyTally(AssemblyKind kind)
@@ -171,14 +190,13 @@ void SetRandom(mfem::Vector &x, MPI_Comm comm, int stream)
   }
 }
 
-double RelativeResidual(const mfem::HypreParMatrix &A, const mfem::Vector &b,
-                        const mfem::Vector &x)
+double RelativeResidual(const mfem::Operator &A, const mfem::Vector &b,
+                        const mfem::Vector &x, MPI_Comm comm)
 {
   mfem::Vector r(b.Size());
   r.UseDevice(true);
   A.Mult(x, r);
   r -= b;
-  MPI_Comm comm = A.GetComm();
   const double nr = std::sqrt(mfem::InnerProduct(comm, r, r));
   const double nb = std::sqrt(mfem::InnerProduct(comm, b, b));
   return (nb > 0.0) ? nr / nb : nr;

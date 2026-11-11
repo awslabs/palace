@@ -256,6 +256,66 @@ TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel][GP
                                               1.0e-14, 1000, 0, false));
 }
 
+// The memory probe of the error estimate, which runs for example at every time step,
+// measures the first estimate of each reporting iteration only.
+TEST_CASE("Error estimate memory probe", "[errorestimator][perfstats][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  auto smesh = mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL);
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::EIGENMODE, mesh);
+  mfem::H1_FECollection h1_fec(order, 2);
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace l2_fespace(mesh, &l2_fec);
+  FiniteElementSpaceHierarchy h1_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &h1_fec));
+
+  BlockTimer::Reset();
+  CurlFluxErrorEstimator<Vector> estimator(mat_op, l2_fespace, h1_fespaces, 1.0e-10, 1000,
+                                           0, false);
+  Vector b(l2_fespace.GetTrueVSize());
+  b.UseDevice(true);
+  FillRandom(b, 3);
+  ErrorIndicator indicator;
+  auto Events = [](bool cumulative)
+  {
+    const auto &r = perf::GetResults();
+    for (std::size_t i = 0; i < r.counter_paths.size(); i++)
+    {
+      if (r.counter_paths[i] == "Memory/Estimator/Estimation/Events")
+      {
+        return (cumulative ? r.cum_counter[i] : r.counter[i]).max;
+      }
+    }
+    return -1.0;
+  };
+  for (int k = 0; k < 3; k++)
+  {
+    estimator.AddErrorIndicator(b, 1.0, indicator);
+  }
+  BlockTimer::Finalize(comm);
+  CHECK(Events(false) == 1.0);
+  BlockTimer::StartIteration();
+  for (int k = 0; k < 2; k++)
+  {
+    estimator.AddErrorIndicator(b, 1.0, indicator);
+  }
+  BlockTimer::Finalize(comm);
+  CHECK(Events(false) == 1.0);
+  CHECK(Events(true) == 2.0);
+  BlockTimer::Reset();
+}
+
 // The flux projection of an estimator with a two-level multigrid is a nested ("Estimator")
 // solver: its coarse solve is tallied once per V-cycle, without nested scopes.
 TEST_CASE("Nested multigrid coarse solve tally",

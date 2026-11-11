@@ -228,7 +228,8 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // (recovery) and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
-  perf::ScopedMemoryProbe probe("Estimator/Estimation");
+  static perf::MemoryProbeSite probe_site("Estimator/Estimation");
+  perf::ScopedMemoryProbe probe(probe_site);
   projector.Mult(F, G);
   if constexpr (std::is_same_v<VecType, ComplexVector>)
   {

@@ -4,7 +4,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 #include <mfem.hpp>
@@ -73,6 +75,64 @@ TEST_CASE("PerfProbes Memory Attribution", "[perfprobes][perfstats][Serial][Para
   CHECK(r.counter[persistent].min > 50.0);
   CHECK(r.counter[events].max == 1.0);
 #endif
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfProbes Peak Memory Of Later Iterations", "[perfprobes][perfstats][Serial]")
+{
+  // The peak RSS of the process is not reset at the start of an iteration (the reset would
+  // also change the peak seen by getrusage and the accounting of job schedulers). The peak
+  // of an iteration which does not raise it is flagged as a lower bound.
+  MPI_Comm comm = Mpi::World();
+  BlockTimer::Reset();
+  static char *volatile escape = nullptr;  // Keeps the allocation from being elided
+  {
+    constexpr std::size_t n = 256 << 20;
+    std::unique_ptr<char[]> big(new char[n]);
+    std::memset(big.get(), 1, n);
+    escape = big.get();
+  }
+  const long peak = memory_reporting::GetPeakMemory();
+  if (peak < memory_reporting::GetCurrentMemory() + (64l << 20))
+  {
+    // For example on macOS, where the peak and the current memory are different measures.
+    BlockTimer::Reset();
+    SKIP("The peak RSS is not above the RSS after the allocation is freed");
+  }
+  BlockTimer::Finalize(comm);
+  CHECK(perf::GetResults().peak_lower_bound == 0);
+  BlockTimer::StartIteration();
+  CHECK(memory_reporting::GetPeakMemory() >= peak);
+  {
+    BlockTimer bt(Timer::IO);
+    std::vector<char> small(1 << 20, 1);
+    escape = small.data();
+  }
+  BlockTimer::Finalize(comm);
+  const auto &r = perf::GetResults();
+  CHECK(r.peak_lower_bound == 1);
+  CHECK(r.peak_mem.max < peak);
+  CHECK(r.cum_peak_mem.max >= peak);
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  CHECK(meta["PeakMemoryMegabytes"]["LowerBound"] == true);
+  CHECK(meta["PeakNodeMemoryMegabytes"]["LowerBound"] == true);
+  CHECK(!meta["Cumulative"]["PeakMemoryMegabytes"].contains("LowerBound"));
+#if defined(__linux__)
+  // The high-water mark of the kernel is kept as well.
+  std::ifstream status("/proc/self/status");
+  std::string line;
+  long hwm = 0;
+  while (std::getline(status, line))
+  {
+    if (line.starts_with("VmHWM:"))
+    {
+      hwm = std::stol(line.substr(6)) * 1024;
+    }
+  }
+  CHECK(hwm >= peak);
+#endif
+  escape = nullptr;
   BlockTimer::Reset();
 }
 
@@ -247,9 +307,9 @@ TEST_CASE("PerfProbes Residual", "[perfprobes][Serial][Parallel]")
   mfem::Vector x(M->Height()), b(M->Height());
   x.Randomize(1);
   M->Mult(x, b);
-  CHECK_THAT(perf::RelativeResidual(*M, b, x), WithinAbs(0.0, 1.0e-14));
+  CHECK_THAT(perf::RelativeResidual(*M, b, x, comm), WithinAbs(0.0, 1.0e-14));
   x *= 2.0;
-  CHECK_THAT(perf::RelativeResidual(*M, b, x), WithinAbs(1.0, 1.0e-12));
+  CHECK_THAT(perf::RelativeResidual(*M, b, x, comm), WithinAbs(1.0, 1.0e-12));
 
   std::vector<long> tdofs = {fes.GetTrueVSize()};
   perf::RecordPartitionHash(pmesh, tdofs);  // Collective, must not hang

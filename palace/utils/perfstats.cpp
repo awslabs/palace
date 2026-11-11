@@ -36,7 +36,6 @@ struct State
   std::set<std::string> counter_paths;  // All counter paths written by the report so far
 
   // Peak memory bookkeeping (rank-local), see IterationPeakMemory.
-  bool hwm_reset = false;
   long peak_at_start = 0, cur_at_start = 0;
   double cum_peak = 0.0;
   double cum_node_peak = 0.0, last_node_peak = 0.0;
@@ -263,18 +262,21 @@ double AccumulateValue(Accumulate acc, double cum, bool cum_set, double v, bool 
   return v;
 }
 
-// Peak RSS of this rank within the current iteration. Without a high-water mark reset, a
-// peak which did not grow during the iteration is unknown and bounded below by the current
-// RSS at the iteration boundaries.
-double IterationPeakMemory()
+// Peak RSS of this rank within the current iteration, and whether it is exact. The peak RSS
+// of the process is not reset (the reset would also change the peak seen by getrusage,
+// wait4 and the accounting of job schedulers): a peak of the iteration which did not raise
+// it is unknown and bounded below by the RSS at the iteration boundaries and at the timer
+// events where it was sampled (rss_sampled, see Timer::RssSampled).
+std::pair<double, bool> IterationPeakMemory(long rss_sampled)
 {
   const long peak = memory_reporting::GetPeakMemory();
-  if (state.hwm_reset || peak > state.peak_at_start)
+  if (peak > state.peak_at_start)
   {
-    return static_cast<double>(peak);
+    return {static_cast<double>(peak), true};
   }
-  return static_cast<double>(
-      std::max(state.cur_at_start, memory_reporting::GetCurrentMemory()));
+  return {static_cast<double>(std::max(
+              {state.cur_at_start, rss_sampled, memory_reporting::GetCurrentMemory()})),
+          false};
 }
 
 json Num(double v)
@@ -425,6 +427,14 @@ json PeakJson(const Stats &s, bool node)
           {"Average", s.avg * to_mb},
           {"Total", s.sum * to_mb},
           {node ? "MaxNode" : "MaxRank", s.max_rank}};
+}
+
+// Peak memory of the iteration, flagged as a lower bound if it is for any process.
+json IterationPeakJson(const Stats &s, bool node, bool lower_bound)
+{
+  auto j = PeakJson(s, node);
+  j["LowerBound"] = lower_bound;
+  return j;
 }
 
 void Commit()
@@ -654,8 +664,9 @@ void WriteJson(json &meta, const json *error)
     out["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
     out["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
   }
-  out["PeakMemoryMegabytes"] = PeakJson(r.peak_mem, false);
-  out["PeakNodeMemoryMegabytes"] = PeakJson(r.peak_node_mem, true);
+  out["PeakMemoryMegabytes"] = IterationPeakJson(r.peak_mem, false, r.peak_lower_bound > 0);
+  out["PeakNodeMemoryMegabytes"] =
+      IterationPeakJson(r.peak_node_mem, true, r.peak_lower_bound > 0);
   auto &heap = out["HeapGrowthMegabytes"];
   auto HeapRow = [&heap](const std::string &key, const Stats &s)
   {
@@ -749,7 +760,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   constexpr int N = Timer::NUM_TIMINGS;
   auto [tidx, tkeys, cidx, ckeys] = CanonicalOrder(comm);
   const int T = static_cast<int>(tidx.size()), C = static_cast<int>(cidx.size());
-  const double iter_peak = IterationPeakMemory();
+  const auto [iter_peak, peak_exact] = IterationPeakMemory(timer.RssSampled());
   const double cur_mem = static_cast<double>(memory_reporting::GetCurrentMemory());
   const double cum_peak = std::max(state.cum_peak, iter_peak);
   double phase_mem = 0.0;
@@ -765,7 +776,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (7 * N + 14 * T + 2 * C + 9));
+  buf.reserve(STRIDE * (7 * N + 14 * T + 2 * C + 10));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -804,6 +815,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   }
   PushEntry(buf, iter_peak, true, rank);
   PushEntry(buf, cur_mem, true, rank);
+  PushEntry(buf, peak_exact ? 0.0 : 1.0, true, rank);
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.CumulativeData(static_cast<Timer::Index>(i)), true, rank);
@@ -902,7 +914,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   auto &r = state.results;
   r = Results();
   r.iteration = state.iteration;
-  r.hwm_reset = state.hwm_reset;
+
   const double *e = buf.data();
   auto Next = [&e]()
   {
@@ -947,6 +959,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   NextN(r.counter, C);
   r.peak_mem = Next();
   r.cur_mem = Next();
+  r.peak_lower_bound = static_cast<int>(Next().sum);
   NextN(r.cum.time, N);
   NextN(r.cum.count, N);
   NextN(r.cum.tally_time, T);
@@ -989,16 +1002,16 @@ void BlockTimer::Finalize(MPI_Comm comm)
 void BlockTimer::StartIteration()
 {
   using namespace perf;
-  state.cum_peak = std::max(state.cum_peak, IterationPeakMemory());
+  state.cum_peak = std::max(state.cum_peak, IterationPeakMemory(timer.RssSampled()).first);
   state.cum_node_peak = std::max(state.cum_node_peak, state.last_node_peak);
   Commit();
   state.info = json::object();
-  state.hwm_reset = memory_reporting::ResetPeakMemory();
   state.peak_at_start = memory_reporting::GetPeakMemory();
   state.cur_at_start = memory_reporting::GetCurrentMemory();
   timer.StartIteration();
   heap_open = stack.size();
   state.iteration++;
+  detail::iteration_serial++;
   state.finalized = false;
 }
 
@@ -1022,6 +1035,7 @@ void BlockTimer::Reset()
     c.set = c.cum_set = false;
   }
   detail::registry.roles.clear();
+  detail::iteration_serial++;
   state = State();
 }
 
@@ -1099,6 +1113,14 @@ void BlockTimer::Print(MPI_Comm comm)
                 memory_reporting::FormatBytes((i == Timer::TOTAL) ? nb.sum + nm.sum : hwm)};
       },
       &baseline);
+  if (r.peak_lower_bound > 0)
+  {
+    Mpi::Print(
+        comm,
+        "The peak RSS did not grow in this iteration on {:d} process{}: the largest RSS "
+        "sampled is a lower bound of its peak\n",
+        r.peak_lower_bound, (r.peak_lower_bound > 1) ? "es" : "");
+  }
 
   // This iteration alone, when it differs from the totals.
   if (r.iteration > 1)

@@ -25,10 +25,6 @@ long GetHeapMemory();
 // the RSS), "malloc_zone_statistics" or "rss" (with the replacement allocator, if any).
 std::string HeapMemorySource();
 
-// Reset the peak RSS to the current RSS, where supported (Linux /proc/self/clear_refs).
-// Returns whether the reset succeeded.
-bool ResetPeakMemory();
-
 // Shared-memory (node) communicator and node-leader communicator (MPI_COMM_NULL on
 // non-leaders) for comm, created once and cached.
 struct NodeComms

@@ -3,6 +3,7 @@
 
 #include "solver.hpp"
 
+#include <optional>
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
 #include "utils/perfprobes.hpp"
@@ -15,35 +16,20 @@ template <>
 void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 {
   BeginSetup();
-  const mfem::HypreParMatrix *Ac = nullptr;
   // Operator is always assembled as a HypreParMatrix.
   if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
   {
     SetInnerOperator(*hA);
-    Ac = hA;
   }
   else
   {
     const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
     MFEM_VERIFY(PtAP,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    if (!save_assembled)
-    {
-      auto hA = PtAP->StealParallelAssemble();
-      SetInnerOperator(*hA);
-      if (perf::Verification())
-      {
-        A = std::move(hA);  // Kept for the residual check
-        Ac = A.get();
-      }
-    }
-    else
-    {
-      Ac = &PtAP->ParallelAssemble();
-      SetInnerOperator(*Ac);
-    }
+    SetInnerOperator(!save_assembled ? *PtAP->StealParallelAssemble()
+                                     : PtAP->ParallelAssemble());
   }
-  EndSetup(Ac, op);
+  EndSetup(op, false);
   this->height = op.Height();
   this->width = op.Width();
 }
@@ -52,7 +38,6 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
   BeginSetup();
-  const mfem::HypreParMatrix *Ac = nullptr;
   // Assemble the real and imaginary parts, then add.
   // XX TODO: Test complex matrix assembly if coarse solve supports it.
   const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
@@ -109,11 +94,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       DropSmallEntries();
     }
     SetInnerOperator(*A);
-    if (!save_assembled && !perf::Verification())
+    if (!save_assembled)
     {
       A.reset();
     }
-    Ac = A.get();
   }
   else if (hAr)
   {
@@ -122,12 +106,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
       SetInnerOperator(*A);
-      Ac = A.get();
     }
     else
     {
       SetInnerOperator(*hAr);
-      Ac = (PtAPr && !save_assembled) ? nullptr : hAr;
     }
     if (PtAPr && !save_assembled)
     {
@@ -141,12 +123,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
       SetInnerOperator(*A);
-      Ac = A.get();
     }
     else
     {
       SetInnerOperator(*hAi);
-      Ac = (PtAPi && !save_assembled) ? nullptr : hAi;
     }
     if (PtAPi && !save_assembled)
     {
@@ -157,7 +137,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   {
     MFEM_ABORT("Empty ComplexOperator for MfemWrapperSolver!");
   }
-  EndSetup(Ac, op);
+  EndSetup(op, hAr && hAi && complex_matrix);
   this->height = op.Height();
   this->width = op.Width();
 }
@@ -317,7 +297,7 @@ template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::BeginSetup()
 {
   first_mult = true;
-  A_check = nullptr;
+  res_check = nullptr;
   if (direct)
   {
     probe.Start();
@@ -325,8 +305,7 @@ void MfemWrapperSolver<OperType>::BeginSetup()
 }
 
 template <OperatorType OperType>
-void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac,
-                                           const OperType &op)
+void MfemWrapperSolver<OperType>::EndSetup(const OperType &op, bool block)
 {
   if (direct)
   {
@@ -335,9 +314,64 @@ void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac,
   // Only the main solver's coarse solve is checked: nested solvers (e.g. wave port mode
   // solves) may run on a subset of the matrix communicator.
   const bool check = perf::Verification() && perf::IsMainRole(role);
-  A_check = check ? Ac : nullptr;
+  res_check = check ? &op : nullptr;
+  res_block = block;
   op_check = (check && direct) ? &op : nullptr;
 }
+
+namespace
+{
+
+// The real-valued matrix a wrapped solver factors for a complex-valued operator, applied
+// through the operator's parts (matrix-free or assembled, as given): the equivalent-real
+// block [Ar, Ai; Ai, -Ar], or the sum of the parts.
+class CoarseMatrixOperator : public Operator
+{
+  const Operator *Ar, *Ai;
+  bool block;
+
+public:
+  CoarseMatrixOperator(const ComplexOperator &op, bool block)
+    : Ar(op.Real()), Ai(op.Imag()), block(block)
+  {
+    const int n = Ar ? Ar->Height() : Ai->Height();
+    height = width = block ? 2 * n : n;
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    if (!block)
+    {
+      y = 0.0;
+      for (const auto *P : {Ar, Ai})
+      {
+        if (P)
+        {
+          P->AddMult(x, y);
+        }
+      }
+      return;
+    }
+    const int n = height / 2;
+    Vector x1, x2, y1, y2, t(n);
+    t.UseDevice(true);
+    auto &xx = const_cast<Vector &>(x);
+    xx.Read();
+    y.Write();
+    x1.MakeRef(xx, 0, n);
+    x2.MakeRef(xx, n, n);
+    y1.MakeRef(y, 0, n);
+    y2.MakeRef(y, n, n);
+    Ar->Mult(x1, y1);
+    Ai->Mult(x2, t);
+    y1 += t;
+    Ai->Mult(x1, y2);
+    Ar->Mult(x2, t);
+    y2 -= t;
+  }
+};
+
+}  // namespace
 
 template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::FinishSetup(
@@ -351,20 +385,35 @@ void MfemWrapperSolver<OperType>::FinishSetup(
   probe.Stop();
   probe.Record((role == "Main") ? std::string("CoarseFactorization")
                                 : "CoarseFactorization/" + role);
-  if (!A_check)
+  if (!res_check)
   {
     return;
   }
-  // The check is collective on the matrix communicator: all ranks must agree to run it.
+  // The residual of the wrapped solver's system, with its matrix applied through the
+  // operator given to SetOperator: the check keeps no assembled copy of the matrix. It is
+  // collective on the matrix communicator: all ranks must agree to run it.
   BlockTimer bt(Timer::VERIFICATION);
+  std::optional<CoarseMatrixOperator> complex_A;
+  const Operator *A_check = nullptr;
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    A_check = &complex_A.emplace(*res_check, res_block);
+  }
+  else
+  {
+    A_check = res_check;
+  }
   int check = (A_check->Height() == bx[0].first->Size()) ? 1 : 0;
-  MPI_Allreduce(MPI_IN_PLACE, &check, 1, MPI_INT, MPI_MIN, A_check->GetComm());
+  MPI_Allreduce(MPI_IN_PLACE, &check, 1, MPI_INT, MPI_MIN, check_comm);
   if (check)
   {
     double res = 0.0;
-    for (const auto &[b, x] : bx)
     {
-      res = std::max(res, perf::RelativeResidual(*A_check, *b, *x));
+      perf::ScopedPause pause;
+      for (const auto &[b, x] : bx)
+      {
+        res = std::max(res, perf::RelativeResidual(*A_check, *b, *x, check_comm));
+      }
     }
     const std::string base = "Verification/CoarseSolve/" + role;
     perf::SetMax(perf::RegisterCounter(base + "/MaxRelativeResidual", perf::Reduce::MAX,

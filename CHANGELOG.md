@@ -121,8 +121,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Reworked the performance report in `palace.json` (new `SchemaVersion` 2). Every
     `iterationX/palace.json` of an adaptive run now describes that iteration alone, as if it
-    were a separate simulation (times, counts and peak memory restart at each iteration, and
-    the work between iterations is charged to the iteration using the new mesh), and a
+    were a separate simulation (times and counts restart at each iteration, the peak memory
+    is that of the iteration, flagged `LowerBound` if the iteration did not raise the peak
+    of the process, and the work between iterations is charged to the iteration using the
+    new mesh), and a
     `Cumulative` block holds the totals over all iterations so far. `ElapsedTime` keys are
     now the timer names (for example `KSP_COARSE_SOLVE` instead of `CoarseSolve`, which made
     `Setup`, `Solve` and `Construction` ambiguous); `Durations` holds the average over MPI

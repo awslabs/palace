@@ -117,14 +117,17 @@ private:
   void SetInnerOperator(const mfem::HypreParMatrix &op);
   // Performance probes: memory of the factorization (SetOperator and the first Mult) for
   // direct solvers, hierarchy summary for hypre solvers, and the optional residual check of
-  // the first solve after each setup (matrix not owned).
+  // the first solve after each setup, against the operator given to SetOperator (not owned;
+  // for complex operators, through the equivalent-real block of its parts or their sum, as
+  // factored by the solver).
   std::string role;
   bool direct;
   mutable bool first_mult = false;
   mutable perf::MemoryProbe probe;
-  const mfem::HypreParMatrix *A_check = nullptr;
+  const OperType *res_check = nullptr;
+  bool res_block = false;
   void BeginSetup();
-  void EndSetup(const mfem::HypreParMatrix *Ac, const OperType &op);
+  void EndSetup(const OperType &op, bool block);
   void FinishSetup(const std::vector<std::pair<const Vector *, const Vector *>> &bx) const;
 
   // Optional forward error check of the first solve after each setup of a direct solver,

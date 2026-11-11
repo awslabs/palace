@@ -160,22 +160,6 @@ std::string HeapMemorySource()
 #endif
 }
 
-bool ResetPeakMemory()
-{
-#if defined(__linux__)
-  std::ofstream clear_refs("/proc/self/clear_refs");
-  if (!clear_refs.is_open())
-  {
-    return false;
-  }
-  clear_refs << "5";
-  clear_refs.close();
-  return !clear_refs.fail();
-#else
-  return false;
-#endif
-}
-
 const NodeComms &GetNodeComms(MPI_Comm comm)
 {
   static MPI_Comm cached_comm = MPI_COMM_NULL;

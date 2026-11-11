@@ -12,7 +12,7 @@
 
 namespace mfem
 {
-class HypreParMatrix;
+class Operator;
 class ParMesh;
 class Solver;
 class Vector;
@@ -31,12 +31,20 @@ namespace palace::perf
 void SetVerification(int verbose);
 bool Verification();
 
+// Counter ids of a memory probe name (see MemoryProbe), registered once.
+struct MemoryProbeCounters
+{
+  int persistent, growth, transient, heap, events;
+  explicit MemoryProbeCounters(std::string_view name);
+};
+
 // RSS, peak RSS (high-water mark) and heap in use over one or more segments, recorded
 // under Memory/<name>/: PersistentMegabytes (RSS growth), PeakGrowthMegabytes (high-water
 // mark growth), TransientMegabytes (in-segment peak above the final RSS, when the segment
 // set a new peak; otherwise zero) and HeapPersistentMegabytes (heap in use growth, which
 // also counts allocations served from freed but still resident heap), each the largest
-// over the events of the iteration, and Events.
+// over the events of the iteration, and Events. Each segment queries the RSS, the peak RSS
+// and the heap twice: avoid probes in hot paths (see MemoryProbeSite).
 class MemoryProbe
 {
   long cur0 = 0, hwm0 = 0, heap0 = 0;
@@ -46,22 +54,51 @@ class MemoryProbe
 public:
   void Start();
   void Stop();
-  void Record(std::string_view name);
+  void Record(std::string_view name) { Record(MemoryProbeCounters(name)); }
+  void Record(const MemoryProbeCounters &counters);
   bool Used() const { return used; }
 };
 
-// Scoped single-segment MemoryProbe.
+// A probe call site in a loop (for example the error estimate of each time step), measured
+// in the first of its scopes of each reporting iteration only. Declare it static.
+class MemoryProbeSite
+{
+  MemoryProbeCounters counters;
+  long iteration = -1;  // perf::detail::iteration_serial of the last scope measured
+
+public:
+  explicit MemoryProbeSite(std::string_view name) : counters(name) {}
+  // Whether to measure the current scope: true for the first one of the iteration.
+  bool Sample();
+  const MemoryProbeCounters &Counters() const { return counters; }
+};
+
+// Scoped single-segment MemoryProbe, of every scope or of the first scope per iteration
+// of a call site.
 class ScopedMemoryProbe
 {
   MemoryProbe probe;
   std::string name;
+  const MemoryProbeCounters *counters = nullptr;
+  bool active = true;
 
 public:
   explicit ScopedMemoryProbe(std::string name) : name(std::move(name)) { probe.Start(); }
+  explicit ScopedMemoryProbe(MemoryProbeSite &site)
+    : counters(&site.Counters()), active(site.Sample())
+  {
+    if (active)
+    {
+      probe.Start();
+    }
+  }
   ~ScopedMemoryProbe()
   {
-    probe.Stop();
-    probe.Record(name);
+    if (active)
+    {
+      probe.Stop();
+      counters ? probe.Record(*counters) : probe.Record(name);
+    }
   }
   ScopedMemoryProbe(const ScopedMemoryProbe &) = delete;
   ScopedMemoryProbe &operator=(const ScopedMemoryProbe &) = delete;
@@ -85,9 +122,9 @@ void RecordHypreHierarchy(const mfem::Solver &solver, std::string_view role);
 // without changing the state of the C library generator (unlike mfem::Vector::Randomize).
 void SetRandom(mfem::Vector &x, MPI_Comm comm, int stream = 0);
 
-// Relative residual ‖b - A x‖ / ‖b‖ (collective).
-double RelativeResidual(const mfem::HypreParMatrix &A, const mfem::Vector &b,
-                        const mfem::Vector &x);
+// Relative residual ‖b - A x‖ / ‖b‖ (collective on comm).
+double RelativeResidual(const mfem::Operator &A, const mfem::Vector &b,
+                        const mfem::Vector &x, MPI_Comm comm);
 
 // Rank-order-sensitive hashes of the mesh partition and of the true DOF counts per rank
 // (collective), written as Info under Verification/.

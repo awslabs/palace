@@ -442,10 +442,14 @@ and `PeakNodeMemoryGrowthMegabytes` keys, alongside the `ElapsedTime` data.
 The report (`SchemaVersion` 2, implemented in `utils/perfstats.hpp`) is reduced across MPI
 processes once per report, in `BlockTimer::Finalize`, with no other synchronization. For
 adaptive mesh refinement, each `iterationX/palace.json` describes that iteration only:
-`BlockTimer::StartIteration` restarts all times, counts and tallies and resets the peak RSS
-(through `/proc/self/clear_refs` where available, otherwise the peak is estimated from the
-current RSS at the iteration boundaries). The `Cumulative` block holds sums over iterations
-for times and counts and the maximum for peak memory. The log's "Elapsed Time Report" table
+`BlockTimer::StartIteration` restarts all times, counts and tallies. It does not reset the
+peak RSS of the process, which would also change the peak that `getrusage` and job
+schedulers report: the peak of an iteration is the peak RSS of the process if it grew in the
+iteration, and otherwise unknown and bounded below by the largest RSS at the iteration
+boundaries and at the timer events while the peak did not grow (sampled with the heap,
+below), flagged with `"LowerBound": true` in `PeakMemoryMegabytes` and
+`PeakNodeMemoryMegabytes`. The `Cumulative` block holds sums over iterations for times and
+counts and the maximum for peak memory (exact). The log's "Elapsed Time Report" table
 holds the totals over iterations so far, while the "Peak Memory" table is per iteration.
 
   - `ElapsedTime`: per exclusive timer row (keys are `Timer::names`, including
@@ -507,7 +511,10 @@ them). The verification checks, including the coarse solve residual check, are c
 the exclusive `Verification` row (`VERIFICATION`, zero when verification is off) and the
 two probes also to their own tallies, `Main/Verification/...`; they pause the other timers,
 tallies and counters (`perf::ScopedPause`, which also leaves out their blocking waits from
-`Wait/MPI` and their nested scopes from `Nested`).
+`Wait/MPI` and their nested scopes from `Nested`). The coarse solve checks apply the
+operator given to the coarse solver, as the preconditioner check applies the system
+operator: they keep no assembled copy of a matrix, so that verification does not raise
+the peak memory.
 
 Reports written at the end of an iteration have `"Complete": true`. If a process fails
 (an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the report
@@ -569,7 +576,9 @@ and `SkippedSamples`, except the first query, which also detects the allocator, 
 `Memory/HeapSource` check. The growth since a skipped sample spans several phases and goes
 to the innermost row open throughout (to `Unattributed` if none); `Coverage` gives, per
 row, the smallest fraction over processes of its exclusive time whose growth was charged
-to it. Memory probes report `HeapPersistentMegabytes` next to the RSS-based values.
+to it. Memory probes report `HeapPersistentMegabytes` next to the RSS-based values. The
+probe of the error estimate, which runs for example at every time step, measures the first
+estimate of each iteration only (`perf::MemoryProbeSite`).
 
 ## Profiling *Palace* on CPUs
 
