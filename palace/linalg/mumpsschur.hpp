@@ -13,29 +13,12 @@
 #include <vector>
 #include <dmumps_c.h>
 #include <zmumps_c.h>
+#include "linalg/lowertriangle.hpp"
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
 
 namespace palace
 {
-
-// Lower-triangle COO pattern (1-based global indices, one entry per position, columns
-// ascending in each row) of the local rows of the union of the given symmetric matrices
-// (same row distribution; null ones skipped). The entries of each matrix in pattern order
-// are returned in vals (empty for a null one), and the first pattern entry of each local
-// row in row_ptr (n_loc + 1).
-void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
-                          std::vector<MUMPS_INT> &irn, std::vector<MUMPS_INT> &jcn,
-                          std::vector<std::vector<double>> &vals,
-                          std::vector<int> &row_ptr);
-
-// val += a X on a pattern from LowerTrianglePattern, for a matrix X with entries inside the
-// pattern (or zero).
-void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
-                  const std::vector<MUMPS_INT> &jcn, std::vector<double> &val);
-void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
-                  const std::vector<int> &row_ptr, const std::vector<MUMPS_INT> &jcn,
-                  std::vector<std::complex<double>> &val);
 
 // MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
 // operator A (rows/cols outside the eliminated subsystem set to identity), or the

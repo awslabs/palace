@@ -28,6 +28,7 @@
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/hodlr.hpp"
+#include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"

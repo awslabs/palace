@@ -13,6 +13,7 @@
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
+#include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
 #include "models/romoperator.hpp"
