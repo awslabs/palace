@@ -59,6 +59,18 @@ bool AnyNonEmpty(MPI_Comm comm,
   return any;
 }
 
+#if defined(MFEM_USE_MUMPS)
+// Block low-rank compression tolerance of MUMPS: as for the other problem types
+// (ConfigurePreconditionerSolver in ksp.cpp), MUMPS compresses its factorization only with
+// "STRUMPACKCompressionType": "BLR", and otherwise factors the matrix exactly.
+double GetMumpsBLRTol(const config::LinearSolverData &linear)
+{
+  return (linear.strumpack_compression_type == SparseCompression::BLR)
+             ? linear.strumpack_lr_tol
+             : 0.0;
+}
+#endif
+
 }  // namespace
 
 ModeEigenSolver::ModeEigenSolver(
@@ -574,7 +586,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 #if defined(MFEM_USE_MUMPS)
           return std::make_unique<MumpsSolver>(
               comm, MatrixSymmetry::UNSYMMETRIC, linear.sym_factorization,
-              linear.strumpack_lr_tol, reorder_reuse, verbose - 1);
+              GetMumpsBLRTol(linear), reorder_reuse, verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::CUDSS)
@@ -666,7 +678,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 #if defined(MFEM_USE_MUMPS)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<MumpsSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
-                                          linear.sym_factorization, linear.strumpack_lr_tol,
+                                          linear.sym_factorization, GetMumpsBLRTol(linear),
                                           true, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
