@@ -22,8 +22,7 @@ follows:
     the propagation of waves to infinity. This can be accomplished by enclosing
     the system inside a sphere or box and applying
     [`config["Boundaries"]["Absorbing"]` boundary
-    conditions](../config/reference.md#config-boundaries-absorbing), or a
-    [perfectly matched layer](../guide/boundaries.md#Perfectly-matched-layer).
+    conditions](../config/reference.md#config-boundaries-absorbing).
   - The result is provided as complex vectors ``r \mathbf{E}(\theta, \phi)``,
     where ``(\theta, \phi)`` identify a point on sphere at infinite distance and
     the result is defined up to a global phase.
