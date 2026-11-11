@@ -34,7 +34,7 @@ using SideSchurSolver = DirectSchurSolver;
 
 // The factorization of the region with S_E added on the interface online (one system,
 // without a Schur complement).
-using CoupledSolver = SideSchurSolver;
+using CoupledSolver = DirectSchurSolver;  // PROBE
 
 //
 // Barycentric rational interpolation of a vector-valued function of the frequency from its

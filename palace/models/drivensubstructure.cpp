@@ -649,7 +649,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
           coo.jcn.push_back(static_cast<int>(b + 1));
           coo.val.push_back(v);
         });
-#if defined(MFEM_USE_MUMPS)
+#if 0  // PROBE
     coupled = std::make_unique<CoupledSolver>(
         comm, region.n_sys, static_cast<int>(region.rows.size()), std::move(coo),
         std::vector<HYPRE_BigInt>{}, kBlrTol, 0, true, false, region.rows);
