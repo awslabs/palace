@@ -2735,6 +2735,33 @@ struct DomainBoundaryExclusions
 // (`unmerged_portions`) is DomainBoundary whatever its points' containment (decision 481:
 // the configuration is read as a Missing feature); the coupon supports' reach into the
 // configurations (real or image portions) is recorded as information.
+// Lane fix-response-memory round 3 M1 (decision 1501): the local points (lines) a rank
+// sends per round of the point locator's candidate / fallback exchanges and of the Maxwell
+// line exchange: PALACE_RESPONSE_EXCHANGE_BLOCK_QUERIES (a test-only override), default
+// 4,096. Results-neutral: every query of a point travels in one round and the per-point
+// answers and selection rules are unchanged. Collective (C10): the ROOT's value on every
+// rank, so that every rank walks the same rounds. No job of record sets it.
+int LocatorExchangeBlockQueries(MPI_Comm comm);
+
+// The distributed point location of the surface-response point communication
+// (DistributedPointLocator::Locate: the lowest candidate rank, then its lowest element; the
+// rank-local gslib fallback for the unresolved points) with at most `block_queries` local
+// points per exchange round (0 = LocatorExchangeBlockQueries); exposed for the unit tests
+// of the blocked exchange (round 3 M1). Collective.
+struct DistributedPointLocation
+{
+  std::vector<int> owners;  // the communicator size when unresolved
+  std::vector<int> elements;
+  std::vector<double> references;  // dimension per point
+  std::vector<double> owner_values;
+  long long int candidate_queries = 0;
+  long long int fallback_queries = 0;
+};
+DistributedPointLocation
+LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &xyz,
+                        int block_queries,
+                        const std::function<double(int element)> *element_value = nullptr);
+
 // The containment test's block size in tested points (lane fix-response-memory, decision
 // 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^20 (~0.04 GB
 // of per-point lists per rank; 2^23 before round 2a T1, decision 1475). Results-neutral:

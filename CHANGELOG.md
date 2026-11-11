@@ -351,6 +351,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     them from the operator into the partition's list); without AMR (`Refinement.MaxIts` 0)
     the per-process response-matrix caches are released after the construction (lane
     fix-response-memory round 2; decisions 1475 / 1484; results bitwise).
+  - The point locator of the surface-response correction (the candidate exchange of the
+    Maxwell contour quadrature and of the electrostatic trace points, its rank-local gslib
+    fallback) and the Maxwell contour-line exchange run in rounds of at most 4,096 local
+    points per rank, so that a rank whose routing boxes cover most of the device (a rank
+    owning large elements) receives at most ~0.5 GB of queries per round instead of every
+    point of the device; every int MPI count of these exchanges and of the owner plan is
+    checked in 64 bit before use (an abort instead of a wrapped count). Results are bitwise
+    unchanged (every query of a point travels in one round; the answers, the owner rule and
+    the output order are unchanged). In the Maxwell construction the placed-patch lists
+    (the shared geometry's list, the placement's list, now moved into the applied list, and
+    the applied list), the matrices of the models no local patch references and, without
+    AMR, the response-matrix caches are released before the line and point exchanges
+    instead of after the construction. `PALACE_RESPONSE_EXCHANGE_SUMMARY=1` prints the
+    per-rank receive counts of the candidate exchange and the most-loaded ranks' routing
+    boxes (log only); `PALACE_RESPONSE_EXCHANGE_BLOCK_QUERIES` is a test-only override of
+    the round size (lane fix-response-memory round 3; decision 1501; results bitwise).
 
 #### Bug Fixes
 
