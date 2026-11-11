@@ -370,6 +370,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - `Mpi::BroadcastLarge` now bounds every single `MPI_Bcast` it issues IN BYTES, by the
+    compile-time constant `mpi::BROADCAST_LARGE_CHUNK_BYTES` = 2^28 bytes (the element count
+    per call = that / `sizeof(T)`, at least 1; an explicit chunk is capped at it), instead of
+    INT_MAX elements. On Open MPI 5.0.8 + libfabric-aws 2.6.0 one broadcast of ~2^31 bytes
+    segfaults in the transport, so the restart from a nonconforming mesh whose serialized
+    text exceeds 2^31 bytes crashed in the mesh distribution
+    (OI-NC-LOAD-BYTESTRING-ABOVE-2GIB-SEGFAULT). Results are bitwise unchanged (the same
+    bytes are delivered in the same order).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
