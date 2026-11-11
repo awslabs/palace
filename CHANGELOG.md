@@ -37,6 +37,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
+#### New Features
+
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, with
+    the surface normal oriented from an optional `"Center"` inside the surface, so that far
+    fields can be computed when the outer boundary is not a valid integration surface (for
+    example behind a perfectly matched layer), or away from the truncation. SchemaVer 4-2-3.
+    [PR 1110](https://github.com/awslabs/palace/pull/1110).
+
 #### Performance Improvements
 
   - Added a STRUMPACK patch for
@@ -258,11 +266,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 ## [0.19.0] - 2026-11-02
 
 #### New Features
-
-  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, with
-    the surface normal oriented from an optional `"Center"` inside the surface, so that far
-    fields can be computed when the outer boundary is not a valid integration surface (for
-    example behind a perfectly matched layer), or away from the truncation. SchemaVer 4-1-0.
 
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
