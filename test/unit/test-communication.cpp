@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <numeric>
@@ -58,6 +59,58 @@ TEST_CASE("BroadcastLarge", "[communication][Parallel]")
     std::vector<double> ref(len);
     std::iota(ref.begin(), ref.end(), 0.5);
     REQUIRE(buf == ref);
+  }
+
+  // OI-NC-LOAD-BYTESTRING-ABOVE-2GIB-SEGFAULT: the default chunk is bounded in BYTES (one
+  // MPI_Bcast never carries more than mpi::BROADCAST_LARGE_CHUNK_BYTES <= 2^28 bytes), so
+  // the element count per call depends on sizeof(T).
+  SECTION("Byte-bounded default chunk")
+  {
+    struct Huge
+    {
+      char bytes[(std::int64_t(1) << 28) + 1];
+    };
+    STATIC_REQUIRE(mpi::BROADCAST_LARGE_CHUNK_BYTES <= (std::int64_t(1) << 28));
+    CHECK(Mpi::BroadcastLargeChunk<char>() == mpi::BROADCAST_LARGE_CHUNK_BYTES);
+    CHECK(Mpi::BroadcastLargeChunk<int>() ==
+          std::max<std::int64_t>(1, mpi::BROADCAST_LARGE_CHUNK_BYTES / 4));
+    CHECK(Mpi::BroadcastLargeChunk<double>() ==
+          std::max<std::int64_t>(1, mpi::BROADCAST_LARGE_CHUNK_BYTES / 8));
+    CHECK(Mpi::BroadcastLargeChunk<Huge>() == 1);
+    CHECK(Mpi::BroadcastLargeChunk<double>() * static_cast<std::int64_t>(sizeof(double)) <=
+          (std::int64_t(1) << 28));
+  }
+
+  SECTION("Non-char type at the default and at forced chunks")
+  {
+    // A pattern that is not an arithmetic sequence, so that a misplaced chunk is visible.
+    const std::int64_t len = 1000;
+    std::vector<double> ref(len), buf(len);
+    if (Mpi::Rank(comm) == root)
+    {
+      for (std::int64_t i = 0; i < len; i++)
+      {
+        ref[i] = 0.125 * static_cast<double>((i * 37) % 1009) - 3.0e-7 * i;
+      }
+      buf = ref;
+    }
+    Mpi::Broadcast(static_cast<int>(len), ref.data(), root, comm);
+    {
+      std::vector<double> out = (Mpi::Rank(comm) == root) ? buf : std::vector<double>(len);
+      Mpi::BroadcastLarge(len, out.data(), root, comm);
+      REQUIRE(out == ref);
+    }
+    for (const std::int64_t chunk :
+         {std::int64_t(1), std::int64_t(7), std::int64_t(333), std::int64_t(5000)})
+    {
+      std::vector<double> out = (Mpi::Rank(comm) == root) ? buf : std::vector<double>(len);
+      Mpi::BroadcastLarge(len, out.data(), root, comm, chunk);
+      REQUIRE(out == ref);
+    }
+    std::vector<double> empty;
+    Mpi::BroadcastLarge(0, empty.data(), root, comm);
+    Mpi::BroadcastLarge(0, empty.data(), root, comm, 7);
+    REQUIRE(empty.empty());
   }
 }
 
