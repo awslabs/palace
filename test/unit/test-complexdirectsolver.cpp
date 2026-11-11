@@ -1,7 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
+#include <utility>
+#include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -138,6 +142,89 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11);
+}
+
+// As for StrumpackSolver (see test-strumpack.cpp), the parallel matrix products of hypre
+// can store explicit zeros without their transposes, so the sparsity pattern given to
+// STRUMPACK is not declared symmetric: a five-point Laplacian with a loss, plus explicit
+// zeros which couple distant unknowns in one direction only.
+TEST_CASE("STRUMPACK complex arithmetic solver unsymmetric sparsity pattern",
+          "[strumpack][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int P = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const int m = 24;
+  const HYPRE_BigInt N = m * m;
+  const HYPRE_BigInt first = (N * rank) / P, last = (N * (rank + 1)) / P;
+  const int n_loc = static_cast<int>(last - first);
+  std::vector<int> Ir(n_loc + 1, 0), Ii(n_loc + 1, 0);
+  std::vector<HYPRE_BigInt> Jr, Ji;
+  std::vector<double> Vr, Vi;
+  for (HYPRE_BigInt i = first; i < last; i++)
+  {
+    const HYPRE_BigInt ix = i % m, iy = i / m;
+    std::vector<std::pair<HYPRE_BigInt, double>> row = {{i, 4.0}};
+    if (ix > 0)
+    {
+      row.emplace_back(i - 1, -1.0);
+    }
+    if (ix < m - 1)
+    {
+      row.emplace_back(i + 1, -1.0);
+    }
+    if (iy > 0)
+    {
+      row.emplace_back(i - m, -1.0);
+    }
+    if (iy < m - 1)
+    {
+      row.emplace_back(i + m, -1.0);
+    }
+    if (i < N / 2 && i % 5 == 0)
+    {
+      row.emplace_back(N - 1 - i, 0.0);
+    }
+    if (i >= N / 2 && i % 7 == 3 && (i - N / 2) % 5 != 0)
+    {
+      row.emplace_back(i - N / 2, 0.0);
+    }
+    std::sort(row.begin(), row.end());
+    for (const auto &[j, v] : row)
+    {
+      Jr.push_back(j);
+      Vr.push_back(v);
+    }
+    Ir[i - first + 1] = static_cast<int>(Jr.size());
+    Ji.push_back(i);
+    Vi.push_back(0.5);
+    Ii[i - first + 1] = static_cast<int>(Ji.size());
+  }
+  HYPRE_BigInt row_starts[2] = {first, last};
+  auto *Ar = new mfem::HypreParMatrix(comm, n_loc, N, N, Ir.data(), Jr.data(), Vr.data(),
+                                      row_starts, row_starts);
+  auto *Ai = new mfem::HypreParMatrix(comm, n_loc, N, N, Ii.data(), Ji.data(), Vi.data(),
+                                      row_starts, row_starts);
+  ComplexWrapperOperator A{std::unique_ptr<Operator>(Ar), std::unique_ptr<Operator>(Ai)};
+
+  ComplexVector x_ex(n_loc), b(n_loc), x(n_loc), r(n_loc);
+  for (int i = 0; i < n_loc; i++)
+  {
+    const double t = static_cast<double>(first + i) / static_cast<double>(N);
+    x_ex.Real()[i] = std::sin(7.0 * t) + t;
+    x_ex.Imag()[i] = std::cos(3.0 * t);
+  }
+  A.Mult(x_ex, b);
+  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, 0);
+  for (int k = 0; k < 2; k++)
+  {
+    // Factorization, and refactorization reusing the reordering.
+    solver.SetOperator(A);
+    x = 0.0;
+    solver.Mult(b, x);
+    r = x;
+    r -= x_ex;
+    CHECK(linalg::Norml2(comm, r) / linalg::Norml2(comm, x_ex) < 1.0e-12);
+  }
 }
 #endif
 

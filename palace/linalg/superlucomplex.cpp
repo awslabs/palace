@@ -133,6 +133,10 @@ SuperLUComplexSolver::SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization 
   options.ReplaceTinyPivot = NO;
   options.IterRefine = NOREFINE;
   options.SymPattern = robust_pivoting ? NO : YES;
+#if SUPERLU_DIST_MAJOR_VERSION >= 8
+  // Relaxed supernodes of up to 200 columns, as for SuperLUSolver.
+  options.superlu_relax = 200;
+#endif
   switch (reorder)
   {
     case SymbolicFactorization::METIS:
