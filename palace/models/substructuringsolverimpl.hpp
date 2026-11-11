@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -95,7 +96,24 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoD
                                                       [[maybe_unused]] MPI_Comm comm,
                                                       [[maybe_unused]] bool serial = false)
 {
+  // PROBE: the direct solver selected by the run directory (the run label).
+  const std::string cwd = std::filesystem::current_path().string();
+#if defined(MFEM_USE_STRUMPACK)
+  if (cwd.find("_solverstrumpack_") != std::string::npos)
+  {
+    Mpi::Print(comm, "PROBE: STRUMPACK direct solver\n");
+    return std::make_unique<StrumpackSolver>(iodata, comm, 0);
+  }
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  if (cwd.find("_solversuperlu_") != std::string::npos)
+  {
+    Mpi::Print(comm, "PROBE: SuperLU_DIST direct solver\n");
+    return std::make_unique<SuperLUSolver>(iodata, comm, 0);
+  }
+#endif
 #if defined(MFEM_USE_MUMPS)
+  Mpi::Print(comm, "PROBE: MUMPS direct solver\n");
   return std::make_unique<MumpsDirectSolver>(serial,
                                              iodata.solver.linear.sym_factorization);
 #elif defined(MFEM_USE_SUPERLU)
