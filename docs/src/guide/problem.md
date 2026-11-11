@@ -263,14 +263,19 @@ The computed propagation constants ``k_n`` and effective indices
 ``n_\text{eff} = k_n / k_0`` (where ``k_0 = \omega / c_0`` is the free-space wavenumber)
 are written to an ASCII file named `mode-kn.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem-output). Both
-backward and absolute error estimates are included for each eigenvalue.
+backward and absolute error estimates are included for each eigenvalue. For a mode below
+cutoff, ``k_n`` is the root with ``\text{Im}\{k_n\} < 0``, for which the mode decays in the
+direction of propagation.
 
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),
-the characteristic impedance is computed using the power-voltage definition
-``Z_\text{PV} = |V|^2 / P`` and, when a current path is also specified, the voltage-current
-definition ``Z_\text{VI} = V / I``. Per-unit-length inductance and capacitance are derived
-from these quantities. The results are written to `mode-Z.csv`. Similarly, when voltage
+the complex characteristic impedance is computed using the power-voltage definition
+``Z_\text{PV} = |V|^2 / P^*`` and, when a current path is also specified, the voltage-current
+definition ``Z_\text{VI} = V / I`` (see the [reference](../reference.md) for details). The
+per-unit-length inductance ``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
+``C = \text{Re}\{n_\text{eff} / Z\} / c_0`` are derived from each impedance ``Z``, from the
+series impedance ``i k_n Z = R + i\omega L`` and shunt admittance ``i k_n / Z = G + i\omega C``
+per unit length of the line. The results are written to `mode-Z.csv`. Similarly, when voltage
 postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Voltage"]`](../config/reference.md#config-boundaries-postprocessing-voltage),
 the complex mode voltages are written to `mode-V.csv`.
