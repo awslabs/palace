@@ -1156,31 +1156,47 @@ namespace
 
 // Unit cube of tetrahedra with a lossy dielectric (attribute 1, z < 1/3) and vacuum
 // (attribute 3), under a Cartesian PML layer on +z (attribute 2, z > 2/3) with the lossy
-// dielectric as background, static or frequency-dependent with α > 0.
+// dielectric as background, or the cube of the lossy dielectric with a layer of prisms
+// extruded from its boundary (attribute 2), static or frequency-dependent with α > 0.
 std::unique_ptr<SpaceOperator>
 MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_dependent,
-                     int order = 2, int mg_max_levels = 1)
+                     int order = 2, int mg_max_levels = 1, bool extruded = false)
 {
-  auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON);
-  for (int i = 0; i < serial_mesh.GetNE(); i++)
-  {
-    mfem::Vector center;
-    serial_mesh.GetElementCenter(i, center);
-    serial_mesh.SetAttribute(
-        i, (center(2) > 2.0 / 3.0) ? 2 : ((center(2) < 1.0 / 3.0) ? 1 : 3));
-  }
-  serial_mesh.SetAttributes();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON));
   config::PMLData pml;
-  pml.attributes = {2};
-  pml.autodetect_geometry = false;
-  pml.directions = {false, false, false, false, false, true};
-  pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+  if (extruded)
+  {
+    for (int i = 0; i < serial_mesh->GetNBE(); i++)
+    {
+      serial_mesh->SetBdrAttribute(i, 1);
+    }
+    serial_mesh->SetAttributes();
+    pml = config::PMLData(
+        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true);
+    mesh::ExtrudePML(serial_mesh, pml, {});
+  }
+  else
+  {
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(
+          i, (center(2) > 2.0 / 3.0) ? 2 : ((center(2) < 1.0 / 3.0) ? 1 : 3));
+    }
+    serial_mesh->SetAttributes();
+    pml.attributes = {2};
+    pml.autodetect_geometry = false;
+    pml.directions = {false, false, false, false, false, true};
+    pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+  }
   pml.kappa_max.fill(1.5);
   pml.frequency_dependent = frequency_dependent;
   pml.alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
   pml.reference_frequency = 2.0;
   mesh.clear();
-  mesh.push_back(std::make_unique<Mesh>(Mpi::World(), serial_mesh));
+  mesh.push_back(std::make_unique<Mesh>(Mpi::World(), *serial_mesh));
 
   config::SolverData solver;
   solver.order = order;
@@ -1194,8 +1210,13 @@ MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_de
   dielectric.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
   vacuum.attributes = {3};
   config::DomainData domains;
-  domains.attributes = {1, 2, 3};
-  domains.materials = {dielectric, vacuum};
+  domains.attributes = {1, 2};
+  domains.materials = {dielectric};
+  if (!extruded)
+  {
+    domains.attributes.push_back(3);
+    domains.materials.push_back(vacuum);
+  }
   domains.pml = {pml};
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
@@ -1260,11 +1281,14 @@ TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tenso
           "[spaceoperator][pml][Serial][Parallel][GPU]")
 {
   // Every PML term and output part with the stored tensors, against their evaluation at
-  // every application, for a static stretch and a frequency-dependent one with α > 0.
+  // every application, for a static stretch and a frequency-dependent one with α > 0, of a
+  // Cartesian and of an extruded layer.
   const bool frequency_dependent = GENERATE(false, true);
+  const bool extruded = GENERATE(false, true);
   IntegrationSettingsGuard settings_guard;
   std::vector<std::unique_ptr<Mesh>> mesh;
-  auto space_op = MakePMLSpaceOperator(mesh, frequency_dependent);
+  auto space_op = MakePMLSpaceOperator(mesh, frequency_dependent, 2, 1, extruded);
+  REQUIRE(space_op->GetMaterialOp().GetPMLLayers()[0].GetStretch().extruded == extruded);
   const auto &layer = space_op->GetMaterialOp().GetPMLLayers()[0];
   const auto &nd = space_op->GetNDSpace(), &h1 = space_op->GetH1Space();
   pml::ContextHeader header;

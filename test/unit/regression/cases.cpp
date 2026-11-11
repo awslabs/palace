@@ -2167,6 +2167,14 @@ TEST_CASE("pml_waveguide", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
 }
 
+// The same waveguide terminated by a PML extruded from its end (z = 0.4, beyond the meshed
+// layer, which is part of the guide), with the lateral PEC walls extending through the
+// layer. |S11| (-59 dB) is that of the meshed layer to within 5 dB.
+TEST_CASE("pml_waveguide_extruded", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_extruded", "port-S.csv", -55.0);
+}
+
 // E-plane bifurcation with arms of different lengths, each terminated by its own block of
 // PML regions (one static, one frequency-dependent with a real stretch and a complex
 // frequency shift). The complex S11 (|S11| ~ -19 dB, the
