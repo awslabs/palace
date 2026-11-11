@@ -249,10 +249,11 @@ voltage of a lumped port, would depend on both sides.
 
 !!! note
 
-    Offline, driven substructuring condenses the environment and the region with MUMPS, whose
-    partial factorization gives their Schur complements onto the interface directly. *Palace* built
-    without MUMPS uses STRUMPACK or SuperLU_DIST instead, with one solve per interface unknown: an
-    order of magnitude slower or more. Online, the region is factored with the Schur complement of
+    Offline, driven substructuring condenses the environment and the region with MUMPS or, without
+    it, STRUMPACK (with the Schur complement interface that the superbuild and the Spack package
+    patch in), whose partial factorizations give their Schur complements onto the interface
+    directly. Otherwise, SuperLU_DIST takes one solve per interface unknown instead: several times
+    to an order of magnitude slower. Online, the region is factored with the Schur complement of
     the environment as one sparse system, by STRUMPACK, SuperLU_DIST or MUMPS (preferred in this
     order). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
