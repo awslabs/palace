@@ -3,7 +3,6 @@
 
 #include "perfstats.hpp"
 
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -487,60 +486,24 @@ int RegisterTally(std::string_view name)
   return RegisterTally(name, -1);
 }
 
-namespace
+int RegisterPhaseTally(std::string_view name)
 {
-
-// Sub-tally id of a phase tally for a row, registered on first use.
-int PhaseSubTally(int id, int row)
-{
-  static std::unordered_map<int, std::array<int, Timer::NUM_TIMINGS>> subs;
-  auto [it, inserted] = subs.try_emplace(id);
-  if (inserted)
-  {
-    it->second.fill(-1);
-  }
-  int &sub = it->second[row];
-  if (sub < 0)
-  {
-    sub = RegisterTally(
-        fmt::format("{}/{}", detail::registry.tallies[id].name, Timer::names[row]), row);
-  }
-  return sub;
-}
-
-}  // namespace
-
-int PhaseTallyRow(int id, Timer::Index row)
-{
-  return PhaseSubTally(id, row);
-}
-
-int RegisterPhaseTally(std::string_view name, bool eager)
-{
+  auto &reg = detail::registry;
   const int id = RegisterTally(name, Timer::TOTAL);
-  if (detail::registry.tallies[id].phase_base == -1)
+  if (reg.tallies[id].phase_base < 0)
   {
-    detail::registry.tallies[id].phase_base = -2;
-    for (int row = 0; eager && row < Timer::NUM_TIMINGS; row++)
+    // The sub-tallies of all rows, contiguous: the sub-tally of a row is found by index.
+    const int base = static_cast<int>(reg.tallies.size());
+    for (int row = 0; row < Timer::NUM_TIMINGS; row++)
     {
-      PhaseSubTally(id, row);
+      MFEM_VERIFY(RegisterTally(fmt::format("{}/{}", name, Timer::names[row]), row) ==
+                      base + row,
+                  "Phase tally rows must not be registered before the phase tally!");
     }
+    reg.tallies[id].phase_base = base;
   }
   return id;
 }
-
-namespace detail
-{
-
-void AddPhaseTally(int id, double seconds, long count, double wait)
-{
-  auto &s = registry.tallies[PhaseSubTally(id, BlockTimer::Current())];
-  s.time += seconds;
-  s.wait += wait;
-  s.count += count;
-}
-
-}  // namespace detail
 
 int RegisterCounter(std::string_view path, Reduce reduce, Accumulate acc)
 {

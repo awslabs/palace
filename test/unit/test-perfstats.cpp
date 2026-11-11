@@ -652,6 +652,16 @@ TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
   BlockTimer::Reset();
   const int id = perf::RegisterPhaseTally("Test/Phase");
+  // The sub-tallies of all rows are registered with the tally, contiguously.
+  const auto &reg = perf::detail::registry;
+  for (int row = 0; row < Timer::NUM_TIMINGS; row++)
+  {
+    const auto name = fmt::format("Test/Phase/{}", Timer::names[row]);
+    CHECK(reg.tally_ids.at(name) == reg.tallies[id].phase_base + row);
+    CHECK(perf::PhaseTallyRow(id, static_cast<Timer::Index>(row)) ==
+          reg.tally_ids.at(name));
+  }
+  CHECK(perf::RegisterPhaseTally("Test/Phase") == id);
   perf::AddTally(id, 1.0);
   {
     BlockTimer bt(Timer::IO);

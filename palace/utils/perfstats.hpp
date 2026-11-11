@@ -60,7 +60,7 @@ struct TallyData
   double wait = 0.0, cum_wait = 0.0;  // Part of time blocked in communication
   long count = 0, cum_count = 0;
   long nested = 0, cum_nested = 0;  // Scopes opened inside a scope of the same tally
-  int phase_base = -1;  // For phase tallies: first of NUM_TIMINGS sub-tally ids (lazy)
+  int phase_base = -1;  // For phase tallies: first of NUM_TIMINGS contiguous sub-tally ids
 };
 
 struct CounterData
@@ -81,8 +81,6 @@ struct Registry
   bool suspended = false;  // Set while BlockTimer::Finalize reduces (not tallied)
   int paused = 0;          // ScopedPause depth: tallies and counters record nothing
 };
-
-void AddPhaseTally(int id, double seconds, long count, double wait);
 
 // Row of a tally measured within rows a and b (-1: none): TOTAL if they differ.
 inline int MergeRow(int a, int b)
@@ -119,13 +117,16 @@ inline thread_local std::vector<char> open_tallies;
 int RegisterTally(std::string_view name);
 
 // A tally measured in any phase (Parent TOTAL), additionally split by the exclusive row
-// active at the time into "<name>/<ROW>" sub-tallies (Parent ROW). The sub-tallies are
-// registered on first use, or all at once if eager (for tallies whose rows depend on the
-// rank, to keep the registration order the same on all ranks).
-int RegisterPhaseTally(std::string_view name, bool eager = false);
+// active at the time into "<name>/<ROW>" sub-tallies (Parent ROW). The sub-tallies of all
+// rows are registered with it, contiguously: the registration order does not depend on the
+// rows which each rank runs, and finding the sub-tally of a row needs no lookup.
+int RegisterPhaseTally(std::string_view name);
 
-// Id of the sub-tally of a phase tally for an exclusive row (registered if needed).
-int PhaseTallyRow(int id, Timer::Index row);
+// Id of the sub-tally of a phase tally for an exclusive row.
+inline int PhaseTallyRow(int id, Timer::Index row)
+{
+  return detail::registry.tallies[id].phase_base + row;
+}
 
 // Register the communication tallies and counters (Reduce, Barrier, Broadcast, Wait/MPI).
 // Call it where all ranks reach it in the same order, before any rank-dependent
@@ -141,9 +142,12 @@ inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
     t.time += seconds;
     t.wait += wait;
     t.count += count;
-    if (t.phase_base != -1)
+    if (t.phase_base >= 0)
     {
-      detail::AddPhaseTally(id, seconds, count, wait);
+      auto &s = detail::registry.tallies[t.phase_base + BlockTimer::Current()];
+      s.time += seconds;
+      s.wait += wait;
+      s.count += count;
     }
     else if (t.fixed_parent < 0)
     {

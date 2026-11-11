@@ -28,16 +28,16 @@ struct CommTallies
 const CommTallies &Tallies()
 {
   static const CommTallies t = {
-      RegisterPhaseTally("Reduce", true),
-      RegisterPhaseTally("Barrier", true),
-      RegisterPhaseTally("Broadcast", true),
-      RegisterPhaseTally("Wait/MPI", true),
+      RegisterPhaseTally("Reduce"),
+      RegisterPhaseTally("Barrier"),
+      RegisterPhaseTally("Broadcast"),
+      RegisterPhaseTally("Wait/MPI"),
       RegisterCounter("Communication/ReduceBytes", Reduce::STATS, Accumulate::SUM),
       RegisterCounter("Communication/BroadcastBytes", Reduce::STATS, Accumulate::SUM),
       []()
       {
         std::array<int, Timer::NUM_TIMINGS> rows;
-        const int wait = RegisterPhaseTally("Wait/MPI", true);
+        const int wait = RegisterPhaseTally("Wait/MPI");
         for (int i = 0; i < Timer::NUM_TIMINGS; i++)
         {
           rows[i] = PhaseTallyRow(wait, static_cast<Timer::Index>(i));
