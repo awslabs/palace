@@ -43,48 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:  # Pairwise testing (from allpairspy)
-        # Failing configurations currently disabled pending investigation
-        # - compiler: gcc
-        #   mpi: mpich
-        #   math-libs: openblas
-        #   build-shared: shared
-        #   with-64bit-int: int64
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: superlu
-        - compiler: clang
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: strumpack
-        # - compiler: clang
-        #   mpi: mpich
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: arpack
-        #   with-solver: mumps
-        - compiler: gcc
-          mpi: openmpi
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: slepc
-          with-solver: mumps
-        - compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
+        include:  # DIAGNOSTIC: only the OpenMP entry
         - compiler: clang
           mpi: mpich
           math-libs: openblas
@@ -93,38 +52,6 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
-        - compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        # - compiler: gcc
-        #   mpi: openmpi
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: strumpack
-        # - compiler: gcc
-        #   mpi: openmpi
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: superlu
-        # - compiler: gcc
-        #   mpi: openmpi
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int64
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: strumpack
 
     runs-on: macos-15-xlarge
     steps:
@@ -251,7 +178,7 @@ jobs:
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
-        if: needs.filter.outputs.test == 'true'
+        if: false  # DIAGNOSTIC
         timeout-minutes: 5
         run: |
           # Configure environment
@@ -263,15 +190,59 @@ jobs:
           # reserves PROCESSORS per case, so -j just bounds concurrency.
           ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
 
-      - name: Run regression tests
+      # DIAGNOSTIC: run the cases that are 3-7x slower at 2 ranks x 2 threads than at
+      # 5 x 1 (plus two controls) under several OpenMP runtime settings.
+      - name: OpenMP settings diagnostic
         if: needs.filter.outputs.test == 'true'
-        # CTest owns per-case scheduling for the [Regression] cases (label
-        # "regression"). The build-time rank/thread contract sets each case's
-        # PROCESSORS property so -j can fan out safely.
-        timeout-minutes: 40
+        timeout-minutes: 120
         run: |
-          # Configure environment
           export PATH=$(pwd)/palace-install/bin:$PATH
-
+          OUT=$(pwd)/omp-diag
+          mkdir -p "$OUT"
           cd palace-build/palace-build/test/unit
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
+          CASES='coaxial_wave_conductivity_synth|coaxial_matched|coaxial_open|cylinder_waveguide|cpw_wave_adaptive|cavity2d_transient|cylinder_cavity_pec|iris_filter_wave_eigen|cpw_lumped_uniform'
+          ctest -N -L "^regression$" -R "^regression-($CASES)$" | tee "$OUT/cases.txt"
+          run_leg() {
+            local name=$1
+            shift
+            echo "::group::$name ($*)"
+            env "$@" ctest -j "$(sysctl -n hw.ncpu)" --output-on-failure -L "^regression$" \
+              -R "^regression-($CASES)$" 2>&1 | tee "$OUT/$name.txt" || true
+            cp Testing/Temporary/LastTest.log "$OUT/$name.LastTest.log" || true
+            echo "::endgroup::"
+          }
+          run_leg baseline
+          run_leg blocktime0 KMP_BLOCKTIME=0
+          run_leg wait-active OMP_WAIT_POLICY=active
+          run_leg wait-passive OMP_WAIT_POLICY=passive
+          run_leg threads1 OMP_THREAD_LIMIT=1
+          python3 - "$OUT" >> "$GITHUB_STEP_SUMMARY" <<'PYEOF2'
+          import re, sys, pathlib
+          out = pathlib.Path(sys.argv[1])
+          legs = ["baseline", "blocktime0", "wait-active", "wait-passive", "threads1"]
+          pat = re.compile(r"Test\s+#\d+: (\S+) \.+\s*(\*{0,3}\w+.*?)\s+([\d.]+) sec")
+          times = {}
+          for leg in legs:
+              f = out / f"{leg}.txt"
+              for line in f.read_text().splitlines() if f.exists() else []:
+                  m = pat.search(line)
+                  if m:
+                      times.setdefault(m.group(1), {})[leg] = (float(m.group(3)), m.group(2).strip())
+          print("| case | " + " | ".join(legs) + " |")
+          print("|---|" + "---|" * len(legs))
+          for case in sorted(times):
+              cells = []
+              for leg in legs:
+                  t = times[case].get(leg)
+                  cells.append("-" if t is None else f"{t[0]:.1f}" + ("" if t[1] == "Passed" else f" ({t[1]})"))
+              print(f"| {case} | " + " | ".join(cells) + " |")
+          totals = [sum(v[l][0] for v in times.values() if l in v) for l in legs]
+          print("| **total** | " + " | ".join(f"{t:.1f}" for t in totals) + " |")
+          PYEOF2
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && needs.filter.outputs.test == 'true'
+        with:
+          name: omp-diag
+          path: omp-diag/
+          retention-days: 14
