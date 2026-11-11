@@ -142,6 +142,7 @@ private:
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
   std::vector<int> row_cnt, row_disp, rows;
+  int parent = 0;  // the vectors of the solves are of the parent space of rows
   std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;
   std::vector<T> val, grp_val, schur, redrhs, rhs_loc, sol_loc;
   int reduced = 0;  // right-hand sides of the last Reduce, pending Expand

@@ -77,7 +77,10 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int 
     rows(std::move(rows)), irn(std::move(A.irn)), jcn(std::move(A.jcn)),
     val(std::move(A.val)), blr_tol(blr_tol)
 {
-  MFEM_VERIFY(this->rows.empty() || static_cast<int>(this->rows.size()) == n_loc,
+  // Parent vectors if any rank gives rows (a rank with no local rows gives none).
+  int mine = !this->rows.empty();
+  MPI_Allreduce(&mine, &parent, 1, MPI_INT, MPI_MAX, comm);
+  MFEM_VERIFY(!parent || static_cast<int>(this->rows.size()) == n_loc,
               "MumpsSchurSolver: wrong number of parent rows!");
   Init(schur_vars);
 }
@@ -417,7 +420,7 @@ void MumpsSchurSolverT<T>::SetRhs(const std::vector<const VecType *> &X)
       const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
       for (int i = 0; i < n_loc; i++)
       {
-        const int r = rows.empty() ? i : rows[i];
+        const int r = parent ? rows[i] : i;
         l[i] = (r >= 0) ? T(xr[r], xi[r]) : T(0.0);
       }
     }
@@ -426,7 +429,7 @@ void MumpsSchurSolverT<T>::SetRhs(const std::vector<const VecType *> &X)
       const double *xr = x.HostRead();
       for (int i = 0; i < n_loc; i++)
       {
-        const int r = rows.empty() ? i : rows[i];
+        const int r = parent ? rows[i] : i;
         l[i] = (r >= 0) ? xr[r] : 0.0;
       }
     }
@@ -531,7 +534,7 @@ void MumpsSchurSolverT<T>::ScatterSolution(const std::vector<VecType *> &Y)
   for (int k = 0; k < nb; k++)
   {
     VecType &y = *Y[k];
-    if (rows.empty())
+    if (!parent)
     {
       y.SetSize(n_loc);
     }
@@ -541,7 +544,7 @@ void MumpsSchurSolverT<T>::ScatterSolution(const std::vector<VecType *> &Y)
       double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
       for (int e = 0; e < nrecv; e++)
       {
-        const int r = rows.empty() ? ridx[e] : rows[ridx[e]];
+        const int r = parent ? rows[ridx[e]] : ridx[e];
         if (r >= 0)
         {
           const T v = rval[static_cast<std::size_t>(e) * nb + k];
@@ -555,7 +558,7 @@ void MumpsSchurSolverT<T>::ScatterSolution(const std::vector<VecType *> &Y)
       double *yr = y.HostReadWrite();
       for (int e = 0; e < nrecv; e++)
       {
-        const int r = rows.empty() ? ridx[e] : rows[ridx[e]];
+        const int r = parent ? rows[ridx[e]] : ridx[e];
         if (r >= 0)
         {
           yr[r] = rval[static_cast<std::size_t>(e) * nb + k];
