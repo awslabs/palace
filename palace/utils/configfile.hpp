@@ -244,12 +244,46 @@ public:
 
 // PML configuration (the "PML" object of config["Domains"]): the domain attributes of the
 // PML regions, whose materials define the background material properties, and the
-// coordinate stretch, the same in all PML regions.
+// coordinate stretch, the same in all PML regions. For config["Boundaries"]["PML"]
+// (extruded), the PML regions are extruded from boundaries of the mesh instead (see
+// mesh::ExtrudePML), and this is one more block.
 struct PMLData
 {
 public:
-  // Domain attributes of the PML regions.
+  // Domain attributes of the PML regions. For an extruded PML, these are the attributes of
+  // the extruded elements, assigned by the extrusion.
   std::vector<int> attributes = {};
+
+  // Extrusion of the PML regions from boundaries of the mesh, if its attributes are
+  // nonempty.
+  struct Extrusion
+  {
+    // Boundary attributes of the surface to extrude from.
+    std::vector<int> attributes = {};
+
+    // Thickness of the layer in mesh length units (nondimensionalized at load time), and
+    // number of layers of elements.
+    double thickness = 0.0;
+    int layers = 4;
+
+    // The rays of the extrusion start from the closest point of each surface point on the
+    // core, the segment from center[0] to center[1] (a point if they are equal), in mesh
+    // length units (nondimensionalized at load time). Unless configured (has_center), this
+    // is the centre of the bounding box of the surface, set by the extrusion.
+    bool has_center = false;
+    std::array<std::array<double, 3>, 2> center{};
+
+    // Boundary attribute of the outer (back) surface of the layer, PEC unless it has
+    // another boundary condition. By default (0), the extrusion assigns one larger than the
+    // largest boundary attribute of the mesh.
+    int back_attribute = 0;
+
+    // Domain attribute of the elements below the extruded elements of each attribute of
+    // the block, whose material they share. Set by the extrusion.
+    std::vector<int> base_attributes = {};
+  } extrusion;
+
+  bool IsExtruded() const { return !extrusion.attributes.empty(); }
 
   // Active absorption directions, per face of the physical domain. Layout: [x_neg, x_pos,
   // y_neg, y_pos, z_neg, z_pos].
@@ -309,7 +343,7 @@ public:
   bool allow_refinement = false;
 
   PMLData() = default;
-  PMLData(const json &pml);
+  PMLData(const json &pml, bool extruded = false);
 };
 
 // Terms of a frequency-dependent relative permittivity ε(s) = ε∞ + Σₖ χₖ(s), s = iω.

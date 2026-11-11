@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cmath>
 #include <complex>
 #include <limits>
 #include <vector>
@@ -15,10 +16,12 @@
 #include "fem/integrator.hpp"
 #include "fem/libceed/operator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/qfunctions/coeff/coeff_qf.h"
 #include "fixtures.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "models/pml.hpp"
 #include "models/spaceoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
@@ -1130,6 +1133,256 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
     y.Add(-1.0, y_ref);
     INFO("muinv = " << muinv << ", element = " << static_cast<int>(element));
     CHECK_THAT(linalg::Norml2(comm, y) / norm, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  }
+}
+
+namespace
+{
+
+// Unit cube of tetrahedra with a lossy dielectric (attribute 1, z < 1/3) and vacuum
+// (attribute 3), under a Cartesian PML layer on +z (attribute 2, z > 2/3) with the lossy
+// dielectric as background, or the cube of the lossy dielectric with a layer of prisms
+// extruded from its boundary (attribute 2), static or frequency-dependent with α > 0.
+std::unique_ptr<SpaceOperator>
+MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_dependent,
+                     int order = 2, int mg_max_levels = 1, bool extruded = false)
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON));
+  config::PMLData pml;
+  if (extruded)
+  {
+    for (int i = 0; i < serial_mesh->GetNBE(); i++)
+    {
+      serial_mesh->SetBdrAttribute(i, 1);
+    }
+    serial_mesh->SetAttributes();
+    pml = config::PMLData(
+        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true);
+    mesh::ExtrudePML(serial_mesh, pml, {});
+  }
+  else
+  {
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(
+          i, (center(2) > 2.0 / 3.0) ? 2 : ((center(2) < 1.0 / 3.0) ? 1 : 3));
+    }
+    serial_mesh->SetAttributes();
+    pml.attributes = {2};
+    pml.autodetect_geometry = false;
+    pml.directions = {false, false, false, false, false, true};
+    pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+  }
+  pml.kappa_max.fill(1.5);
+  pml.frequency_dependent = frequency_dependent;
+  pml.alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
+  pml.reference_frequency = 2.0;
+  mesh.clear();
+  mesh.push_back(std::make_unique<Mesh>(Mpi::World(), *serial_mesh));
+
+  config::SolverData solver;
+  solver.order = order;
+  solver.linear.mg_max_levels = mg_max_levels;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  config::MaterialData dielectric, vacuum;
+  dielectric.attributes = {1, 2};
+  dielectric.mu_r.s = {1.0, 2.0, 1.5};
+  dielectric.epsilon_r.s = {2.0, 3.0, 4.0};
+  dielectric.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+  vacuum.attributes = {3};
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {dielectric};
+  if (!extruded)
+  {
+    domains.attributes.push_back(3);
+    domains.materials.push_back(vacuum);
+  }
+  domains.pml = {pml};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  auto space_op = std::make_unique<SpaceOperator>(solver, domains, boundaries,
+                                                  ProblemType::DRIVEN, units, mesh);
+  REQUIRE(space_op->GetMaterialOp().GetPMLLayers().size() == 1);
+  return space_op;
+}
+
+// Relative difference over all processes of local vectors, which may be empty.
+double RelativeError(MPI_Comm comm, const Vector &y, const Vector &y_ref)
+{
+  double norm[2] = {0.0, 0.0};
+  if (y_ref.Size() > 0)
+  {
+    Vector d(y);
+    d -= y_ref;
+    norm[0] = std::pow(d.Norml2(), 2);
+    norm[1] = std::pow(y_ref.Norml2(), 2);
+  }
+  Mpi::GlobalSum(2, norm, comm);
+  REQUIRE(norm[1] > 0.0);
+  return std::sqrt(norm[0] / norm[1]);
+}
+
+// The PML integrator T with its default stored quadrature data gives the action of the
+// evaluation of the tensors at every application, on the local elements of the layer.
+template <typename T>
+void CheckPMLQuadratureData(const FiniteElementSpace &space, const pml::Layer &layer,
+                            const pml::ContextHeader &header)
+{
+  const auto ctx = layer.PackContext(header);
+  Vector y, y_ref;
+  if (!ctx.empty())
+  {
+    auto Assemble = [&](bool assemble_q_data)
+    {
+      BilinearForm a(space);
+      a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),
+                                           ctx.size() * sizeof(CeedIntScalar),
+                                           assemble_q_data);
+      return a.PartialAssemble();
+    };
+    const auto A = Assemble(true), A_ref = Assemble(false);
+    Vector x(A->Width());
+    y.SetSize(A->Height());
+    y_ref.SetSize(A->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    x.Randomize(42);
+    A->Mult(x, y);
+    A_ref->Mult(x, y_ref);
+  }
+  CHECK_THAT(RelativeError(space.GetComm(), y, y_ref),
+             Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+}
+
+}  // namespace
+
+TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tensors",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  // Every PML term and output part with the stored tensors, against their evaluation at
+  // every application, for a static stretch and a frequency-dependent one with α > 0, of a
+  // Cartesian and of an extruded layer.
+  const bool frequency_dependent = GENERATE(false, true);
+  const bool extruded = GENERATE(false, true);
+  test::IntegrationSettingsGuard settings_guard;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  auto space_op = MakePMLSpaceOperator(mesh, frequency_dependent, 2, 1, extruded);
+  REQUIRE(space_op->GetMaterialOp().GetPMLLayers()[0].GetStretch().extruded == extruded);
+  const auto &layer = space_op->GetMaterialOp().GetPMLLayers()[0];
+  const auto &nd = space_op->GetNDSpace(), &h1 = space_op->GetH1Space();
+  pml::ContextHeader header;
+  header.c_muinv = {0.7, -0.4};
+  header.c_eps = {1.3, 0.2};
+  header.omega = 1.1;
+  const std::array<double, 3> k = {0.3, -0.2, 0.5};
+  header.wave_vector_cross = {0.0, k[2], -k[1], -k[2], 0.0, k[0], k[1], -k[0], 0.0};
+  for (auto part :
+       {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
+        pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG})
+  {
+    header.part = part;
+    INFO("part = " << static_cast<int>(part));
+    CheckPMLQuadratureData<CurlCurlPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<VectorFEMassPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<CurlCurlMassPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<FloquetMassPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<FloquetCrossPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<DiffusionPMLIntegrator>(h1, layer, header);
+    CheckPMLQuadratureData<FloquetDiffusionPMLIntegrator>(h1, layer, header);
+  }
+}
+
+TEST_CASE("SpaceOperator bulk terms on the support of their coefficients",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  // With BilinearForm::SetCoefficientSupport (all but the PML attributes), the bulk terms
+  // whose coefficients vanish on the PML are assembled on the other elements only. The
+  // levels of a p-multigrid hierarchy coarsened from them, with the stored PML terms, and
+  // the complex operators with the lossy imaginary terms on the shared lossy subset, must
+  // give the action and the diagonal of the same terms over all elements. A term with a
+  // coefficient on the PML too keeps every element.
+  const bool on_pml = GENERATE(false, true);
+  test::IntegrationSettingsGuard settings_guard;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  auto space_op = MakePMLSpaceOperator(mesh, false, 3, 3);
+  const auto &mat_op = space_op->GetMaterialOp();
+  const auto &layer = mat_op.GetPMLLayers()[0];
+  const auto &spaces = space_op->GetNDSpaces();
+  REQUIRE(spaces.GetNumLevels() == 3);
+  std::vector<int> support;
+  for (auto attr : mesh[0]->Get().attributes)
+  {
+    if (std::ranges::find(layer.GetAttributes(), attr) == layer.GetAttributes().end())
+    {
+      support.push_back(attr);
+    }
+  }
+  MaterialPropertyCoefficient muinv(mat_op.GetBulkAttributeToMaterial(),
+                                    mat_op.GetCurlCurlInvPermeability()),
+      eps(on_pml ? mat_op.GetAttributeToMaterial() : mat_op.GetBulkAttributeToMaterial(),
+          mat_op.GetPermittivityReal()),
+      loss(mat_op.GetBulkAttributeToMaterial(), mat_op.GetPermittivityImag());
+  pml::ContextHeader header;
+  header.c_muinv = 1.0;
+  header.c_eps = -4.0;
+  const auto ctx = layer.PackContext(header);
+  auto Assemble = [&](bool real, bool restrict)
+  {
+    BilinearForm a(spaces.GetFinestFESpace());
+    a.SkipZeroCoefficientElements();
+    if (restrict)
+    {
+      a.SetCoefficientSupport(support);
+    }
+    if (real)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv, eps);
+      if (!ctx.empty())
+      {
+        a.AddDomainIntegratorOnAttributes<CurlCurlMassPMLIntegrator>(
+            layer.GetAttributes(), ctx.data(), ctx.size() * sizeof(CeedIntScalar));
+      }
+    }
+    else
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
+    }
+    a.AssembleQuadratureData();
+    return a.Assemble(spaces, false, 1);
+  };
+  auto ar = Assemble(true, true), ai = Assemble(false, true);
+  const auto ar_ref = Assemble(true, false), ai_ref = Assemble(false, false);
+  MPI_Comm comm = space_op->GetComm();
+  for (std::size_t l = 0; l < ar.size(); l++)
+  {
+    INFO("level " << l + 1);
+    Vector d(ar[l]->Height()), d_ref(ar[l]->Height());
+    d.UseDevice(true);
+    d_ref.UseDevice(true);
+    ar[l]->AssembleDiagonal(d);
+    ar_ref[l]->AssembleDiagonal(d_ref);
+    CHECK_THAT(RelativeError(comm, d, d_ref), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    const ComplexWrapperOperator A_ref(ar_ref[l].get(), ai_ref[l].get());
+    const auto A = ceed::CreateComplexOperator(std::move(ar[l]), std::move(ai[l]),
+                                               spaces.GetFESpaceAtLevel(l + 1));
+    ComplexVector x(A->Width()), y(A->Height()), y_ref(A->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    x.Real().Randomize(42);
+    x.Imag().Randomize(43);
+    A->Mult(x, y);
+    A_ref.Mult(x, y_ref);
+    CHECK_THAT(RelativeError(comm, y.Real(), y_ref.Real()),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    CHECK_THAT(RelativeError(comm, y.Imag(), y_ref.Imag()),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
   }
 }
 

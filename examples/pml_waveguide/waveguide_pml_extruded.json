@@ -1,0 +1,49 @@
+{
+  // Test: PML extruded from the guide's +z end (attribute 5), with the PML slab of the mesh
+  // (attribute 2) as part of the guide. The extruded layer has the thickness of the meshed
+  // one, and the lateral PEC walls (attribute 4) extend through it. The rays start from a
+  // point far behind the end, so that they are almost normal to it.
+  //
+  // Reference frequency = 3 GHz (matches MinFreq/MaxFreq).
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/waveguide_pml_extruded",
+    "OutputFormats": { "Paraview": false }
+  },
+  "Model": { "Mesh": "mesh/waveguide.msh", "L0": 1.0 },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      { "Index": 1, "Attributes": [3], "Mode": 1, "Excitation": true }
+    ],
+    "PEC": { "Attributes": [4] },
+    "PML":
+    {
+      "Attributes": [5],
+      "Thickness": 0.1,
+      "Layers": 7,
+      "Center": [0.0, 0.0, -9.6],
+      "Order": 3,
+      "ReferenceFrequency": 3.0
+    }
+  },
+  "Solver":
+  {
+    "Order": 2, "Device": "CPU",
+    "Driven": { "MinFreq": 3.0, "MaxFreq": 3.0, "FreqStep": 0.5, "SaveStep": 1 },
+    "Linear":
+    {
+      "Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100
+    }
+  }
+}

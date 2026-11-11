@@ -163,14 +163,22 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Integrators for the Cartesian PML terms. The PML material tensors μ̃⁻¹ and ε̃ are
-// evaluated at each quadrature point from the physical coordinate (cached in the geometry
-// data) and a packed QFunction context (layout in fem/qfunctions/coeff/pml_qf.h) which also
-// holds the complex prefactor c, the output part (real, imaginary, or magnitude), and the
-// frequency of the stretch. Attributes outside of the PML regions get no contribution.
-// These are used alongside the standard integrators, whose material coefficients exclude
-// the PML attributes (see MaterialOperator::GetBulkAttributeToMaterial). Only 3D elements
-// are supported.
+// Integrators for the PML terms. The PML material tensors μ̃⁻¹ and ε̃ are evaluated at each
+// quadrature point from the physical coordinate (and for an extruded PML the depth into the
+// layer, both cached in the geometry data) and a packed QFunction context (layout in
+// fem/qfunctions/coeff/pml_qf.h) which also holds the complex prefactor c, the output part
+// (real, imaginary, or magnitude), and the frequency of the stretch. Attributes outside of
+// the PML regions get no contribution. These are used alongside the standard integrators,
+// whose material coefficients exclude the PML attributes (see
+// MaterialOperator::GetBulkAttributeToMaterial). Only 3D elements are supported.
+//
+// The tensors cost far more to evaluate than a material coefficient (complex stretch
+// factors and, for an extruded PML, the complex Jacobian of the stretch, its adjugate, and
+// for α > 0 a Gauss-Legendre rule for the stretched depth), so unlike the other integrators
+// the PML integrators store them at the quadrature points by default, in every operator and
+// on every device: after assembly, a PML point costs what an anisotropic material point
+// with stored quadrature data costs. With assemble_q_data = false, they are evaluated at
+// every application instead, which is kept to check the stored data.
 class PMLIntegratorBase : public BilinearFormIntegrator
 {
 protected:
@@ -178,9 +186,10 @@ protected:
   std::size_t ctx_size;
 
 public:
-  PMLIntegratorBase(const void *ctx, std::size_t ctx_size)
+  PMLIntegratorBase(const void *ctx, std::size_t ctx_size, bool assemble_q_data = true)
     : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size)
   {
+    this->assemble_q_data = assemble_q_data;
   }
 };
 
