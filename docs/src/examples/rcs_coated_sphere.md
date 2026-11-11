@@ -87,15 +87,13 @@ volume attributes of the total-field region (the coating and the vacuum inside `
 
 The coating is a material with `"Permittivity"`, `"Permeability"` and `"Conductivity"`,
 the surface of the core is a `"PEC"` boundary, and the outer boundary is `"Absorbing"`
-with `"Order": 2`. The far field is computed on the far-field cube, an interior surface
-with a `"Center"` inside it, on the E-plane (``\phi = 0``) and the H-plane
-(``\phi = 90^\circ``) every ``5^\circ``:
+with `"Order": 2`. The far field is computed on the far-field cube, an interior surface,
+on the E-plane (``\phi = 0``) and the H-plane (``\phi = 90^\circ``) every ``5^\circ``:
 
 ```json
 "FarField":
 {
     "Attributes": [11],
-    "Center": [0.0, 0.0, 0.0],
     "ThetaPhis": [[0, 0], [5, 0], ..., [175, 90]]
 }
 ```
