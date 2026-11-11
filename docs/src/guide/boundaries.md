@@ -290,13 +290,16 @@ the real-valued approximation of the operator, which does not absorb in the PML.
 complex-valued coarse solve
 ([`"ComplexCoarseSolve"`](../config/reference.md#config-solver-linear-complexcoarsesolve))
 typically reduces the number of iterations further, at the cost of a coarse-level
-factorization of a complex-valued matrix, and is needed for convergence with Floquet periodic
-boundaries at oblique incidence. Simulations with PML regions therefore require a sparse
-direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not supported with PML
-regions. When the PML regions hold a significant fraction of the unknowns (for example a
-layer on all of the faces of a small domain), the factorization of the PML subdomain can
-dominate the memory cost of the simulation. STRUMPACK and MUMPS tend to use less memory than
-SuperLU_DIST, and are thus recommended for such cases.
+factorization of a complex-valued matrix. It is needed for convergence with Floquet periodic
+boundaries at oblique incidence, and for electrically large domains (several wavelengths
+across, such as the air region around a radiating antenna), where the number of iterations
+with the real-valued coarse solve grows quickly with the size of the domain. Simulations
+with PML regions therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or
+MUMPS) and AMS is not supported with PML regions. When the PML regions hold a significant
+fraction of the unknowns (for example a layer on all of the faces of a small domain), the
+factorization of the PML subdomain can dominate the memory cost of the simulation. STRUMPACK
+and MUMPS tend to use less memory than SuperLU_DIST, and are thus recommended for such
+cases.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
