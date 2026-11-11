@@ -295,6 +295,11 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1"
   9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b
 )
+# A Schur complement interface, for the substructuring condensations: the source changes
+# of https://github.com/pghysels/STRUMPACK/pull/167, onto the two patches above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr167.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

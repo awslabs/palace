@@ -93,6 +93,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     coarse levels at high process counts. Results are unchanged.
     [PR 1139](https://github.com/awslabs/palace/pull/1139).
   - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
+    Schur complement interface to its sparse solvers. Without MUMPS, the partial
+    factorization of STRUMPACK then condenses the environment of substructuring, instead of
+    one solve per interface unknown. [PR 995](https://github.com/awslabs/palace/pull/995).
+  - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#163](https://github.com/pghysels/STRUMPACK/pull/163), which lowers
     the communication cost of its distributed solve phase: point-to-point exchanges of only
     the nonempty messages instead of all-to-all collectives, cached right-hand side
@@ -160,6 +165,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only the modes nearest to the target, and the reduced model is only used with a basis of
     at most `2√N` vectors for `N` port unknowns, beyond which exact port solves are cheaper.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Driven simulations apply the system matrix through the finest level of the multigrid
+    preconditioner and no longer assemble it separately for uniform sweeps, reducing CPU
+    time by 1–5% and peak memory by up to 6%.
+    [PR 980](https://github.com/awslabs/palace/pull/980).
 
 #### Bug Fixes
 
