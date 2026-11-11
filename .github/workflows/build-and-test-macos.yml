@@ -205,3 +205,22 @@ jobs:
 
           cd palace-build/palace-build/test/unit
           ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
+
+      # VALIDATION ONLY: A/B the early cases that looked slower with active waiting,
+      # alternating default (unset) and active policy on a warm runner.
+      - name: Early-case wait-policy A/B
+        if: needs.filter.outputs.test == 'true'
+        timeout-minutes: 30
+        run: |
+          export PATH=$(pwd)/palace-install/bin:$PATH
+          cd palace-build/palace-build/test/unit
+          CASES='rings|square_hole_flux_loop|circular_hole_london_two_sided_nc_amr|double_hole_london_flux|microstrip_superconductor|circular_hole_london_nc_amr|circular_hole_london_nc_amr_rebalance|ring_disk_mixed_current_flux|cylinder_cavity_pec'
+          for leg in default1 active1 default2 active2; do
+            echo "::group::$leg"
+            if [[ "$leg" == default* ]]; then
+              env -u OMP_WAIT_POLICY ctest -j 5 --output-on-failure -L "^regression$" -R "^regression-($CASES)$" || true
+            else
+              ctest -j 5 --output-on-failure -L "^regression$" -R "^regression-($CASES)$" || true
+            fi
+            echo "::endgroup::"
+          done
