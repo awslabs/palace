@@ -20,18 +20,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### New Features
 
   - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
-    eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
-    `"Attributes"` are the domains of the PML regions (the other parameters have suitable
-    defaults). The stretch can be evaluated at a fixed reference frequency or at the
-    solve frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of
-    the field energy of each mode in the PML regions is written to `eig.csv`, which
-    identifies the spurious modes of the layer. SchemaVer 4-3-0
-    [PR 1048](https://github.com/awslabs/palace/pull/1048).
-  - Added `config["Boundaries"]["PML"]`, a PML which *Palace* extrudes from farfield
-    boundaries of the mesh, for example in place of an absorbing boundary on a sphere. Each
-    face becomes a column of prisms or hexahedra along rays from a core point or segment,
-    and the coordinates are stretched along the rays, with the parameters of
-    `config["Domains"]["PML"]`. SchemaVer 4-3-0
+    eigenmode simulations. A PML meshed with the model is configured with blocks of
+    `config["Domains"]["PML"]`, whose `"Attributes"` are the domains of the PML regions (the
+    other parameters have suitable defaults). With `config["Boundaries"]["PML"]`, *Palace*
+    instead extrudes the PML from farfield boundaries of the mesh, for example in place of
+    an absorbing boundary on a sphere: each face becomes a column of prisms or hexahedra
+    along rays from a core point or segment, and the coordinates are stretched along the
+    rays. The stretch can be evaluated at a fixed reference frequency or at the solve
+    frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of the field
+    energy of each mode in the PML regions is written to `eig.csv`, which identifies the
+    spurious modes of the layer. SchemaVer 4-3-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Interface Changes
