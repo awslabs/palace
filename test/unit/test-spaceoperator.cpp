@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cmath>
 #include <complex>
 #include <limits>
 #include <vector>
@@ -15,10 +16,12 @@
 #include "fem/integrator.hpp"
 #include "fem/libceed/operator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/qfunctions/coeff/coeff_qf.h"
 #include "fixtures.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "models/pml.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -1145,6 +1148,144 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
     y.Add(-1.0, y_ref);
     INFO("muinv = " << muinv << ", element = " << static_cast<int>(element));
     CHECK_THAT(linalg::Norml2(comm, y) / norm, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  }
+}
+
+namespace
+{
+
+// Unit cube of tetrahedra with a lossy dielectric (attribute 1, z < 1/3) and vacuum
+// (attribute 3), under a Cartesian PML layer on +z (attribute 2, z > 2/3) with the lossy
+// dielectric as background, static or frequency-dependent with α > 0.
+std::unique_ptr<SpaceOperator>
+MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_dependent,
+                     int order = 2, int mg_max_levels = 1)
+{
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(
+        i, (center(2) > 2.0 / 3.0) ? 2 : ((center(2) < 1.0 / 3.0) ? 1 : 3));
+  }
+  serial_mesh.SetAttributes();
+  config::PMLData pml;
+  pml.attributes = {2};
+  pml.autodetect_geometry = false;
+  pml.directions = {false, false, false, false, false, true};
+  pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+  pml.kappa_max.fill(1.5);
+  pml.frequency_dependent = frequency_dependent;
+  pml.alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
+  pml.reference_frequency = 2.0;
+  mesh.clear();
+  mesh.push_back(std::make_unique<Mesh>(Mpi::World(), serial_mesh));
+
+  config::SolverData solver;
+  solver.order = order;
+  solver.linear.mg_max_levels = mg_max_levels;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  config::MaterialData dielectric, vacuum;
+  dielectric.attributes = {1, 2};
+  dielectric.mu_r.s = {1.0, 2.0, 1.5};
+  dielectric.epsilon_r.s = {2.0, 3.0, 4.0};
+  dielectric.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+  vacuum.attributes = {3};
+  config::DomainData domains;
+  domains.attributes = {1, 2, 3};
+  domains.materials = {dielectric, vacuum};
+  domains.pml = {pml};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  auto space_op = std::make_unique<SpaceOperator>(solver, domains, boundaries,
+                                                  ProblemType::DRIVEN, units, mesh);
+  REQUIRE(space_op->GetMaterialOp().GetPMLLayers().size() == 1);
+  return space_op;
+}
+
+// Relative difference over all processes of local vectors, which may be empty.
+double RelativeError(MPI_Comm comm, const Vector &y, const Vector &y_ref)
+{
+  double norm[2] = {0.0, 0.0};
+  if (y_ref.Size() > 0)
+  {
+    Vector d(y);
+    d -= y_ref;
+    norm[0] = std::pow(d.Norml2(), 2);
+    norm[1] = std::pow(y_ref.Norml2(), 2);
+  }
+  Mpi::GlobalSum(2, norm, comm);
+  REQUIRE(norm[1] > 0.0);
+  return std::sqrt(norm[0] / norm[1]);
+}
+
+// The PML integrator T with its default stored quadrature data gives the action of the
+// evaluation of the tensors at every application, on the local elements of the layer.
+template <typename T>
+void CheckPMLQuadratureData(const FiniteElementSpace &space, const pml::Layer &layer,
+                            const pml::ContextHeader &header)
+{
+  const auto ctx = layer.PackContext(header);
+  Vector y, y_ref;
+  if (!ctx.empty())
+  {
+    auto Assemble = [&](bool assemble_q_data)
+    {
+      BilinearForm a(space);
+      a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),
+                                           ctx.size() * sizeof(CeedIntScalar),
+                                           assemble_q_data);
+      return a.PartialAssemble();
+    };
+    const auto A = Assemble(true), A_ref = Assemble(false);
+    Vector x(A->Width());
+    y.SetSize(A->Height());
+    y_ref.SetSize(A->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    x.Randomize(42);
+    A->Mult(x, y);
+    A_ref->Mult(x, y_ref);
+  }
+  CHECK_THAT(RelativeError(space.GetComm(), y, y_ref),
+             Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+}
+
+}  // namespace
+
+TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tensors",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  // Every PML term and output part with the stored tensors, against their evaluation at
+  // every application, for a static stretch and a frequency-dependent one with α > 0.
+  const bool frequency_dependent = GENERATE(false, true);
+  IntegrationSettingsGuard settings_guard;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  auto space_op = MakePMLSpaceOperator(mesh, frequency_dependent);
+  const auto &layer = space_op->GetMaterialOp().GetPMLLayers()[0];
+  const auto &nd = space_op->GetNDSpace(), &h1 = space_op->GetH1Space();
+  pml::ContextHeader header;
+  header.c_muinv = {0.7, -0.4};
+  header.c_eps = {1.3, 0.2};
+  header.omega = 1.1;
+  const std::array<double, 3> k = {0.3, -0.2, 0.5};
+  header.wave_vector_cross = {0.0, k[2], -k[1], -k[2], 0.0, k[0], k[1], -k[0], 0.0};
+  for (auto part :
+       {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
+        pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG})
+  {
+    header.part = part;
+    INFO("part = " << static_cast<int>(part));
+    CheckPMLQuadratureData<CurlCurlPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<VectorFEMassPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<CurlCurlMassPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<FloquetMassPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<FloquetCrossPMLIntegrator>(nd, layer, header);
+    CheckPMLQuadratureData<DiffusionPMLIntegrator>(h1, layer, header);
+    CheckPMLQuadratureData<FloquetDiffusionPMLIntegrator>(h1, layer, header);
   }
 }
 

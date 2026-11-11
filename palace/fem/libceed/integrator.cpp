@@ -236,6 +236,10 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
   CeedQFunction apply_qf;
   CeedInt qf_size_1 = qf_active_sizes[0],
           qf_size_2 = (qf_active_sizes.size() > 1) ? qf_active_sizes[1] : 0;
+  MFEM_VERIFY(!info.q_data_cross || (qf_size_1 == 3 && qf_size_2 == 3),
+              "Quadrature data coupling the active fields across is only available for a "
+              "pair of 3-component fields (got ("
+                  << qf_size_1 << ", " << qf_size_2 << "))!");
   switch (10 * qf_size_1 + qf_size_2)
   {
     case 1:
@@ -262,6 +266,14 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
                                PalaceQFunctionRelativePath(f_apply_22_loc), &apply_qf));
       break;
     case 33:
+      if (info.q_data_cross)
+      {
+        PalaceCeedCall(ceed,
+                       CeedQFunctionCreateInterior(
+                           ceed, 1, f_apply_33_cross,
+                           PalaceQFunctionRelativePath(f_apply_33_cross_loc), &apply_qf));
+        break;
+      }
       PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
                                ceed, 1, f_apply_33,
                                PalaceQFunctionRelativePath(f_apply_33_loc), &apply_qf));

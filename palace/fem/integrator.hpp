@@ -171,6 +171,13 @@ public:
 // These are used alongside the standard integrators, whose material coefficients exclude
 // the PML attributes (see MaterialOperator::GetBulkAttributeToMaterial). Only 3D elements
 // are supported.
+//
+// The tensors cost far more to evaluate than a material coefficient (complex stretch
+// factors, their products and quotients), so unlike the other integrators the PML
+// integrators store them at the quadrature points by default, in every operator and on
+// every device: after assembly, a PML point costs what an anisotropic material point with
+// stored quadrature data costs. With assemble_q_data = false, they are evaluated at every
+// application instead, which is kept to check the stored data.
 class PMLIntegratorBase : public BilinearFormIntegrator
 {
 protected:
@@ -178,9 +185,10 @@ protected:
   std::size_t ctx_size;
 
 public:
-  PMLIntegratorBase(const void *ctx, std::size_t ctx_size)
+  PMLIntegratorBase(const void *ctx, std::size_t ctx_size, bool assemble_q_data = true)
     : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size)
   {
+    this->assemble_q_data = assemble_q_data;
   }
 };
 

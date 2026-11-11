@@ -21,8 +21,9 @@
 //   floquet_mass  : c [k ×]ᵀ μ̃⁻¹ [k ×] (u, v) (or the corresponding H1 diffusion form).
 //   floquet_cross : c ([k ×]ᵀ μ̃⁻¹ curl u, v) - c (μ̃⁻¹ [k ×] u, curl v).
 //
-// The build variants assemble the quadrature data for the generic f_apply_3 / f_apply_33
-// QFunctions so that the PML tensors are only evaluated once per quadrature point.
+// The build variants assemble the quadrature data for the generic f_apply_3 / f_apply_33 /
+// f_apply_33_cross QFunctions so that the PML tensors are only evaluated once per
+// quadrature point (the default, see PMLIntegratorBase).
 //
 // geom_data layout: {attr, w|J|, adj(J)ᵀ / |J|, x}, (2 + 9 + 3) components.
 
@@ -299,6 +300,47 @@ CEED_QFUNCTION(f_apply_hcurl_pml_floquet_cross_33)(void *__restrict__ ctx, CeedI
     curl_v[i + Q * 0] = wdetJ[i] * curl_v_loc[0];
     curl_v[i + Q * 1] = wdetJ[i] * curl_v_loc[1];
     curl_v[i + Q * 2] = wdetJ[i] * curl_v_loc[2];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_build_hcurl_pml_floquet_cross_33)(void *__restrict__ ctx, CeedInt Q,
+                                                   const CeedScalar *const *in,
+                                                   CeedScalar *const *out)
+{
+  // Quadrature data for f_apply_33_cross: the curl-to-field block followed by the
+  // field-to-curl block of f_apply_hcurl_pml_floquet_cross_33.
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q;
+  CeedScalar *qd1 = out[0], *qd2 = out[0] + 9 * Q;
+  const CeedIntScalar *pml_ctx = (const CeedIntScalar *)ctx;
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar adjJt_loc[9], x_loc[3], coeff[9],
+        qd1_loc[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+        qd2_loc[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    PMLGeomUnpack33(in[0], Q, i, adjJt_loc, x_loc);
+    if (PMLMuInvCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff))
+    {
+      CeedScalar J_loc[9], K[9], KA[9];
+      AdjJt33(adjJt_loc, J_loc);
+      const CeedIntScalar *kx = PMLWaveVectorCross(pml_ctx);
+      for (CeedInt k = 0; k < 9; k++)
+      {
+        K[k] = kx[k].second;
+      }
+
+      // With A = adj(J)ᵀ / |J| and B = J / |J|: (K A)ᵀ μ̃⁻¹ B maps curl u to v, and
+      // -Bᵀ μ̃⁻¹ (K A) maps u to curl v.
+      MultBA33(adjJt_loc, K, KA);
+      MultAtBC33(KA, coeff, J_loc, qd1_loc);
+      MultAtBC33(J_loc, coeff, KA, qd2_loc);
+    }
+    for (CeedInt k = 0; k < 9; k++)
+    {
+      qd1[i + Q * k] = wdetJ[i] * qd1_loc[k];
+      qd2[i + Q * k] = -wdetJ[i] * qd2_loc[k];
+    }
   }
   return 0;
 }

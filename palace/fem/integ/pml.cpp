@@ -22,16 +22,17 @@ namespace
 {
 
 // All PML integrators share everything except the QFunctions and the evaluation modes.
-// When quadrature data assembly is requested and a build QFunction is available, the PML
-// tensors are evaluated once at assembly and the operator is applied using the generic
-// quadrature data QFunctions.
+// With quadrature data assembly (the default, see PMLIntegratorBase), the PML tensors are
+// evaluated once at assembly by the build QFunction and the operator is applied using the
+// generic quadrature data QFunctions, f_apply_33_cross for the Floquet cross term (cross).
 void AssemblePMLOperator(CeedQFunctionUser apply_qf, const char *apply_qf_loc,
                          CeedQFunctionUser build_qf, const char *build_qf_loc,
                          unsigned int ops, bool assemble_q_data, const void *ctx,
                          std::size_t ctx_size, Ceed ceed, CeedElemRestriction trial_restr,
                          CeedElemRestriction test_restr, CeedBasis trial_basis,
                          CeedBasis test_basis, CeedVector geom_data,
-                         CeedElemRestriction geom_data_restr, CeedOperator *op)
+                         CeedElemRestriction geom_data_restr, CeedOperator *op,
+                         bool cross = false)
 {
   CeedInt dim, space_dim;
   PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
@@ -43,7 +44,8 @@ void AssemblePMLOperator(CeedQFunctionUser apply_qf, const char *apply_qf_loc,
               "PML integrators require the quadrature point coordinates in the geometry "
               "factor data (see BilinearForm::AddDomainIntegratorOnAttributes)!");
   CeedQFunctionInfo info;
-  info.assemble_q_data = assemble_q_data && build_qf;
+  info.assemble_q_data = assemble_q_data;
+  info.q_data_cross = cross;
   info.apply_qf = info.assemble_q_data ? build_qf : apply_qf;
   info.apply_qf_path =
       PalaceQFunctionRelativePath(info.assemble_q_data ? build_qf_loc : apply_qf_loc);
@@ -144,12 +146,13 @@ void FloquetCrossPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
                                          CeedElemRestriction geom_data_restr,
                                          CeedOperator *op) const
 {
-  // The cross term couples the two active fields, so it has no quadrature data form for the
-  // generic block-diagonal f_apply_33 QFunction.
+  // The cross term couples the field to the curl and the curl to the field, so its
+  // quadrature data is applied by f_apply_33_cross rather than f_apply_33.
   AssemblePMLOperator(
-      f_apply_hcurl_pml_floquet_cross_33, f_apply_hcurl_pml_floquet_cross_33_loc, nullptr,
-      nullptr, EvalMode::Interp | EvalMode::Curl, false, ctx, ctx_size, ceed, trial_restr,
-      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+      f_apply_hcurl_pml_floquet_cross_33, f_apply_hcurl_pml_floquet_cross_33_loc,
+      f_build_hcurl_pml_floquet_cross_33, f_build_hcurl_pml_floquet_cross_33_loc,
+      EvalMode::Interp | EvalMode::Curl, assemble_q_data, ctx, ctx_size, ceed, trial_restr,
+      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op, true);
 }
 
 }  // namespace palace

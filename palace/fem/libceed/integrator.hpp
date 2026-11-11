@@ -38,9 +38,14 @@ struct CeedQFunctionInfo
   // operator application in true matrix-free fashion.
   bool assemble_q_data;
 
+  // Whether the assembled quadrature data couples a pair of 3-component active fields
+  // across, (u₁, u₂) ↦ (qd₁ u₂, qd₂ u₁), rather than each field to itself (see
+  // f_apply_33_cross).
+  bool q_data_cross;
+
   CeedQFunctionInfo()
     : apply_qf(nullptr), apply_qf_path(""), trial_ops(0), test_ops(0),
-      assemble_q_data(false)
+      assemble_q_data(false), q_data_cross(false)
   {
   }
 };

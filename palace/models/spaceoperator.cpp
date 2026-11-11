@@ -464,6 +464,9 @@ struct PMLIntegrator
   std::vector<int> attributes;  // Domain attributes of the PML regions
 };
 
+// The PML integrators store their quadrature data whatever the assemble_q_data of the other
+// integrators of the form, including in the system matrices and on devices (see
+// PMLIntegratorBase).
 void AddPMLIntegrators(BilinearForm &a, const std::vector<PMLIntegrator> *pml, bool aux)
 {
   if (!pml)
