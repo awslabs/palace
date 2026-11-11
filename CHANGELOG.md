@@ -17,6 +17,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - `validate-config` accepts several configuration files and validates them in one Julia
+    session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
+
 #### Interface Changes
 
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
@@ -236,6 +241,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
+  - The superbuild now builds the unit tests in parallel with GNU make 4.3 and later, which
+    built them serially because the unit-test step did not inherit the make jobserver. It
+    also skips Eigen's BLAS, LAPACK, and demos, which *Palace* does not use, and clones
+    PETSc and SLEPc shallowly.
+    [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
 ## [0.19.0] - 2026-11-02
 
