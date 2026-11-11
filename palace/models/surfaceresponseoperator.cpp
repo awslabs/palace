@@ -30148,18 +30148,38 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   // S7diag R1 (decision 758): the excluded patches' raw claims (built at construction by
   // the DomainBoundary rule) are served raw from this excitation on: the electrostatic
   // driver keeps their within-R energy in E_ft / E_ff / E_sc as the ConductorConsistency
-  // share, never dropped. C5: each rank packs the claims of ITS excluded patches (the
-  // owner decided `excluded` before the gather; the claims are local), the items are
-  // allgathered and appended on EVERY rank in ascending patch order with the portions in
-  // claim order = the former loop's sequence over the sorted records (the same dedupe
-  // decisions, the same `length` sum), so the portions list is identical on every rank.
+  // share, never dropped. C5: the claims are local to their OWNERS (the placed index modulo
+  // the rank count, the claim build's rule); the items are allgathered and appended on
+  // EVERY rank in ascending patch order with the portions in claim order = the former
+  // loop's sequence over the sorted records (the same dedupe decisions, the same `length`
+  // sum), so the portions list is identical on every rank. Lane fix-gate-claim (decision
+  // 1533): the record's HOLDER is not always the claim's owner (the Maxwell path
+  // distributes the applied patches by their applied position in
+  // ConfigureMaxwellResponse, not by the placed index), so the pass's excluded patches are
+  // gathered first and each rank packs the ones it owns (the form of
+  // RecordUnprobedPatchClaims and the MaxwellPatchExcluded ledger).
   {
-    std::vector<std::pair<int, int>> excluded_local;
+    std::vector<double> excluded_held;
     for (const auto &record : patch_records)
     {
       if (record.excluded && !record.record_only)
       {
-        excluded_local.emplace_back(record.patch, record.patch);
+        excluded_held.push_back(static_cast<double>(record.patch));
+      }
+    }
+    std::vector<int> excluded_patches;
+    for (const double value : AllgatherRecords(excluded_held))
+    {
+      excluded_patches.push_back(static_cast<int>(std::llround(value)));
+    }
+    std::sort(excluded_patches.begin(), excluded_patches.end());
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    std::vector<std::pair<int, int>> excluded_local;
+    for (const int patch : excluded_patches)
+    {
+      if (patch % size == rank)
+      {
+        excluded_local.emplace_back(patch, patch);
       }
     }
     for (const auto &item :
