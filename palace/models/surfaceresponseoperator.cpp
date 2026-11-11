@@ -29208,12 +29208,67 @@ void SurfaceResponseOperator::BuildReferencedModelMatrices(
 {
   // The root built every model in the loop; this rank's referenced set is
   // ReleaseUnreferencedModelMatrices' (the models of patches + diagnostic_patches).
-  if (Mpi::Root(fespace.GetComm()))
+  if (!Mpi::Root(fespace.GetComm()))
   {
-    return;
+    MFEM_VERIFY(config.models.size() == models.size(),
+                "The response models do not match the configuration's model list!");
+    std::vector<char> referenced(models.size(), 0);
+    for (const auto *list : {&patches, &diagnostic_patches})
+    {
+      for (const auto &patch : *list)
+      {
+        referenced[static_cast<std::size_t>(patch.model)] = 1;
+      }
+    }
+    for (std::size_t i = 0; i < models.size(); i++)
+    {
+      if (!referenced[i])
+      {
+        continue;
+      }
+      // The model loop's calls, the same arguments (models[i] is config.models[i]).
+      const auto &model_config = config.models[i];
+      auto &model = models[i];
+      MFEM_VERIFY(model.idx == model_config.idx,
+                  "The response model order does not match the configuration's!");
+      auto domain_response = BuildDomainResponseMatrices(
+          model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+      model.fabricated_domain = std::move(domain_response.fabricated);
+      model.thin_domain = std::move(domain_response.thin);
+      model.domain_defect = std::move(domain_response.defect);
+      model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+      model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+      auto surface_response = BuildSurfaceResponseMatrices(
+          model_config, model.basis_size, iodata.units, target_matching_radius);
+      model.fabricated_surfaces = std::move(surface_response.fabricated);
+      model.surface_defects = std::move(surface_response.defects);
+      if (model.magnetic)
+      {
+        auto magnetic = EvaluateMagneticLeaf(model_config, model.basis_size,
+                                             model.conductor_state_count, dimension,
+                                             config.magnetic_rules, iodata.units);
+        MFEM_VERIFY(magnetic.status.status == model.magnetic_status.status,
+                    "The magnetic leaf of response model \""
+                        << model.name << "\" evaluates to " << magnetic.status.status
+                        << " after the placement, " << model.magnetic_status.status
+                        << " in the model loop!");
+        model.magnetic_domain_defect = std::move(magnetic.defect);
+        model.magnetic_thin_domain = std::move(magnetic.thin);
+      }
+    }
   }
-  MFEM_VERIFY(config.models.size() == models.size(),
-              "The response models do not match the configuration's model list!");
+#if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
+  CheckReferencedModelMatricesAgainstRoot();
+#endif
+}
+
+#if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
+void SurfaceResponseOperator::CheckReferencedModelMatricesAgainstRoot() const
+{
+  // Per model: the root's matrices (built in the model loop, not yet released) broadcast;
+  // a referencing rank's must be equal bit for bit, every rank's surface-map keys equal.
+  MPI_Comm comm = fespace.GetComm();
+  const bool root = Mpi::Root(comm);
   std::vector<char> referenced(models.size(), 0);
   for (const auto *list : {&patches, &diagnostic_patches})
   {
@@ -29222,43 +29277,104 @@ void SurfaceResponseOperator::BuildReferencedModelMatrices(
       referenced[static_cast<std::size_t>(patch.model)] = 1;
     }
   }
+  auto Pack = [](const ResponseModel &model, bool with_values)
+  {
+    std::vector<double> out;
+    auto Dense = [&](const mfem::DenseMatrix &matrix)
+    {
+      out.push_back(matrix.Height());
+      out.push_back(matrix.Width());
+      if (with_values)
+      {
+        out.insert(out.end(), matrix.Data(),
+                   matrix.Data() +
+                       static_cast<std::size_t>(matrix.Height()) * matrix.Width());
+      }
+    };
+    for (const auto *matrix :
+         {&model.fabricated_domain, &model.thin_domain, &model.domain_defect,
+          &model.fixed_flux_transform, &model.fixed_flux_domain_defect,
+          &model.magnetic_domain_defect, &model.magnetic_thin_domain})
+    {
+      Dense(*matrix);
+    }
+    for (const auto *map : {&model.fabricated_surfaces, &model.surface_defects})
+    {
+      out.push_back(static_cast<double>(map->size()));
+      for (const auto &[interface, matrix] : *map)
+      {
+        out.push_back(interface);
+        Dense(matrix);
+      }
+    }
+    return out;
+  };
+  int checked = 0;
   for (std::size_t i = 0; i < models.size(); i++)
   {
-    if (!referenced[i])
+    std::vector<double> reference = root ? Pack(models[i], true) : std::vector<double>();
+    int length = static_cast<int>(reference.size());
+    Mpi::Broadcast(1, &length, 0, comm);
+    reference.resize(static_cast<std::size_t>(length));
+    Mpi::Broadcast(length, reference.data(), 0, comm);
+    if (root)
     {
       continue;
     }
-    // The model loop's calls, the same arguments (models[i] is config.models[i]).
-    const auto &model_config = config.models[i];
-    auto &model = models[i];
-    MFEM_VERIFY(model.idx == model_config.idx,
-                "The response model order does not match the configuration's!");
-    auto domain_response = BuildDomainResponseMatrices(
-        model_config, model.basis_size, model.zero_trace_indices, iodata.units);
-    model.fabricated_domain = std::move(domain_response.fabricated);
-    model.thin_domain = std::move(domain_response.thin);
-    model.domain_defect = std::move(domain_response.defect);
-    model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
-    model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-    auto surface_response = BuildSurfaceResponseMatrices(
-        model_config, model.basis_size, iodata.units, target_matching_radius);
-    model.fabricated_surfaces = std::move(surface_response.fabricated);
-    model.surface_defects = std::move(surface_response.defects);
-    if (model.magnetic)
+    if (referenced[i])
     {
-      auto magnetic =
-          EvaluateMagneticLeaf(model_config, model.basis_size, model.conductor_state_count,
-                               dimension, config.magnetic_rules, iodata.units);
-      MFEM_VERIFY(magnetic.status.status == model.magnetic_status.status,
-                  "The magnetic leaf of response model \""
-                      << model.name << "\" evaluates to " << magnetic.status.status
-                      << " after the placement, " << model.magnetic_status.status
-                      << " in the model loop!");
-      model.magnetic_domain_defect = std::move(magnetic.defect);
-      model.magnetic_thin_domain = std::move(magnetic.thin);
+      const auto mine = Pack(models[i], true);
+      MFEM_VERIFY(
+          mine.size() == reference.size() &&
+              std::memcmp(mine.data(), reference.data(), mine.size() * sizeof(double)) == 0,
+          "PALACE_RESPONSE_REFERENCED_MATRIX_CHECK: the matrices of response model "
+              << i << " differ from the root's!");
+      checked++;
+    }
+    else
+    {
+      // The keys only (the sizes of a never-built model are 0 x 0).
+      std::vector<int> keys_root, keys_mine;
+      auto Keys = [](const std::vector<double> &packed, bool with_values)
+      {
+        std::vector<int> keys;
+        std::size_t k = 0;
+        auto SkipDense = [&]()
+        {
+          const auto h = static_cast<std::size_t>(packed[k++]);
+          const auto w = static_cast<std::size_t>(packed[k++]);
+          k += with_values ? h * w : 0;
+        };
+        for (int d = 0; d < 7; d++)
+        {
+          SkipDense();
+        }
+        for (int m = 0; m < 2; m++)
+        {
+          const auto count = static_cast<std::size_t>(packed[k++]);
+          for (std::size_t e = 0; e < count; e++)
+          {
+            keys.push_back(static_cast<int>(packed[k++]));
+            SkipDense();
+          }
+        }
+        return keys;
+      };
+      keys_root = Keys(reference, true);
+      keys_mine = Keys(Pack(models[i], false), false);
+      MFEM_VERIFY(keys_root == keys_mine,
+                  "PALACE_RESPONSE_REFERENCED_MATRIX_CHECK: the surface-map keys of "
+                  "response model "
+                      << i << " differ from the root's!");
     }
   }
+  Mpi::GlobalSum(1, &checked, comm);
+  Mpi::Print(comm,
+             " PALACE_RESPONSE_REFERENCED_MATRIX_CHECK: {:d} referenced model(s) on the "
+             "non-root ranks equal the root's bit for bit; every rank's keys equal\n",
+             checked);
 }
+#endif
 
 void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
 {

@@ -1640,6 +1640,11 @@ private:
   void BuildReferencedModelMatrices(
       const config::ElectrostaticSolverData::ResponseCorrectionData &config,
       const IoData &iodata, double target_matching_radius, int dimension);
+#if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
+  // TEST BUILDS ONLY: a referencing rank's model matrices equal the root's bit for bit, and
+  // every rank's surface-map keys equal the root's (collective).
+  void CheckReferencedModelMatricesAgainstRoot() const;
+#endif
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,
