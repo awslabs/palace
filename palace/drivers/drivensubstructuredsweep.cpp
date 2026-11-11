@@ -99,16 +99,18 @@ std::vector<double> EnvironmentPortData(const IoData &iodata,
   return data;
 }
 
-// The functional of a wave port's overlap with its mode at ω as a true-DOF vector l (the
-// overlap is l^T E): -conj(s), with s the port's n×H mode vector.
+// The functional of a wave port's S-parameter at ω as a true-DOF vector l (S = l^T E), as
+// in WavePortData::GetSParameter: s / R, the unconjugated reaction of the field with the
+// port's n×H mode vector s relative to that of the mode itself, R.
 ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double omega)
 {
-  auto s = space_op.GetWavePortOp().GetModeVector(idx, omega, space_op.GetNDSpace(),
-                                                  space_op.GetNDDbcTDofLists().back());
+  auto &wp_op = space_op.GetWavePortOp();
+  auto s = wp_op.GetModeVector(idx, omega, space_op.GetNDSpace(),
+                               space_op.GetNDDbcTDofLists().back());
   ComplexVector l(s->Size());
   l.Real() = s->Real();
-  l.Real() *= -1.0;
   l.Imag() = s->Imag();
+  l *= 1.0 / wp_op.GetPort(idx).modal_reaction;
   return l;
 }
 
