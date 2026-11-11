@@ -1275,6 +1275,170 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Lane setupmem-impl (decision 1546), S1 + S2 on the AMR re-construction path: a rank other
+// than the root builds the matrices of the models ITS patches reference only, after the
+// placement (S1), and the placement moves the shared geometry's patch list, the geometry
+// keeping this rank's local ORIGINAL patches (S2). On the sheared-cut lead (14 applied of
+// 18 placed patches at shear 0.45, 16 at 0.2) with CURVED meshes (the containment test runs
+// at every construction): (1) after a construction every rank holds matrix entries exactly
+// for the models it references, and at more than one rank some model is referenced by ONE
+// rank only; (2) a second construction on the SAME geometry where the applied set changes
+// (shear 0.2: 2 DomainBoundary cells come back) changes the referenced sets, keeps the
+// geometry's local residency, and acts bit for bit as a construction on a FRESH geometry on
+// that mesh; (3) a third construction back on the first mesh acts as the first, bit for
+// bit.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator referenced-only model matrices and the moved "
+                 "patch list across AMR re-constructions (setupmem)",
+                 "[surfaceresponseoperator][setupmem][domainboundary][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto basis_path = temp.temp_dir / "setupmem-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-setupmem-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-setupmem-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  auto MakeCurvedMeshes = [&](double mesh_shear)
+  {
+    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(mesh_shear, false);
+    serial.SetCurvature(2);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return meshes;
+  };
+  const int rank = Mpi::Rank(Mpi::World()), size = Mpi::Size(Mpi::World());
+  // This rank's referenced models; every model's entries are held iff it is referenced.
+  auto ReferencedSet = [](const SurfaceResponseOperator &op)
+  {
+    std::vector<int> referenced(op.GetModelCount(), 0);
+    for (std::size_t model = 0; model < op.GetModelCount(); model++)
+    {
+      CAPTURE(model);
+      referenced[model] = op.ReferencesModelLocally(model) ? 1 : 0;
+      CHECK((op.GetModelMatrixEntries(model) > 0) == (referenced[model] == 1));
+    }
+    return referenced;
+  };
+  // The geometry's residence: this rank's local patches of the unplaced list.
+  auto LocalResidency = [&](const SurfaceResponseGeometry &geometry)
+  {
+    CHECK(geometry.PatchesLocal());
+    std::size_t local = 0;
+    for (std::size_t p = 0; p < geometry.GlobalPatchCount(); p++)
+    {
+      local += (static_cast<int>(p % size) == rank) ? 1 : 0;
+    }
+    CHECK(geometry.RetainedPatchCount() == local);
+  };
+
+  // (1) The first construction (shear 0.45): 14 applied patches.
+  auto first_meshes = MakeCurvedMeshes(0.45);
+  LaplaceOperator first_laplace(iodata, first_meshes);
+  std::shared_ptr<const SurfaceResponseGeometry> geometry;
+  SurfaceResponseOperator first(iodata, first_laplace, &geometry);
+  REQUIRE(geometry);
+  REQUIRE(first.GetPatchCount() == 14);
+  LocalResidency(*geometry);
+  const std::size_t placed_count = geometry->GlobalPatchCount();
+  const auto first_referenced = ReferencedSet(first);
+  std::vector<int> referencing_ranks = first_referenced;
+  Mpi::GlobalSum(static_cast<int>(referencing_ranks.size()), referencing_ranks.data(),
+                 Mpi::World());
+  int single_rank_models = 0;
+  for (std::size_t model = 0; model < referencing_ranks.size(); model++)
+  {
+    single_rank_models += referencing_ranks[model] == 1 ? 1 : 0;
+  }
+  // A model referenced on ONE rank only (its matrices built there and in the root's loop,
+  // held nowhere else after the construction): exercised at 8 ranks (14 patches on 8
+  // ranks); at fewer ranks the count is reported.
+  WARN("setupmem: " << single_rank_models << " model(s) referenced on one rank only at "
+                    << size << " rank(s)");
+  if (size >= 8)
+  {
+    CHECK(single_rank_models > 0);
+  }
+  const auto first_probe = ProbeResponse(first);
+  REQUIRE(!first_probe.empty());
+
+  // (2) The re-construction on the SAME geometry where the applied set changes (shear
+  // 0.2: 16 applied patches), against a fresh geometry on that mesh.
+  auto second_meshes = MakeCurvedMeshes(0.2);
+  LaplaceOperator second_laplace(iodata, second_meshes);
+  {
+    SurfaceResponseOperator second(iodata, second_laplace, &geometry);
+    CHECK_FALSE(second.DomainBoundaryContainmentReused());
+    REQUIRE(second.GetPatchCount() == 16);
+    LocalResidency(*geometry);
+    CHECK(geometry->GlobalPatchCount() == placed_count);
+    const auto second_referenced = ReferencedSet(second);
+    int changed = second_referenced != first_referenced ? 1 : 0;
+    Mpi::GlobalSum(1, &changed, Mpi::World());
+    // The referenced set of some rank changed between the cycles (exercised at 8 ranks).
+    WARN("setupmem: the referenced set changed on " << changed << " of " << size
+                                                    << " rank(s)");
+    if (size >= 8)
+    {
+      CHECK(changed > 0);
+    }
+    std::shared_ptr<const SurfaceResponseGeometry> fresh_geometry;
+    SurfaceResponseOperator fresh(iodata, second_laplace, &fresh_geometry);
+    REQUIRE(fresh.GetPatchCount() == second.GetPatchCount());
+    CHECK(ReferencedSet(fresh) == second_referenced);
+    const auto second_probe = ProbeResponse(second), fresh_probe = ProbeResponse(fresh);
+    REQUIRE(second_probe.size() == fresh_probe.size());
+    CHECK(std::memcmp(second_probe.data(), fresh_probe.data(),
+                      second_probe.size() * sizeof(double)) == 0);
+  }
+
+  // (3) Back on the first mesh: the first construction, bit for bit.
+  SurfaceResponseOperator third(iodata, first_laplace, &geometry);
+  CHECK(third.GetPatchCount() == 14);
+  LocalResidency(*geometry);
+  CHECK(ReferencedSet(third) == first_referenced);
+  const auto third_probe = ProbeResponse(third);
+  REQUIRE(third_probe.size() == first_probe.size());
+  CHECK(std::memcmp(third_probe.data(), first_probe.data(),
+                    first_probe.size() * sizeof(double)) == 0);
+#endif
+}
+
 // F-DB-a (decisions 442 / 454; DESIGN 2.1): a DomainBoundary-excluded patch is NEVER
 // dropped. Its raw claim — here the own-edge interval of each excluded cell, the two
 // cut-touching cells [0, 0.0625] and [0.0625, 0.125] of both long edges of the sheared lead
