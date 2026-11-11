@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include "utils/communication.hpp"
+#include "utils/rankcheck.hpp"
 
 extern "C"
 {
@@ -474,9 +475,14 @@ bool WavePortReducedModel::SolveFromGram(
   Eigen::VectorXcd work(lwork);
   Eigen::VectorXd rwork(std::max(8 * n, 1));
   char job_n = 'N', job_v = 'V';
+  rankcheck::Check(solver_comm, "zggev input B", Bq.data(), static_cast<int>(Bq.size()));
+  rankcheck::Check(solver_comm, "zggev input A", Aq.data(), static_cast<int>(Aq.size()));
   zggev_(&job_n, &job_v, &n, Bq.data(), &n, Aq.data(), &n, alpha.data(), beta.data(),
          vl_dummy.data(), &ldvl, vr.data(), &ldvr, work.data(), &lwork, rwork.data(),
          &info);
+  rankcheck::Check(solver_comm, "zggev alpha", alpha.data(), n);
+  rankcheck::Check(solver_comm, "zggev beta", beta.data(), n);
+  rankcheck::Check(solver_comm, "zggev vr", vr.data(), static_cast<int>(vr.size()));
   if (info != 0)
   {
     return false;
@@ -596,6 +602,16 @@ bool WavePortReducedModel::SolveFromGram(
     candidates.push_back({lambda, pair.kn, std::move(y), eta, pair.distance});
   }
 
+  {
+    std::vector<int> picked;
+    for (const auto &c : candidates)
+    {
+      picked.push_back(static_cast<int>(c.coefficients.size()));
+    }
+    picked.push_back(static_cast<int>(ritz_pairs.size()));
+    picked.push_back(static_cast<int>(candidates.size()));
+    rankcheck::Check(solver_comm, "reduced selection", picked);
+  }
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
     return false;

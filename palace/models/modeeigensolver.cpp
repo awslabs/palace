@@ -28,6 +28,7 @@
 #include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/rankcheck.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
@@ -340,6 +341,15 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   std::iota(mode_perm.begin(), mode_perm.end(), 0);
   std::ranges::stable_sort(mode_perm,
                            [&distance](int a, int b) { return distance[a] < distance[b]; });
+  {
+    std::vector<std::complex<double>> lambdas(num_conv);
+    for (int i = 0; i < num_conv; i++)
+    {
+      lambdas[i] = eigen->GetEigenvalue(i);
+    }
+    rankcheck::Check(solver_comm, "exact eigenvalues", lambdas.data(), num_conv);
+    rankcheck::Check(solver_comm, "exact mode_perm", mode_perm);
+  }
 
   if (real_frequency && num_conv > 0)
   {

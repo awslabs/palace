@@ -46,6 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        replica: [1, 2]
         include:
         # x86 Intel stack.
         - arch: x86
@@ -57,49 +58,6 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: superlu
-        # x86 GCC / OpenBLAS open stack.
-        - arch: x86
-          compiler: gcc
-          mpi: openmpi
-          math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        # arm GCC / OpenBLAS and ARPACK.
-        - arch: arm
-          compiler: gcc
-          mpi: openmpi
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: mumps
-        # Sanitizer build (ASan/UBSan), x86 Clang.
-        - arch: x86
-          compiler: clang
-          mpi: openmpi
-          math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: slepc
-          with-solver: superlu
-          with-sanitizers: true
-          with-enzyme: true
-        # Coverage build, x86 GCC.
-        - arch: x86
-          compiler: gcc
-          mpi: openmpi
-          math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-          with-coverage: true
 
     # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
     # (See comment above matrix)
@@ -248,16 +206,6 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
-      # Julia is needed for the antenna postprocessing example below; the
-      # regression sweep itself uses the Catch2 binary and doesn't need it.
-      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
-        if: needs.filter.outputs.test == 'true'
-        with:
-          version: '1'
-
-      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
-        if: needs.filter.outputs.test == 'true'
-
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
         env:
@@ -360,138 +308,22 @@ jobs:
 
           make -j$NUM_PROC_BUILD palace-tests
 
-      - name: Run unit tests
+      - name: Run the suspect unit tests repeatedly
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 15
+        timeout-minutes: 75
         run: |
-          # Configure environment
-          if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
-             [[ "${{ matrix.mpi }}" == 'intelmpi' ]] || \
-             [[ "${{ matrix.math-libs }}" == 'intelmkl' ]]; then
-            source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
-          fi
-          export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$LD_LIBRARY_PATH
-          export LD_LIBRARY_PATH=$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
-          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
-          fi
-          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
-          fi
+          sudo apt-get install -y gdb > /dev/null
+          source /opt/intel/oneapi/setvars.sh
+          export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
+          scripts/ci-hang-diag diag palace-build/palace-build/test/unit 600 400 \
+            base \
+            mkl1:MKL_NUM_THREADS=1 \
+            cbwr:MKL_CBWR=AUTO,STRICT \
+            omp1:OMP_THREAD_LIMIT=1
 
-          # Disable Open MPI's CPU binding (as in spack-macos.yml): with two ranks, each is
-          # bound to one core, shared by its OpenMP threads.
-          if [[ "${{ matrix.mpi }}" == 'openmpi' ]] && \
-             [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            export OMPI_MCA_hwloc_base_binding_policy=none
-            export PRTE_MCA_hwloc_default_binding_policy=none
-          fi
-
-          # Configure sanitizer options
-          if [[ "${{ matrix.with-sanitizers }}" == 'true' ]]; then
-            export ASAN_OPTIONS=detect_leaks=1
-            export UBSAN_OPTIONS=print_stacktrace=1
-            # Suppress known leaks in third-party MPI/hwloc/libCEED libraries.
-            # See test/unit/lsan_suppressions.txt for the suppression list.
-            export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/test/unit/lsan_suppressions.txt"
-          fi
-
-          # We don't compute coverage for the entire matrix because it slows
-          # everything down.
-          if [[ "${{ matrix.with-coverage }}" == 'true' ]]; then
-            scripts/measure-test-coverage report $(pwd)/palace-build
-          else
-            cd $(pwd)/palace-build/palace-build/test/unit
-            # Skip [Regression] and [Long] cases here; they have their
-            # own slower steps further down. CTest pins OMP_NUM_THREADS and
-            # reserves PROCESSORS per case, so -j just bounds concurrency.
-            ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
-          fi
-
-      # NOTE: Fork PRs get a read-only GITHUB_TOKEN and cannot push to gh-pages;
-      # for those the coverage report is still available via the artifact below.
-      - name: Deploy coverage to gh-pages
-        if: |
-          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: palace-build/coverage_html
-          destination_dir: ${{ github.event_name == 'pull_request' && format('previews/PR{0}/coverage', github.event.pull_request.number) || format('coverage/{0}', github.sha) }}
-          keep_files: true
-
-      - name: Add coverage link to summary
-        if: |
-          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUMBER}/coverage/"
-          else
-            COVERAGE_URL="https://awslabs.github.io/palace/coverage/${SHA}/"
-          fi
-          echo "### Coverage Report" >> "$GITHUB_STEP_SUMMARY"
-          echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload coverage report
-        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+      - name: Upload diagnostics
+        if: always() && needs.filter.outputs.test == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
-          path: palace-build/coverage_html/
-
-      - name: Upload coverage to Codecov
-        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          files: palace-build/coverage_filtered.info
-          disable_search: true
-          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
-          fail_ci_if_error: false
-
-      - name: Run regression tests
-        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
-        # CTest owns per-case scheduling for the [Regression] cases (label
-        # "regression"). The configured MPI rank count and PROCESSORS property
-        # reserve matching ctest slots so -j can fan out safely.
-        timeout-minutes: 60
-        run: |
-          # Configure environment
-          if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
-             [[ "${{ matrix.mpi }}" == 'intelmpi' ]] || \
-             [[ "${{ matrix.math-libs }}" == 'intelmkl' ]]; then
-            source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
-          fi
-          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
-          fi
-          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
-          fi
-          export PATH=$(pwd)/palace-install/bin:$PATH
-
-          cd palace-build/palace-build/test/unit
-          # CTest pins OMP_NUM_THREADS and reserves PROCESSORS per case, so -j is
-          # just an upper bound on concurrency and can safely be all cores.
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
-
-      - name: Check antenna postprocessing example
-        # The Julia plot script that ships with the antenna example is
-        # exercised here so it doesn't bit-rot. Gated to one matrix entry
-        # to avoid paying the ~7 min Julia precompile per job. Reads the
-        # farfield CSV the regression step left in the staging tree.
-        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
-        run: |
-          STAGE_ROOT="${TMPDIR:-/tmp}/palace-regression"
-          FARFIELD="$STAGE_ROOT/antenna/antenna_short_dipole/postpro/antenna_short_dipole/farfield-rE.csv"
-          if [[ ! -f "$FARFIELD" ]]; then
-            echo "Expected regression output missing: $FARFIELD" >&2
-            exit 1
-          fi
-          julia --project=examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=examples examples/antenna/plot_farfield.jl --model short_dipole --file "$FARFIELD"
+          name: hang-diag-${{ matrix.replica }}
+          path: diag/

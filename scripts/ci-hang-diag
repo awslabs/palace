@@ -1,0 +1,81 @@
+#!/bin/bash
+# CI diagnostic: run the suspect unit tests repeatedly under several environments, and
+# capture the stacks of the test processes that hang.
+# Usage: ci-hang-diag OUTDIR TEST_DIR BUDGET_SECONDS MAX_REPS VARIANT...
+# Each VARIANT is NAME[:VAR=VALUE[,VAR=VALUE...]].
+set -u
+out=$1; test_dir=$2; budget=$3; max_reps=$4; shift 4
+regex=${DIAG_REGEX:-'^mpi-ModeEigenSolver (guarded reduced|reduced model basis|takes the decaying|reduced rejection)'}
+timeout_s=${DIAG_TIMEOUT:-60}
+stack_age=${DIAG_STACK_AGE:-35}
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+cd "$test_dir"
+{ lscpu; echo; nproc; echo; free -g; } > "$out/machine.txt" 2>&1
+ctest -N -R "$regex" > "$out/list.txt" 2>&1
+
+watchdog() {
+  local dir=$1
+  while true; do
+    for pid in $(ps -eo pid=,etimes=,comm= | awk -v a="$stack_age" '$3 ~ /^palace-unit/ && $2 > a {print $1}'); do
+      [ -e "$dir/stack.$pid.txt" ] && continue
+      {
+        echo "== pid $pid"
+        tr '\0' ' ' < /proc/$pid/cmdline; echo
+        tr '\0' '\n' < /proc/$pid/environ | grep -E '^(PMI_RANK|PMI_SIZE|MPI_LOCALRANKID|OMP_|MKL_|I_MPI_)' | sort
+        grep -E '^(State|Threads|Cpus_allowed_list)' /proc/$pid/status
+        ps -L -o tid,stat,pcpu,psr,etimes -p $pid
+        sudo timeout 90 gdb -p $pid -batch -ex 'set pagination off' -ex 'thread apply all bt' 2>&1 | \
+          grep -v -E '^\[New LWP|^warning: (Could not|Unable)'
+      } > "$dir/stack.$pid.txt" 2>&1
+    done
+    sleep 5
+  done
+}
+
+summary="$out/summary.tsv"
+printf 'variant\trep\tseconds\tpassed\tfailed\ttimeout\tleftover\n' > "$summary"
+for variant in "$@"; do
+  name=${variant%%:*}
+  envs=()
+  if [[ "$variant" == *:* ]]; then
+    IFS=',' read -r -a envs <<< "${variant#*:}"
+  fi
+  dir="$out/$name"; mkdir -p "$dir"
+  echo "variant $name: ${envs[*]:-(none)}" | tee -a "$out/variants.txt"
+  watchdog "$dir" &
+  wpid=$!
+  start=$SECONDS; rep=0
+  while [ $((SECONDS - start)) -lt "$budget" ] && [ "$rep" -lt "$max_reps" ]; do
+    rep=$((rep + 1))
+    t0=$SECONDS
+    env "${envs[@]}" ctest -j "$(nproc)" -R "$regex" --timeout "$timeout_s" -V > "$dir/rep$rep.log" 2>&1
+    dt=$((SECONDS - t0))
+    passed=$(grep -c -E 'Test +#[0-9]+: .* Passed' "$dir/rep$rep.log")
+    failed=$(grep -c -E 'Test +#[0-9]+: .*\*\*\*Failed' "$dir/rep$rep.log")
+    tmo=$(grep -c -E 'Test +#[0-9]+: .*\*\*\*Timeout' "$dir/rep$rep.log")
+    leftover=$(ps -eo comm= | grep -c '^palace-unit' || true)
+    if [ "$leftover" -gt 0 ]; then
+      sudo pkill -9 -f palace-unit-tests || true
+      pkill -9 -f mpiexec.hydra || true
+      pkill -9 -f hydra_pmi_proxy || true
+    fi
+    printf '%s\t%d\t%d\t%d\t%d\t%d\t%d\n' "$name" "$rep" "$dt" "$passed" "$failed" "$tmo" "$leftover" >> "$summary"
+    if [ "$failed" -eq 0 ] && [ "$tmo" -eq 0 ]; then
+      # Keep only the rank-consistency lines of passing repetitions.
+      grep -E 'RANKCHECK|RANKDIFF' "$dir/rep$rep.log" > "$dir/rep$rep.rank" || true
+      rm -f "$dir/rep$rep.log"
+    fi
+  done
+  kill $wpid 2> /dev/null; wait $wpid 2> /dev/null
+done
+
+echo "== summary per variant (reps, failed tests, timed-out tests)"
+awk -F'\t' 'NR > 1 {r[$1]++; f[$1] += $5; t[$1] += $6} END {for (v in r) printf "%s reps=%d failed=%d timeout=%d\n", v, r[v], f[v], t[v]}' "$summary"
+echo "== rank-consistency lines per variant"
+for d in "$out"/*/; do
+  v=$(basename "$d")
+  echo "$v: $(cat "$d"/rep*.rank "$d"/rep*.log 2> /dev/null | grep -c 'RANKCHECK.* DIFF') DIFF / $(cat "$d"/rep*.rank "$d"/rep*.log 2> /dev/null | grep -c 'RANKCHECK') checks"
+  cat "$d"/rep*.rank "$d"/rep*.log 2> /dev/null | grep 'RANKCHECK.* DIFF\|RANKDIFF' | sed -E 's/.*RANKCHECK (.*) n=[0-9]+ DIFF.*/\1/; s/.*RANKDIFF ([^:]*):.*/\1 (sizes)/' | sort | uniq -c | sort -rn | head -10
+done
+exit 0
