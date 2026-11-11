@@ -146,13 +146,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     problems, also when it factors the real-valued approximation) and the growth rate of the
     error under the main preconditioner, an estimate of ρ(I - M A). The communication waits
     are the blocking reductions, barriers and broadcasts of *Palace* and, with the new CMake
-    option `PALACE_WITH_MPI_WAIT_TALLY` (default on), the blocking `MPI_Wait` family calls
-    of the code linked into the `palace` executable, timed through the MPI profiling
-    interface (not Fortran bindings such as MUMPS). The wrappers pass the calls on to a
-    profiling tool loaded at run time; turn the option off to link such a tool into the
-    executable. When a run fails, `palace.json` still gets the report collected so far,
-    flagged with `"Complete": false` and an `Error` block, so a report no longer means that
-    the run finished: check `Complete`.
+    option `PALACE_WITH_MPI_WAIT_TALLY` (default off; Spack variant `+mpi-wait-tally`,
+    enabled in the *Palace* containers), the blocking `MPI_Wait` family calls of the code
+    linked into the `palace` executable, timed through the MPI profiling interface (not
+    Fortran bindings such as MUMPS); `Communication/MPIWaitTally` says whether they are in
+    use. The wrappers pass the calls on to a profiling tool loaded at run time; leave the
+    option off to link such a tool into the executable. When a run fails, `palace.json`
+    still gets the report collected so far, flagged with `"Complete": false` and an `Error`
+    block, so a report no longer means that the run finished: check `Complete`.
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still

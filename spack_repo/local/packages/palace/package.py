@@ -89,6 +89,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build Enzyme-backed automatic-differentiation unit tests",
         when="@0.19:",
     )
+    variant(
+        "mpi-wait-tally",
+        default=False,
+        description="Time blocking MPI_Wait calls for the performance report (MPI profiling "
+        "interface wrappers in the executables)",
+        when="@0.20:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch(
@@ -548,6 +555,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
+            self.define_from_variant("PALACE_WITH_MPI_WAIT_TALLY", "mpi-wait-tally"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's

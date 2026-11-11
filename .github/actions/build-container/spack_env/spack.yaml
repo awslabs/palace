@@ -67,7 +67,7 @@ spack:
   - palace_base:
     - >-
       palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
-      %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
+      +mpi-wait-tally %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
   - cuda_constraints:
     # Palace and its CUDA-capable dependencies receive the same multi-valued
     # architecture constraint. This is the single source of truth for the CUDA

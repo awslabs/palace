@@ -471,7 +471,8 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     imbalance of `Work` is closer to the load imbalance than the imbalance of the time. The
     waits counted are the blocking reductions, barriers and broadcasts of `Mpi` (tallied as
     the phase tallies `Reduce`, `Barrier` and `Broadcast`) and, with the CMake option
-    `PALACE_WITH_MPI_WAIT_TALLY` (default on), the calls to `MPI_Wait`, `MPI_Waitall`,
+    `PALACE_WITH_MPI_WAIT_TALLY` (default off, Spack variant `+mpi-wait-tally`, enabled in
+    the *Palace* containers), the calls to `MPI_Wait`, `MPI_Waitall`,
     `MPI_Waitany` and `MPI_Waitsome` that block, tallied as `Wait/MPI`. These wrappers use
     the MPI profiling interface and are compiled into the executables only. They see the C
     calls of the code linked into the executable, including the halo exchanges of statically
