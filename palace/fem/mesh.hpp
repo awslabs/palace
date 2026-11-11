@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
@@ -41,9 +42,11 @@ struct CeedGeomFactorData
   std::vector<int> indices, active_indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
-  // space_dim x dim, stored column-major by component. The vector uses the libCEED
-  // backend's strided layout (CEED_STRIDES_BACKEND) and is only accessed through the
-  // restrictions below.
+  // space_dim x dim, stored column-major by component. For 3D domain elements, this is
+  // followed by the physical coordinates x of the quadrature points for the geometry
+  // factor data restricted to elements of given attributes (see
+  // Mesh::GetCeedGeomFactorData). The vector uses the libCEED backend's strided layout
+  // (CEED_STRIDES_BACKEND) and is only accessed through the restrictions below.
   CeedVector geom_data;
 
   // Element restrictions for all geometry factors and the shared subset. Both address the
@@ -113,6 +116,21 @@ private:
     bool root_valid = false;
   };
   mutable std::map<std::vector<int>, CrackSidesEntry> crack_sides;
+
+  // Geometry factor data of the domain elements with given (global) domain attributes,
+  // with the physical coordinates of the quadrature points for 3D elements. Built on demand
+  // for each Ceed context.
+  mutable std::map<
+      std::vector<int>,
+      std::unordered_map<Ceed,
+                         std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>>>>
+      geom_data_attr, geom_data_subset;
+  void CheckSameElements(Ceed ceed, const std::vector<int> &attr_list) const;
+
+  // Depth of the mesh nodes into an extruded PML (see mesh::GetExtrudedPMLDepth), whose
+  // value and gradient are stored after the coordinates in the geometry factor data of
+  // given attributes.
+  mutable std::unique_ptr<mfem::ParGridFunction> pml_depth;
 
 public:
   template <typename... T>
@@ -217,6 +235,28 @@ public:
 
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
+
+  // Geometry factor data of the domain elements with the given (global, sorted) domain
+  // attributes only, for integrators restricted to these elements (see
+  // BilinearForm::AddDomainIntegratorOnAttributes). For 3D elements, it also stores the
+  // physical coordinates of the quadrature points, for QFunctions with spatially varying
+  // coefficients (such as the PML material tensors). The shared element subsets do not
+  // apply to this data (its active subset is empty).
+  const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
+  GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const;
+
+  // The geometry factor data of all domain elements (GetCeedGeomFactorData(ceed)) for the
+  // domain elements with the given (global, sorted) domain attributes only, read through
+  // offsets without copying any of it, in the same element order as the data with
+  // coordinates above. The shared element subsets do not apply to it.
+  const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
+  GetCeedGeomFactorDataSubset(Ceed ceed, const std::vector<int> &attr_list) const;
+
+  // Set the depth of the mesh nodes into an extruded PML, for the geometry factor data of
+  // given attributes (see GetCeedGeomFactorData), which it resets. Derived data of the
+  // mesh, like the geometry factor data, reset by Update.
+  void SetPMLDepth(std::unique_ptr<mfem::ParGridFunction> &&depth) const;
+  const mfem::ParGridFunction *GetPMLDepth() const { return pml_depth.get(); }
 
   // Configure the process-local libCEED attributes in the shared lossy-domain and
   // active-boundary element sets. The sets must be configured before geometry data is

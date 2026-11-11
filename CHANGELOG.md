@@ -17,6 +17,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
+    eigenmode simulations. A PML meshed with the model is configured with blocks of
+    `config["Domains"]["PML"]`, whose `"Attributes"` are the domains of the PML regions (the
+    other parameters have suitable defaults). With `config["Boundaries"]["PML"]`, *Palace*
+    instead extrudes the PML from farfield boundaries of the mesh, for example in place of
+    an absorbing boundary on a sphere: each face becomes a column of prisms or hexahedra
+    along rays from a core point or segment, and the coordinates are stretched along the
+    rays. The stretch can be evaluated at a fixed reference frequency or at the solve
+    frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of the field
+    energy of each mode in the PML regions is written to `eig.csv`, which identifies the
+    spurious modes of the layer. SchemaVer 4-3-0
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
 #### Interface Changes
 
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
@@ -36,6 +51,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
+    `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
+    instead of aborting without output.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Performance Improvements
 

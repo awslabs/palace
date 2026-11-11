@@ -146,6 +146,14 @@ enum class MultigridCoarsening : char
   LOGARITHMIC
 };
 
+// Solver for the PML subdomain correction of the multigrid preconditioner.
+enum class PMLSubdomainSolver : char
+{
+  DEFAULT,
+  NONE,
+  DIRECT
+};
+
 // Preconditioning side.
 enum class PreconditionerSide : char
 {

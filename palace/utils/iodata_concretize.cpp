@@ -3,6 +3,7 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -82,6 +83,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},
                 {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
+                {"PMLSubdomainSolver", ToString(linear.pml_subdomain_solver)},
                 {"ReorderingReuse", linear.reorder_reuse},
                 {"PCSide", ToString(linear.pc_side)},
                 {"ColumnOrdering", ToString(linear.sym_factorization)},
@@ -237,6 +239,52 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"SerialUniformLevels", ref.ser_uniform_ref_levels}});
 }
 
+void ConcretizePML(const config::PMLData &pml, json &j_pml)
+{
+  // The σ_max computed per face from the mesh (negative entries) is recorded as "Auto"
+  // (from the element size) or null (from the reflection target, which is only recorded if
+  // used) when it applies to all axes.
+  const bool computed_sigma_max =
+      std::ranges::all_of(pml.sigma_max, [](double s) { return s < 0.0; });
+  if (pml.IsExtruded())
+  {
+    // config["Boundaries"]["PML"], with scalar parameters for the direction of the rays.
+    ApplyEntries(j_pml, {{"Layers", pml.extrusion.layers},
+                         {"Order", pml.order},
+                         {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max[0])
+                                      : pml.sigma_auto    ? json("Auto")
+                                                          : json(nullptr)},
+                         {"KappaMax", pml.kappa_max[0]},
+                         {"AlphaMax", pml.alpha_max[0]},
+                         {"FrequencyDependent", pml.frequency_dependent}});
+    // The core in the form it was given (a point or a segment), or the default.
+    const auto &center = pml.extrusion.center;
+    if (pml.extrusion.has_center)
+    {
+      j_pml["Center"] = (center[0] == center[1]) ? json(center[0]) : json(center);
+    }
+  }
+  else
+  {
+    ApplyEntries(j_pml, {{"Order", pml.order},
+                         {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max)
+                                      : pml.sigma_auto    ? json("Auto")
+                                                          : json(nullptr)},
+                         {"KappaMax", pml.kappa_max},
+                         {"AlphaMax", pml.alpha_max},
+                         {"FrequencyDependent", pml.frequency_dependent},
+                         {"AllowRefinement", pml.allow_refinement}});
+  }
+  if (!pml.sigma_auto)
+  {
+    Concretize(j_pml, "ReflectionTarget", pml.reflection_target);
+  }
+  if (!pml.frequency_dependent)
+  {
+    Concretize(j_pml, "ReferenceFrequency", pml.reference_frequency);
+  }
+}
+
 void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
 {
   // Materials: positional match to the C++ vector. Emit the per-property baseline only
@@ -257,10 +305,26 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
                                {"LondonDepth", m.lambda_L}});
     }
   }
+  // PML blocks: positional match to the C++ vector.
+  if (j_domains.contains("PML") && j_domains["PML"].is_array())
+  {
+    auto &j_pml = j_domains["PML"];
+    const std::size_t n = std::min(j_pml.size(), domains.pml.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      ConcretizePML(domains.pml[i], j_pml[i]);
+    }
+  }
 }
 
-void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
+void ConcretizeBoundaries(const config::BoundaryData &boundaries,
+                          const config::DomainData &domains, json &j_boundaries)
 {
+  // Extruded PML, the last PML block.
+  if (j_boundaries.contains("PML") && !domains.pml.empty())
+  {
+    ConcretizePML(domains.pml.back(), j_boundaries["PML"]);
+  }
 
   // Absorbing (farfield) boundary. Only touch it if the user declared it.
   if (j_boundaries.contains("Absorbing"))
@@ -560,7 +624,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
 
   if (config.contains("Boundaries"))
   {
-    ConcretizeBoundaries(iodata.boundaries, config["Boundaries"]);
+    ConcretizeBoundaries(iodata.boundaries, iodata.domains, config["Boundaries"]);
   }
 
   return config;

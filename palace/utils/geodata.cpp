@@ -55,6 +55,12 @@ std::unique_ptr<mfem::Mesh> ReadMeshStream(std::istream &, bool, bool, bool);
 // Clean the provided serial mesh by removing unused domain and boundary elements.
 void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &);
 
+// Add the elements extruded by mesh::ExtrudePML to the materials of the elements below
+// them, and the back of the layer to the PEC boundaries unless it has another boundary
+// condition. Optionally broadcasts the results of the extrusion from the root process
+// first.
+void ApplyPMLExtrusion(IoData &, MPI_Comm = MPI_COMM_NULL);
+
 // Create a new mesh by splitting all elements of the mesh into simplices or hexes
 // (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
 // the high-order nodes with GSLIB.
@@ -290,6 +296,17 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
              "each side separately)! Remove the refinement regions, or use a "
              "simplex mesh.");
 
+  // Extrude the PML regions from the refined surface of the mesh, so that they are not
+  // refined.
+  for (auto &pml : iodata.domains.pml)
+  {
+    if (pml.IsExtruded())
+    {
+      ExtrudePML(smesh, pml, iodata.boundaries);
+      ApplyPMLExtrusion(iodata);
+    }
+  }
+
   // Exterior-boundary check and optional material-interface / crack boundary element
   // insertion. Only meaningful on an initial conformal mesh.
   if (smesh->Conforming())
@@ -368,6 +385,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   {
     iodata.boundaries.split_impedance_attributes = iodata.boundaries.cracked_attributes;
   }
+  ApplyPMLExtrusion(iodata, comm);
 
   // Generate partitioning from the serial mesh on loading ranks.
   std::unique_ptr<int[]> partitioning;
@@ -3143,10 +3161,577 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
   orig_mesh->FinalizeTopology();
 }
 
+void ApplyPMLExtrusion(IoData &iodata, MPI_Comm comm)
+{
+  for (auto &pml : iodata.domains.pml)
+  {
+    if (!pml.IsExtruded())
+    {
+      continue;
+    }
+    auto &ex = pml.extrusion;
+    if (comm != MPI_COMM_NULL)
+    {
+      int n = static_cast<int>(pml.attributes.size());
+      Mpi::Broadcast(1, &n, 0, comm);
+      pml.attributes.resize(n);
+      ex.base_attributes.resize(n);
+      Mpi::Broadcast(n, pml.attributes.data(), 0, comm);
+      Mpi::Broadcast(n, ex.base_attributes.data(), 0, comm);
+      Mpi::Broadcast(1, &ex.back_attribute, 0, comm);
+      Mpi::Broadcast(6, ex.center[0].data(), 0, comm);
+    }
+    for (std::size_t i = 0; i < pml.attributes.size(); i++)
+    {
+      auto &attributes = iodata.domains.attributes;
+      if (std::ranges::binary_search(attributes, pml.attributes[i]))
+      {
+        continue;  // Already added
+      }
+      auto it = std::ranges::find_if(
+          iodata.domains.materials, [&](const auto &material)
+          { return std::ranges::count(material.attributes, ex.base_attributes[i]) > 0; });
+      MFEM_VERIFY(it != iodata.domains.materials.end(), "No material for domain attribute "
+                                                            << ex.base_attributes[i]
+                                                            << " below the extruded PML!");
+      it->attributes.push_back(pml.attributes[i]);
+      attributes.insert(std::ranges::upper_bound(attributes, pml.attributes[i]),
+                        pml.attributes[i]);
+    }
+    auto &bdr_attributes = iodata.boundaries.attributes;
+    if (!std::ranges::binary_search(bdr_attributes, ex.back_attribute))
+    {
+      iodata.boundaries.pec.attributes.push_back(ex.back_attribute);
+      bdr_attributes.insert(std::ranges::upper_bound(bdr_attributes, ex.back_attribute),
+                            ex.back_attribute);
+    }
+  }
+}
+
+// Closest point of x on the core of an extruded PML, the segment from core[0] to core[1] (a
+// point if they are equal).
+std::array<double, 3> ClosestPointOnCore(const std::array<std::array<double, 3>, 2> &core,
+                                         const double *x)
+{
+  double t = 0.0, ee = 0.0;
+  for (int c = 0; c < 3; c++)
+  {
+    t += (x[c] - core[0][c]) * (core[1][c] - core[0][c]);
+    ee += (core[1][c] - core[0][c]) * (core[1][c] - core[0][c]);
+  }
+  t = (ee > 0.0) ? std::clamp(t / ee, 0.0, 1.0) : 0.0;
+  std::array<double, 3> p;
+  for (int c = 0; c < 3; c++)
+  {
+    p[c] = core[0][c] + t * (core[1][c] - core[0][c]);
+  }
+  return p;
+}
+
+// Distance of x from the core of an extruded PML, and the unit direction r of the ray of x
+// from its closest point on the core.
+double GetRay(const std::array<std::array<double, 3>, 2> &core, const double *x, double *r)
+{
+  const auto p = ClosestPointOnCore(core, x);
+  const double d = std::sqrt((x[0] - p[0]) * (x[0] - p[0]) + (x[1] - p[1]) * (x[1] - p[1]) +
+                             (x[2] - p[2]) * (x[2] - p[2]));
+  for (int c = 0; c < 3; c++)
+  {
+    r[c] = (d > 0.0) ? (x[c] - p[c]) / d : 0.0;
+  }
+  return d;
+}
+
 }  // namespace
 
 namespace mesh
 {
+
+void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
+                const config::BoundaryData &boundaries)
+{
+  // The extruded layer is built on the faces of the boundary with the given attributes.
+  // Each geometry node of a face moves along its ray from its closest point on the core, to
+  // the depths ξ_k = k t / N, k = 1, ..., N: each triangle becomes N prisms and each
+  // quadrilateral N hexahedra. With the face vertices ordered so that their normal points
+  // out of the element below (as for the faces of MFEM meshes on the exterior boundary),
+  // the bottom face of each new element is its face 0, with its outward normal pointing
+  // along the rays (the reference coordinate z of the prism or hexahedron is the depth into
+  // its layer).
+  auto &ex = pml.extrusion;
+  const mfem::Mesh &mesh = *orig_mesh;
+  MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
+              "config[\"Boundaries\"][\"PML\"] requires a 3D mesh!");
+  MFEM_VERIFY(mesh.Conforming(),
+              "config[\"Boundaries\"][\"PML\"] requires a conforming mesh (the refinement "
+              "boxes and spheres make meshes with hexahedra, prisms, or pyramids "
+              "nonconforming)!");
+  const std::string surface =
+      fmt::format("the PML boundary with attributes {}", fmt::join(ex.attributes, ", "));
+  auto IsSurface = [&ex](int attr)
+  { return std::ranges::binary_search(ex.attributes, attr); };
+
+  // Faces of the surface, on the exterior boundary, and the elements below them.
+  std::vector<int> faces, elems;
+  {
+    std::unordered_set<int> seen;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      const int f = mesh.GetBdrElementFaceIndex(be);
+      if (!IsSurface(attr) || !seen.insert(f).second)
+      {
+        continue;
+      }
+      int e1, e2;
+      mesh.GetFaceElements(f, &e1, &e2);
+      MFEM_VERIFY(e2 < 0, "Boundary attribute " << attr << " of " << surface
+                                                << " is not on the exterior boundary of "
+                                                   "the mesh!");
+      faces.push_back(f);
+      elems.push_back(e1);
+    }
+  }
+  MFEM_VERIFY(!faces.empty(), "No boundary elements found for " << surface << "!");
+
+  // Sample points of the faces: the uniform points of the geometry order, which include the
+  // vertices.
+  const mfem::GridFunction *nodes = mesh.GetNodes();
+  const int order = nodes ? nodes->FESpace()->GetMaxElementOrder() : 1;
+  auto SamplePoints = [order](mfem::Geometry::Type geom) -> const mfem::IntegrationRule &
+  { return mfem::GlobGeometryRefiner.Refine(geom, std::max(order, 2))->RefPts; };
+
+  // The core is, by default, the centre of the bounding box of the surface.
+  mfem::IsoparametricTransformation T;
+  mfem::Vector x(3), normal(3);
+  if (!ex.has_center)
+  {
+    std::array<double, 3> lo, hi;
+    lo.fill(std::numeric_limits<double>::infinity());
+    hi.fill(-std::numeric_limits<double>::infinity());
+    for (const int f : faces)
+    {
+      mesh.GetFaceTransformation(f, &T);
+      const auto &ir = SamplePoints(T.GetGeometryType());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        T.Transform(ir.IntPoint(j), x);
+        for (int c = 0; c < 3; c++)
+        {
+          lo[c] = std::min(lo[c], x(c));
+          hi[c] = std::max(hi[c], x(c));
+        }
+      }
+    }
+    for (int c = 0; c < 3; c++)
+    {
+      ex.center[0][c] = ex.center[1][c] = 0.5 * (lo[c] + hi[c]);
+    }
+  }
+  // The core is printed exactly, in the form of "PML.Center".
+  const std::string core =
+      (ex.center[0] == ex.center[1])
+          ? fmt::format("point [{}, {}, {}]", ex.center[0][0], ex.center[0][1],
+                        ex.center[0][2])
+          : fmt::format("segment [[{}, {}, {}], [{}, {}, {}]]", ex.center[0][0],
+                        ex.center[0][1], ex.center[0][2], ex.center[1][0], ex.center[1][1],
+                        ex.center[1][2]);
+
+  // Every face must face its closest point on the core (the outward normal makes an acute
+  // angle with the ray): rays from the closest points on a convex set never cross, so the
+  // layer is then valid for any thickness.
+  {
+    mfem::Vector bbmin, bbmax;
+    orig_mesh->GetBoundingBox(bbmin, bbmax);
+    bbmax -= bbmin;
+    const double tol = 1.0e-12 * bbmax.Normlinf();
+    for (const int f : faces)
+    {
+      mesh.GetFaceTransformation(f, &T);
+      const auto &ir = SamplePoints(T.GetGeometryType());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        T.SetIntPoint(&ir.IntPoint(j));
+        T.Transform(ir.IntPoint(j), x);
+        mfem::CalcOrtho(T.Jacobian(), normal);
+        double r[3];
+        const double d = GetRay(ex.center, x.GetData(), r);
+        MFEM_VERIFY(
+            d > tol && normal(0) * r[0] + normal(1) * r[1] + normal(2) * r[2] > 0.0,
+            "The face of "
+                << surface << " at (" << x(0) << ", " << x(1) << ", " << x(2)
+                << ") does not face its closest point on the " << core
+                << ", from which the rays of the extrusion start! Every face of the "
+                   "surface must face the core, or the rays would cross (set "
+                   "\"PML.Center\").");
+      }
+    }
+  }
+
+  // Columns of vertices along the rays of the vertices of the surface, and edges of the
+  // surface.
+  const int nv = mesh.GetNV(), ne = mesh.GetNE(), nbe = mesh.GetNBE();
+  const int nf = static_cast<int>(faces.size()), N = ex.layers;
+  const double h = ex.thickness / N;
+  std::unordered_map<int, int> column;
+  std::vector<mfem::Vector> column_base;  // Positions of the vertices of the surface
+  std::set<std::pair<int, int>> surface_edges;
+  mfem::Array<int> verts;
+  for (const int f : faces)
+  {
+    mesh.GetFaceVertices(f, verts);
+    mesh.GetFaceTransformation(f, &T);
+    for (int j = 0; j < verts.Size(); j++)
+    {
+      if (column.try_emplace(verts[j], static_cast<int>(column_base.size())).second)
+      {
+        T.Transform(mfem::Geometries.GetVertices(T.GetGeometryType())->IntPoint(j),
+                    column_base.emplace_back(3));
+      }
+      surface_edges.insert(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
+    }
+  }
+  auto LayerVertex = [&](int v, int k)
+  { return (k == 0) ? v : nv + column.at(v) * N + k - 1; };
+
+  // Ports, periodic, and Floquet boundaries must not touch the surface. The other
+  // boundaries through the edges of the surface are extruded into quadrilaterals with their
+  // attribute.
+  std::vector<int> rejected;
+  for (const auto &[idx, data] : boundaries.lumpedport)
+  {
+    for (const auto &elem : data.elements)
+    {
+      rejected.insert(rejected.end(), elem.attributes.begin(), elem.attributes.end());
+    }
+  }
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    rejected.insert(rejected.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : boundaries.floquetport)
+  {
+    rejected.insert(rejected.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &data : boundaries.periodic.boundary_pairs)
+  {
+    rejected.insert(rejected.end(), data.donor_attributes.begin(),
+                    data.donor_attributes.end());
+    rejected.insert(rejected.end(), data.receiver_attributes.begin(),
+                    data.receiver_attributes.end());
+  }
+  std::ranges::sort(rejected);
+  std::map<std::pair<int, int>, int> sides;
+  for (int be = 0; be < nbe; be++)
+  {
+    const int attr = mesh.GetBdrAttribute(be);
+    if (IsSurface(attr))
+    {
+      continue;
+    }
+    mesh.GetBdrElementVertices(be, verts);
+    if (std::ranges::binary_search(rejected, attr))
+    {
+      MFEM_VERIFY(std::ranges::none_of(verts, [&](int v) { return column.contains(v); }),
+                  "Boundary attribute "
+                      << attr << " of a port, periodic, or Floquet boundary touches "
+                      << surface << ", which is not supported!");
+      continue;
+    }
+    for (int j = 0; j < verts.Size(); j++)
+    {
+      const std::pair<int, int> edge = std::minmax(verts[j], verts[(j + 1) % verts.Size()]);
+      if (surface_edges.contains(edge))
+      {
+        const auto [it, inserted] = sides.try_emplace(edge, attr);
+        MFEM_VERIFY(inserted || it->second == attr, "Boundary attributes "
+                                                        << it->second << " and " << attr
+                                                        << " share an edge of " << surface
+                                                        << ", which cannot be extruded!");
+      }
+    }
+  }
+
+  // Attributes of the extruded elements, one per attribute of the elements below, and of
+  // the back of the layer.
+  ex.base_attributes.clear();
+  for (const int e : elems)
+  {
+    ex.base_attributes.push_back(mesh.GetAttribute(e));
+  }
+  std::ranges::sort(ex.base_attributes);
+  ex.base_attributes.erase(std::ranges::unique(ex.base_attributes).begin(),
+                           ex.base_attributes.end());
+  const int attr_max = mesh.attributes.Max();
+  pml.attributes.resize(ex.base_attributes.size());
+  std::iota(pml.attributes.begin(), pml.attributes.end(), attr_max + 1);
+  auto PMLAttribute = [&](int attr)
+  {
+    return attr_max + 1 +
+           static_cast<int>(std::ranges::lower_bound(ex.base_attributes, attr) -
+                            ex.base_attributes.begin());
+  };
+  if (ex.back_attribute == 0)
+  {
+    ex.back_attribute = mesh.bdr_attributes.Max() + 1;
+  }
+  MFEM_VERIFY(mesh.bdr_attributes.Find(ex.back_attribute) < 0,
+              "\"PML.BackAttribute\" " << ex.back_attribute
+                                       << " is already a boundary attribute of the mesh!");
+
+  // Build the new mesh: the original elements and boundary elements, followed by the
+  // extruded ones.
+  auto new_mesh = std::make_unique<mfem::Mesh>(
+      3, nv + static_cast<int>(column_base.size()) * N, ne + nf * N,
+      nbe + nf + static_cast<int>(sides.size()) * N, 3);
+  for (int v = 0; v < nv; v++)
+  {
+    new_mesh->AddVertex(mesh.GetVertex(v));
+  }
+  for (const auto &x0 : column_base)
+  {
+    double r[3];
+    GetRay(ex.center, x0.GetData(), r);
+    for (int k = 1; k <= N; k++)
+    {
+      new_mesh->AddVertex(x0(0) + k * h * r[0], x0(1) + k * h * r[1], x0(2) + k * h * r[2]);
+    }
+  }
+  for (int e = 0; e < ne; e++)
+  {
+    new_mesh->AddElement(mesh.GetElement(e)->Duplicate(new_mesh.get()));
+  }
+  for (int i = 0; i < nf; i++)
+  {
+    mesh.GetFaceVertices(faces[i], verts);
+    const int m = verts.Size(), attr = PMLAttribute(mesh.GetAttribute(elems[i]));
+    for (int k = 0; k < N; k++)
+    {
+      int v[8];
+      for (int j = 0; j < m; j++)
+      {
+        v[j] = LayerVertex(verts[j], k);
+        v[m + j] = LayerVertex(verts[j], k + 1);
+      }
+      (m == 3) ? new_mesh->AddWedge(v, attr) : new_mesh->AddHex(v, attr);
+    }
+  }
+  for (int be = 0; be < nbe; be++)
+  {
+    new_mesh->AddBdrElement(mesh.GetBdrElement(be)->Duplicate(new_mesh.get()));
+  }
+  for (const int f : faces)
+  {
+    mesh.GetFaceVertices(f, verts);
+    int v[4];
+    for (int j = 0; j < verts.Size(); j++)
+    {
+      v[j] = LayerVertex(verts[j], N);
+    }
+    (verts.Size() == 3) ? new_mesh->AddBdrTriangle(v, ex.back_attribute)
+                        : new_mesh->AddBdrQuad(v, ex.back_attribute);
+  }
+  for (const auto &[edge, attr] : sides)
+  {
+    for (int k = 0; k < N; k++)
+    {
+      new_mesh->AddBdrQuad(LayerVertex(edge.first, k), LayerVertex(edge.second, k),
+                           LayerVertex(edge.second, k + 1), LayerVertex(edge.first, k + 1),
+                           attr);
+    }
+  }
+  constexpr bool generate_bdr = false;
+  new_mesh->FinalizeTopology(generate_bdr);
+  new_mesh->CheckBdrElementOrientation(true);
+
+  // High-order nodes: the original elements keep their geometry, and each node of an
+  // extruded element is the point of the face below at its reference coordinates (x, y),
+  // moved along its own ray to its depth.
+  if (nodes)
+  {
+    const auto *fespace = nodes->FESpace();
+    new_mesh->SetCurvature(
+        order, dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr, 3,
+        fespace->GetOrdering());
+    mfem::GridFunction &new_nodes = *new_mesh->GetNodes();
+    mfem::Array<int> vdofs;
+    mfem::Vector loc;
+    for (int e = 0; e < new_mesh->GetNE(); e++)
+    {
+      const mfem::IntegrationRule &ir = new_nodes.FESpace()->GetFE(e)->GetNodes();
+      const int i = (e - ne) / N, k = (e - ne) % N;
+      if (e < ne)
+      {
+        mesh.GetElementTransformation(e, &T);
+      }
+      else
+      {
+        mesh.GetFaceTransformation(faces[i], &T);
+      }
+      new_nodes.FESpace()->GetElementVDofs(e, vdofs);
+      loc.SetSize(vdofs.Size());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        if (e < ne)
+        {
+          T.Transform(ip, x);
+        }
+        else
+        {
+          mfem::IntegrationPoint ip_face;
+          ip_face.Set2(ip.x, ip.y);
+          T.Transform(ip_face, x);
+          double r[3];
+          GetRay(ex.center, x.GetData(), r);
+          for (int c = 0; c < 3; c++)
+          {
+            x(c) += (k + ip.z) * h * r[c];
+          }
+        }
+        for (int c = 0; c < 3; c++)
+        {
+          loc(j + c * ir.GetNPoints()) = x(c);
+        }
+      }
+      new_nodes.SetSubVector(vdofs, loc);
+    }
+  }
+
+  // Every extruded element must have a positive Jacobian.
+  for (int e = ne; e < new_mesh->GetNE(); e++)
+  {
+    new_mesh->GetElementTransformation(e, &T);
+    const auto geom = T.GetGeometryType();
+    for (const auto *ir :
+         {mfem::Geometries.GetVertices(geom), &mfem::IntRules.Get(geom, 2 * order + 1)})
+    {
+      for (int j = 0; j < ir->GetNPoints(); j++)
+      {
+        T.SetIntPoint(&ir->IntPoint(j));
+        if (T.Jacobian().Det() <= 0.0)
+        {
+          T.Transform(ir->IntPoint(j), x);
+          MFEM_ABORT("The element of layer "
+                     << (e - ne) % N + 1 << " extruded from " << surface
+                     << " has a non-positive Jacobian at (" << x(0) << ", " << x(1) << ", "
+                     << x(2) << "): the faces of the surface must face the " << core
+                     << ", from which the rays of the extrusion start!");
+        }
+      }
+    }
+  }
+
+  Mpi::Print("Extruded {:d} layer{} of {:d} element{} from {} (thickness {:.3e}, rays "
+             "from the {}), with attributes {} and back boundary attribute {:d}\n",
+             N, (N > 1) ? "s" : "", nf, (nf > 1) ? "s" : "", surface, ex.thickness, core,
+             fmt::join(pml.attributes, ", "), ex.back_attribute);
+  orig_mesh = std::move(new_mesh);
+}
+
+std::unique_ptr<mfem::ParGridFunction> GetExtrudedPMLDepth(const mfem::ParMesh &mesh,
+                                                           const config::PMLData &pml)
+{
+  // The nodes of the extruded layer lie on the rays of the nodes of the surface, and the
+  // depth of a node is its distance from the core less that of the node of the surface on
+  // its ray. The rays are identified by the point at unit distance along the ray from its
+  // start on the core.
+  const auto &ex = pml.extrusion;
+  MFEM_VERIFY(mesh.GetNodes(), "The extruded PML requires the mesh nodes!");
+  const mfem::FiniteElementSpace &nodes_fespace = *mesh.GetNodes()->FESpace();
+  auto IsSurface = [&ex](int attr)
+  { return std::ranges::binary_search(ex.attributes, attr); };
+  auto Key = [&ex](const double *x, double *key)
+  {
+    double r[3];
+    const double d = GetRay(ex.center, x, r);
+    for (int c = 0; c < 3; c++)
+    {
+      key[c] = x[c] - (d - 1.0) * r[c];
+    }
+    return d;
+  };
+
+  // Keys and distances of the nodes of the surface (at the nodes of its faces in the space
+  // of the mesh nodes), gathered from all processes.
+  std::vector<double> surface;
+  {
+    const auto *fec = nodes_fespace.FEColl();
+    mfem::IsoparametricTransformation T;
+    mfem::Vector x(3);
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      if (!IsSurface(mesh.GetBdrAttribute(be)))
+      {
+        continue;
+      }
+      mesh.GetBdrElementTransformation(be, &T);
+      const auto geom = mesh.GetBdrElementGeometry(be);
+      const auto *fe = fec->FiniteElementForGeometry(geom);
+      const mfem::IntegrationRule &ir =
+          fe ? fe->GetNodes() : mfem::GlobGeometryRefiner.Refine(geom, 1)->RefPts;
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        T.Transform(ir.IntPoint(j), x);
+        double key[3];
+        const double d = Key(x.GetData(), key);
+        surface.insert(surface.end(), {key[0], key[1], key[2], d});
+      }
+    }
+  }
+  {
+    const MPI_Comm comm = mesh.GetComm();
+    int count = static_cast<int>(surface.size());
+    std::vector<int> counts(Mpi::Size(comm)), displs(Mpi::Size(comm));
+    MPI_Allgather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+    std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
+    std::vector<double> all(displs.back() + counts.back());
+    MPI_Allgatherv(surface.data(), count, MPI_DOUBLE, all.data(), counts.data(),
+                   displs.data(), MPI_DOUBLE, comm);
+    surface = std::move(all);
+  }
+  mfem::KDTree3D tree;
+  for (std::size_t i = 0; i < surface.size() / 4; i++)
+  {
+    tree.AddPoint(&surface[4 * i], static_cast<int>(i));
+  }
+  tree.Sort();
+
+  // Depth of the nodes of the elements of the layer, zero elsewhere.
+  auto *fespace = new mfem::ParFiniteElementSpace(
+      const_cast<mfem::ParMesh *>(&mesh),
+      mfem::FiniteElementCollection::New(nodes_fespace.FEColl()->Name()));
+  auto depth = std::make_unique<mfem::ParGridFunction>(fespace);
+  depth->MakeOwner(const_cast<mfem::FiniteElementCollection *>(fespace->FEColl()));
+  *depth = 0.0;
+  const mfem::GridFunction &nodes = *mesh.GetNodes();
+  mfem::Array<int> dofs, vdofs;
+  double miss = 0.0;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (!std::ranges::binary_search(pml.attributes, mesh.GetAttribute(e)))
+    {
+      continue;
+    }
+    fespace->GetElementDofs(e, dofs);
+    nodes_fespace.GetElementVDofs(e, vdofs);
+    for (int j = 0; j < dofs.Size(); j++)
+    {
+      const double x[3] = {nodes(vdofs[j]), nodes(vdofs[j + dofs.Size()]),
+                           nodes(vdofs[j + 2 * dofs.Size()])};
+      double key[3];
+      const double d = Key(x, key);
+      const int i = tree.FindClosestPoint(key);
+      miss = std::max(miss, std::hypot(key[0] - surface[4 * i], key[1] - surface[4 * i + 1],
+                                       key[2] - surface[4 * i + 2]));
+      (*depth)(dofs[j]) = std::clamp(d - surface[4 * i + 3], 0.0, ex.thickness);
+    }
+  }
+  Mpi::GlobalMax(1, &miss, mesh.GetComm());
+  MFEM_VERIFY(miss < 1.0e-6, "The mesh of the extruded PML is not the extrusion of its "
+                             "surface (it cannot be refined)!");
+  return depth;
+}
 
 // Conformally bisect a set of mesh edges by inserting a midpoint on each and splitting
 // every tetrahedron and boundary element incident on a split edge into two. Unlike

@@ -18,6 +18,14 @@ namespace palace
 class IoData;
 class Units;
 
+namespace config
+{
+
+struct BoundaryData;
+struct PMLData;
+
+}  // namespace config
+
 namespace mesh
 {
 
@@ -40,6 +48,26 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
 
 // Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
+
+// Extrude the PML regions of config["Boundaries"]["PML"] from boundaries of a serial 3D
+// mesh (see config::PMLData::Extrusion): the geometry nodes of each face of the surface
+// move along their rays from their closest points on the core, each triangle becomes a
+// column of prisms and each quadrilateral one of hexahedra, with new attributes (one per
+// attribute of the elements below), and the other boundaries through the edges of the
+// surface are extruded with their attributes. The surface becomes an interior boundary, and
+// the outer surface of the layer a boundary with the back attribute. The attributes of the
+// extruded elements and of the elements below them, the back attribute, and the default
+// core are written to the configuration of the PML. Checks that every face of the surface
+// faces its closest point on the core, that every extruded element has a positive Jacobian,
+// and that no port, periodic, or Floquet boundary touches the surface.
+void ExtrudePML(std::unique_ptr<mfem::Mesh> &mesh, config::PMLData &pml,
+                const config::BoundaryData &boundaries);
+
+// Depth into the extruded PML of config["Boundaries"]["PML"] (see ExtrudePML) of the nodes
+// of the elements of the layer, in the space of the mesh nodes (zero on the other
+// elements). Checks that the layer is the extrusion of its surface: it cannot be refined.
+std::unique_ptr<mfem::ParGridFunction> GetExtrudedPMLDepth(const mfem::ParMesh &mesh,
+                                                           const config::PMLData &pml);
 
 // Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over
 // `comm` so every rank sees the same value. Returns 0 when no rank holds a mesh.

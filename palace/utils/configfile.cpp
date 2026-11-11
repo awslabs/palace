@@ -15,6 +15,7 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+#include "communication.hpp"
 #include "units.hpp"
 #include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
@@ -54,6 +55,7 @@ PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
 PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
 PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
+PALACE_JSON_SERIALIZE_ENUM(PMLSubdomainSolver)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
 PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
@@ -298,6 +300,201 @@ MaterialData::MaterialData(const json &domain)
   lambda_L = domain.value("LondonDepth", lambda_L);
 }
 
+namespace
+{
+
+// Helper: parse an array of direction strings like "+X", "-y", "+z" (case-insensitive) into
+// per-face flags. Empty strings are ignored.
+std::array<bool, 6> ParsePMLDirections(const json &pml)
+{
+  std::array<bool, 6> directions{{false, false, false, false, false, false}};
+  auto it = pml.find("Direction");
+  if (it == pml.end())
+  {
+    return directions;
+  }
+  MFEM_VERIFY(it->is_array(),
+              "\"PML.Direction\" must be an array of strings like \"+X\", \"-Y\"!");
+  for (const auto &entry : *it)
+  {
+    auto s = entry.get<std::string>();
+    if (s.empty())
+    {
+      continue;
+    }
+    const char axis = (s.size() == 2) ? std::tolower(s[1]) : '\0';
+    MFEM_VERIFY((s[0] == '+' || s[0] == '-') && (axis == 'x' || axis == 'y' || axis == 'z'),
+                "\"PML.Direction\" entries must be \"+X\", \"-X\", \"+Y\", \"-Y\", "
+                "\"+Z\", or \"-Z\" (got: \""
+                    << s << "\")!");
+    const int face = (s[0] == '-') ? 0 : 1;  // 0 = negative face, 1 = positive face
+    directions[2 * (axis - 'x') + face] = true;
+  }
+  return directions;
+}
+
+// Helper: parse a JSON field that may be a scalar or a 3-element array, writing into
+// `out` in either case. Leaves `out` untouched if the field is missing or null.
+void ParseScalarOrArray3(const json &pml, const std::string &key,
+                         std::array<double, 3> &out)
+{
+  auto it = pml.find(key);
+  if (it == pml.end() || it->is_null())
+  {
+    return;
+  }
+  if (it->is_array())
+  {
+    out = it->get<std::array<double, 3>>();
+  }
+  else
+  {
+    out.fill(it->get<double>());
+  }
+}
+
+}  // namespace
+
+PMLData::PMLData(const json &pml, bool extruded)
+{
+  if (extruded)
+  {
+    // The boundary to extrude the PML regions from, and their geometry.
+    auto &ex = extrusion;
+    ex.attributes = pml.at("Attributes").get<std::vector<int>>();  // Required
+    std::ranges::sort(ex.attributes);
+    ex.attributes.erase(std::ranges::unique(ex.attributes).begin(), ex.attributes.end());
+    MFEM_VERIFY(!ex.attributes.empty(), "\"PML.Attributes\" must not be empty!");
+    ex.thickness = pml.at("Thickness").get<double>();  // Required
+    MFEM_VERIFY(ex.thickness > 0.0, "\"PML.Thickness\" must be positive!");
+    ex.layers = pml.value("Layers", ex.layers);
+    MFEM_VERIFY(ex.layers > 0, "\"PML.Layers\" must be positive!");
+    if (auto it = pml.find("Center"); it != pml.end())
+    {
+      // A point [x, y, z], or the segment [[x1, y1, z1], [x2, y2, z2]] between two points.
+      auto IsPoint = [](const json &x)
+      {
+        return x.is_array() && x.size() == 3 &&
+               std::ranges::all_of(x, [](const json &c) { return c.is_number(); });
+      };
+      const bool point = IsPoint(*it);
+      MFEM_VERIFY(point || (it->is_array() && it->size() == 2 && IsPoint((*it)[0]) &&
+                            IsPoint((*it)[1])),
+                  "\"PML.Center\" must be a point [x, y, z] or a segment [[x1, y1, z1], "
+                  "[x2, y2, z2]]!");
+      if (point)
+      {
+        ex.center[0] = ex.center[1] = it->get<std::array<double, 3>>();
+      }
+      else
+      {
+        ex.center = it->get<std::array<std::array<double, 3>, 2>>();
+        MFEM_VERIFY(ex.center[0] != ex.center[1],
+                    "\"PML.Center\" is a segment between two equal points, give the point "
+                    "[x, y, z] instead!");
+      }
+      ex.has_center = true;
+    }
+    ex.back_attribute = pml.value("BackAttribute", ex.back_attribute);
+    MFEM_VERIFY(!pml.contains("BackAttribute") || ex.back_attribute > 0,
+                "\"PML.BackAttribute\" must be positive!");
+  }
+  else
+  {
+    attributes = pml.at("Attributes").get<std::vector<int>>();  // Required
+  }
+  std::ranges::sort(attributes);
+  attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
+
+  const bool has_direction = !extruded && pml.find("Direction") != pml.end();
+  const bool has_thickness = !extruded && pml.find("Thickness") != pml.end();
+  autodetect_geometry = !has_direction && !has_thickness;
+  MFEM_VERIFY(has_direction == has_thickness,
+              "\"PML.Direction\" and \"PML.Thickness\" must be specified together (or "
+              "both omitted, to detect the layer geometry from the mesh)!");
+
+  directions = ParsePMLDirections(pml);
+
+  if (has_thickness)
+  {
+    auto it = pml.find("Thickness");
+    if (it->is_array())
+    {
+      thickness = it->get<std::array<double, 6>>();
+    }
+    else
+    {
+      // Scalar: apply to every face of the directions.
+      const double d = it->get<double>();
+      for (std::size_t i = 0; i < thickness.size(); i++)
+      {
+        thickness[i] = directions[i] ? d : 0.0;
+      }
+    }
+  }
+
+  order = pml.value("Order", order);
+  MFEM_VERIFY(order >= 2,
+              "\"PML.Order\" must be ≥ 2 to preserve continuity of the material tensor "
+              "and its first derivative across the PML/physical interface (got "
+                  << order << ")!");
+
+  // Peak conductivity: given per axis, or, for the axes without a nonnegative value (null,
+  // negative, or "Auto"), computed from the size of the PML elements, or from the
+  // reflection target if one is specified.
+  const bool has_reflection_target = pml.find("ReflectionTarget") != pml.end();
+  if (auto it = pml.find("SigmaMax"); it != pml.end() && it->is_string())
+  {
+    MFEM_VERIFY(it->get<std::string>() == "Auto",
+                "\"PML.SigmaMax\" must be a number, an array of 3 numbers, or \"Auto\"!");
+    MFEM_VERIFY(!has_reflection_target,
+                "\"PML.ReflectionTarget\" is not used with \"PML.SigmaMax\": \"Auto\", "
+                "which computes the conductivity from the size of the PML elements!");
+  }
+  else
+  {
+    ParseScalarOrArray3(pml, "SigmaMax", sigma_max);
+  }
+  sigma_auto = !has_reflection_target;
+  ParseScalarOrArray3(pml, "KappaMax", kappa_max);
+  ParseScalarOrArray3(pml, "AlphaMax", alpha_max);
+  MFEM_VERIFY(std::ranges::all_of(kappa_max, [](double k) { return k >= 1.0; }),
+              "\"PML.KappaMax\" entries must be ≥ 1!");
+  MFEM_VERIFY(std::ranges::all_of(alpha_max, [](double a) { return a >= 0.0; }),
+              "\"PML.AlphaMax\" entries must be nonnegative!");
+  // The extruded PML stretches the single direction of the rays of the extrusion.
+  auto IsScalar = [](const std::array<double, 3> &v)
+  { return v[0] == v[1] && v[1] == v[2]; };
+  MFEM_VERIFY(!extruded ||
+                  (IsScalar(sigma_max) && IsScalar(kappa_max) && IsScalar(alpha_max)),
+              "\"PML.SigmaMax\", \"PML.KappaMax\", and \"PML.AlphaMax\" must be scalars "
+              "for config[\"Boundaries\"][\"PML\"]!");
+
+  reflection_target = pml.value("ReflectionTarget", reflection_target);
+  MFEM_VERIFY(reflection_target > 0.0 && reflection_target < 1.0,
+              "\"PML.ReflectionTarget\" must be in (0, 1) (got " << reflection_target
+                                                                 << ")!");
+
+  frequency_dependent = pml.value("FrequencyDependent", frequency_dependent);
+  reference_frequency = pml.value("ReferenceFrequency", reference_frequency);
+
+  // For a static stretch, the complex frequency shift only changes the constant stretch
+  // factor κ + σ / (α + iω₀), which is the same as the one of different κ and σ.
+  MFEM_VERIFY(frequency_dependent ||
+                  std::ranges::all_of(alpha_max, [](double a) { return a == 0.0; }),
+              "\"PML.AlphaMax\" requires \"PML.FrequencyDependent\": for a static PML, the "
+              "complex frequency shift is equivalent to a different \"KappaMax\" and "
+              "\"SigmaMax\"!");
+
+  if (frequency_dependent && pml.find("ReferenceFrequency") != pml.end())
+  {
+    Mpi::Warning("\"PML.ReferenceFrequency\" is ignored when "
+                 "\"PML.FrequencyDependent\" is true.\n");
+  }
+
+  allow_refinement = pml.value("AllowRefinement", allow_refinement);
+}
+
 DomainEnergyData::DomainEnergyData(const json &domain)
 {
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
@@ -355,6 +552,16 @@ DomainData::DomainData(const json &domains)
   current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
                                                        "\"CurrentDipole\" source");
   postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
+  if (auto it = domains.find("PML"); it != domains.end())
+  {
+    MFEM_VERIFY(it->is_array(),
+                "config[\"Domains\"][\"PML\"] should specify an array of PML blocks in "
+                "the configuration file!");
+    for (const auto &p : *it)
+    {
+      pml.emplace_back(p);
+    }
+  }
 
   // Store all unique domain attributes.
   for (const auto &data : materials)
@@ -372,6 +579,24 @@ DomainData::DomainData(const json &domains)
                     "config[\"Domains\"][\"Materials\"]!",
                     attr));
   }
+  std::vector<int> pml_attributes;
+  for (const auto &data : pml)
+  {
+    for (const auto &attr : data.attributes)
+    {
+      MFEM_VERIFY(std::ranges::binary_search(attributes, attr),
+                  fmt::format("PML attribute {:d} has no corresponding entry in "
+                              "config[\"Domains\"][\"Materials\"]!",
+                              attr));
+    }
+    pml_attributes.insert(pml_attributes.end(), data.attributes.begin(),
+                          data.attributes.end());
+  }
+  std::ranges::sort(pml_attributes);
+  const auto dup = std::ranges::adjacent_find(pml_attributes);
+  MFEM_VERIFY(dup == pml_attributes.end(),
+              fmt::format("PML attribute {:d} is specified in more than one PML block!",
+                          (dup != pml_attributes.end()) ? *dup : 0));
 }
 
 PecBoundaryData::PecBoundaryData(const json &pec)
@@ -1629,6 +1854,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
+  pml_subdomain_solver = linear.value("PMLSubdomainSolver", pml_subdomain_solver);
   reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
   pc_side = linear.value("PCSide", pc_side);
   sym_factorization = linear.value("ColumnOrdering", sym_factorization);
@@ -1848,6 +2074,51 @@ void Nondimensionalize(const Units &units, RefinementData &data)
     sphere.r /= units.GetMeshLengthRelativeScale();
     std::ranges::transform(sphere.center, sphere.center.begin(), scale);
   }
+}
+
+void Nondimensionalize(const Units &units, PMLData &data)
+{
+  // Thickness per face [m] → nondimensional.
+  for (auto &t : data.thickness)
+  {
+    t /= units.GetMeshLengthRelativeScale();
+  }
+  data.extrusion.thickness /= units.GetMeshLengthRelativeScale();
+  for (auto &x : data.extrusion.center)
+  {
+    for (auto &c : x)
+    {
+      c /= units.GetMeshLengthRelativeScale();
+    }
+  }
+  // ω₀ [Hz] → angular nondimensional frequency. Palace's solver uses ω = 2πf
+  // (angular) when passing "omega" into GetExtraSystemMatrix and the stretch
+  // formulas, so reference_frequency must match that convention — multiply by 2π
+  // in addition to the unit conversion.
+  if (data.reference_frequency > 0.0)
+  {
+    data.reference_frequency = 2.0 * std::numbers::pi * data.reference_frequency /
+                               units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  }
+  // σ_max [S/m]-like (same units as conductivity) when explicitly specified by the user.
+  // Negative sentinels mean "auto-compute from reflection target" — leave them alone.
+  for (auto &s : data.sigma_max)
+  {
+    if (s > 0.0)
+    {
+      s /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+    }
+  }
+  // α is an angular-frequency-like quantity in the CFS denominator (α + iω); apply
+  // the same 2π factor as reference_frequency so α and ω share units.
+  for (auto &a : data.alpha_max)
+  {
+    if (a > 0.0)
+    {
+      a = 2.0 * std::numbers::pi * a / units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+    }
+  }
+  // κ is dimensionless; nothing to scale.
 }
 
 void Nondimensionalize(const Units &units, MaterialData &data)
