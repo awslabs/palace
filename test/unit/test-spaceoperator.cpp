@@ -1707,6 +1707,44 @@ TEST_CASE("Driven system operator from the preconditioner",
     floquet_boundaries.farfield.attributes = {6};
     CheckSystemOperator(floquet_boundaries);
   }
+
+  SECTION("PML region")
+  {
+    // The PML integrators of a static or frequency-dependent stretch, on the lossy
+    // material as background, are in the stiffness, damping and mass matrices, or in the
+    // extra system matrix. The layer is z > 1/2, under the surface impedance boundary.
+    for (int i = 0; i < serial_mesh.GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh.GetElementCenter(i, center);
+      if (center(2) > 0.5)
+      {
+        serial_mesh.SetAttribute(i, 3);
+      }
+    }
+    serial_mesh.SetAttributes();
+    mesh.clear();
+    mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+    auto background = lossy;
+    background.attributes = {3};
+    config::PMLData pml;
+    pml.attributes = {3};
+    pml.autodetect_geometry = false;
+    pml.directions = {false, false, false, false, false, true};
+    pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.5};
+    pml.kappa_max = {1.0, 1.0, 1.5};
+    pml.frequency_dependent = GENERATE(false, true);
+    pml.alpha_max = {0.0, 0.0, pml.frequency_dependent ? 0.2 : 0.0};
+    pml.reference_frequency = 1.5;
+    CAPTURE(pml.frequency_dependent);
+    domains.attributes = {1, 2, 3};
+    domains.materials.push_back(background);
+    domains.pml = {pml};
+    SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+    REQUIRE(space_op.GetMaterialOp().HasPML());
+    REQUIRE(space_op.GetMaterialOp().HasFrequencyDependentPML() == pml.frequency_dependent);
+    CheckSystemOperator(boundaries);
+  }
 }
 
 }  // namespace palace
