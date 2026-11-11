@@ -20,7 +20,7 @@ concurrency:
 jobs:
   # Filter to allow skipping the test if no relevant changes occurred.
   filter:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
