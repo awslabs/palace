@@ -154,6 +154,9 @@ jobs:
           brew install libomp
           echo "CPATH=/opt/homebrew/opt/libomp/include:$CPATH" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/opt/libomp/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          # Idle libomp workers otherwise sleep between parallel regions here, and
+          # the wake-ups make small regression cases 3-4x slower.
+          echo "OMP_WAIT_POLICY=active" >> $GITHUB_ENV
 
       - name: Install math libraries (ARMPL)
         if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'armpl'
