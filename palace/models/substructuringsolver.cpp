@@ -553,7 +553,8 @@ std::string SubstructuringSolver::Impl::SetUpRegionSolver()
     pc = std::make_unique<CallableSolver>(A_region_free->Height(),
                                           [this](const mfem::Vector &r, mfem::Vector &z)
                                           { ApplyRegionFactor(r, z); });
-    region_solver = fmt::format("{} factorization", substructuring::kDirectSolverName);
+    region_solver =
+        fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
   }
   else if (BuildRegionGmg())
   {
@@ -633,29 +634,30 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->LoadModel(model_path, sig_w);
     loaded = true;
   }
-  // MUMPS Schur materialization when available and the environment fits a direct
-  // factorization; not when S^K is also materialized (its correction needs the lifted
-  // columns, which the batched back-solve path produces).
-  bool mumps_done = false;
-#if defined(MFEM_USE_MUMPS)
-  if (!loaded && nG > 0 && !(impl->EnergyDiffers() && !model_path.empty()) &&
-      impl->EnvDirectSize() <= subcfg.direct_max_size)
+  // S_E from a partial factorization when one is built and the environment fits a direct
+  // factorization, else from solves with A_EE: always when S^K is also materialized (its
+  // correction needs the lifted columns, which the solves give).
+  const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
+  if (!loaded && nG > 0 && !with_sk && impl->EnvDirectSize() <= subcfg.direct_max_size)
   {
-    impl->MaterializeMumps();
-    mumps_done = true;
+    impl->MaterializePartial();
   }
-#endif
-  if (!loaded && !mumps_done && impl->iodata.solver.substructuring->factorization_tol > 0.0)
+  if (!loaded && impl->env_partial != "MUMPS" && subcfg.factorization_tol > 0.0)
   {
     Mpi::Warning(comm, "Solver.Substructuring.FactorizationTol is only used with the MUMPS "
                        "environment factorization; the environment is factored exactly.\n");
   }
   if (!loaded)
   {
-    impl->EnsureEnv();  // no-op after the MUMPS materialization (it is the env solver)
-    if (!mumps_done)
+    impl->EnsureEnv();  // no-op after a partial factorization (it is the env solver)
+    if (with_sk)
     {
-      impl->MaterializeByBackSolves(impl->EnergyDiffers() && !model_path.empty());
+      impl->MaterializeWithEnergy();
+    }
+    else
+    {
+      // S_E is symmetric (column-major == row-major): scatter its rows to their owners.
+      impl->ScatterRows(impl->env_schur->ReleaseSchur(), nG, impl->S_rows);
     }
     if (!impl->magnetostatic)
     {
@@ -700,10 +702,10 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   else
   {
-    if (mumps_done)
+    if (!impl->env_partial.empty())
     {
-      env_solver = "MUMPS partial factorization";
-      if (subcfg.factorization_tol > 0.0)
+      env_solver = fmt::format("{} partial factorization", impl->env_partial);
+      if (impl->env_partial == "MUMPS" && subcfg.factorization_tol > 0.0)
       {
         env_solver +=
             fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
@@ -711,7 +713,8 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else if (impl->env_parent_direct)
     {
-      env_solver = fmt::format("{} factorization", substructuring::kDirectSolverName);
+      env_solver =
+          fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
     }
     else
     {

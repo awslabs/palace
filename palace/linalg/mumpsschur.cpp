@@ -255,7 +255,10 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchur()
 {
   std::vector<T> S;
   S.swap(schur);
-  S.resize(static_cast<std::size_t>(n_schur) * n_schur);
+  if (rank == 0)
+  {
+    S.resize(static_cast<std::size_t>(n_schur) * n_schur);
+  }
   return S;
 }
 

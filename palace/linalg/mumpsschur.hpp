@@ -14,6 +14,7 @@
 #include <dmumps_c.h>
 #include <zmumps_c.h>
 #include "linalg/lowertriangle.hpp"
+#include "linalg/schursolver.hpp"
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
 
@@ -30,13 +31,13 @@ namespace palace
 // (ZMUMPS) for a complex symmetric A = Ar + i Ai. The right-hand sides and solutions of the
 // solves stay distributed by rows; only the condensed (Schur) parts are on rank 0.
 template <typename T>
-class MumpsSchurSolverT
+class MumpsSchurSolverT : public SchurSolver<T>
 {
   static constexpr bool kComplex = !std::is_same_v<T, double>;
   using Struc = std::conditional_t<kComplex, ZMUMPS_STRUC_C, DMUMPS_STRUC_C>;
 
 public:
-  using VecType = std::conditional_t<kComplex, ComplexVector, mfem::Vector>;
+  using typename SchurSolver<T>::VecType;
 
   // Local lower-triangle COO entries (1-based global indices) of the local rows of an
   // n_glob x n_glob symmetric matrix.
@@ -72,7 +73,7 @@ public:
                     std::vector<int> rows = {},
                     SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
 
-  ~MumpsSchurSolverT();
+  ~MumpsSchurSolverT() override;
 
   // With refactor: the entries of the next Refactor in the order of the input (to be
   // overwritten).
@@ -81,15 +82,10 @@ public:
   // Factor the entries in Values() with the sparsity pattern of the analysis (collective).
   void Refactor();
 
-  // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric), or its
-  // buffer handed over (until the next factorization).
-  const std::vector<T> &Schur() const { return schur; }
-  std::vector<T> ReleaseSchur();
+  std::vector<T> ReleaseSchur() override;
 
-  // Internal solves for a batch of parent true-DOF vectors (collective): y_k solves A_11 on
-  // the internal (non-Schur) variables, with 0 on the Schur variables. y_k may alias x_k.
   void SolveInternal(const std::vector<const VecType *> &X,
-                     const std::vector<VecType *> &Y);
+                     const std::vector<VecType *> &Y) override;
 
   // Condensation of a batch of right-hand sides onto the Schur variables (collective):
   // red = b_S - A_SI A_II^-1 b_I on rank 0 (n_schur x |B|, column-major). The next call
