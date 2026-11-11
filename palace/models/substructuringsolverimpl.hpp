@@ -41,20 +41,49 @@ namespace palace
 namespace substructuring
 {
 
-// Sparse direct solver for the environment and region factorizations: STRUMPACK, MUMPS or
-// SuperLU_DIST, in this order of preference (null without one). With MUMPS, its partial
-// factorization condenses the environment instead (MaterializePartial).
-constexpr const char *kDirectSolverName =
-#if defined(MFEM_USE_STRUMPACK)
-    "STRUMPACK";
-#elif defined(MFEM_USE_MUMPS)
-    "MUMPS";
-#elif defined(MFEM_USE_SUPERLU)
-    "SuperLU_DIST";
+constexpr bool kHasDirectSolver =
+#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU)
+    true;
 #else
-    "";
+    false;
 #endif
-constexpr bool kHasDirectSolver = (kDirectSolverName[0] != '\0');
+
+// Sparse direct solver for the environment and region factorizations: the one
+// config["Solver"]["Linear"]["Type"] names, else STRUMPACK, MUMPS or SuperLU_DIST, in this
+// order of preference among those Palace is built with.
+inline LinearSolver DirectSolverType(const IoData &iodata)
+{
+  const LinearSolver type = iodata.solver.substructuring->direct_solver;
+  switch (type)
+  {
+    case LinearSolver::STRUMPACK:
+    case LinearSolver::MUMPS:
+    case LinearSolver::SUPERLU:
+      return type;
+    default:
+      break;
+  }
+#if defined(MFEM_USE_STRUMPACK)
+  return LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+  return LinearSolver::MUMPS;
+#else
+  return LinearSolver::SUPERLU;
+#endif
+}
+
+inline const char *DirectSolverName(const IoData &iodata)
+{
+  switch (DirectSolverType(iodata))
+  {
+    case LinearSolver::STRUMPACK:
+      return "STRUMPACK";
+    case LinearSolver::MUMPS:
+      return "MUMPS";
+    default:
+      return "SuperLU_DIST";
+  }
+}
 
 #if defined(MFEM_USE_MUMPS)
 // MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
@@ -94,42 +123,64 @@ private:
 #endif
 
 // With serial, a small system is factored on rank 0 alone (MUMPS only).
-inline std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoData &iodata,
+inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
                                                       [[maybe_unused]] MPI_Comm comm,
                                                       [[maybe_unused]] bool serial = false)
 {
+  switch (DirectSolverType(iodata))
+  {
 #if defined(MFEM_USE_STRUMPACK)
-  return std::make_unique<StrumpackSolver>(iodata, comm, 0);
-#elif defined(MFEM_USE_MUMPS)
-  return std::make_unique<MumpsDirectSolver>(serial,
-                                             iodata.solver.linear.sym_factorization);
-#elif defined(MFEM_USE_SUPERLU)
-  return std::make_unique<SuperLUSolver>(iodata, comm, 0);
-#else
-  return nullptr;
+    case LinearSolver::STRUMPACK:
+      return std::make_unique<StrumpackSolver>(iodata, comm, 0);
 #endif
+#if defined(MFEM_USE_MUMPS)
+    case LinearSolver::MUMPS:
+      return std::make_unique<MumpsDirectSolver>(serial,
+                                                 iodata.solver.linear.sym_factorization);
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    case LinearSolver::SUPERLU:
+      return std::make_unique<SuperLUSolver>(iodata, comm, 0);
+#endif
+    default:
+      break;
+  }
+  MFEM_ABORT("Substructuring needs the sparse direct solver \""
+             << DirectSolverName(iodata) << "\", which Palace is not built with!");
+  return nullptr;
 }
 
 // The partial factorization of the environment, whose Schur complement then needs no
-// solves: by MUMPS or else by STRUMPACK with its Schur complement interface (null without
-// one, else name is set to its solver).
+// solves: by MUMPS or else by STRUMPACK with its Schur complement interface, or only by the
+// one config["Solver"]["Linear"]["Type"] names (none for SuperLU_DIST). Null without one,
+// else name is set to its solver.
 inline std::unique_ptr<SchurSolver<double>>
-MakePartialFactorization([[maybe_unused]] const IoData &iodata,
+MakePartialFactorization(const IoData &iodata,
                          [[maybe_unused]] const mfem::HypreParMatrix &A,
                          [[maybe_unused]] const std::vector<HYPRE_BigInt> &schur_vars,
                          [[maybe_unused]] std::string &name)
 {
+  const LinearSolver type = iodata.solver.substructuring->direct_solver;
+  [[maybe_unused]] const bool any =
+      (type != LinearSolver::STRUMPACK && type != LinearSolver::MUMPS &&
+       type != LinearSolver::SUPERLU);
 #if defined(MFEM_USE_MUMPS)
-  name = "MUMPS";
-  return std::make_unique<MumpsSchurSolver>(A, schur_vars,
-                                            iodata.solver.substructuring->factorization_tol,
-                                            false, iodata.solver.linear.sym_factorization);
-#elif defined(PALACE_WITH_STRUMPACK_SCHUR)
-  name = "STRUMPACK";
-  return std::make_unique<StrumpackSchurSolver>(A, schur_vars);
-#else
-  return nullptr;
+  if (any || type == LinearSolver::MUMPS)
+  {
+    name = "MUMPS";
+    return std::make_unique<MumpsSchurSolver>(
+        A, schur_vars, iodata.solver.substructuring->factorization_tol, false,
+        iodata.solver.linear.sym_factorization);
+  }
 #endif
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+  if (any || type == LinearSolver::STRUMPACK)
+  {
+    name = "STRUMPACK";
+    return std::make_unique<StrumpackSchurSolver>(A, schur_vars);
+  }
+#endif
+  return nullptr;
 }
 
 // Multi-RHS solves with a direct factor whose RHS count is fixed by its first solve (MFEM's

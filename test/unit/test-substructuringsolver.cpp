@@ -28,6 +28,7 @@
 #include "models/curlcurloperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
+#include "models/substructuringsolverimpl.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "utils/communication.hpp"
@@ -1988,6 +1989,116 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
       MonolithCapacitance(mesh.back()->Get(), order, eps_by_attr, 1, {2, 3});
   CAPTURE(C(0, 0), C_mono(0, 0));
   CHECK(std::abs(C(0, 0) - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
+}
+
+TEST_CASE("SubstructuringSolver sparse direct solver choice",
+          "[substructure][Serial][Parallel]")
+{
+  // Solver.Linear.Type names the sparse direct solver of the factorizations, else Palace
+  // prefers STRUMPACK, MUMPS, then SuperLU_DIST. The environment is condensed by the
+  // partial factorization of MUMPS, or else of STRUMPACK with its Schur complement
+  // interface, and otherwise by solves. The capacitance matrix does not depend on it.
+  auto config = [](const std::string &type)
+  {
+    return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                {"Model", {{"Mesh", "test.msh"}}},
+                {"Domains",
+                 {{"Materials",
+                   {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+                    {{"Attributes", {3}}, {"Permittivity", 4.0}},
+                    {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+                {"Boundaries",
+                 {{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+                  {"PEC", {{"Attributes", {2, 3}}}}}},
+                {"Solver",
+                 {{"Order", 2},
+                  {"Linear", {{"Type", type}}},
+                  {"Substructuring",
+                   {{"Region", {{"Attributes", {1, 3}}}},
+                    {"Environment", {{"Attributes", {2}}}}}}}}};
+  };
+  std::vector<std::string> types;
+#if defined(MFEM_USE_STRUMPACK)
+  types.push_back("STRUMPACK");
+#endif
+#if defined(MFEM_USE_MUMPS)
+  types.push_back("MUMPS");
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  types.push_back("SuperLU");
+#endif
+
+  // The solver of each choice, and its partial factorization of a small SPD matrix.
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL);
+  mfem::ParMesh pmesh(Mpi::World(), serial);
+  mfem::H1_FECollection fec(1, 2);
+  mfem::ParFiniteElementSpace fes(&pmesh, &fec);
+  mfem::ConstantCoefficient one(1.0);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator(one));
+  a.AddDomainIntegrator(new mfem::MassIntegrator(one));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  const std::vector<HYPRE_BigInt> schur_vars = {0, 3};
+  std::vector<std::string> choices = {"Default"};
+  choices.insert(choices.end(), types.begin(), types.end());
+  for (const auto &type : choices)
+  {
+    CAPTURE(type);
+    IoData iodata(config(type), false);
+    const std::string direct = substructuring::DirectSolverName(iodata);
+    std::string partial;
+    const bool built = (substructuring::MakePartialFactorization(iodata, *A, schur_vars,
+                                                                 partial) != nullptr);
+    std::string direct_ref = (type == "SuperLU") ? "SuperLU_DIST" : type, partial_ref;
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+    partial_ref = (type == "Default" || type == "STRUMPACK") ? "STRUMPACK" : "";
+#endif
+#if defined(MFEM_USE_MUMPS)
+    partial_ref = (type == "Default" || type == "MUMPS") ? "MUMPS" : partial_ref;
+#endif
+    if (type == "Default")
+    {
+      direct_ref = (types[0] == "SuperLU") ? "SuperLU_DIST" : types[0];
+    }
+    CHECK(direct == direct_ref);
+    const auto solver = substructuring::MakeDirectSolver(iodata, Mpi::World());
+    std::string made;
+#if defined(MFEM_USE_STRUMPACK)
+    made = dynamic_cast<StrumpackSolver *>(solver.get()) ? "STRUMPACK" : made;
+#endif
+#if defined(MFEM_USE_MUMPS)
+    made = dynamic_cast<substructuring::MumpsDirectSolver *>(solver.get()) ? "MUMPS" : made;
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    made = dynamic_cast<SuperLUSolver *>(solver.get()) ? "SuperLU_DIST" : made;
+#endif
+    CHECK(made == direct_ref);
+    CHECK(built == !partial_ref.empty());
+    CHECK(partial == partial_ref);
+  }
+
+  // The capacitance of each choice, against a monolith: the grounded boundaries of the
+  // environment cross the interface, so its Dirichlet rows couple to it.
+  const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+  mfem::Vector eps_by_attr(3);
+  eps_by_attr(0) = 1.0;
+  eps_by_attr(1) = 10.0;
+  eps_by_attr(2) = 4.0;
+  const mfem::DenseMatrix C_mono =
+      MonolithCapacitance(mesh.back()->Get(), 2, eps_by_attr, 1, {2, 3});
+  for (const auto &type : choices)
+  {
+    IoData iodata(config(type), false);
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    const double C = ss.CapacitanceMatrix({1})(0, 0);
+    CAPTURE(type, C, C_mono(0, 0));
+    CHECK(std::abs(C - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
+  }
 }
 
 TEST_CASE("SubstructuringSolver rejects the interface compression with London sheets",

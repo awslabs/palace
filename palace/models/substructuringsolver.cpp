@@ -553,7 +553,8 @@ std::string SubstructuringSolver::Impl::SetUpRegionSolver()
     pc = std::make_unique<CallableSolver>(A_region_free->Height(),
                                           [this](const mfem::Vector &r, mfem::Vector &z)
                                           { ApplyRegionFactor(r, z); });
-    region_solver = fmt::format("{} factorization", substructuring::kDirectSolverName);
+    region_solver =
+        fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
   }
   else if (BuildRegionGmg())
   {
@@ -712,7 +713,8 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else if (impl->env_parent_direct)
     {
-      env_solver = fmt::format("{} factorization", substructuring::kDirectSolverName);
+      env_solver =
+          fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
     }
     else
     {

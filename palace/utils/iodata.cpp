@@ -569,6 +569,13 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
+  // The substructuring factorizations follow a sparse direct solver the configuration
+  // names, not the default resolved below.
+  if (solver.substructuring)
+  {
+    solver.substructuring->direct_solver = solver.linear.type;
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
