@@ -22,7 +22,8 @@ class DirectSchurFactorization;
 // onto some of its variables (the Schur variables), with a sparse direct solver other than
 // MUMPS: A_II is factored by STRUMPACK or by SuperLU_DIST in its real equivalent form
 // [Re A_II, Im A_II; Im A_II, -Re A_II], and S is formed from one solve with A_II per Schur
-// variable, in batches (MumpsSchurSolverT's partial factorization gives S without them).
+// variable, in batches. A partial factorization gives S without them: MumpsSchurSolverT's,
+// or STRUMPACK's here with its Schur complement interface (when its build has it).
 // The vectors of the solves are those of the rows, 0 outside them.
 //
 class DirectSchurSolver : public SchurFactorization<std::complex<double>>
@@ -67,10 +68,11 @@ private:
 
   // Where the entries go (their transposes too, A being symmetric): the input entries in
   // the order sent to each rank, and, received, the slot of each entry in the local values
-  // of A_II, A_IS (CSR over the local rows of A_II) or A_SS (dense, on rank 0).
+  // of A_II, A_IS (CSR over the local rows of A_II) or A_SS (dense, on rank 0, with
+  // ss_slots those of its structural entries).
   std::vector<int> send_src, send_cnt, send_dsp, recv_cnt, recv_dsp;
   std::vector<int> recv_kind, recv_slot;
-  std::vector<int> ii_ptr, is_ptr, is_col;
+  std::vector<int> ii_ptr, is_ptr, is_col, ss_slots;
   std::vector<HYPRE_BigInt> ii_col;
   std::vector<T> ii_val, is_val, ss_val;
 

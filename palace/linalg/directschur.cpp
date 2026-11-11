@@ -4,6 +4,7 @@
 #include "directschur.hpp"
 
 #include <algorithm>
+#include <numeric>
 #include <utility>
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
@@ -15,16 +16,32 @@
 namespace palace
 {
 
-// The factorization of A_II, from its local rows (CSR with global columns, rows [off, off +
-// n) of n_glob, numbered by rank).
+// The blocks of the matrix on the local rows of A_II (rows [off, off + n) of its n_glob,
+// numbered by rank): A_II (CSR with global columns), A_IS (CSR, by the positions of the
+// Schur variables) and, on rank 0, A_SS (dense, column-major, with ss_slots its structural
+// entries).
+struct DirectSchurBlocks
+{
+  using T = std::complex<double>;
+  int n, n_schur;
+  HYPRE_BigInt off, n_glob;
+  const std::vector<int> &ii_ptr;
+  const std::vector<HYPRE_BigInt> &ii_col;
+  const std::vector<T> &ii_val;
+  const std::vector<int> &is_ptr, &is_col;
+  const std::vector<T> &is_val;
+  const std::vector<int> &ss_slots;
+  const std::vector<T> &ss_val;
+};
+
+// The factorization of A_II or, partially, of the whole matrix, which then also gives S on
+// rank 0 (Factor returns true).
 class DirectSchurFactorization
 {
 public:
   using T = std::complex<double>;
   virtual ~DirectSchurFactorization() = default;
-  virtual void Factor(int n, HYPRE_BigInt off, HYPRE_BigInt n_glob,
-                      const std::vector<int> &ptr, const std::vector<HYPRE_BigInt> &col,
-                      const std::vector<T> &val) = 0;
+  virtual bool Factor(const DirectSchurBlocks &A, std::vector<T> &schur) = 0;
   // x = A_II^-1 b for nb local column-major blocks (collective).
   virtual void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const = 0;
 };
@@ -55,32 +72,33 @@ public:
     opt.set_verbose(false);
   }
 
-  void Factor(int n, HYPRE_BigInt, HYPRE_BigInt, const std::vector<int> &ptr,
-              const std::vector<HYPRE_BigInt> &col, const std::vector<T> &val) override
+  bool Factor(const DirectSchurBlocks &A, std::vector<T> &) override
   {
-    n_loc = n;
-    cols.assign(col.begin(), col.end());
+    n_loc = A.n;
+    cols.assign(A.ii_col.begin(), A.ii_col.end());
     if (dist.empty())
     {
       const int nranks = Mpi::Size(comm);
       std::vector<int> cnt(nranks);
-      MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+      MPI_Allgather(&n_loc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
       dist.assign(nranks + 1, 0);
       for (int r = 0; r < nranks; r++)
       {
         dist[r + 1] = dist[r] + cnt[r];
       }
-      sp.set_distributed_csr_matrix(n, ptr.data(), cols.data(), val.data(), dist.data(),
-                                    true);
+      sp.set_distributed_csr_matrix(n_loc, A.ii_ptr.data(), cols.data(), A.ii_val.data(),
+                                    dist.data(), true);
       MFEM_VERIFY(sp.reorder() == strumpack::ReturnCode::SUCCESS,
                   "STRUMPACK reordering failed!");
     }
     else
     {
-      sp.update_matrix_values(n, ptr.data(), cols.data(), val.data(), dist.data(), true);
+      sp.update_matrix_values(n_loc, A.ii_ptr.data(), cols.data(), A.ii_val.data(),
+                              dist.data(), true);
     }
     MFEM_VERIFY(sp.factor() == strumpack::ReturnCode::SUCCESS,
                 "STRUMPACK factorization failed!");
+    return false;
   }
 
   void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const override
@@ -99,6 +117,189 @@ private:
 };
 #endif
 
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+// STRUMPACK's partial factorization of the whole matrix, with its Schur complement
+// interface: numbered with the Schur variables first (rows of rank 0), then A_II, it gives
+// S, and the expansions of zero values of the Schur variables are the solves with A_II.
+class StrumpackSchurFactorization : public DirectSchurFactorization
+{
+public:
+  explicit StrumpackSchurFactorization(MPI_Comm comm) : comm(comm), sp(comm, false)
+  {
+    // The Schur complement needs no matching (and a sequential graph reordering without
+    // compression, STRUMPACK's defaults).
+    sp.options().set_matching(strumpack::MatchingJob::NONE);
+  }
+
+  bool Factor(const DirectSchurBlocks &A, std::vector<T> &schur) override
+  {
+    if (dist.empty())
+    {
+      Pattern(A);
+    }
+    std::vector<T> si(si_pos.size());
+    MPI_Gatherv(A.is_val.data(), static_cast<int>(A.is_val.size()), MPI_C_DOUBLE_COMPLEX,
+                si.data(), si_cnt.data(), si_dsp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+    val.assign(col.size(), 0.0);
+    for (std::size_t e = 0; e < si.size(); e++)
+    {
+      val[si_pos[e]] = si[e];
+    }
+    for (std::size_t k = 0; k < ss_pos.size(); k++)
+    {
+      val[ss_pos[k]] = A.ss_val[A.ss_slots[k]];
+    }
+    for (int i = 0; i < n; i++)
+    {
+      auto v = std::copy(A.is_val.begin() + A.is_ptr[i], A.is_val.begin() + A.is_ptr[i + 1],
+                         val.begin() + ptr[r0 + i]);
+      std::copy(A.ii_val.begin() + A.ii_ptr[i], A.ii_val.begin() + A.ii_ptr[i + 1], v);
+    }
+    if (first)
+    {
+      sp.set_distributed_csr_matrix(n_rows, ptr.data(), col.data(), val.data(), dist.data(),
+                                    true);
+      std::vector<int> vars(n_schur);
+      std::iota(vars.begin(), vars.end(), 0);
+      MFEM_VERIFY(sp.set_schur_variables(n_schur, vars.data()) ==
+                      strumpack::ReturnCode::SUCCESS,
+                  "STRUMPACK rejected the Schur variables!");
+      first = false;
+    }
+    else
+    {
+      sp.update_matrix_values(n_rows, ptr.data(), col.data(), val.data(), dist.data(),
+                              true);
+    }
+    MFEM_VERIFY(sp.factor() == strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK partial factorization failed!");
+    strumpack::DenseMatrix<T> S;
+    MFEM_VERIFY(sp.get_schur_complement(S) == strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK Schur complement failed!");
+    schur.resize(static_cast<std::size_t>(r0) * r0);
+    for (int j = 0; j < r0; j++)
+    {
+      for (int i = 0; i < r0; i++)
+      {
+        schur[i + static_cast<std::size_t>(r0) * j] = S(i, j);
+      }
+    }
+    return true;
+  }
+
+  void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const override
+  {
+    const int ld = std::max(n_rows, 1);
+    std::vector<T> bf(static_cast<std::size_t>(ld) * nb, 0.0), xf(bf.size(), 0.0);
+    for (int k = 0; k < nb; k++)
+    {
+      std::copy(b.begin() + static_cast<std::size_t>(n) * k,
+                b.begin() + static_cast<std::size_t>(n) * (k + 1),
+                bf.begin() + static_cast<std::size_t>(ld) * k + r0);
+    }
+    MFEM_VERIFY(sp.schur_expand(nb, bf.data(), ld, xf.data(), ld) ==
+                    strumpack::ReturnCode::SUCCESS,
+                "STRUMPACK solve failed!");
+    x.resize(static_cast<std::size_t>(n) * nb);
+    for (int k = 0; k < nb; k++)
+    {
+      std::copy(xf.begin() + static_cast<std::size_t>(ld) * k + r0,
+                xf.begin() + static_cast<std::size_t>(ld) * k + r0 + n,
+                x.begin() + static_cast<std::size_t>(n) * k);
+    }
+  }
+
+private:
+  // The rows of the Schur variables on rank 0 (the structural entries of A_SS, and those of
+  // A_SI, the transposes of the A_IS entries of every rank), and those of A_II (A_IS, then
+  // A_II), with the slots of the values.
+  void Pattern(const DirectSchurBlocks &A)
+  {
+    const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+    n = A.n;
+    n_schur = A.n_schur;
+    r0 = (rank == 0) ? n_schur : 0;
+    n_rows = r0 + n;
+    std::vector<int> cnt(nranks);
+    MPI_Allgather(&n_rows, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    dist.assign(nranks + 1, 0);
+    for (int r = 0; r < nranks; r++)
+    {
+      dist[r + 1] = dist[r] + cnt[r];
+    }
+    std::vector<int> loc;  // (position, row) of the local A_IS entries
+    for (int i = 0; i < n; i++)
+    {
+      for (int q = A.is_ptr[i]; q < A.is_ptr[i + 1]; q++)
+      {
+        loc.insert(loc.end(), {A.is_col[q], n_schur + static_cast<int>(A.off) + i});
+      }
+    }
+    const int m = static_cast<int>(loc.size()) / 2;
+    si_cnt.assign((rank == 0) ? nranks : 0, 0);
+    si_dsp.assign(si_cnt.size(), 0);
+    MPI_Gather(&m, 1, MPI_INT, si_cnt.data(), 1, MPI_INT, 0, comm);
+    std::vector<int> cnt2(si_cnt.size()), dsp2(si_cnt.size());
+    for (std::size_t r = 0; r < si_cnt.size(); r++)
+    {
+      si_dsp[r] = (r == 0) ? 0 : si_dsp[r - 1] + si_cnt[r - 1];
+      cnt2[r] = 2 * si_cnt[r];
+      dsp2[r] = 2 * si_dsp[r];
+    }
+    std::vector<int> all((rank == 0) ? 2 * (si_dsp.back() + si_cnt.back()) : 0);
+    MPI_Gatherv(loc.data(), 2 * m, MPI_INT, all.data(), cnt2.data(), dsp2.data(), MPI_INT,
+                0, comm);
+    ptr.assign(n_rows + 1, 0);
+    col.clear();
+    if (rank == 0)
+    {
+      // The entries of each row of a Schur variable: (column, k) for the k-th structural
+      // entry of A_SS (k < 0, as -1 - k) and the k-th gathered one of A_SI.
+      std::vector<std::vector<std::pair<int, int>>> srow(n_schur);
+      for (std::size_t k = 0; k < A.ss_slots.size(); k++)
+      {
+        srow[A.ss_slots[k] % n_schur].push_back(
+            {A.ss_slots[k] / n_schur, -1 - static_cast<int>(k)});
+      }
+      for (std::size_t k = 0; k < all.size() / 2; k++)
+      {
+        srow[all[2 * k]].push_back({all[2 * k + 1], static_cast<int>(k)});
+      }
+      ss_pos.resize(A.ss_slots.size());
+      si_pos.resize(all.size() / 2);
+      for (int p = 0; p < n_schur; p++)
+      {
+        std::sort(srow[p].begin(), srow[p].end());
+        for (const auto &[c, k] : srow[p])
+        {
+          ((k < 0) ? ss_pos[-1 - k] : si_pos[k]) = static_cast<int>(col.size());
+          col.push_back(c);
+        }
+        ptr[p + 1] = static_cast<int>(col.size());
+      }
+    }
+    // A_IS's columns (the Schur positions) come before A_II's (after the Schur variables).
+    for (int i = 0; i < n; i++)
+    {
+      col.insert(col.end(), A.is_col.begin() + A.is_ptr[i],
+                 A.is_col.begin() + A.is_ptr[i + 1]);
+      for (int q = A.ii_ptr[i]; q < A.ii_ptr[i + 1]; q++)
+      {
+        col.push_back(n_schur + static_cast<int>(A.ii_col[q]));
+      }
+      ptr[r0 + i + 1] = static_cast<int>(col.size());
+    }
+  }
+
+  MPI_Comm comm;
+  int n = 0, n_schur = 0, r0 = 0, n_rows = 0;
+  bool first = true;
+  std::vector<int> dist, ptr, col, si_cnt, si_dsp, si_pos, ss_pos;
+  std::vector<T> val;
+  mutable strumpack::SparseSolverMPIDist<T, int> sp;
+};
+#endif
+
 #if defined(MFEM_USE_SUPERLU)
 // SuperLU_DIST, in the real equivalent form [Ar, Ai; Ai, -Ar] of A_II (local rows: those of
 // Ar, then of Ai, so that a local vector is [Re x; -Im x] for the solution x).
@@ -111,21 +312,20 @@ public:
   {
   }
 
-  void Factor(int n, HYPRE_BigInt off, HYPRE_BigInt n_glob, const std::vector<int> &ptr,
-              const std::vector<HYPRE_BigInt> &col, const std::vector<T> &val) override
+  bool Factor(const DirectSchurBlocks &A, std::vector<T> &) override
   {
-    n_loc = n;
-    std::vector<double> re(val.size()), im(val.size());
-    for (std::size_t q = 0; q < val.size(); q++)
+    n_loc = A.n;
+    std::vector<double> re(A.ii_val.size()), im(A.ii_val.size());
+    for (std::size_t q = 0; q < A.ii_val.size(); q++)
     {
-      re[q] = val[q].real();
-      im[q] = val[q].imag();
+      re[q] = A.ii_val[q].real();
+      im[q] = A.ii_val[q].imag();
     }
-    HYPRE_BigInt part[2] = {off, off + n};
-    mfem::HypreParMatrix Ar(comm, n, n_glob, n_glob, ptr.data(), col.data(), re.data(),
-                            part, part);
-    mfem::HypreParMatrix Ai(comm, n, n_glob, n_glob, ptr.data(), col.data(), im.data(),
-                            part, part);
+    HYPRE_BigInt part[2] = {A.off, A.off + A.n};
+    mfem::HypreParMatrix Ar(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(), A.ii_col.data(),
+                            re.data(), part, part);
+    mfem::HypreParMatrix Ai(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(), A.ii_col.data(),
+                            im.data(), part, part);
     mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
     mfem::Array2D<double> coef(2, 2);
     blocks(0, 0) = blocks(1, 1) = &Ar;
@@ -134,6 +334,7 @@ public:
     coef(1, 1) = -1.0;
     A2.reset(mfem::HypreParMatrixFromBlocks(blocks, &coef));
     solver->SetOperator(*A2);
+    return false;
   }
 
   void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const override
@@ -195,6 +396,13 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
   {
 #if defined(MFEM_USE_STRUMPACK)
     case LinearSolver::STRUMPACK:
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+      if (n_schur > 0)
+      {
+        fact = std::make_unique<StrumpackSchurFactorization>(comm);
+        break;
+      }
+#endif
       fact = std::make_unique<StrumpackFactorization>(comm);
       break;
 #endif
@@ -340,6 +548,7 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
     if (kind == kSS)
     {
       recv_slot[p] = static_cast<int>(a + static_cast<long long>(n_schur) * b);
+      ss_slots.push_back(recv_slot[p]);
     }
     else
     {
@@ -370,6 +579,8 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
   };
   pattern(ii, ii_ptr, ii_col);
   pattern(is, is_ptr, is_col);
+  std::sort(ss_slots.begin(), ss_slots.end());
+  ss_slots.erase(std::unique(ss_slots.begin(), ss_slots.end()), ss_slots.end());
   Factor();
 }
 
@@ -397,7 +608,12 @@ void DirectSchurSolver::Distribute()
 void DirectSchurSolver::Factor()
 {
   Distribute();
-  fact->Factor(n_int, int_off, n_int_glob, ii_ptr, ii_col, ii_val);
+  if (fact->Factor({n_int, n_schur, int_off, n_int_glob, ii_ptr, ii_col, ii_val, is_ptr,
+                    is_col, is_val, ss_slots, ss_val},
+                   schur))
+  {
+    return;
+  }
 
   // S = A_SS - A_SI A_II^-1 A_IS, for a batch of the Schur variables at a time.
   schur = std::move(ss_val);
