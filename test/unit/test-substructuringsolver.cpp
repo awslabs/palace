@@ -3658,6 +3658,14 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   const int order = GENERATE(1, 2);
   const bool tet = (kind == MeshKind::TET);
   CAPTURE(order, static_cast<int>(kind));
+  // SuperLU_DIST's static pivoting, in the real equivalent form, is accurate to a few
+  // 1e-10 here: it factors the sides without MUMPS and STRUMPACK, and the online region
+  // without STRUMPACK.
+#if defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK)
+  constexpr double exact_tol = 1.0e-9;
+#else
+  constexpr double exact_tol = 1.0e-10;
+#endif
   json config = {
       {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
       {"Model", {{"Mesh", "test.msh"}}},
@@ -3861,8 +3869,8 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
         }
       }
       CAPTURE(nG, nE, d, m, asym);
-      CHECK(d <= 1.0e-10 * m);
-      CHECK(asym <= 1.0e-10 * m);
+      CHECK(d <= exact_tol * m);
+      CHECK(asym <= exact_tol * m);
     }
 
     // Substructured solves for the port excitation (an environment source) and random
@@ -3931,11 +3939,11 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
         }
         const double dv = std::abs(V[1] - (V[0] - hu[0] + hu[1]));
         CAPTURE(dv, std::abs(V[1]));
-        CHECK(dv <= 1.0e-10 * std::abs(V[1]));
+        CHECK(dv <= exact_tol * std::abs(V[1]));
         // and l^T u = l^T x + h^T u_Γ, with x the environment interior solution.
         const double dc = std::abs(V[0] - (std::complex<double>(lx[0], lx[1]) + hu[0]));
         CAPTURE(dc);
-        CHECK(dc <= 1.0e-10 * std::abs(V[0]));
+        CHECK(dc <= exact_tol * std::abs(V[0]));
       }
     }
 
@@ -3969,7 +3977,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
         Mpi::GlobalMax(2, dmax, comm);
         const double unorm = linalg::Norml2(comm, u[k]);
         CAPTURE(k, dmax[0], dmax[1], unorm);
-        CHECK(dmax[0] <= 1.0e-10 * unorm);
+        CHECK(dmax[0] <= exact_tol * unorm);
         CHECK(dmax[1] == 0.0);
       }
     }
@@ -3987,7 +3995,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       r -= b[k];
       const double res = linalg::Norml2(comm, r) / linalg::Norml2(comm, b[k]);
       CAPTURE(k, res);
-      CHECK(res <= 1.0e-10);
+      CHECK(res <= exact_tol);
     }
   }
 }
