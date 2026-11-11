@@ -81,6 +81,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [mfem/mfem#5731](https://github.com/mfem/mfem/pull/5731), which adds the setter of the
     relaxed supernode size to `mfem::SuperLUSolver`.
     [PR 1166](https://github.com/awslabs/palace/pull/1166).
+  - Added SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#250](https://github.com/xiaoyeli/superlu_dist/pull/250),
+    [xiaoyeli/superlu_dist#251](https://github.com/xiaoyeli/superlu_dist/pull/251),
+    [xiaoyeli/superlu_dist#252](https://github.com/xiaoyeli/superlu_dist/pull/252) and
+    [xiaoyeli/superlu_dist#253](https://github.com/xiaoyeli/superlu_dist/pull/253), which
+    lower the communication cost of SuperLU_DIST as the coarse solver at high process
+    counts: point-to-point exchanges of only the nonempty messages instead of dense
+    all-to-all collectives in the symbolic factorization and in the final permutation of
+    the solution, a static schedule reused by refactorizations with the same sparsity
+    pattern, cached row indices for the redistributions of the right-hand side, which on
+    several nodes go through one process per node, the matrix values for MC64 gathered on
+    one process only, and fewer barriers in the triangular solves. Results are unchanged.
+    [PR 1162](https://github.com/awslabs/palace/pull/1162).
   - Skipped the eigenvalue estimate of the Jacobi preconditioner of the error estimator's
     flux recovery, on which the preconditioned conjugate gradient iterates do not depend.
     This speeds up the construction of the error estimator, which is repeated at every
@@ -133,6 +146,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
     NaN, with a warning, and the other outputs are written as before.
     [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
+    the solves after the matrix values change when STRUMPACK compression is enabled
+    (`Solver.Linear.STRUMPACKCompressionType` other than `"None"`) and the reordering is
+    reused (`Solver.Linear.ReorderingReuse`, the default). With the STRUMPACK patch of
+    [PR 1143](https://github.com/awslabs/palace/pull/1143), these solves could abort with
+    an MPI error at high process counts, or give a poor preconditioner which needs more
+    linear solver iterations. [PR 1164](https://github.com/awslabs/palace/pull/1164).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
@@ -211,6 +232,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
     the stiffness matrix as if it were symmetric.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Fixed SLP and TOAR (`PEPLinear: false`) eigenmode solves aborting on a GPU.
+    [PR 1068](https://github.com/awslabs/palace/pull/1068).
+  - Fixed TOAR (`PEPLinear: false`) missing the eigenmodes near the target with the
+    default `"Scaling": true`: the polynomial operators passed to SLEPc were not scaled,
+    while the target, the preconditioner, and the returned eigenvalues were. TOAR can still
+    return spurious eigenvalues near the target, with large backward errors; the default
+    `"PEPLinear": true` is not affected.
+    [PR 1068](https://github.com/awslabs/palace/pull/1068).
 
 #### Documentation
 
