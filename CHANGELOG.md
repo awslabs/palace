@@ -370,6 +370,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - The conductor-consistency gate of the surface-response correction no longer aborts
+    ("excluded patch ... without a raw claim record") on the Maxwell path at more than one
+    rank when an excluded patch is held by a rank other than its raw claim's owner (the
+    applied position vs the placed index; a regression of the round-1 memory fix): the
+    excluded patches are gathered and each owner serves its raw claims (lane fix-gate-claim;
+    decision 1533; results bitwise for every run that completed before).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
