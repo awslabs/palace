@@ -36,6 +36,14 @@ endif()
 string(REPLACE ";" "; " SCALAPACK_OPTIONS_PRINT "${SCALAPACK_OPTIONS}")
 message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 
+# Receive derived datatypes in BLACS packed and unpack them locally: MPICH (ch4) fails to
+# unpack packed messages received in several shared memory segments into derived datatypes
+# with complex-valued elements, which corrupts complex-valued ScaLAPACK factorizations
+# (STRUMPACK and MUMPS).
+set(SCALAPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_blacs_recv.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(scalapack
   DEPENDS           ${SCALAPACK_DEPENDENCIES}
@@ -46,6 +54,7 @@ ExternalProject_Add(scalapack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/scalapack-cmake
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${SCALAPACK_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SCALAPACK_OPTIONS}"
   TEST_COMMAND      ""
 )

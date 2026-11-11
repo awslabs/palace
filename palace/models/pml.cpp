@@ -414,6 +414,24 @@ EvaluateJacobian(const Stretch &stretch, const std::array<double, 3> &x, double 
   return J;
 }
 
+std::array<std::complex<double>, 2> EvaluateExtrudedStretch(const Stretch &stretch,
+                                                            const std::array<double, 3> &x,
+                                                            double xi,
+                                                            std::complex<double> omega)
+{
+  MFEM_VERIFY(stretch.extruded, "Only for an extruded stretch!");
+  std::array<CeedIntScalar, PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE> ctx{};
+  PackStretch(stretch, omega, ctx.data());
+  const CeedIntScalar *p = ctx.data() + PALACE_PML_HEADER_SIZE;
+  const double t = p[32].second;
+  CeedScalar s_re, s_im, D_re, D_im, d[3], dist, grad_d[9];
+  PMLStretchFactor(ctx.data(), (xi > 0.0) ? xi / t : 0.0, p[33].second, p[34].second,
+                   p[35].second, &s_re, &s_im);
+  PMLStretchIntegral(ctx.data(), xi, &D_re, &D_im);
+  PMLRay(ctx.data(), x.data(), d, &dist, grad_d);
+  return {{{s_re, s_im}, {1.0 + D_re / dist, D_im / dist}}};
+}
+
 void CheckStretchContinuity(const std::vector<Layer> &layers, const Mesh &mesh)
 {
   const mfem::ParMesh &pmesh = mesh.Get();

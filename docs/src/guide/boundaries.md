@@ -274,12 +274,32 @@ participation ratios, relative to the energy of the physical region, can exceed 
 
 ### Linear solvers with PML regions
 
-PML can cause convergence difficulties in iterative linear solvers. By default,
+PML can cause convergence difficulties in iterative linear solvers: in the strongly
+stretched elements of the layer, the polynomial smoothers of the multigrid preconditioner
+amplify the error instead of reducing it. By default
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
-the multigrid preconditioner is therefore complemented by a sparse direct solve of the
-PML regions, which restores the convergence of the multigrid preconditioner without PML.
-Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
-STRUMPACK, or MUMPS) and AMS is not supported with PML regions.
+the multigrid preconditioner is therefore complemented by a sparse direct solve on the
+unknowns of the PML elements, and the smoothers do not update the unknowns of the strongly
+stretched elements (above
+[`"PMLSmootherThreshold"`](../config/reference.md#config-solver-linear-pmlsmootherthreshold)
+of the magnitude of the stretch factors). SuperLU_DIST (except with
+[`"SuperLU3DCommunicator"`](../config/reference.md#config-solver-linear-superlu3dcommunicator)),
+STRUMPACK, and MUMPS factor the complex-valued PML subdomain matrix in complex arithmetic,
+with half of the memory of the equivalent real-valued system. The coarse-level solve uses
+the real-valued approximation of the operator, which does not absorb in the PML. A
+complex-valued coarse solve
+([`"ComplexCoarseSolve"`](../config/reference.md#config-solver-linear-complexcoarsesolve))
+typically reduces the number of iterations further, at the cost of a coarse-level
+factorization of a complex-valued matrix. It is needed for convergence with Floquet periodic
+boundaries at oblique incidence, and for electrically large domains (several wavelengths
+across, such as the air region around a radiating antenna), where the number of iterations
+with the real-valued coarse solve grows quickly with the size of the domain. Simulations
+with PML regions therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or
+MUMPS) and AMS is not supported with PML regions. When the PML regions hold a significant
+fraction of the unknowns (for example a layer on all of the faces of a small domain), the
+factorization of the PML subdomain can dominate the memory cost of the simulation. STRUMPACK
+and MUMPS tend to use less memory than SuperLU_DIST, and are thus recommended for such
+cases.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),

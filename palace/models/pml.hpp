@@ -164,6 +164,15 @@ EvaluateJacobian(const Stretch &stretch, const std::array<double, 3> &x, double 
                  const std::array<double, 3> &grad_xi, std::complex<double> omega,
                  bool magnitude = false);
 
+// Principal stretch factors of an extruded stretch at the point x with the depth xi into
+// the layer: the factor s along the ray, and the ratio (r + ξ̃ - ξ) / r of the stretched to
+// the real distance r from the core across the ray (the tangential stretch of a spherical
+// PML).
+std::array<std::complex<double>, 2> EvaluateExtrudedStretch(const Stretch &stretch,
+                                                            const std::array<double, 3> &x,
+                                                            double xi,
+                                                            std::complex<double> omega);
+
 // Pack the QFunction context of a PML integrator (layout in fem/qfunctions/coeff/pml_qf.h),
 // with attr_background the background index of each (1-based) libCEED attribute (-1 for
 // attributes outside of the PML regions). Returns an empty context if no attribute is in a

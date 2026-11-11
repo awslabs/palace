@@ -31,6 +31,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     energy of each mode in the PML regions is written to `eig.csv`, which identifies the
     spurious modes of the layer. SchemaVer 4-3-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Improved the multigrid preconditioner for problems with PML regions: the smoothers do not
+    update the unknowns of strongly stretched PML elements (`"PMLSmootherThreshold"`), and
+    the complex-valued PML subdomain and coarse-level (`"ComplexCoarseSolve"`) matrices are
+    factored in complex arithmetic by SuperLU_DIST, STRUMPACK, and MUMPS, with half of the
+    memory of the equivalent real-valued systems. The superbuild now builds MUMPS with
+    complex double precision (`zmumps`), which is required with `PALACE_WITH_MUMPS`.
+    [PR 1058](https://github.com/awslabs/palace/pull/1058).
 
 #### Interface Changes
 
@@ -273,6 +280,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
+  - The superbuild patches the BLACS of ScaLAPACK to receive messages with derived datatypes
+    packed and unpack them locally. This works around an MPICH bug for processes on the same
+    node, which corrupts complex-valued distributed factorizations of STRUMPACK and MUMPS
+    (packed messages received in several shared memory segments cannot be unpacked into
+    complex-valued elements split across segments).
+    [PR 1058](https://github.com/awslabs/palace/pull/1058).
 
 ## [0.19.0] - 2026-11-02
 

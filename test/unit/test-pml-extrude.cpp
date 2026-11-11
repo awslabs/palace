@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
@@ -19,6 +20,7 @@
 #include "fem/mesh.hpp"
 #include "fem/qfunctions/coeff/coeff_qf.h"
 #include "fem/qfunctions/coeff/pml_qf.h"
+#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/pml.hpp"
 #include "models/spaceoperator.hpp"
@@ -598,6 +600,12 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
       const auto [s, xi_t] = ReferenceProfile(p, xi, omega);
       const auto q = (1.0 + xi_t) / r;
       const double s_mag = std::abs(s), q_mag = std::abs(q);
+
+      // The principal stretch factors along and across the rays, from which the smoother
+      // masks of the multigrid preconditioner are selected.
+      const auto f = pml::EvaluateExtrudedStretch(p, x, xi, omega);
+      CHECK(std::abs(f[0] - s) <= 1.0e-9 * std::abs(s));
+      CHECK(std::abs(f[1] - q) <= 1.0e-9 * std::abs(q));
       for (bool muinv : {true, false})
       {
         for (auto part : all_parts)
@@ -837,6 +845,75 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
     INFO("muinv = " << muinv);
     CHECK_THAT(linalg::Norml2(comm, y) / norm, Matchers::WithinAbs(0.0, 1.0e-12));
   }
+  BilinearForm::pa_order_threshold = pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = p_trial;
+}
+
+TEST_CASE("SpaceOperator smoother masks of an extruded PML",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  // Ball of hexahedra with an extruded spherical layer: the multigrid smoothers do not
+  // update the unknowns of the strongly stretched extruded elements, selected with the
+  // stretch factors along and across the rays at the depth of their vertices (the stretch
+  // of the Cartesian PML is one everywhere for an extruded layer). The masks for
+  // increasing thresholds are nested, and contained in the PML subdomain.
+  MPI_Comm comm = Mpi::World();
+  const int pa_order_threshold = BilinearForm::pa_order_threshold;
+  const int p_trial = fem::DefaultIntegrationOrder::p_trial;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pml_subdomain_solver = PMLSubdomainSolver::DIRECT;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  config::MaterialData material;
+  material.attributes = {1, 2};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+
+  constexpr double omega = 1.5;
+  auto Select = [&](double smoother_threshold)
+  {
+    // The depth of the nodes into the layer is set on the mesh by the SpaceOperator, so
+    // each one has its own mesh.
+    auto serial_mesh =
+        std::make_unique<mfem::Mesh>(MakeBall(mfem::Element::HEXAHEDRON, 2, 2));
+    config::DomainData domains;
+    domains.pml = {MakePML()};
+    domains.pml[0].reference_frequency = 1.5;
+    mesh::ExtrudePML(serial_mesh, domains.pml[0], {});
+    domains.attributes = {1, 2};
+    domains.materials = {material};
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(comm, *serial_mesh));
+    solver.linear.pml_smoother_threshold = smoother_threshold;
+    SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+    REQUIRE(space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch().extruded);
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    REQUIRE(mg->GetNumLevels() == 2);
+    return std::array{mg->GetPMLTrueDofs(), mg->GetSmootherMask(1),
+                      mg->GetAuxiliarySmootherMask(1)};
+  };
+  auto GlobalSize = [&](const std::vector<int> &v)
+  {
+    long long n = static_cast<long long>(v.size());
+    Mpi::GlobalSum(1, &n, comm);
+    return n;
+  };
+  const auto all = Select(1.0), stretched = Select(1.01), none = Select(1.0e6);
+  CHECK(GlobalSize(all[0]) > 0);
+  CHECK(all[1] == all[0]);
+  CHECK(stretched[0] == all[0]);
+  CHECK(std::ranges::includes(all[1], stretched[1]));
+  CHECK(GlobalSize(stretched[1]) > 0);
+  CHECK(GlobalSize(stretched[2]) > 0);
+  CHECK(GlobalSize(none[1]) == 0);
+  CHECK(GlobalSize(none[2]) == 0);
   BilinearForm::pa_order_threshold = pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = p_trial;
 }
