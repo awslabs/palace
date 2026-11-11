@@ -12,6 +12,7 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include "linalg/mumpsschur.hpp"
 #include "linalg/schursolver.hpp"
+#include "linalg/strumpackschur.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -172,6 +173,9 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
 #if defined(MFEM_USE_MUMPS)
   backends.push_back("MUMPS");
 #endif
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+  backends.push_back("STRUMPACK");
+#endif
   const std::string backend = GENERATE_COPY(from_range(backends));
   CAPTURE(backend, ns);
   std::unique_ptr<SchurSolver<double>> solver;
@@ -185,6 +189,12 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   if (backend == "MUMPS")
   {
     solver = std::make_unique<MumpsSchurSolver>(A_elim, schur_vars);
+  }
+#endif
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+  if (backend == "STRUMPACK")
+  {
+    solver = std::make_unique<StrumpackSchurSolver>(A_elim, schur_vars);
   }
 #endif
 

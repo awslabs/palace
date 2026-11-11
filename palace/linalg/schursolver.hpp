@@ -16,8 +16,9 @@ namespace palace
 //
 // A sparse symmetric matrix A = [A_II, A_IS; A_SI, A_SS] factored for its Schur complement
 // S = A_SS - A_SI A_II^-1 A_IS onto some of its variables (the Schur variables), and for
-// solves with its internal block A_II. A partial factorization (MumpsSchurSolver) gives S
-// directly; BackSolveSchurSolver forms it from one solve with A_II per Schur variable.
+// solves with its internal block A_II. A partial factorization (MumpsSchurSolver,
+// StrumpackSchurSolver) gives S directly; BackSolveSchurSolver forms it from one solve
+// with A_II per Schur variable.
 //
 template <typename T>
 class SchurSolver

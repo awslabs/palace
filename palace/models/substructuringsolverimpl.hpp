@@ -28,6 +28,7 @@
 #include "linalg/schursolver.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
+#include "linalg/strumpackschur.hpp"
 #include "linalg/superlu.hpp"
 #include "linalg/vector.hpp"
 #include "models/superconductorsheetoperator.hpp"
@@ -110,7 +111,8 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoD
 }
 
 // The partial factorization of the environment, whose Schur complement then needs no
-// solves: by MUMPS (null without it, else name is set to its solver).
+// solves: by MUMPS or else by STRUMPACK with its Schur complement interface (null without
+// one, else name is set to its solver).
 inline std::unique_ptr<SchurSolver<double>>
 MakePartialFactorization([[maybe_unused]] const IoData &iodata,
                          [[maybe_unused]] const mfem::HypreParMatrix &A,
@@ -122,6 +124,9 @@ MakePartialFactorization([[maybe_unused]] const IoData &iodata,
   return std::make_unique<MumpsSchurSolver>(A, schur_vars,
                                             iodata.solver.substructuring->factorization_tol,
                                             false, iodata.solver.linear.sym_factorization);
+#elif defined(PALACE_WITH_STRUMPACK_SCHUR)
+  name = "STRUMPACK";
+  return std::make_unique<StrumpackSchurSolver>(A, schur_vars);
 #else
   return nullptr;
 #endif
