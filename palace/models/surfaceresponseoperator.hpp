@@ -1632,6 +1632,14 @@ private:
   // F-M: frees the matrices of the models no local patch references (the construction's
   // last step).
   void ReleaseUnreferencedModelMatrices();
+  // setupmem S1 (decision 1546): on a rank other than the root the model loop builds the
+  // metadata only (the surface maps' keys with empty matrices); after the placement this
+  // builds the matrices of the models its patches reference (patches + diagnostic_patches),
+  // by the same functions of the same inputs as the loop. The root builds every model in
+  // the loop (the all-model records and log lines).
+  void BuildReferencedModelMatrices(
+      const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+      const IoData &iodata, double target_matching_radius, int dimension);
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,
