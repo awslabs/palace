@@ -32,6 +32,10 @@ using SideSchurSolver = MumpsSchurSolverT<std::complex<double>>;
 using SideSchurSolver = DirectSchurSolver;
 #endif
 
+// The factorization of the region with S_E added on the interface online (one system,
+// without a Schur complement).
+using CoupledSolver = SideSchurSolver;
+
 //
 // Barycentric rational interpolation of a vector-valued function of the frequency from its
 // samples x_j = x(ω_j), with one set of weights w for all entries,
@@ -170,7 +174,8 @@ private:
 // MUMPS factorization, which gives S_E(ω). The region is condensed onto Γ in the same way,
 // and the interface system S_R(ω) + S_E(ω) is factored densely. Online, the environment is
 // not assembled: S_E(ω) and the condensation of the environment's sources come from a
-// saved model, and the environment interior of the solution is not computed.
+// saved model, the region is factored with S_E(ω) added on Γ as one system, and the
+// environment interior of the solution is not computed.
 //
 class DrivenSubstructure
 {
@@ -335,8 +340,12 @@ private:
   };
   Side env, region;
   bool solvable = false;  // the region is factored against the environment
-  // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots; the
-  // environment's source condensation and the interface solution of the last Solve.
+  // Online: the region with S_E on Γ, factored as one system; its entries are the region's,
+  // then (on rank 0) S_E's lower triangle.
+  std::unique_ptr<CoupledSolver> coupled;
+  std::size_t coupled_region_entries = 0;
+  // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots (offline);
+  // the environment's source condensation and the interface solution of the last Solve.
   std::vector<std::complex<double>> S, T, g_last, u_last;
   std::vector<int> T_piv;
 
@@ -355,8 +364,13 @@ private:
   std::vector<std::vector<double>> red_parts;
   std::vector<double> red_gamma;
 
-  // Factor S_R + S_E on rank 0.
+  // Factor S_R + S_E on rank 0 (offline).
   void FactorInterface();
+
+  // Online Solve, with the coupled factorization of the region and S_E.
+  void SolveCoupled(const std::vector<const ComplexVector *> &rhs,
+                    std::vector<ComplexVector> &u,
+                    const std::vector<std::complex<double>> &g_env);
 
   // The rank-one modal terms of a side's wave ports at ω with their ports, in a fixed
   // order.

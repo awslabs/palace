@@ -617,20 +617,59 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
 void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>> &&S_env)
 {
   MFEM_VERIFY(online, "An offline substructure condenses its own environment!");
-  if (!region.schur)
+  MPI_Comm comm = space_op.GetComm();
+  const bool root = Mpi::Root(comm);
+  const int nG = InterfaceSize();
+  MFEM_VERIFY(!root || S_env.size() == static_cast<std::size_t>(nG) * nG,
+              "Wrong size of a given S_E!");
+  // The region with S_E added on Γ, factored as one system: the region's entries, then on
+  // rank 0 those of S_E's lower triangle, in the rows of the interface DOFs (whose system
+  // indices increase with the interface order).
+  auto add_schur = [&](auto &&add)
+  {
+    for (int q = 0; q < nG && root; q++)
+    {
+      for (int p = q; p < nG; p++)
+      {
+        add(region.gamma_sys[p], region.gamma_sys[q],
+            S_env[p + static_cast<std::size_t>(nG) * q]);
+      }
+    }
+  };
+  if (!coupled)
   {
     Setup(region, omega);
+    CoupledSolver::Coo coo{std::move(region.irn_sys), std::move(region.jcn_sys),
+                           std::move(region.val)};
+    coupled_region_entries = coo.val.size();
+    add_schur(
+        [&](HYPRE_BigInt a, HYPRE_BigInt b, std::complex<double> v)
+        {
+          coo.irn.push_back(static_cast<int>(a + 1));
+          coo.jcn.push_back(static_cast<int>(b + 1));
+          coo.val.push_back(v);
+        });
+#if defined(MFEM_USE_MUMPS)
+    coupled = std::make_unique<CoupledSolver>(
+        comm, region.n_sys, static_cast<int>(region.rows.size()), std::move(coo),
+        std::vector<HYPRE_BigInt>{}, kBlrTol, 0, true, false, region.rows);
+#else
+    coupled = std::make_unique<CoupledSolver>(
+        comm, region.n_sys, static_cast<int>(region.rows.size()), std::move(coo),
+        std::vector<HYPRE_BigInt>{}, region.rows);
+#endif
   }
-  Release(T);
-  Factor(region, omega);
-  if (Mpi::Root(space_op.GetComm()))
+  else
   {
-    MFEM_VERIFY(S_env.size() == static_cast<std::size_t>(InterfaceSize()) * InterfaceSize(),
-                "Wrong size of a given S_E!");
-    S = std::move(S_env);
+    auto &val = coupled->Values();
+    auto extra = ExtraParts(region, omega);
+    MFEM_VERIFY(region.extra == (extra[0] || extra[1]),
+                "The frequency-dependent part of a substructure operator changed!");
+    Fill(region, omega, extra, ModalTerms(region, omega), val);
+    std::size_t k = coupled_region_entries;
+    add_schur([&](HYPRE_BigInt, HYPRE_BigInt, std::complex<double> v) { val[k++] = v; });
+    coupled->Refactor();
   }
-  FactorInterface();
-  Release(S);  // (only the factored interface system is needed online)
   solvable = true;
 }
 
@@ -685,32 +724,25 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
   MPI_Comm comm = space_op.GetComm();
   const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
   const int nG = InterfaceSize();
+  if (online)
+  {
+    SolveCoupled(rhs, u, *g_env);
+    return;
+  }
 
   // Condensation of the sources onto Γ: the environment's with the interface loads b_Γ,
-  // b_Γ - A_ΓE A_EE^-1 b_E (offline, or given online), and the region's, -A_ΓR A_RR^-1 b_R.
-  std::vector<ComplexVector> w(online ? 0 : n), y(n);
-  std::vector<const ComplexVector *> W(w.size()), Y(n);
+  // b_Γ - A_ΓE A_EE^-1 b_E, and the region's, -A_ΓR A_RR^-1 b_R.
+  std::vector<ComplexVector> w(n), y(n);
+  std::vector<const ComplexVector *> W(n), Y(n);
   for (int k = 0; k < n; k++)
   {
-    if (!online)
-    {
-      w[k] = Masked(*rhs[k], is_env_int, &is_gamma);
-      W[k] = &w[k];
-    }
+    w[k] = Masked(*rhs[k], is_env_int, &is_gamma);
+    W[k] = &w[k];
     y[k] = Masked(*rhs[k], is_region_int);
     Y[k] = &y[k];
   }
   std::vector<std::complex<double>> rR;
-  if (!online)
-  {
-    env.schur->Reduce(W, g_last);
-  }
-  else if (Mpi::Root(comm))
-  {
-    MFEM_VERIFY(g_env->size() == static_cast<std::size_t>(nG) * n,
-                "Wrong size of the environment's source condensation!");
-    g_last = *g_env;
-  }
+  env.schur->Reduce(W, g_last);
   region.schur->Reduce(Y, rR);
   if (Mpi::Root(comm))
   {
@@ -729,19 +761,13 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
 
   // The interiors from the interface solution, A_II^-1 (b_I - A_IΓ u_Γ) (the interface
   // values come out of either expansion; the Dirichlet DOFs are 0).
-  std::vector<ComplexVector *> Wo(w.size()), Yo(n);
+  std::vector<ComplexVector *> Wo(n), Yo(n);
   for (int k = 0; k < n; k++)
   {
-    if (!online)
-    {
-      Wo[k] = &w[k];
-    }
+    Wo[k] = &w[k];
     Yo[k] = &y[k];
   }
-  if (!online)
-  {
-    env.schur->Expand(u_last, Wo);
-  }
+  env.schur->Expand(u_last, Wo);
   region.schur->Expand(u_last, Yo);
   u.resize(n);
   for (int k = 0; k < n; k++)
@@ -750,14 +776,110 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
     u[k].UseDevice(true);
     double *ur = u[k].Real().HostWrite(), *ui = u[k].Imag().HostWrite();
     const double *yr = y[k].Real().HostRead(), *yi = y[k].Imag().HostRead();
-    const double *wr = online ? nullptr : w[k].Real().HostRead();
-    const double *wi = online ? nullptr : w[k].Imag().HostRead();
+    const double *wr = w[k].Real().HostRead(), *wi = w[k].Imag().HostRead();
     for (int i = 0; i < nt; i++)
     {
-      const bool from_region = is_region_int[i] || (online && is_gamma[i]);
-      const bool from_env = !online && (is_env_int[i] || is_gamma[i]);
+      const bool from_region = is_region_int[i];
+      const bool from_env = is_env_int[i] || is_gamma[i];
       ur[i] = from_region ? yr[i] : (from_env ? wr[i] : 0.0);
       ui[i] = from_region ? yi[i] : (from_env ? wi[i] : 0.0);
+    }
+  }
+}
+
+void DrivenSubstructure::SolveCoupled(const std::vector<const ComplexVector *> &rhs,
+                                      std::vector<ComplexVector> &u,
+                                      const std::vector<std::complex<double>> &g_env)
+{
+  // The region's sources on its interior and the environment's condensation on Γ (from rank
+  // 0, by the ranks of the interface DOFs), solved for the region and Γ at once.
+  MPI_Comm comm = space_op.GetComm();
+  const int n = static_cast<int>(rhs.size()), nt = static_cast<int>(is_gamma.size());
+  const int nG = InterfaceSize(), rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  const bool root = (rank == 0);
+  MFEM_VERIFY(!root || g_env.size() == static_cast<std::size_t>(nG) * n,
+              "Wrong size of the environment's source condensation!");
+  std::vector<int> cnt(nranks), disp(nranks);
+  for (int r = 0; r < nranks; r++)
+  {
+    cnt[r] = gamma_cnt[r] * n;
+    disp[r] = gamma_disp[r] * n;
+  }
+  const int m = gamma_cnt[rank];
+  std::vector<std::complex<double>> blocks(root ? static_cast<std::size_t>(nG) * n : 0),
+      loc(static_cast<std::size_t>(m) * n);
+  // Rank-major blocks of the interface rows, each column-major.
+  auto block = [&](int r, int l, int k)
+  {
+    return static_cast<std::size_t>(disp[r]) + l +
+           static_cast<std::size_t>(gamma_cnt[r]) * k;
+  };
+  for (int r = 0; r < nranks && root; r++)
+  {
+    for (int k = 0; k < n; k++)
+    {
+      for (int l = 0; l < gamma_cnt[r]; l++)
+      {
+        blocks[block(r, l, k)] =
+            g_env[gamma_disp[r] + l + static_cast<std::size_t>(nG) * k];
+      }
+    }
+  }
+  MPI_Scatterv(blocks.data(), cnt.data(), disp.data(), MPI_C_DOUBLE_COMPLEX, loc.data(),
+               m * n, MPI_C_DOUBLE_COMPLEX, 0, comm);
+  std::vector<ComplexVector> y(n);
+  std::vector<const ComplexVector *> Y(n);
+  std::vector<ComplexVector *> Yo(n);
+  for (int k = 0; k < n; k++)
+  {
+    y[k] = Masked(*rhs[k], is_region_int);
+    double *yr = y[k].Real().HostReadWrite(), *yi = y[k].Imag().HostReadWrite();
+    for (int i = 0, l = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        const auto v = loc[l++ + static_cast<std::size_t>(m) * k];
+        yr[i] = v.real();
+        yi[i] = v.imag();
+      }
+    }
+    Y[k] = &y[k];
+    Yo[k] = &y[k];
+  }
+  coupled->SolveInternal(Y, Yo);
+
+  // The solution on the region's interior and Γ, and its interface part on rank 0.
+  u.resize(n);
+  for (int k = 0; k < n; k++)
+  {
+    u[k].SetSize(nt);
+    u[k].UseDevice(true);
+    u[k] = y[k];
+    const double *yr = y[k].Real().HostRead(), *yi = y[k].Imag().HostRead();
+    for (int i = 0, l = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        loc[l++ + static_cast<std::size_t>(m) * k] = {yr[i], yi[i]};
+      }
+    }
+  }
+  MPI_Gatherv(loc.data(), m * n, MPI_C_DOUBLE_COMPLEX, blocks.data(), cnt.data(),
+              disp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+  if (root)
+  {
+    g_last = g_env;
+    u_last.resize(static_cast<std::size_t>(nG) * n);
+    for (int r = 0; r < nranks; r++)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        for (int l = 0; l < gamma_cnt[r]; l++)
+        {
+          u_last[gamma_disp[r] + l + static_cast<std::size_t>(nG) * k] =
+              blocks[block(r, l, k)];
+        }
+      }
     }
   }
 }
