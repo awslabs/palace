@@ -150,6 +150,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only the modes nearest to the target, and the reduced model is only used with a basis of
     at most `2√N` vectors for `N` port unknowns, beyond which exact port solves are cheaper.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Driven simulations apply the system matrix through the finest level of the multigrid
+    preconditioner and no longer assemble it separately for uniform sweeps, reducing CPU
+    time by 1–5% and peak memory by up to 6%.
+    [PR 980](https://github.com/awslabs/palace/pull/980).
 
 #### Bug Fixes
 
