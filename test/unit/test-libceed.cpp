@@ -2779,14 +2779,13 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // Volume and boundary leaves without an imaginary partner are packed as well, so the
+  // fine and H1 auxiliary operators all use the fast path.
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
+  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  if (!partial_lossy)
-  {
-    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
-  }
+  REQUIRE(!IsOriginalComplexWrapper(local));
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2867,7 +2866,7 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   }
 }
 
-TEST_CASE("libCEED packed complex unsupported input fallbacks",
+TEST_CASE("libCEED packed complex input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
   if (!PackedTestBackend())
@@ -2924,7 +2923,9 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  REQUIRE(IsOriginalComplexWrapper(*actual));
+  // Non-tensor H1 bases and real-only inputs are packed; tensor-product bases, dof
+  // multiplicity, and unassembled vector quadrature data keep the original action.
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
 }

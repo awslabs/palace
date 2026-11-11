@@ -281,6 +281,7 @@ struct PackedLeaf
 {
   PackedField active, qdata;
   CeedInt elements = 0, nodes = 0, qpts = 0;
+  CeedEvalMode mode = CEED_EVAL_INTERP;
   bool curl = false;
 };
 
@@ -295,9 +296,10 @@ bool FieldMatches(Ceed ceed, CeedQFunctionField field, CeedInt size, CeedEvalMod
 
 std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int size)
 {
-  // Recognize QData-assembled, non-tensor 3D H(curl)/H(div) volume kernels. Names
-  // identify candidates; the field and restriction checks below establish the layout
-  // assumed by the packed kernels. Unsupported leaves remain in the original action.
+  // Recognize QData-assembled, non-tensor 3D H(curl)/H(div) volume kernels and H1
+  // diffusion kernels. Names identify candidates; the field and restriction checks below
+  // establish the layout assumed by the packed kernels. Unsupported leaves remain in the
+  // original action.
   bool composite;
   PalaceCeedCall(ceed, CeedOperatorIsComposite(op, &composite));
   if (composite)
@@ -346,11 +348,18 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   {
     return {};
   }
+  // Vector spaces interpolate their three-component fields; H1 diffusion acts on
+  // gradients of a scalar field.
+  {
+    CeedFESpace space;
+    PalaceCeedCall(ceed, CeedBasisGetFESpace(basis, &space));
+    leaf->mode = (space == CEED_FE_SPACE_H1) ? CEED_EVAL_GRAD : CEED_EVAL_INTERP;
+  }
   // Validate all active field modes/sizes and the actual trial/test handles. Names
   // alone cannot distinguish mass from diffusion, mixed spaces, or boundary operators.
   for (CeedInt j = 0; j < no; j++)
   {
-    const auto mode = j == 0 ? CEED_EVAL_INTERP : CEED_EVAL_CURL;
+    const auto mode = j == 0 ? leaf->mode : CEED_EVAL_CURL;
     if (!FieldMatches(ceed, qinputs[j + 1], 3, mode) ||
         !FieldMatches(ceed, qoutputs[j], 3, mode))
     {
@@ -380,8 +389,8 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(basis, &components));
   PalaceCeedCall(ceed, CeedBasisGetNumNodes(basis, &leaf->nodes));
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(basis, &leaf->qpts));
-  PalaceCeedCall(
-      ceed, CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &qcomponents));
+  PalaceCeedCall(ceed,
+                 CeedBasisGetNumQuadratureComponents(basis, leaf->mode, &qcomponents));
   PalaceCeedCall(ceed, CeedElemRestrictionGetType(restriction, &type));
   PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(restriction, &rcomponents));
   PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(restriction, &leaf->elements));
@@ -389,7 +398,8 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(restriction, &length));
   PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op, &in_length, &out_length));
   if (tensor || dim != 3 || components != 1 || qcomponents != 3 || rcomponents != 1 ||
-      (space != CEED_FE_SPACE_HCURL && space != CEED_FE_SPACE_HDIV) ||
+      (space != CEED_FE_SPACE_HCURL && space != CEED_FE_SPACE_HDIV &&
+       space != CEED_FE_SPACE_H1) ||
       (curl && space != CEED_FE_SPACE_HCURL) || block != 1 || leaf->elements <= 0 ||
       leaf->qpts <= 0 || length != size || in_length != size || out_length != size ||
       (type != CEED_RESTRICTION_STANDARD && type != CEED_RESTRICTION_ORIENTED &&
@@ -425,10 +435,9 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
 // The second component starts size entries after the first in the L-vector, giving
 // [Re(x) | Im(x)] with the same element offsets and orientations for both parts.
 // Copy those maps before restoring the borrowed arrays from the original restriction.
-void ClonePackedRestriction(Ceed ceed, const PackedLeaf &leaf, int size,
-                            CeedElemRestriction *packed)
+void ClonePackedRestriction(Ceed ceed, CeedElemRestriction original, CeedInt elements,
+                            CeedInt nodes, int size, CeedElemRestriction *packed)
 {
-  auto original = leaf.active.restriction.value;
   CeedRestrictionType type;
   const CeedInt *offsets;
   PalaceCeedCall(ceed, CeedElemRestrictionGetType(original, &type));
@@ -439,10 +448,9 @@ void ClonePackedRestriction(Ceed ceed, const PackedLeaf &leaf, int size,
     const CeedInt8 *orientations;
     PalaceCeedCall(ceed, CeedElemRestrictionGetCurlOrientations(original, CEED_MEM_HOST,
                                                                 &orientations));
-    PalaceCeedCall(ceed,
-                   CeedElemRestrictionCreateCurlOriented(
-                       ceed, leaf.elements, leaf.nodes, 2, size, length, CEED_MEM_HOST,
-                       CEED_COPY_VALUES, offsets, orientations, packed));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreateCurlOriented(
+                             ceed, elements, nodes, 2, size, length, CEED_MEM_HOST,
+                             CEED_COPY_VALUES, offsets, orientations, packed));
     PalaceCeedCall(ceed,
                    CeedElemRestrictionRestoreCurlOrientations(original, &orientations));
   }
@@ -451,17 +459,16 @@ void ClonePackedRestriction(Ceed ceed, const PackedLeaf &leaf, int size,
     const bool *orientations;
     PalaceCeedCall(
         ceed, CeedElemRestrictionGetOrientations(original, CEED_MEM_HOST, &orientations));
-    PalaceCeedCall(ceed, CeedElemRestrictionCreateOriented(ceed, leaf.elements, leaf.nodes,
-                                                           2, size, length, CEED_MEM_HOST,
-                                                           CEED_COPY_VALUES, offsets,
-                                                           orientations, packed));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreateOriented(
+                             ceed, elements, nodes, 2, size, length, CEED_MEM_HOST,
+                             CEED_COPY_VALUES, offsets, orientations, packed));
     PalaceCeedCall(ceed, CeedElemRestrictionRestoreOrientations(original, &orientations));
   }
   else
   {
-    PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, leaf.elements, leaf.nodes, 2, size,
-                                                   length, CEED_MEM_HOST, CEED_COPY_VALUES,
-                                                   offsets, packed));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, elements, nodes, 2, size, length,
+                                                   CEED_MEM_HOST, CEED_COPY_VALUES, offsets,
+                                                   packed));
   }
   PalaceCeedCall(ceed, CeedElemRestrictionRestoreOffsets(original, &offsets));
 }
@@ -485,6 +492,12 @@ void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
     PalaceCeedCall(ceed, CeedBasisGetCurl(original, &derivative));
     PalaceCeedCall(ceed, CeedBasisCreateHcurl(ceed, topology, 2, leaf.nodes, leaf.qpts,
                                               interp, derivative, qref, weights, packed));
+  }
+  else if (space == CEED_FE_SPACE_H1)
+  {
+    PalaceCeedCall(ceed, CeedBasisGetGrad(original, &derivative));
+    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, topology, 2, leaf.nodes, leaf.qpts, interp,
+                                           derivative, qref, weights, packed));
   }
   else
   {
@@ -590,7 +603,8 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   // the real leaf, or the active subset of it. Both leaves share the basis, so the node
   // count matches, and the cloned orientation maps coincide with the real leaf's on the
   // subset elements because both restrictions derive from the same space's element list.
-  ClonePackedRestriction(ceed, imag, size, &restriction.value);
+  ClonePackedRestriction(ceed, imag.active.restriction.value, imag.elements, imag.nodes,
+                         size, &restriction.value);
   ClonePackedBasis(ceed, real, &basis.value);
   if (subset.data)
   {
@@ -609,8 +623,8 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   PalaceCeedCall(ceed,
                  CeedQFunctionAddInput(qf.value, "qr", real.curl ? 18 : 9, CEED_EVAL_NONE));
   PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "qi", 9, CEED_EVAL_NONE));
-  PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "u", 6, CEED_EVAL_INTERP));
-  PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf.value, "v", 6, CEED_EVAL_INTERP));
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "u", 6, real.mode));
+  PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf.value, "v", 6, real.mode));
   if (real.curl)
   {
     PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "curl_u", 6, CEED_EVAL_CURL));
@@ -636,12 +650,71 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   packed.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
-// Reproduce a real leaf's action over the elements outside the subset its pair was packed
-// over, so that the two together cover each of its elements exactly once. The leaf's own
-// QFunction, field names, bases and QData vector are reused unchanged; only the element
-// restrictions are replaced by those of the complement subset.
+// Pack a leaf that has no partner in the other part: a real leaf acts identically on
+// [Re(x) | Im(x)], an imaginary (mass) leaf maps them to [-Im | Re] parts of i A x. The
+// leaf's QData vector is reused, either over all of its elements or over a subset of them
+// given by an element restriction and the matching QData positions.
+void AddPackedSingle(Ceed ceed, const PackedLeaf &leaf, bool imag, int size,
+                     CeedElemRestriction subset_restriction, CeedInt subset_elements,
+                     CeedElemRestriction subset_qdata, Operator &packed)
+{
+  ScopedRestriction restriction;
+  ScopedBasis basis;
+  ScopedQFunction qf;
+  ScopedOperator op;
+  MFEM_ASSERT(!imag || !leaf.curl, "Imaginary curl leaves are not packed!");
+  ClonePackedRestriction(
+      ceed, subset_restriction ? subset_restriction : leaf.active.restriction.value,
+      subset_restriction ? subset_elements : leaf.elements, leaf.nodes, size,
+      &restriction.value);
+  ClonePackedBasis(ceed, leaf, &basis.value);
+  if (imag)
+  {
+    PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                             ceed, 1, f_apply_imag_3,
+                             PalaceQFunctionRelativePath(f_apply_imag_3_loc), &qf.value));
+  }
+  else
+  {
+    PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                             ceed, 1, leaf.curl ? f_apply_real_33 : f_apply_real_3,
+                             leaf.curl ? PalaceQFunctionRelativePath(f_apply_real_33_loc)
+                                       : PalaceQFunctionRelativePath(f_apply_real_3_loc),
+                             &qf.value));
+  }
+  PalaceCeedCall(ceed,
+                 CeedQFunctionAddInput(qf.value, "q", leaf.curl ? 18 : 9, CEED_EVAL_NONE));
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "u", 6, leaf.mode));
+  PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf.value, "v", 6, leaf.mode));
+  if (leaf.curl)
+  {
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "curl_u", 6, CEED_EVAL_CURL));
+    PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf.value, "curl_v", 6, CEED_EVAL_CURL));
+  }
+  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, qf.value, CEED_QFUNCTION_NONE,
+                                          CEED_QFUNCTION_NONE, &op.value));
+  PalaceCeedCall(
+      ceed, CeedOperatorSetField(op.value, "q",
+                                 subset_qdata ? subset_qdata : leaf.qdata.restriction.value,
+                                 CEED_BASIS_NONE, leaf.qdata.vector.value));
+  for (const auto *field : {"u", "v", "curl_u", "curl_v"})
+  {
+    if (leaf.curl || field[0] != 'c')
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(op.value, field, restriction.value,
+                                                basis.value, CEED_VECTOR_ACTIVE));
+    }
+  }
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
+  packed.AddSubOperator(std::exchange(op.value, nullptr));
+}
+
+// Pack a real leaf's action over the elements outside the subset its pair was packed over,
+// so that the two together cover each of its elements exactly once. The leaf's bases and
+// QData vector are reused; only the element restrictions are those of the complement.
 void AddPackedComplement(Ceed ceed, const FiniteElementSpace &fespace,
-                         const PackedSubset &subset, CeedOperator leaf, Operator &remainder)
+                         const PackedSubset &subset, const PackedLeaf &leaf, int size,
+                         Operator &packed)
 {
   // Derive the complement only for this CPU packing path rather than storing it on every
   // mesh and finite element space.
@@ -664,35 +737,11 @@ void AddPackedComplement(Ceed ceed, const FiniteElementSpace &fespace,
   MFEM_ASSERT(!positions.empty(), "Empty packed-operator complement!");
 
   ScopedRestriction restriction, qdata;
-  ScopedQFunction qf;
-  ScopedOperator op;
   restriction.value =
       FiniteElementSpace::BuildCeedElemRestriction(fespace, ceed, subset.geom, elements);
-  CeedInt ni, no;
-  CeedOperatorField *inputs, *outputs;
-  PalaceCeedCall(ceed, CeedOperatorGetQFunction(leaf, &qf.value));
-  PalaceCeedCall(ceed, CeedOperatorGetFields(leaf, &ni, &inputs, &no, &outputs));
-  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, qf.value, CEED_QFUNCTION_NONE,
-                                          CEED_QFUNCTION_NONE, &op.value));
-  // InspectPackedLeaf validated the field layout: the QData is the first input, and every
-  // other field is active on the leaf's single element restriction and basis.
-  for (CeedInt j = 0; j < ni + no; j++)
-  {
-    auto op_field = j < ni ? inputs[j] : outputs[j - ni];
-    const char *name;
-    PackedField field;
-    field.Read(ceed, op_field);
-    PalaceCeedCall(ceed, CeedOperatorFieldGetName(op_field, &name));
-    if (j == 0)
-    {
-      CreateSubsetQDataRestriction(ceed, field.restriction.value, positions, &qdata.value);
-    }
-    PalaceCeedCall(ceed, CeedOperatorSetField(op.value, name,
-                                              j == 0 ? qdata.value : restriction.value,
-                                              field.basis.value, field.vector.value));
-  }
-  PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
-  remainder.AddSubOperator(std::exchange(op.value, nullptr));
+  CreateSubsetQDataRestriction(ceed, leaf.qdata.restriction.value, positions, &qdata.value);
+  AddPackedSingle(ceed, leaf, false, size, restriction.value,
+                  static_cast<CeedInt>(positions.size()), qdata.value, packed);
 }
 
 // The base owns the finalized originals for diagonal, transpose, full assembly, and
@@ -781,18 +830,25 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   // lost by packing.
   const auto *real = dynamic_cast<const Operator *>(Ar.get());
   const auto *imag = dynamic_cast<const Operator *>(Ai.get());
-  if (!real || !imag || internal::NumCeeds() != 1 || utils::GetMaxThreads() > 1 ||
-      utils::InParallel() || mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ||
-      real->Size() != 1 || imag->Size() != 1 || real->HasDofMultiplicity() ||
-      imag->HasDofMultiplicity() || real->Width() != real->Height() ||
-      real->Width() != imag->Width() || real->Height() != imag->Height() ||
-      real->Width() <= 0 || real->Width() > std::numeric_limits<int>::max() / 2)
+  if ((!real && !imag) || (Ar && !real) || (Ai && !imag) || internal::NumCeeds() != 1 ||
+      utils::GetMaxThreads() > 1 || utils::InParallel() ||
+      mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
     return {};
   }
-  // Do not bypass an unknown subclass's application semantics.
-  if ((typeid(*real) != typeid(Operator) && typeid(*real) != typeid(SymmetricOperator)) ||
-      (typeid(*imag) != typeid(Operator) && typeid(*imag) != typeid(SymmetricOperator)))
+  const auto *first = real ? real : imag;
+  for (const auto *part : {real, imag})
+  {
+    // Do not bypass an unknown subclass's application semantics.
+    if (part &&
+        (part->Size() != 1 || part->HasDofMultiplicity() ||
+         part->Width() != part->Height() || part->Width() != first->Width() ||
+         (typeid(*part) != typeid(Operator) && typeid(*part) != typeid(SymmetricOperator))))
+    {
+      return {};
+    }
+  }
+  if (first->Width() <= 0 || first->Width() > std::numeric_limits<int>::max() / 2)
   {
     return {};
   }
@@ -802,22 +858,26 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
   PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
   if (mem != CEED_MEM_HOST || std::strncmp(resource, "/cpu/", 5) != 0 ||
-      !SameContext(ceed, CeedOperatorReturnCeed((*real)[0])) ||
-      !SameContext(ceed, CeedOperatorReturnCeed((*imag)[0])))
+      (real && !SameContext(ceed, CeedOperatorReturnCeed((*real)[0]))) ||
+      (imag && !SameContext(ceed, CeedOperatorReturnCeed((*imag)[0]))))
   {
     return {};
   }
-  const int size = real->Width();
+  const int size = first->Width();
   // Pair only direct children of Palace's composites. Keep unmatched nested
   // composites intact in the remainder rather than flattening them, preserving
   // their action and libCEED's composite size limits.
-  CeedInt count[2];
-  CeedOperator *children[2];
+  CeedInt count[2] = {0, 0};
+  CeedOperator *children[2] = {nullptr, nullptr};
   for (int part = 0; part < 2; part++)
   {
-    auto op = part == 0 ? (*real)[0] : (*imag)[0];
-    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op, &count[part]));
-    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op, &children[part]));
+    const auto *part_op = part == 0 ? real : imag;
+    if (part_op)
+    {
+      auto op = (*part_op)[0];
+      PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op, &count[part]));
+      PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op, &children[part]));
+    }
   }
   std::vector<std::unique_ptr<PackedLeaf>> fields[2];
   std::vector<bool> matched[2];
@@ -833,7 +893,7 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   // Requiring both identities ties each pair to the same quadrature, element ordering,
   // and orientation maps. Separately constructed equivalents remain unmatched.
   std::unique_ptr<Operator> packed;
-  std::vector<std::pair<CeedOperator, PackedSubset>> complements;
+  std::vector<std::pair<std::size_t, PackedSubset>> complements;
   for (std::size_t r = 0; r < fields[0].size(); r++)
   {
     if (!fields[0][r])
@@ -867,10 +927,34 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
       AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, subset, *packed);
       if (subset.data)
       {
-        complements.emplace_back(children[0][r], subset);
+        complements.emplace_back(r, subset);
       }
       matched[0][r] = matched[1][i] = true;
       break;
+    }
+  }
+  // A real leaf packed over a subset still owes the elements that subset leaves out, and
+  // recognized leaves without a partner act on both parts of x on their own. Imaginary
+  // curl leaves stay in the remainder, like for pairing.
+  for (const auto &[r, subset] : complements)
+  {
+    AddPackedComplement(ceed, fespace, subset, *fields[0][r], size, *packed);
+  }
+  for (int part = 0; part < 2; part++)
+  {
+    for (std::size_t j = 0; j < fields[part].size(); j++)
+    {
+      if (matched[part][j] || !fields[part][j] || (part == 1 && fields[part][j]->curl))
+      {
+        continue;
+      }
+      if (!packed)
+      {
+        packed = std::make_unique<Operator>(2 * size, 2 * size);
+      }
+      AddPackedSingle(ceed, *fields[part][j], part == 1, size, nullptr, 0, nullptr,
+                      *packed);
+      matched[part][j] = true;
     }
   }
   if (!packed)
@@ -896,18 +980,6 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
         CeedOperator copy = nullptr;
         PalaceCeedCall(ceed, CeedOperatorReferenceCopy(children[part][j], &copy));
         remainder->AddSubOperator(copy);
-      }
-    }
-    if (part == 0)
-    {
-      // A real leaf packed over a subset still owes the elements that subset leaves out.
-      for (const auto &[leaf, subset] : complements)
-      {
-        if (!remainder)
-        {
-          remainder = std::make_unique<Operator>(size, size);
-        }
-        AddPackedComplement(ceed, fespace, subset, leaf, *remainder);
       }
     }
     if (remainder)
