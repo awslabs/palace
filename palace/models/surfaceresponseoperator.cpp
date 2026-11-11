@@ -38550,4 +38550,19 @@ double SurfaceResponseOperator::GetPatchWeight() const
   return weight;
 }
 
+std::map<int, double>
+MaxwellPatchMaxLoopResiduals(const SurfaceResponseOperator::MaxwellResponse &response)
+{
+  std::map<int, double> by_patch;
+  for (const auto &loop : response.path_loop_residuals)
+  {
+    if (loop.kind == 0)
+    {
+      auto &value = by_patch[loop.patch];
+      value = std::max(value, loop.residual);
+    }
+  }
+  return by_patch;
+}
+
 }  // namespace palace

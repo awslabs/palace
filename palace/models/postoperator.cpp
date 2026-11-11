@@ -3137,19 +3137,6 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
                          ? excitation
                          : static_cast<int>(std::lround(output_index));
   const char *index_label = solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m";
-  auto MaxLoopResidual = [](const SurfaceResponseOperator::MaxwellResponse &response)
-  {
-    std::map<int, double> by_patch;
-    for (const auto &loop : response.path_loop_residuals)
-    {
-      if (loop.kind == 0)
-      {
-        auto &value = by_patch[loop.patch];
-        value = std::max(value, loop.residual);
-      }
-    }
-    return by_patch;
-  };
   if (!surface_response_patch_energy)
   {
     surface_response_patch_energy =
@@ -3207,15 +3194,18 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
   }
   {
     auto &table = surface_response_patch_energy->table;
+    // OI-PATCH-ENERGY-CSV-QUADRATIC-ROOT-WRITER (decision 1544): the per-patch max loop
+    // residuals come built once per response (ForEachMaxwellPatchEnergyRow); they were
+    // rebuilt over all of the response's loop records for every row (rows x loops).
     auto Append =
         [&](int evaluation, const SurfaceResponseOperator::MaxwellResponse &response,
+            const std::map<int, double> &max_loops,
             const SurfaceResponseOperator::PatchContribution &data, bool fixed_flux)
     {
       const auto assignment = assignments.find(data.patch);
       MFEM_VERIFY(assignment != assignments.end(),
                   "Per-patch Maxwell response energy of an unknown patch " << data.patch + 1
                                                                            << "!");
-      const auto max_loops = MaxLoopResidual(response);
       table["source"] << source;
       table["evaluation"] << evaluation;
       table["patch"] << data.patch + 1;
@@ -3288,21 +3278,9 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       table["loop_fallback"] << share->fallback;
       table["loop_weight"] << units.Dimensionalize<VT::ENERGY>(share->detector_energy);
     };
-    if (result.has_postprocessed)
-    {
-      for (const auto &contribution : result.confidence.patch_contributions)
-      {
-        Append(0, result.confidence, contribution, false);
-        Append(1, result.confidence, contribution, true);
-      }
-    }
-    if (result.has_self_consistent)
-    {
-      for (const auto &contribution : result.self_consistent_confidence.patch_contributions)
-      {
-        Append(2, result.self_consistent_confidence, contribution, false);
-      }
-    }
+    ForEachMaxwellPatchEnergyRow(result.confidence, result.has_postprocessed,
+                                 result.self_consistent_confidence,
+                                 result.has_self_consistent, Append);
     surface_response_patch_energy->AppendRowsAndClear();
   }
   if (result.has_postprocessed && !result.confidence.spatial_traces.empty())

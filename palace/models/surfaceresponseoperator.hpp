@@ -3101,6 +3101,42 @@ MaxwellLineCoverage ResolveMaxwellLineCoverage(
     const std::vector<double> &in_face_diameters = {},
     MaxwellLineUncovered *uncovered = nullptr);
 
+// OI-PATCH-ENERGY-CSV-QUADRATIC-ROOT-WRITER (decision 1544): the per-patch maximum of a
+// Maxwell response's kind-0 path loop residuals (the patch-energy CSV's
+// max_loop_residual column; a patch without a record is absent).
+std::map<int, double>
+MaxwellPatchMaxLoopResiduals(const SurfaceResponseOperator::MaxwellResponse &response);
+
+// The rows of the Maxwell patch-energy CSV in their order: evaluations 0 / 1 (fixed trace /
+// fixed flux) per patch of the confidence response, then evaluation 2 per patch of the
+// self-consistent one; `append(evaluation, response, max_loops, contribution, fixed_flux)`
+// per row, with the response's max loop residuals built ONCE per response (decision 1544:
+// a per-row rebuild was rows x loops on the root and stalled the chip-scale smoke).
+template <typename AppendRow>
+void ForEachMaxwellPatchEnergyRow(
+    const SurfaceResponseOperator::MaxwellResponse &confidence, bool has_postprocessed,
+    const SurfaceResponseOperator::MaxwellResponse &self_consistent_confidence,
+    bool has_self_consistent, AppendRow &&append)
+{
+  if (has_postprocessed)
+  {
+    const auto max_loops = MaxwellPatchMaxLoopResiduals(confidence);
+    for (const auto &contribution : confidence.patch_contributions)
+    {
+      append(0, confidence, max_loops, contribution, false);
+      append(1, confidence, max_loops, contribution, true);
+    }
+  }
+  if (has_self_consistent)
+  {
+    const auto max_loops = MaxwellPatchMaxLoopResiduals(self_consistent_confidence);
+    for (const auto &contribution : self_consistent_confidence.patch_contributions)
+    {
+      append(2, self_consistent_confidence, max_loops, contribution, false);
+    }
+  }
+}
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP

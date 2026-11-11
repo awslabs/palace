@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -14774,6 +14775,73 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CompareTable("surface-Q-corrected.csv");
   CompareTable("terminal-C-corrected.csv");
 #endif
+}
+
+// OI-PATCH-ENERGY-CSV-QUADRATIC-ROOT-WRITER (decision 1544): the Maxwell patch-energy
+// rows build a response's max loop residuals ONCE. A timing guard at 2e5 patches x 2e5
+// loop records: the former per-row rebuild (rows x loops; ~0.01 s per rebuild at 1e5
+// records measured on the cluster host) would take thousands of seconds for these 6e5
+// rows; the bound is 10 s.
+TEST_CASE("Maxwell patch-energy rows build the max loop residuals once per response",
+          "[surfaceresponseoperator][patchenergyrows][Serial]")
+{
+  using Response = SurfaceResponseOperator::MaxwellResponse;
+  {
+    Response small;
+    small.path_loop_residuals = {{3, 0, 0, 0, 0.5, 1.0},
+                                 {3, 0, 1, 0, 0.7, 1.0},
+                                 {3, 0, 2, 1, 0.9, 1.0},
+                                 {5, 0, 0, 1, 0.4, 1.0}};
+    const auto max_loops = MaxwellPatchMaxLoopResiduals(small);
+    REQUIRE(max_loops.size() == 1);
+    CHECK(max_loops.at(3) == 0.7);
+  }
+  constexpr int n = 200000;
+  Response confidence, self_consistent;
+  for (Response *response : {&confidence, &self_consistent})
+  {
+    response->patch_contributions.resize(n);
+    response->path_loop_residuals.resize(n);
+    for (int i = 0; i < n; i++)
+    {
+      response->patch_contributions[i].patch = i;
+      response->path_loop_residuals[i].patch = i;
+      response->path_loop_residuals[i].kind = i % 7 == 0 ? 1 : 0;
+      response->path_loop_residuals[i].residual = 1.0e-3 * (i % 97);
+    }
+  }
+  std::size_t rows = 0, missing = 0, wrong = 0;
+  int previous = -1;
+  const auto start = std::chrono::steady_clock::now();
+  ForEachMaxwellPatchEnergyRow(
+      confidence, true, self_consistent, true,
+      [&](int evaluation, const Response &response, const std::map<int, double> &max_loops,
+          const SurfaceResponseOperator::PatchContribution &data, bool fixed_flux)
+      {
+        rows++;
+        wrong += (evaluation < previous || (evaluation == 1) != fixed_flux ||
+                  (evaluation == 2) != (&response == &self_consistent))
+                     ? 1
+                     : 0;
+        previous = evaluation == 1 ? 0 : evaluation;
+        const auto loop = max_loops.find(data.patch);
+        if (data.patch % 7 == 0)
+        {
+          missing += loop == max_loops.end() ? 0 : 1;
+        }
+        else
+        {
+          missing += loop == max_loops.end() ? 1 : 0;
+          wrong += loop != max_loops.end() && loop->second != 1.0e-3 * (data.patch % 97);
+        }
+      });
+  const double wall =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  INFO("wall " << wall << " s for " << rows << " rows");
+  CHECK(rows == 3 * static_cast<std::size_t>(n));
+  CHECK(missing == 0);
+  CHECK(wrong == 0);
+  CHECK(wall < 10.0);
 }
 
 }  // namespace palace
