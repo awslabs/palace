@@ -57,7 +57,7 @@ public:
                          int cheby_smooth_it, int cheby_order, double cheby_sf_max,
                          double cheby_sf_min, bool cheby_4th_kind);
 
-  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
+  void SetPerfTallies(const std::string &prefix) override;
 
   void SetOperator(const OperType &op) override
   {

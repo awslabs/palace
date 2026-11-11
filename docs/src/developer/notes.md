@@ -452,7 +452,9 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     `VERIFICATION` for the opt-in verification checks), `Durations` (average over
     processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
     measurements which do not interrupt the timer rows and may overlap each other; each
-    names the row it is measured within as `Parent`, and must never be added to the rows.
+    names the row it is measured within as `Parent` (the row active when it is measured,
+    `TOTAL` if that differs between its measurements or processes), includes the time of
+    the rows nested in its scopes, and must never be added to the rows.
     As a safeguard, a `perf::ScopedTally` opened while a scope of the same tally is open on
     the same thread is not counted: the outermost scope counts the time once, and the tally
     reports such scopes as `Nested`.
@@ -529,7 +531,10 @@ namespace) or those of the Fortran bindings of MPI (used by MUMPS and ARPACK).
 
 Solver roles (`perf::ScopedRole`, `BaseKspSolver` role) keep the statistics of nested
 solvers apart from the main linear solver (`Main`, which is also the mode solver of a
-boundary mode problem; wave port mode solvers are `ModeEigen`). Tallies use host clocks, so on GPU builds they
+boundary mode problem; wave port mode solvers are `ModeEigen`, the projections of lumped
+port modes `PortProjection`). Solvers and smoothers take the role active at their
+construction. Sub-roles keep the blocks of a block preconditioner apart, such as `Main/ND`
+and `Main/H1` for the multigrid preconditioner of a boundary mode problem. Tallies use host clocks, so on GPU builds they
 measure kernel launches unless the measured region synchronizes.
 
 When comparing with earlier versions: the former "Coarse Solve" row is now "Coarse Setup" plus

@@ -36,9 +36,9 @@ bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
   return valid;
 }
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, int tally)
 {
-  perf::ScopedTally t(perf::LambdaMaxTally());
+  perf::ScopedTally t(tally);
   // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
   // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
   // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
@@ -55,9 +55,10 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
   return linalg::SpectralNorm(comm, S, true);
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                    int tally)
 {
-  perf::ScopedTally t(perf::LambdaMaxTally());
+  perf::ScopedTally t(tally);
   if (A.IsReal())
   {
     MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
@@ -210,7 +211,7 @@ template <OperatorType OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
                                                double sf_max)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
-    lambda_max(0.0), sf_max(sf_max)
+    lambda_max(0.0), sf_max(sf_max), perf_lambda(perf::LambdaMaxTally())
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
@@ -228,7 +229,7 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
-  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, perf_lambda);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
@@ -279,7 +280,7 @@ ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int 
                                                              int poly_order, double sf_max,
                                                              double sf_min)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
-    theta(0.0), sf_max(sf_max), sf_min(sf_min)
+    theta(0.0), sf_max(sf_max), sf_min(sf_min), perf_lambda(perf::LambdaMaxTally())
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
@@ -301,7 +302,7 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, perf_lambda);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;

@@ -91,7 +91,7 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override;
 
-  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
+  void SetPerfTallies(const std::string &prefix) override;
 
   void EnableTimer();
 };

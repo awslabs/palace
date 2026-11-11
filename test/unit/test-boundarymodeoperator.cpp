@@ -821,6 +821,27 @@ TEST_CASE("ModeEigenSolver solver statistics in the performance report",
   CHECK(Value("EigenSolver/ModeEigen/Solves") == -1.0);
   CHECK(Value("Verification/CoarseSolve/Main/Checks") >= 1.0);
 
+  // The blocks of the multigrid preconditioner have sub-roles of their own: their coarse
+  // solvers and smoothers are reported apart, including the eigenvalue estimates of the
+  // smoothers, which run outside the scope of the role.
+  BlockTimer::Reset();
+  REQUIRE(SolveRectangularModesMultigrid(2, [](IoData &) {}).size() >= 1);
+  BlockTimer::Finalize(Mpi::World());
+  CHECK(Value("LinearSolver/TotalSolves") > 0.0);
+  CHECK(Value("LinearSolver/Main/ND/Coarse/Setups") >= 1.0);
+  CHECK(Value("LinearSolver/Main/H1/Coarse/Setups") >= 1.0);
+  CHECK(Value("LinearSolver/Main/Coarse/Setups") == -1.0);
+  {
+    nlohmann::json meta = nlohmann::json::object();
+    perf::WriteJson(meta);
+    CHECK(meta["LinearSolver"]["Main"]["ND"]["Chebyshev"].is_array());
+    CHECK(meta["LinearSolver"]["Main"]["H1"]["Chebyshev"].is_array());
+    const auto &tallies = meta["ElapsedTime"]["Tallies"];
+    CHECK(tallies.contains("Main/ND/LambdaMax"));
+    CHECK(tallies.contains("Main/H1/LambdaMax"));
+    CHECK(!tallies.contains("Main/LambdaMax"));
+  }
+
   BlockTimer::Reset();
   REQUIRE(SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, [](IoData &) {})
               .num_converged >= 1);

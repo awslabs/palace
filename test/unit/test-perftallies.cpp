@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -75,11 +76,12 @@ TEST_CASE("PerfTallies Reduce", "[perfstats][Serial][Parallel]")
   Mpi::GlobalMax(3, buf, Mpi::World());
   CHECK(t.count == count + 1);
   CHECK(c.value == bytes + 3 * sizeof(double));
-  CHECK(t.parent == Timer::TOTAL);
+  CHECK(t.fixed_parent == Timer::TOTAL);
 }
 
 TEST_CASE("PerfTallies Krylov", "[perfstats][Serial][Parallel]")
 {
+  BlockTimer::Reset();
   SpdTestOperator A;
   Vector b(2), x(2);
   b[0] = 1.0;
@@ -89,18 +91,21 @@ TEST_CASE("PerfTallies Krylov", "[perfstats][Serial][Parallel]")
   cg.SetOperator(A);
   cg.SetRelTol(1.0e-12);
   cg.SetMaxIter(10);
-  cg.SetPerfTallies("TestCG/Krylov", Timer::KSP);
+  cg.SetPerfTallies("TestCG/Krylov");
   x = 0.0;
-  cg.Mult(b, x);
+  {
+    BlockTimer bt(Timer::KSP);
+    cg.Mult(b, x);
+  }
   CHECK(cg.GetNumIterations() > 0);
   CHECK(Tally("TestCG/Krylov/ApplyBA").count >= cg.GetNumIterations());
-  CHECK(Tally("TestCG/Krylov/ApplyBA").parent == Timer::KSP);
+  CHECK(Tally("TestCG/Krylov/ApplyBA").row == Timer::KSP);
 
   GmresSolver<Operator> gmres(Mpi::World(), 0);
   gmres.SetOperator(A);
   gmres.SetRelTol(1.0e-12);
   gmres.SetMaxIter(10);
-  gmres.SetPerfTallies("TestGMRES/Krylov", Timer::KSP);
+  gmres.SetPerfTallies("TestGMRES/Krylov");
   x = 0.0;
   gmres.Mult(b, x);
   const auto &apply = Tally("TestGMRES/Krylov/ApplyBA");
@@ -108,13 +113,14 @@ TEST_CASE("PerfTallies Krylov", "[perfstats][Serial][Parallel]")
   CHECK(apply.count == gmres.GetNumIterations());
   CHECK(orth.count == apply.count);
   CHECK(orth.time >= 0.0);
+  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfTallies Nested Same Tally", "[perfstats][Serial]")
 {
   BlockTimer::Reset();
   const int id = perf::LambdaMaxTally();
-  const int outer = perf::RegisterTally("Test/Outer", Timer::KSP_SETUP);
+  const int outer = perf::RegisterTally("Test/Outer");
   const auto &t = perf::detail::registry.tallies[id];
   const auto t0 = Timer::Now();
   RealEstimate(id);
@@ -143,13 +149,26 @@ TEST_CASE("PerfTallies Nested Same Tally", "[perfstats][Serial]")
 
 TEST_CASE("PerfTallies Chebyshev", "[perfstats][Serial][Parallel]")
 {
+  BlockTimer::Reset();
   SpdTestOperator A;
   constexpr int order = 3;
-  ChebyshevSmoother<Operator> cheby(Mpi::World(), 1, order, 1.0);
-  cheby.SetOperator(A);
-  cheby.SetPerfTallies("TestCheby", Timer::KSP_PRECONDITIONER);
+  std::unique_ptr<ChebyshevSmoother<Operator>> smoother;
+  {
+    // The eigenvalue estimates are keyed by the role at construction.
+    perf::ScopedRole role("TestCheby");
+    smoother = std::make_unique<ChebyshevSmoother<Operator>>(Mpi::World(), 1, order, 1.0);
+  }
+  auto &cheby = *smoother;
+  {
+    BlockTimer bt(Timer::KSP_SETUP);
+    cheby.SetOperator(A);
+  }
+  CHECK(Tally("TestCheby/LambdaMax").count == 1);
+  CHECK(Tally("TestCheby/LambdaMax").row == Timer::KSP_SETUP);
+  cheby.SetPerfTallies("TestCheby");
   Vector b(2), x(2);
   b = 1.0;
+  BlockTimer bt(Timer::KSP_PRECONDITIONER);
   cheby.SetInitialGuess(false);
   cheby.Mult(b, x);
   const auto &t = Tally("TestCheby/OpApply");
@@ -157,7 +176,8 @@ TEST_CASE("PerfTallies Chebyshev", "[perfstats][Serial][Parallel]")
   cheby.SetInitialGuess(true);
   cheby.Mult(b, x);
   CHECK(t.count == 2 * order - 1);
-  CHECK(t.parent == Timer::KSP_PRECONDITIONER);
+  CHECK(t.row == Timer::KSP_PRECONDITIONER);
+  BlockTimer::Reset();
 }
 
 }  // namespace palace

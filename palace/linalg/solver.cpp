@@ -171,7 +171,9 @@ void MfemWrapperSolver<ComplexOperator>::Apply(const ComplexVector &x, ComplexVe
 template <>
 void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
 {
-  const auto idx = (setup_pending && time_setup) ? Timer::KSP_COARSE_SETUP : apply_timer;
+  // Solvers which factorize in SetOperator time that as the setup instead.
+  const auto idx =
+      (setup_pending && time_setup && !eager_setup) ? Timer::KSP_COARSE_SETUP : apply_timer;
   BlockTimer bt(idx, idx != Timer::NUM_TIMINGS);
   setup_pending = false;
   if (perf_setups >= 0)
@@ -204,7 +206,9 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
-  const auto idx = (setup_pending && time_setup) ? Timer::KSP_COARSE_SETUP : apply_timer;
+  // Solvers which factorize in SetOperator time that as the setup instead.
+  const auto idx =
+      (setup_pending && time_setup && !eager_setup) ? Timer::KSP_COARSE_SETUP : apply_timer;
   BlockTimer bt(idx, idx != Timer::NUM_TIMINGS);
   setup_pending = false;
   if (perf_setups >= 0)
@@ -279,7 +283,6 @@ void MfemWrapperSolver<OperType>::EnableTimer(bool setup, Timer::Index apply)
 {
   time_setup = setup;
   apply_timer = apply;
-  const auto role = perf::CurrentRole();
   perf_setups = perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/Setups"));
   perf_refact =
       perf::RegisterCounter(perf::LinearSolverPath(role, "Coarse/Refactorizations"));
@@ -331,7 +334,7 @@ void MfemWrapperSolver<OperType>::EndSetup(const mfem::HypreParMatrix *Ac,
   }
   // Only the main solver's coarse solve is checked: nested solvers (e.g. wave port mode
   // solves) may run on a subset of the matrix communicator.
-  const bool check = perf::Verification() && role == "Main";
+  const bool check = perf::Verification() && perf::IsMainRole(role);
   A_check = check ? Ac : nullptr;
   op_check = (check && direct) ? &op : nullptr;
 }
@@ -378,8 +381,7 @@ void MfemWrapperSolver<OperType>::CheckForwardError() const
 {
   // Charged to the verification row and its own tally only.
   BlockTimer bt(Timer::VERIFICATION);
-  perf::ScopedTally t(
-      perf::RegisterTally(role + "/Verification/CoarseForwardError", Timer::VERIFICATION));
+  perf::ScopedTally t(perf::RegisterTally(role + "/Verification/CoarseForwardError"));
   const double err = [this]()
   {
     perf::ScopedPause pause;

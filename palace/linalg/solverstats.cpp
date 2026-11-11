@@ -104,26 +104,9 @@ void RecordEigenSolve(std::string_view role, int outer_its, int num_conv, int nu
   Add(prefix + "Incomplete", (num_conv < num_req) ? 1 : 0);
 }
 
-Timer::Index RoleParent(std::string_view role)
-{
-  if (role == "DivFree")
-  {
-    return Timer::DIV_FREE;
-  }
-  if (role == "Estimator")
-  {
-    return Timer::ESTIMATION;
-  }
-  return Timer::KSP;
-}
-
 int LambdaMaxTally()
 {
-  const auto role = CurrentRole();
-  const auto parent = (role == "Estimator") ? Timer::CONSTRUCT_ESTIMATOR
-                      : (role == "DivFree") ? Timer::DIV_FREE
-                                            : Timer::KSP_SETUP;
-  return RegisterTally(fmt::format("{}/LambdaMax", role), parent);
+  return RegisterTally(fmt::format("{}/LambdaMax", CurrentRole()));
 }
 
 }  // namespace palace::perf

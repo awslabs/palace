@@ -662,23 +662,31 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
     }
   };
 
-  // ND block: p-multigrid with Hiptmair distributive relaxation smoothing.
+  // ND block: p-multigrid with Hiptmair distributive relaxation smoothing. Each block has
+  // its own sub-role, for the counters of its coarse solver and smoothers.
+  std::unique_ptr<GeometricMultigridSolver<ComplexOperator>> nd_gmg, h1_gmg;
   const auto nd_P = bmo->GetNDSpaceHierarchy().GetProlongationOperators();
   const auto nd_G =
       bmo->GetNDSpaceHierarchy().GetDiscreteInterpolators(bmo->GetH1AuxSpaceHierarchy());
-  auto nd_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
-      comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
-      linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
-      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
-  nd_gmg->EnableTimer();
+  {
+    perf::ScopedRole nd_role(perf_role + "/ND");
+    nd_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
+        comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
+        linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
+        linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+    nd_gmg->EnableTimer();
+  }
 
   // H1 block: p-multigrid with Chebyshev smoothing.
   const auto h1_P = bmo->GetH1SpaceHierarchy().GetProlongationOperators();
-  auto h1_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
-      comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
-      linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
-      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
-  h1_gmg->EnableTimer();
+  {
+    perf::ScopedRole h1_role(perf_role + "/H1");
+    h1_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
+        comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
+        linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
+        linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+    h1_gmg->EnableTimer();
+  }
 
   // Combine into block-diagonal preconditioner.
   auto block_pc = std::make_unique<BlockDiagonalPreconditioner<ComplexOperator>>(

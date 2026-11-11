@@ -35,7 +35,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
 {
   BlockTimer bt(Timer::IO);
   {
-    perf::ScopedTally t(perf::RegisterTally("Wait/IO/SaveIteration", Timer::IO));
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/SaveIteration"));
     Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   }
   auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);

@@ -127,8 +127,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Main excitation and frequency loop. Per-frequency assembly is reported as a tally of
   // the Operator Construction row.
-  const int assembly_tally =
-      perf::RegisterTally("Driven/FrequencyAssembly", Timer::CONSTRUCT);
+  const int assembly_tally = perf::RegisterTally("Driven/FrequencyAssembly");
   auto t0 = Timer::Now();
   std::size_t excitation_counter = 0;
   const std::size_t excitation_restart_counter =

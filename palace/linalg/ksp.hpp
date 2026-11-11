@@ -75,9 +75,11 @@ public:
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
-  // An empty role means the role active at construction (perf::CurrentRole()).
+  // The constructors above configure the solver of the role active at construction
+  // (perf::CurrentRole(), "Main" by default). Other solvers name their role, under which
+  // the performance report keeps their statistics.
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
-                std::unique_ptr<Solver<OperType>> &&pc, std::string_view role = {});
+                std::unique_ptr<Solver<OperType>> &&pc, std::string_view role);
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }

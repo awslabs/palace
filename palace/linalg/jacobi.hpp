@@ -6,6 +6,7 @@
 
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
+#include "linalg/solverstats.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -30,9 +31,13 @@ private:
   // Damping factor and scaling factor for maximum eigenvalue.
   double omega, sf_max;
 
+  // Performance tally id for the eigenvalue estimate (keyed by the role at construction).
+  int perf_lambda;
+
 public:
   JacobiSmoother(MPI_Comm comm, double omega = 1.0, double sf_max = 1.0)
-    : Solver<OperType>(), comm(comm), omega(omega), sf_max(sf_max)
+    : Solver<OperType>(), comm(comm), omega(omega), sf_max(sf_max),
+      perf_lambda((omega == 0.0) ? perf::LambdaMaxTally() : -1)
   {
   }
 

@@ -51,7 +51,11 @@ namespace detail
 struct TallyData
 {
   std::string name;
-  Timer::Index parent;
+  // Exclusive timer row the tally is measured within: fixed for phase tallies (TOTAL, and
+  // the row of each sub-tally), otherwise the row active at each measurement (-1 until
+  // measured, TOTAL once measured within several rows), this iteration and over all.
+  int fixed_parent = -1;
+  int row = -1, cum_row = -1;
   double time = 0.0, cum_time = 0.0;
   double wait = 0.0, cum_wait = 0.0;  // Part of time blocked in communication
   long count = 0, cum_count = 0;
@@ -80,6 +84,12 @@ struct Registry
 
 void AddPhaseTally(int id, double seconds, long count, double wait);
 
+// Row of a tally measured within rows a and b (-1: none): TOTAL if they differ.
+inline int MergeRow(int a, int b)
+{
+  return (a < 0 || a == b) ? b : ((b < 0) ? a : static_cast<int>(Timer::TOTAL));
+}
+
 inline Registry registry;
 
 // Seconds this thread has spent blocked in communication: in the MPI_Wait family (requests
@@ -93,14 +103,17 @@ inline thread_local std::vector<char> open_tallies;
 
 //
 // Inclusive tallies: stackless, they do not interrupt BlockTimer rows and may overlap each
-// other. Each carries the exclusive Timer row it is measured within (Parent). Reported in
-// palace.json under ElapsedTime/Tallies/<name>, with the time imbalance over ranks and,
-// when nonzero, the time blocked in communication within the tally (Wait) and the rest
-// (Work = time - Wait), each reduced over ranks.
+// other. Each reports the exclusive Timer row it is measured within (Parent): the row
+// active at each measurement (BlockTimer::Current(), when a ScopedTally closes), TOTAL if
+// it was measured within several rows or between top-level timers. Its time includes that
+// of the rows nested in its scopes. Reported in palace.json under
+// ElapsedTime/Tallies/<name>, with the time imbalance over ranks and, when nonzero, the
+// time blocked in communication within the tally (Wait) and the rest (Work = time - Wait),
+// each reduced over ranks.
 //
 
 // Register (or look up) a tally. Ids are stable for the lifetime of the process.
-int RegisterTally(std::string_view name, Timer::Index parent);
+int RegisterTally(std::string_view name);
 
 // A tally measured in any phase (Parent TOTAL), additionally split by the exclusive row
 // active at the time into "<name>/<ROW>" sub-tallies (Parent ROW). The sub-tallies are
@@ -128,6 +141,10 @@ inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
     if (t.phase_base != -1)
     {
       detail::AddPhaseTally(id, seconds, count, wait);
+    }
+    else if (t.fixed_parent < 0)
+    {
+      t.row = detail::MergeRow(t.row, BlockTimer::Current());
     }
   }
 }
@@ -295,10 +312,18 @@ inline void Set(std::string_view path, double v, Reduce reduce = Reduce::MAX,
 void SetInfo(std::string_view path, const nlohmann::json &value);
 
 //
-// Solver roles: the KSP solvers and the tallies they register are keyed by the role active
-// at their construction ("Main" if none).
+// Solver roles: the solvers and the tallies they register are keyed by the role active at
+// their construction ("Main" if none). A sub-role "<role>/<part>" keeps apart the parts
+// of one solver of a role (for example the blocks of a block preconditioner).
 //
 std::string_view CurrentRole();
+
+// Whether a role is the main solver's or one of its sub-roles: verification checks only
+// run for these, which run on all processes of the problem.
+inline bool IsMainRole(std::string_view role)
+{
+  return role == "Main" || role.starts_with("Main/");
+}
 
 class ScopedRole
 {

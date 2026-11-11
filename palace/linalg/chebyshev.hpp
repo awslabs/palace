@@ -6,6 +6,7 @@
 
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
+#include "linalg/solverstats.hpp"
 #include "linalg/vector.hpp"
 #include "utils/perfstats.hpp"
 
@@ -44,17 +45,18 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
-  // Performance tally id for the operator applications.
-  int perf_op = -1;
+  // Performance tally ids for the operator applications and for the eigenvalue estimates
+  // (keyed by the role at construction).
+  int perf_op = -1, perf_lambda;
 
 public:
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
 
-  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override
+  void SetPerfTallies(const std::string &prefix) override
   {
-    perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
+    perf_op = perf::RegisterTally(prefix + "/OpApply");
   }
   int GetOrder() const { return order; }
   double GetMaxEigenvalue() const { return lambda_max; }
@@ -118,8 +120,9 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
-  // Performance tally id for the operator applications.
-  int perf_op = -1;
+  // Performance tally ids for the operator applications and for the eigenvalue estimates
+  // (keyed by the role at construction).
+  int perf_op = -1, perf_lambda;
 
 public:
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
@@ -127,9 +130,9 @@ public:
 
   void SetOperator(const OperType &op) override;
 
-  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override
+  void SetPerfTallies(const std::string &prefix) override
   {
-    perf_op = perf::RegisterTally(prefix + "/OpApply", parent);
+    perf_op = perf::RegisterTally(prefix + "/OpApply");
   }
   int GetOrder() const { return order; }
   double GetMaxEigenvalue() const { return theta + delta; }

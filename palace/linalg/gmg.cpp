@@ -167,23 +167,18 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 }
 
 template <OperatorType OperType>
-void GeometricMultigridSolver<OperType>::SetPerfTallies(const std::string &prefix,
-                                                        Timer::Index parent)
+void GeometricMultigridSolver<OperType>::SetPerfTallies(const std::string &prefix)
 {
-  // The coarse solve of the timed multigrid is charged to its own exclusive row.
-  perf[0].pre = perf::RegisterTally(prefix + "/MG/Coarse",
-                                    (use_timer && parent == Timer::KSP_PRECONDITIONER)
-                                        ? Timer::KSP_COARSE_SOLVE
-                                        : parent);
+  perf[0].pre = perf::RegisterTally(prefix + "/MG/Coarse");
   for (std::size_t l = 1; l < B.size(); l++)
   {
     const auto lp = fmt::format("{}/MG/L{}/", prefix, l);
-    perf[l].pre = perf::RegisterTally(lp + "PreSmooth", parent);
-    perf[l].post = perf::RegisterTally(lp + "PostSmooth", parent);
-    perf[l].res = perf::RegisterTally(lp + "Residual", parent);
-    perf[l].restr = perf::RegisterTally(lp + "Restriction", parent);
-    perf[l].prol = perf::RegisterTally(lp + "Prolongation", parent);
-    B[l]->SetPerfTallies(lp + "Smoother", parent);
+    perf[l].pre = perf::RegisterTally(lp + "PreSmooth");
+    perf[l].post = perf::RegisterTally(lp + "PostSmooth");
+    perf[l].res = perf::RegisterTally(lp + "Residual");
+    perf[l].restr = perf::RegisterTally(lp + "Restriction");
+    perf[l].prol = perf::RegisterTally(lp + "Prolongation");
+    B[l]->SetPerfTallies(lp + "Smoother");
   }
 }
 

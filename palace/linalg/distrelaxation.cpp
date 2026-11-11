@@ -96,16 +96,15 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 }  // namespace
 
 template <OperatorType OperType>
-void DistRelaxationSmoother<OperType>::SetPerfTallies(const std::string &prefix,
-                                                      Timer::Index parent)
+void DistRelaxationSmoother<OperType>::SetPerfTallies(const std::string &prefix)
 {
-  perf_main = perf::RegisterTally(prefix + "/Main", parent);
-  perf_aux = perf::RegisterTally(prefix + "/Aux", parent);
-  perf_res = perf::RegisterTally(prefix + "/Residual", parent);
-  perf_gt = perf::RegisterTally(prefix + "/GT", parent);
-  perf_g = perf::RegisterTally(prefix + "/G", parent);
-  B->SetPerfTallies(prefix + "/Main", parent);
-  B_G->SetPerfTallies(prefix + "/Aux", parent);
+  perf_main = perf::RegisterTally(prefix + "/Main");
+  perf_aux = perf::RegisterTally(prefix + "/Aux");
+  perf_res = perf::RegisterTally(prefix + "/Residual");
+  perf_gt = perf::RegisterTally(prefix + "/GT");
+  perf_g = perf::RegisterTally(prefix + "/G");
+  B->SetPerfTallies(prefix + "/Main");
+  B_G->SetPerfTallies(prefix + "/Aux");
 }
 
 template <OperatorType OperType>

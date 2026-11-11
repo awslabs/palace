@@ -40,11 +40,10 @@ private:
 // iterations (restarts for Krylov-Schur and ARPACK), converged and requested eigenpairs.
 void RecordEigenSolve(std::string_view role, int outer_its, int num_conv, int num_req);
 
-// Inclusive tally for a smoother's largest eigenvalue estimate, keyed by the current role.
+// Inclusive tally for a smoother's largest eigenvalue estimates, keyed by the current role:
+// register it at the construction of the smoother, whose estimates may run outside the
+// role's scope.
 int LambdaMaxTally();
-
-// Exclusive timer row a nested solver role runs within (parent for its tallies).
-Timer::Index RoleParent(std::string_view role);
 
 }  // namespace palace::perf
 

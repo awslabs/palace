@@ -36,9 +36,9 @@ bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
   return valid;
 }
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, int tally)
 {
-  perf::ScopedTally t(perf::LambdaMaxTally());
+  perf::ScopedTally t(tally);
   // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
   // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
   // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
@@ -55,9 +55,10 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
   return linalg::SpectralNorm(comm, S, true);
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                    int tally)
 {
-  perf::ScopedTally t(perf::LambdaMaxTally());
+  perf::ScopedTally t(tally);
   if (A.IsReal())
   {
     MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
@@ -132,7 +133,7 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
   // damping factor.
   if (omega == 0.0)
   {
-    const auto lambda_max = GetLambdaMax(comm, op, dinv);
+    const auto lambda_max = GetLambdaMax(comm, op, dinv, perf_lambda);
     MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
                 "Encountered invalid maximum eigenvalue in Jacobi smoother!");
     const auto lambda_min = (sf_max - 1.0) * lambda_max;

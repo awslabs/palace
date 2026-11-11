@@ -96,7 +96,7 @@ public:
   // Set the preconditioner for the solver.
   void SetPreconditioner(const Solver<OperType> &pc) { B = &pc; }
 
-  void SetPerfTallies(const std::string &prefix, Timer::Index parent) override;
+  void SetPerfTallies(const std::string &prefix) override;
 
   // Returns if the previous solve converged or not.
   bool GetConverged() const { return converged && (rel_tol > 0.0 || abs_tol > 0.0); }

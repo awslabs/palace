@@ -21,6 +21,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
 
 using namespace palace;
 using namespace nlohmann;
@@ -336,9 +337,21 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // Assembly primary vector h_t x n = e_t / eta of port; since TEM this is purely
   // tangential. Field normalization in GetLumpedPortExcitationVectorPrimaryHt is such that
   // reference impedance is 1.0 in internal units, so that it is Z_0 in physical units.
+  // The L2 projections of the port mode are solves of their own role in the performance
+  // report, not main linear solves.
+  auto LocalCounter = [](const std::string &path)
+  {
+    const auto &reg = perf::detail::registry;
+    const auto it = reg.counter_ids.find(path);
+    return (it != reg.counter_ids.end()) ? reg.counters[it->second].value : 0.0;
+  };
+  const double main_solves = LocalCounter("LinearSolver/TotalSolves"),
+               projections = LocalCounter("LinearSolver/PortProjection/Solves");
   ComplexVector port_primary_ht_cn;
   port_primary_ht_cn.UseDevice(true);
   space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn);
+  CHECK(LocalCounter("LinearSolver/TotalSolves") == main_solves);
+  CHECK(LocalCounter("LinearSolver/PortProjection/Solves") == projections + 1.0);
   // As palace GridFunction: Undo restriction
   GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());
   port_primary_gf_ht_cn = 0.0;

@@ -219,7 +219,7 @@ bool Report(std::string_view message, std::string_view fallback)
   const bool collective = AllFailed();
   const double wait = Timer::Duration(Timer::Now() - t0).count();
   detail::comm_wait += wait;
-  AddTally(RegisterTally("Wait/FailureReport", BlockTimer::Current()), wait, 1, wait);
+  AddTally(RegisterTally("Wait/FailureReport"), wait, 1, wait);
   error["Collective"] = collective;
   if (collective)
   {

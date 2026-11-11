@@ -133,8 +133,7 @@ int AssemblyTally(AssemblyKind kind)
   {
     constexpr std::array<const char *, 3> kinds = {"Partial", "Full", "Parallel"};
     id = RegisterTally(
-        fmt::format("Assembly/{}/{}", kinds[static_cast<int>(kind)], Timer::names[idx]),
-        idx);
+        fmt::format("Assembly/{}/{}", kinds[static_cast<int>(kind)], Timer::names[idx]));
   }
   return id;
 }

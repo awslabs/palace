@@ -132,7 +132,7 @@ std::uint64_t Hash(std::uint64_t h, std::string_view s)
 
 std::string TallyKey(const detail::TallyData &t)
 {
-  return t.name + '\x1f' + std::to_string(static_cast<int>(t.parent));
+  return t.name;
 }
 
 std::string CounterKey(const detail::CounterData &c)
@@ -436,8 +436,10 @@ void Commit()
     t.cum_wait += t.wait;
     t.cum_count += t.count;
     t.cum_nested += t.nested;
+    t.cum_row = detail::MergeRow(t.cum_row, t.row);
     t.time = t.wait = 0.0;
     t.count = t.nested = 0;
+    t.row = -1;
   }
   for (auto &c : reg.counters)
   {
@@ -450,7 +452,10 @@ void Commit()
 
 }  // namespace
 
-int RegisterTally(std::string_view name, Timer::Index parent)
+namespace
+{
+
+int RegisterTally(std::string_view name, int fixed_parent)
 {
   auto &reg = detail::registry;
   std::string key(name);
@@ -460,9 +465,16 @@ int RegisterTally(std::string_view name, Timer::Index parent)
     return it->second;
   }
   const int id = static_cast<int>(reg.tallies.size());
-  reg.tallies.push_back({key, parent});
+  reg.tallies.push_back({key, fixed_parent});
   reg.tally_ids.emplace(std::move(key), id);
   return id;
+}
+
+}  // namespace
+
+int RegisterTally(std::string_view name)
+{
+  return RegisterTally(name, -1);
 }
 
 namespace
@@ -481,8 +493,7 @@ int PhaseSubTally(int id, int row)
   if (sub < 0)
   {
     sub = RegisterTally(
-        fmt::format("{}/{}", detail::registry.tallies[id].name, Timer::names[row]),
-        static_cast<Timer::Index>(row));
+        fmt::format("{}/{}", detail::registry.tallies[id].name, Timer::names[row]), row);
   }
   return sub;
 }
@@ -754,7 +765,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (7 * N + 12 * T + 2 * C + 9));
+  buf.reserve(STRIDE * (7 * N + 14 * T + 2 * C + 9));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -783,6 +794,8 @@ void BlockTimer::Finalize(MPI_Comm comm)
     PushEntry(buf, t ? t->time - t->wait : 0.0, true, rank);
     PushEntry(buf, t ? t->nested : 0.0, true, rank);
     PushEntry(buf, (t && t->count > 0) ? 1.0 : 0.0, true, rank);
+    const int row = !t ? -1 : (t->fixed_parent >= 0) ? t->fixed_parent : t->row;
+    PushEntry(buf, row, row >= 0, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -817,6 +830,10 @@ void BlockTimer::Finalize(MPI_Comm comm)
     PushEntry(buf, t ? t->cum_time + t->time - wait : 0.0, true, rank);
     PushEntry(buf, t ? t->cum_nested + t->nested : 0.0, true, rank);
     PushEntry(buf, (t && t->cum_count + t->count > 0) ? 1.0 : 0.0, true, rank);
+    const int row = !t                       ? -1
+                    : (t->fixed_parent >= 0) ? t->fixed_parent
+                                             : detail::MergeRow(t->cum_row, t->row);
+    PushEntry(buf, row, row >= 0, rank);
   }
   for (int i = 0; i < C; i++)
   {
@@ -907,12 +924,18 @@ void BlockTimer::Finalize(MPI_Comm comm)
     {
       v->resize(n);
     }
+    t.tally_parents.resize(n);
     for (int i = 0; i < n; i++)
     {
       t.tally_wait[i] = Next();
       t.tally_work[i] = Next();
       t.tally_nested[i] = Next();
       t.tally_active[i] = Next();
+      // The row of all processes which measured the tally, TOTAL if they differ.
+      const auto row = Next();
+      t.tally_parents[i] = (row.n > 0 && row.min == row.max)
+                               ? static_cast<Timer::Index>(row.min)
+                               : Timer::TOTAL;
     }
   };
   NextN(r.iter.time, N);
@@ -950,15 +973,8 @@ void BlockTimer::Finalize(MPI_Comm comm)
   r.cum.rank_mem = r.iter.rank_mem;
   r.cum.node_mem = r.iter.node_mem;
 
-  for (int i = 0; i < T; i++)
-  {
-    const auto sep = tkeys[i].rfind('\x1f');
-    r.iter.tally_names.push_back(tkeys[i].substr(0, sep));
-    r.iter.tally_parents.push_back(
-        static_cast<Timer::Index>(std::stoi(tkeys[i].substr(sep + 1))));
-  }
-  r.cum.tally_names = r.iter.tally_names;
-  r.cum.tally_parents = r.iter.tally_parents;
+  r.iter.tally_names = tkeys;
+  r.cum.tally_names = tkeys;
   reg.suspended = false;
   for (int i = 0; i < C; i++)
   {
@@ -998,6 +1014,7 @@ void BlockTimer::Reset()
   {
     t.time = t.cum_time = t.wait = t.cum_wait = 0.0;
     t.count = t.cum_count = t.nested = t.cum_nested = 0;
+    t.row = t.cum_row = -1;
   }
   for (auto &c : detail::registry.counters)
   {

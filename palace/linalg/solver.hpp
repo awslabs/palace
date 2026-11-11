@@ -43,9 +43,8 @@ public:
   // Set the operator associated with the solver, or update it if called repeatedly.
   virtual void SetOperator(const OperType &op) = 0;
 
-  // Register inclusive performance tallies named under prefix, measured within the given
-  // exclusive timer row. No-op by default.
-  virtual void SetPerfTallies(const std::string &prefix, Timer::Index parent) {}
+  // Register inclusive performance tallies named under prefix. No-op by default.
+  virtual void SetPerfTallies(const std::string &prefix) {}
 
   // Apply the solver for the transpose problem.
   void MultTranspose(const VecType &x, VecType &y) const override
@@ -106,7 +105,8 @@ private:
 
   // Performance reporting: the first application after SetOperator (where lazy solvers
   // factorize or set up) is timed as Timer::KSP_COARSE_SETUP, later ones as apply_timer.
-  // Solvers which factorize in SetOperator (MUMPS) time that as Timer::KSP_COARSE_SETUP.
+  // Solvers which factorize in SetOperator (eager_setup, MUMPS) time that as
+  // Timer::KSP_COARSE_SETUP instead, and all their applications as apply_timer.
   bool time_setup = false, eager_setup = false;
   Timer::Index apply_timer = Timer::NUM_TIMINGS;
   mutable bool setup_pending = false;
@@ -151,10 +151,15 @@ public:
     InitEagerSetup();
   }
 
-  // Enable timing (and coarse solver counters, keyed by the current solver role), see
-  // above. Applications after the first are timed as apply_timer (NUM_TIMINGS: not timed).
+  // Enable timing (and coarse solver counters, keyed by the solver role at construction),
+  // see above. Applications after the first are timed as apply_timer (NUM_TIMINGS: not
+  // timed).
   void EnableTimer(bool setup, Timer::Index apply = Timer::NUM_TIMINGS);
   void InitEagerSetup();
+
+  // Whether the wrapped solver factorizes in SetOperator rather than at its first
+  // application (detected for MUMPS).
+  void SetEagerSetup(bool eager) { eager_setup = eager; }
 
   // Access the underlying solver.
   const mfem::Solver &GetSolver() { return *pc; }

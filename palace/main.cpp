@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
   Mpi::Init(argc, argv);
   // Before any rank-dependent work, so that all ranks register the tallies in one order.
   perf::RegisterCommunicationTallies();
-  perf::AddTally(perf::RegisterTally("Startup/MPIInit", Timer::STARTUP),
+  perf::AddTally(perf::RegisterTally("Startup/MPIInit"),
                  Timer::Duration(Timer::Now() - t_mpi).count());
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
@@ -256,7 +256,7 @@ int main(int argc, char *argv[])
   {
     iodata.WriteResolvedConfig(config, argv[1]);
   }
-  perf::AddTally(perf::RegisterTally("Startup/Config", Timer::STARTUP),
+  perf::AddTally(perf::RegisterTally("Startup/Config"),
                  Timer::Duration(Timer::Now() - t_config).count());
 
   // Initialize device + numerics. The BlockTimer is scoped to this block so it

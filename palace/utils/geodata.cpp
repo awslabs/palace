@@ -139,14 +139,14 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   {
     BlockTimer bt(Timer::IO);
     // Registered on all ranks, so that the report's registrations match across ranks.
-    const int root_load = perf::RegisterTally("Startup/MeshLoad/Root", Timer::IO);
+    const int root_load = perf::RegisterTally("Startup/MeshLoad/Root");
     if (Mpi::Root(comm))
     {
       perf::ScopedTally t(root_load);
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       use_mesh_partitioner &= smesh->Conforming();
     }
-    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad", Timer::IO));
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad"));
     Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
   }
 
@@ -158,7 +158,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   }
   {
     BlockTimer bt1(Timer::IO);
-    const int node_root_load = perf::RegisterTally("Startup/MeshLoad/NodeRoot", Timer::IO);
+    const int node_root_load = perf::RegisterTally("Startup/MeshLoad/NodeRoot");
     if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
@@ -167,7 +167,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
-    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad", Timer::IO));
+    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad"));
     Mpi::Barrier(comm);
   }
   if (node_comm != MPI_COMM_NULL)
@@ -327,7 +327,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
                                          MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
-  perf::ScopedTally t(perf::RegisterTally("Startup/Partition", Timer::MESH_PREPROCESS));
+  perf::ScopedTally t(perf::RegisterTally("Startup/Partition"));
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = UseAmr(refinement);
 

@@ -315,24 +315,6 @@ double ErrorPropagatorGrowth(const OperType &A, const Solver<OperType> &M, MPI_C
   return std::exp(log_growth / (its - its / 2));
 }
 
-// Exclusive timer row containing the untimed solves of a given role.
-Timer::Index RoleParent(std::string_view role)
-{
-  if (role == "DivFree")
-  {
-    return Timer::DIV_FREE;
-  }
-  if (role == "Estimator")
-  {
-    return Timer::SOLVE_ESTIMATOR;
-  }
-  if (role == "Mass")
-  {
-    return Timer::TS;
-  }
-  return Timer::TOTAL;
-}
-
 }  // namespace
 
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
@@ -361,7 +343,8 @@ BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                                   fespaces.GetFinestFESpace().GetComm()),
                   ConfigurePreconditionerSolver<OperType>(
                       linear, pc_mat_sym, verbose, fespaces.GetFinestFESpace().GetComm(),
-                      fespaces, aux_fespaces))
+                      fespaces, aux_fespaces),
+                  perf::CurrentRole())
 {
   use_timer = true;
 }
@@ -380,15 +363,14 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
                                        std::unique_ptr<Solver<OperType>> &&pc,
                                        std::string_view role)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
-    role(role.empty() ? perf::CurrentRole() : role),
-    perf_solve_tally(
-        perf::RegisterTally(fmt::format("{}/LinearSolve", this->role), Timer::KSP)),
-    perf_setup_tally(perf::RegisterTally(fmt::format("{}/LinearSolverSetup", this->role),
-                                         Timer::KSP_SETUP)),
+    role(role), perf_solve_tally(perf::RegisterTally(fmt::format("{}/LinearSolve", role))),
+    perf_setup_tally(perf::RegisterTally(fmt::format("{}/LinearSolverSetup", role))),
     perf_basis(perf::RegisterCounter("Memory/KrylovBasis/" + this->role + "/Megabytes",
                                      perf::Reduce::STATS, perf::Accumulate::MAX)),
     perf_stats(this->role)
 {
+  MFEM_VERIFY(!this->role.empty(),
+              "Linear solvers need a role for the performance report!");
   if (this->pc)
   {
     // Nested solvers run without exclusive timers: tally their preconditioner instead (not
@@ -396,9 +378,8 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
     // below, include its coarse solve (<role>/MG/Coarse).
     if (this->role != "Main" && !mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
     {
-      const auto parent = perf::RoleParent(this->role);
       pc_tally = std::make_unique<TalliedSolver<OperType>>(
-          *this->pc, perf::RegisterTally(this->role + "/Preconditioner", parent));
+          *this->pc, perf::RegisterTally(this->role + "/Preconditioner"));
       this->ksp->SetPreconditioner(*pc_tally);
     }
     else
@@ -406,12 +387,10 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
       this->ksp->SetPreconditioner(*this->pc);
     }
   }
-  const bool main = (this->role == "Main");
-  const auto parent = main ? Timer::KSP : RoleParent(this->role);
-  this->ksp->SetPerfTallies(this->role + "/Krylov", parent);
+  this->ksp->SetPerfTallies(this->role + "/Krylov");
   if (this->pc)
   {
-    this->pc->SetPerfTallies(this->role, main ? Timer::KSP_PRECONDITIONER : parent);
+    this->pc->SetPerfTallies(this->role);
   }
 }
 
@@ -468,8 +447,7 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
     double growth;
     {
       BlockTimer bt(Timer::VERIFICATION);
-      perf::ScopedTally t(
-          perf::RegisterTally(role + "/Verification/ErrorPropagator", Timer::VERIFICATION));
+      perf::ScopedTally t(perf::RegisterTally(role + "/Verification/ErrorPropagator"));
       perf::ScopedPause pause;
       growth = ErrorPropagatorGrowth(*check_op, *pc, ksp->GetComm());
     }

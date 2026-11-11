@@ -1141,7 +1141,8 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(200);
   auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
-  auto ksp = std::make_unique<BaseKspSolver<Operator>>(std::move(pcg), std::move(jac));
+  auto ksp = std::make_unique<BaseKspSolver<Operator>>(std::move(pcg), std::move(jac),
+                                                       "PortProjection");
   ksp->SetOperators(*M_bdr, *M_bdr);
 
   Vector sol(nd_fespace.GetTrueVSize());

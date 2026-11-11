@@ -339,11 +339,10 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
 }
 
 template <OperatorType OperType>
-void IterativeSolver<OperType>::SetPerfTallies(const std::string &prefix,
-                                               Timer::Index parent)
+void IterativeSolver<OperType>::SetPerfTallies(const std::string &prefix)
 {
-  perf_apply = perf::RegisterTally(prefix + "/ApplyBA", parent);
-  perf_orth = perf::RegisterTally(prefix + "/Orthogonalize", parent);
+  perf_apply = perf::RegisterTally(prefix + "/ApplyBA");
+  perf_orth = perf::RegisterTally(prefix + "/Orthogonalize");
 }
 
 template <OperatorType OperType>

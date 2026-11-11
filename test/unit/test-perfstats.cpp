@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
@@ -86,9 +87,12 @@ TEST_CASE("PerfStats Reductions", "[perfstats][Serial][Parallel]")
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
   BlockTimer::Reset();
 
-  const int tally = perf::RegisterTally("Test/Tally", Timer::KSP_PRECONDITIONER);
-  CHECK(perf::RegisterTally("Test/Tally", Timer::KSP_PRECONDITIONER) == tally);
-  perf::AddTally(tally, 1.0 + rank, 2);
+  const int tally = perf::RegisterTally("Test/Tally");
+  CHECK(perf::RegisterTally("Test/Tally") == tally);
+  {
+    BlockTimer bt(Timer::KSP_PRECONDITIONER);
+    perf::AddTally(tally, 1.0 + rank, 2);
+  }
   const int stats = perf::RegisterCounter("Test/Rows", perf::Reduce::STATS);
   perf::Set(stats, 10.0 * (rank + 1));
   const int sum = perf::RegisterCounter("Test/Bytes", perf::Reduce::SUM);
@@ -176,8 +180,7 @@ TEST_CASE("PerfStats Inconsistent Registration", "[perfstats][Parallel]")
   BlockTimer::Reset();
   if (rank == np - 1)
   {
-    perf::AddTally(perf::RegisterTally(fmt::format("Test/OnlyRank{}", rank), Timer::IO),
-                   2.0);
+    perf::AddTally(perf::RegisterTally(fmt::format("Test/OnlyRank{}", rank)), 2.0);
     perf::Set(perf::RegisterCounter("Test/OnlyLast", perf::Reduce::STATS), 5.0);
   }
   perf::Add(perf::RegisterCounter("Test/All", perf::Reduce::SUM), 1.0);
@@ -229,7 +232,7 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   const int once = perf::RegisterCounter("Test/Once", perf::Reduce::SUM);
   const int size =
       perf::RegisterCounter("Test/Size", perf::Reduce::MAX, perf::Accumulate::NONE);
-  const int tally = perf::RegisterTally("Test/Iter", Timer::IO);
+  const int tally = perf::RegisterTally("Test/Iter");
   {
     BlockTimer bt(Timer::INIT);
     Sleep(5);
@@ -370,6 +373,123 @@ TEST_CASE("PerfStats Coarse Setup And Apply", "[perfstats][Serial][Parallel]")
   BlockTimer::Reset();
 }
 
+TEST_CASE("PerfStats Eager Coarse Setup", "[perfstats][Serial][Parallel]")
+{
+  // A coarse solver which factorizes in SetOperator (as MUMPS) charges that to the coarse
+  // setup row, and all of its applications to the coarse solve row.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  BlockTimer::Reset();
+  constexpr int n = 20;
+  mfem::SparseMatrix diag(n);
+  for (int i = 0; i < n; i++)
+  {
+    diag.Set(i, i, 2.0);
+  }
+  diag.Finalize();
+  HYPRE_BigInt row_starts[2] = {static_cast<HYPRE_BigInt>(rank) * n,
+                                static_cast<HYPRE_BigInt>(rank + 1) * n};
+  mfem::HypreParMatrix A(comm, static_cast<HYPRE_BigInt>(np) * n, row_starts, &diag);
+  MfemWrapperSolver<Operator> pc(std::make_unique<DiagonalSolver>());
+  pc.SetEagerSetup(true);
+  pc.EnableTimer(true, Timer::KSP_COARSE_SOLVE);
+  Vector x(n), y(n);
+  x = 1.0;
+  for (int k = 0; k < 2; k++)
+  {
+    BlockTimer bt(Timer::KSP_PRECONDITIONER);
+    pc.SetOperator(A);
+    pc.Mult(x, y);
+    pc.Mult(x, y);
+  }
+  BlockTimer::Finalize(comm);
+  const auto &r = perf::GetResults();
+  CHECK(r.iter.count[Timer::KSP_COARSE_SETUP].max == 2);
+  CHECK(r.iter.count[Timer::KSP_COARSE_SOLVE].max == 4);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Setups")].max == 2);
+  CHECK(r.counter[CounterIndex(r, "LinearSolver/Main/Coarse/Applies")].max == 4);
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfStats Tally Parents", "[perfstats][Serial][Parallel]")
+{
+  // A tally reports the row it was measured within, TOTAL if it was measured within
+  // several, on one process or across processes. A nested solver's tallies are measured
+  // within the rows of its setup and of its solves.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  BlockTimer::Reset();
+  const int one = perf::RegisterTally("Test/OneRow"),
+            two = perf::RegisterTally("Test/TwoRows"),
+            by_rank = perf::RegisterTally("Test/RowByRank");
+  {
+    BlockTimer bt(Timer::DIV_FREE);
+    perf::AddTally(one, 1.0);
+    perf::AddTally(two, 1.0);
+  }
+  {
+    BlockTimer bt((rank == np - 1) ? Timer::IO : Timer::DIV_FREE);
+    perf::AddTally(by_rank, 1.0);
+  }
+  {
+    BlockTimer bt(Timer::SOLVE_ESTIMATOR);
+    perf::ScopedTally t(two);
+    BlockTimer inner(Timer::KSP);  // A nested row is part of the tally's time
+  }
+  constexpr int n = 20;
+  mfem::SparseMatrix diag(n);
+  for (int i = 0; i < n; i++)
+  {
+    diag.Set(i, i, 1.0 + i);
+  }
+  diag.Finalize();
+  HYPRE_BigInt row_starts[2] = {static_cast<HYPRE_BigInt>(rank) * n,
+                                static_cast<HYPRE_BigInt>(rank + 1) * n};
+  mfem::HypreParMatrix A(comm, static_cast<HYPRE_BigInt>(np) * n, row_starts, &diag);
+  KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
+                std::make_unique<JacobiSmoother<Operator>>(comm), "TestNested");
+  Vector b(n), x(n);
+  b = 1.0;
+  {
+    BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
+    ksp.SetOperators(A, A);
+  }
+  {
+    BlockTimer bt(Timer::SOLVE_ESTIMATOR);
+    ksp.Mult(b, x);
+  }
+  BlockTimer::Finalize(comm);
+  {
+    const auto &r = perf::GetResults();
+    auto Parent = [&r](const std::string &name)
+    { return r.iter.tally_parents[TallyIndex(r.iter, name)]; };
+    CHECK(Parent("Test/OneRow") == Timer::DIV_FREE);
+    CHECK(Parent("Test/TwoRows") == Timer::TOTAL);
+    CHECK(Parent("Test/RowByRank") == ((np > 1) ? Timer::TOTAL : Timer::IO));
+    CHECK(Parent("TestNested/LinearSolverSetup") == Timer::CONSTRUCT_ESTIMATOR);
+    CHECK(Parent("TestNested/LinearSolve") == Timer::SOLVE_ESTIMATOR);
+    CHECK(Parent("TestNested/Preconditioner") == Timer::SOLVE_ESTIMATOR);
+    CHECK(Parent("TestNested/Krylov/ApplyBA") == Timer::SOLVE_ESTIMATOR);
+    CHECK(Parent("Reduce/SOLVE_ESTIMATOR") == Timer::SOLVE_ESTIMATOR);
+    CHECK(Parent("Reduce") == Timer::TOTAL);
+  }
+
+  // Per iteration, and over all iterations in Cumulative.
+  BlockTimer::StartIteration();
+  {
+    BlockTimer bt(Timer::IO);
+    perf::AddTally(one, 1.0);
+  }
+  BlockTimer::Finalize(comm);
+  const auto &r = perf::GetResults();
+  const int i = TallyIndex(r.iter, "Test/OneRow");
+  CHECK(r.iter.tally_parents[i] == Timer::IO);
+  CHECK(r.cum.tally_parents[i] == Timer::TOTAL);
+  CHECK(r.cum.tally_parents[TallyIndex(r.cum, "TestNested/LinearSolve")] ==
+        Timer::SOLVE_ESTIMATOR);
+  BlockTimer::Reset();
+}
+
 TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
           "[perfstats][Serial][Parallel]")
 {
@@ -413,7 +533,7 @@ TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
     perf::SetVerification(0);
     BlockTimer::Reset();
     KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
-                  std::make_unique<MfemWrapperSolver<Operator>>(Direct()));
+                  std::make_unique<MfemWrapperSolver<Operator>>(Direct()), "Main");
     Vector b(n), x(n);
     b = 1.0;
     ksp.SetOperators(*A2, *A4);
@@ -433,7 +553,7 @@ TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
     BlockTimer::Reset();
     auto pc = std::make_unique<MfemWrapperSolver<Operator>>(Direct());
     pc->EnableTimer(true, Timer::KSP_COARSE_SOLVE);
-    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0), std::move(pc));
+    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0), std::move(pc), "Main");
     Vector b(n), x(n);
     b = 0.0;
     ksp.SetOperators(*A2, *A4);
@@ -476,7 +596,7 @@ TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
     perf::SetVerification(2);
     BlockTimer::Reset();
     KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
-                  std::make_unique<MfemWrapperSolver<Operator>>(Amg()));
+                  std::make_unique<MfemWrapperSolver<Operator>>(Amg()), "Main");
     Vector b(n), x(n);
     b = 1.0;
     ksp.SetOperators(*A2, *A4);
@@ -498,7 +618,8 @@ TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
       ComplexWrapperOperator A(A2.get(), A1.get());
       ComplexKspSolver ksp(std::make_unique<GmresSolver<ComplexOperator>>(comm, 0),
                            std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-                               Direct(), true, /*complex_matrix*/ false));
+                               Direct(), true, /*complex_matrix*/ false),
+                           "Main");
       ComplexVector b(n), x(n);
       b = 1.0;
       ksp.SetOperators(A, A);
@@ -557,16 +678,16 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
   BlockTimer::Reset();
-  const int imb = perf::RegisterTally("Test/Imbalance", Timer::KSP);
+  const int imb = perf::RegisterTally("Test/Imbalance");
   perf::AddTally(imb, 1.0 + rank);
-  const int root_only = perf::RegisterTally("Test/RootOnly", Timer::IO);
+  const int root_only = perf::RegisterTally("Test/RootOnly");
   if (rank == 0)
   {
     perf::AddTally(root_only, 1.0);
   }
 
   // A reduction inside a scope is its wait.
-  const int red = perf::RegisterTally("Test/Reduce", Timer::KSP);
+  const int red = perf::RegisterTally("Test/Reduce");
   {
     perf::ScopedTally t(red);
     double v = 1.0;
@@ -578,7 +699,7 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
   CHECK(tr.wait <= tr.time);
 
   // So is a barrier, behind a slow rank.
-  const int bar = perf::RegisterTally("Test/Barrier", Timer::KSP);
+  const int bar = perf::RegisterTally("Test/Barrier");
   {
     perf::ScopedTally t(bar);
     if (rank == 0)
@@ -595,7 +716,7 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
 
   // Rank 0 works while the others block in MPI_Wait for its message: the wait lands in
   // their exchange, the work in rank 0's.
-  const int ex = perf::RegisterTally("Test/Exchange", Timer::KSP);
+  const int ex = perf::RegisterTally("Test/Exchange");
   const auto it = reg.tally_ids.find("Wait/MPI");
   const long waits0 = (it != reg.tally_ids.end()) ? reg.tallies[it->second].count : 0;
   {
@@ -661,7 +782,7 @@ TEST_CASE("PerfStats Pause Wait And Nesting", "[perfstats][Serial]")
   BlockTimer::Reset();
   perf::detail::AddWait(0.0);  // Registers the communication tallies
   const auto &reg = perf::detail::registry;
-  const int id = perf::RegisterTally("Test/PausedNesting", Timer::KSP);
+  const int id = perf::RegisterTally("Test/PausedNesting");
   const auto &wait = reg.tallies[reg.tally_ids.at("Wait/MPI")];
   const long waits = wait.count;
   {
