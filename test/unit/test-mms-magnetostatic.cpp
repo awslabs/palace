@@ -32,8 +32,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "linalg/ksp.hpp"
-#include "linalg/operator.hpp"
-#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "utils/communication.hpp"
@@ -85,15 +83,7 @@ Vector SolveManufactured(const IoData &iodata, CurlCurlOperator &curlcurl_op,
   RHS = 0.0;
   nd.GetProlongationMatrix()->MultTranspose(b, RHS);
 
-  // Same unwrapping as the electrostatic MMS helper: with multigrid the stiffness matrix
-  // is a MultigridOperator whose finest level holds the eliminated ParOperator.
-  const auto *mg_K = dynamic_cast<const MultigridOperator *>(K.get());
-  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
-                            : dynamic_cast<const ParOperator *>(K.get());
-  REQUIRE(PtAP_K);
-  PtAP_K->EliminateRHS(X, RHS);
-
-  ksp.Mult(RHS, X);
+  SolveEliminated(ksp, *K, X, RHS);
   return X;
 }
 
@@ -148,7 +138,10 @@ MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_me
   CurlCurlOperator curlcurl_op(iodata, mesh);
   mfem::VectorFunctionCoefficient a_exact(/*vdim=*/3, mms.potential);
   mfem::VectorFunctionCoefficient b_exact(/*vdim=*/3, mms.magnetic_flux_density);
-  // The right-hand side data H_mms = μ⁻¹ B_mms for the diagonal permeability.
+  // The right-hand side data H_mms = μ⁻¹ B_mms. Dividing component-wise is μ⁻¹ only
+  // because the material uses the default (identity) material axes, so the tensor
+  // diag(mu_r) is diagonal in the global frame. A rotated-tensor case (non-default
+  // material_axes) would instead need the full inverse R diag(1/mu_r) Rᵀ here.
   mfem::VectorFunctionCoefficient h_exact(
       /*vdim=*/3,
       [&mms](const mfem::Vector &x, mfem::Vector &f)
