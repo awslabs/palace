@@ -261,6 +261,24 @@ TEST_CASE("PerfProbes Heap Skipped Samples", "[perfprobes][Serial]")
   CHECK(timer.HeapCoverage(Timer::EPS) == 1.0);
 }
 
+TEST_CASE("PerfProbes Node Communicators", "[perfprobes][perfstats][Serial][Parallel]")
+{
+  // The node communicators are cached for the group of a communicator: one of another
+  // group gets its own, also if it reuses the handle of a freed communicator.
+  MPI_Comm world = Mpi::World();
+  MPI_Comm dup, single;
+  MPI_Comm_dup(world, &dup);
+  const int node_size = Mpi::Size(memory_reporting::GetNodeComms(dup).node);
+  MPI_Comm_free(&dup);
+  MPI_Comm_split(world, Mpi::Rank(world), 0, &single);
+  const auto &nc = memory_reporting::GetNodeComms(single);
+  CHECK(Mpi::Size(nc.node) == 1);
+  CHECK(nc.node_rank == 0);
+  CHECK(nc.leaders != MPI_COMM_NULL);
+  MPI_Comm_free(&single);
+  CHECK(Mpi::Size(memory_reporting::GetNodeComms(world).node) == node_size);
+}
+
 TEST_CASE("PerfProbes Assembly Tally", "[perfprobes][Serial]")
 {
   BlockTimer::Reset();

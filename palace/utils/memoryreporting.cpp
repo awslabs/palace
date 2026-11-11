@@ -162,16 +162,34 @@ std::string HeapMemorySource()
 
 const NodeComms &GetNodeComms(MPI_Comm comm)
 {
-  static MPI_Comm cached_comm = MPI_COMM_NULL;
+  // Cached for the group of comm, not its handle: the handle of a freed communicator may
+  // be reused for another group. A group stays valid after its communicator is freed, and
+  // the node communicators of a communicator of the same group are those of comm.
+  static MPI_Group cached_group = MPI_GROUP_NULL;
   static NodeComms comms;
-  if (cached_comm != comm || comms.node == MPI_COMM_NULL)
+  MPI_Group group;
+  MPI_Comm_group(comm, &group);
+  int result = MPI_UNEQUAL;
+  if (cached_group != MPI_GROUP_NULL)
+  {
+    MPI_Group_compare(group, cached_group, &result);
+  }
+  if (result != MPI_IDENT || comms.node == MPI_COMM_NULL)
   {
     // Communicators of a previous comm are leaked deliberately: freeing is collective
     // over the old communicator.
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &comms.node);
     comms.node_rank = Mpi::Rank(comms.node);
     MPI_Comm_split(comm, (comms.node_rank == 0) ? 0 : MPI_UNDEFINED, 0, &comms.leaders);
-    cached_comm = comm;
+    if (cached_group != MPI_GROUP_NULL)
+    {
+      MPI_Group_free(&cached_group);
+    }
+    cached_group = group;
+  }
+  else
+  {
+    MPI_Group_free(&group);
   }
   return comms;
 }

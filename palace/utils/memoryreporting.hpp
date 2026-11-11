@@ -26,7 +26,7 @@ long GetHeapMemory();
 std::string HeapMemorySource();
 
 // Shared-memory (node) communicator and node-leader communicator (MPI_COMM_NULL on
-// non-leaders) for comm, created once and cached.
+// non-leaders) for comm, created once and cached for the group of comm (collective).
 struct NodeComms
 {
   MPI_Comm node = MPI_COMM_NULL, leaders = MPI_COMM_NULL;
