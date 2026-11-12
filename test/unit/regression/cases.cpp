@@ -9,10 +9,12 @@
 // long-tests CI workflow.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -21,6 +23,7 @@
 
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
@@ -294,6 +297,281 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 //       reactance/impedance): a wrong-phase result that still conserves power is caught
 //       here. The magnitude column is skipped — |S|=1 is ~0 dB, where a relative diff is
 //       meaningless.
+// Maxwell capacitance matrix entries (aa, ab, bb) of two spheres of radii a and b with
+// centers a distance c apart, from the series of the spheres example documentation.
+std::array<double, 3> SpheresCapacitance(double a, double b, double c)
+{
+  const double u = std::acosh((c * c - a * a - b * b) / (2.0 * a * b));
+  double s_aa = 0.0, s_bb = 0.0, s_ab = 0.0;
+  for (int n = 0; n < 60; n++)
+  {
+    s_aa += 1.0 / (a * std::sinh(n * u) + b * std::sinh((n + 1) * u));
+    s_bb += 1.0 / (b * std::sinh(n * u) + a * std::sinh((n + 1) * u));
+    s_ab += (n > 0) ? 1.0 / std::sinh(n * u) : 0.0;
+  }
+  const double k =
+      4.0 * std::numbers::pi * palace::electromagnetics::epsilon0_ * a * b * std::sinh(u);
+  return {k * s_aa, -k / c * s_ab, k * s_bb};
+}
+
+// Check the sensitivity export of the spheres case, next to terminal-C.csv: the exact
+// discrete identities of the capacitances (C for a dilation, and for a relative change of
+// the permittivity), and their derivatives with respect to the radius of sphere A against
+// the analytic series, to the discretization error.
+palace::test::CustomCheck
+TestSpheresSensitivity(const palace::test::RegressionOptions &opts)
+{
+  return [opts](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto dir = path.parent_path() / "sensitivity";
+    std::ifstream fj(dir / "sensitivity.json");
+    REQUIRE(fj.is_open());
+    const auto meta = nlohmann::json::parse(fj);
+    const std::size_t n = meta.at("NumPoints");
+    auto ReadDoubles = [&](const std::string &file)
+    {
+      std::vector<double> data(3 * n);
+      std::ifstream fi(dir / file, std::ios::binary);
+      fi.read(reinterpret_cast<char *>(data.data()), data.size() * sizeof(double));
+      REQUIRE(fi.gcount() == static_cast<std::streamsize>(data.size() * sizeof(double)));
+      return data;
+    };
+    const auto points = ReadDoubles(meta.at("Points"));
+
+    // Sphere A has radius 1 cm and center (-2.5, 0, 0) cm. Its radial velocity is 1 on it
+    // and 0 beyond 1 cm from it.
+    std::vector<double> V(3 * n, 0.0);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      const double d[3] = {points[3 * k] + 2.5, points[3 * k + 1], points[3 * k + 2]};
+      const double r = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      const double psi = std::clamp(2.0 - r, 0.0, 1.0);
+      for (int c = 0; c < 3; c++)
+      {
+        V[3 * k + c] = (r > 0.0) ? psi * d[c] / r : 0.0;
+      }
+    }
+    const double h = 1.0e-6;  // m
+    const auto Cp = SpheresCapacitance(0.01 + h, 0.02, 0.05),
+               Cm = SpheresCapacitance(0.01 - h, 0.02, 0.05);
+    const std::array<double, 3> rtol = {0.01, 0.06, 0.1};
+    REQUIRE(meta.at("Objectives").size() == 3);
+    for (std::size_t i = 0; i < 3; i++)
+    {
+      const auto &objective = meta.at("Objectives")[i];
+      const auto g = ReadDoubles(objective.at("Gradient"));
+      double dilation = 0.0, radial = 0.0;
+      for (std::size_t p = 0; p < 3 * n; p++)
+      {
+        dilation += g[p] * points[p];
+        radial += g[p] * V[p];
+      }
+      const double C = objective.at("Value");
+      const double dC_da = (Cp[i] - Cm[i]) / (2.0 * h) / 100.0;  // F/cm
+      INFO("objective " << i + 1 << ": C = " << C << " F, dC/da = " << radial
+                        << " F/cm, analytic " << dC_da << " F/cm");
+      CHECK_THAT(dilation, Catch::Matchers::WithinRel(C, 1.0e-8));
+      CHECK_THAT(objective.at("MaterialProperties")[0].at("Permittivity").get<double>(),
+                 Catch::Matchers::WithinRel(C, 1.0e-12));
+      CHECK_THAT(radial, Catch::Matchers::WithinRel(dC_da, rtol[i]));
+    }
+  };
+}
+
+// Check the sensitivity export of the cylinder cavity case, next to eig.csv: zero for
+// translations and rotations, and the derivatives of the frequencies of TM010 and TM011 and
+// the quality factor of TM010 with respect to the radius, the height and the material
+// properties against their analytic values, to the discretization error.
+palace::test::CustomCheck
+TestCylinderSensitivity(const palace::test::RegressionOptions &opts)
+{
+  return [opts](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto dir = path.parent_path() / "sensitivity";
+    std::ifstream fj(dir / "sensitivity.json");
+    REQUIRE(fj.is_open());
+    const auto meta = nlohmann::json::parse(fj);
+    const std::size_t n = meta.at("NumPoints");
+    auto ReadDoubles = [&](const std::string &file)
+    {
+      std::vector<double> data(3 * n);
+      std::ifstream fi(dir / file, std::ios::binary);
+      fi.read(reinterpret_cast<char *>(data.data()), data.size() * sizeof(double));
+      REQUIRE(fi.gcount() == static_cast<std::streamsize>(data.size() * sizeof(double)));
+      return data;
+    };
+    const auto x = ReadDoubles(meta.at("Points"));
+
+    // The cavity has radius a = 2.74 cm and height d = 5.48 cm along z, a dielectric with
+    // relative permittivity 2.08, and walls of surface resistance Rs. The fields (x, y, 0)
+    // and (0, 0, z) scale a and d.
+    const double a = 2.74, d = 5.48, eps_r = 2.08, tan_delta = 4.0e-4, Rs = 0.0184;
+    const double B = palace::electromagnetics::c0_ * 1.0e-7 / std::sqrt(eps_r) /
+                     (2.0 * std::numbers::pi);  // GHz cm
+    const double eta = palace::electromagnetics::Z0_ / std::sqrt(eps_r);
+    const double x01 = 2.404825557695773;
+    REQUIRE(meta.at("Objectives").size() == 3);
+    for (const auto &objective : meta.at("Objectives"))
+    {
+      const auto g = ReadDoubles(objective.at("Gradient"));
+      double norm = 0.0, rigid = 0.0, radial = 0.0, axial = 0.0;
+      std::array<double, 3> translation = {0.0, 0.0, 0.0};
+      double rotation_x = 0.0, rotation_z = 0.0, x_max = 0.0;
+      for (std::size_t k = 0; k < n; k++)
+      {
+        const double *gk = &g[3 * k], *xk = &x[3 * k];
+        for (int c = 0; c < 3; c++)
+        {
+          norm += std::abs(gk[c]);
+          translation[c] += gk[c];
+          x_max = std::max(x_max, std::abs(xk[c]));
+        }
+        rotation_x += gk[2] * xk[1] - gk[1] * xk[2];
+        rotation_z += gk[1] * xk[0] - gk[0] * xk[1];
+        radial += gk[0] * xk[0] + gk[1] * xk[1];
+        axial += gk[2] * xk[2];
+      }
+      for (const double r : translation)
+      {
+        rigid = std::max(rigid, std::abs(r) * x_max);
+      }
+      rigid = std::max({rigid, std::abs(rotation_x), std::abs(rotation_z)});
+      CHECK(rigid <= 1.0e-10 * norm * x_max);
+
+      const double value = objective.at("Value");
+      const double kd = (objective.at("Mode") == 1) ? 0.0 : std::numbers::pi / d,
+                   ka = x01 / a;
+      const auto &material = objective.at("MaterialProperties")[0];
+      double radial_ref, axial_ref, rtol;
+      if (objective.at("Type") == "Frequency")
+      {
+        // f = B √(ka² + kd²) for TM01p, with ka = x01 / a and kd = p π / d, and f ∝ 1 /
+        // √(με) up to the small effect of the impedance of the walls.
+        const double f = B * std::sqrt(ka * ka + kd * kd);
+        radial_ref = -f * ka * ka / (ka * ka + kd * kd);
+        axial_ref = -f * kd * kd / (ka * ka + kd * kd);
+        rtol = 5.0e-3;
+        for (const auto *property : {"Permittivity", "Permeability"})
+        {
+          CHECK_THAT(material.at(property).get<double>(),
+                     Catch::Matchers::WithinRel(-0.5 * value, 1.0e-6));
+        }
+      }
+      else
+      {
+        // 1 / Q = 1 / Qc + tan δ for TM010, with Qc = x01 η / (2 Rs (1 + a / d)) and
+        // η = √(μ / ε).
+        const double Qc = x01 * eta / (2.0 * Rs * (1.0 + a / d)),
+                     s = value * value / Qc * (a / d) / (1.0 + a / d);
+        radial_ref = -s;
+        axial_ref = s;
+        rtol = 1.0e-2;
+        CHECK_THAT(material.at("LossTan").get<double>(),
+                   Catch::Matchers::WithinRel(-value * value * tan_delta, 1.0e-5));
+        CHECK_THAT(material.at("Permittivity").get<double>(),
+                   Catch::Matchers::WithinRel(-0.5 * value * value / Qc, rtol));
+        CHECK_THAT(material.at("Permeability").get<double>(),
+                   Catch::Matchers::WithinRel(0.5 * value * value / Qc, rtol));
+      }
+      INFO("objective " << objective.at("Index") << ": value " << value << ", radial "
+                        << radial << " (analytic " << radial_ref << "), axial " << axial
+                        << " (analytic " << axial_ref << ")");
+      CHECK_THAT(radial, Catch::Matchers::WithinRel(radial_ref, rtol));
+      if (axial_ref == 0.0)
+      {
+        CHECK(std::abs(axial) <= 1.0e-6 * std::abs(value));
+      }
+      else
+      {
+        CHECK_THAT(axial, Catch::Matchers::WithinRel(axial_ref, rtol));
+      }
+    }
+  };
+}
+
+// Check the sensitivity export of the rings case, next to terminal-M.csv: zero for
+// translations, 3 M for a dilation (K scales as (1 + t)⁻¹, and the excitations at fixed
+// current densities as (1 + t), so M scales as (1 + t)³), M for a relative change of the
+// permeability, and the derivatives of M_aa and M_ab with respect to the radius of the
+// inner ring against the analytic ones, to the discretization error.
+palace::test::CustomCheck TestRingsSensitivity(const palace::test::RegressionOptions &opts)
+{
+  return [opts](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto dir = path.parent_path() / "sensitivity";
+    std::ifstream fj(dir / "sensitivity.json");
+    REQUIRE(fj.is_open());
+    const auto meta = nlohmann::json::parse(fj);
+    const std::size_t n = meta.at("NumPoints");
+    auto ReadDoubles = [&](const std::string &file)
+    {
+      std::vector<double> data(3 * n);
+      std::ifstream fi(dir / file, std::ios::binary);
+      fi.read(reinterpret_cast<char *>(data.data()), data.size() * sizeof(double));
+      REQUIRE(fi.gcount() == static_cast<std::streamsize>(data.size() * sizeof(double)));
+      return data;
+    };
+    const auto x = ReadDoubles(meta.at("Points"));
+
+    // The inner ring has radius r_a = 10 μm and width w = 1 μm, in z = 0, and the outer one
+    // r_b = 100 μm. A unit radial displacement of the inner ring, 1 within 1.5 μm of its
+    // center line and 0 beyond 6 μm, keeps its width.
+    std::vector<double> V(3 * n, 0.0);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      const double r = std::hypot(x[3 * k], x[3 * k + 1]),
+                   psi = std::clamp((6.0 - std::hypot(r - 10.0, x[3 * k + 2])) / 4.5, 0.0,
+                                    1.0);
+      if (r > 0.0)
+      {
+        V[3 * k] = psi * x[3 * k] / r;
+        V[3 * k + 1] = psi * x[3 * k + 1] / r;
+      }
+    }
+    const double mu0 = palace::electromagnetics::mu0_, ra = 10.0e-6, rb = 100.0e-6,
+                 w = 1.0e-6;
+    const std::array<double, 2> dM_dra = {mu0 * (std::log(16.0 * ra / w) - 0.75),
+                                          mu0 * std::numbers::pi * ra / rb};  // H/m
+    const std::array<double, 2> rtol = {0.05, 0.03};
+    REQUIRE(meta.at("Objectives").size() == 3);
+    for (std::size_t i = 0; i < 3; i++)
+    {
+      const auto &objective = meta.at("Objectives")[i];
+      const auto g = ReadDoubles(objective.at("Gradient"));
+      double norm = 0.0, x_max = 0.0, dilation = 0.0, radial = 0.0;
+      std::array<double, 3> translation = {0.0, 0.0, 0.0};
+      for (std::size_t p = 0; p < 3 * n; p++)
+      {
+        norm += std::abs(g[p]);
+        x_max = std::max(x_max, std::abs(x[p]));
+        translation[p % 3] += g[p];
+        dilation += g[p] * x[p];
+        radial += g[p] * V[p];
+      }
+      const double M = objective.at("Value");
+      INFO("objective " << i + 1 << ": M = " << M << " H, dM/dr_a = " << radial * 1.0e6
+                        << " H/m");
+      for (const double t : translation)
+      {
+        CHECK(std::abs(t) <= 1.0e-10 * norm);
+      }
+      CHECK_THAT(dilation, Catch::Matchers::WithinRel(3.0 * M, 1.0e-8));
+      CHECK_THAT(objective.at("MaterialProperties")[0].at("Permeability").get<double>(),
+                 Catch::Matchers::WithinRel(M, 1.0e-10));
+      if (i < 2)
+      {
+        CHECK_THAT(radial * 1.0e6, Catch::Matchers::WithinRel(dM_dra[i], rtol[i]));
+      }
+    }
+  };
+}
+
 palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
 {
   return [rtol, atol](palace::Table &actual, palace::Table &reference,
@@ -1474,6 +1752,21 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
 }
 
+// The spheres at second order, with the sensitivities of the capacitances (see
+// TestSpheresSensitivity).
+TEST_CASE("spheres_sensitivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.sensitivity = true;
+  opts.custom_checks["terminal-C.csv"] = TestSpheresSensitivity(opts);
+  palace::test::RunRegressionCase("spheres_sensitivity", "spheres_sensitivity.json",
+                                  "spheres_sensitivity", opts);
+}
+
 TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1482,6 +1775,21 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
+}
+
+// The rings with the sensitivities of their inductances (see TestRingsSensitivity).
+TEST_CASE("rings_sensitivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.sensitivity = true;
+  opts.custom_checks["terminal-M.csv"] = TestRingsSensitivity(opts);
+  palace::test::RunRegressionCase("rings_sensitivity", "rings_sensitivity.json",
+                                  "rings_sensitivity", opts);
 }
 
 TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")
@@ -1766,6 +2074,22 @@ TEST_CASE("cylinder_cavity_impedance_conductivity_slp",
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "cavity_impedance_conductivity_slp.json",
                                   "cavity_impedance_conductivity_slp", opts);
+}
+
+// The cylinder cavity with impedance walls, with the sensitivities of its eigenmodes (see
+// TestCylinderSensitivity).
+TEST_CASE("cylinder_cavity_sensitivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.sensitivity = true;
+  opts.custom_checks["eig.csv"] = TestCylinderSensitivity(opts);
+  palace::test::RunRegressionCase("cylinder", "cavity_sensitivity.json",
+                                  "cavity_sensitivity", opts);
 }
 
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")

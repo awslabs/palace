@@ -1088,6 +1088,128 @@ TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
   CHECK(nonlinear.nonlinear_max_it == 500);
 }
 
+TEST_CASE("Config Sensitivity", "[config][Serial]")
+{
+  auto Config = [](const json &sensitivity)
+  {
+    return json{
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {1}}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {2}}}, {{"Index", 2}, {"Attributes", {3}}}}}}},
+        {"Solver", json::object()},
+        {"Sensitivity", sensitivity}};
+  };
+  const json objectives = {{{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 2}}}};
+
+  SECTION("Objectives, export region and defaults")
+  {
+    const auto config = Config({{"Objectives", objectives},
+                                {"Shape",
+                                 {{"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                                  {"BoundingBoxMax", {1.0, 2.0, 3.0}},
+                                  {"Attributes", {3, 1}}}}});
+    IoData iodata(config, false);
+    const auto &sensitivity = iodata.sensitivity;
+    REQUIRE(sensitivity.objectives.size() == 1);
+    CHECK(sensitivity.objectives.at(1).type == SensitivityObjective::CAPACITANCE);
+    CHECK(sensitivity.objectives.at(1).terminals == std::array<int, 2>{1, 2});
+    REQUIRE(sensitivity.shape);
+    CHECK(*sensitivity.shape->bbmax == std::array<double, 3>{1.0, 2.0, 3.0});
+    CHECK(sensitivity.shape->attributes == std::vector<int>{1, 3});
+    CHECK(!sensitivity.shape->boundary_tags);
+    CHECK(!sensitivity.material_properties);
+    CHECK(!sensitivity.lumped_ports);
+
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Sensitivity"]["MaterialProperties"] == false);
+    CHECK(resolved["Sensitivity"]["LumpedPorts"] == false);
+    CHECK(resolved["Sensitivity"]["Shape"]["BoundaryTags"] == false);
+  }
+
+  SECTION("Invalid configurations")
+  {
+    using Catch::Matchers::ContainsSubstring;
+    const json unknown = {{{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 3}}}};
+    CHECK_THROWS_WITH(IoData(Config({{"Objectives", unknown}}), false),
+                      ContainsSubstring("refers to terminal 3"));
+    CHECK_THROWS_WITH(IoData(Config({{"Objectives", objectives},
+                                     {"Shape", {{"BoundingBoxMin", {0.0, 0.0, 0.0}}}}}),
+                             false),
+                      ContainsSubstring("\"BoundingBoxMax\""));
+    CHECK_THROWS(
+        config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Capacitance"}}));
+    auto config = Config({{"Objectives", objectives}});
+    config["Problem"]["Type"] = "Eigenmode";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("requires an electrostatic problem"));
+  }
+
+  SECTION("Eigenmode objectives")
+  {
+    auto config = Config({{"Objectives",
+                           {{{"Index", 1}, {"Type", "Frequency"}, {"Mode", 2}},
+                            {{"Index", 2}, {"Type", "QualityFactor"}, {"Mode", 1}}}}});
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}}};
+    config["Solver"] = {{"Eigenmode", {{"N", 2}, {"Target", 1.0}}}};
+    config["Sensitivity"]["LumpedPorts"] = true;
+    IoData iodata(config, false);
+    CHECK(iodata.sensitivity.lumped_ports);
+    const auto &objectives = iodata.sensitivity.objectives;
+    REQUIRE(objectives.size() == 2);
+    CHECK(objectives.at(1).type == SensitivityObjective::FREQUENCY);
+    CHECK(objectives.at(1).mode == 2);
+    CHECK(objectives.at(2).type == SensitivityObjective::QUALITY_FACTOR);
+    CHECK(objectives.at(2).mode == 1);
+
+    using Catch::Matchers::ContainsSubstring;
+    config["Sensitivity"]["Objectives"][0]["Mode"] = 3;
+    CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("refers to mode 3"));
+    config["Problem"]["Type"] = "Electrostatic";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("requires an eigenmode problem"));
+    config["Sensitivity"]["Objectives"] = {
+        {{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 1}}}};
+    config["Boundaries"] = {{"Ground", {{"Attributes", {1}}}},
+                            {"Terminal", {{{"Index", 1}, {"Attributes", {2}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("\"LumpedPorts\" is only available"));
+    CHECK_THROWS(
+        config::SensitivityObjectiveData(json{{"Index", 1}, {"Type", "Frequency"}}));
+  }
+
+  SECTION("Magnetostatic objectives")
+  {
+    auto config = Config(
+        {{"Objectives", {{{"Index", 1}, {"Type", "Inductance"}, {"Terminals", {1, 2}}}}}});
+    config["Problem"]["Type"] = "Magnetostatic";
+    config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}},
+                            {"SurfaceCurrent",
+                             {{{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}},
+                              {{"Index", 2}, {"Attributes", {3}}, {"Direction", "+X"}}}}};
+    IoData iodata(config, false);
+    const auto &objective = iodata.sensitivity.objectives.at(1);
+    CHECK(objective.type == SensitivityObjective::INDUCTANCE);
+    CHECK(objective.terminals == std::array<int, 2>{1, 2});
+
+    using Catch::Matchers::ContainsSubstring;
+    auto unknown = config;
+    unknown["Sensitivity"]["Objectives"][0]["Terminals"] = {1, 3};
+    CHECK_THROWS_WITH(IoData(unknown, false),
+                      ContainsSubstring("not a \"SurfaceCurrent\""));
+    auto shorted = config;
+    shorted["Solver"] = {{"Magnetostatic", {{"InactivePorts", "Short"}}}};
+    CHECK_THROWS_WITH(IoData(shorted, false), ContainsSubstring("shorted inactive ports"));
+    config["Problem"]["Type"] = "Electrostatic";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("requires a magnetostatic problem"));
+  }
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   auto MixedConfig = []()

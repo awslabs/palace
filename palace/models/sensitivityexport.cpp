@@ -1,0 +1,308 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#include "sensitivityexport.hpp"
+
+#include <algorithm>
+#include <bit>
+#include <cstdint>
+#include <fstream>
+#include <map>
+#include <fmt/format.h>
+#include <nlohmann/json.hpp>
+#include "fem/mesh.hpp"
+#include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
+#include "utils/iodata.hpp"
+
+namespace palace
+{
+
+namespace
+{
+
+// Exports of more nodes than this, for the whole mesh, are flagged.
+constexpr long long int large_export = 1000000;
+
+// Mark the owned true DOFs of the first component of the mesh nodal space at the nodes of
+// the given local elements, whose DOFs get_dofs returns.
+template <typename GetDofs>
+Vector MarkNodes(const mfem::ParFiniteElementSpace &nodal_fespace,
+                 const std::vector<int> &elements, GetDofs &&get_dofs)
+{
+  Vector marker_l(nodal_fespace.GetVSize()), marker(nodal_fespace.GetTrueVSize());
+  marker_l = 0.0;
+  auto *h_marker_l = marker_l.HostReadWrite();
+  mfem::Array<int> dofs;
+  for (const int e : elements)
+  {
+    get_dofs(e, dofs);
+    for (const int d : dofs)
+    {
+      h_marker_l[nodal_fespace.DofToVDof(d, 0)] = 1.0;
+    }
+  }
+  nodal_fespace.GetProlongationMatrix()->MultTranspose(marker_l, marker);
+  return marker;
+}
+
+std::ofstream OpenBinary(const std::filesystem::path &path)
+{
+  std::ofstream fo(path, std::ios::binary);
+  MFEM_VERIFY(fo.is_open(), "Unable to open sensitivity export file " << path << "!");
+  return fo;
+}
+
+// Write data in little-endian byte order.
+template <typename T>
+void WriteBinary(std::ofstream &fo, const std::vector<T> &data)
+{
+  if constexpr (std::endian::native == std::endian::little)
+  {
+    fo.write(reinterpret_cast<const char *>(data.data()), data.size() * sizeof(T));
+  }
+  else
+  {
+    for (const T v : data)
+    {
+      auto bytes = std::bit_cast<std::array<char, sizeof(T)>>(v);
+      std::reverse(bytes.begin(), bytes.end());
+      fo.write(bytes.data(), sizeof(T));
+    }
+  }
+  MFEM_VERIFY(fo.good(), "Failed to write a sensitivity export file!");
+}
+
+}  // namespace
+
+SensitivityExport::SensitivityExport(const IoData &iodata, const Mesh &mesh)
+  : iodata(iodata), comm(mesh.GetComm()), shape(iodata.sensitivity.shape.has_value()),
+    space_dim(mesh.SpaceDimension())
+{
+  if (!shape)
+  {
+    return;
+  }
+  const auto &region = *iodata.sensitivity.shape;
+  const auto &pmesh = mesh.Get();
+  const auto &nodes = *pmesh.GetNodes();
+  const auto *nodal_fespace =
+      dynamic_cast<const mfem::ParFiniteElementSpace *>(nodes.FESpace());
+  MFEM_VERIFY(nodal_fespace, "Sensitivity export requires a parallel mesh with nodes!");
+
+  // The nodes of the elements with the given attributes.
+  Vector in_attributes;
+  if (!region.attributes.empty())
+  {
+    std::vector<int> elements;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      if (std::ranges::binary_search(region.attributes, pmesh.GetAttribute(e)))
+      {
+        elements.push_back(e);
+      }
+    }
+    in_attributes = MarkNodes(*nodal_fespace, elements, [&](int e, mfem::Array<int> &dofs)
+                              { nodal_fespace->GetElementDofs(e, dofs); });
+  }
+  const auto *h_in_attributes = in_attributes.HostRead();
+
+  // Owned true DOFs in the region. Constrained (hanging) nodes are not true DOFs.
+  const double scale = iodata.units.GetMeshLengthRelativeScale();
+  const auto *h_nodes = nodes.HostRead();
+  for (int i = 0; i < nodal_fespace->GetNDofs(); i++)
+  {
+    std::array<int, 3> tdof = {-1, -1, -1};
+    std::array<double, 3> x = {0.0, 0.0, 0.0};
+    for (int c = 0; c < space_dim; c++)
+    {
+      const int ldof = nodal_fespace->DofToVDof(i, c);
+      tdof[c] = nodal_fespace->GetLocalTDofNumber(ldof);
+      x[c] = h_nodes[ldof];
+    }
+    if (tdof[0] < 0 || (!region.attributes.empty() && h_in_attributes[tdof[0]] == 0.0))
+    {
+      continue;
+    }
+    if (region.bbmin)
+    {
+      bool inside = true;
+      for (int c = 0; c < space_dim; c++)
+      {
+        inside = inside && x[c] >= (*region.bbmin)[c] && x[c] <= (*region.bbmax)[c];
+      }
+      if (!inside)
+      {
+        continue;
+      }
+    }
+    tdofs.push_back(tdof);
+    for (int c = 0; c < 3; c++)
+    {
+      points.push_back(x[c] * scale);
+    }
+  }
+
+  // The boundary attributes of each exported node. The list of boundary attributes is
+  // global, so every process takes part in each marking.
+  if (region.boundary_tags)
+  {
+    std::map<int, std::vector<int>> bdr_elements;
+    for (int e = 0; e < pmesh.GetNBE(); e++)
+    {
+      bdr_elements[pmesh.GetBdrAttribute(e)].push_back(e);
+    }
+    boundary.resize(tdofs.size());
+    for (const int attr : pmesh.bdr_attributes)
+    {
+      const auto on_boundary =
+          MarkNodes(*nodal_fespace, bdr_elements[attr], [&](int e, mfem::Array<int> &dofs)
+                    { nodal_fespace->GetBdrElementDofs(e, dofs); });
+      const auto *h_on_boundary = on_boundary.HostRead();
+      for (std::size_t k = 0; k < tdofs.size(); k++)
+      {
+        if (h_on_boundary[tdofs[k][0]] > 0.0)
+        {
+          boundary[k].push_back(attr);
+        }
+      }
+    }
+  }
+
+  long long int num_points = tdofs.size();
+  Mpi::GlobalSum(1, &num_points, comm);
+  if (!region.bbmin && region.attributes.empty() && num_points > large_export)
+  {
+    Mpi::Warning(comm,
+                 "The sensitivity export covers the whole mesh ({:d} nodes): restrict it "
+                 "with \"BoundingBoxMin\" and \"BoundingBoxMax\", or \"Attributes\"!\n",
+                 num_points);
+  }
+}
+
+SensitivityExport::~SensitivityExport() = default;
+
+void SensitivityExport::AddObjective(nlohmann::json entry, const Vector *g, double scale)
+{
+  if (shape)
+  {
+    MFEM_VERIFY(g,
+                "Missing gradient for sensitivity objective " << entry.at("Index") << "!");
+    const double s = scale / iodata.units.GetMeshLengthRelativeScale();
+    const auto *h_g = g->HostRead();
+    auto &gradient = gradients.emplace_back(3 * tdofs.size(), 0.0);
+    for (std::size_t k = 0; k < tdofs.size(); k++)
+    {
+      for (int c = 0; c < space_dim; c++)
+      {
+        gradient[3 * k + c] = s * h_g[tdofs[k][c]];
+      }
+    }
+    entry["Gradient"] = fmt::format("gradient-{:d}.bin", entry.at("Index").get<int>());
+  }
+  objectives.push_back(std::move(entry));
+}
+
+void SensitivityExport::Write(const std::filesystem::path &dir) const
+{
+  // Gather and write one array at a time, so that the root process holds at most one array
+  // of the whole region.
+  const bool root = Mpi::Root(comm);
+  if (root)
+  {
+    std::filesystem::create_directories(dir);
+  }
+  std::size_t num_points = 0;
+  nlohmann::json meta;
+  if (shape)
+  {
+    {
+      const auto all_points = Mpi::GatherOnRoot(points, comm);
+      if (root)
+      {
+        num_points = all_points.size() / 3;
+        auto fp = OpenBinary(dir / "points.bin");
+        WriteBinary(fp, all_points);
+        meta["Points"] = "points.bin";
+      }
+    }
+    const auto &region = *iodata.sensitivity.shape;
+    if (region.boundary_tags)
+    {
+      std::vector<int> counts, attributes;
+      for (const auto &attr_list : boundary)
+      {
+        counts.push_back(static_cast<int>(attr_list.size()));
+        attributes.insert(attributes.end(), attr_list.begin(), attr_list.end());
+      }
+      const auto all_counts = Mpi::GatherOnRoot(counts, comm);
+      const auto all_attributes = Mpi::GatherOnRoot(attributes, comm);
+      if (root)
+      {
+        std::vector<std::int64_t> offsets(all_counts.size() + 1, 0);
+        for (std::size_t k = 0; k < all_counts.size(); k++)
+        {
+          offsets[k + 1] = offsets[k] + all_counts[k];
+        }
+        auto fb = OpenBinary(dir / "boundary.bin");
+        WriteBinary(fb, offsets);
+        WriteBinary(
+            fb, std::vector<std::int32_t>(all_attributes.begin(), all_attributes.end()));
+        meta["Boundary"] = "boundary.bin";
+      }
+    }
+    for (std::size_t i = 0; i < objectives.size(); i++)
+    {
+      const auto all_gradient = Mpi::GatherOnRoot(gradients[i], comm);
+      if (root)
+      {
+        auto fg = OpenBinary(dir / objectives[i].at("Gradient").get<std::string>());
+        WriteBinary(fg, all_gradient);
+      }
+    }
+    if (root)
+    {
+      nlohmann::json json_region = nlohmann::json::object();
+      if (region.bbmin)
+      {
+        const double scale = iodata.units.GetMeshLengthRelativeScale();
+        std::array<double, 3> bbmin = *region.bbmin, bbmax = *region.bbmax;
+        for (int c = 0; c < 3; c++)
+        {
+          bbmin[c] *= scale;
+          bbmax[c] *= scale;
+        }
+        json_region["BoundingBoxMin"] = bbmin;
+        json_region["BoundingBoxMax"] = bbmax;
+      }
+      if (!region.attributes.empty())
+      {
+        json_region["Attributes"] = region.attributes;
+      }
+      if (!json_region.empty())
+      {
+        meta["Region"] = json_region;
+      }
+    }
+  }
+  if (!root)
+  {
+    return;
+  }
+  meta["Format"] = "PalaceSensitivity";
+  meta["Version"] = 1;
+  meta["ProblemType"] = ToString(iodata.problem.type);
+  meta["LengthUnit"] = iodata.model.L0;
+  meta["NumPoints"] = num_points;
+  meta["ByteOrder"] = "LittleEndian";
+  meta["Objectives"] = objectives;
+
+  std::ofstream fo(dir / "sensitivity.json");
+  MFEM_VERIFY(fo.is_open(),
+              "Unable to open sensitivity export file " << dir / "sensitivity.json" << "!");
+  fo << meta.dump(2) << '\n';
+  Mpi::Print(comm, " Wrote the sensitivities of {:d} objective{} to {}\n",
+             objectives.size(), (objectives.size() > 1) ? "s" : "", dir.string());
+}
+
+}  // namespace palace

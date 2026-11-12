@@ -60,6 +60,7 @@ PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
 PALACE_JSON_SERIALIZE_ENUM(InactivePortMode)
+PALACE_JSON_SERIALIZE_ENUM(SensitivityObjective)
 }  // namespace palace
 
 namespace palace::config
@@ -1672,6 +1673,51 @@ SolverData::SolverData(const json &solver)
   linear = ParseOptional<LinearSolverData>(solver, "Linear");
 }
 
+SensitivityObjectiveData::SensitivityObjectiveData(const json &objective)
+{
+  type = objective.at("Type");  // Required
+  switch (type)
+  {
+    case SensitivityObjective::CAPACITANCE:
+    case SensitivityObjective::INDUCTANCE:
+      terminals = objective.at("Terminals").get<std::array<int, 2>>();  // Required
+      break;
+    case SensitivityObjective::FREQUENCY:
+    case SensitivityObjective::QUALITY_FACTOR:
+      mode = objective.at("Mode");  // Required
+      break;
+  }
+}
+
+SensitivityShapeData::SensitivityShapeData(const json &shape)
+{
+  const auto bbmin_it = shape.find("BoundingBoxMin"),
+             bbmax_it = shape.find("BoundingBoxMax");
+  MFEM_VERIFY((bbmin_it == shape.end()) == (bbmax_it == shape.end()),
+              "\"Sensitivity\" \"Shape\" requires both \"BoundingBoxMin\" and "
+              "\"BoundingBoxMax\", or neither!");
+  if (bbmin_it != shape.end())
+  {
+    bbmin = bbmin_it->get<std::array<double, 3>>();
+    bbmax = bbmax_it->get<std::array<double, 3>>();
+  }
+  attributes = shape.value("Attributes", attributes);
+  std::ranges::sort(attributes);
+  boundary_tags = shape.value("BoundaryTags", boundary_tags);
+}
+
+SensitivityData::SensitivityData(const json &sensitivity)
+{
+  objectives = ParseOptionalMap<SensitivityObjectiveData>(sensitivity, "Objectives",
+                                                          "\"Sensitivity\" objective");
+  if (auto it = sensitivity.find("Shape"); it != sensitivity.end())
+  {
+    shape = SensitivityShapeData(*it);
+  }
+  material_properties = sensitivity.value("MaterialProperties", material_properties);
+  lumped_ports = sensitivity.value("LumpedPorts", lumped_ports);
+}
+
 int GetNumSteps(double start, double end, double delta)
 {
   MFEM_VERIFY(delta > 0.0 && end >= start,
@@ -1854,6 +1900,15 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, SensitivityShapeData &data)
+{
+  if (data.bbmin)
+  {
+    std::ranges::transform(*data.bbmin, data.bbmin->begin(), LengthScaler(units));
+    std::ranges::transform(*data.bbmax, data.bbmax->begin(), LengthScaler(units));
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)

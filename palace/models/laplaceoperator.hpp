@@ -18,6 +18,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class ShapeDerivativeOperator;
 
 namespace config
 {
@@ -101,6 +102,13 @@ public:
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
+
+  // The stiffness operator of the elements with the given domain attributes, without
+  // boundary conditions, on L-vectors of the finest H1 space.
+  std::unique_ptr<Operator> GetStiffness(const std::vector<int> &attributes) const;
+
+  // The derivative of the stiffness form with respect to the positions of the mesh nodes.
+  std::unique_ptr<ShapeDerivativeOperator> GetStiffnessShapeDerivative() const;
 
   // Construct and return the discrete gradient matrix.
   const Operator &GetGradMatrix() const

@@ -126,6 +126,10 @@ void CheckSetEqual(const char *label, const std::set<std::string> &actual,
 std::set<std::string> ExpectedDirectories(int max_its, const RegressionOptions &opts)
 {
   std::set<std::string> expected;
+  if (opts.sensitivity)
+  {
+    expected.insert("sensitivity");
+  }
   if (opts.gridfunction_fields)
   {
     expected.insert("gridfunction");
@@ -508,7 +512,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   // doesn't strand the other ranks.
   if (Mpi::Root(comm))
   {
-    const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
+    const std::set<std::string> skip_dirs{"paraview", "gridfunction", "sensitivity"};
     FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
 
