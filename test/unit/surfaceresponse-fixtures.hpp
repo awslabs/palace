@@ -35,6 +35,24 @@ namespace palace::test
 
 using json = nlohmann::json;
 
+// The crack policy a fixture config states (SD-801 / SD-901; P3-23): Legacy writes
+// Model.CrackInternalBoundaryElements = true (the pre-integration behaviour every record
+// was made with); Default OMITS the key, so upstream's default applies (interior PEC,
+// Ground, Terminal and PrescribedPotential sheets are not cracked). The builders below take
+// it as their last argument (default Legacy); the uncracked-leg cases GENERATE over both.
+enum class CrackPolicy
+{
+  Legacy,
+  Default
+};
+// "legacy" / "default" (the spelling of the config writers' --crack-policy flag, SD-901).
+const char *CrackPolicyName(CrackPolicy crack_policy);
+// Sets Model.CrackInternalBoundaryElements = true (Legacy) or erases it (Default); the
+// IoData form sets IoData::model.crack_bdr_elements = true or resets it (an IoData read
+// from an example config, before the mesh is loaded).
+void ApplyCrackPolicy(json &config, CrackPolicy crack_policy);
+void ApplyCrackPolicy(IoData &iodata, CrackPolicy crack_policy);
+
 // Metal edge segments of one interface of a mesh (ExtractMetalEdgeGeometry): the segment
 // indices, their total length and the counts of the physical vertex types they touch.
 struct InterfaceEdgeSummary
@@ -286,24 +304,24 @@ struct SurfaceResponseFiles
   // Configurations (Problem.Output = the temporary directory).
   // The 2D automatic library problem: an 8 x 4 triangle mesh with the cracked metal
   // attributes 9 / 10 on y = 0.5 (MakeAutomatic2DMesh), one SA interface at R = 0.1.
-  json AutomaticConfig2D() const;
+  json AutomaticConfig2D(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
   // The same problem as a BoundaryMode solve (PEC metal, Freq 5).
-  json BoundaryModeConfig2D() const;
+  json BoundaryModeConfig2D(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
   // The automatic problem with the exact same-conductor pair library at R = 0.3.
-  json ExactPairConfig2D() const;
+  json ExactPairConfig2D(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
   // The cpw3d_surface example (examples/cpw3d_surface/cpw3d_surface_validation_thin.json)
   // on the test mesh cpw3d-surface-nc.msh with the legacy 3D library and PatchConstruction
   // "Legacy".
-  json Cpw3dLegacyConfig() const;
+  json Cpw3dLegacyConfig(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
   // A closed rectangular PEC island (attribute 9) on the plane y = 0.5 of a box with the
   // concave 3D library and PatchConstruction "Legacy" (MakeIslandMesh).
-  json IslandConfig() const;
-  json ConvexIslandConfig() const;
-  json ConvexMaxwellIslandConfig() const;
-  json RoundedIslandConfig() const;
+  json IslandConfig(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
+  json ConvexIslandConfig(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
+  json ConvexMaxwellIslandConfig(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
+  json RoundedIslandConfig(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
   // Two islands (attributes 9 / 10, two terminals) with the spatial cluster library and
   // UnmatchedPolicy "Warn" (MakeIslandMesh(..., neighboring_island = true)).
-  json HighOrderSpatialConfig() const;
+  json HighOrderSpatialConfig(CrackPolicy crack_policy = CrackPolicy::Legacy) const;
 
   // An IoData whose operators are built on the mesh another IoData read with mesh::ReadMesh
   // (the reading IoData records the cracked boundary attributes; both must describe the
