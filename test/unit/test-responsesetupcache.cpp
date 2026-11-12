@@ -136,9 +136,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(geometry);
   REQUIRE(first.GetPatchCount() == 2);
   const auto after_first = GetDerivedResponseMatrixCacheCounters();
-  CHECK(after_first.misses - before_first.misses == 2);
+  // setupmem S1 (decision 1546): a rank derives the model's matrices iff it is the root or
+  // a local patch references the model (the counters are per process); n = 2 or 0.
+  const int n = (Mpi::Root(Mpi::World()) || first.ReferencesModelLocally(0)) ? 2 : 0;
+  CHECK(after_first.misses - before_first.misses == n);
   CHECK(after_first.hits - before_first.hits == 0);
-  CHECK(after_first.entries - before_first.entries == 2);
+  CHECK(after_first.entries - before_first.entries == n);
   const auto first_probe = ApplyToProbe(first);
   REQUIRE(!first_probe.empty());
 
@@ -146,7 +149,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // returns the cached derived matrices and acts identically.
   SurfaceResponseOperator second(iodata, laplace, &geometry);
   const auto after_second = GetDerivedResponseMatrixCacheCounters();
-  CHECK(after_second.hits - after_first.hits == 2);
+  CHECK(after_second.hits - after_first.hits == n);
   CHECK(after_second.misses - after_first.misses == 0);
   CHECK(after_second.entries == after_first.entries);
   CHECK(second.GetPatchCount() == first.GetPatchCount());
@@ -158,7 +161,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     DerivedCacheRecomputeEnvGuard recompute;
     SurfaceResponseOperator verified(iodata, laplace, &geometry);
     const auto after_verified = GetDerivedResponseMatrixCacheCounters();
-    CHECK(after_verified.hits - after_second.hits == 2);
+    CHECK(after_verified.hits - after_second.hits == n);
     CHECK(after_verified.misses - after_second.misses == 0);
     CHECK(BitwiseEqual(ApplyToProbe(verified), first_probe));
   }
@@ -175,9 +178,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const auto before_invalidated = GetDerivedResponseMatrixCacheCounters();
   SurfaceResponseOperator invalidated(iodata, laplace, &geometry);
   const auto after_invalidated = GetDerivedResponseMatrixCacheCounters();
-  CHECK(after_invalidated.misses - before_invalidated.misses == 1);
-  CHECK(after_invalidated.hits - before_invalidated.hits == 1);
-  CHECK(after_invalidated.entries - before_invalidated.entries == 1);
+  CHECK(after_invalidated.misses - before_invalidated.misses == n / 2);
+  CHECK(after_invalidated.hits - before_invalidated.hits == n / 2);
+  CHECK(after_invalidated.entries - before_invalidated.entries == n / 2);
   CHECK(BitwiseEqual(ApplyToProbe(invalidated), first_probe));
 #endif
 }

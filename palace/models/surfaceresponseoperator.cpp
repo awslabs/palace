@@ -12,6 +12,7 @@
 #include <malloc.h>
 #endif
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -757,6 +758,12 @@ public:
 // Decision 1469 (1) (i): the census's RSS read around the FIRST all-pairs exchange of the
 // point locator (the per-peer MPI state); defined with ResponseMemoryCensus below.
 void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant);
+// setupmem (decision 1546): the census INSIDE the patch build (BuildFeaturePatches; the
+// setup plateau before the placement): the configuration being built and the build's own
+// members (name, bytes or count); log only, collective, under the census switch.
+void PrintResponseMemoryCensusOfPatchBuild(
+    MPI_Comm comm, const std::string &instant, const ResponseCorrectionData &result,
+    const std::vector<std::pair<std::string, double>> &members);
 bool TakeFirstExchangeCensus(MPI_Comm comm)
 {
   static bool taken = false;
@@ -12361,7 +12368,7 @@ FeaturePatchSummary BuildFeaturePatches(
     const std::map<int, FeatureCornerMatch> &corner_matches = {},
     const std::vector<EdgeSegment3D> &image_segments = {},
     const std::vector<MirrorPlane> &mirror_planes = {},
-    GeometryFallbackLedger *geometry_ledger = nullptr)
+    GeometryFallbackLedger *geometry_ledger = nullptr, MPI_Comm census_comm = MPI_COMM_NULL)
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -14611,6 +14618,32 @@ FeaturePatchSummary BuildFeaturePatches(
       summary.first_order_missing_features++;
     }
   }
+  // setupmem (decision 1546): two log-only census instants inside the patch build (the
+  // setup plateau before the placement), under PALACE_RESPONSE_MEMORY_CENSUS; the
+  // identification's and the segments' vectors by their own storage only (shallow).
+  auto PatchBuildCensus = [&](const char *instant)
+  {
+    if (census_comm == MPI_COMM_NULL)
+    {
+      return;
+    }
+    const std::vector<std::pair<std::string, double>> members = {
+        {"patch build: identification features (shallow)",
+         double(identification.features.capacity() *
+                sizeof(decltype(identification.features)::value_type))},
+        {"patch build: identification features count",
+         double(identification.features.size())},
+        {"patch build: framed + image segments (shallow)",
+         double((framed_segments.capacity() + image_segments.capacity()) *
+                sizeof(EdgeSegment3D))},
+        {"patch build: trace meshes count", double(trace_meshes.size())},
+        {"patch build: nearest-foot indices count", double(foot_indices.size())},
+        {"patch build: deferred placements count",
+         double(deferred_r9_pairs.size() + deferred_placements.size())},
+        {"patch build: runtime models count", double(runtime_models.size())}};
+    PrintResponseMemoryCensusOfPatchBuild(census_comm, instant, result, members);
+  };
+  PatchBuildCensus("inside the patch build (features placed, before the deferred ones)");
   for (const auto &place : deferred_r9_pairs)
   {
     place();
@@ -14705,6 +14738,7 @@ FeaturePatchSummary BuildFeaturePatches(
   // claims clipped at the exit.
   FillVertexRawClaims(identification, result.patches, result.corner_arm_trims,
                       result.corner_arm_extensions, result.mirror_arm_trims, R);
+  PatchBuildCensus("inside the patch build (at its end)");
   return summary;
 }
 
@@ -15909,11 +15943,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         result.geometry_fallback_interface_types[target] = type;
       }
     }
-    const auto summary =
-        BuildFeaturePatches(library, identification, global_segments, quadrature,
-                            requirements ? *requirements : law_describer, diagnostics,
-                            result, coordinate_scale, curved_matches, corner_matches,
-                            mirror_band.image_frames, mirror_band.planes, &geometry_ledger);
+    const auto summary = BuildFeaturePatches(
+        library, identification, global_segments, quadrature,
+        requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
+        curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes,
+        &geometry_ledger, mesh.GetComm());
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     if (requirements && !summary.unpatched_pairs.empty())
     {
@@ -21112,6 +21146,46 @@ SurfaceResponseMatrices BuildSurfaceResponseMatrices(
       .first->second;
 }
 
+// setupmem S1 (decision 1546): the keys BuildSurfaceResponseMatrices returns (one per
+// interface-mapping target when the model has surface matrices, none otherwise) with EMPTY
+// matrices: the released form of a model a rank does not reference (the keys stay, F-M).
+// The file checks run where the matrices are built (the root; a referencing rank).
+SurfaceResponseMatrices SurfaceResponseMatrixKeys(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config)
+{
+  SurfaceResponseMatrices result;
+  if (config.fabricated_surface_matrix.empty() && config.thin_surface_matrix.empty())
+  {
+    return result;
+  }
+  for (const auto &mapping : config.interfaces)
+  {
+    result.fabricated.emplace(mapping.target, mfem::DenseMatrix());
+    result.defects.emplace(mapping.target, mfem::DenseMatrix());
+  }
+  return result;
+}
+
+// setupmem S1 (decision 1553): a model's matrix files are read on the root and on the ranks
+// that reference the model only, so an exception there (MFEM_USE_EXCEPTIONS, the unit
+// build) can be raised on a subset of the ranks. Every rank calls this after each model
+// loop and after BuildReferencedModelMatrices, in every mode: one max-reduction of one int.
+// The failing rank rethrows its own exception and the others fail by name, so no rank is
+// left waiting in the next collective. In abort mode a failing rank's MFEM_VERIFY has
+// aborted the job before this point.
+void ExchangeModelMatrixStatus(MPI_Comm comm, const std::exception_ptr &error,
+                               const char *stage)
+{
+  int failed = error ? 1 : 0;
+  Mpi::GlobalMax(1, &failed, comm);
+  if (error)
+  {
+    std::rethrow_exception(error);
+  }
+  MFEM_VERIFY(failed == 0,
+              "The response-model matrices failed on another rank " << stage << "!");
+}
+
 double Orientation(const Point2D &a, const Point2D &b, const Point2D &c)
 {
   return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -23748,6 +23822,21 @@ void PrintResponseMemoryCensusOfRss(MPI_Comm comm, const std::string &instant)
   ResponseMemoryCensus::Print(comm, instant, entries);
 }
 
+void PrintResponseMemoryCensusOfPatchBuild(
+    MPI_Comm comm, const std::string &instant, const ResponseCorrectionData &result,
+    const std::vector<std::pair<std::string, double>> &members)
+{
+  if (!ResponseMemoryCensusEnabled(comm))
+  {
+    return;
+  }
+  ResponseMemoryCensus::Entries entries;
+  ResponseMemoryCensus::Add(entries, "config.", result);
+  entries.insert(entries.end(), members.begin(), members.end());
+  ResponseMemoryCensus::AddProcess(entries);
+  ResponseMemoryCensus::Print(comm, instant, entries);
+}
+
 void SurfaceResponseOperator::PrintResponseMemoryCensus(
     const std::string &instant, const SurfaceResponseGeometry *geometry) const
 {
@@ -24050,6 +24139,16 @@ void SurfaceResponseGeometry::RestoreReplicatedPatches(MPI_Comm comm) const
                   << count << " of " << impl.global_patch_count << " patches!");
   impl.config.patches = std::move(patches);
   impl.patches_local = false;
+}
+
+void SurfaceResponseGeometry::AdoptLocalPatches(std::vector<ResponsePatchData> &&local,
+                                                std::size_t global_count) const
+{
+  const Impl &impl = *this->impl;
+  impl.global_patch_count = global_count;
+  impl.config.patches = std::move(local);
+  impl.config.patches.shrink_to_fit();
+  impl.patches_local = true;
 }
 
 namespace
@@ -29124,6 +29223,191 @@ void SurfaceResponseOperator::ReleaseUnreferencedModelMatrices()
   }
 }
 
+void SurfaceResponseOperator::BuildReferencedModelMatrices(
+    const ResponseCorrectionData &config, const IoData &iodata,
+    double target_matching_radius, int dimension)
+{
+  // The root built every model in the loop; this rank's referenced set is
+  // ReleaseUnreferencedModelMatrices' (the models of patches + diagnostic_patches).
+  // decision 1553: a failure on this rank (a file the root read) is exchanged below.
+  std::exception_ptr referenced_matrix_error;
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    try
+    {
+      MFEM_VERIFY(config.models.size() == models.size(),
+                  "The response models do not match the configuration's model list!");
+      std::vector<char> referenced(models.size(), 0);
+      for (const auto *list : {&patches, &diagnostic_patches})
+      {
+        for (const auto &patch : *list)
+        {
+          referenced[static_cast<std::size_t>(patch.model)] = 1;
+        }
+      }
+      for (std::size_t i = 0; i < models.size(); i++)
+      {
+        if (!referenced[i])
+        {
+          continue;
+        }
+        // The model loop's calls, the same arguments (models[i] is config.models[i]).
+        const auto &model_config = config.models[i];
+        auto &model = models[i];
+        MFEM_VERIFY(model.idx == model_config.idx,
+                    "The response model order does not match the configuration's!");
+        auto domain_response = BuildDomainResponseMatrices(
+            model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+        model.fabricated_domain = std::move(domain_response.fabricated);
+        model.thin_domain = std::move(domain_response.thin);
+        model.domain_defect = std::move(domain_response.defect);
+        model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+        model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+        auto surface_response = BuildSurfaceResponseMatrices(
+            model_config, model.basis_size, iodata.units, target_matching_radius);
+        model.fabricated_surfaces = std::move(surface_response.fabricated);
+        model.surface_defects = std::move(surface_response.defects);
+        if (model.magnetic)
+        {
+          auto magnetic = EvaluateMagneticLeaf(model_config, model.basis_size,
+                                               model.conductor_state_count, dimension,
+                                               config.magnetic_rules, iodata.units);
+          MFEM_VERIFY(magnetic.status.status == model.magnetic_status.status,
+                      "The magnetic leaf of response model \""
+                          << model.name << "\" evaluates to " << magnetic.status.status
+                          << " after the placement, " << model.magnetic_status.status
+                          << " in the model loop!");
+          model.magnetic_domain_defect = std::move(magnetic.defect);
+          model.magnetic_thin_domain = std::move(magnetic.thin);
+        }
+      }
+    }
+    catch (...)
+    {
+      referenced_matrix_error = std::current_exception();
+    }
+  }
+  ExchangeModelMatrixStatus(fespace.GetComm(), referenced_matrix_error,
+                            "after the placement");
+#if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
+  CheckReferencedModelMatricesAgainstRoot();
+#endif
+}
+
+#if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
+void SurfaceResponseOperator::CheckReferencedModelMatricesAgainstRoot() const
+{
+  // Per model: the root's matrices (built in the model loop, not yet released) broadcast;
+  // a referencing rank's must be equal bit for bit, every rank's surface-map keys equal.
+  MPI_Comm comm = fespace.GetComm();
+  const bool root = Mpi::Root(comm);
+  std::vector<char> referenced(models.size(), 0);
+  for (const auto *list : {&patches, &diagnostic_patches})
+  {
+    for (const auto &patch : *list)
+    {
+      referenced[static_cast<std::size_t>(patch.model)] = 1;
+    }
+  }
+  auto Pack = [](const ResponseModel &model, bool with_values)
+  {
+    std::vector<double> out;
+    auto Dense = [&](const mfem::DenseMatrix &matrix)
+    {
+      out.push_back(matrix.Height());
+      out.push_back(matrix.Width());
+      if (with_values)
+      {
+        out.insert(out.end(), matrix.Data(),
+                   matrix.Data() +
+                       static_cast<std::size_t>(matrix.Height()) * matrix.Width());
+      }
+    };
+    for (const auto *matrix :
+         {&model.fabricated_domain, &model.thin_domain, &model.domain_defect,
+          &model.fixed_flux_transform, &model.fixed_flux_domain_defect,
+          &model.magnetic_domain_defect, &model.magnetic_thin_domain})
+    {
+      Dense(*matrix);
+    }
+    for (const auto *map : {&model.fabricated_surfaces, &model.surface_defects})
+    {
+      out.push_back(static_cast<double>(map->size()));
+      for (const auto &[interface, matrix] : *map)
+      {
+        out.push_back(interface);
+        Dense(matrix);
+      }
+    }
+    return out;
+  };
+  int checked = 0;
+  for (std::size_t i = 0; i < models.size(); i++)
+  {
+    std::vector<double> reference = root ? Pack(models[i], true) : std::vector<double>();
+    int length = static_cast<int>(reference.size());
+    Mpi::Broadcast(1, &length, 0, comm);
+    reference.resize(static_cast<std::size_t>(length));
+    Mpi::Broadcast(length, reference.data(), 0, comm);
+    if (root)
+    {
+      continue;
+    }
+    if (referenced[i])
+    {
+      const auto mine = Pack(models[i], true);
+      MFEM_VERIFY(
+          mine.size() == reference.size() &&
+              std::memcmp(mine.data(), reference.data(), mine.size() * sizeof(double)) == 0,
+          "PALACE_RESPONSE_REFERENCED_MATRIX_CHECK: the matrices of response model "
+              << i << " differ from the root's!");
+      checked++;
+    }
+    else
+    {
+      // The keys only (the sizes of a never-built model are 0 x 0).
+      std::vector<int> keys_root, keys_mine;
+      auto Keys = [](const std::vector<double> &packed, bool with_values)
+      {
+        std::vector<int> keys;
+        std::size_t k = 0;
+        auto SkipDense = [&]()
+        {
+          const auto h = static_cast<std::size_t>(packed[k++]);
+          const auto w = static_cast<std::size_t>(packed[k++]);
+          k += with_values ? h * w : 0;
+        };
+        for (int d = 0; d < 7; d++)
+        {
+          SkipDense();
+        }
+        for (int m = 0; m < 2; m++)
+        {
+          const auto count = static_cast<std::size_t>(packed[k++]);
+          for (std::size_t e = 0; e < count; e++)
+          {
+            keys.push_back(static_cast<int>(packed[k++]));
+            SkipDense();
+          }
+        }
+        return keys;
+      };
+      keys_root = Keys(reference, true);
+      keys_mine = Keys(Pack(models[i], false), false);
+      MFEM_VERIFY(keys_root == keys_mine,
+                  "PALACE_RESPONSE_REFERENCED_MATRIX_CHECK: the surface-map keys of "
+                  "response model "
+                      << i << " differ from the root's!");
+    }
+  }
+  Mpi::GlobalSum(1, &checked, comm);
+  Mpi::Print(comm,
+             " PALACE_RESPONSE_REFERENCED_MATRIX_CHECK: {:d} referenced model(s) on the "
+             "non-root ranks equal the root's bit for bit; every rank's keys equal\n",
+             checked);
+}
+#endif
+
 void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
 {
   MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
@@ -30347,9 +30631,110 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   return records;
 }
 
+namespace
+{
+
+// setupmem S2 (decision 1546): the ORIGINAL values of every field the placement writes in
+// a placed patch: ApplyContinuationOwnership's clip (weight, quadrature weight, the cell,
+// the origin and the Maxwell anchors moved with it, the own-cell pre-image by ClipOwnCell /
+// ClipLongitudinalCell) and its foreign-edge domain drop (domain_weight); the
+// DomainBoundary passes (weight).
+struct PlacementOriginalFields
+{
+  double weight = 0.0;
+  double quadrature_weight = 0.0;
+  double domain_weight = 0.0;
+  std::array<double, 2> longitudinal_cell{};
+  std::array<double, 3> origin{};
+  std::array<std::array<double, 3>, 2> own_cell{};
+  std::vector<std::array<double, 3>> maxwell_conductor_anchors;
+};
+
+std::vector<PlacementOriginalFields>
+TakePlacementOriginalFields(const std::vector<ResponsePatchData> &patches)
+{
+  std::vector<PlacementOriginalFields> originals(patches.size());
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const auto &patch = patches[i];
+    auto &original = originals[i];
+    original.weight = patch.weight;
+    original.quadrature_weight = patch.provenance.quadrature_weight;
+    original.domain_weight = patch.domain_weight;
+    original.longitudinal_cell = patch.longitudinal_cell;
+    original.origin = patch.origin;
+    original.own_cell = patch.provenance.own_cell;
+    original.maxwell_conductor_anchors = patch.maxwell_conductor_anchors;
+  }
+  return originals;
+}
+
+// Exchanges the written fields of every patch with the side table: called in pairs, the
+// list holds the ORIGINAL values between the two calls and the placed values again after
+// the second (a swap moves the values, no arithmetic).
+void SwapPlacementOriginalFields(std::vector<ResponsePatchData> &patches,
+                                 std::vector<PlacementOriginalFields> &originals)
+{
+  MFEM_VERIFY(patches.size() == originals.size(),
+              "The placement's original-field table does not match the patch list!");
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    auto &patch = patches[i];
+    auto &original = originals[i];
+    std::swap(patch.weight, original.weight);
+    std::swap(patch.provenance.quadrature_weight, original.quadrature_weight);
+    std::swap(patch.domain_weight, original.domain_weight);
+    std::swap(patch.longitudinal_cell, original.longitudinal_cell);
+    std::swap(patch.origin, original.origin);
+    std::swap(patch.provenance.own_cell, original.own_cell);
+    patch.maxwell_conductor_anchors.swap(original.maxwell_conductor_anchors);
+  }
+}
+
+std::size_t PlacementOriginalFieldsBytes(const std::vector<PlacementOriginalFields> &table)
+{
+  std::size_t bytes = table.capacity() * sizeof(PlacementOriginalFields);
+  for (const auto &entry : table)
+  {
+    bytes += entry.maxwell_conductor_anchors.capacity() * sizeof(std::array<double, 3>);
+  }
+  return bytes;
+}
+
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+// TEST BUILDS ONLY (-DPALACE_RESPONSE_PLACEMENT_MOVE_CHECK): the list a reader of the
+// original patches sees equals the unplaced list, every field (PackPatch's exact form).
+void CheckOriginalPatchList(const std::vector<ResponsePatchData> &patches,
+                            const std::vector<ResponsePatchData> &unplaced,
+                            const char *where)
+{
+  MFEM_VERIFY(patches.size() == unplaced.size(), "PALACE_RESPONSE_PLACEMENT_MOVE_CHECK ("
+                                                     << where << "): " << patches.size()
+                                                     << " vs " << unplaced.size()
+                                                     << " patches!");
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    std::vector<double> a, b;
+    SurfaceResponseGeometry::PackPatch(a, i, patches[i]);
+    SurfaceResponseGeometry::PackPatch(b, i, unplaced[i]);
+    MFEM_VERIFY(a.size() == b.size() &&
+                    std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0,
+                "PALACE_RESPONSE_PLACEMENT_MOVE_CHECK ("
+                    << where << "): patch " << i
+                    << " differs from the unplaced list in a field!");
+  }
+  Mpi::Print(" PALACE_RESPONSE_PLACEMENT_MOVE_CHECK ({}): {:d} patches equal the unplaced "
+             "list field by field\n",
+             where, static_cast<int>(patches.size()));
+}
+#endif
+
+}  // namespace
+
 SurfaceResponseOperator::PlacementOwnership
 SurfaceResponseOperator::ApplyPlacementOwnership(
-    const ResponseCorrectionData &config, const std::unordered_map<int, int> &model_indices,
+    const ResponseCorrectionData &config, std::vector<ResponsePatchData> *movable_patches,
+    const std::unordered_map<int, int> &model_indices,
     const std::vector<std::vector<std::array<double, 3>>> &basis_points,
     double coordinate_scale, int dimension,
     const std::shared_ptr<const SurfaceResponseGeometry> &cached_geometry,
@@ -30395,7 +30780,76 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   // placement, read after the domain-boundary pass for the raw remainder (decision 922).
   std::vector<std::pair<std::size_t, std::size_t>> spatial_cluster_priority_pairs;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
-  std::vector<ResponsePatchData> placed_patches = config.patches;
+  // setupmem S2 (decision 1546): the caller's list itself when it is movable (written in
+  // place, returned moved), else a copy. Until the first write below (the continuation
+  // ownership) the placed list IS the configured one, so the readers of `config.patches`
+  // before it read the same values either way; after it they run inside a swap of the
+  // original-field table (SwapPlacementOriginalFields).
+  MFEM_VERIFY(!movable_patches || movable_patches == &config.patches,
+              "The placement's movable patch list is not the configuration's!");
+  std::vector<ResponsePatchData> copied_patches;
+  if (!movable_patches)
+  {
+    copied_patches = config.patches;
+  }
+  std::vector<ResponsePatchData> &placed_patches =
+      movable_patches ? *movable_patches : copied_patches;
+  // A shared geometry's list: this rank's local ORIGINAL patches (ReleaseReplicatedPatches'
+  // rule), taken before any write; adopted by the geometry when the list leaves below.
+  const bool moves_shared_list = movable_patches && cached_geometry &&
+                                 movable_patches == &cached_geometry->impl->config.patches;
+  const std::size_t unplaced_patch_count = placed_patches.size();
+  std::vector<ResponsePatchData> shared_local_patches;
+  if (moves_shared_list)
+  {
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    for (std::size_t patch_idx = static_cast<std::size_t>(rank);
+         patch_idx < placed_patches.size(); patch_idx += static_cast<std::size_t>(size))
+    {
+      shared_local_patches.push_back(placed_patches[patch_idx]);
+    }
+  }
+  // decision 1554: a throw (exception mode) between the first write below and the adoption
+  // at the end leaves the shared geometry as a completed placement does (this rank's local
+  // originals), not its partly written list; dismissed at the normal end.
+  struct SharedListRestore
+  {
+    const SurfaceResponseGeometry *geometry;
+    std::vector<ResponsePatchData> *local;
+    std::size_t global_count;
+    ~SharedListRestore()
+    {
+      if (geometry)
+      {
+        geometry->AdoptLocalPatches(std::move(*local), global_count);
+      }
+    }
+  } shared_list_restore{moves_shared_list ? cached_geometry.get() : nullptr,
+                        &shared_local_patches, unplaced_patch_count};
+  std::vector<PlacementOriginalFields> original_fields;
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+  const std::vector<ResponsePatchData> unplaced_patches = config.patches;
+#endif
+  // Runs `read` with `config.patches` holding the ORIGINAL values (a no-op swap when the
+  // list is a copy or nothing was written yet).
+  auto WithOriginalPatches = [&](const char *where, auto &&read)
+  {
+    const bool swap = movable_patches && !original_fields.empty();
+    if (swap)
+    {
+      SwapPlacementOriginalFields(placed_patches, original_fields);
+    }
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+    CheckOriginalPatchList(config.patches, unplaced_patches, where);
+#else
+    (void)where;
+#endif
+    read();
+    if (swap)
+    {
+      SwapPlacementOriginalFields(placed_patches, original_fields);
+    }
+  };
   // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
   // weight 0 at construction and is skipped like a wholly owned cell.
   for (const auto &trim : config.corner_arm_trims)
@@ -30721,6 +31175,12 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     const auto partial_records = FindTranslationalStretchPartiallyInsideSpatialSupport(
         placed_patches, boxes, dimension,
         kSignatureParameterToleranceOverRadius * config.matching_radius);
+    // setupmem S2: the first write of the placed list follows; its original values of the
+    // written fields are kept from here (a moved list only).
+    if (movable_patches)
+    {
+      original_fields = TakePlacementOriginalFields(placed_patches);
+    }
     const ContinuationOwnership ownership = ApplyContinuationOwnership(
         placed_patches, boxes, dimension,
         kSignatureParameterToleranceOverRadius * config.matching_radius,
@@ -30738,11 +31198,16 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         spatially_owned_patches.insert(vertex.patch);
         vertex_coupon_exclusion_reasons.emplace(vertex.patch, "VertexOwnership");
       }
-      ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
-          DescribeTranslationalOwnershipRecords(records, boxes, config, coordinate_scale,
-                                                skipped, &ownership);
-      ownership_diagnostics["ContinuationOwnership"] =
-          DescribeContinuationOwnership(ownership, boxes, config, coordinate_scale);
+      WithOriginalPatches(
+          "the continuation-ownership records",
+          [&]()
+          {
+            ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
+                DescribeTranslationalOwnershipRecords(
+                    records, boxes, config, coordinate_scale, skipped, &ownership);
+            ownership_diagnostics["ContinuationOwnership"] =
+                DescribeContinuationOwnership(ownership, boxes, config, coordinate_scale);
+          });
       if (!records.empty())
       {
         Mpi::Warning(
@@ -30752,9 +31217,14 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       if (!partial_records.empty())
       {
-        ownership_diagnostics["TranslationalStretchesPartiallyInsideSpatialSupport"] =
-            DescribeTranslationalPartialStretchRecords(partial_records, boxes, config,
-                                                       coordinate_scale, &ownership);
+        WithOriginalPatches(
+            "the partial-stretch records",
+            [&]()
+            {
+              ownership_diagnostics["TranslationalStretchesPartiallyInsideSpatialSupport"] =
+                  DescribeTranslationalPartialStretchRecords(partial_records, boxes, config,
+                                                             coordinate_scale, &ownership);
+            });
         Mpi::Warning(fespace.GetComm(), "{}",
                      DescribeTranslationalPartialStretchWarning(
                          ownership_diagnostics
@@ -30905,8 +31375,13 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         geometry_ledger.Enforce(maxwell ? "Maxwell surface-response configuration"
                                         : "electrostatic surface-response configuration");
       }
-      ownership_diagnostics["DomainBoundaryExclusions"] =
-          DescribeDomainBoundaryExclusions(exclusions, config, coordinate_scale);
+      WithOriginalPatches("the DomainBoundary record",
+                          [&]()
+                          {
+                            ownership_diagnostics["DomainBoundaryExclusions"] =
+                                DescribeDomainBoundaryExclusions(exclusions, config,
+                                                                 coordinate_scale);
+                          });
       // F-DB-a (decisions 442 / 454): the excluded patches' raw claims are kept in the
       // corrected interface energies (GetDomainBoundaryPortions), never dropped.
       domain_boundary_portions = CollectDomainBoundaryPortions(
@@ -31032,8 +31507,23 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         ResponseMemoryCensus::Add(entries, "config.", config);
         ResponseMemoryCensus::Add(entries, *this);
         // The placement's own locals live at this instant.
-        entries.emplace_back("placement: placed_patches (the copy of config.patches)",
-                             ResponseMemoryCensus::Heap(placed_patches));
+        if (movable_patches)
+        {
+          // setupmem S2: the placed list IS config.patches (counted above).
+          entries.emplace_back(
+              "placement: placed_patches (config.patches moved in place; counted there)",
+              0.0);
+          entries.emplace_back("placement: the original-field side table (setupmem S2)",
+                               double(PlacementOriginalFieldsBytes(original_fields)));
+          entries.emplace_back(
+              "placement: the shared geometry's local original patches (setupmem S2)",
+              ResponseMemoryCensus::Heap(shared_local_patches));
+        }
+        else
+        {
+          entries.emplace_back("placement: placed_patches (the copy of config.patches)",
+                               ResponseMemoryCensus::Heap(placed_patches));
+        }
         entries.emplace_back("placement: the containment exclusions",
                              ResponseMemoryCensus::Heap(exclusions));
         entries.emplace_back("placement: spatial_supports + spatially_owned_patches",
@@ -31128,17 +31618,22 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           ownership_diagnostics["SpatialClusterPriority"]["WindowLength"].get<double>());
     }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
-    ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
-        DescribeCornerArmTrimExcludedCoupons(
-            config.corner_arm_trims, config,
-            [&](std::size_t patch_idx) -> std::optional<std::string>
-            {
-              const auto it = vertex_coupon_exclusion_reasons.find(patch_idx);
-              return it == vertex_coupon_exclusion_reasons.end()
-                         ? std::nullopt
-                         : std::optional<std::string>(it->second);
-            },
-            coordinate_scale);
+    WithOriginalPatches("the trimmed corners' excluded coupons",
+                        [&]()
+                        {
+                          ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
+                              DescribeCornerArmTrimExcludedCoupons(
+                                  config.corner_arm_trims, config,
+                                  [&](std::size_t patch_idx) -> std::optional<std::string>
+                                  {
+                                    const auto it =
+                                        vertex_coupon_exclusion_reasons.find(patch_idx);
+                                    return it == vertex_coupon_exclusion_reasons.end()
+                                               ? std::nullopt
+                                               : std::optional<std::string>(it->second);
+                                  },
+                                  coordinate_scale);
+                        });
     if (ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
     {
       Mpi::Warning(
@@ -31148,7 +31643,34 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
   }
-  return {std::move(placed_patches), std::move(spatially_owned_patches)};
+#if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
+  // TEST BUILDS ONLY: the moved list with its original fields swapped back is the unplaced
+  // list field by field (no unlisted field was written), and the shared geometry's local
+  // subset is the unplaced list's.
+  WithOriginalPatches("the end of the placement", []() {});
+  if (moves_shared_list)
+  {
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    std::vector<ResponsePatchData> expected;
+    for (std::size_t patch_idx = static_cast<std::size_t>(rank);
+         patch_idx < unplaced_patches.size(); patch_idx += static_cast<std::size_t>(size))
+    {
+      expected.push_back(unplaced_patches[patch_idx]);
+    }
+    CheckOriginalPatchList(shared_local_patches, expected, "the shared local patches");
+  }
+#endif
+  PlacementOwnership placement{std::move(placed_patches),
+                               std::move(spatially_owned_patches)};
+  shared_list_restore.geometry = nullptr;
+  if (moves_shared_list)
+  {
+    // The shared geometry keeps this rank's local originals until the next construction
+    // (C6); ReleaseReplicatedPatches finds them local.
+    cached_geometry->AdoptLocalPatches(std::move(shared_local_patches),
+                                       unplaced_patch_count);
+  }
+  return placement;
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -31186,6 +31708,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   std::optional<ResponseCorrectionData> automatic_config;
   std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
   const ResponseCorrectionData *config = &*request;
+  // setupmem S2: the same configuration when this constructor owns it (automatic), so
+  // that the placement moves its patch list instead of copying it; null for iodata's.
+  ResponseCorrectionData *movable_config = nullptr;
   if (request->IsAutomatic())
   {
     if (automatic_geometry && *automatic_geometry)
@@ -31196,7 +31721,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                   "Cannot reuse Maxwell surface-response geometry for electrostatics!");
       // C6: the full placed-patch list again (released after the previous construction).
       cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
-      config = &cached_geometry->impl->config;
+      config = movable_config = &cached_geometry->impl->config;
       automatic_statistics = cached_geometry->impl->statistics;
     }
     else
@@ -31261,11 +31786,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
             new SurfaceResponseGeometry(std::move(impl)));
         *automatic_geometry = cached_geometry;
-        config = &cached_geometry->impl->config;
+        config = movable_config = &cached_geometry->impl->config;
       }
       else
       {
-        config = &*automatic_config;
+        config = movable_config = &*automatic_config;
       }
     }
   }
@@ -31325,6 +31850,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config->target_interfaces);
   const auto derived_cache_before = GetDerivedResponseMatrixCacheCounters();
+  // setupmem S1 (decision 1546): the root builds every model's matrices here (the
+  // all-model records and log lines); another rank builds the metadata only and, after the
+  // placement, the matrices of the models its patches reference.
+  const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
+  std::exception_ptr model_matrix_error;
   for (const auto &model_config : config->models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -31767,17 +32297,38 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           !model.spatial_mortar &&
           (!model.zero_trace_indices.empty() || !model.consistent_mortar_vertices.empty());
     }
-    auto domain_response = BuildDomainResponseMatrices(
-        model_config, model.basis_size, model.zero_trace_indices, iodata.units);
-    model.fabricated_domain = std::move(domain_response.fabricated);
-    model.thin_domain = std::move(domain_response.thin);
-    model.domain_defect = std::move(domain_response.defect);
-    model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
-    model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-    auto surface_response = BuildSurfaceResponseMatrices(
-        model_config, model.basis_size, iodata.units, target_matching_radius);
-    model.fabricated_surfaces = std::move(surface_response.fabricated);
-    model.surface_defects = std::move(surface_response.defects);
+    bool model_matrices_built = false;
+    if (build_every_model_matrix && !model_matrix_error)
+    {
+      // decision 1553: a failure is kept for ExchangeModelMatrixStatus after the loop; the
+      // loop goes on as on another rank (the keys only), so every rank runs its statements.
+      try
+      {
+        auto domain_response = BuildDomainResponseMatrices(
+            model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+        model.fabricated_domain = std::move(domain_response.fabricated);
+        model.thin_domain = std::move(domain_response.thin);
+        model.domain_defect = std::move(domain_response.defect);
+        model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+        model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+        auto surface_response = BuildSurfaceResponseMatrices(
+            model_config, model.basis_size, iodata.units, target_matching_radius);
+        model.fabricated_surfaces = std::move(surface_response.fabricated);
+        model.surface_defects = std::move(surface_response.defects);
+        model_matrices_built = true;
+      }
+      catch (...)
+      {
+        model_matrix_error = std::current_exception();
+      }
+    }
+    if (!model_matrices_built)
+    {
+      // setupmem S1: the keys only (the released form; BuildReferencedModelMatrices).
+      auto surface_keys = SurfaceResponseMatrixKeys(model_config);
+      model.fabricated_surfaces = std::move(surface_keys.fabricated);
+      model.surface_defects = std::move(surface_keys.defects);
+    }
     // The conductor-consistency gate (decision 277) probes the trace mesh's conductor
     // vertices through the surface mortar only: a spatial model applied collocated keeps
     // its metal cross-sections unprobed, which is said once here.
@@ -31818,6 +32369,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
   }
+  // decision 1553: every rank, every mode (a failure of the root's matrices above).
+  ExchangeModelMatrixStatus(fespace.GetComm(), model_matrix_error, "in the model loop");
   {
     // The derived-matrix cache (decision 734 F1): hits from the second AMR cycle on.
     const auto derived_cache_after = GetDerivedResponseMatrixCacheCounters();
@@ -31852,9 +32405,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         ownership_diagnostics["ConsistentMortar"]["WithZeroTraceIndices"].get<int>(),
         ownership_diagnostics["ConsistentMortar"]["WithoutBand"].get<int>());
   }
-  auto placement =
-      ApplyPlacementOwnership(*config, model_indices, basis_points, coordinate_scale,
-                              dimension, cached_geometry, setup_timing);
+  auto placement = ApplyPlacementOwnership(
+      *config, movable_config ? &movable_config->patches : nullptr, model_indices,
+      basis_points, coordinate_scale, dimension, cached_geometry, setup_timing);
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
@@ -32645,6 +33198,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // the next construction (an AMR iteration) re-assembles the list.
     cached_geometry->ReleaseReplicatedPatches(fespace.GetComm());
   }
+  // setupmem S1 (decision 1546): the referenced models' matrices on a rank other than the
+  // root (no reader of a model matrix runs between the model loop and here).
+  BuildReferencedModelMatrices(*config, iodata, target_matching_radius, dimension);
   ReleaseUnreferencedModelMatrices();
 #if defined(__GLIBC__)
   // Round 2b B2 (decision 1484; glibc only; a memory hint, no result path): the
@@ -32713,6 +33269,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   std::optional<ResponseCorrectionData> local_config;
   std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
   const ResponseCorrectionData *config_ptr = nullptr;
+  // setupmem S2: the configuration this function owns (always automatic here): the
+  // placement moves its patch list instead of copying it.
+  ResponseCorrectionData *movable_config = nullptr;
   const AutomaticResponseDiagnostics *diagnostics_ptr = nullptr;
   if (automatic_geometry && *automatic_geometry)
   {
@@ -32723,7 +33282,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
     // C6: the full placed-patch list again (released after the previous construction).
     cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
-    config_ptr = &cached_geometry->impl->config;
+    config_ptr = movable_config = &cached_geometry->impl->config;
     diagnostics_ptr = &*cached_geometry->impl->diagnostics;
     automatic_statistics = cached_geometry->impl->statistics;
   }
@@ -32759,12 +33318,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
           new SurfaceResponseGeometry(std::move(impl)));
       *automatic_geometry = cached_geometry;
-      config_ptr = &cached_geometry->impl->config;
+      config_ptr = movable_config = &cached_geometry->impl->config;
       diagnostics_ptr = &*cached_geometry->impl->diagnostics;
     }
     else
     {
-      config_ptr = &*local_config;
+      config_ptr = movable_config = &*local_config;
       diagnostics_ptr = &local_diagnostics;
     }
   }
@@ -32834,6 +33393,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   basis_points.reserve(config.models.size());
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config.target_interfaces);
+  // setupmem S1 (decision 1546): as the electrostatic constructor (the root builds every
+  // model's matrices here; another rank the metadata, then BuildReferencedModelMatrices).
+  const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
+  std::exception_ptr model_matrix_error;
   for (const auto &model_config : config.models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -33020,17 +33583,38 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         model.hat_rim_knots.push_back(rim);
       }
     }
-    auto domain_response = BuildDomainResponseMatrices(
-        model_config, model.basis_size, model.zero_trace_indices, iodata.units);
-    model.fabricated_domain = std::move(domain_response.fabricated);
-    model.thin_domain = std::move(domain_response.thin);
-    model.domain_defect = std::move(domain_response.defect);
-    model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
-    model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-    auto surface_response = BuildSurfaceResponseMatrices(
-        model_config, model.basis_size, iodata.units, target_matching_radius);
-    model.fabricated_surfaces = std::move(surface_response.fabricated);
-    model.surface_defects = std::move(surface_response.defects);
+    bool model_matrices_built = false;
+    if (build_every_model_matrix && !model_matrix_error)
+    {
+      // decision 1553: a failure is kept for ExchangeModelMatrixStatus after the loop; the
+      // loop goes on as on another rank (the keys only), so every rank runs its statements.
+      try
+      {
+        auto domain_response = BuildDomainResponseMatrices(
+            model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+        model.fabricated_domain = std::move(domain_response.fabricated);
+        model.thin_domain = std::move(domain_response.thin);
+        model.domain_defect = std::move(domain_response.defect);
+        model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+        model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+        auto surface_response = BuildSurfaceResponseMatrices(
+            model_config, model.basis_size, iodata.units, target_matching_radius);
+        model.fabricated_surfaces = std::move(surface_response.fabricated);
+        model.surface_defects = std::move(surface_response.defects);
+        model_matrices_built = true;
+      }
+      catch (...)
+      {
+        model_matrix_error = std::current_exception();
+      }
+    }
+    if (!model_matrices_built)
+    {
+      // setupmem S1: the keys only (the released form; BuildReferencedModelMatrices).
+      auto surface_keys = SurfaceResponseMatrixKeys(model_config);
+      model.fabricated_surfaces = std::move(surface_keys.fabricated);
+      model.surface_defects = std::move(surface_keys.defects);
+    }
     // The magnetic (inductive) leaf (DESIGN-v2 section 3; USER 1221 D3): evaluated by the
     // rules r1-r4 on every rank from the model data; a refusal by r1 / r2 / r3 is fatal
     // unless AllowElectricOnlyFallback, an r4 refusal continues electric-only by name
@@ -33090,8 +33674,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           model.magnetic_status.status == "Finding")
       {
         model.magnetic = true;
-        model.magnetic_domain_defect = std::move(magnetic.defect);
-        model.magnetic_thin_domain = std::move(magnetic.thin);
+        if (build_every_model_matrix)
+        {
+          // Elsewhere the status above is this rank's own evaluation; the matrices of a
+          // referenced model are evaluated again after the placement (setupmem S1).
+          model.magnetic_domain_defect = std::move(magnetic.defect);
+          model.magnetic_thin_domain = std::move(magnetic.thin);
+        }
         has_magnetic_models = true;
         Mpi::Print(" Magnetic (inductive) leaf of model \"{}\" ({}): -lambda_min / "
                    "||dS_m|| = {:.3e}, {:d} negative eigenvalue(s) of {:d}{}\n",
@@ -33122,6 +33711,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
   }
+  // decision 1553: every rank, every mode (a failure of the root's matrices above).
+  ExchangeModelMatrixStatus(fespace.GetComm(), model_matrix_error, "in the model loop");
   if (iodata.model.refinement.max_it == 0)
   {
     // Round 3 M2-e (decision 1501; the round-2b B3 release moved here from the drivers):
@@ -33147,8 +33738,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // The placement sub-stamps under PALACE_RESPONSE_SETUP_TIMING (lane fix-response-memory
   // C2; the electrostatic constructor's rule): the default log is byte-identical.
   auto placement = ApplyPlacementOwnership(
-      config, model_indices, basis_points, coordinate_scale, dimension, cached_geometry,
-      std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
+      config, &movable_config->patches, model_indices, basis_points, coordinate_scale,
+      dimension, cached_geometry, std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
@@ -34130,6 +34721,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // patch's model) are released before the line and point exchanges.
     std::vector<const ResponsePatchData *>().swap(local_patch_configs);
     std::vector<ResponsePatchData>().swap(applied_patches);
+    // setupmem S1 (decision 1546): the referenced models' matrices on a rank other than the
+    // root (no reader of a model matrix runs between the model loop and here).
+    BuildReferencedModelMatrices(config, iodata, target_matching_radius, dimension);
+    if (iodata.model.refinement.max_it == 0)
+    {
+      // M2-e's release (after the model loop) again: the build above refilled the caches.
+      ReleaseResponseMatrixCaches();
+    }
     ReleaseUnreferencedModelMatrices();
 #if defined(__GLIBC__)
     malloc_trim(0);

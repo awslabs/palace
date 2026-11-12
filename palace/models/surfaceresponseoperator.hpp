@@ -203,6 +203,12 @@ public:
   std::size_t GlobalPatchCount() const;
   void ReleaseReplicatedPatches(MPI_Comm comm) const;
   void RestoreReplicatedPatches(MPI_Comm comm) const;
+  // setupmem S2 (decision 1546): the local patches ReleaseReplicatedPatches would keep,
+  // taken by the placement before it moved the full list (`local` = the global indices
+  // rank, rank + size, ... of the unplaced list, in order).
+  void AdoptLocalPatches(
+      std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &&local,
+      std::size_t global_count) const;
   // The exact pack / unpack of one placed patch (every field) the re-assembly uses.
   static void
   PackPatch(std::vector<double> &out, std::size_t global_index,
@@ -1149,6 +1155,12 @@ private:
   // spatial cluster, wholly trimmed, vertex-owned or DomainBoundary-excluded). Records the
   // uncovered / DomainBoundary / conductor-consistency portions and the ownership
   // Diagnostics as members. Collective (the domain-boundary containment test).
+  // setupmem S2 (decision 1546): `movable_patches` = &config.patches when the caller owns
+  // the list (an automatic configuration): the placement then writes that list in place
+  // and returns it MOVED (one copy of the patch list), keeping the original values of the
+  // fields it writes in a side table for the readers of the original list; a shared
+  // geometry's list keeps this rank's local originals (AdoptLocalPatches). Null = the
+  // former copy (a manual configuration: iodata's own list).
   struct PlacementOwnership
   {
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
@@ -1157,6 +1169,8 @@ private:
   };
   PlacementOwnership ApplyPlacementOwnership(
       const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+      std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+          *movable_patches,
       const std::unordered_map<int, int> &model_indices,
       const std::vector<std::vector<std::array<double, 3>>> &basis_points,
       double coordinate_scale, int dimension,
@@ -1618,6 +1632,19 @@ private:
   // F-M: frees the matrices of the models no local patch references (the construction's
   // last step).
   void ReleaseUnreferencedModelMatrices();
+  // setupmem S1 (decision 1546): on a rank other than the root the model loop builds the
+  // metadata only (the surface maps' keys with empty matrices); after the placement this
+  // builds the matrices of the models its patches reference (patches + diagnostic_patches),
+  // by the same functions of the same inputs as the loop. The root builds every model in
+  // the loop (the all-model records and log lines).
+  void BuildReferencedModelMatrices(
+      const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+      const IoData &iodata, double target_matching_radius, int dimension);
+#if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
+  // TEST BUILDS ONLY: a referencing rank's model matrices equal the root's bit for bit, and
+  // every rank's surface-map keys equal the root's (collective).
+  void CheckReferencedModelMatricesAgainstRoot() const;
+#endif
   // Whether this rank holds the gathered per-patch records (the root always does).
   bool HoldsPatchRecords() const;
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only,

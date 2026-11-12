@@ -1085,6 +1085,20 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                           ContainsSubstring("4 vs 2 DomainBoundary patches"));
   }
 
+  // setupmem S2 (decision 1554): the placement writes the shared geometry's patch list in
+  // place; a construction that throws in it (above) leaves the geometry as a completed one
+  // does, so a construction after it on the first mesh reproduces the first's, bit for bit.
+  {
+    SurfaceResponseOperator after_throw(iodata, laplace, &geometry);
+    CHECK(after_throw.DomainBoundaryContainmentReused());
+    CHECK(after_throw.GetPatchCount() == 14);
+    CHECK(DomainBoundaryRecordWithoutTiming(after_throw) == first_record);
+    const auto after_throw_probe = ProbeResponse(after_throw);
+    REQUIRE(after_throw_probe.size() == first_probe.size());
+    CHECK(std::memcmp(after_throw_probe.data(), first_probe.data(),
+                      first_probe.size() * sizeof(double)) == 0);
+  }
+
   // A curved mesh refuses the reuse (its boundary moves under refinement): recomputed, the
   // same classification on this straight-sided order-2 copy.
   {
@@ -1271,6 +1285,287 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // No DomainBoundary patch, so no per-patch element-box distance: the whole record.
       CHECK(DomainBoundaryRecordWithoutTiming(rechecked) == mirror_record);
     }
+  }
+#endif
+}
+
+// Lane setupmem-impl (decision 1546), S1 + S2 on the AMR re-construction path: a rank other
+// than the root builds the matrices of the models ITS patches reference only, after the
+// placement (S1), and the placement moves the shared geometry's patch list, the geometry
+// keeping this rank's local ORIGINAL patches (S2). On the sheared-cut lead (14 applied of
+// 18 placed patches at shear 0.45, 16 at 0.2) with CURVED meshes (the containment test runs
+// at every construction): (1) after a construction every rank holds matrix entries exactly
+// for the models it references; (2) a second construction on the SAME geometry where the
+// applied set changes (shear 0.2: 2 DomainBoundary cells come back) keeps the geometry's
+// local residency and acts bit for bit as a construction on a FRESH geometry on that mesh;
+// (3) a third construction back on the first mesh acts as the first, bit for bit; (1') a
+// model is referenced by a strict subset of the ranks that includes a non-root rank (from 3
+// ranks on, decision 1557); (4) re-constructions on meshes that exclude 3 more edge cells
+// change some rank's referenced set (from 8 ranks on) and act as fresh constructions.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator referenced-only model matrices and the moved "
+                 "patch list across AMR re-constructions (setupmem)",
+                 "[surfaceresponseoperator][setupmem][domainboundary][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto basis_path = temp.temp_dir / "setupmem-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-setupmem-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-setupmem-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  auto MakeCurvedMeshes = [&](double mesh_shear)
+  {
+    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(mesh_shear, false);
+    serial.SetCurvature(2);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return meshes;
+  };
+  const int rank = Mpi::Rank(Mpi::World()), size = Mpi::Size(Mpi::World());
+  // This rank's referenced models; every model's entries are held iff it is referenced.
+  auto ReferencedSet = [](const SurfaceResponseOperator &op)
+  {
+    std::vector<int> referenced(op.GetModelCount(), 0);
+    for (std::size_t model = 0; model < op.GetModelCount(); model++)
+    {
+      CAPTURE(model);
+      referenced[model] = op.ReferencesModelLocally(model) ? 1 : 0;
+      CHECK((op.GetModelMatrixEntries(model) > 0) == (referenced[model] == 1));
+    }
+    return referenced;
+  };
+  // The geometry's residence: this rank's local patches of the unplaced list.
+  auto LocalResidency = [&](const SurfaceResponseGeometry &geometry)
+  {
+    CHECK(geometry.PatchesLocal());
+    std::size_t local = 0;
+    for (std::size_t p = 0; p < geometry.GlobalPatchCount(); p++)
+    {
+      local += (static_cast<int>(p % size) == rank) ? 1 : 0;
+    }
+    CHECK(geometry.RetainedPatchCount() == local);
+  };
+
+  // (1) The first construction (shear 0.45): 14 applied patches.
+  auto first_meshes = MakeCurvedMeshes(0.45);
+  LaplaceOperator first_laplace(iodata, first_meshes);
+  std::shared_ptr<const SurfaceResponseGeometry> geometry;
+  SurfaceResponseOperator first(iodata, first_laplace, &geometry);
+  REQUIRE(geometry);
+  REQUIRE(first.GetPatchCount() == 14);
+  LocalResidency(*geometry);
+  const std::size_t placed_count = geometry->GlobalPatchCount();
+  const auto first_referenced = ReferencedSet(first);
+  std::vector<int> referencing_ranks = first_referenced;
+  Mpi::GlobalSum(static_cast<int>(referencing_ranks.size()), referencing_ranks.data(),
+                 Mpi::World());
+  int single_rank_models = 0;
+  for (std::size_t model = 0; model < referencing_ranks.size(); model++)
+  {
+    single_rank_models += referencing_ranks[model] == 1 ? 1 : 0;
+  }
+  // Reported only: 0 at 2 and at 8 ranks on this mesh (decision 1556: the earlier
+  // "exercised at 8 ranks" was never run there and was wrong); the property is asserted by
+  // construction in (4).
+  WARN("setupmem: " << single_rank_models << " model(s) referenced on one rank only at "
+                    << size << " rank(s)");
+  // Decision 1557: a model referenced by a STRICT SUBSET of the ranks that includes a
+  // non-root rank (the corner model: its 2 patches, placed 16 / 17, on ranks 0 and 1), from
+  // 3 ranks on; at 2 ranks every model is on both ranks here (reported).
+  std::vector<int> nonroot_referencing(first_referenced.size(), 0);
+  for (std::size_t model = 0; model < first_referenced.size(); model++)
+  {
+    nonroot_referencing[model] = (rank != 0 && first_referenced[model]) ? 1 : 0;
+  }
+  Mpi::GlobalSum(static_cast<int>(nonroot_referencing.size()), nonroot_referencing.data(),
+                 Mpi::World());
+  int strict_subset_models = 0;
+  for (std::size_t model = 0; model < referencing_ranks.size(); model++)
+  {
+    strict_subset_models +=
+        (referencing_ranks[model] < size && nonroot_referencing[model] > 0) ? 1 : 0;
+  }
+  WARN("setupmem: " << strict_subset_models
+                    << " model(s) on a strict subset of the ranks incl. a non-root rank at "
+                    << size << " rank(s)");
+  if (size >= 3)
+  {
+    CHECK(strict_subset_models > 0);
+  }
+  const auto first_probe = ProbeResponse(first);
+  REQUIRE(!first_probe.empty());
+
+  // (2) The re-construction on the SAME geometry where the applied set changes (shear
+  // 0.2: 16 applied patches), against a fresh geometry on that mesh.
+  auto second_meshes = MakeCurvedMeshes(0.2);
+  LaplaceOperator second_laplace(iodata, second_meshes);
+  {
+    SurfaceResponseOperator second(iodata, second_laplace, &geometry);
+    CHECK_FALSE(second.DomainBoundaryContainmentReused());
+    REQUIRE(second.GetPatchCount() == 16);
+    LocalResidency(*geometry);
+    CHECK(geometry->GlobalPatchCount() == placed_count);
+    const auto second_referenced = ReferencedSet(second);
+    int changed = second_referenced != first_referenced ? 1 : 0;
+    Mpi::GlobalSum(1, &changed, Mpi::World());
+    // Reported only (the 2 returning cells do not change any rank's set here, decision
+    // 1556); a set that changes is asserted by construction in (4).
+    WARN("setupmem: the referenced set changed on " << changed << " of " << size
+                                                    << " rank(s)");
+    std::shared_ptr<const SurfaceResponseGeometry> fresh_geometry;
+    SurfaceResponseOperator fresh(iodata, second_laplace, &fresh_geometry);
+    REQUIRE(fresh.GetPatchCount() == second.GetPatchCount());
+    CHECK(ReferencedSet(fresh) == second_referenced);
+    const auto second_probe = ProbeResponse(second), fresh_probe = ProbeResponse(fresh);
+    REQUIRE(second_probe.size() == fresh_probe.size());
+    CHECK(std::memcmp(second_probe.data(), fresh_probe.data(),
+                      second_probe.size() * sizeof(double)) == 0);
+  }
+
+  // (3) Back on the first mesh: the first construction, bit for bit.
+  SurfaceResponseOperator third(iodata, first_laplace, &geometry);
+  CHECK(third.GetPatchCount() == 14);
+  LocalResidency(*geometry);
+  CHECK(ReferencedSet(third) == first_referenced);
+  const auto third_probe = ProbeResponse(third);
+  REQUIRE(third_probe.size() == first_probe.size());
+  CHECK(std::memcmp(third_probe.data(), first_probe.data(),
+                    first_probe.size() * sizeof(double)) == 0);
+
+  // (4) Decisions 1556 / 1557: re-constructions on the shared geometry on meshes whose top
+  // face is lowered towards the lead's end cap on ONE side (above the end cap, in the
+  // unsheared frame, z -> 0.5 + (z - 0.5) s(x), s = 0.1 on that side and 1 on the other,
+  // linear across the lead; the metal and the placed patches unchanged): 3 more edge cells
+  // leave the domain (DomainBoundary), so from 8 ranks on some rank's referenced set
+  // differs from (1)'s (the AMR re-construction). Each acts bit for bit as a construction
+  // on a FRESH geometry on that mesh.
+  auto MakeTiltedCurvedMeshes = [&](bool lower_left)
+  {
+    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(0.45, false);
+    for (int v = 0; v < serial.GetNV(); v++)
+    {
+      double *point = serial.GetVertex(v);
+      const double x = point[0], z = point[2] - 0.45 * (point[1] - 0.5);
+      if (z > 0.5 + 1.0e-12)
+      {
+        const double t = std::clamp((x - 0.25) / 0.5, 0.0, 1.0);
+        const double s = lower_left ? 0.1 + 0.9 * t : 1.0 - 0.9 * t;
+        point[2] = 0.5 + (z - 0.5) * s + 0.45 * (point[1] - 0.5);
+      }
+    }
+    serial.SetCurvature(2);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return meshes;
+  };
+  int one_nonroot_rank_models = 0, changed_ranks = 0;
+  for (const bool lower_left : {true, false})
+  {
+    CAPTURE(lower_left);
+    auto tilted_meshes = MakeTiltedCurvedMeshes(lower_left);
+    LaplaceOperator tilted_laplace(iodata, tilted_meshes);
+    SurfaceResponseOperator tilted(iodata, tilted_laplace, &geometry);
+    LocalResidency(*geometry);
+    CHECK(geometry->GlobalPatchCount() == placed_count);
+    const auto tilted_referenced = ReferencedSet(tilted);
+    // Every rank's referenced flags (reported with the variant's line below).
+    const int model_count = static_cast<int>(tilted_referenced.size());
+    std::vector<int> all_referenced(static_cast<std::size_t>(model_count * size)),
+        all_first(static_cast<std::size_t>(model_count * size));
+    MPI_Allgather(tilted_referenced.data(), model_count, MPI_INT, all_referenced.data(),
+                  model_count, MPI_INT, Mpi::World());
+    MPI_Allgather(first_referenced.data(), model_count, MPI_INT, all_first.data(),
+                  model_count, MPI_INT, Mpi::World());
+    std::ostringstream ranks_text;
+    for (int r = 0; r < size; r++)
+    {
+      ranks_text << " r" << r << ":";
+      for (int m = 0; m < model_count; m++)
+      {
+        ranks_text << all_first[r * model_count + m] << "->"
+                   << all_referenced[r * model_count + m]
+                   << (m + 1 < model_count ? "," : "");
+      }
+    }
+    const auto tilted_record = DomainBoundaryRecordWithoutTiming(tilted);
+    std::vector<int> ranks_per_model = tilted_referenced,
+                     root_referenced = tilted_referenced;
+    Mpi::GlobalSum(static_cast<int>(ranks_per_model.size()), ranks_per_model.data(),
+                   Mpi::World());
+    Mpi::Broadcast(static_cast<int>(root_referenced.size()), root_referenced.data(), 0,
+                   Mpi::World());
+    int variant_one_nonroot = 0;
+    for (std::size_t model = 0; model < ranks_per_model.size(); model++)
+    {
+      variant_one_nonroot +=
+          (ranks_per_model[model] == 1 && !root_referenced[model]) ? 1 : 0;
+    }
+    int variant_changed = tilted_referenced != first_referenced ? 1 : 0;
+    Mpi::GlobalSum(1, &variant_changed, Mpi::World());
+    WARN("setupmem: the top lowered on the "
+         << (lower_left ? "left" : "right") << ": " << tilted.GetPatchCount()
+         << " applied, " << variant_one_nonroot << " model(s) on one non-root rank only, "
+         << variant_changed << " of " << size << " rank(s) with a changed referenced set; "
+         << tilted_record["Count"] << " DomainBoundary cells; referenced (first->this)"
+         << ranks_text.str());
+    one_nonroot_rank_models += variant_one_nonroot;
+    changed_ranks += variant_changed;
+    std::shared_ptr<const SurfaceResponseGeometry> fresh_geometry;
+    SurfaceResponseOperator fresh(iodata, tilted_laplace, &fresh_geometry);
+    REQUIRE(fresh.GetPatchCount() == tilted.GetPatchCount());
+    CHECK(ReferencedSet(fresh) == tilted_referenced);
+    const auto tilted_probe = ProbeResponse(tilted), fresh_probe = ProbeResponse(fresh);
+    REQUIRE(tilted_probe.size() == fresh_probe.size());
+    CHECK(std::memcmp(tilted_probe.data(), fresh_probe.data(),
+                      tilted_probe.size() * sizeof(double)) == 0);
+  }
+  // Decision 1557: the corner coupons are never DomainBoundary-excluded, so no mesh change
+  // here gives a model on ONE rank only (reported); the edge model's references change on
+  // some rank from 8 ranks on (the lowered top excludes 3 edge cells); at 2-4 ranks no
+  // rank's set changes on this fixture (reported, not asserted).
+  WARN("setupmem: " << one_nonroot_rank_models << " model(s) on one non-root rank only, "
+                    << changed_ranks << " changed rank set(s) over the two variants at "
+                    << size << " rank(s)");
+  if (size >= 8)
+  {
+    CHECK(changed_ranks > 0);
   }
 #endif
 }
