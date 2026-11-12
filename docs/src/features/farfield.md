@@ -38,8 +38,16 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
     *Palace* only supports propagation of fields to infinity when the integration
     surface
 
-     1. is an external boundary
-     2. does not cross anisotropic materials
+     1. is closed and encloses all sources and scatterers
+     2. is an external boundary, or an interior surface in a homogeneous medium or on
+        the inner side of a perfectly matched layer (no surface source on it)
+     3. does not cross anisotropic materials
+
+    On an interior surface (for example a box around the radiating structure, inside the
+    physical region terminated by a PML), the fields of each face are taken from the side
+    facing the center of the bounding box of the surface, as on an external boundary. An
+    interior surface must be closed, every face must face that center, and both sides of
+    each face must have the same isotropic material.
 
 ## Setup
 

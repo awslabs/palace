@@ -174,9 +174,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack~openmp", when="~openmp")
 
     # The STRUMPACK version of the superbuild, with
-    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its fix
-    # https://github.com/pghysels/STRUMPACK/pull/164, and the copy in extern/patch/STRUMPACK
-    # of https://github.com/pghysels/STRUMPACK/pull/167 for the Schur complements of
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, the solver changes of
+    # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
+    # solves with a few right-hand sides, and the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/167 for the Schur complements of
     # substructuring. Kept off the `with` blocks so the Palace variants are not folded into
     # the patch condition.
     depends_on(
@@ -197,6 +199,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
+                "0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/"
+                "strumpack_pr165.diff",
+                sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
                 "ceae7bf924d9ef505791937db58ac1ae609d2f10/extern/patch/STRUMPACK/"
                 "strumpack_pr167.diff",
                 sha256="c05abf224416247af48f2f29b7ae785a87304920aaa1ea7f373e6c49fb286f86",
@@ -210,8 +219,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # https://github.com/xiaoyeli/superlu_dist/pull/251,
     # https://github.com/xiaoyeli/superlu_dist/pull/252 and
     # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
-    # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
-    # the Palace variants are not folded into the patch condition.
+    # the symbolic factorization, refactorizations and solves, and of
+    # https://github.com/xiaoyeli/superlu_dist/pull/254,
+    # https://github.com/xiaoyeli/superlu_dist/pull/255 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/256 for the solves with a 3D process
+    # grid. Kept off the `with` blocks so the Palace variants are not folded into the patch
+    # condition.
     depends_on(
         "superlu-dist@9.3.1",
         when="@0.20:+superlu-dist",
@@ -242,6 +255,27 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
                 "superlu_dist_pr253.diff",
                 sha256="8de4200968cfc3d8c2d5a5e60ec2c00c624dc6668d510a709dd79eb475ebfa34",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr254.diff",
+                sha256="6e52065a7f276e3db2b1b3a1ca91b3e03131a7a65751ad988a23d3de2b12bd1f",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr255.diff",
+                sha256="686b940b832c560d8fb703f8591cc7f39bedd78646b376142654187973b61bf7",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr256.diff",
+                sha256="f9658bc250bfdb7add6dd7087611f63bc1779eccd60505ea97118fe4f802c17a",
                 when="@9.3.1",
             ),
         ],
@@ -503,6 +537,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "https://github.com/mfem/mfem/commit/"
                 "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
                 sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
+            # the layers of a 3D process grid (narrow to @4.10.0 once merged upstream and
+            # Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff",
+                sha256="7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0",
                 when="@4.10:",
             ),
         ],

@@ -1432,7 +1432,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` includes the complex terms in the real-valued preconditioner. This override affects only this wave port and does not change the full 3D system preconditioner.",
+          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` the real-valued approximation of the system matrix. This override affects only this wave port and does not change the full 3D system preconditioner.",
           "x-palace-advanced": true
         },
         "EigenTol": {
@@ -1791,7 +1791,7 @@
         "FarField": {
           "$ref": "#/$defs/FarField",
           "title": "Far Field",
-          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+          "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium."
         }
       }
     },
@@ -1920,7 +1920,7 @@
     "FarField": {
       "type": "object",
       "title": "Far Field",
-      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium.",
       "additionalProperties": false,
       "required": [
         "Attributes"

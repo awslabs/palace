@@ -295,8 +295,16 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1"
   9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b
 )
+# Lower-latency distributed triangular solves for a few right-hand sides
+# (https://github.com/pghysels/STRUMPACK/pull/165), without its test and CI changes, which
+# need test infrastructure added after STRUMPACK 8.1.0
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr165.diff
+  "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"
+  b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294
+)
 # A Schur complement interface, for the substructuring condensations: the source changes
-# of https://github.com/pghysels/STRUMPACK/pull/167, onto the two patches above
+# of https://github.com/pghysels/STRUMPACK/pull/167, onto the patches above
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr167.diff"
 )
