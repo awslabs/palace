@@ -36,8 +36,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   constexpr double angle_error_deg = 1.0;
   auto lengths = bounding_box.Lengths();
   auto deviations_deg = bounding_box.Deviations(dir_vec);
-  if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
-                   [](double x) { return x < angle_warning_deg; }))
+  if (std::ranges::none_of(deviations_deg, [](double x) { return x < angle_warning_deg; }))
   {
     auto normals = bounding_box.Normals();
     if (dim == 3)
@@ -65,8 +64,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                    fmt::join(n1, ", "), deviations_deg(1));
     }
   }
-  if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
-                   [](double x) { return x < angle_error_deg; }))
+  if (std::ranges::none_of(deviations_deg, [](double x) { return x < angle_error_deg; }))
   {
     Mpi::Barrier(mesh.GetComm());
     std::string dev_str;

@@ -41,11 +41,6 @@ void Initialize(int &argc, char **&argv, const char rc_file[], const char help[]
 void Initialize();
 void Finalize();
 
-// Compute and return the maximum singular value of the given operator, σₙ² = λₙ(Aᴴ A) .
-PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                              PetscReal tol = PETSC_DEFAULT,
-                              PetscInt max_it = PETSC_DEFAULT);
-
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic
 // polynomial eigenvalue problems. Shift-and-invert spectral transformations can be used to
@@ -486,7 +481,12 @@ public:
   using SlepcEigenvalueSolver::sinvert;
 
   // Operators for the nonlinear eigenvalue problem.
-  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;
+  // Function and Jacobian shell matrices must retain independent A2 owners: SLEPc may
+  // apply either shell after invoking the other callback. The top-level opA/opJ sums hold
+  // non-owning references to these subordinate operators.
+  std::unique_ptr<ComplexOperator> opA2, opA;                   // Function T(λ)
+  std::unique_ptr<ComplexOperator> opA2_jac, opA2p, opAJ, opJ;  // Jacobian T′(λ)
+  std::unique_ptr<ComplexOperator> opA2_pc, opA_pc, opP_pc;     // Preconditioner
 
   // Function to compute the A2 operator.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
@@ -510,6 +510,10 @@ public:
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
+
+  // Shared by the SetOperators overloads, with C = nullptr when there is no damping.
+  void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                        const ComplexOperator &M, ScaleType type);
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,

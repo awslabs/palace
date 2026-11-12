@@ -14,9 +14,15 @@ anchor of the curved family."""
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parent.parent / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 class CouponPlacement:
@@ -279,6 +285,7 @@ def make_config(
     coupon_depth,
     substrate_permittivity,
     interface_layers,
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     if fabricated:
         ground = [2, 3, 4]
@@ -298,6 +305,7 @@ def make_config(
     model = {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth}
     if PLACEMENT.axisymmetric:
         model["Axisymmetric"] = True
+    apply_crack_policy(model, crack_policy)
     return {
         "Problem": {
             "Type": "Electrostatic",
@@ -449,6 +457,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--thin-mesh", type=Path)
     parser.add_argument("--fabricated-mesh", type=Path)
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.edge_distances is not None:
         distances = sorted(set(args.edge_distances))
@@ -512,6 +521,7 @@ def main():
             args.coupon_depth,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(config, indent=2) + "\n")
@@ -527,6 +537,7 @@ def main():
             args.coupon_depth,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         heldout["Solver"]["Electrostatic"]["ResponseMatrix"] = False
         heldout["Solver"]["Electrostatic"]["AggregateResponseMatrix"] = False

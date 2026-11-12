@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class CurlCurlOperator;
 class ErrorIndicator;
 class Mesh;
 template <ProblemType>
@@ -30,7 +31,17 @@ private:
                             const SurfaceCurrentOperator &surf_j_op,
                             const SurfaceFluxOperator &surf_flux_op,
                             const std::vector<Vector> &A, const std::vector<double> &I_inc,
-                            const std::vector<double> &Phi_inc) const;
+                            const std::vector<double> &Phi_inc,
+                            const mfem::DenseMatrix &linked_flux,
+                            const std::vector<Vector> &london_ah,
+                            const std::vector<Vector> &london_ms_shifted) const;
+
+  // Report the stored energy and imposed loop fluxoids of each excitation, when grouped
+  // flux loop excitations leave no inductance matrix.
+  void PostprocessExcitations(const CurlCurlOperator &curlcurl_op,
+                              const std::vector<Vector> &london_ah,
+                              const std::vector<double> &domain_energy,
+                              const std::vector<double> &london_kinetic) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

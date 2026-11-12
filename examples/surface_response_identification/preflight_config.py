@@ -14,6 +14,7 @@ library and the target interfaces. Nothing here depends on a particular device.
     python3 -m surface_response_identification.preflight_config --mesh M.msh2 \\
         --ground 5 6 7 --terminal 9 --sa 8 --library lib.json --output cfg.json \\
         [--ms 5 6 7 9] [--ma ...] [--uniform-levels 1] [--no-crack] [--l0 1e-6] [--radius 1.9]
+        [--crack-policy legacy|default]   # Model.CrackInternalBoundaryElements true | omitted
         [--plane 114@0,0,1 --plane 10,17,25,119,126@0,0,-1]   # per metal plane: MS + MA targets
                                                              # with their own EdgeFrameNormal
                                                              # (flip-chip: the top chip faces down)
@@ -22,6 +23,8 @@ library and the target interfaces. Nothing here depends on a particular device.
 import argparse
 import json
 import os
+
+from .crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy
 
 # Decision 88(1) (2026-09-26; was 2.1 um by decision 82(4)): the default matching radius of
 # the identification tools is 1.9 um — off the common 2 / 4 / 20 um layout dimensions (R 1.9,
@@ -47,6 +50,7 @@ def preflight_config(
     l0=1.0e-6,
     uniform_levels=0,
     crack=True,
+    crack_policy=CRACK_POLICY_DEFAULT,
     substrate_attributes=(1,),
     vacuum_attributes=(2,),
     substrate_permittivity=11.45,
@@ -124,6 +128,8 @@ def preflight_config(
     model = {"Mesh": os.path.abspath(mesh), "L0": l0, "Refinement": {"MaxIts": 0, "UniformLevels": uniform_levels, "SerialUniformLevels": 0}}
     if not crack:
         model["CrackInternalBoundaryElements"] = False
+    else:
+        apply_crack_policy(model, crack_policy)
     return {
         "Problem": {"Type": "Electrostatic", "Verbose": 1, "Output": os.path.abspath(output_directory), "OutputFormats": {"Paraview": False, "GridFunction": False}},
         "Model": model,
@@ -176,7 +182,8 @@ def main(argv=None):
     parser.add_argument("--radius", type=float, default=DEFAULT_RADIUS, help="matching radius when the library has none (default 1.9 um, decision 88(1))")
     parser.add_argument("--l0", type=float, default=1.0e-6)
     parser.add_argument("--uniform-levels", type=int, default=0)
-    parser.add_argument("--no-crack", action="store_true", help="Model.CrackInternalBoundaryElements false")
+    parser.add_argument("--no-crack", action="store_true", help="Model.CrackInternalBoundaryElements false (overrides --crack-policy)")
+    add_crack_policy_argument(parser)
     parser.add_argument("--frame-normal", type=float, nargs=3, help="EdgeFrameNormal on every interface: the process side of sheets with one material on both sides")
     parser.add_argument("--port", type=int, nargs="*", default=[], help="port boundary attributes (LumpedPort / WavePort faces of the run): the metal perimeter bordering them is the Port exclusion")
     parser.add_argument("--plane", type=parse_plane, action="append", default=[], metavar="ATTRS[@NX,NY,NZ]",
@@ -193,7 +200,8 @@ def main(argv=None):
     postpro = args.postpro or os.path.join(os.path.dirname(output), "postpro")
     config = preflight_config(
         args.mesh, args.ground, args.terminal, args.sa, args.library, postpro, ms=args.ms, ma=args.ma, radius=args.radius, l0=args.l0,
-        uniform_levels=args.uniform_levels, crack=not args.no_crack, substrate_attributes=args.substrate, vacuum_attributes=args.vacuum,
+        uniform_levels=args.uniform_levels, crack=not args.no_crack, crack_policy=args.crack_policy,
+        substrate_attributes=args.substrate, vacuum_attributes=args.vacuum,
         frame_normal=args.frame_normal, planes=args.plane or None, ports=args.port,
     )
     os.makedirs(os.path.dirname(output), exist_ok=True)

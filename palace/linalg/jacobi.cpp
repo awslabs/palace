@@ -3,7 +3,11 @@
 
 #include "jacobi.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <type_traits>
 #include <mfem/general/forall.hpp>
+#include "utils/device.hpp"
 
 namespace palace
 {
@@ -11,20 +15,64 @@ namespace palace
 namespace
 {
 
+bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
+                              const Vector *imag = nullptr)
+{
+  int valid = 1;
+  if (real.Size() > 0)
+  {
+    const auto *R = real.HostRead();
+    const auto *I = imag ? imag->HostRead() : nullptr;
+    for (int i = 0; i < real.Size(); i++)
+    {
+      if (!(std::isfinite(R[i]) && R[i] != 0.0) ||
+          (I && !(std::isfinite(I[i]) && I[i] == 0.0)))
+      {
+        valid = 0;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalMin(1, &valid, comm);
+  return valid;
+}
+
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
-  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
-  DiagonalOperator Dinv(dinv);
-  ProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, true);
+  // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
+  // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
+  // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
+  // A with essential DOFs eliminated using a unit diagonal.
+  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
+              "Jacobi smoother spectral estimation requires a finite, nonzero operator "
+              "diagonal!");
+  Vector dinv_sqrt(dinv);
+  dinv_sqrt.Abs();
+  linalg::Sqrt(dinv_sqrt);
+  DiagonalOperator DinvSqrt(dinv_sqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
+  return linalg::SpectralNorm(comm, S, true);
 }
 
 double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
 {
-  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
+  if (A.IsReal())
+  {
+    MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
+                "Jacobi smoother spectral estimation requires a finite, nonzero real "
+                "operator diagonal!");
+    ComplexVector dinv_sqrt(dinv);
+    dinv_sqrt.Real().Abs();
+    linalg::Sqrt(dinv_sqrt.Real());
+    ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
+    ComplexProductOperator ADinvSqrt(A, DinvSqrt);
+    ComplexProductOperator S(DinvSqrt, ADinvSqrt);
+    return linalg::SpectralNorm(comm, S, true);
+  }
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, A.IsReal());
+  return linalg::SpectralNorm(comm, DinvA, false);
 }
 
 template <bool Transpose = false>
@@ -71,7 +119,7 @@ inline void Apply(const ComplexVector &dinv, const ComplexVector &x, ComplexVect
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 void JacobiSmoother<OperType>::SetOperator(const OperType &op)
 {
   dinv.SetSize(op.Height());
@@ -83,20 +131,54 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
   // damping factor.
   if (omega == 0.0)
   {
-    auto lambda_max = GetLambdaMax(comm, op, dinv);
-    auto lambda_min = (sf_max - 1.0) * lambda_max;
-    omega = 2.0 / (lambda_min + lambda_max);
+    const auto lambda_max = GetLambdaMax(comm, op, dinv);
+    MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
+                "Encountered invalid maximum eigenvalue in Jacobi smoother!");
+    const auto lambda_min = (sf_max - 1.0) * lambda_max;
+    const auto denominator = lambda_min + lambda_max;
+    MFEM_VERIFY(std::isfinite(denominator) && denominator > 0.0,
+                "Automatic Jacobi damping requires a finite, strictly positive damping "
+                "denominator!");
+    omega = 2.0 / denominator;
   }
   if (omega != 1.0)
   {
     dinv *= omega;
   }
 
+  // Decide once, consistently across processes, whether callers may fuse the application
+  // of the smoother into their own host loops. Device data is not read on the host.
+  host_real = false;
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    int fuse = utils::IsSerialHost();
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      const auto *DI = dinv.Imag().HostRead();
+      fuse = fuse && std::all_of(DI, DI + dinv.Size(), [](double d) { return d == 0.0; });
+    }
+    Mpi::GlobalMin(1, &fuse, comm);
+    host_real = fuse;
+  }
+
   this->height = op.Height();
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
+const Vector *JacobiSmoother<OperType>::GetHostRealScaling() const
+{
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    return host_real ? &dinv.Real() : nullptr;
+  }
+  else
+  {
+    return host_real ? &dinv : nullptr;
+  }
+}
+
+template <OperatorType OperType>
 void JacobiSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
   MFEM_ASSERT(!this->initial_guess, "JacobiSmoother does not use initial guess!");

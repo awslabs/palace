@@ -100,7 +100,7 @@ def main():
     )
     parser.add_argument(
         "--save-adapt-mesh", action="store_true",
-        help="write every adapted mesh (<mesh stem>.mesh in the postprocessing directory)",
+        help="write every adapted mesh (<mesh stem>.mesh in the postprocessing directory; .meshgz on a zlib build)",
     )
     parser.add_argument(
         "--edge-refinement", nargs=2, type=float, metavar=("RADIUS_UM", "ELEMENTS_PER_RADIUS"),

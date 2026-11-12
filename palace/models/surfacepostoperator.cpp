@@ -11,6 +11,7 @@
 #include <limits>
 #include <set>
 #include <sstream>
+#include <string>
 #include <tuple>
 #include <utility>
 #include "fem/gridfunction.hpp"
@@ -33,8 +34,30 @@
 namespace palace
 {
 
+using namespace std::complex_literals;
+
 namespace
 {
+
+bool IsSupportedSurfaceFunctionalDimension(const mfem::ParMesh &mesh)
+{
+  return (mesh.Dimension() == 2 && mesh.SpaceDimension() == 2) ||
+         (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3);
+}
+
+bool IsSupportedSurfaceFluxDimension(const mfem::ParMesh &mesh)
+{
+  // The libCEED surface-flux kernels currently implement 3D surface integrals. 2D line
+  // flux semantics remain on the legacy path explicitly rather than by silent invalid
+  // fallback.
+  return mesh.Dimension() == 3 && mesh.SpaceDimension() == 3;
+}
+
+void RequireCeedSurfaceFunctional(const SurfaceFunctional *func, const std::string &what)
+{
+  MFEM_VERIFY(func && func->IsValid(), "libCEED postprocessing was expected for " + what +
+                                           ", but SurfaceFunctional could not assemble!");
+}
 
 template <typename T>
 mfem::Array<int> SetUpBoundaryProperties(const T &data,
@@ -678,22 +701,21 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
     }
     else
     {
-      std::copy(data.center.begin(), data.center.end(), center.begin());
+      std::copy_n(data.center.begin(), mesh.SpaceDimension(), center.begin());
     }
   }
 }
 
-std::unique_ptr<mfem::Coefficient>
-SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction *E,
-                                                     const mfem::ParGridFunction *B,
-                                                     const MaterialOperator &mat_op) const
+std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
+    const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+    const MaterialOperator &mat_op, bool imag_permittivity) const
 {
   switch (type)
   {
     case SurfaceFlux::ELECTRIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>>(
-          attr_list, E, nullptr, mat_op, two_sided, center);
+          attr_list, E, nullptr, mat_op, two_sided, center, 1.0, imag_permittivity);
     case SurfaceFlux::MAGNETIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>>(
@@ -775,22 +797,22 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     case InterfaceDielectric::DEFAULT:
       coefficient = std::make_unique<RestrictedCoefficient<
           InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>>(
-          attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker, recovered_flux, component);
       break;
     case InterfaceDielectric::MA:
       coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(
-          attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker, recovered_flux, component);
       break;
     case InterfaceDielectric::MS:
       coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(
-          attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker, recovered_flux, component);
       break;
     case InterfaceDielectric::SA:
       coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(
-          attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+          attr_list, E, mat_op, t, epsilon, nullptr, recovered_flux, component);
       break;
   }
   if (ownership)
@@ -831,8 +853,7 @@ bool ExclusionEnergyRequested(const config::SolverData &solver)
 SurfacePostOperator::SurfacePostOperator(
     const config::BoundaryPostData &postpro, ProblemType problem_type,
     const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h1_fespace,
-    mfem::ParFiniteElementSpace &nd_fespace,
-    const std::unordered_set<int> *cracked_attributes,
+    mfem::ParFiniteElementSpace &nd_fespace, const std::vector<int> &sheet_attributes,
     const config::BoundaryData *boundaries,
     std::shared_ptr<const SurfacePostGeometry> *automatic_geometry,
     bool classified_edge_trees)
@@ -968,16 +989,33 @@ SurfacePostOperator::SurfacePostOperator(
                     problem_type == ProblemType::ELECTROSTATIC,
                 "Quadrature ownership is currently implemented for electrostatic "
                 "postprocessing only!");
-    MFEM_VERIFY(
-        !data.flux_recovery || !cracked_attributes ||
-            std::none_of(
-                data.attributes.begin(), data.attributes.end(),
-                [cracked_attributes](int attr)
-                { return cracked_attributes->find(attr) != cracked_attributes->end(); }),
-        "Interface dielectric \"FluxRecovery\" is not supported on cracked internal "
-        "boundaries: the volume L2 projection does not provide a controlled normal trace "
-        "on a zero-thickness PEC surface!");
+    // FluxRecovery is refused on the cracked internal boundaries (the mesh crack set, as at
+    // OURS) and on the INTERIOR faces of the sheet attributes (uncracked by default): the
+    // volume L2 projection does not provide a controlled normal trace on a zero-thickness
+    // PEC surface. An exterior sheet boundary keeps it, as at OURS.
+    if (data.flux_recovery)
+    {
+      constexpr const char *refusal =
+          "Interface dielectric \"FluxRecovery\" is not supported on internal boundary "
+          "sheets, cracked or not: the volume L2 projection does not provide a controlled "
+          "normal trace on a zero-thickness PEC surface!";
+      std::vector<int> entry_sheet_attributes;
+      for (const int attr : data.attributes)
+      {
+        MFEM_VERIFY(!(boundaries && boundaries->cracked_attributes.contains(attr)),
+                    refusal);
+        if (std::ranges::find(sheet_attributes, attr) != sheet_attributes.end())
+        {
+          entry_sheet_attributes.push_back(attr);
+        }
+      }
+      int interior_sheet = !entry_sheet_attributes.empty() &&
+                           mat_op.GetMesh().GetCrackSides(entry_sheet_attributes).Any();
+      Mpi::GlobalMax(1, &interior_sheet, mesh.GetComm());
+      MFEM_VERIFY(!interior_sheet, refusal);
+    }
     auto it = eps_surfs.try_emplace(idx, data, bdr_attr_marker).first;
+    it->second.sum_sides_marker = mesh::AttrToMarker(bdr_attr_max, sheet_attributes, true);
     if (it->second.ownership)
     {
       MFEM_VERIFY(!data.attributes.empty(),
@@ -1183,7 +1221,7 @@ SurfacePostOperator::SurfacePostOperator(
     mfem::ParFiniteElementSpace &h1_fespace, mfem::ParFiniteElementSpace &nd_fespace,
     std::shared_ptr<const SurfacePostGeometry> *automatic_geometry)
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
-                        nd_fespace, &iodata.boundaries.cracked_attributes,
+                        nd_fespace, iodata.boundaries.GetSheetAttributes(),
                         &iodata.boundaries, automatic_geometry,
                         ExclusionEnergyRequested(iodata.solver))
 {
@@ -1194,22 +1232,67 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
 {
   // For complex-valued fields, output the separate real and imaginary parts for the time-
   // harmonic quantity. For power flux (Poynting vector), output only the stationary real
-  // part and not the part which has double the frequency.
+  // part and not the part which has double the frequency. For the electric flux of a
+  // complex field in a lossy dielectric, D = ε E with the complex permittivity
+  // ε = Re{ε} + i Im{ε} (Im{ε} = -Re{ε} tan δ): the Im{ε}-weighted flux F'' of the same
+  // field adds as Φ = F'(E) + i F''(E), i.e. Φ_r = F'(E_r) - F''(E_i), Φ_i = F'(E_i) +
+  // F''(E_r).
   auto it = flux_surfs.find(idx);
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown surface flux postprocessing index requested!");
   const bool has_imag = (E) ? E->HasImag() : B->HasImag();
+  const bool complex_permittivity =
+      (it->second.type == SurfaceFlux::ELECTRIC && has_imag && mat_op.HasLossTangent());
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
-  auto f =
-      it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
-  std::complex<double> dot(GetLocalSurfaceIntegral(*f, attr_marker), 0.0);
+
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
+  auto &func = flux_funcs[idx];
+  if (!func)
+  {
+    func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, E ? E->ParFESpace() : nullptr,
+        B ? B->ParFESpace() : nullptr, mat_op, it->second.type, it->second.two_sided,
+        it->second.center);
+  }
+  if (func && func->IsValid())
+  {
+    std::complex<double> flux = func->EvalFlux(E, B);
+    if (complex_permittivity)
+    {
+      auto &func_imag = flux_funcs_imag[idx];
+      if (!func_imag)
+      {
+        func_imag = std::make_unique<SurfaceFunctional>(
+            mat_op.GetMesh(), attr_marker, E->ParFESpace(), nullptr, mat_op,
+            it->second.type, it->second.two_sided, it->second.center,
+            /*imag_permittivity*/ true);
+      }
+      MFEM_VERIFY(func_imag && func_imag->IsValid(),
+                  "libCEED postprocessing was expected for the lossy electric surface "
+                  "flux, but SurfaceFunctional could not assemble!");
+      flux += 1i * func_imag->EvalFlux(E, B);
+    }
+    return flux;
+  }
+  if (IsSupportedSurfaceFluxDimension(mesh))
+  {
+    RequireCeedSurfaceFunctional(func.get(), "3D surface flux");
+  }
+
+  auto Integrate = [&](const mfem::ParGridFunction *Ei, const mfem::ParGridFunction *Bi,
+                       bool imag_permittivity)
+  {
+    auto f = it->second.GetCoefficient(Ei, Bi, mat_op, imag_permittivity);
+    return GetLocalSurfaceIntegral(*f, attr_marker);
+  };
+  std::complex<double> dot(
+      Integrate(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, false), 0.0);
   if (has_imag)
   {
-    f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
-                                  mat_op);
-    double doti = GetLocalSurfaceIntegral(*f, attr_marker);
+    double doti = Integrate(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr, false);
     if (it->second.type == SurfaceFlux::POWER)
     {
       dot += doti;
@@ -1217,6 +1300,11 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     else
     {
       dot.imag(doti);
+    }
+    if (complex_permittivity)
+    {
+      dot += 1i * std::complex<double>(Integrate(&E->Real(), nullptr, true),
+                                       Integrate(&E->Imag(), nullptr, true));
     }
   }
   Mpi::GlobalSum(1, &dot, (E) ? E->GetComm() : B->GetComm());
@@ -1240,6 +1328,36 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridF
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
+
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
+  // It evaluates the plain interface energy density with the same two-sided sheet rule
+  // (sum_sides_marker) as the coefficient; an entry with recovered flux, an ownership
+  // slot, a region, its own ownership quadrature order, or on an axisymmetric mesh (the
+  // revolution measure) keeps the coefficient path, which the edge / partitioned /
+  // response energies of the entry share.
+  const bool coefficient_path = it->second.flux_recovery || it->second.ownership ||
+                                it->second.region ||
+                                it->second.ownership_quadrature_order > 0 || axisymmetric;
+  if (!coefficient_path)
+  {
+    auto &func = eps_funcs[idx];
+    if (!func)
+    {
+      func = std::make_unique<SurfaceFunctional>(
+          mat_op.GetMesh(), attr_marker, *E.ParFESpace(), mat_op, it->second.type,
+          it->second.t, it->second.epsilon, &it->second.sum_sides_marker);
+    }
+    if (func && func->IsValid())
+    {
+      return func->Eval(E);
+    }
+    if (IsSupportedSurfaceFunctionalDimension(mesh))
+    {
+      RequireCeedSurfaceFunctional(func.get(), "interface dielectric postprocessing");
+    }
+  }
+
   auto f = it->second.GetCoefficient(E, D, mat_op);
   double dot =
       GetLocalSurfaceIntegral(*f, attr_marker, it->second.ownership_quadrature_order);
@@ -1750,7 +1868,8 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
   for (std::size_t i = 0; i < E.size(); i++)
   {
     evaluators.push_back(std::make_unique<InterfaceDielectricCoefficient<Type>>(
-        *E[i], mat_op, data.t, data.epsilon, data.flux_recovery ? D[i] : nullptr));
+        *E[i], mat_op, data.t, data.epsilon, &data.sum_sides_marker,
+        data.flux_recovery ? D[i] : nullptr));
   }
 
   std::vector<double> weights, distances, amplitudes;
@@ -2068,6 +2187,7 @@ void SurfacePostOperator::EvaluateInterfaceResponseRowImpl(
               "Streamed interface response requires recovered electric flux!");
   const auto &mesh = *h1_fespace.GetParMesh();
   InterfaceDielectricCoefficient<Type> evaluator(E, mat_op, data.t, data.epsilon,
+                                                 &data.sum_sides_marker,
                                                  data.flux_recovery ? D : nullptr);
   mfem::Vector field;
   mfem::ElementTransformation *T = nullptr;
@@ -2354,7 +2474,7 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 
 std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction &E,
-    const GridFunction &B, double omega_re, double omega_im) const
+    const GridFunction &B, std::complex<double> omega) const
 {
   if (theta_phi_pairs.empty())
     return {};
@@ -2365,8 +2485,6 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   // Compute target unit vectors from the given theta and phis.
   std::vector<std::array<double, 3>> r_naughts;
   r_naughts.reserve(theta_phi_pairs.size());
-
-  r_naughts.reserve(theta_phi_pairs.size());
   for (const auto &[theta, phi] : theta_phi_pairs)
   {
     r_naughts.emplace_back(std::array<double, 3>{
@@ -2376,6 +2494,25 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   const auto &mesh = *nd_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
+
+  // Use the libCEED surface functional path when supported, avoiding per-point host
+  // coefficient evaluation in the MFEM path. Observation directions are part of the
+  // assembled operator and must therefore invalidate the cached functional when changed.
+  const bool use_ceed = E.HasImag() && B.HasImag();
+  if (use_ceed && (!farfield_func || farfield_func_dirs != r_naughts))
+  {
+    farfield_func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, *E.ParFESpace(), *B.ParFESpace(), mat_op, r_naughts);
+    farfield_func_dirs = r_naughts;
+  }
+  if (use_ceed && farfield_func && farfield_func->IsValid())
+  {
+    return farfield_func->EvalFarField(E, B, omega);
+  }
+  if (use_ceed)
+  {
+    RequireCeedSurfaceFunctional(farfield_func.get(), "3D far-field postprocessing");
+  }
 
   // Integrate. Each MPI process computes its contribution and we will reduce
   // everything at the end. We make them std::vector<std::array<double, 3>>
@@ -2394,8 +2531,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
-                                     integrals_r, integrals_i);
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega.real(), omega.imag(), r_naughts,
+                                     *T, *ir, integrals_r, integrals_i);
   }
 
   double *data_r_ptr = integrals_r.data()->data();

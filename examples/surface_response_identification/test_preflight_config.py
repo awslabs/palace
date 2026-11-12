@@ -63,7 +63,20 @@ class PreflightConfigTest(unittest.TestCase):
         self.assertEqual(config["Domains"]["Materials"][0]["Permittivity"], 11.7)
         self.assertEqual(config["Problem"]["Type"], "Electrostatic")
         self.assertEqual(config["Model"]["Refinement"]["UniformLevels"], 0)
+        # Decision 1570: the default crack policy (legacy) writes the key explicitly.
+        self.assertIs(config["Model"]["CrackInternalBoundaryElements"], True)
+
+    def test_crack_policy_default_omits_the_key_and_no_crack_overrides_it(self):
+        config = preflight_config("m.msh2", ground=[4], terminals=[], sa=[8], library=self.library, output_directory="out", crack_policy="default")
         self.assertNotIn("CrackInternalBoundaryElements", config["Model"])
+        config = preflight_config("m.msh2", ground=[4], terminals=[], sa=[8], library=self.library, output_directory="out", crack=False, crack_policy="default")
+        self.assertIs(config["Model"]["CrackInternalBoundaryElements"], False)
+        output = os.path.join(self.directory.name, "cfg", "default.json")
+        main(["--mesh", "m.msh2", "--ground", "5", "--sa", "8", "--library", self.library, "--output", output, "--crack-policy", "default"])
+        with open(output) as source:
+            self.assertNotIn("CrackInternalBoundaryElements", json.load(source)["Model"])
+        with self.assertRaises(SystemExit):
+            main(["--mesh", "m.msh2", "--ground", "5", "--sa", "8", "--library", self.library, "--output", output, "--crack-policy", "true"])
 
     def test_without_sa_only_ms_and_ma_are_targeted(self):
         config = preflight_config("m.msh2", ground=[4], terminals=[], sa=[], library=self.library, output_directory="out", ms=[4], ma=[4], uniform_levels=1, crack=False)

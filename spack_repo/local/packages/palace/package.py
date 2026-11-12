@@ -1,6 +1,5 @@
-# Copyright Spack Project Developers. See COPYRIGHT file for details.
-#
-# SPDX-License-Identifier: (Apache-2.0 OR MIT)
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from spack_repo.builtin.build_systems.cmake import CMakePackage
 from spack_repo.builtin.build_systems.cuda import CudaPackage
@@ -21,6 +20,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
+    version("0.19.0", tag="v0.19.0", commit="ca9a6a2d1e64a410229c3d7538507e5eae975cc6")
+    version("0.18.1", tag="v0.18.1", commit="0dc74cdf8c36c58b69b21c4a06e816048ec0b83f")
+    version("0.18.0", tag="v0.18.0", commit="b92aef83ecfe6d360c4b3d83e2122986297f6778")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
     version("0.16.1", tag="v0.16.1", commit="c13e409f255392b9d78369c386276cf9343c2205")
     version("0.16.0", tag="v0.16.0", commit="869ee5ced4850384410a7aeebc7c25f4c01be161")
@@ -32,7 +34,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # Note: 'cuda' and 'cuda_arch' variants are added by the CudaPackage
     # Note: 'rocm' and 'amdgpu_target' variants are added by the ROCmPackage
-    variant("cxxstd", default="17", values=("17", "20"), description="C++ standard", when="@0.16:")
+    variant(
+        "cxxstd", default="17", values=("17", "20"), description="C++ standard", when="@0.16:0.18"
+    )
+    variant("cxxstd", default="20", values=("20",), description="C++ standard", when="@0.19:")
     variant("shared", default=True, description="Build shared libraries")
     variant("int64", default=False, description="Use 64 bit integers")
     variant("openmp", default=False, description="Use OpenMP for shared-memory parallelism")
@@ -51,7 +56,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "cudss",
         default=False,
         description="Build with cuDSS sparse direct solver",
-        when="@0.18:",
+        when="@0.19:",
     )
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
@@ -78,6 +83,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Measure code coverage when running (leads to severe loss of performance)",
         when="@0.16:",
     )
+    variant(
+        "enzyme",
+        default=False,
+        description="Build Enzyme-backed automatic-differentiation unit tests",
+        when="@0.19:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch(
@@ -92,7 +103,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cxx", type="build")
     depends_on("cmake@3.18.1:", type="build", when="@0.11")
     depends_on("cmake@3.21:", type="build", when="@0.12:0.14")
-    depends_on("cmake@3.24:", type="build", when="@0.15:")
+    depends_on("cmake@3.24:", type="build", when="@0.15:0.18")
+    depends_on("cmake@3.27:", type="build", when="@0.19:")
+    depends_on("cuda@12:", when="@0.19: +cuda")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
     depends_on("blas")
@@ -106,21 +119,32 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib~shared", when="~shared@0.14:")
     depends_on("eigen", type="build")
     depends_on("lcov@1.15:", when="+coverage@0.16:", type="run")
+    depends_on("enzyme@0.0.206:", when="+enzyme@0.19:")
 
     conflicts(
         "~superlu-dist~strumpack~mumps",
-        when="@:0.17",
+        when="@:0.18",
         msg="Need at least one sparse direct solver",
     )
     conflicts(
         "~superlu-dist~strumpack~mumps~cudss",
-        when="@0.18:",
+        when="@0.19:",
         msg="Need at least one sparse direct solver",
     )
     conflicts(
         "+asan",
         when="platform=darwin %gcc",
         msg="GCC does not support AddressSanitizer on macOS (Apple Silicon). Use Clang instead.",
+    )
+    requires(
+        "%c=llvm@15:21",
+        when="+enzyme",
+        msg="Enzyme requires upstream Clang 15-21 built against the same LLVM as the plugin.",
+    )
+    requires(
+        "%cxx=llvm@15:21",
+        when="+enzyme",
+        msg="Enzyme requires upstream Clang 15-21 built against the same LLVM as the plugin.",
     )
 
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
@@ -148,6 +172,105 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
+
+    # The STRUMPACK version of the superbuild, with
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, and the solver changes of
+    # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
+    # solves with a few right-hand sides. Kept off the `with` blocks so the Palace variants
+    # are not folded into the patch condition.
+    depends_on(
+        "strumpack@8.1.0",
+        when="@develop+strumpack",
+        patches=[
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff?full_index=1",
+                sha256="b9a4d57b05a1790c6858f570d7a2c7fb82b7b4b6d6feaa39a364b0d56fefe092",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1",
+                sha256="9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/"
+                "strumpack_pr165.diff",
+                sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
+                when="@8.1.0",
+            ),
+        ],
+    )
+
+    # The SuperLU_DIST version of the superbuild, with the copies in
+    # extern/patch/superlu_dist of https://github.com/xiaoyeli/superlu_dist/pull/250,
+    # https://github.com/xiaoyeli/superlu_dist/pull/251,
+    # https://github.com/xiaoyeli/superlu_dist/pull/252 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
+    # the symbolic factorization, refactorizations and solves. Kept off the `with` blocks so
+    # the Palace variants are not folded into the patch condition.
+    depends_on(
+        "superlu-dist@9.3.1",
+        when="@0.20:+superlu-dist",
+        patches=[
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr250.diff",
+                sha256="d8c22daed9ed89b982f7f12dd62db5509cc5a5a852c6f57bd10b3d7f330273ab",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr251.diff",
+                sha256="fbda88f8172a04bc7bbcda7f5fb8e5e697a92d3bd26682e7693703dae03d54f6",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr252.diff",
+                sha256="7b84bceb7e45333aaabdf38ce85c19d58aa20febd55bf664c4279669335a47dc",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr253.diff",
+                sha256="8de4200968cfc3d8c2d5a5e60ec2c00c624dc6668d510a709dd79eb475ebfa34",
+                when="@9.3.1",
+            ),
+        ],
+    )
+
+    # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
+    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
+    # the implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination). Kept off the
+    # `with` blocks so the Palace variants are not folded into the patch conditions.
+    depends_on(
+        "hypre",
+        when="@develop",
+        patches=[
+            patch(
+                "https://github.com/hypre-space/hypre/commit/"
+                "2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1",
+                sha256="bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f",
+                when="@3.2.0:3.2.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/"
+                "hypre_multicomponent_relax.diff",
+                sha256="fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a",
+                when="@3.2.0:3.2.1",
+            ),
+        ],
+    )
 
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
@@ -200,75 +323,184 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # NOTE: hypre+gpu-profiling is also useful: it adds NVTX annotations, which
     # are great for GPU profiling with Nsight.
 
+    # +lapack means: use external lapack. Palace 0.16-0.18 build against MFEM
+    # 4.9, 0.19+ (including develop) against MFEM 4.10. Kept off a `with` block
+    # so the Palace `when=` is not folded into the MFEM patch conditions.
+    depends_on(
+        "mfem+mpi+metis+lapack@4.9.0",
+        when="@0.16:0.18",
+        patches=[
+            # https://github.com/mfem/mfem/pull/3847
+            patch(
+                "https://github.com/mfem/mfem/compare/"
+                "2d574015756711029556c14d096ca52c15d5b663..."
+                "50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff",
+                sha256="e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4",
+            ),
+            # https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "e4a2b9568c40f20e24612066d155cc6a9973b247.diff",
+                sha256="6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e",
+                when="@4.9.0",
+            ),
+            # Curated snapshots retain only the parts of these PRs that
+            # apply cleanly to MFEM 4.9.
+            # https://github.com/mfem/mfem/pull/5246
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
+                "mfem_pr5246.diff",
+                sha256="d5227c18768369b8fa3a20f4457dd378a360346850329ab1970d18ed5a73b0d6",
+                when="@4.9.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5353
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
+                "mfem_pr5353.diff",
+                sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
+            ),
+            # https://github.com/mfem/mfem/pull/4983
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
+                "mfem_pr4983.diff",
+                sha256="530532da3ae8815d004bb6ce19f6f08a1248c3d585503551c90d0eeae7fb3f87",
+                when="@:4.9",
+            ),
+            # https://github.com/mfem/mfem/pull/5415
+            patch(
+                "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
+                sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
+                when="@4.9.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5494 (source-only backport for 4.9)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1382ca5e9f72369b33c0ff5e8e0a244ac6597f6a/extern/patch/mfem/"
+                "mfem_nc_partition_fixes.diff",
+                sha256="a28bf879ecf197856d24ef5427d493f84a159224c22e7cd17ec977e06a222ffb",
+                when="@4.9.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5502
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "3091ba40b238c4008b67216314bb26da6738b833.diff",
+                sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                when="@4.9.0",
+            ),
+        ],
+    )
+    depends_on(
+        "mfem+mpi+metis+lapack@4.10:",
+        when="@0.19:",
+        patches=[
+            # https://github.com/mfem/mfem/pull/3847
+            patch(
+                "https://github.com/mfem/mfem/compare/"
+                "2d574015756711029556c14d096ca52c15d5b663..."
+                "50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff",
+                sha256="e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4",
+            ),
+            # https://github.com/mfem/mfem/pull/5353
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
+                "mfem_pr5353.diff",
+                sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
+            ),
+            # https://github.com/mfem/mfem/pull/5711 (rebased onto the PR 5353
+            # snapshot above, applied after it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/"
+                "mfem_pr5711.diff",
+                sha256="4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5494 (from the PR range)
+            patch(
+                "https://github.com/mfem/mfem/compare/"
+                "10b0b596dbc26dca384b9f25f23026b1a6403592..."
+                "399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff",
+                sha256="771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5502
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "3091ba40b238c4008b67216314bb26da6738b833.diff",
+                sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5531
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "641e56439e63a1774f43bc2ba904797694a047ad.diff",
+                sha256="2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5639 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "864d476acf25135d2059d3379d208e635823f26c.diff",
+                sha256="9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5698 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff",
+                sha256="eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5610 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff",
+                sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5714 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff",
+                sha256="3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5717 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff",
+                sha256="f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5721 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "c79f309399361b2d6aadc207087ca6dc475513b4.diff",
+                sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
+            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
+                sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
+                when="@4.10:",
+            ),
+        ],
+    )
+
     with when("@0.16:"):
-        # +lapack means: use external lapack
-        depends_on(
-            "mfem+mpi+metis+lapack@4.9:",
-            patches=[
-                # https://github.com/mfem/mfem/pull/3847
-                patch(
-                    "https://github.com/mfem/mfem/compare/"
-                    "2d574015756711029556c14d096ca52c15d5b663..."
-                    "50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff",
-                    sha256="e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4",
-                ),
-                # https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
-                patch(
-                    "https://github.com/mfem/mfem/commit/"
-                    "e4a2b9568c40f20e24612066d155cc6a9973b247.diff",
-                    sha256="6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e",
-                    when="@:4.9",
-                ),
-                # Curated snapshots retain only the parts of these PRs that
-                # apply cleanly to MFEM 4.9.
-                # https://github.com/mfem/mfem/pull/5246
-                patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr5246.diff",
-                    sha256="d5227c18768369b8fa3a20f4457dd378a360346850329ab1970d18ed5a73b0d6",
-                    when="@:4.9",
-                ),
-                # https://github.com/mfem/mfem/pull/5353
-                # Remove once merged upstream and MFEM is bumped.
-                patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr5353.diff",
-                    sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
-                ),
-                # https://github.com/mfem/mfem/pull/4983
-                patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr4983.diff",
-                    sha256="530532da3ae8815d004bb6ce19f6f08a1248c3d585503551c90d0eeae7fb3f87",
-                ),
-                # https://github.com/mfem/mfem/pull/5124
-                patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr5124_cudss.diff",
-                    sha256="d0b5893ec7925cbc8a70cc5eba2abe037754b99b5bb366c4bae90f0583d22290",
-                    when="@:4.9 +cudss",
-                ),
-                # https://github.com/mfem/mfem/pull/5415
-                # Pulled directly from the PR head commit. Remove once merged
-                # upstream and MFEM is bumped.
-                patch(
-                    "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
-                    sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
-                    when="@:4.9",
-                ),
-                # https://github.com/mfem/mfem/pull/5494 (parallel NC tet
-                # hanging-vertex ownership + edge-face communication).
-                # Re-based onto MFEM 4.9 (no FlipIndexSign helper), so it has
-                # no immutable upstream URL: a copy of
-                # extern/patch/mfem/mfem_pr5494.diff kept identical to it.
-                # Remove once merged upstream and MFEM is bumped.
-                patch("mfem_pr5494.diff", when="@:4.9"),
-            ],
-        )
         depends_on("mfem+shared", when="+shared")
         depends_on("mfem~shared", when="~shared")
         depends_on("mfem+openmp", when="+openmp")
@@ -293,22 +525,28 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem+libunwind", when="build_type=Debug")
         depends_on("eigen@3.5:", type="build")
 
-    with when("@0.18:"):
+    with when("@0.19:"):
         depends_on("mfem+cudss", when="+cudss")
-        depends_on("cudss", when="+cudss")
+        depends_on("cudss+mpi", when="+cudss")
 
     with when("+libxsmm"):
-        # NOTE: @=main != @main since libxsmm has a version main-2023-22, which matches @2:
-        depends_on("libxsmm@=main blas=0")
-        # TODO: depends_on("libxsmm@2: blas=0") when spack-package > 2026.06 is relased
+        depends_on("libxsmm@2: blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
-        # NOTE: libxsmm builds on MacOS have linker issues
-        # https://github.com/libxsmm/libxsmm/issues/883
-        depends_on("libxsmm+shared")
+        depends_on("libxsmm+shared", when="+shared")
+        depends_on("libxsmm~shared", when="~shared")
 
     with when("@0.14:"):
-        depends_on("libceed@0.13:")
+        # libCEED had no release between 0.12.0 and 1.0.0, so 0.14-0.17 pin develop commits
+        # matching cmake/ExternalGitTags.cmake.
+        depends_on(
+            "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
+        )
+        depends_on(
+            "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
+            when="@0.15:0.17",
+        )
+        depends_on("libceed@1", when="@0.18:")
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
@@ -343,6 +581,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("magma+shared", when="+shared")
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
+
+    # Palace 0.16 to 0.18 build their GPU stack as C++17, and Umpire 2026.07 requires C++20.
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +cuda")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +rocm")
+    # From 0.19 Umpire can be C++20. MFEM compiles Umpire's C++ headers, so it has to match;
+    # hypre only uses Umpire's C interface.
+    depends_on("mfem cxxstd=20", when="@0.19: +cuda")
+    depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI
@@ -408,6 +654,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
+            self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
@@ -423,8 +670,28 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 
+        # Spack sources carry no usable git metadata for `git describe` (commit
+        # fetches have no tags, mirror archives drop .git), so embed the version
+        # from the spec's resolved commit. Develop specs without one fall back to
+        # `git describe` on the working tree.
+        if "commit" in self.spec.variants:
+            commit = self.spec.variants["commit"].value
+            if commit == self.versions.get(self.spec.version, {}).get("commit"):
+                commit = f"v{self.spec.version}"
+            args.append(self.define("PALACE_GIT_COMMIT_ID", commit))
+
+        # Lets `palace --version` point at the full spec (`spack find /<hash>`)
+        args.append(self.define("PALACE_BUILD_ID", f"Spack {self.spec.dag_hash()}"))
+
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
+            if self.spec.satisfies("+enzyme"):
+                args.append(
+                    self.define(
+                        "ENZYME_DIR",
+                        self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme"),
+                    )
+                )
             if self.spec.satisfies("+mumps"):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+cudss"):
@@ -573,12 +840,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 args.append(self.define("MUMPS_REQUIRED_LIBRARIES", mumps_libs))
 
         # We guarantee that there are arch specs with conflicts above
+        # Avoid CMake's default of emitting both cubin and PTX for every target.
         if self.spec.satisfies("+cuda"):
-            args.append(
-                self.define(
-                    "CMAKE_CUDA_ARCHITECTURES", ";".join(self.spec.variants["cuda_arch"].value)
-                )
-            )
+            cuda_arch = [f"{arch}-real" for arch in self.spec.variants["cuda_arch"].value]
+            args.append(self.define("CMAKE_CUDA_ARCHITECTURES", ";".join(cuda_arch)))
 
         if self.spec.satisfies("+rocm"):
             args.append(

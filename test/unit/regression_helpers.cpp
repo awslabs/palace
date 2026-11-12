@@ -65,7 +65,7 @@ FileListing ListRegressionFiles(const std::filesystem::path &root,
     if (it->is_directory())
     {
       out.dirs.insert(std::filesystem::relative(it->path(), root).generic_string());
-      if (skip_dirs.count(it->path().filename().string()))
+      if (skip_dirs.contains(it->path().filename().string()))
       {
         it.disable_recursion_pending();
       }
@@ -263,9 +263,12 @@ bool SkipNumericComparison(const RegressionOptions &opts)
   return std::isinf(opts.rtol) && std::isinf(opts.atol);
 }
 
+}  // namespace
+
 // Column-wise diff using Catch2's WithinRel + WithinAbs matchers.
 //   |a - b| <= max(atol, rtol * max(|a|, |b|))
 // is the "either condition" form: WithinRel(ref, rtol) || WithinAbs(ref, atol).
+// Declared in the header so custom checks can run it before their own assertions.
 void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts)
 {
   if (!ValidateCSVTables(actual, reference, opts) || SkipNumericComparison(opts))
@@ -299,12 +302,21 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
         av = std::abs(av);
         rv = std::abs(rv);
       }
+      // NaN-vs-NaN (undefined reciprocity entries, e.g. Short-port off-diagonals) is a
+      // match; Catch's matchers would otherwise reject any NaN operand.
+      if (std::isnan(av) && std::isnan(rv))
+      {
+        continue;
+      }
       INFO("row " << r + 1 << " column '" << r_col.header_text << "'");
       CHECK_THAT(av, Catch::Matchers::WithinRel(rv, opts.rtol) ||
                          Catch::Matchers::WithinAbs(rv, opts.atol));
     }
   }
 }
+
+namespace
+{
 
 // RAII: per-case staging directory. Symlinks the example inputs into
 // `stage_root / <example>/ <label>` and chdirs in so palace::Run writes
@@ -497,8 +509,18 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   if (Mpi::Root(comm))
   {
     const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
-    const FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
+    FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+
+    // Drop intentionally-unstored outputs (large files no check consumes) from the live
+    // listing so their absence in the reference tree is not flagged as a missing file.
+    for (auto it = got.csv_files.begin(); it != got.csv_files.end();)
+    {
+      const bool unstored =
+          std::ranges::any_of(effective_opts.unstored_files, [&it](const std::string &pat)
+                              { return it->find(pat) != std::string::npos; });
+      it = unstored ? got.csv_files.erase(it) : std::next(it);
+    }
 
     CheckSetEqual("regression output directories", got.dirs,
                   ExpectedDirectories(max_refinement_iterations, effective_opts));
@@ -521,9 +543,9 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
 
       // Presence in both trees is already established above; skip excluded files
       // before any shape/header/value comparison.
-      const bool excluded = std::any_of(
-          effective_opts.excluded_files.begin(), effective_opts.excluded_files.end(),
-          [&rel](const std::string &pat) { return rel.find(pat) != std::string::npos; });
+      const bool excluded =
+          std::ranges::any_of(effective_opts.excluded_files, [&rel](const std::string &pat)
+                              { return rel.find(pat) != std::string::npos; });
       if (excluded)
       {
         continue;
@@ -535,10 +557,12 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       auto custom_it = effective_opts.custom_checks.find(rel);
       if (custom_it != effective_opts.custom_checks.end())
       {
-        if (ValidateCSVTables(a, r, effective_opts) &&
-            !SkipNumericComparison(effective_opts))
+        // A custom check owns its numeric tolerance policy. Run it even when the generic
+        // table comparison is disabled with infinite tolerances (adaptive smoke tests can
+        // still require a targeted physical observable such as complex S-parameters).
+        if (ValidateCSVTables(a, r, effective_opts))
         {
-          custom_it->second(a, r);
+          custom_it->second(a, r, actual);
         }
         continue;
       }

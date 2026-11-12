@@ -54,15 +54,39 @@ void Finalize();
 // Get the configured libCEED backend.
 std::string Print();
 
-// Initialize a CeedVector from an mfem::Vector. When init is false, expects the CeedVector
-// has already been initialized and just sets the data pointer.
-void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init = true);
+// Initialize a CeedVector from an mfem::Vector. When init is false, expects an existing
+// CeedVector of exactly the same length and only replaces its borrowed data pointer.
+void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init = true,
+                    bool take_array = true);
+
+// Preferred memory type of the Ceed backend, falling back to host memory when MFEM is not
+// using a device.
+CeedMemType GetUsableMemType(Ceed ceed);
+
+// Create a line basis with one node and num_qpts points that evaluates to one everywhere,
+// used to carry per-element data such as attributes at quadrature points.
+void InitConstantLineBasis(Ceed ceed, CeedInt num_comp, CeedInt num_qpts, CeedBasis *basis);
 
 // Convert an MFEM geometry type to a libCEED one.
 CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
 
 // Convert a libCEED geometry type to an MFEM one.
 mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom);
+
+// Holds libCEED object references created during operator assembly for destruction once
+// the assembled operator owns them.
+struct CeedAssemblyScratch
+{
+  Ceed ceed;
+  std::vector<CeedVector> vectors;
+  std::vector<CeedElemRestriction> restrictions;
+  std::vector<CeedBasis> bases;
+
+  explicit CeedAssemblyScratch(Ceed ceed_);
+  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
+  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
+  ~CeedAssemblyScratch();
+};
 
 namespace internal
 {

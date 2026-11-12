@@ -27,13 +27,20 @@ source](#Build-from-source) instead.
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To
-install the solver, follow the [instructions for setting up Spack on your
-system](https://spack.readthedocs.io/en/latest/getting_started.html). Note that
-Spack requires basic system utilities that may not be installed by default on
-certain systems (such as Ubuntu for Windows Subsystem for Linux). Consult the
-[Spack Prerequisites
-page](https://spack.readthedocs.io/en/latest/installing_prerequisites.html) to
-ensure all required utilities are installed.
+install the solver, clone the Spack release series that *Palace* is tested with and
+set up its shell environment:
+
+```bash
+git clone --depth=2 --branch releases/v1.2 https://github.com/spack/spack.git
+. spack/share/spack/setup-env.sh
+```
+
+The [Spack instructions](https://spack.readthedocs.io/en/v1.2.0/getting_started.html)
+cover other shells. Note that Spack requires basic system utilities that may not be
+installed by default on certain systems (such as Ubuntu for Windows Subsystem for
+Linux). Consult the [Spack Prerequisites
+page](https://spack.readthedocs.io/en/v1.2.0/installing_prerequisites.html) to ensure
+all required utilities are installed.
 
 Once you have installed Spack, check that the version of *Palace* you want to
 install is available
@@ -57,12 +64,14 @@ _variants_ of *Palace*. For instance, if you want to install *Palace* with CUDA,
 MUMPS, SLEPc and the NVIDIA cuDSS GPU sparse direct solver, call
 
 ```bash
-spack install palace +mumps +slepc +cuda +cudss cuda_arch=90
+spack install palace +mumps +slepc +cuda +cudss cuda_arch=80,90
 ```
 
 where `cuda_arch` is determined by the [generation of your
-GPU](https://developer.nvidia.com/cuda-gpus). More information about the
-available configuration options and dependencies can be found using `spack info palace`. See the [official
+GPU](https://developer.nvidia.com/cuda-gpus). Multiple comma-separated values
+produce a fat binary that supports several GPU generations. More information
+about the available configuration options and dependencies can be found using
+`spack info palace`. See the [official
 tutorial](https://spack-tutorial.readthedocs.io/en/latest/tutorial_basics.html)
 for an introduction.
 
@@ -115,12 +124,12 @@ spec (e.g., compiling with other solvers or with GPU support).
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.24 or later
-  - C++17 compatible C++ compiler
+  - [CMake](https://cmake.org/download) version 3.27 or later
+  - C++20 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries (described below in [Math libraries](#Math-libraries))
-  - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) or
+  - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) 12.0 or later, or
     [ROCm](https://rocm.docs.amd.com/en/latest/) installation (optional, for GPU support
     only)
 
@@ -194,7 +203,9 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
   - `PALACE_WITH_CUDSS [OFF]` :  Build with NVIDIA cuDSS sparse direct solver (requires
     `PALACE_WITH_CUDA=ON`; the cuDSS installation directory can be specified with
-    `CUDSS_DIR`)
+    `CUDSS_DIR`, which must point at a cuDSS archive installation rather than a pip/conda
+    wheel: the MPI communication layer is built from the source it ships against the
+    selected MPI)
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
@@ -202,6 +213,11 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
   - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
+  - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
+    `palace.json`), for builds from a source tree without Git metadata. When empty, the
+    `PALACE_GIT_COMMIT_ID` environment variable is used if set, otherwise `git describe`
+  - `PALACE_BUILD_ID []` :  Build identifier reported as `Build:` in `palace --version`. The
+    Spack package sets it to `Spack <DAG hash>`
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -220,26 +236,27 @@ which installs the binary executable in `${CMAKE_INSTALL_PREFIX}/bin/`.
 ### Math libraries
 
 During the configure step, the build system will try to detect system installations of BLAS
-and LAPACK libraries depending on the system architecture according to the following
-procedure:
+and LAPACK libraries from the following environment variables, in order (each can be given
+as `<NAME>_DIR`, `<NAME>ROOT`, or `<NAME>_ROOT`):
 
-  - For `x86_64` systems:
+  - `ARMPL`: [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries),
+    intended for `aarch64`/`arm64` systems.
+  - `AOCL`: [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
+    installation of BLIS and libFLAME, intended for `x86_64` systems.
+  - `MKL`: [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html),
+    intended for `x86_64` systems.
+  - `OPENBLAS`: [OpenBLAS](https://www.openblas.net/), which is permissively licensed and
+    available from most package managers.
 
-      + If the `MKLROOT` environment variable is set, looks for an
-        [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
-        installation.
-      + If the `AOCL_DIR` or `AOCLROOT` environment variables are set, looks for an
-        [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
-        installation of BLIS and libFLAME.
-      + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/)
-        which is permissively licensed and available from most package managers.
+If none of these are set, the libraries are located by CMake.
 
-  - For `aarch64`/`arm64` systems:
+This detection can be bypassed by passing a vendor to CMake with `-DBLA_VENDOR=<vendor>`
+(see the [CMake documentation](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors)
+for the supported values).
 
-      + If the `ARMPL_DIR` environment variable is set, looks for an
-        [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
-        installation.
-      + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/).
+On macOS, if none of these environment variables are set, CMake may pick Apple's Accelerate
+framework instead of OpenBLAS; set `OPENBLAS_DIR` or pass `-DBLA_VENDOR=OpenBLAS` to use
+OpenBLAS.
 
 If the installation path of OpenBLAS is non-standard or is not found by default, it can be
 set using the `OPENBLAS_DIR` or `OPENBLASROOT` environment variables, or added to

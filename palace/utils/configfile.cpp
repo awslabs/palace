@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
+#include <numbers>
 #include <sstream>
 #include <string_view>
 #include <fmt/format.h>
@@ -103,7 +105,7 @@ void ParseSymmetricMatrixData(const json &mat, const std::string &name,
 void ParseElementData(const json &elem, bool required, internal::ElementData &data)
 {
   data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(data.attributes.begin(), data.attributes.end());
+  std::ranges::sort(data.attributes);
   auto it = elem.find("Direction");
   if (it != elem.end() && it->is_array())
   {
@@ -113,10 +115,19 @@ void ParseElementData(const json &elem, bool required, internal::ElementData &da
   else
   {
     // String direction - CoordinateSystem is implicit in the string value.
-    MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
+    MFEM_VERIFY(!elem.contains("CoordinateSystem"),
                 "Cannot specify \"CoordinateSystem\" with string \"Direction\"!");
     std::tie(data.direction, data.coordinate_system) =
         ParseStringAsDirection(elem.value("Direction", ""), required);
+  }
+}
+
+void ParseSurfaceCurrentElementData(const json &elem, SurfaceCurrentElementData &data)
+{
+  ParseElementData(elem, true, data);
+  if (auto aperture = elem.find("Aperture"); aperture != elem.end())
+  {
+    data.aperture.emplace(*aperture);
   }
 }
 
@@ -269,7 +280,10 @@ ModelData::ModelData(const json &model)
   make_hex = model.value("MakeHexahedral", make_hex);
   reorder_elements = model.value("ReorderElements", reorder_elements);
   clean_unused_elements = model.value("CleanUnusedElements", clean_unused_elements);
-  crack_bdr_elements = model.value("CrackInternalBoundaryElements", crack_bdr_elements);
+  if (auto it = model.find("CrackInternalBoundaryElements"); it != model.end())
+  {
+    crack_bdr_elements = it->get<bool>();
+  }
   refine_crack_elements = model.value("RefineCrackElements", refine_crack_elements);
   crack_displ_factor = model.value("CrackDisplacementFactor", crack_displ_factor);
   add_bdr_elements = model.value("AddInterfaceBoundaryElements", add_bdr_elements);
@@ -282,7 +296,7 @@ ModelData::ModelData(const json &model)
 MaterialData::MaterialData(const json &domain)
 {
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   ParseSymmetricMatrixData(domain, "Permeability", mu_r);
   ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
@@ -293,7 +307,7 @@ MaterialData::MaterialData(const json &domain)
 DomainEnergyData::DomainEnergyData(const json &domain)
 {
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
 }
 
 ProbeData::ProbeData(const json &probe)
@@ -311,8 +325,8 @@ DomainPostData::DomainPostData(const json &postpro)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
-  std::sort(attributes.begin(), attributes.end());
-  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+  std::ranges::sort(attributes);
+  attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
   attributes.shrink_to_fit();
 }
 
@@ -353,13 +367,13 @@ DomainData::DomainData(const json &domains)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
-  std::sort(attributes.begin(), attributes.end());
-  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+  std::ranges::sort(attributes);
+  attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
   attributes.shrink_to_fit();
   for (const auto &attr : postpro.attributes)
   {
     MFEM_VERIFY(
-        std::binary_search(attributes.begin(), attributes.end(), attr),
+        std::ranges::binary_search(attributes, attr),
         fmt::format("Domain postprocessing attribute {:d} has no corresponding entry in "
                     "config[\"Domains\"][\"Materials\"]!",
                     attr));
@@ -369,45 +383,47 @@ DomainData::DomainData(const json &domains)
 PecBoundaryData::PecBoundaryData(const json &pec)
 {
   attributes = pec.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
 }
 
 PmcBoundaryData::PmcBoundaryData(const json &pmc)
 {
   attributes = pmc.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
 }
 
 WavePortPecBoundaryData::WavePortPecBoundaryData(const json &auxpec)
 {
   attributes = auxpec.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
 }
 
 FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
 {
   attributes = absorbing.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   order = absorbing.value("Order", order);
 }
 
 ConductivityData::ConductivityData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   sigma = boundary.at("Conductivity");  // Required
   mu_r = boundary.value("Permeability", mu_r);
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
+  crack = boundary.value("Crack", crack);
 }
 
 ImpedanceData::ImpedanceData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   Rs = boundary.value("Rs", Rs);
   Ls = boundary.value("Ls", Ls);
   Cs = boundary.value("Cs", Cs);
+  crack = boundary.value("Crack", crack);
 }
 
 int ParsePortExcitation(const json &port, int index)
@@ -438,18 +454,109 @@ int ParsePortExcitation(const json &port, int index)
   }
 }
 
+// Group the excited sources (excitation != 0) of the given index-keyed source maps by
+// excitation index.
+template <typename... Sources>
+std::map<int, std::vector<int>> GroupByExcitation(const Sources &...sources)
+{
+  std::map<int, std::vector<int>> groups;
+  auto add = [&groups](const auto &map)
+  {
+    for (const auto &[idx, data] : map)
+    {
+      if (data.excitation != 0)
+      {
+        groups[data.excitation].emplace_back(idx);
+      }
+    }
+  };
+  (add(sources), ...);
+  return groups;
+}
+
+// Whether every excitation drives a single source (the S-parameter or inductance-matrix
+// case).
+bool SingleSourceExcitations(const std::map<int, std::vector<int>> &groups)
+{
+  return !groups.empty() &&
+         std::ranges::all_of(groups, [](const auto &x) { return x.second.size() == 1; });
+}
+
+// For single-source excitations the excitation index must equal the source index so a
+// matrix column is unambiguous; a lone "Excitation": true (1) is also accepted and upgraded
+// to the source index.
+bool SingleSourceExcitationsMatchIndices(const std::map<int, std::vector<int>> &groups)
+{
+  const auto &ext1 = *groups.begin();
+  return (groups.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+         std::ranges::all_of(groups, [](const auto &x) { return x.first == x.second[0]; });
+}
+
+// Upgrade excitation = 1 to the source index, once the excitations are known to be single
+// and consistent.
+template <typename... Sources>
+void UpgradeUnitExcitation(Sources &...sources)
+{
+  auto upgrade = [](auto &map)
+  {
+    for (auto &[idx, data] : map)
+    {
+      if (data.excitation == 1)
+      {
+        data.excitation = idx;
+      }
+    }
+  };
+  (upgrade(sources), ...);
+}
+
 RationalImpedanceData::RationalImpedanceData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   num = boundary.at("Numerator").get<std::vector<double>>();    // Required
   den = boundary.at("Denominator").get<std::vector<double>>();  // Required
   MFEM_VERIFY(!num.empty() && !den.empty(),
               "Rational impedance \"Numerator\" and \"Denominator\" must be nonempty!");
-  MFEM_VERIFY(std::any_of(den.begin(), den.end(), [](double c) { return c != 0.0; }),
+  MFEM_VERIFY(std::ranges::any_of(den, [](double c) { return c != 0.0; }),
               "Rational impedance \"Denominator\" must have a nonzero coefficient!");
-  MFEM_VERIFY(std::any_of(num.begin(), num.end(), [](double c) { return c != 0.0; }),
+  MFEM_VERIFY(std::ranges::any_of(num, [](double c) { return c != 0.0; }),
               "Rational impedance \"Numerator\" must have a nonzero coefficient!");
+  crack = boundary.value("Crack", crack);
+}
+
+SuperconductorData::SuperconductorData(const json &boundary)
+{
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::ranges::sort(attributes);
+  lambda_L = boundary.value("PenetrationDepth", lambda_L);
+  thickness = boundary.value("Thickness", thickness);
+  Ls = boundary.value("KineticInductance", Ls);
+  two_sided = boundary.value("TwoSided", two_sided);
+
+  // Require exactly one of {(PenetrationDepth, Thickness), KineticInductance}. The (λ, d)
+  // form defines the kinetic sheet inductance as L_ksq = mu0 * lambda * coth(d/lambda); the
+  // direct form supplies L_ksq itself.
+  const bool has_lambda_d = (lambda_L != 0.0 || thickness != 0.0);
+  const bool has_Ls = (Ls != 0.0);
+  MFEM_VERIFY(has_lambda_d != has_Ls,
+              "Superconductor boundary requires exactly one of {(\"PenetrationDepth\", "
+              "\"Thickness\"), \"KineticInductance\"}!");
+  if (has_lambda_d)
+  {
+    MFEM_VERIFY(
+        lambda_L > 0.0 && thickness > 0.0,
+        "Superconductor boundary \"PenetrationDepth\" and \"Thickness\" must both be "
+        "positive!");
+  }
+  else
+  {
+    MFEM_VERIFY(Ls > 0.0,
+                "Superconductor boundary \"KineticInductance\" must be positive!");
+  }
+  MFEM_VERIFY(!two_sided || has_lambda_d,
+              "Superconductor boundary \"TwoSided\" requires the (\"PenetrationDepth\", "
+              "\"Thickness\") form!");
 }
 
 LumpedPortData::LumpedPortData(const json &port)
@@ -484,7 +591,7 @@ LumpedPortData::LumpedPortData(const json &port)
                             "(uniform) element only!",
                             index));
   };
-  if (port.find("Attributes") != port.end())
+  if (port.contains("Attributes"))
   {
     auto &elem = elements.emplace_back();
     ParseElementData(port, true, elem);
@@ -504,7 +611,7 @@ LumpedPortData::LumpedPortData(const json &port)
 TerminalData::TerminalData(const json &terminal)
 {
   attributes = terminal.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
 }
 
 PrescribedPotentialData::PrescribedPotentialData(const json &potential)
@@ -541,14 +648,14 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   }
 
   const auto &pairs = periodic.at("BoundaryPairs");
-  for (auto it = pairs.begin(); it != pairs.end(); ++it)
+  for (const auto &pair : pairs)
   {
     PeriodicData &data = boundary_pairs.emplace_back();
-    data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
+    data.donor_attributes = pair.at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
-        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
-    auto translation = it->find("Translation");
-    if (translation != it->end())
+        pair.at("ReceiverAttributes").get<std::vector<int>>();  // Required
+    auto translation = pair.find("Translation");
+    if (translation != pair.end())
     {
       std::array<double, 3> translation_array = translation->get<std::array<double, 3>>();
       for (int i = 0; i < 3; i++)
@@ -558,8 +665,8 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
       }
       data.affine_transform[3 * 4 + 3] = 1.0;
     }
-    auto transformation = it->find("AffineTransformation");
-    if (transformation != it->end())
+    auto transformation = pair.find("AffineTransformation");
+    if (transformation != pair.end())
     {
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
@@ -570,9 +677,10 @@ WavePortData::WavePortData(const json &port)
 {
   int index = port.at("Index");                                // Required
   attributes = port.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   mode_idx = port.value("Mode", mode_idx);
   d_offset = port.value("Offset", d_offset);
+  target = port.value("Target", target);
   eigen_solver = port.value("SolverType", eigen_solver);
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
@@ -584,6 +692,10 @@ WavePortData::WavePortData(const json &port)
                           index));
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
+  if (auto it = port.find("ComplexCoarseSolve"); it != port.end())
+  {
+    complex_coarse_solve = it->get<bool>();
+  }
   eig_tol = port.value("EigenTol", eig_tol);
   max_size = port.value("MaxSize", max_size);
   verbose = port.value("Verbose", verbose);
@@ -594,7 +706,6 @@ WavePortData::WavePortData(const json &port)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = port.value("NSamples", n_samples);
   if (auto it = port.find("PolarityAttributes"); it != port.end())
   {
     auto pa = it->get<std::vector<int>>();
@@ -618,28 +729,62 @@ FloquetPortData::FloquetPortData(const json &port)
 {
   int index = port.at("Index");                                // Required
   attributes = port.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   excitation = ParsePortExcitation(port, index);
   inc_polarization = port.value("IncidentPolarization", inc_polarization);
   max_order = port.value("MaxOrder", max_order);
 }
 
+SurfaceCurrentApertureData::SurfaceCurrentApertureData(const json &aperture)
+{
+  attributes = aperture.at("Attributes").get<std::vector<int>>();  // Required
+  std::ranges::sort(attributes);
+
+  const auto &input_direction = aperture.at("Direction");  // Required
+  if (input_direction.is_array())
+  {
+    direction = input_direction.get<std::array<double, 3>>();
+  }
+  else
+  {
+    CoordinateSystem coordinate_system;
+    std::tie(direction, coordinate_system) =
+        ParseStringAsDirection(input_direction.get<std::string>(), true);
+    MFEM_VERIFY(coordinate_system == CoordinateSystem::CARTESIAN,
+                "SurfaceCurrent Aperture \"Direction\" must be Cartesian!");
+  }
+
+  double norm2 = 0.0;
+  for (double x : direction)
+  {
+    MFEM_VERIFY(std::isfinite(x),
+                "SurfaceCurrent Aperture \"Direction\" must contain finite values!");
+    norm2 += x * x;
+  }
+  MFEM_VERIFY(norm2 > 0.0, "SurfaceCurrent Aperture \"Direction\" must be nonzero!");
+  const double inv_norm = 1.0 / std::sqrt(norm2);
+  for (double &x : direction)
+  {
+    x *= inv_norm;
+  }
+}
+
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
-  if (source.find("Attributes") != source.end())
+  if (source.contains("Attributes"))
   {
     auto &elem = elements.emplace_back();
-    ParseElementData(source, true, elem);
+    ParseSurfaceCurrentElementData(source, elem);
   }
   else
   {
     for (const auto &e : source.at("Elements"))
     {
       auto &elem = elements.emplace_back();
-      ParseElementData(e, true, elem);
+      ParseSurfaceCurrentElementData(e, elem);
     }
   }
-  if (source.find("InactiveMode") != source.end())
+  if (source.contains("InactiveMode"))
   {
     inactive_port_mode = source.at("InactiveMode").get<InactivePortMode>();
   }
@@ -648,7 +793,7 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
 SurfaceFluxData::SurfaceFluxData(const json &flux)
 {
   attributes = flux.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   type = flux.at("Type");  // Required
   two_sided = flux.value("TwoSided", two_sided);
   auto ctr = flux.find("Center");
@@ -662,7 +807,7 @@ SurfaceFluxData::SurfaceFluxData(const json &flux)
 InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
 {
   attributes = dielectric.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
   edge_attributes = dielectric.value("EdgeAttributes", std::vector<int>{});
   std::sort(edge_attributes.begin(), edge_attributes.end());
   automatic_edges = dielectric.value("AutomaticEdges", automatic_edges);
@@ -905,12 +1050,12 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
   if (auto it = imp.find("VoltageAttributes"); it != imp.end())
   {
     voltage_attributes = it->get<std::vector<int>>();
-    std::sort(voltage_attributes.begin(), voltage_attributes.end());
+    std::ranges::sort(voltage_attributes);
   }
   if (auto it = imp.find("CurrentAttributes"); it != imp.end())
   {
     current_attributes = it->get<std::vector<int>>();
-    std::sort(current_attributes.begin(), current_attributes.end());
+    std::ranges::sort(current_attributes);
   }
   if (auto it = imp.find("VoltagePath"); it != imp.end())
   {
@@ -926,7 +1071,6 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
       current_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = imp.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Impedance boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -943,7 +1087,7 @@ ModeVoltageData::ModeVoltageData(const json &volt)
   if (auto it = volt.find("VoltageAttributes"); it != volt.end())
   {
     voltage_attributes = it->get<std::vector<int>>();
-    std::sort(voltage_attributes.begin(), voltage_attributes.end());
+    std::ranges::sort(voltage_attributes);
   }
   if (auto it = volt.find("VoltagePath"); it != volt.end())
   {
@@ -952,7 +1096,6 @@ ModeVoltageData::ModeVoltageData(const json &volt)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = volt.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Voltage boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -964,7 +1107,7 @@ ModeVoltageData::ModeVoltageData(const json &volt)
 FarFieldPostData::FarFieldPostData(const json &farfield)
 {
   attributes = farfield.at("Attributes").get<std::vector<int>>();  // Required
-  std::sort(attributes.begin(), attributes.end());
+  std::ranges::sort(attributes);
 
   // Generate NSample points with the following properties:
   // - If NSample >= 2, the generated points are precisely NSample, otherwise NSample = 2.
@@ -981,8 +1124,8 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
     if (nsample > 0)
     {
       // Always include poles.
-      thetaphis.emplace_back(0.0, 0.0);   // North pole.
-      thetaphis.emplace_back(M_PI, 0.0);  // South pole.
+      thetaphis.emplace_back(0.0, 0.0);               // North pole.
+      thetaphis.emplace_back(std::numbers::pi, 0.0);  // South pole.
 
       if (nsample > 2)
       {
@@ -1021,12 +1164,13 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
         {
           // Ensure equator and XZ plane inclusion.
           bool is_equator = (i == (n_theta + 1) / 2);
-          double theta = is_equator ? M_PI / 2 : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
+          double theta = is_equator ? std::numbers::pi / 2
+                                    : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
           int points_in_level = points_per_level[i - 1];
 
           for (int j = 0; j < points_in_level; ++j)
           {
-            double phi = 2.0 * M_PI * j / points_in_level;
+            double phi = 2.0 * std::numbers::pi * j / points_in_level;
 
             // Force XZ plane points (phi = 0 or π).
             if (j == 0)
@@ -1035,7 +1179,7 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
             }
             else if (j == points_in_level / 2)
             {
-              phi = M_PI;
+              phi = std::numbers::pi;
             }
 
             thetaphis.emplace_back(theta, phi);
@@ -1060,41 +1204,45 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
     auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
     for (const auto &vec : vec_of_vec)
     {
-      thetaphis.emplace_back(vec[0] * M_PI / 180, vec[1] * M_PI / 180);
+      thetaphis.emplace_back(vec[0] * std::numbers::pi / 180,
+                             vec[1] * std::numbers::pi / 180);
     }
   }
 
   // Remove duplicate entries with numerical tolerance.
   constexpr double tol = 1e-6;
-  std::sort(thetaphis.begin(), thetaphis.end());
-  auto it = std::unique(thetaphis.begin(), thetaphis.end(),
-                        [tol](const auto &a, const auto &b)
-                        {
-                          // At poles (theta ≈ 0 or π), phi is irrelevant.
-                          if ((std::abs(a.first) < tol || std::abs(a.first - M_PI) < tol) &&
-                              (std::abs(b.first) < tol || std::abs(b.first - M_PI) < tol))
-                          {
-                            return std::abs(a.first - b.first) < tol;
-                          }
+  std::ranges::sort(thetaphis);
+  auto it =
+      std::ranges::unique(
+          thetaphis,
+          [tol](const auto &a, const auto &b)
+          {
+            // At poles (theta ≈ 0 or π), phi is irrelevant.
+            if ((std::abs(a.first) < tol || std::abs(a.first - std::numbers::pi) < tol) &&
+                (std::abs(b.first) < tol || std::abs(b.first - std::numbers::pi) < tol))
+            {
+              return std::abs(a.first - b.first) < tol;
+            }
 
-                          // Check direct match.
-                          if (std::abs(a.first - b.first) < tol)
-                          {
-                            double phi_diff = std::abs(a.second - b.second);
-                            return phi_diff < tol || std::abs(phi_diff - 2.0 * M_PI) < tol;
-                          }
+            // Check direct match.
+            if (std::abs(a.first - b.first) < tol)
+            {
+              double phi_diff = std::abs(a.second - b.second);
+              return phi_diff < tol || std::abs(phi_diff - 2.0 * std::numbers::pi) < tol;
+            }
 
-                          // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
-                          if (std::abs(a.first - (M_PI - b.first)) < tol)
-                          {
-                            double phi_diff = std::abs(a.second - (b.second + M_PI));
-                            if (phi_diff > M_PI)
-                              phi_diff = 2.0 * M_PI - phi_diff;
-                            return phi_diff < tol;
-                          }
+            // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
+            if (std::abs(a.first - (std::numbers::pi - b.first)) < tol)
+            {
+              double phi_diff = std::abs(a.second - (b.second + std::numbers::pi));
+              if (phi_diff > std::numbers::pi)
+                phi_diff = 2.0 * std::numbers::pi - phi_diff;
+              return phi_diff < tol;
+            }
 
-                          return false;
-                        });
+            return false;
+          })
+          .begin();
   thetaphis.erase(it, thetaphis.end());
 
   if (thetaphis.empty())
@@ -1104,25 +1252,35 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 }
 FluxLoopData::FluxLoopData(const json &fluxloop)
 {
-  MFEM_VERIFY(fluxloop.find("FluxLoopPEC") != fluxloop.end(),
-              "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
-  fluxloop_pec = fluxloop.at("FluxLoopPEC").get<std::vector<int>>();
-  std::sort(fluxloop_pec.begin(), fluxloop_pec.end());
+  int index = fluxloop.at("Index");  // Required
+  MFEM_VERIFY(fluxloop.contains("FilmAttributes"),
+              "Missing \"FilmAttributes\" for \"FluxLoop\" boundary!");
+  film_attributes = fluxloop.at("FilmAttributes").get<std::vector<int>>();
+  std::ranges::sort(film_attributes);
 
-  MFEM_VERIFY(fluxloop.find("HoleAttributes") != fluxloop.end(),
+  MFEM_VERIFY(fluxloop.contains("HoleAttributes"),
               "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");
   hole_attributes = fluxloop.at("HoleAttributes").get<std::vector<int>>();
 
-  MFEM_VERIFY(fluxloop.find("FluxAmounts") != fluxloop.end(),
+  MFEM_VERIFY(fluxloop.contains("FluxAmounts"),
               "Missing \"FluxAmounts\" for \"FluxLoop\" boundary!");
   flux_amounts = fluxloop.at("FluxAmounts").get<std::vector<double>>();
 
   MFEM_VERIFY(hole_attributes.size() == flux_amounts.size(),
               "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
 
-  regularization = fluxloop.value("Regularization", regularization);
-  MFEM_VERIFY(regularization > 0.0,
-              "\"Regularization\" for \"FluxLoop\" boundary must be positive!");
+  pec_lperp = fluxloop.value("PecPenetrationDepth", pec_lperp);
+  MFEM_VERIFY(pec_lperp > 0.0,
+              "\"PecPenetrationDepth\" for \"FluxLoop\" boundary must be positive!");
+
+  // Each loop is its own excitation unless told otherwise. The drive is normalized to the
+  // loop's fluxoid, so an excited loop with a zero fluxoid would be a zero right-hand side.
+  excitation =
+      fluxloop.contains("Excitation") ? ParsePortExcitation(fluxloop, index) : index;
+  MFEM_VERIFY(excitation == 0 ||
+                  std::ranges::any_of(flux_amounts, [](double phi) { return phi != 0.0; }),
+              "\"FluxLoop\" boundary " << index
+                                       << " is excited but has zero \"FluxAmounts\"!");
 
   auto direction_it = fluxloop.find("Direction");
   if (direction_it != fluxloop.end())
@@ -1177,8 +1335,8 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
   attributes.insert(attributes.end(), farfield.attributes.begin(),
                     farfield.attributes.end());
 
-  std::sort(attributes.begin(), attributes.end());
-  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+  std::ranges::sort(attributes);
+  attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
   attributes.shrink_to_fit();
 }
 
@@ -1214,6 +1372,7 @@ BoundaryData::BoundaryData(const json &boundaries)
   impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
   rational_impedance =
       ParseOptionalVector<RationalImpedanceData>(boundaries, "RationalImpedance");
+  superconductor = ParseOptionalVector<SuperconductorData>(boundaries, "Superconductor");
   lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   prescribed_potential = ParseOptionalMap<PrescribedPotentialData>(
@@ -1229,56 +1388,17 @@ BoundaryData::BoundaryData(const json &boundaries)
 
   // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
   // calculating S-parameters (each port has a single excitation) and indices are valid.
+  // Flux loops (magnetostatic) form their own excitation space, normalized the same way for
+  // the inductance matrix.
+  if (auto groups = GroupByExcitation(lumpedport, waveport, floquetport);
+      SingleSourceExcitations(groups) && SingleSourceExcitationsMatchIndices(groups))
   {
-    std::map<int, std::vector<int>> excitation_map;
-    for (const auto &[idx, data] : lumpedport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    for (const auto &[idx, data] : waveport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    for (const auto &[idx, data] : floquetport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    excitation_map.erase(0);  // zeroth index is unexcited.
-    bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
-                                     [](const auto &x) { return x.second.size() == 1; });
-    if (calc_s_params && !excitation_map.empty())
-    {
-      // Only normalize if excitation indices are valid (match port indices or are 1).
-      const auto &ext1 = *excitation_map.begin();
-      bool valid = (excitation_map.size() == 1 &&
-                    (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-                   std::all_of(excitation_map.begin(), excitation_map.end(),
-                               [](const auto &x) { return x.first == x.second[0]; });
-      if (valid)
-      {
-        for (auto &[port_idx, lp] : lumpedport)
-        {
-          if (lp.excitation == 1)
-          {
-            lp.excitation = port_idx;
-          }
-        }
-        for (auto &[port_idx, wp] : waveport)
-        {
-          if (wp.excitation == 1)
-          {
-            wp.excitation = port_idx;
-          }
-        }
-        for (auto &[port_idx, fp] : floquetport)
-        {
-          if (fp.excitation == 1)
-          {
-            fp.excitation = port_idx;
-          }
-        }
-      }
-    }
+    UpgradeUnitExcitation(lumpedport, waveport, floquetport);
+  }
+  if (auto groups = GroupByExcitation(fluxloop);
+      SingleSourceExcitations(groups) && SingleSourceExcitationsMatchIndices(groups))
+  {
+    UpgradeUnitExcitation(fluxloop);
   }
 
   // Store all unique boundary attributes.
@@ -1327,9 +1447,126 @@ BoundaryData::BoundaryData(const json &boundaries)
       attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
-  std::sort(attributes.begin(), attributes.end());
-  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+  std::ranges::sort(attributes);
+  attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
   attributes.shrink_to_fit();
+}
+
+std::vector<int> BoundaryData::GetSheetAttributes() const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : superconductor)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &[idx, data] : lumpedport)
+  {
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
+  }
+  for (const auto &[idx, data] : terminal)
+  {
+    Append(data.attributes);
+  }
+  // A prescribed-potential trace and its terminal attributes are Dirichlet conductor
+  // sheets like a terminal: not cracked by default, the fields are discontinuous across
+  // them when interior.
+  for (const auto &[idx, data] : prescribed_potential)
+  {
+    Append(data.attributes);
+    Append(data.terminal_attributes);
+  }
+  for (const auto &[idx, data] : current)
+  {
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
+  }
+  for (const auto &[idx, data] : fluxloop)
+  {
+    Append(data.film_attributes);
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
+std::vector<int>
+BoundaryData::GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const
+{
+  std::vector<int> attr_list;
+  if (crack_bdr_elements.has_value() && !*crack_bdr_elements)
+  {
+    return attr_list;
+  }
+  if (crack_bdr_elements.has_value())
+  {
+    // Legacy behavior: all boundary condition attributes except for lumped ports.
+    attr_list = attributes;
+    for (const auto &[idx, data] : lumpedport)
+    {
+      for (const auto &elem : data.elements)
+      {
+        for (auto attr : elem.attributes)
+        {
+          attr_list.erase(std::remove(attr_list.begin(), attr_list.end(), attr),
+                          attr_list.end());
+        }
+      }
+    }
+    return attr_list;
+  }
+
+  // Default: boundary conditions which apply to each side of an interior boundary
+  // separately, and would otherwise have no effect there (wave and Floquet ports are
+  // always exterior boundaries), and sheets with a surface impedance which are modeled as
+  // two independent surfaces (a conductor much thicker than the penetration depth).
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pmc.attributes);
+  Append(farfield.attributes);
+  for (const auto &data : conductivity)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : impedance)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : rational_impedance)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
 }
 
 std::vector<double> ConstructLinearRange(double start, double end, double delta)
@@ -1337,20 +1574,26 @@ std::vector<double> ConstructLinearRange(double start, double end, double delta)
   auto n_step = GetNumSteps(start, end, delta);
   std::vector<double> f(n_step);
   std::iota(f.begin(), f.end(), 0);
-  std::for_each(f.begin(), f.end(), [=](double &x) { x = start + x * delta; });
+  std::ranges::for_each(f, [=](double &x) { x = start + x * delta; });
   return f;
 }
 std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 {
+  // A single sample is the interval start (as in numpy.linspace).
   std::vector<double> f(n_sample);
   for (int i = 0; i < n_sample; i++)
   {
-    f[i] = start + (double(i) / (n_sample - 1)) * (end - start);
+    f[i] = start + (n_sample > 1 ? double(i) / (n_sample - 1) : 0.0) * (end - start);
   }
   return f;
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
+  MFEM_VERIFY(n_sample > 0, "Invalid number of samples for log frequency range!");
+  if (n_sample == 1)
+  {
+    return {start};
+  }
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);
@@ -1366,7 +1609,7 @@ std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
 {
   // Find the first element not less than x.
-  auto it = std::lower_bound(vec.begin(), vec.end(), x);
+  auto it = std::ranges::lower_bound(vec, x);
   // Check if we found an exact match or a close enough value.
   if (it != vec.end() && std::abs(*it - x) <= tol)
   {
@@ -1404,8 +1647,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
-  if (driven.find("MinFreq") != driven.end() && driven.find("MaxFreq") != driven.end() &&
-      driven.find("FreqStep") != driven.end())
+  if (driven.contains("MinFreq") && driven.contains("MaxFreq") &&
+      driven.contains("FreqStep"))
   {
     double min_f = driven.at("MinFreq");     // Required
     double max_f = driven.at("MaxFreq");     // Required
@@ -1423,8 +1666,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   {
     for (auto &r : *freq_samples)
     {
-      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampling::POINT
-                                                            : FrequencySampling::DEFAULT);
+      auto type = r.value("Type", r.contains("Freq") ? FrequencySampling::POINT
+                                                     : FrequencySampling::DEFAULT);
       auto f = [&]()
       {
         switch (type)
@@ -1484,8 +1727,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   auto equal_f = [=](auto x, auto y) { return std::abs(x - y) < delta_eps; };
   auto deduplicate = [&equal_f](auto &f)
   {
-    std::sort(f.begin(), f.end());
-    f.erase(std::unique(f.begin(), f.end(), equal_f), f.end());
+    std::ranges::sort(f);
+    f.erase(std::ranges::unique(f, equal_f).begin(), f.end());
   };
 
   // Enforce explicit saves exactly match the sample frequencies.
@@ -1519,11 +1762,11 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   // extra samples. Can use equality comparison given no floating point operations have been
   // done.
   prom_indices = {0, sample_f.size() - 1};
-  if (prom_f.size() > 0 && prom_f.back() == sample_f.back())
+  if (!prom_f.empty() && prom_f.back() == sample_f.back())
   {
     prom_f.pop_back();
   }
-  if (prom_f.size() > 0 && prom_f.front() == sample_f.front())
+  if (!prom_f.empty() && prom_f.front() == sample_f.front())
   {
     prom_f.erase(prom_f.begin(), std::next(prom_f.begin()));
   }
@@ -1564,10 +1807,13 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
+  nonlinear_max_it = eigenmode.value("NonlinearMaxIts", nonlinear_max_it);
 
   // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
   // downstream sees -1. max_it is a single large cap because it only bounds iteration
-  // count, with no buffers scaling with it.
+  // count, with no buffers scaling with it. It does not apply to the quasi-Newton
+  // iterations (nonlinear_max_it), for which it would let a stagnating Newton iteration
+  // run indefinitely.
   if (max_it <= 0)
   {
     max_it = 1'000'000;
@@ -1576,6 +1822,7 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   {
     max_size = DefaultEigenSubspaceSize(n);
   }
+  n_post = std::clamp(n_post, 0, n);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
@@ -1985,7 +2232,7 @@ BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
   if (auto it = ma.find("Attributes"); it != ma.end())
   {
     attributes = it->get<std::vector<int>>();
-    std::sort(attributes.begin(), attributes.end());
+    std::ranges::sort(attributes);
   }
 
   // Resolve subspace sentinel: ModeEigenSolver forwards this to SLEPc/ARPACK, which
@@ -2001,6 +2248,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   type = linear.value("Type", type);
   krylov_solver = linear.value("KSPType", krylov_solver);
   tol = linear.value("Tol", tol);
+  abs_tol = linear.value("AbsTol", abs_tol);
   max_it = linear.value("MaxIts", max_it);
   max_size = linear.value("MaxSize", max_size);
   initial_guess = linear.value("InitialGuess", initial_guess);
@@ -2034,6 +2282,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   superlu_3d = linear.value("SuperLU3DCommunicator", superlu_3d);
   ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
   ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
+  london_pc_shift = linear.value("LondonPCShift", london_pc_shift);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
 
@@ -2074,16 +2323,18 @@ SolverData::SolverData(const json &solver)
 
 int GetNumSteps(double start, double end, double delta)
 {
-  if (end < start)
-  {
-    return 1;
-  }
+  MFEM_VERIFY(delta > 0.0 && end >= start,
+              "Invalid range from " << start << " to " << end << " in steps of " << delta
+                                    << ": the step must be positive and the end must not "
+                                       "be less than the start!");
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
-  double dn = std::abs(end - start) / std::abs(delta);
+  double dn = (end - start) / delta;
+  MFEM_VERIFY(dn < std::numeric_limits<int>::max() - 2,
+              "Step " << delta << " is too small for the range [" << start << ", " << end
+                      << "]: " << dn << " steps!");
   int n_step = 1 + static_cast<int>(dn);
   double dfinal = start + n_step * delta;
-  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
-                   (delta > 0.0 && dfinal - end < delta_eps * end));
+  return n_step + (dfinal - end < delta_eps * end);
 }
 
 std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,
@@ -2117,11 +2368,6 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
   std::ostringstream errors;
 
   // Check for unsupported boundary combinations.
-  if (!boundaries.current.empty() && !boundaries.fluxloop.empty())
-  {
-    errors << "Combining \"SurfaceCurrent\" and \"FluxLoop\" excitations in the same "
-              "magnetostatic simulation is not yet supported\n";
-  }
   if (!boundaries.terminal.empty() && !boundaries.prescribed_potential.empty())
   {
     errors << "\"Terminal\" and \"PrescribedPotential\" cannot both be specified\n";
@@ -2191,33 +2437,31 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     }
   }
 
-  // Check excitation indices match port indices for S-parameter calculation.
-  std::map<int, std::vector<int>> excitation_map;
-  for (const auto &[idx, data] : boundaries.lumpedport)
+  // Check excitation indices match port indices for S-parameter calculation, and flux loop
+  // indices for the inductance matrix.
+  if (auto groups = GroupByExcitation(boundaries.lumpedport, boundaries.waveport,
+                                      boundaries.floquetport);
+      SingleSourceExcitations(groups) && !SingleSourceExcitationsMatchIndices(groups))
   {
-    excitation_map[data.excitation].emplace_back(idx);
+    errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
   }
-  for (const auto &[idx, data] : boundaries.waveport)
+  if (auto groups = GroupByExcitation(boundaries.fluxloop);
+      SingleSourceExcitations(groups) && !SingleSourceExcitationsMatchIndices(groups))
   {
-    excitation_map[data.excitation].emplace_back(idx);
+    errors << "\"Excitation\" must match \"Index\" for single flux loops to avoid "
+              "ambiguity\n";
   }
-  for (const auto &[idx, data] : boundaries.floquetport)
+  else
   {
-    excitation_map[data.excitation].emplace_back(idx);
-  }
-  excitation_map.erase(0);
-  bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
-                                   [](const auto &x) { return x.second.size() == 1; });
-  if (calc_s_params && !excitation_map.empty())
-  {
-    const auto &ext1 = *excitation_map.begin();
-    bool valid =
-        (excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-        std::all_of(excitation_map.begin(), excitation_map.end(),
-                    [](const auto &x) { return x.first == x.second[0]; });
-    if (!valid)
+    // A flux loop excitation is a magnetostatic source under its own index, next to the
+    // surface current sources, so the two must not collide in the outputs.
+    for (const auto &[excitation, loops] : groups)
     {
-      errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
+      if (boundaries.current.contains(excitation))
+      {
+        errors << "FluxLoop \"Excitation\" " << excitation
+               << " collides with SurfaceCurrent \"Index\" " << excitation << "\n";
+      }
     }
   }
 
@@ -2260,14 +2504,13 @@ void Nondimensionalize(const Units &units, RefinementData &data)
   auto scale = LengthScaler(units);
   for (auto &box : data.GetBoxes())
   {
-    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(), scale);
-    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(), scale);
+    std::ranges::transform(box.bbmin, box.bbmin.begin(), scale);
+    std::ranges::transform(box.bbmax, box.bbmax.begin(), scale);
   }
   for (auto &sphere : data.GetSpheres())
   {
     sphere.r /= units.GetMeshLengthRelativeScale();
-    std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
-                   scale);
+    std::ranges::transform(sphere.center, sphere.center.begin(), scale);
   }
   data.min_element_size /= units.GetMeshLengthRelativeScale();
 }
@@ -2280,14 +2523,12 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 
 void Nondimensionalize(const Units &units, ProbeData &data)
 {
-  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                 LengthScaler(units));
+  std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, CurrentDipoleData &data)
 {
-  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                 LengthScaler(units));
+  std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, ConductivityData &data)
@@ -2301,6 +2542,16 @@ void Nondimensionalize(const Units &units, ImpedanceData &data)
   data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+}
+
+void Nondimensionalize(const Units &units, SuperconductorData &data)
+{
+  // PenetrationDepth (λ) and Thickness (d) are entered in mesh length units (L0), like all
+  // geometric lengths, so they use the mesh-relative scale (consistent with MaterialData's
+  // LondonDepth and ConductivityData's Thickness). KineticInductance (Ls) is in Henries.
+  data.lambda_L /= units.GetMeshLengthRelativeScale();
+  data.thickness /= units.GetMeshLengthRelativeScale();
+  data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
 }
 
 void Nondimensionalize(const Units &units, LumpedPortData &data)
@@ -2340,8 +2591,7 @@ void Nondimensionalize(const Units &units, WavePortData &data)
 
 void Nondimensionalize(const Units &units, SurfaceFluxData &data)
 {
-  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                 LengthScaler(units));
+  std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
@@ -2391,24 +2641,25 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
 
 void Nondimensionalize(const Units &units, EigenSolverData &data)
 {
-  data.target =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
+  data.target = 2 * std::numbers::pi *
+                units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
   data.target_upper =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
+      2 * std::numbers::pi *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
 }
 
 void Nondimensionalize(const Units &units, DrivenSolverData &data)
 {
   for (auto &f : data.sample_f)
   {
-    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+    f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
   }
 }
 
 void Nondimensionalize(const Units &units, TransientSolverData &data)
 {
-  data.pulse_f =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.pulse_f);
+  data.pulse_f = 2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.pulse_f);
   data.pulse_tau = units.Nondimensionalize<Units::ValueType::TIME>(data.pulse_tau);
   data.max_t = units.Nondimensionalize<Units::ValueType::TIME>(data.max_t);
   data.delta_t = units.Nondimensionalize<Units::ValueType::TIME>(data.delta_t);

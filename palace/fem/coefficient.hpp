@@ -170,7 +170,11 @@ private:
   const MaterialOperator &mat_op;
   bool two_sided;
   const mfem::Vector &x0;
-  const mfem::Vector *ref_dir;  // Optional reference direction for field alignment
+  const mfem::Vector *ref_dir;  // Optional reference direction for normal orientation
+  // ELECTRIC flux with Im{ε} instead of Re{ε}, for assembling the complex D = ε E of a
+  // lossy dielectric from real-valued evaluations (see
+  // SurfacePostOperator::GetSurfaceFlux).
+  bool imag_permittivity;
 
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
@@ -185,11 +189,13 @@ public:
   // Constructor with center-based orientation
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &x0, double scaling = 1.0)
+                            const mfem::Vector &x0, double scaling = 1.0,
+                            bool imag_permittivity = false)
     : mfem::Coefficient(),
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr)
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr),
+      imag_permittivity(imag_permittivity)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -205,7 +211,8 @@ public:
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(reference_direction),
-      ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr)
+      ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr),
+      imag_permittivity(false)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -233,9 +240,9 @@ public:
       GetLocalFlux(*FET.Elem2, VL);
       if (two_sided)
       {
-        // Add result with opposite normal. This only happens when crack_bdr_elements =
-        // false (two_sided = true doesn't make sense for an internal boundary without an
-        // associated BC).
+        // Add result with opposite normal. This happens on interior boundaries which are
+        // not cracked, such as metal sheets (two_sided = true doesn't make sense for an
+        // interior boundary without an associated BC).
         VU -= VL;
       }
       else
@@ -259,8 +266,15 @@ public:
     {
       if (ref_dir && Type == SurfaceFlux::MAGNETIC)
       {
-        // For magnetic flux with reference direction, orient based on field alignment
-        return VU * (*ref_dir);
+        // The reference direction selects the sign of the geometric normal; it is not a
+        // projection axis for the field. This preserves the B ⋅ n surface-flux magnitude
+        // for tilted and curved surfaces.
+        const double alignment = normal * (*ref_dir);
+        MFEM_VERIFY(
+            std::abs(alignment) > 1.0e-12 * ref_dir->Norml2(),
+            "Surface flux reference direction is tangent to the surface and cannot orient "
+            "its normal!");
+        return (alignment < 0.0) ? -flux : flux;
       }
       else
       {
@@ -279,11 +293,18 @@ template <>
 inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
-  // Flux D.
+  // Flux D = ε E, with the real or imaginary part of the permittivity.
   double W_data[3];
   mfem::Vector W(W_data, T.GetSpaceDim());
   E->GetVectorValue(T, T.GetIntPoint(), W);
-  mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+  if (imag_permittivity)
+  {
+    mat_op.GetPermittivityImag(T.Attribute).Mult(W, V);
+  }
+  else
+  {
+    mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+  }
   V *= scaling;
 }
 
@@ -354,6 +375,33 @@ private:
   const double t_i, epsilon_i;
   const InterfaceDielectricComponent component;
 
+  // Boundary attributes of interior boundaries separating the fields on their two sides,
+  // for which the energies of both (qualifying) sides are summed instead of evaluating the
+  // energy of the average field (optional).
+  const mfem::Array<int> *sum_sides_marker = nullptr;
+
+  bool SumSides(const mfem::ElementTransformation &T) const
+  {
+    return FET.Elem2 && sum_sides_marker && T.Attribute <= sum_sides_marker->Size() &&
+           (*sum_sides_marker)[T.Attribute - 1];
+  }
+
+  // Whether a side (1 or 2) qualifies as vacuum or substrate side, and the field and
+  // element attribute on the given side.
+  bool Qualifies(int side, bool vacuum_side) const
+  {
+    constexpr double threshold = 1.0 - 1.0e-6;
+    const auto *elem = (side == 1) ? FET.Elem1 : FET.Elem2;
+    return elem && (vacuum_side ? mat_op.GetLightSpeedMax(elem->Attribute) >= threshold
+                                : mat_op.GetLightSpeedMax(elem->Attribute) < threshold);
+  }
+  int GetSideVectorValue(const mfem::ParGridFunction &U, mfem::Vector &V, int side) const
+  {
+    auto &elem = (side == 1) ? *FET.Elem1 : *FET.Elem2;
+    U.GetVectorValue(elem, elem.GetIntPoint(), V);
+    return elem.Attribute;
+  }
+
   void Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                   mfem::Vector *normal)
   {
@@ -405,10 +453,11 @@ private:
 public:
   InterfaceDielectricCoefficient(
       const GridFunction &E, const MaterialOperator &mat_op, double t_i, double epsilon_i,
-      const GridFunction *D = nullptr,
+      const mfem::Array<int> *sum_sides_marker = nullptr, const GridFunction *D = nullptr,
       InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E),
-      D(D), mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i), component(component)
+      D(D), mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i), component(component),
+      sum_sides_marker(sum_sides_marker)
   {
     MFEM_ASSERT(!D || D->ParFESpace()->GetParMesh() == E.ParFESpace()->GetParMesh(),
                 "Recovered electric flux must use the electric-field mesh!");
@@ -444,11 +493,29 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval
       add(0.5, V, W, V);
     }
   };
+  MFEM_VERIFY(component == InterfaceDielectricComponent::TOTAL,
+              "Polarized interface energy is unavailable for a generic dielectric!");
   double V_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim());
   Initialize(T, ip, nullptr);
+  double V2 = 0.0;
+  if (SumSides(T))
+  {
+    // Sum of the energies on both sides.
+    for (int side : {1, 2})
+    {
+      GetSideVectorValue(E.Real(), V, side);
+      V2 += V * V;
+      if (E.HasImag())
+      {
+        GetSideVectorValue(E.Imag(), V, side);
+        V2 += V * V;
+      }
+    }
+    return 0.5 * t_i * epsilon_i * V2;
+  }
   GetLocalVectorValueDefault(E.Real(), V);
-  double V2 = V * V;
+  V2 = V * V;
   if (E.HasImag())
   {
     GetLocalVectorValueDefault(E.Imag(), V);
@@ -456,8 +523,6 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval
   }
 
   // No specific interface, use full field evaluation: 0.5 * t * ε * |E|² .
-  MFEM_VERIFY(component == InterfaceDielectricComponent::TOTAL,
-              "Polarized interface energy is unavailable for a generic dielectric!");
   return 0.5 * t_i * epsilon_i * V2;
 }
 
@@ -470,6 +535,32 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
   mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
   const GridFunction &normal_field = D ? *D : E;
+  if (SumSides(T) && Qualifies(1, true) && Qualifies(2, true))
+  {
+    // A GridFunction D lives on the continuous RT space (a broken space carries no grid
+    // function, SD-605), whose normal trace is single-valued across the sheet: the per-side
+    // reads below would count one D_n twice instead of two sides once. Refused until the
+    // per-side D of the broken recovery space exists (SD-407 (3)).
+    MFEM_VERIFY(!D, "A recovered electric flux on a two-sided interface sheet is not "
+                    "supported yet!");
+    // Sum of the energies on both sides.
+    double Vn2 = 0.0;
+    for (int side : {1, 2})
+    {
+      GetSideVectorValue(normal_field.Real(), V, side);
+      Vn2 += (V * normal) * (V * normal);
+      if (normal_field.HasImag())
+      {
+        GetSideVectorValue(normal_field.Imag(), V, side);
+        Vn2 += (V * normal) * (V * normal);
+      }
+    }
+    if (component == InterfaceDielectricComponent::TANGENTIAL)
+    {
+      return 0.0;
+    }
+    return 0.5 * (t_i / epsilon_i) * Vn2;
+  }
   int attr = GetLocalVectorValue(normal_field.Real(), V, true);
   if (attr <= 0)
   {
@@ -502,6 +593,48 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
       normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
   const GridFunction &normal_field = D ? *D : E;
+  if (SumSides(T) && Qualifies(1, false) && Qualifies(2, false))
+  {
+    // A GridFunction D lives on the continuous RT space (a broken space carries no grid
+    // function, SD-605), whose normal trace is single-valued across the sheet: the per-side
+    // reads below would count one D_n twice instead of two sides once. Refused until the
+    // per-side D of the broken recovery space exists (SD-407 (3)).
+    MFEM_VERIFY(!D, "A recovered electric flux on a two-sided interface sheet is not "
+                    "supported yet!");
+    // Sum of the energies on both sides.
+    double Vn2 = 0.0;
+    for (int side : {1, 2})
+    {
+      int side_attr = GetSideVectorValue(normal_field.Real(), V, side);
+      if (D)
+      {
+        W = V;
+      }
+      else
+      {
+        mat_op.GetPermittivityReal(side_attr).Mult(V, W);
+      }
+      Vn2 += (W * normal) * (W * normal);
+      if (normal_field.HasImag())
+      {
+        GetSideVectorValue(normal_field.Imag(), V, side);
+        if (D)
+        {
+          W = V;
+        }
+        else
+        {
+          mat_op.GetPermittivityReal(side_attr).Mult(V, W);
+        }
+        Vn2 += (W * normal) * (W * normal);
+      }
+    }
+    if (component == InterfaceDielectricComponent::TANGENTIAL)
+    {
+      return 0.0;
+    }
+    return 0.5 * (t_i / epsilon_i) * Vn2;
+  }
   int attr = GetLocalVectorValue(normal_field.Real(), V, false);
   if (attr <= 0)
   {
@@ -605,6 +738,10 @@ inline void InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::EvalEn
   field.SetSize(sdim + 1);
   field = 0.0;
   Initialize(T, ip, nullptr);
+  MFEM_VERIFY(!SumSides(T),
+              "Batched interface response fields cannot represent the summed energies "
+              "of both sides of an interior sheet (boundary attribute "
+                  << T.Attribute << ")!");
   double value_data[3], neighbor_data[3];
   mfem::Vector value(value_data, sdim), neighbor(neighbor_data, sdim);
   E.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), value);
@@ -632,6 +769,10 @@ inline void InterfaceDielectricCoefficient<InterfaceDielectric::MA>::EvalEnergyF
   double value_data[3], normal_data[3];
   mfem::Vector value(value_data, sdim), normal(normal_data, sdim);
   Initialize(T, ip, &normal);
+  MFEM_VERIFY(!(SumSides(T) && Qualifies(1, true) && Qualifies(2, true)),
+              "Batched interface response fields cannot represent the summed energies "
+              "of both sides of an interior sheet (boundary attribute "
+                  << T.Attribute << ")!");
   const GridFunction &normal_field = D ? *D : E;
   if (GetLocalVectorValue(normal_field.Real(), value, true) > 0)
   {
@@ -652,6 +793,10 @@ inline void InterfaceDielectricCoefficient<InterfaceDielectric::MS>::EvalEnergyF
   mfem::Vector value(value_data, sdim), displacement(displacement_data, sdim),
       normal(normal_data, sdim);
   Initialize(T, ip, &normal);
+  MFEM_VERIFY(!(SumSides(T) && Qualifies(1, false) && Qualifies(2, false)),
+              "Batched interface response fields cannot represent the summed energies "
+              "of both sides of an interior sheet (boundary attribute "
+                  << T.Attribute << ")!");
   const GridFunction &normal_field = D ? *D : E;
   const int attr = GetLocalVectorValue(normal_field.Real(), value, false);
   if (attr > 0)
@@ -1236,40 +1381,6 @@ public:
       V(0) = (kn_r * eti(1) + kn_i * etr(1) - grad_ezr(1)) * inv_omega;
       V(1) = (-kn_r * eti(0) - kn_i * etr(0) + grad_ezr(0)) * inv_omega;
     }
-  }
-};
-
-// Compute z-directed Poynting power density for a waveguide mode on a 2D cross-section:
-//   Sn = Re{Ex Hy* - Ey Hx*} where Ht = μ⁻¹ Bt.
-// No 1/2 factor, consistent with the 3D PoyntingVectorCoefficient convention.
-class ModeSnCoefficient : public mfem::Coefficient
-{
-  const mfem::ParGridFunction &et_r, &et_i;
-  const mfem::ParGridFunction &bt_r, &bt_i;
-  const MaterialOperator &mat_op;
-
-public:
-  ModeSnCoefficient(const mfem::ParGridFunction &et_r, const mfem::ParGridFunction &et_i,
-                    const mfem::ParGridFunction &bt_r, const mfem::ParGridFunction &bt_i,
-                    const MaterialOperator &mat_op)
-    : et_r(et_r), et_i(et_i), bt_r(bt_r), bt_i(bt_i), mat_op(mat_op)
-  {
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    mfem::Vector etr(2), eti(2), btr(2), bti(2);
-    et_r.GetVectorValue(T, ip, etr);
-    et_i.GetVectorValue(T, ip, eti);
-    bt_r.GetVectorValue(T, ip, btr);
-    bt_i.GetVectorValue(T, ip, bti);
-
-    double muinv = mat_op.GetInvPermeabilityZZ(T.Attribute);
-    double hx_r = muinv * btr(0), hx_i = muinv * bti(0);
-    double hy_r = muinv * btr(1), hy_i = muinv * bti(1);
-
-    // Re{Ex(-Hy*) + Ey(Hx*)} = -Ex_r Hy_r - Ex_i Hy_i + Ey_r Hx_r + Ey_i Hx_i
-    return -etr(0) * hy_r - eti(0) * hy_i + etr(1) * hx_r + eti(1) * hx_i;
   }
 };
 

@@ -182,9 +182,8 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
              std::abs(x[2] - y[2]) < tolerance;
     };
     vertices = std::move(collected_vertices);
-    std::sort(vertices.begin(), vertices.end(), EigenLE);
-    vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
-                   vertices.end());
+    std::ranges::sort(vertices, EigenLE);
+    vertices.erase(std::ranges::unique(vertices, vertex_equality).begin(), vertices.end());
   }
   else
   {
@@ -229,18 +228,16 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // found.
     MFEM_VERIFY(vertices.size() >= 4,
                 "A bounding box requires a minimum of four vertices for this algorithm!");
-    auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
-    auto p_111 =
-        std::max_element(vertices.begin(), vertices.end(),
-                         [p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                         { return (x - *p_000).norm() < (y - *p_000).norm(); });
-    p_000 = std::max_element(vertices.begin(), vertices.end(),
-                             [p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                             { return (x - *p_111).norm() < (y - *p_111).norm(); });
-    MFEM_ASSERT(std::max_element(vertices.begin(), vertices.end(),
-                                 [p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                 { return (x - *p_000).norm() < (y - *p_000).norm(); }) ==
-                    p_111,
+    auto p_000 = std::ranges::min_element(vertices, EigenLE);
+    auto p_111 = std::ranges::max_element(
+        vertices, [p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+        { return (x - *p_000).norm() < (y - *p_000).norm(); });
+    p_000 = std::ranges::max_element(
+        vertices, [p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+        { return (x - *p_111).norm() < (y - *p_111).norm(); });
+    MFEM_ASSERT(std::ranges::max_element(
+                    vertices, [p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                    { return (x - *p_000).norm() < (y - *p_000).norm(); }) == p_111,
                 "p_000 and p_111 must be mutually opposing points!");
 
     // Define a diagonal of the ASSUMED cuboid bounding box.
@@ -258,12 +255,12 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     const double diag_length = (v_111 - v_000).norm();
     auto max_perp_dist = PerpendicularDistance(
         {n_1}, origin,
-        *std::max_element(vertices.begin(), vertices.end(),
-                          [&](const auto &x, const auto &y)
-                          {
-                            return PerpendicularDistance({n_1}, origin, x) <
-                                   PerpendicularDistance({n_1}, origin, y);
-                          }));
+        *std::ranges::max_element(vertices,
+                                  [&](const auto &x, const auto &y)
+                                  {
+                                    return PerpendicularDistance({n_1}, origin, x) <
+                                           PerpendicularDistance({n_1}, origin, y);
+                                  }));
     collinear = (max_perp_dist < rel_tol * diag_length);
     if (collinear)
     {
@@ -306,12 +303,13 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     }
     if (!collinear)
     {
-      const auto &t_0 = *std::max_element(vertices.begin(), vertices.end(),
-                                          [&](const auto &x, const auto &y)
-                                          {
-                                            return PerpendicularDistance({n_1}, origin, x) <
-                                                   PerpendicularDistance({n_1}, origin, y);
-                                          });
+      const auto &t_0 =
+          *std::ranges::max_element(vertices,
+                                    [&](const auto &x, const auto &y)
+                                    {
+                                      return PerpendicularDistance({n_1}, origin, x) <
+                                             PerpendicularDistance({n_1}, origin, y);
+                                    });
       MFEM_VERIFY(&t_0 != &v_000 && &t_0 != &v_111, "Vertices are degenerate!");
 
       // Use the discovered vertex to define a second direction and thus a plane. n_1 and
@@ -325,12 +323,12 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
       // with a cross, then use a dot product to pick the greatest deviation.
       auto max_distance = PerpendicularDistance(
           {n_1, n_2}, origin,
-          *std::max_element(vertices.begin(), vertices.end(),
-                            [&](const auto &x, const auto &y)
-                            {
-                              return PerpendicularDistance({n_1, n_2}, origin, x) <
-                                     PerpendicularDistance({n_1, n_2}, origin, y);
-                            }));
+          *std::ranges::max_element(vertices,
+                                    [&](const auto &x, const auto &y)
+                                    {
+                                      return PerpendicularDistance({n_1, n_2}, origin, x) <
+                                             PerpendicularDistance({n_1, n_2}, origin, y);
+                                    }));
       box.planar = (max_distance < rel_tol * (v_111 - v_000).norm());
 
       // For the non-planar case, collect points furthest from the plane and choose the one
@@ -342,16 +340,16 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
           return t_0;
         }
         std::vector<Eigen::Vector3d> vertices_out_of_plane;
-        std::copy_if(vertices.begin(), vertices.end(),
-                     std::back_inserter(vertices_out_of_plane),
-                     [&](const auto &v)
-                     {
-                       return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
-                                       max_distance) < rel_tol * max_distance;
-                     });
-        return *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
-                                 [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                 { return (x - origin).norm() < (y - origin).norm(); });
+        std::ranges::copy_if(
+            vertices, std::back_inserter(vertices_out_of_plane),
+            [&](const auto &v)
+            {
+              return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) - max_distance) <
+                     rel_tol * max_distance;
+            });
+        return *std::ranges::min_element(
+            vertices_out_of_plane, [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+            { return (x - origin).norm() < (y - origin).norm(); });
       }();
 
       // Given candidates t_0 and t_1, the closer to origin defines v_001.
@@ -621,25 +619,25 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
     // considered first. The two points are not necessarily the maximizer of the distance
     // between all pairs, but they should be a good estimate.
     {
-      auto p_1 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
-      auto p_2 = std::max_element(vertices.begin(), vertices.end(),
-                                  [p_1](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                  { return (x - *p_1).norm() < (y - *p_1).norm(); });
-      p_1 = std::max_element(vertices.begin(), vertices.end(),
-                             [p_2](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                             { return (x - *p_2).norm() < (y - *p_2).norm(); });
+      auto p_1 = std::ranges::min_element(vertices, EigenLE);
+      auto p_2 = std::ranges::max_element(
+          vertices, [p_1](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+          { return (x - *p_1).norm() < (y - *p_1).norm(); });
+      p_1 = std::ranges::max_element(
+          vertices, [p_2](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+          { return (x - *p_2).norm() < (y - *p_2).norm(); });
 
       // Find the next point as the vertex furthest from the initial axis.
       const Eigen::Vector3d n_1 = (*p_2 - *p_1).normalized();
-      auto p_3 = std::max_element(vertices.begin(), vertices.end(),
-                                  [&](const auto &x, const auto &y)
-                                  {
-                                    return PerpendicularDistance({n_1}, *p_1, x) <
-                                           PerpendicularDistance({n_1}, *p_1, y);
-                                  });
-      auto p_4 = std::max_element(vertices.begin(), vertices.end(),
-                                  [p_3](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                  { return (x - *p_3).norm() < (y - *p_3).norm(); });
+      auto p_3 = std::ranges::max_element(vertices,
+                                          [&](const auto &x, const auto &y)
+                                          {
+                                            return PerpendicularDistance({n_1}, *p_1, x) <
+                                                   PerpendicularDistance({n_1}, *p_1, y);
+                                          });
+      auto p_4 = std::ranges::max_element(
+          vertices, [p_3](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+          { return (x - *p_3).norm() < (y - *p_3).norm(); });
       MFEM_VERIFY(p_3 != p_1 && p_3 != p_2 && p_4 != p_1 && p_4 != p_2,
                   "Vertices are degenerate!");
 
@@ -964,8 +962,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   for (int be = 0; be < mesh->GetNBE(); be++)
   {
     int attr = mesh->GetBdrAttribute(be);
-    auto donor = std::find(da.begin(), da.end(), attr) != da.end();
-    auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
+    auto donor = std::ranges::find(da, attr) != da.end();
+    auto receiver = std::ranges::find(ra, attr) != ra.end();
     if (donor || receiver)
     {
       int el, info;
@@ -1024,8 +1022,7 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   // Use the translation vector or affine transformation matrix if provided
   // in the config file, otherwise automatically detect the transformation.
   mfem::DenseMatrix transformation(4);
-  if (std::any_of(data.affine_transform.begin(), data.affine_transform.end(),
-                  [](auto y) { return std::abs(y) > 0.0; }))
+  if (std::ranges::any_of(data.affine_transform, [](auto y) { return std::abs(y) > 0.0; }))
   {
     // Use user-provided affine transformation matrix.
     for (int i = 0; i < 4; i++)

@@ -3,6 +3,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import gzip
 import importlib.util
 import tempfile
 import unittest
@@ -83,6 +84,14 @@ class AmrEdgeResolutionTest(unittest.TestCase):
         self.assertEqual(coordinates[6].tolist(), [5.0, 0.0, 0.0])
         self.assertEqual(coordinates[10].tolist(), [5.0, 0.0, 5.0])
         self.assertEqual(coordinates[11].tolist(), [0.0, 5.0, 5.0])
+
+    def test_reads_a_gzip_meshgz_as_the_plain_mesh(self):
+        """Upstream PR 923: a zlib build saves the adapted mesh as <name>.meshgz (gzip)."""
+        plain = TOOL.read_nc_mesh(self.write(NC_MESH))
+        path = Path(self.tmp.name, "adapted.meshgz")
+        path.write_bytes(gzip.compress(NC_MESH.encode()))
+        for expected, actual in zip(plain, TOOL.read_nc_mesh(path)):
+            self.assertEqual(expected.tolist(), actual.tolist())
 
     def test_metal_edges_are_shared_with_non_metal_faces_off_the_bounding_box(self):
         leaves, boundary, coordinates = TOOL.read_nc_mesh(self.write(NC_MESH))

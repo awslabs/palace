@@ -369,7 +369,8 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
                                                    &surface_post_geometry);
   GradFluxErrorEstimator<Vector> estimator(
       laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
-      linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg);
+      linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg,
+      iodata.boundaries.GetSheetAttributes());
   json report = {
       {"Version", 1},
       {"Status", "incomplete"},
@@ -601,7 +602,8 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
   };
   ErrorIndicator aggregate;
   Vector v(Grad.Width()), bc(Grad.Width()), rhs(Grad.Width());
-  Vector source_bc, source_rhs, e(Grad.Height()), d(laplace_op.GetRTSpace().GetTrueVSize());
+  Vector source_bc, source_rhs, e(Grad.Height()),
+      d(estimator.GetFluxSpace().GetTrueVSize());
   std::set<std::string> names;
   int case_number = 0;
   for (const auto &excitation : cases)
@@ -1004,8 +1006,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Right-hand side term and solution vector storage.
-  Vector RHS(Grad.Width()), E(Grad.Height()), D(laplace_op.GetRTSpace().GetTrueVSize());
-  D.UseDevice(true);
+  // D is sized by the flux space of the estimator, below.
+  Vector RHS(Grad.Width()), E(Grad.Height()), D;
   std::vector<Vector> V(n_step);
   std::vector<Vector> V_corrected(self_consistent_response ? n_step : 0);
   std::vector<Vector> D_basis(post_op.NeedsRecoveredElectricFlux() &&
@@ -1570,7 +1572,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator = std::make_unique<GradFluxErrorEstimator<Vector>>(
         laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
         iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
+        iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
+  }
+  if (estimator)
+  {
+    // The recovered electric flux lives on the estimator's recovery space (broken across
+    // the sheet attributes when the mesh has interior faces there).
+    D.SetSize(estimator->GetFluxSpace().GetTrueVSize());
+    D.UseDevice(true);
   }
   ErrorIndicator indicator;
 
@@ -1977,7 +1986,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           const Vector *D_corrected_ptr = nullptr;
           if (post_op.NeedsRecoveredElectricFlux())
           {
-            D_corrected.SetSize(laplace_op.GetRTSpace().GetTrueVSize());
+            D_corrected.SetSize(estimator->GetFluxSpace().GetTrueVSize());
             D_corrected.UseDevice(true);
             estimator->RecoverFlux(E_corrected, D_corrected);
             D_corrected_ptr = &D_corrected;

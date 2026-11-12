@@ -49,6 +49,12 @@ order of the set fix the Ground / Terminal boundaries and their order on both si
 import argparse
 import json
 import os
+import sys
+
+_IDENTIFICATION = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "surface_response_identification")
+if _IDENTIFICATION not in sys.path:
+    sys.path.insert(0, _IDENTIFICATION)
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 # The fabrication record of the transmon reference (`process-library.json` `Fabrication`):
 # 2-nm layers, eps SA 4.0 / MS 11.45 / MA 10.0, substrate 11.45; the loss tangents are the
@@ -198,7 +204,7 @@ def fabricated_config(polygon_set, manifest, mesh, postpro, order=4, linear_max_
     }
 
 
-def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFAULT_RADIUS_UM, verbose=1):
+def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFAULT_RADIUS_UM, verbose=1, crack_policy=CRACK_POLICY_DEFAULT):
     """The thin + library configuration from the thin window manifest (`Attributes`: name ->
     attribute; sheets `ground_<plane>`, `<label>_<plane>`, `gap_<plane>`, bump shells
     `bump_surface` (ground) / `bump_<label>` (terminal), volumes `substrate_<plane lower-case>`,
@@ -262,7 +268,7 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
         })
     return {
         "Problem": {"Type": "Electrostatic", "Verbose": verbose, "Output": postpro, "OutputFormats": {"Paraview": False, "GridFunction": False}},
-        "Model": {"Mesh": mesh, "L0": 1.0e-6, "Refinement": refinement},
+        "Model": apply_crack_policy({"Mesh": mesh, "L0": 1.0e-6, "Refinement": refinement}, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": substrates, "Permittivity": SUBSTRATE_PERMITTIVITY},
@@ -316,6 +322,7 @@ def main(argv=None):
     parser.add_argument("--library", help="thin: the response-correction library (default: the geometry-only seed)")
     parser.add_argument("--path", default="T", choices=sorted(THIN_PATHS), help="thin: protocol path T (p5, 12 solves), P4 or preflight")
     parser.add_argument("--radius", type=float, help="thin: EdgeDistances when the library has no MatchingRadius (default 1.9)")
+    add_crack_policy_argument(parser)  # thin only: the fabricated reference keeps CrackInternalBoundaryElements false
     args = parser.parse_args(argv)
     polygon_set = load_json(args.polygon_set)
     manifest = load_json(args.manifest)
@@ -324,7 +331,7 @@ def main(argv=None):
     else:
         library = args.library or DEFAULT_SEED_LIBRARY
         radius = args.radius if args.radius is not None else library_radius(library)
-        config = thin_config(polygon_set, manifest, args.mesh, library, args.path, args.postpro, radius=radius)
+        config = thin_config(polygon_set, manifest, args.mesh, library, args.path, args.postpro, radius=radius, crack_policy=args.crack_policy)
     output = os.path.abspath(args.output)
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w") as target:

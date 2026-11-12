@@ -14,6 +14,7 @@ IDENTIFICATION_TOOLS = Path(__file__).resolve().parent.parent / "surface_respons
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
 import local_pieces  # noqa: E402
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 # R0-b, the GENERATOR side (identification fix round DESIGN A.3 (b); decisions 1058 MAJOR-1, 1064 (4), 1096 (8)):
 # with --local-pieces the coupon's conductor labels are its LOCAL metal pieces (local_pieces.local_pieces_of_parallel_edges,
@@ -425,6 +426,7 @@ def make_config(
     substrate_permittivity,
     interface_layers,
     conductor_count,
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     ms = [10 + conductor for conductor in range(1, conductor_count + 1)]
     ma = [100 + conductor for conductor in range(1, conductor_count + 1)]
@@ -457,7 +459,7 @@ def make_config(
             "Output": str(output / "postpro" / name),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
         },
-        "Model": {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth},
+        "Model": apply_crack_policy({"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth}, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": substrate_permittivity},
@@ -606,6 +608,7 @@ def main():
             type=float,
             default=permittivity,
         )
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.basis_size <= 0 or args.samples < args.basis_size:
         parser.error("invalid basis size or sample count")
@@ -679,6 +682,7 @@ def main():
             args.substrate_permittivity,
             interface_layers,
             int(max(conductors)),
+            crack_policy=args.crack_policy,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(config, indent=2) + "\n")
@@ -695,6 +699,7 @@ def main():
             args.substrate_permittivity,
             interface_layers,
             int(max(conductors)),
+            crack_policy=args.crack_policy,
         )
         potential = {
             "Index": 1,
@@ -726,6 +731,7 @@ def main():
             args.substrate_permittivity,
             interface_layers,
             int(max(conductors)),
+            crack_policy=args.crack_policy,
         )
         probe_path = output / f"{probe_name}.json"
         probe_path.write_text(json.dumps(probe, indent=2) + "\n")

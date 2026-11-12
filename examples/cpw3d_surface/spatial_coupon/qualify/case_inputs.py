@@ -50,6 +50,7 @@ import local_pieces  # noqa: E402  (surface_response_identification, on sys.path
 from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
 import trace_basis  # noqa: E402
 from mixed_mesh import SHELL_LABEL_STRIDE  # noqa: E402
+from crack_policy import CRACK_KEY  # noqa: E402  (surface_response_identification, as local_pieces)
 
 PHYSICS_RUN_KEY = "PhysicsRun"
 JOB_POLICY_KEY = "JobPolicy"
@@ -588,13 +589,23 @@ def strip_paths(config):
 
 def config_differences(derived, reference, *, ignore_solver=()):
     """Field paths where the derived and the reference configs differ outside
-    PATH_FIELDS (DataFile compared by name) and the named Solver fields."""
+    PATH_FIELDS (DataFile compared by name) and the named Solver fields.
+
+    Model.CrackInternalBoundaryElements true on one side and absent on the other is NOT a
+    difference (only that pair): the stored references were made before the crack policy
+    of the writers (decision 1570) on the pre-integration binary, where an unset key means
+    true (ModelData::crack_bdr_elements = true, configfile.hpp:229 at 9269317f46), and the
+    legacy writer now spells it out (decision 1582 (2)). false vs absent, true vs false and
+    any other value still differ."""
     a, b = strip_paths(derived), strip_paths(reference)
     for field in ignore_solver:
         section, key = field.split(".") if "." in field else (None, field)
         for view in (a, b):
             target = view["Solver"][section] if section else view["Solver"]
             target.pop(key, None)
+    for view, other in ((a, b), (b, a)):
+        if view["Model"].get(CRACK_KEY, None) is True and CRACK_KEY not in other["Model"]:
+            view["Model"].pop(CRACK_KEY)
     return _differences(a, b, "")
 
 

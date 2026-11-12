@@ -4,6 +4,7 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
+#include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -45,50 +46,14 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              space_op.GetPortExcitations().FmtLog());
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<Vector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<Vector>> estimator_2d;
-  if (is_2d)
+  const FluxErrorEstimator<Vector> estimator(space_op, iodata);
+  Vector D;
+  if (post_op.NeedsRecoveredElectricFlux())
   {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<Vector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+    // The recovered flux is allocated only when interface postprocessing uses it.
+    D.SetSize(estimator.GetElectricFluxSpace().GetTrueVSize());
+    D.UseDevice(true);
   }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<Vector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate =
-      [&](const Vector &E, const Vector &B, const Vector *D, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-    {
-      if (D)
-        estimator_2d->AddErrorIndicator(E, B, *D, Et, ind);
-      else
-        estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    }
-    else
-    {
-      if (D)
-        estimator_3d->AddErrorIndicator(E, B, *D, Et, ind);
-      else
-        estimator_3d->AddErrorIndicator(E, B, Et, ind);
-    }
-  };
-  auto RecoverElectricFlux = [&](const Vector &E, Vector &D)
-  {
-    if (is_2d)
-      estimator_2d->RecoverElectricFlux(E, D);
-    else
-      estimator_3d->RecoverElectricFlux(E, D);
-  };
-  Vector D(space_op.GetRTSpace().GetTrueVSize());
-  D.UseDevice(true);
   ErrorIndicator indicator;
 
   // Main time integration loop.
@@ -125,7 +90,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (post_op.NeedsRecoveredElectricFlux())
     {
       Mpi::Print(" Recovering electric flux for interface postprocessing\n");
-      RecoverElectricFlux(E, D);
+      estimator.RecoverElectricFlux(E, D);
       post_op.SetRecoveredElectricFlux(D);
       recovered_flux = &D;
     }
@@ -133,7 +98,14 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    AddEstimate(E, B, recovered_flux, total_domain_energy, indicator);
+    if (recovered_flux)
+    {
+      estimator.AddErrorIndicator(E, B, *recovered_flux, total_domain_energy, indicator);
+    }
+    else
+    {
+      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    }
   }
   // Final postprocessing & printing.
   BlockTimer bt1(Timer::POSTPRO);

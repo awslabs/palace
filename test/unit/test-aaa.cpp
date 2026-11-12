@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <numbers>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -171,8 +172,7 @@ TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")
   // Match poles to known set {2, 5} (order-independent).
   std::vector<std::complex<double>> sorted_poles(pr.poles.data(),
                                                  pr.poles.data() + pr.poles.size());
-  std::sort(sorted_poles.begin(), sorted_poles.end(),
-            [](auto a, auto b) { return a.real() < b.real(); });
+  std::ranges::sort(sorted_poles, [](auto a, auto b) { return a.real() < b.real(); });
   REQUIRE(sorted_poles.size() >= 2);
   REQUIRE_THAT(std::abs(sorted_poles[0] - 2.0) / 2.0, WithinAbs(0.0, 1e-9));
   REQUIRE_THAT(std::abs(sorted_poles[1] - 5.0) / 5.0, WithinAbs(0.0, 1e-9));
@@ -259,11 +259,11 @@ TEST_CASE("AAA: textbook waveguide dispersion residual converges", "[aaa][Serial
   // Numbers approximating the adapter's rectangular port: ω_c/(2π) = 6.52 GHz,
   // c_eff = c₀ ≈ 2.998e8, sweep band 7.5 - 16 GHz.
   const double c_eff = 2.998e8;
-  const double omega_c = 2.0 * M_PI * 6.5172e9;
+  const double omega_c = 2.0 * std::numbers::pi * 6.5172e9;
   const double gamma_kn2 = 1.0 / (c_eff * c_eff);
   const double alpha_kn2 = -omega_c * omega_c * gamma_kn2;
-  const double omega_lo = 2.0 * M_PI * 7.5e9;
-  const double omega_hi = 2.0 * M_PI * 16.0e9;
+  const double omega_lo = 2.0 * std::numbers::pi * 7.5e9;
+  const double omega_hi = 2.0 * std::numbers::pi * 16.0e9;
   constexpr int n_fit = 30;
   Eigen::VectorXcd z_full(n_fit);
   Eigen::VectorXd kn_full(n_fit);
@@ -308,4 +308,26 @@ TEST_CASE("AAA: textbook waveguide dispersion residual converges", "[aaa][Serial
     max_rel = std::max(max_rel, std::abs(v.real() - truth) / std::abs(truth));
   }
   REQUIRE(max_rel < 1e-3);  // looser since this is OUT-of-sample evaluation
+}
+
+TEST_CASE("AAA: set-valued fit recovers common denominator", "[aaa][Serial]")
+{
+  auto z = LinSpace(-2.0, 2.0, 61);
+  const std::complex<double> p0(3.0, 0.4), p1(-2.7, 0.3);
+  Eigen::MatrixXcd F(z.size(), 3);
+  for (long i = 0; i < z.size(); i++)
+  {
+    const auto a = 1.0 / (z(i) - p0), b = 1.0 / (z(i) - p1);
+    F(i, 0) = 0.7 * a - 0.2 * b;
+    F(i, 1) = std::complex<double>(0.1, 0.4) * a + 0.8 * b;
+    F(i, 2) = -0.3 * a + std::complex<double>(0.2, -0.5) * b;
+  }
+  auto denominator = RunAAA(z, F, 1.0e-11, 6);
+  REQUIRE(denominator.converged);
+  auto pr = AAAToPoleResidue(denominator);
+  REQUIRE(pr.poles.size() == 2);
+  auto nearest = [&](std::complex<double> p)
+  { return std::min(std::abs(pr.poles(0) - p), std::abs(pr.poles(1) - p)); };
+  CHECK(nearest(p0) < 1.0e-8);
+  CHECK(nearest(p1) < 1.0e-8);
 }

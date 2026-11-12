@@ -87,6 +87,12 @@ include(ExternalScn)
 message(STATUS "===================== Configuring Eigen dependency =====================")
 include(ExternalEigen)
 
+# Add Enzyme
+if(PALACE_WITH_ENZYME AND "${ENZYME_DIR}" STREQUAL "")
+  message(STATUS "===================== Configuring Enzyme dependency ====================")
+  include(ExternalEnzyme)
+endif()
+
 # Add SUNDIALS
 if(PALACE_WITH_SUNDIALS)
   message(STATUS "===================== Configuring SUNDIALS dependency =====================")
@@ -106,4 +112,3 @@ include(ExternalLibCEED)
 # Add MFEM
 message(STATUS "====================== Configuring MFEM dependency =====================")
 include(ExternalMFEM)
-

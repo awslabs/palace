@@ -20,6 +20,7 @@ _IDENTIFICATION = str(Path(__file__).resolve().parents[2] / "surface_response_id
 if _IDENTIFICATION not in sys.path:
     sys.path.insert(0, _IDENTIFICATION)
 import deterministic_math  # noqa: E402
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 INTERFACE_DEFAULTS = {
@@ -1556,6 +1557,7 @@ def make_config(
     terminal_traces=None,
     edge_exclude_segments=None,
     edge_exclude_segment_sagittas=None,
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     validate_metal_slot_partitioning(
         edges, fabricated, available_attributes, slot_partitioned
@@ -1667,11 +1669,11 @@ def make_config(
             "Output": str(output / "postpro" / name),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
         },
-        "Model": {
+        "Model": apply_crack_policy({
             "Mesh": str(mesh),
             "L0": 1.0e-6,
             "Refinement": {"MaxIts": 0},
-        },
+        }, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": substrate_permittivity},
@@ -2695,6 +2697,7 @@ def main():
             type=float,
             default=permittivity,
         )
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.radius <= 0.0 or args.metal_thickness <= 0.0:
         parser.error("radius and metal thickness must be positive")
@@ -3053,6 +3056,7 @@ def main():
             available_attributes=available_attributes,
             slot_partitioned=slot_partitioned,
             terminal_traces=conductor_probe_paths,
+            crack_policy=args.crack_policy,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
         heldout_name = f"heldout_{name}"
@@ -3073,6 +3077,7 @@ def main():
             False,
             available_attributes,
             slot_partitioned,
+            crack_policy=args.crack_policy,
         )
         heldout_terminals = [
             attribute
@@ -3106,6 +3111,7 @@ def main():
             available_attributes=available_attributes,
             slot_partitioned=slot_partitioned,
             terminal_traces=conductor_probe_paths,
+            crack_policy=args.crack_policy,
         )
         (output / f"{probe_name}.json").write_text(
             json.dumps(probe, indent=2) + "\n"

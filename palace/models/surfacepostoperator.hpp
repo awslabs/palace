@@ -14,6 +14,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/output_functionals.hpp"
 #include "utils/edgedistance.hpp"
 
 namespace palace
@@ -104,7 +105,8 @@ private:
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
                                                       const mfem::ParGridFunction *B,
-                                                      const MaterialOperator &mat_op) const;
+                                                      const MaterialOperator &mat_op,
+                                                      bool imag_permittivity = false) const;
   };
   struct InterfaceDielectricData : public SurfaceData
   {
@@ -133,6 +135,10 @@ private:
     // (decision 657 (b): the listed length and the perimeter length the coincidence test
     // removed); nullopt for an entry without EdgeExcludeSegments.
     std::optional<EdgeExclusionRecord> edge_exclusion;
+
+    // Marker of boundary attributes of interior boundaries separating the fields on their
+    // two sides (thin metal sheets), for which the energies of both sides are summed.
+    mfem::Array<int> sum_sides_marker;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::Array<int> &bdr_attr_marker);
@@ -202,6 +208,15 @@ private:
       const std::vector<const GridFunction *> &D, int interface_index, int quadrature_extra,
       std::vector<InterfaceQuadratureRule> *quadrature_rules) const;
 
+  // libCEED surface functionals for flux and interface dielectric postprocessing,
+  // constructed lazily per surface index to replace per-call coefficient evaluation and
+  // boundary LinearForm assembly in the legacy paths when supported.
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
+  // Im{ε}-weighted electric flux functionals for complex fields in lossy dielectrics.
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs_imag;
+  mutable std::unique_ptr<SurfaceFunctional> farfield_func;
+  mutable std::vector<std::array<double, 3>> farfield_func_dirs;
+
 public:
   // The rank-local quadrature samples of one interface response matrix (the streaming
   // one-pass Gram of the archive reduction): the same boundary elements, quadrature
@@ -259,11 +274,17 @@ public:
   std::map<int, InterfaceDielectricData> eps_surfs;
   FarFieldData farfield;
 
+  // Interface dielectric energies on interior boundaries with attributes in
+  // sheet_attributes, which separate the fields on their two sides, sum the energies of
+  // both sides. The interface dielectric "FluxRecovery" is refused on the mesh crack set of
+  // the optional boundaries (the cracked internal boundaries) and where an entry's sheet
+  // attributes have an interior face (cracked or not, a zero-thickness sheet has no
+  // controlled normal trace of the volume projection); an exterior sheet boundary keeps it.
   SurfacePostOperator(
       const config::BoundaryPostData &postpro, ProblemType problem_type,
       const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h1_fespace,
       mfem::ParFiniteElementSpace &nd_fespace,
-      const std::unordered_set<int> *cracked_attributes = nullptr,
+      const std::vector<int> &sheet_attributes = {},
       const config::BoundaryData *boundaries = nullptr,
       std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr,
       bool classified_edge_trees = false);
@@ -272,15 +293,17 @@ public:
       mfem::ParFiniteElementSpace &h1_fespace, mfem::ParFiniteElementSpace &nd_fespace,
       std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr);
 
-  // Get surface integrals computing electric or magnetic field flux through a boundary.
+  // Get surface integrals computing electric or magnetic field flux, or the stationary real
+  // power flux, through a boundary. For complex fields the electric flux uses the complex
+  // permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
                                       const GridFunction *B) const;
 
   // Batch version for multiple theta/phi pairs
   std::vector<std::array<std::complex<double>, 3>>
   GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
-                const GridFunction &E, const GridFunction &B, double omega_re,
-                double omega_im) const;
+                const GridFunction &E, const GridFunction &B,
+                std::complex<double> omega) const;
 
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;

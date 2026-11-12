@@ -1101,7 +1101,7 @@ json SurfaceResponseFiles::AutomaticConfig2D() const
 {
   json automatic_config = {
       {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
-      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Model", {{"Mesh", "unused.msh"}, {"CrackInternalBoundaryElements", true}}},
       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
       {"Boundaries",
        {{"Ground", {{"Attributes", {1, 3, 4, 9, 10}}}},
@@ -1158,6 +1158,7 @@ json SurfaceResponseFiles::Cpw3dLegacyConfig() const
   config_3d["Problem"]["Output"] = temp.temp_dir.string();
   config_3d["Model"]["Mesh"] =
       (fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh").string();
+  config_3d["Model"]["CrackInternalBoundaryElements"] = true;  // explicit crack policy
   // The three-dimensional sections below exercise the legacy per-interface-group
   // classification (parametric matching with tolerances, interpolation brackets, plan-view
   // masks), kept behind PatchConstruction = "Legacy"; the Features-driven construction
@@ -1174,7 +1175,7 @@ json SurfaceResponseFiles::IslandConfig() const
 {
   json island_config = {
       {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
-      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Model", {{"Mesh", "unused.msh"}, {"CrackInternalBoundaryElements", true}}},
       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
       {"Boundaries",
        {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}},

@@ -5,7 +5,13 @@
 import argparse
 import copy
 import json
+import sys
 from pathlib import Path
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[1] / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 THIN_INTERFACES = (
@@ -52,6 +58,7 @@ def base_config(
     order,
     problem,
     eigenmode_target,
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     eigenmode = problem == "eigenmode"
     port_attributes = (7, 8) if fabricated else (5, 6)
@@ -105,11 +112,11 @@ def base_config(
             "Output": str(output),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
         },
-        "Model": {
+        "Model": apply_crack_policy({
             "Mesh": str(mesh),
             "L0": 1.0e-6,
             "Refinement": {"MaxIts": 0},
-        },
+        }, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": 11.47},
@@ -160,6 +167,7 @@ def main():
         type=Path,
         default=Path(__file__).resolve().parent / "mesh",
     )
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.order < 1:
         parser.error("--order must be positive")
@@ -188,6 +196,7 @@ def main():
         args.order,
         args.problem,
         args.eigenmode_target,
+        crack_policy=args.crack_policy,
     )
     corrected = copy.deepcopy(baseline)
     corrected["Problem"]["Output"] = str(output / "thin_corrected")
@@ -204,6 +213,7 @@ def main():
         args.order,
         args.problem,
         args.eigenmode_target,
+        crack_policy=args.crack_policy,
     )
 
     write_config(output / "thin_raw.json", baseline)

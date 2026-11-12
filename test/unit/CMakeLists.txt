@@ -29,9 +29,11 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-2d-submesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-axisymmetric.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cgsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-collectiveenvironment.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
@@ -46,20 +48,26 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerfamily.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency-r0a.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary-blocked.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-excludedpatchportions-index.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geometryfallback.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigensolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-interfaceownership.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-interfaceregion.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libraryqualification.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lineintegrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-loaderconductors.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lowrank.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-magneticresponse.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
@@ -67,20 +75,31 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwellinplanelines.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwelllinecoverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-metadatafile.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-pointlocatorblocked.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-prescribedpotentialsheet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsegeometry-residency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsesetupcache.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-signaturekeytext.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-strumpack.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacecharge.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacefunctional.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator-boundary-viz.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseidentification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponse-rootgather.cpp
@@ -97,6 +116,29 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
 
+if(PALACE_WITH_ENZYME)
+  # Enzyme-differentiated sources are compiled into their own object library so the Enzyme
+  # Clang plugin (ClangEnzymeFlags) applies only here, not to the rest of unit-tests.
+  add_library(enzyme-unit-tests OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-enzyme.cpp
+  )
+  target_link_libraries(enzyme-unit-tests
+    PRIVATE Catch2::Catch2
+            ${LIB_TARGET_NAME}
+            ClangEnzymeFlags
+  )
+
+  # ASan only, not the shared sanitizer_flags: its UBSan (-fsanitize=undefined) injects
+  # runtime-handler calls that Enzyme's autodiff pass cannot differentiate, breaking the
+  # compile. ASan is compatible; its runtime comes from unit-tests' sanitizer_flags.
+  if(PALACE_BUILD_WITH_SANITIZERS)
+    target_compile_options(enzyme-unit-tests PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+  endif()
+
+  target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
+endif()
+
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
 
@@ -111,6 +153,13 @@ target_link_libraries(unit-tests
           $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
+
+# The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
+# when MFEM is built with zlib support.
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+  target_link_libraries(unit-tests PRIVATE ZLIB::ZLIB)
+endif()
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE

@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
 #include <complex>
 
 #include "linalg/vector.hpp"
@@ -109,6 +110,42 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
+// On the host, inner products are computed with several partial sums (by blocks with
+// several OpenMP threads), and the complex ones in a single pass; compare with plain sums.
+TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")
+{
+  const int n = GENERATE(1, 7, 8, 9, 1003);
+  MPI_Comm comm = Mpi::World();
+  ComplexVector x(n), y(n);
+  double ref[4] = {0.0, 0.0, 0.0, 0.0};  // Re(yᴴ x), Im(yᴴ x), yᵣᵀ xᵣ, xᴴ x
+  for (int i = 0; i < n; i++)
+  {
+    const int j = i + n * Mpi::Rank(comm);
+    x.Real()[i] = std::sin(0.3 * j);
+    x.Imag()[i] = std::cos(0.7 * j);
+    y.Real()[i] = std::cos(1.1 * j + 0.2);
+    y.Imag()[i] = std::sin(0.5 * j - 0.4);
+    ref[0] += y.Real()[i] * x.Real()[i] + y.Imag()[i] * x.Imag()[i];
+    ref[1] += y.Real()[i] * x.Imag()[i] - y.Imag()[i] * x.Real()[i];
+    ref[2] += y.Real()[i] * x.Real()[i];
+    ref[3] += x.Real()[i] * x.Real()[i] + x.Imag()[i] * x.Imag()[i];
+  }
+  Mpi::GlobalSum(4, ref, comm);
+  const double tol = 1.0e-14 * n * Mpi::Size(comm);
+  const auto dot = linalg::Dot(comm, x, y);
+  CHECK_THAT(dot.real(), WithinAbs(ref[0], tol));
+  CHECK_THAT(dot.imag(), WithinAbs(ref[1], tol));
+  CHECK(linalg::Dot(comm, x, y) == dot);
+  CHECK_THAT(linalg::Dot(comm, x.Real(), y.Real()), WithinAbs(ref[2], tol));
+  // The inner product of x with itself skips the imaginary part, which a copy computes.
+  ComplexVector z(x);
+  const auto nrm2 = linalg::Dot(comm, x, x), nrm2_copy = linalg::Dot(comm, x, z);
+  CHECK_THAT(nrm2.real(), WithinAbs(ref[3], tol));
+  CHECK(nrm2.imag() == 0.0);
+  CHECK_THAT(nrm2_copy.real(), WithinAbs(ref[3], tol));
+  CHECK_THAT(nrm2_copy.imag(), WithinAbs(0.0, tol));
+}
+
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 {
   ComplexVector cv(2);
@@ -126,6 +163,9 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   cv.Set(vals, 2, data_already_on_dev);
 
+  // Set writes on the device when it is enabled; copy back before indexing on the host.
+  cv.Real().HostRead();
+  cv.Imag().HostRead();
   CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank) || WithinAbs(0.0, 1e-14));
   CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank) || WithinAbs(0.0, 1e-14));
 

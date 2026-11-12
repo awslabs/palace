@@ -48,6 +48,12 @@ class ArchLabel(unittest.TestCase):
     def test_release_target_with_underscores(self):
         self.assertEqual(arch_label_from_image("palace-x86_64_v3-deadbee"), "x86_64_v3")
 
+    def test_cuda_image_label(self):
+        self.assertEqual(
+            arch_label_from_image("palace-x86_64_v3_cuda-deadbee"),
+            "x86_64_v3_cuda",
+        )
+
     def test_rejects_non_palace(self):
         with self.assertRaises(ValueError):
             arch_label_from_image("notpalace-x-abc1234")
@@ -80,14 +86,15 @@ class S3Prefix(unittest.TestCase):
 
 
 class Plan(unittest.TestCase):
-    def test_release_matrix_six_targets(self):
+    def test_release_matrix_seven_targets(self):
         names = [f"palace-{t}-abc1234" for t in
-                 ("x86_64_v3", "x86_64_v4", "sapphirerapids", "aarch64", "neoverse_v1", "neoverse_v2")]
+                 ("x86_64_v3", "x86_64_v4", "sapphirerapids", "aarch64",
+                  "neoverse_v1", "neoverse_v2", "x86_64_v3_cuda")]
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             make_artifacts(root, names)
             items = plan(root, "0.18.0", REGISTRY, ECR_REPO, BUCKET)
-        self.assertEqual(len(items), 6)
+        self.assertEqual(len(items), 7)
         by_label = {i.arch_label: i for i in items}
         self.assertEqual(
             by_label["neoverse_v2"].ecr_tag,
@@ -106,6 +113,21 @@ class Plan(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].ecr_tag, f"{REGISTRY}/palace:dev-myfeature-sapphirerapids")
         self.assertEqual(items[0].s3_uri, f"s3://{BUCKET}/dev/myfeature/sapphirerapids.sif")
+
+    def test_cuda_fat_binary_destinations(self):
+        image = "palace-x86_64_v3_cuda-deadbee"
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            make_artifacts(root, [image])
+            item = plan(root, "main", REGISTRY, ECR_REPO, BUCKET)[0]
+        self.assertEqual(
+            item.ecr_tag,
+            f"{REGISTRY}/palace:main-x86_64_v3_cuda",
+        )
+        self.assertEqual(
+            item.s3_uri,
+            f"s3://{BUCKET}/main/x86_64_v3_cuda.sif",
+        )
 
     def test_empty_artifacts_yields_empty_plan(self):
         with tempfile.TemporaryDirectory() as d:
@@ -145,16 +167,17 @@ class PlanGuards(unittest.TestCase):
             self.assertIn("duplicate arch label", str(cm.exception))
 
     def test_full_release_matrix_all_legs_complete(self):
-        # A complete 6-leg release plan builds cleanly (no set check needed —
+        # A complete 7-leg release plan builds cleanly (no set check needed —
         # completeness of the leg set is guaranteed by the workflow_run success
         # gate; plan() just requires each present leg to be a complete pair).
         names = [f"palace-{t}-abc1234" for t in
-                 ("x86_64_v3", "x86_64_v4", "sapphirerapids", "aarch64", "neoverse_v1", "neoverse_v2")]
+                 ("x86_64_v3", "x86_64_v4", "sapphirerapids", "aarch64",
+                  "neoverse_v1", "neoverse_v2", "x86_64_v3_cuda")]
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             make_artifacts(root, names)
             items = plan(root, "0.18.0", REGISTRY, ECR_REPO, BUCKET)
-        self.assertEqual(len(items), 6)
+        self.assertEqual(len(items), 7)
 
 
 class SchemaUri(unittest.TestCase):

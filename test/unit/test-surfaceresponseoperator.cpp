@@ -13347,6 +13347,23 @@ TEST_CASE("SurfaceResponseOperatorMirrorFormedEdgeWeights",
 namespace palace
 {
 
+namespace
+{
+
+// The file name RebalanceMesh gives the SaveAdaptMesh mesh (upstream's rule, SD-302):
+// gzip-compressed ".meshgz" when MFEM is built with zlib, ".mesh" otherwise. MFEM's
+// named_ifgzstream reads either form.
+std::string SavedAdaptMeshName(const std::string &stem)
+{
+#if defined(MFEM_USE_ZLIB)
+  return stem + ".meshgz";
+#else
+  return stem + ".mesh";
+#endif
+}
+
+}  // namespace
+
 // Decision 899 (OI-CTX-ARC-ADAPT): a run whose INPUT mesh is the saved adapted mesh of an
 // AMR run (SaveAdaptMesh, the MFEM nonconforming format) identifies on the ROOT level of
 // that mesh — the producing run's initial mesh — so it reproduces the producing run's
@@ -13383,7 +13400,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const fs::path follow_on_dir = temp.temp_dir / (stem + "-follow-on");
     const fs::path saved_mesh_path =
         producer_dir /
-        (fs::path(config["Model"]["Mesh"].get<std::string>()).stem().string() + ".mesh");
+        SavedAdaptMeshName(
+            fs::path(config["Model"]["Mesh"].get<std::string>()).stem().string());
     config["Problem"]["Output"] = producer_dir.string();
     test::RunElectrostatic(config);
     Mpi::Barrier(comm);
@@ -13415,7 +13433,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK(saved_leaf_segments > initial_leaf_segments);
     {
-      std::ifstream saved(saved_mesh_path);
+      mfem::named_ifgzstream saved(saved_mesh_path.string());
       std::string header;
       std::getline(saved, header);
       CHECK(header == "MFEM NC mesh v1.0");
@@ -13595,7 +13613,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     const fs::path mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
     const fs::path producer_dir = temp.temp_dir / "adaptid-cpw-producer";
-    const fs::path saved_mesh_path = producer_dir / "cpw3d-surface-nc.mesh";
+    const fs::path saved_mesh_path = producer_dir / SavedAdaptMeshName("cpw3d-surface-nc");
     json dielectric = {{"Thickness", 2.0e-3},
                        {"AutomaticEdges", true},
                        {"EdgeDistances", {2.0}},
@@ -13620,6 +13638,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
         {"Model",
          {{"Mesh", mesh_path.string()},
+          {"CrackInternalBoundaryElements", true},
           {"L0", 1.0e-6},
           {"Refinement",
            {{"MaxIts", 3},
@@ -14615,7 +14634,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       temp.temp_dir / "fabrication-process-adaptid-uncovered-3d.json";
   const fs::path producer_dir = temp.temp_dir / "adaptid-uncovered-producer";
   const fs::path follow_on_dir = temp.temp_dir / "adaptid-uncovered-follow-on";
-  const fs::path saved_mesh_path = producer_dir / "adaptid-uncovered-claw.mesh";
+  const fs::path saved_mesh_path =
+      producer_dir / SavedAdaptMeshName("adaptid-uncovered-claw");
   // The plan (mesh units; the domain 5 x 1 x 3): the bar x in [0.5, 4.5], z in [1.2, 2.0];
   // the finger x in [2.4, 2.6], z in [2.0, 2.8]; the rest of the sheet y = 0.5 is the SA
   // interface (attribute 10) beside the metal, so that the within-R energy of the

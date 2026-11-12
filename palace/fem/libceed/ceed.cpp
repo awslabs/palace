@@ -4,6 +4,7 @@
 #include "ceed.hpp"
 
 #include <string_view>
+#include "basis.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed
@@ -33,9 +34,8 @@ void Initialize(const char *resource, const char *jit_source_dir)
     PalacePragmaOmp(master)
     {
       // Only parallelize libCEED operators over threads when not using the GPU.
-      const int nt = !std::string_view(resource).compare(0, 4, "/cpu")
-                         ? utils::GetNumActiveThreads()
-                         : 1;
+      const int nt =
+          std::string_view(resource).starts_with("/cpu") ? utils::GetNumActiveThreads() : 1;
       internal::ceeds.resize(nt, nullptr);
     }
   }
@@ -62,6 +62,10 @@ void Initialize(const char *resource, const char *jit_source_dir)
 
 void Finalize()
 {
+  // Cached bases own references to their creating Ceed contexts and must be released before
+  // dropping Palace's top-level context references.
+  internal::FinalizeBasisCache();
+
   // Destroy Ceed context(s).
   for (std::size_t i = 0; i < internal::ceeds.size(); i++)
   {
@@ -73,7 +77,7 @@ void Finalize()
 
 std::string Print()
 {
-  MFEM_VERIFY(internal::GetCeedObjects().size() > 0,
+  MFEM_VERIFY(!internal::GetCeedObjects().empty(),
               "libCEED must be initialized before querying the active backend!");
   Ceed ceed = internal::GetCeedObjects()[0];
   const char *ceed_resource;
@@ -81,7 +85,7 @@ std::string Print()
   return std::string(ceed_resource);
 }
 
-void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
+CeedMemType GetUsableMemType(Ceed ceed)
 {
   CeedMemType mem;
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
@@ -89,6 +93,26 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
   {
     mem = CEED_MEM_HOST;
   }
+  return mem;
+}
+
+void InitConstantLineBasis(Ceed ceed, CeedInt num_comp, CeedInt num_qpts, CeedBasis *basis)
+{
+  // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+  mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
+  Bt = 1.0;
+  Gt = 0.0;
+  qX = 0.0;
+  qW = 0.0;
+  PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, num_comp, 1, num_qpts,
+                                         Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                         qW.GetData(), basis));
+}
+
+void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
+                    bool take_array)
+{
+  const CeedMemType mem = GetUsableMemType(ceed);
   const auto *data = v.Read(mem == CEED_MEM_DEVICE);
   if (init)
   {
@@ -96,7 +120,16 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
   }
   else
   {
-    PalaceCeedCall(ceed, CeedVectorTakeArray(*cv, mem, nullptr));
+    CeedSize length;
+    PalaceCeedCall(ceed, CeedVectorGetLength(*cv, &length));
+    MFEM_VERIFY(length == static_cast<CeedSize>(v.Size()),
+                "Cannot re-point a libCEED vector at an MFEM vector with a different "
+                "length ("
+                    << length << " != " << v.Size() << ")!");
+    if (take_array)
+    {
+      PalaceCeedCall(ceed, CeedVectorTakeArray(*cv, mem, nullptr));
+    }
   }
   PalaceCeedCall(
       ceed, CeedVectorSetArray(*cv, mem, CEED_USE_POINTER, const_cast<CeedScalar *>(data)));
@@ -147,6 +180,24 @@ mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom)
     default:
       MFEM_ABORT("This type of element is not supported!");
       return mfem::Geometry::SEGMENT;  // Silence compiler warning
+  }
+}
+
+CeedAssemblyScratch::CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
+
+CeedAssemblyScratch::~CeedAssemblyScratch()
+{
+  for (auto &v : vectors)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+  }
+  for (auto &r : restrictions)
+  {
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
+  }
+  for (auto &b : bases)
+  {
+    PalaceCeedCall(ceed, CeedBasisDestroy(&b));
   }
 }
 

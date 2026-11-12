@@ -128,12 +128,35 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
-  if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(APPEND MFEM_OPTIONS
-      "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
-      "-DCUDA_ARCH=${CMAKE_CUDA_ARCHITECTURES}"
+  if(PALACE_WITH_CUDSS)
+    # cuDSS loads its MPI calls from a small plugin that must be compiled against the same
+    # MPI as Palace. Build it from the source NVIDIA ships with cuDSS rather than using the
+    # bundled Open MPI binary.
+    set(PALACE_CUDSS_COMM_SRC "${CUDSS_DIR}/src/cudss_commlayer_openmpi.cu")
+    if(NOT EXISTS "${PALACE_CUDSS_COMM_SRC}")
+      message(FATAL_ERROR
+        "Could not find ${PALACE_CUDSS_COMM_SRC}. The cuDSS tarball archives include the "
+        "communication layer source under src/; the pip/conda wheels do not. Install the "
+        "archive and set CUDSS_DIR to it."
+      )
+    endif()
+    find_package(cudss CONFIG REQUIRED HINTS "${CUDSS_DIR}/lib/cmake/cudss")
+    add_library(cudss_commlayer_mpi SHARED "${PALACE_CUDSS_COMM_SRC}")
+    target_link_libraries(cudss_commlayer_mpi PRIVATE cudss CUDA::cudart MPI::MPI_CXX)
+    set_target_properties(cudss_commlayer_mpi PROPERTIES
+      CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_INSTALL_PREFIX}/lib"
+      BUILD_WITH_INSTALL_RPATH ON
+      INSTALL_RPATH_USE_LINK_PATH ON
     )
+    set(PALACE_CUDSS_COMM_LIB
+      "${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}cudss_commlayer_mpi${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    )
+    message(STATUS "Building cuDSS communication layer for the selected MPI: ${PALACE_CUDSS_COMM_LIB}")
+    list(APPEND MFEM_DEPENDENCIES cudss_commlayer_mpi)
+    list(APPEND MFEM_OPTIONS "-DMFEM_CUDSS_COMM_LIB=${PALACE_CUDSS_COMM_LIB}")
   endif()
+  palace_append_cuda_architectures(MFEM_OPTIONS)
 else()
   list(APPEND MFEM_OPTIONS
     "-DMFEM_USE_CUDA=NO"
@@ -402,74 +425,107 @@ string(REPLACE ";" "; " MFEM_OPTIONS_PRINT "${MFEM_OPTIONS}")
 message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 
 # Download the MFEM patches used by the Spack build.
+include(PatchHelpers)
 set(MFEM_PATCH_DIR "${CMAKE_BINARY_DIR}/extern/mfem-patches")
-file(MAKE_DIRECTORY "${MFEM_PATCH_DIR}")
 set(MFEM_PATCH_FILES)
 
-function(download_mfem_patch FILENAME URL SHA256)
-  set(PATCH_FILE "${MFEM_PATCH_DIR}/${FILENAME}")
-  file(DOWNLOAD
-    "${URL}"
-    "${PATCH_FILE}"
-    EXPECTED_HASH "SHA256=${SHA256}"
-    TLS_VERIFY ON
-  )
-  list(APPEND MFEM_PATCH_FILES "${PATCH_FILE}")
-  set(MFEM_PATCH_FILES "${MFEM_PATCH_FILES}" PARENT_SCOPE)
-endfunction()
-
 # https://github.com/mfem/mfem/pull/3847
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr3847.diff
   "https://github.com/mfem/mfem/compare/2d574015756711029556c14d096ca52c15d5b663...50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff"
   e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4
 )
-# https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
-download_mfem_patch(
-  mfem_gmsh_parser_performance.diff
-  "https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247.diff"
-  6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e
-)
-# https://github.com/mfem/mfem/pull/5246
-download_mfem_patch(
-  mfem_pr5246.diff
-  "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5246.diff"
-  d5227c18768369b8fa3a20f4457dd378a360346850329ab1970d18ed5a73b0d6
-)
 # https://github.com/mfem/mfem/pull/5353
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr5353.diff
   "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5353.diff"
   c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f
 )
-# https://github.com/mfem/mfem/pull/4983
-download_mfem_patch(
-  mfem_pr4983.diff
-  "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr4983.diff"
-  530532da3ae8815d004bb6ce19f6f08a1248c3d585503551c90d0eeae7fb3f87
+# https://github.com/mfem/mfem/pull/5711
+# DofTransformation in LinearForm::AssembleDelta (current dipoles on Nedelec spaces of
+# order 2 and above on elements with triangular faces), rebased onto the PR 5353
+# snapshot above, so it must be applied after it.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5711.diff
+  "https://raw.githubusercontent.com/awslabs/palace/3316062b3655bed6aba8e856e066c20ac213f98c/extern/patch/mfem/mfem_pr5711.diff"
+  4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470
 )
-if(PALACE_WITH_CUDSS)
-  # https://github.com/mfem/mfem/pull/5124
-  download_mfem_patch(
-    mfem_pr5124_cudss.diff
-    "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5124_cudss.diff"
-    d0b5893ec7925cbc8a70cc5eba2abe037754b99b5bb366c4bae90f0583d22290
-  )
-endif()
-# https://github.com/mfem/mfem/pull/5415
-download_mfem_patch(
-  mfem_pr5415.diff
-  "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
-  482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
+# https://github.com/mfem/mfem/pull/5494
+# NCMesh partition fixes; not yet in MFEM 4.10. Applied directly from the
+# upstream PR range, which uses FlipIndexSign (present as of 4.10).
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5494.diff
+  "https://github.com/mfem/mfem/compare/10b0b596dbc26dca384b9f25f23026b1a6403592...399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff"
+  771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c
 )
-# https://github.com/mfem/mfem/pull/5494 (open): parallel nonconforming tetrahedral meshes
-# could hang in ParFiniteElementSpace construction (an interior edge of an unsplit slave face
-# owned by an edge-only neighbor rank was left out of the master-row communication group) or
-# produce partition-dependent spurious H1 true DOFs (a hanging vertex owned by a rank with no
-# constraining slave). Vendored because the PR is re-based onto this MFEM version: the
-# FlipIndexSign(i) helper of the PR's base does not exist here and is spelled -1 - i. Remove
-# once merged upstream and MFEM is bumped.
-list(APPEND MFEM_PATCH_FILES "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5494.diff")
+# https://github.com/mfem/mfem/pull/5502
+# NCMesh: fix 8-bit reference-counter overflow at high-valence vertices.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5502.diff
+  "https://github.com/mfem/mfem/commit/3091ba40b238c4008b67216314bb26da6738b833.diff"
+  52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533
+)
+# https://github.com/mfem/mfem/pull/5531
+# Essential DOFs on interior boundaries of 2D nonconforming meshes refined on one side.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5531.diff
+  "https://github.com/mfem/mfem/commit/641e56439e63a1774f43bc2ba904797694a047ad.diff"
+  2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe
+)
+
+# https://github.com/mfem/mfem/pull/5639
+# Consistent order of the shared entities of ParSubMesh groups across ranks.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5639.diff
+  "https://github.com/mfem/mfem/commit/864d476acf25135d2059d3379d208e635823f26c.diff"
+  9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03
+)
+# https://github.com/mfem/mfem/pull/5698
+# NCMesh::GetRootTransforms and NCMesh::GetElementCornerNodes, for the interior boundary
+# sides of nonconforming meshes computed on their root elements.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5698.diff
+  "https://github.com/mfem/mfem/commit/e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff"
+  eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f
+)
+# https://github.com/mfem/mfem/pull/5610
+# Host hypre matrix products no longer read hypre's device-resident row cache.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5610.diff
+  "https://github.com/mfem/mfem/commit/e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff"
+  917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964
+)
+# https://github.com/mfem/mfem/pull/5714
+# Gmsh meshes with boundary elements of a different order than the volume elements, which
+# the Gmsh reader of MFEM 4.10 rejects.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5714.diff
+  "https://github.com/mfem/mfem/commit/c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff"
+  3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5
+)
+# https://github.com/mfem/mfem/pull/5717
+# All processes take part in the exchange of the face neighbor orientations of
+# nonconforming meshes with triangular faces.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5717.diff
+  "https://github.com/mfem/mfem/commit/d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff"
+  f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3
+)
+# https://github.com/mfem/mfem/pull/5721
+# Nonconforming refinement, derefinement and rebalancing in parallel process their messages in
+# the order of the source ranks, so the mesh numbering does not depend on message timing.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5721.diff
+  "https://github.com/mfem/mfem/commit/c79f309399361b2d6aadc207087ca6dc475513b4.diff"
+  75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456
+)
+# https://github.com/mfem/mfem/pull/5731
+# SuperLUSolver setters for the relaxed and maximum supernode sizes.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5731.diff
+  "https://github.com/mfem/mfem/commit/67dd11d697fafba16d8826172343a42e7a0c5df1.diff"
+  17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
@@ -481,10 +537,11 @@ ExternalProject_Add(mfem
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/mfem-cmake
   UPDATE_COMMAND    ""
+  # Upstream commits can also edit MFEM's CHANGELOG, which differs from the release.
   PATCH_COMMAND
     git reset --hard &&
     git clean -fd &&
-    git apply "${MFEM_PATCH_FILES}"
+    git apply --exclude=CHANGELOG "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
-  TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
+  TEST_COMMAND      ${PALACE_MAKE_COMMAND} ex1 ex1p
 )

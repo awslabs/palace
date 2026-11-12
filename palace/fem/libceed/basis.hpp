@@ -17,8 +17,29 @@ class IntegrationRule;
 namespace palace::ceed
 {
 
+namespace internal
+{
+
+// Release process-wide cached basis references before destroying their Ceed contexts.
+void FinalizeBasisCache();
+
+}  // namespace internal
+
 void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir, int num_comp,
                Ceed ceed, CeedBasis *basis);
+
+// Initialize an ordinary libCEED basis from an arbitrary fixed integration rule (which
+// need not be tensor-product, for example a rule mapped from a face into an element).
+// This always uses MFEM FULL tabulation in native dof ordering, so the corresponding
+// element restriction must also use native ordering (is_interp = true for scalar tensor
+// product spaces). The rule is fixed when the operator is assembled.
+void InitBasisFromRule(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+                       int num_comp, Ceed ceed, CeedBasis *basis);
+
+// Reuse a process-lifetime ordinary basis for finite mapped face/domain rule families.
+// Do not use for arbitrary probe point clouds.
+void InitCachedBasisFromRule(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+                             int num_comp, Ceed ceed, CeedBasis *basis);
 
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                            const mfem::FiniteElement &test_fe, int trial_num_comp,

@@ -54,6 +54,17 @@ def compare_geometry(reference,actual):
     return worst
 
 
+# The processed mesh-statistics record must report the crack policy the probe config states. An
+# UNSET Model.CrackInternalBoundaryElements is upstream's default (PR 994), recorded as null
+# (SHARED-DECISIONS SD-001; decision 1570); RefineCrackElements still defaults to true.
+MESH_PREPROCESSING_DEFAULTS=(('CrackInternalBoundaryElements',None),('RefineCrackElements',True))
+
+
+def check_mesh_preprocessing_policy(processed,model):
+    for name,default in MESH_PREPROCESSING_DEFAULTS:
+        if processed[name]!=model.get(name,default):raise ValueError('Mesh preprocessing policy differs')
+
+
 def trace_policy_environment(case):
     """Validate before cache lookup/jobs; never infer a policy from historical size."""
     scope=case.get('TraceSizeScope','off')
@@ -196,8 +207,7 @@ def main():
         processed=json.loads(stats_path.read_text())
         if processed['Order']!=case['Order'] or processed['H1TrueDOFs']<=0:
             raise ValueError('Invalid processed H1 statistics')
-        for name in ('CrackInternalBoundaryElements','RefineCrackElements'):
-            if processed[name]!=probe['Model'].get(name,True):raise ValueError('Mesh preprocessing policy differs')
+        check_mesh_preprocessing_policy(processed,probe['Model'])
         status.update(ProcessedH1TrueDOFs=processed['H1TrueDOFs'],
                       ProcessedStatisticsSHA256=sha(stats_path),MeshStatisticsBinarySHA256=sha(stats_binary))
         status.update(State='Completed',MeshSHA256=sha(case['Mesh']),Elements=quality['Elements'],

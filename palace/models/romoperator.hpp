@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -157,7 +158,6 @@ class RomOperator
 {
 protected:
   // Reference to HDM discretization (not owned).
-  // TODO(C++20): Use std::reference_wrapper with incomplete types.
   SpaceOperator &space_op;
 
   // Used for constructing & reuse of RHS1.
@@ -171,7 +171,8 @@ protected:
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
   // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
   //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
-  // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
+  // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
+  //   are cached before frequency-major online evaluation.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   std::unique_ptr<ComplexOperator> response_mass;
   // The magnetic (inductive) defect dK (mx-sc-magnetic DESIGN-v2 E4; USER 1221 D8): the
@@ -207,12 +208,32 @@ protected:
   mutable bool other_A2_self_checked = false;
   mutable bool other_A2_factored_ok = true;
 
+  // Port-space evaluation of the wave-port terms of the PROM. The modal correction
+  // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ and the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full only
+  // need the pairings Vᵀs of the basis with the per-port modal n×H shape vectors. Since s
+  // is supported on the port only, Vᵀs is computed from the basis restricted to the port
+  // submesh (V_wp, kept on the host and extended as the basis grows) and the port-space
+  // mode forms refreshed by WavePortData::Initialize, without any per-frequency assembly
+  // and projection of HDM-size vectors. sV_wp_full caches Vᵀs_full per port at Ar_omega
+  // for the excitation of every excitation index at that frequency. A one-time self-check
+  // (repeated once more at the start of the online sweep with the final basis) compares
+  // against the parent-space assembled vectors; on mismatch we fall back permanently to
+  // the assembled path.
+  std::map<int, std::vector<Vector>> V_wp;
+  std::size_t V_wp_dim = 0;
+  std::unique_ptr<mfem::ParGridFunction> V_wp_gf;
+  std::map<int, Eigen::VectorXcd> sV_wp_full;
+  bool wp_pairing_ok = true;
+  bool wp_pairing_checked = false;
+
   // ω-independent boundary operators for the other frequency-dependent BCs, folded into
   // circuit synthesis the same way as the wave ports (each contributes i·f(ω)·M_proj·v to
   // Aᵣ(ω); project M_proj once, fit/inject the scalar f(ω)). Stored with the boundary mass
   // in the IMAGINARY slot (matching Mwp_p) so the synthesis path treats them uniformly.
   //   - Second-order farfield ABC: f(ω) = 0.5/ω, a single exact pole at ω=0 (residue 0.5),
-  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix.
+  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix, which
+  //     includes the negative sign of β (see
+  //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
   //   - Surface conductivity, one entry per attribute group g: f(ω) = ω/Z_g(ω) (the i is
   //     the implicit slot factor; surf_sigma_op.EvaluateScalar returns i·ω/Z, so the scalar
   //     used here is EvaluateScalar/i, generally complex), fit by poly+AAA.
@@ -256,7 +277,8 @@ protected:
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr, response_mass_r;  // Extended as modes are added
   Eigen::MatrixXcd response_stiffness_r;
-  Eigen::VectorXcd RHS1r;  // Need to recompute drive vector on excitation change.
+  Eigen::VectorXcd RHS1r;  // Active excitation's projected frequency-linear source.
+  std::map<int, Eigen::VectorXcd> RHS1r_online;  // Final-basis cache for online switching.
 
   // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
   // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
@@ -274,6 +296,8 @@ protected:
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
   // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.
   Eigen::MatrixXcd Ar;
+  Eigen::FullPivHouseholderQR<Eigen::MatrixXcd> Ar_solver;
+  double Ar_omega = std::numeric_limits<double>::quiet_NaN();
   Eigen::VectorXcd RHSr;
 
   // PROM reduced-order basis (real-valued).
@@ -332,25 +356,26 @@ protected:
     // to e.g. "farfield" or "surfsigma_<g>" for the other frequency-dependent BCs so their
     // aux rows are distinguishable in the emitted matrices.
     std::string label;
-    std::vector<double> sigmas;           // singular values kept above tolerance
-    std::vector<Eigen::VectorXd> u_dirs;  // matching left singular vectors
+    // Signed weights and matching real directions in the symmetric factorization
+    // M_proj = Σ_j weights[j] u_j u_jᵀ. The weights are eigenvalues, not unsigned
+    // singular values: modal-correction residue matrices are generally indefinite.
+    std::vector<double> weights;
+    std::vector<Eigen::VectorXd> u_dirs;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
   };
 
-  // Result of fitting k_n,p(omega) on the sweep band for a single port. Polynomial regime
-  // populates {alpha0, alpha1, alpha2}; Augmented regime additionally populates `aux`
-  // and folds the AAA constant `d` into `alpha0`.
+  // Result of fitting k_n,p(omega) (or the scalar dispersion f(ω) of another frequency-
+  // dependent BC) on the sweep band. Polynomial regime populates {alpha0c, alpha1c,
+  // alpha2c}; Augmented regime additionally populates `aux` and folds the AAA constant `d`
+  // into `alpha0c`.
   struct WavePortDispersionFit
   {
     int port_idx = 0;
     WavePortRegime regime = WavePortRegime::Polynomial;
-    double alpha0 = 0.0;
-    double alpha1 = 0.0;
-    double alpha2 = 0.0;
-    // Complex polynomial coefficients, used by the generalized scalar-dispersion path
-    // (FitScalarDispersion, for surface conductivity) where f(ω) is complex. The wave-port
-    // path leaves these zero and uses the real alpha0/1/2 above.
+    // Complex polynomial coefficients. For a wave port, k_n,p(ω) is complex for a lossy
+    // port mode (its imaginary part is the attenuation of the mode), and real up to
+    // roundoff for a lossless one.
     std::complex<double> alpha0c = 0.0;
     std::complex<double> alpha1c = 0.0;
     std::complex<double> alpha2c = 0.0;
@@ -403,24 +428,13 @@ protected:
   WavePortDispersionFit FitWavePortDispersion(int port_idx,
                                               const Eigen::MatrixXcd &Mp_r) const;
 
-  // Evaluate the fitted real wave-port dispersion model at frequency ω:
-  //   kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ Re(rₖ / (ω − pₖ))
-  // (the AAA pole–residue residual term is present only in the Augmented regime). This is
-  // the single source of truth for evaluating a WavePortDispersionFit on the real axis.
-  // Only valid for the real-coefficient wave-port fit (alpha0/1/2 + aux poles); the
-  // complex scalar-dispersion fit (alpha0c/1c/2c, surface conductivity) is evaluated
-  // separately.
-  static double EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega);
-
-  // Accumulate the polynomial-fit corrections from one port into the running Kr_corr,
-  // Cr_corr, Mr_corr buffers. With Mp_r = i·M_proj this folds (α₀+d)·M_proj into Im(Kr),
-  // +α₁·M_proj into Re(Cr), and -α₂·M_proj into Im(Mr), recovering the port term
-  // i·(α₀+d+α₁ω+α₂ω²)·M_proj in K + iωC - ω²M.
-  static void ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
-                                            const Eigen::MatrixXcd &Mp_r,
-                                            Eigen::MatrixXcd &Kr_corr,
-                                            Eigen::MatrixXcd &Cr_corr,
-                                            Eigen::MatrixXcd &Mr_corr);
+  // Evaluate the fitted wave-port dispersion model at frequency ω:
+  //   kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ rₖ / (ω − pₖ)
+  // (the AAA pole–residue residual term is present only in the Augmented regime), the same
+  // expression the synthesized pencil realizes. This is the single source of truth for
+  // evaluating a wave-port WavePortDispersionFit.
+  static std::complex<double> EvaluateWavePortKnFit(const WavePortDispersionFit &fit,
+                                                    std::complex<double> omega);
 
   // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface
   // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function
@@ -441,9 +455,11 @@ protected:
                                                        const Eigen::MatrixXcd &Mp_r,
                                                        int idx) const;
 
-  // Complex-coefficient variant of ApplyPolynomialFitCorrections for the other BCs: folds
-  // α₀·Mp_r into Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with COMPLEX α (the wave-port
-  // version assumes real α). With Mp_r = i·M_proj this reproduces i·(α₀+α₁ω+α₂ω²)·M_proj·v.
+  // Accumulate the polynomial-fit corrections of one frequency-dependent BC (a wave port,
+  // or another BC) into the running Kr_corr, Cr_corr, Mr_corr buffers: folds α₀·Mp_r into
+  // Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with complex α. With Mp_r = i·M_proj this
+  // reproduces i·(α₀+α₁ω+α₂ω²)·M_proj·v in K + iωC - ω²M. Real α (a lossless wave port)
+  // fold into Im(Kr), Re(Cr), and Im(Mr).
   static void ApplyComplexPolynomialFitCorrections(
       std::complex<double> alpha0, std::complex<double> alpha1, std::complex<double> alpha2,
       const Eigen::MatrixXcd &Mp_r, Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,
@@ -452,9 +468,9 @@ protected:
   // Build an aux block for one (matrix, pole-residue list) contribution, used by the ABC
   // (analytic single pole at ω=0, residue 0.5), surf-σ, and rational impedance (fitted
   // poles). `label` (required, nonempty) prefixes the aux-state row names in the
-  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; the SVD
-  // of its imaginary part gives the coupling directions exactly as in the wave-port
-  // augmented path.
+  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; a signed
+  // symmetric eigendecomposition of its imaginary part gives the coupling directions
+  // exactly, including indefinite modal-correction residue matrices.
   static std::optional<WavePortAuxBlock>
   MakeAuxBlock(std::string label, const Eigen::MatrixXcd &Mp_r,
                const std::vector<std::complex<double>> &poles,
@@ -489,8 +505,10 @@ public:
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
-  // Return PROM dimension.
+  // Return PROM dimension and the current online reduced solution.
   auto GetReducedDimension() const { return V.size(); }
+  const auto &GetBasis() const { return V; }
+  const Eigen::VectorXcd &GetReducedSolution() const { return RHSr; }
 
   // Return set of sampled parameter points for basis construction.
   const auto &GetSamplePoints(int excitation_idx) const
@@ -500,6 +518,19 @@ public:
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
+
+  // Extend the port-restricted basis V_wp to the current basis size.
+  void UpdateWavePortBasisRestriction();
+
+  // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the projected excitation
+  // shape vectors at ω. Uses the port-space pairings when available (see wp_pairing_ok),
+  // otherwise the parent-space assembled vectors.
+  void AddWavePortModalCorrection(double omega);
+
+  // Project and cache every frequency-linear excitation vector once after the adaptive
+  // basis is complete. Frequency-major online traversal can then switch excitations without
+  // repeating HDM-scale projections.
+  void PrepareOnlineExcitations();
 
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
@@ -543,9 +574,10 @@ public:
 
   // Compute eigenvalue estimates of the synthesized L⁻¹/R⁻¹/C system via the companion
   // linearization (in s = iω) of the quadratic pencil (L⁻¹ + iωR⁻¹ − ω²C)v = 0. Returns
-  // modes whose Re(f) lies inside [fmin_GHz, fmax_GHz] with Q > 0.5 (spurious
-  // aux-state roots filtered). The complex-symmetric pencil yields decaying modes with
-  // positive Im{f}, the same sign convention as the eigenmode solver's eig.csv.
+  // every finite root whose Re(f) lies inside [fmin_GHz, fmax_GHz]; spurious roots are left
+  // in and flagged by their reported HDM residuals rather than a fixed cutoff. The
+  // complex-symmetric pencil yields decaying modes with positive Im{f}, the same sign
+  // convention as the eigenmode solver's eig.csv.
   struct EigenvalueEstimate
   {
     double freq_re_GHz;  // Re(f): resonant frequency

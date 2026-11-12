@@ -5,9 +5,9 @@
 
 help()
 {
-    echo "Usage: validate-config [OPTIONS] CONFIG_FILE
+    echo "Usage: validate-config [OPTIONS] CONFIG_FILE...
 
-Validate the provided Palace configuration file against the provided JSON Schema
+Validate the provided Palace configuration files against the provided JSON Schema
 
 Options:
   -h, --help                       Show this help message and exit
@@ -42,12 +42,10 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]}"  # Restore positional parameters
 
-# Check arguments: Everything remaining should be the configuration file
-if [[ -z "$@" ]]; then
+# Check arguments: Everything remaining should be configuration files
+if [[ $# -eq 0 ]]; then
     help
     exit 1
-else
-    CONFIG="$@"
 fi
 
 SCRIPT_DIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
@@ -57,8 +55,9 @@ if ! command -v $JULIA &> /dev/null; then
     exit 1
 fi
 
+# Validate all files in one Julia session to pay the startup and package load once
 JULIA_CMD=$(
-    cat << EOF
+    cat << 'EOF'
 try
     using JSON
     using JSONSchema
@@ -66,22 +65,30 @@ catch
     using Pkg; Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
     Pkg.activate(; temp=true); Pkg.add(["JSON", "JSONSchema"])
 end
-include(joinpath("$SCRIPT_DIR", "schema", "ValidateConfig.jl"))
+script_dir = ARGS[1]
+include(joinpath(script_dir, "schema", "ValidateConfig.jl"))
 using .ValidateConfig
-try
-    result = validate_config_file(;
-        config_file="$CONFIG",
-        schema_file=joinpath("$SCRIPT_DIR", "schema", "config-schema.json")
-    )
-    if result != nothing
-        println("Dry-run: Configuration file \"$CONFIG\" contains errors!")
-        error(result)
-    else
-        println("Dry-run: No errors detected in configuration file \"$CONFIG\"")
+schema_file = joinpath(script_dir, "schema", "config-schema.json")
+failed = String[]
+for config_file in ARGS[2:end]
+    try
+        result = validate_config_file(; config_file=config_file, schema_file=schema_file)
+        if result != nothing
+            println("Dry-run: Configuration file \"$config_file\" contains errors!")
+            show(stdout, MIME("text/plain"), result)
+            println()
+            push!(failed, config_file)
+        else
+            println("Dry-run: No errors detected in configuration file \"$config_file\"")
+        end
+    catch e
+        println("Dry-run: Configuration file \"$config_file\" could not be validated!")
+        showerror(stdout, e)
+        println()
+        push!(failed, config_file)
     end
-catch e
-    error(e)
 end
+isempty(failed) || error("Validation failed for: " * join(failed, ", "))
 EOF
 )
-$JULIA -e "$JULIA_CMD"
+$JULIA -e "$JULIA_CMD" -- "$SCRIPT_DIR" "$@"

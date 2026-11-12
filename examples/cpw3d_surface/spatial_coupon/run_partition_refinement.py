@@ -21,6 +21,9 @@ import subprocess
 import sys
 
 HERE=Path(__file__).resolve().parent
+if str(HERE.parents[1]/"surface_response_identification") not in sys.path:
+    sys.path.insert(0,str(HERE.parents[1]/"surface_response_identification"))
+from crack_policy import CRACK_POLICY_DEFAULT,add_crack_policy_argument,apply_crack_policy  # noqa: E402
 OFFSET=10000
 
 
@@ -38,7 +41,7 @@ def physical_group(attribute):
     raise ValueError(f"Unsupported fabricated interface {attribute}")
 
 
-def make_probe(mesh,attributes,output,prescribed=False):
+def make_probe(mesh,attributes,output,prescribed=False,crack_policy=CRACK_POLICY_DEFAULT):
     canonical=lambda a:a%OFFSET
     conductors=sorted({canonical(a)%100 for a in attributes if canonical(a)//1000 in (5,6)})
     if not conductors:
@@ -56,7 +59,7 @@ def make_probe(mesh,attributes,output,prescribed=False):
     config={
         "Problem":{"Type":"Electrostatic","Verbose":1,"Output":str(output),
                    "OutputFormats":{"Paraview":False,"GridFunction":False}},
-        "Model":{"Mesh":str(mesh),"L0":1e-6,"Refinement":{"MaxIts":0}},
+        "Model":apply_crack_policy({"Mesh":str(mesh),"L0":1e-6,"Refinement":{"MaxIts":0}},crack_policy),
         "Domains":{"Materials":[{"Attributes":[1],"Permittivity":11.47},
                                    {"Attributes":[2],"Permittivity":1.}]},
         "Boundaries":{"Ground":{"Attributes":[1]},
@@ -141,17 +144,27 @@ def compare_steps(first,second):
     return report
 
 
-def run(args):
-    args.root.mkdir(parents=True,exist_ok=False)
-    tools=args.root/'tools';tools.mkdir()
+def snapshot_tools(tools):
+    """Copy the study's tools into tools/ so that the archive is self-contained; returns their names.
+    The archived run_partition_refinement.py imports crack_policy (decision 1570), which lives beside the
+    config writers: it is copied next to the archived copy (whose own directory is on sys.path)."""
     names=['mesh_spatial_coupon.jl','mesh_graded_tet_experiment.jl','frozen_volume_study.jl','label_interface_patches.jl',
            'interface_ownership.jl','ownership_bernstein.jl','graded_curve_distance.jl','graded_size_points.jl',
            'graded_trace_size.jl','surface_ribbon_constraints.jl',
            'tag_partition_uncertainty.jl','run_bounded_mesher.py','run_partition_refinement.py']
     for name in names:shutil.copy2(HERE/name,tools/name)
+    policy=HERE.parents[1]/'surface_response_identification'/'crack_policy.py'
+    shutil.copy2(policy,tools/policy.name)
+    return names+[policy.name]
+
+
+def run(args):
+    args.root.mkdir(parents=True,exist_ok=False)
+    tools=args.root/'tools';tools.mkdir()
+    names=snapshot_tools(tools)
     summary={"Version":1,"Scope":"Fixed-FE-field partition bounds and independent convergence observations",
              "LibraryQualified":False,"Order":5,"SolveTolerance":1e-8,"Cases":[],
-             "Ranks":args.ranks,"ArchiveStates":args.archive_states,
+             "Ranks":args.ranks,"ArchiveStates":args.archive_states,"CrackPolicy":args.crack_policy,
              "ResourceLimits":{"SolveSeconds":args.solve_seconds,"SolveMemoryGiB":args.solve_memory_gib},
              "Criteria":{"GroupNormalizedPartitionBound":args.partition_tol,
                          "ObservedDomainChange":5e-4,"ObservedGroupAndSlotChange":5e-3},
@@ -171,7 +184,10 @@ def run(args):
     baseline=None
     if args.baseline:
         baseline=json.loads((args.baseline/'summary.json').read_text())
-        if baseline['Order']!=5 or baseline['SolveTolerance']!=1e-8 or baseline.get('ArchiveStates',False)!=args.archive_states:
+        # A summary without CrackPolicy predates decision 1570: its probes left the key unset on the
+        # pre-integration binary, where unset means cracked (= legacy).
+        if baseline['Order']!=5 or baseline['SolveTolerance']!=1e-8 or baseline.get('ArchiveStates',False)!=args.archive_states or \
+           baseline.get('CrackPolicy','legacy')!=args.crack_policy:
             raise ValueError('Incompatible baseline solve settings')
         summary['Baseline']=str(args.baseline)
         summary['SHA256']['BaselineSummary']=hashlib.sha256((args.baseline/'summary.json').read_bytes()).hexdigest()
@@ -219,7 +235,7 @@ def run(args):
                         step/'tagger.log',env,20,4)
                 with Path(str(diagnostic)+'.attributes.csv').open() as stream:
                     attributes=[int(r['attribute']) for r in csv.DictReader(stream)]
-                config,mapping=make_probe(diagnostic,attributes,step/'postpro',args.archive_states)
+                config,mapping=make_probe(diagnostic,attributes,step/'postpro',args.archive_states,args.crack_policy)
                 config_path=step/'probe.json';config_path.write_text(json.dumps(config,indent=2)+'\n')
                 (step/'interface-map.json').write_text(json.dumps(mapping,indent=2)+'\n')
                 if args.archive_states:
@@ -254,7 +270,7 @@ def run(args):
                 # not change the PDE or the sum of per-slot interface energies.
                 if iteration==0:
                     original_attributes=sorted({a%OFFSET for a in attributes})
-                    original_config,original_map=make_probe(mesh,original_attributes,step/'control',args.archive_states)
+                    original_config,original_map=make_probe(mesh,original_attributes,step/'control',args.archive_states,args.crack_policy)
                     path=step/'control.json';path.write_text(json.dumps(original_config,indent=2)+'\n')
                     bounded(['mpirun','-n',str(args.ranks),str(args.palace),str(path)],step/'control.log',env,args.solve_seconds,args.solve_memory_gib)
                     changes=compare_steps(energies(step/'control',original_map),result)
@@ -292,6 +308,7 @@ if __name__=='__main__':
     parser.add_argument('--partition-tol',type=float,default=.005)
     parser.add_argument('--solve-seconds',type=float,default=120)
     parser.add_argument('--solve-memory-gib',type=float,default=24)
+    add_crack_policy_argument(parser)
     args=parser.parse_args()
     for value,name in ((args.partition_tol,'partition tolerance'),(args.solve_seconds,'solve seconds'),
                        (args.solve_memory_gib,'solve memory')):

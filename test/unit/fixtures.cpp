@@ -3,22 +3,37 @@
 
 #include "fixtures.hpp"
 
-#include <random>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <vector>
 #include "utils/communication.hpp"
 
 namespace palace::test
 {
 
+namespace
+{
+
+// New uniquely named temporary directory (empty path on failure).
+fs::path MakeUniqueTempDir(const std::string &prefix)
+{
+  std::string tmpl = (fs::temp_directory_path() / (prefix + "XXXXXX")).string();
+  std::vector<char> buf(tmpl.begin(), tmpl.end());
+  buf.push_back('\0');
+  return mkdtemp(buf.data()) ? fs::path(buf.data()) : fs::path();
+}
+
+}  // namespace
+
 PerRankTempDir::PerRankTempDir()
 {
   int rank = Mpi::Rank(Mpi::World());
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<> dis(10000, 99999);
-  int random_num = dis(gen);
-  temp_dir = fs::temp_directory_path() /
-             ("palace_test_" + std::to_string(random_num) + "_rank" + std::to_string(rank));
-  fs::create_directories(temp_dir);
+  temp_dir = MakeUniqueTempDir("palace_test_rank" + std::to_string(rank) + "_");
+  if (temp_dir.empty())
+  {
+    throw std::runtime_error("Failed to create a temporary directory!");
+  }
 }
 
 PerRankTempDir::~PerRankTempDir()
@@ -28,24 +43,24 @@ PerRankTempDir::~PerRankTempDir()
 
 SharedTempDir::SharedTempDir()
 {
-  int rank = Mpi::Rank(Mpi::World());
-  int random_num;
-
-  // Rank 0 generates random number and broadcasts to all ranks.
-  if (rank == 0)
+  // Rank 0 creates the directory and broadcasts its path.
+  std::string path;
+  if (Mpi::Root(Mpi::World()))
   {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(10000, 99999);
-    random_num = dis(gen);
+    path = MakeUniqueTempDir("palace_test_").string();
   }
-  Mpi::Broadcast(1, &random_num, 0, Mpi::World());
-
-  temp_dir = fs::temp_directory_path() / ("palace_test_" + std::to_string(random_num));
-  if (rank == 0)
+  int len = static_cast<int>(path.size());
+  Mpi::Broadcast(1, &len, 0, Mpi::World());
+  path.resize(len);
+  if (len > 0)
   {
-    fs::create_directories(temp_dir);
+    MPI_Bcast(path.data(), len, MPI_CHAR, 0, Mpi::World());
   }
+  if (len == 0)
+  {
+    throw std::runtime_error("Failed to create a temporary directory!");
+  }
+  temp_dir = path;
   Mpi::Barrier(Mpi::World());
 }
 

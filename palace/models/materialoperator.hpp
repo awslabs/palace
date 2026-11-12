@@ -29,9 +29,9 @@ private:
   // electrical conductivity, London penetration depth for superconductors and Floquet wave
   // vector).
   mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_scalar,
-      mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_invz0, mat_c0,
-      mat_sigma, mat_sigma_scalar, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv,
-      mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+      mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_epsilon_abs_scalar,
+      mat_invz0, mat_c0, mat_sigma, mat_sigma_scalar, mat_invLondon, mat_invLondon_scalar,
+      mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Vector wave_vector;        // BZ-wrapped k_F (fixed) or k₀ = k_F/ω (freq-scaled).
   mfem::Vector wave_vector_bz;     // BZ-wrapped k_F (always k_F, never k₀). For BZ offset.
@@ -58,7 +58,7 @@ private:
   auto AttrToMat(int attr) const
   {
     const auto &loc_attr = mesh.GetCeedAttributes();
-    MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
+    MFEM_ASSERT(loc_attr.contains(attr),
                 "Missing libCEED domain attribute for attribute " << attr << "!");
     return attr_mat[loc_attr.at(attr) - 1];
   }
@@ -97,6 +97,9 @@ public:
   const auto &GetPermittivityScalar() const { return mat_epsilon_scalar; }
   // Scalar (1x1) imaginary permittivity for the out-of-plane component in 2D.
   const auto &GetPermittivityImagScalar() const { return mat_epsilon_imag_scalar; }
+  // Scalar (1x1) permittivity magnitude (see GetPermittivityAbs) for the out-of-plane
+  // component in 2D.
+  const auto &GetPermittivityAbsScalar() const { return mat_epsilon_abs_scalar; }
   // Scalar (1x1) conductivity for the out-of-plane component in 2D mode analysis.
   const auto &GetConductivityScalar() const { return mat_sigma_scalar; }
   auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
@@ -147,6 +150,9 @@ public:
   bool HasWaveVector() const { return has_wave_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }
   const mfem::Vector &GetWaveVectorBZ() const { return wave_vector_bz; }
+  // Matrix [k x] of the cross product with the Floquet wave vector k of GetWaveVector (k
+  // divided by the reference angular frequency with FloquetReferenceFrequency).
+  const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
 
@@ -191,6 +197,16 @@ public:
                               const mfem::DenseTensor &mat_coeff_, double a = 1.0);
 
   bool empty() const { return mat_coeff.TotalSize() == 0; }
+
+  // Mathematically exact zero: empty storage is zero, otherwise every stored scalar must
+  // compare exactly equal to zero. This deliberately has no tolerance.
+  bool IsExactlyZero() const;
+
+  // Append the (libCEED, 1-based) attributes whose material property tensor has at least
+  // one entry which is not exactly zero. Attributes with no assigned material, or an
+  // exactly zero tensor, contribute exactly zero and are not appended. The output is not
+  // sorted or made unique by this call.
+  void AddNonzeroAttributes(std::vector<int> &attr_list) const;
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   const auto &GetMaterialProperties() const { return mat_coeff; }

@@ -19,7 +19,7 @@ namespace palace
 // Reference: Phillips and Fischer, Optimal Chebyshev smoothers and one-sided V-cycles,
 //            arXiv:2210.03179v1 (2022).
 //
-template <typename OperType>
+template <OperatorType OperType>
 class ChebyshevSmoother : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;
@@ -39,6 +39,10 @@ private:
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
   double lambda_max, sf_max;
+
+  // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
+  // the next operator starts.
+  VecType lambda_vec;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
@@ -82,7 +86,7 @@ public:
 // Reference: Adams et al., Parallel multigrid smoothing: polynomial versus Gauss–Seidel,
 //            JCP (2003).
 //
-template <typename OperType>
+template <OperatorType OperType>
 class ChebyshevSmoother1stKind : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;
@@ -103,6 +107,10 @@ private:
   // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
   // polynomial smoothing.
   double theta, delta, sf_max, sf_min;
+
+  // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
+  // the next operator starts.
+  VecType lambda_vec;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;

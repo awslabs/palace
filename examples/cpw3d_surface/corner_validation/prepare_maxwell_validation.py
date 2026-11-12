@@ -4,7 +4,13 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[2] / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 INTERFACES = {
@@ -36,7 +42,7 @@ def dielectric(index, attributes, interface_type, radius, automatic):
     return result
 
 
-def config(output, mesh, order, frequency, fabricated, library, radius):
+def config(output, mesh, order, frequency, fabricated, library, radius, crack_policy=CRACK_POLICY_DEFAULT):
     interfaces = (
         [
             dielectric(1, [3], "SA", radius, False),
@@ -77,11 +83,11 @@ def config(output, mesh, order, frequency, fabricated, library, radius):
             "Output": str(output),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
         },
-        "Model": {
+        "Model": apply_crack_policy({
             "Mesh": str(mesh),
             "L0": 1.0e-6,
             "Refinement": {"MaxIts": 0},
-        },
+        }, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": 11.47},
@@ -119,6 +125,7 @@ def main():
     parser.add_argument("--fabricated-mesh", type=Path, required=True)
     parser.add_argument("--order", type=int, default=1)
     parser.add_argument("--frequency", type=float, default=50.0)
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.order < 1:
         parser.error("--order must be positive")
@@ -151,6 +158,7 @@ def main():
             fabricated,
             correction_library,
             radius,
+            crack_policy=args.crack_policy,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(data, indent=2) + "\n")

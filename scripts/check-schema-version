@@ -77,8 +77,8 @@ if [[ "${BASE_VERSION}" == "${HEAD_VERSION}" ]]; then
     echo "Error: schema files changed but '\$id' version was not bumped (still ${HEAD_VERSION})."
     echo "Changed files:"
     echo "${CHANGED}" | while IFS= read -r file; do echo "  ${file}"; done
-    echo "Bump the version in the '\$id' URN in ${ROOT_SCHEMA} and add a row to the version"
-    echo "table in docs/src/developer/notes.md. See the 'Schema versioning' section for the policy."
+    echo "Bump the version in the '\$id' URN in ${ROOT_SCHEMA} and add a SchemaVer entry"
+    echo "to CHANGELOG.md. See the 'Schema versioning' section in the developer notes."
     exit 1
 fi
 
