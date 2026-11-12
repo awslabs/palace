@@ -117,6 +117,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     same pass as the next search direction, with any preconditioner and on CPUs and GPUs.
     This speeds up the error estimator's flux recovery and the GMRES orthogonalization of
     driven and eigenmode simulations. [PR 1146](https://github.com/awslabs/palace/pull/1146).
+  - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
+    full space in one pass over memory on CPUs, reading each basis vector once.
+    [PR 1165](https://github.com/awslabs/palace/pull/1165).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
