@@ -1,0 +1,19 @@
+diff --git a/src/dense/DistTrsmNarrow.hpp b/src/dense/DistTrsmNarrow.hpp
+index 3ed5ef58..36ce2eca 100644
+--- a/src/dense/DistTrsmNarrow.hpp
++++ b/src/dense/DistTrsmNarrow.hpp
+@@ -166,8 +166,13 @@ namespace strumpack {
+     struct Desc { int imb, inb, mb, nb, rsrc, csrc, lld; };
+ 
+     // true iff PDTRSM (SIDE = L, TRANS = N, A and B with nb x nb blocks
+-    // starting in process (0,0)) uses PB_CptrsmB, which Solver reproduces
++    // starting in process (0,0)) uses PB_CptrsmB, which Solver reproduces.
++    // Solver sends each solved diagonal block to process column 0 in one
++    // piece, which needs the logical blocks of PB_CptrsmB (a multiple of
++    // 2 * pblas_nb rows) to start on block boundaries, and it matches
++    // PDTRSM only for blocks of at most pblas_nb (the default block size).
+     inline bool applicable(int M, int N, int nb, int nprow, int npcol) {
++      if (nb > pblas_nb || (2 * pblas_nb) % nb) return false;
+       if (N > nb || M <= 0 || N <= 0) return false;
+       auto dnroc = [](int n, int b, int p) {
+         return (double)((((n + b - 1) / b) + p - 1) / p) * (double)b;

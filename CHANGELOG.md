@@ -52,6 +52,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - STRUMPACK is now built with a PBLAS block size of 128 instead of 32 for its distributed
+    dense fronts, with STRUMPACK patches which allow setting the block size and use the
+    narrow triangular solves of
+    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165) only for the
+    block sizes they handle. Spack builds of STRUMPACK with SLATE keep its block size of
+    512. This lowers the time of STRUMPACK as the coarse solver by 5-18%, and its memory.
+    Results change only by round-off. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few

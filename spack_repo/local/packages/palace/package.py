@@ -175,10 +175,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # The STRUMPACK version of the superbuild, with
     # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
-    # fix https://github.com/pghysels/STRUMPACK/pull/164, and the solver changes of
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, the solver changes of
     # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
-    # solves with a few right-hand sides. Kept off the `with` blocks so the Palace variants
-    # are not folded into the patch condition.
+    # solves with a few right-hand sides, and copies of the patches in extern/patch/STRUMPACK which
+    # use these solves only for the PBLAS block sizes they handle and allow setting the
+    # PBLAS block size (see the local strumpack package). Kept off the `with` blocks so
+    # the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -202,6 +204,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
                 when="@8.1.0",
             ),
+            patch("strumpack_narrow_trsm_blocksize.diff", when="@8.1.0"),
+            patch("strumpack_pblas_blocksize.diff", when="@8.1.0"),
         ],
     )
 
