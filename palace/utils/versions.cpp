@@ -11,13 +11,15 @@
 #include <ceed.h>
 #include <metis.h>
 #include <mpi.h>
-#include <parmetis.h>
 #include <fmt/format.h>
 #include <scn/fwd.h>
 #include <nlohmann/json.hpp>
 #include <mfem/config/config.hpp>
 #include <mfem/general/version.hpp>
 
+#if defined(PALACE_WITH_PARMETIS)
+#include <parmetis.h>
+#endif
 #if defined(PALACE_WITH_SUPERLU)
 #include <superlu_defs.h>
 #endif
@@ -231,9 +233,11 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
 #endif
   versions.emplace_back("METIS", fmt::format("{}.{}.{}", METIS_VER_MAJOR, METIS_VER_MINOR,
                                              METIS_VER_SUBMINOR));
+#if defined(PALACE_WITH_PARMETIS)
   versions.emplace_back("ParMETIS",
                         fmt::format("{}.{}.{}", PARMETIS_MAJOR_VERSION,
                                     PARMETIS_MINOR_VERSION, PARMETIS_SUBMINOR_VERSION));
+#endif
 
 #if defined(MFEM_USE_CUDA)
   int cuda_version = 0;
