@@ -12,6 +12,7 @@
 #include <malloc.h>
 #endif
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -21165,6 +21166,26 @@ SurfaceResponseMatrices SurfaceResponseMatrixKeys(
   return result;
 }
 
+// setupmem S1 (decision 1553): a model's matrix files are read on the root and on the ranks
+// that reference the model only, so an exception there (MFEM_USE_EXCEPTIONS, the unit
+// build) can be raised on a subset of the ranks. Every rank calls this after each model
+// loop and after BuildReferencedModelMatrices, in every mode: one max-reduction of one int.
+// The failing rank rethrows its own exception and the others fail by name, so no rank is
+// left waiting in the next collective. In abort mode a failing rank's MFEM_VERIFY has
+// aborted the job before this point.
+void ExchangeModelMatrixStatus(MPI_Comm comm, const std::exception_ptr &error,
+                               const char *stage)
+{
+  int failed = error ? 1 : 0;
+  Mpi::GlobalMax(1, &failed, comm);
+  if (error)
+  {
+    std::rethrow_exception(error);
+  }
+  MFEM_VERIFY(failed == 0,
+              "The response-model matrices failed on another rank " << stage << "!");
+}
+
 double Orientation(const Point2D &a, const Point2D &b, const Point2D &c)
 {
   return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -29208,55 +29229,66 @@ void SurfaceResponseOperator::BuildReferencedModelMatrices(
 {
   // The root built every model in the loop; this rank's referenced set is
   // ReleaseUnreferencedModelMatrices' (the models of patches + diagnostic_patches).
+  // decision 1553: a failure on this rank (a file the root read) is exchanged below.
+  std::exception_ptr referenced_matrix_error;
   if (!Mpi::Root(fespace.GetComm()))
   {
-    MFEM_VERIFY(config.models.size() == models.size(),
-                "The response models do not match the configuration's model list!");
-    std::vector<char> referenced(models.size(), 0);
-    for (const auto *list : {&patches, &diagnostic_patches})
+    try
     {
-      for (const auto &patch : *list)
+      MFEM_VERIFY(config.models.size() == models.size(),
+                  "The response models do not match the configuration's model list!");
+      std::vector<char> referenced(models.size(), 0);
+      for (const auto *list : {&patches, &diagnostic_patches})
       {
-        referenced[static_cast<std::size_t>(patch.model)] = 1;
+        for (const auto &patch : *list)
+        {
+          referenced[static_cast<std::size_t>(patch.model)] = 1;
+        }
+      }
+      for (std::size_t i = 0; i < models.size(); i++)
+      {
+        if (!referenced[i])
+        {
+          continue;
+        }
+        // The model loop's calls, the same arguments (models[i] is config.models[i]).
+        const auto &model_config = config.models[i];
+        auto &model = models[i];
+        MFEM_VERIFY(model.idx == model_config.idx,
+                    "The response model order does not match the configuration's!");
+        auto domain_response = BuildDomainResponseMatrices(
+            model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+        model.fabricated_domain = std::move(domain_response.fabricated);
+        model.thin_domain = std::move(domain_response.thin);
+        model.domain_defect = std::move(domain_response.defect);
+        model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+        model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+        auto surface_response = BuildSurfaceResponseMatrices(
+            model_config, model.basis_size, iodata.units, target_matching_radius);
+        model.fabricated_surfaces = std::move(surface_response.fabricated);
+        model.surface_defects = std::move(surface_response.defects);
+        if (model.magnetic)
+        {
+          auto magnetic = EvaluateMagneticLeaf(model_config, model.basis_size,
+                                               model.conductor_state_count, dimension,
+                                               config.magnetic_rules, iodata.units);
+          MFEM_VERIFY(magnetic.status.status == model.magnetic_status.status,
+                      "The magnetic leaf of response model \""
+                          << model.name << "\" evaluates to " << magnetic.status.status
+                          << " after the placement, " << model.magnetic_status.status
+                          << " in the model loop!");
+          model.magnetic_domain_defect = std::move(magnetic.defect);
+          model.magnetic_thin_domain = std::move(magnetic.thin);
+        }
       }
     }
-    for (std::size_t i = 0; i < models.size(); i++)
+    catch (...)
     {
-      if (!referenced[i])
-      {
-        continue;
-      }
-      // The model loop's calls, the same arguments (models[i] is config.models[i]).
-      const auto &model_config = config.models[i];
-      auto &model = models[i];
-      MFEM_VERIFY(model.idx == model_config.idx,
-                  "The response model order does not match the configuration's!");
-      auto domain_response = BuildDomainResponseMatrices(
-          model_config, model.basis_size, model.zero_trace_indices, iodata.units);
-      model.fabricated_domain = std::move(domain_response.fabricated);
-      model.thin_domain = std::move(domain_response.thin);
-      model.domain_defect = std::move(domain_response.defect);
-      model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
-      model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-      auto surface_response = BuildSurfaceResponseMatrices(
-          model_config, model.basis_size, iodata.units, target_matching_radius);
-      model.fabricated_surfaces = std::move(surface_response.fabricated);
-      model.surface_defects = std::move(surface_response.defects);
-      if (model.magnetic)
-      {
-        auto magnetic = EvaluateMagneticLeaf(model_config, model.basis_size,
-                                             model.conductor_state_count, dimension,
-                                             config.magnetic_rules, iodata.units);
-        MFEM_VERIFY(magnetic.status.status == model.magnetic_status.status,
-                    "The magnetic leaf of response model \""
-                        << model.name << "\" evaluates to " << magnetic.status.status
-                        << " after the placement, " << model.magnetic_status.status
-                        << " in the model loop!");
-        model.magnetic_domain_defect = std::move(magnetic.defect);
-        model.magnetic_thin_domain = std::move(magnetic.thin);
-      }
+      referenced_matrix_error = std::current_exception();
     }
   }
+  ExchangeModelMatrixStatus(fespace.GetComm(), referenced_matrix_error,
+                            "after the placement");
 #if defined(PALACE_RESPONSE_REFERENCED_MATRIX_CHECK)
   CheckReferencedModelMatricesAgainstRoot();
 #endif
@@ -31804,6 +31836,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // all-model records and log lines); another rank builds the metadata only and, after the
   // placement, the matrices of the models its patches reference.
   const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
+  std::exception_ptr model_matrix_error;
   for (const auto &model_config : config->models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -32246,21 +32279,32 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           !model.spatial_mortar &&
           (!model.zero_trace_indices.empty() || !model.consistent_mortar_vertices.empty());
     }
-    if (build_every_model_matrix)
+    bool model_matrices_built = false;
+    if (build_every_model_matrix && !model_matrix_error)
     {
-      auto domain_response = BuildDomainResponseMatrices(
-          model_config, model.basis_size, model.zero_trace_indices, iodata.units);
-      model.fabricated_domain = std::move(domain_response.fabricated);
-      model.thin_domain = std::move(domain_response.thin);
-      model.domain_defect = std::move(domain_response.defect);
-      model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
-      model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-      auto surface_response = BuildSurfaceResponseMatrices(
-          model_config, model.basis_size, iodata.units, target_matching_radius);
-      model.fabricated_surfaces = std::move(surface_response.fabricated);
-      model.surface_defects = std::move(surface_response.defects);
+      // decision 1553: a failure is kept for ExchangeModelMatrixStatus after the loop; the
+      // loop goes on as on another rank (the keys only), so every rank runs its statements.
+      try
+      {
+        auto domain_response = BuildDomainResponseMatrices(
+            model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+        model.fabricated_domain = std::move(domain_response.fabricated);
+        model.thin_domain = std::move(domain_response.thin);
+        model.domain_defect = std::move(domain_response.defect);
+        model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+        model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+        auto surface_response = BuildSurfaceResponseMatrices(
+            model_config, model.basis_size, iodata.units, target_matching_radius);
+        model.fabricated_surfaces = std::move(surface_response.fabricated);
+        model.surface_defects = std::move(surface_response.defects);
+        model_matrices_built = true;
+      }
+      catch (...)
+      {
+        model_matrix_error = std::current_exception();
+      }
     }
-    else
+    if (!model_matrices_built)
     {
       // setupmem S1: the keys only (the released form; BuildReferencedModelMatrices).
       auto surface_keys = SurfaceResponseMatrixKeys(model_config);
@@ -32307,6 +32351,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
   }
+  // decision 1553: every rank, every mode (a failure of the root's matrices above).
+  ExchangeModelMatrixStatus(fespace.GetComm(), model_matrix_error, "in the model loop");
   {
     // The derived-matrix cache (decision 734 F1): hits from the second AMR cycle on.
     const auto derived_cache_after = GetDerivedResponseMatrixCacheCounters();
@@ -33332,6 +33378,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // setupmem S1 (decision 1546): as the electrostatic constructor (the root builds every
   // model's matrices here; another rank the metadata, then BuildReferencedModelMatrices).
   const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
+  std::exception_ptr model_matrix_error;
   for (const auto &model_config : config.models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -33518,21 +33565,32 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         model.hat_rim_knots.push_back(rim);
       }
     }
-    if (build_every_model_matrix)
+    bool model_matrices_built = false;
+    if (build_every_model_matrix && !model_matrix_error)
     {
-      auto domain_response = BuildDomainResponseMatrices(
-          model_config, model.basis_size, model.zero_trace_indices, iodata.units);
-      model.fabricated_domain = std::move(domain_response.fabricated);
-      model.thin_domain = std::move(domain_response.thin);
-      model.domain_defect = std::move(domain_response.defect);
-      model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
-      model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-      auto surface_response = BuildSurfaceResponseMatrices(
-          model_config, model.basis_size, iodata.units, target_matching_radius);
-      model.fabricated_surfaces = std::move(surface_response.fabricated);
-      model.surface_defects = std::move(surface_response.defects);
+      // decision 1553: a failure is kept for ExchangeModelMatrixStatus after the loop; the
+      // loop goes on as on another rank (the keys only), so every rank runs its statements.
+      try
+      {
+        auto domain_response = BuildDomainResponseMatrices(
+            model_config, model.basis_size, model.zero_trace_indices, iodata.units);
+        model.fabricated_domain = std::move(domain_response.fabricated);
+        model.thin_domain = std::move(domain_response.thin);
+        model.domain_defect = std::move(domain_response.defect);
+        model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+        model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
+        auto surface_response = BuildSurfaceResponseMatrices(
+            model_config, model.basis_size, iodata.units, target_matching_radius);
+        model.fabricated_surfaces = std::move(surface_response.fabricated);
+        model.surface_defects = std::move(surface_response.defects);
+        model_matrices_built = true;
+      }
+      catch (...)
+      {
+        model_matrix_error = std::current_exception();
+      }
     }
-    else
+    if (!model_matrices_built)
     {
       // setupmem S1: the keys only (the released form; BuildReferencedModelMatrices).
       auto surface_keys = SurfaceResponseMatrixKeys(model_config);
@@ -33635,6 +33693,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
   }
+  // decision 1553: every rank, every mode (a failure of the root's matrices above).
+  ExchangeModelMatrixStatus(fespace.GetComm(), model_matrix_error, "in the model loop");
   if (iodata.model.refinement.max_it == 0)
   {
     // Round 3 M2-e (decision 1501; the round-2b B3 release moved here from the drivers):

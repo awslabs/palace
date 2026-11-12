@@ -399,7 +399,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     fields it writes are kept in a side table for the readers of the original list);
     two log-only memory-census instants are added inside the patch build. Results are
     bitwise unchanged (the same functions of the same inputs; only where the originals
-    are read from changes).
+    are read from changes). A model-matrix failure on some ranks only (the root, or a
+    referencing rank) is exchanged after the model loop and after the referenced build,
+    so that every rank fails instead of waiting in the next collective (decision 1553).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
