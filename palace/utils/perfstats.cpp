@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
@@ -369,13 +370,11 @@ json CounterJson(Reduce reduce, const Stats &s)
   return nullptr;
 }
 
-// Max/avg over the ranks which ran the tally (1 is balanced), when anything was measured.
-void SetImbalance(json &j, const Stats &s, const Stats &active)
+// Whether a timer row is reported: TOTAL always, any other row if it was used on any
+// process (maximum count over ranks).
+bool RowUsed(const TimerResults &r, int i)
 {
-  if (s.sum > 0.0 && active.sum > 0.0)
-  {
-    j["Imbalance"] = s.max * active.sum / s.sum;
-  }
+  return i == Timer::TOTAL || r.count[i].max > 0;
 }
 
 json ElapsedTimeJson(const TimerResults &r)
@@ -383,6 +382,10 @@ json ElapsedTimeJson(const TimerResults &r)
   json et;
   for (int i = 0; i < Timer::NUM_TIMINGS; i++)
   {
+    if (!RowUsed(r, i))
+    {
+      continue;
+    }
     std::string key(Timer::names[i]);
     et["Durations"][key] = r.time[i].avg;
     et["Min"][key] = r.time[i].min;
@@ -406,7 +409,6 @@ json ElapsedTimeJson(const TimerResults &r)
         t["Parent"] = parent;
       }
       t["Count"] = Num(r.tally_count[i].max);
-      SetImbalance(t, r.tally_time[i], r.tally_active[i]);
       if (r.tally_nested[i].max > 0)
       {
         t["Nested"] = Num(r.tally_nested[i].max);
@@ -544,6 +546,11 @@ int RegisterTally(std::string_view name)
   return RegisterTally(name, -1);
 }
 
+int RegisterHostOnlyTally(std::string_view name)
+{
+  return mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ? -1 : RegisterTally(name, -1);
+}
+
 int RegisterPhaseTally(std::string_view name)
 {
   auto &reg = detail::registry;
@@ -618,10 +625,9 @@ void WriteJson(json &meta)
   constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
 
   // Remove everything written by a previous iteration.
-  for (const char *key :
-       {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
-        "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes", "PeakNodeMemoryMegabytes",
-        "HeapMegabytes", "Cumulative"})
+  for (const char *key : {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
+                          "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes",
+                          "PeakNodeMemoryMegabytes", "Cumulative"})
   {
     meta.erase(key);
   }
@@ -645,6 +651,10 @@ void WriteJson(json &meta)
   meta["ElapsedTime"] = ElapsedTimeJson(r.iter);
   for (int i = 0; i < Timer::NUM_TIMINGS; i++)
   {
+    if (!RowUsed(r.iter, i))
+    {
+      continue;
+    }
     std::string key(Timer::names[i]);
     const auto &rm = r.iter.rank_mem[i];
     const auto &nm = r.iter.node_mem[i];
@@ -674,7 +684,6 @@ void WriteJson(json &meta)
       IterationPeakJson(r.peak_mem, false, r.peak_lower_bound > 0);
   meta["PeakNodeMemoryMegabytes"] =
       IterationPeakJson(r.peak_node_mem, true, r.peak_lower_bound > 0);
-  meta["HeapMegabytes"] = PeakJson(r.heap_mem, false);
 
   json cum;
   cum["ElapsedTime"] = ElapsedTimeJson(r.cum);
@@ -727,8 +736,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   }
   timer.MarkIterationEnd();
   timer.MarkMemory(Timer::TOTAL, timer.MemoryFromStart());
-  const long heap_mem = memory_reporting::GetHeapMemory();
-  SetInfo("Memory/HeapSource", memory_reporting::HeapMemorySource());
 
   const int rank = Mpi::Rank(comm);
   constexpr int N = Timer::NUM_TIMINGS;
@@ -750,7 +757,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (5 * N + 10 * T + 2 * C + 7));
+  buf.reserve(STRIDE * (5 * N + 8 * T + 2 * C + 6));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -776,7 +783,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   {
     const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
     PushEntry(buf, t ? t->nested : 0.0, true, rank);
-    PushEntry(buf, (t && t->count > 0) ? 1.0 : 0.0, true, rank);
     const int row = !t ? -1 : (t->fixed_parent >= 0) ? t->fixed_parent : t->row;
     PushEntry(buf, row, row >= 0, rank);
   }
@@ -810,7 +816,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   {
     const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
     PushEntry(buf, t ? t->cum_nested + t->nested : 0.0, true, rank);
-    PushEntry(buf, (t && t->cum_count + t->count > 0) ? 1.0 : 0.0, true, rank);
     const int row = !t                       ? -1
                     : (t->fixed_parent >= 0) ? t->fixed_parent
                                              : detail::MergeRow(t->cum_row, t->row);
@@ -825,7 +830,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   PushEntry(buf, cum_peak, true, rank);
   PushEntry(buf, baseline_mem, true, rank);
   PushEntry(buf, unattr_mem, true, rank);
-  PushEntry(buf, static_cast<double>(heap_mem), true, rank);
   StatsAllreduce(buf, comm);
 
   // Node memory: sum over the ranks of each node, then statistics over nodes.
@@ -882,15 +886,11 @@ void BlockTimer::Finalize(MPI_Comm comm)
   };
   auto NextTallyExtras = [&Next](TimerResults &t, int n)
   {
-    for (auto *v : {&t.tally_nested, &t.tally_active})
-    {
-      v->resize(n);
-    }
+    t.tally_nested.resize(n);
     t.tally_parents.resize(n);
     for (int i = 0; i < n; i++)
     {
       t.tally_nested[i] = Next();
-      t.tally_active[i] = Next();
       // The row of all processes which measured the tally, TOTAL if they differ.
       const auto row = Next();
       t.tally_parents[i] = (row.n > 0 && row.min == row.max)
@@ -917,7 +917,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   r.cum_peak_mem = Next();
   r.mem_baseline = Next();
   r.mem_unattributed = Next();
-  r.heap_mem = Next();
   e = node_buf.data();
   NextN(r.iter.node_mem, N);
   r.peak_node_mem = Next();
@@ -1017,8 +1016,10 @@ void BlockTimer::Print(MPI_Comm comm)
   constexpr int w = 12;  // Data column width
   constexpr int h = 26;  // Left-hand side width
   using Row = std::tuple<std::string, std::string, std::string>;
+  // Prints the rows used in t (see RowUsed), as written to palace.json.
   auto Table = [&](const std::string &title, const std::string &col1,
-                   const std::string &col2, const std::string &col3, auto &&row_fn,
+                   const std::string &col2, const std::string &col3,
+                   const perf::TimerResults &t, auto &&row_fn,
                    const Row *baseline = nullptr)
   {
     Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", title, h, col1, w, col2, w, col3,
@@ -1032,7 +1033,7 @@ void BlockTimer::Print(MPI_Comm comm)
     }
     for (int i = 0; i < Timer::NUM_TIMINGS; i++)
     {
-      if (r.cum.count[i].max > 0 || i == Timer::TOTAL)
+      if (perf::RowUsed(t, i))
       {
         if (i == Timer::TOTAL)
         {
@@ -1061,7 +1062,7 @@ void BlockTimer::Print(MPI_Comm comm)
                "iterations 1-{:d}, peak memory is for iteration {:d} only\n",
                r.iteration, r.iteration, r.iteration);
   }
-  Table("Elapsed Time Report (s)", "Min.", "Max.", "Avg.", TimeRow(r.cum));
+  Table("Elapsed Time Report (s)", "Min.", "Max.", "Avg.", r.cum, TimeRow(r.cum));
 
   // Memory table for this iteration: per-node max and total across nodes of the peak RSS
   // growth of each row, and the running total high-water mark across nodes, from the peak
@@ -1072,7 +1073,7 @@ void BlockTimer::Print(MPI_Comm comm)
                         memory_reporting::FormatBytes(nb.sum),
                         memory_reporting::FormatBytes(nb.sum)};
   Table(
-      "Peak Memory", "Per-Node", "Total", "Total HWM",
+      "Peak Memory", "Per-Node", "Total", "Total HWM", r.iter,
       [&](int i) -> Row
       {
         const auto &nm = r.iter.node_mem[i];
@@ -1097,7 +1098,7 @@ void BlockTimer::Print(MPI_Comm comm)
   // This iteration alone, when it differs from the totals.
   if (r.iteration > 1)
   {
-    Table(fmt::format("Iteration {:d} (s)", r.iteration), "Min.", "Max.", "Avg.",
+    Table(fmt::format("Iteration {:d} (s)", r.iteration), "Min.", "Max.", "Avg.", r.iter,
           TimeRow(r.iter));
   }
 }

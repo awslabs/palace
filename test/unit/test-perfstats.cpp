@@ -211,11 +211,11 @@ TEST_CASE("PerfStats Stale Counters Of Other Ranks", "[perfstats][Parallel]")
   }
   BlockTimer::Finalize(comm);
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   CHECK(meta["Test"]["LastRankOnly"] == 3);
   BlockTimer::StartIteration();
   BlockTimer::Finalize(comm);
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   CHECK(!meta.contains("Test"));
   CHECK(meta["Cumulative"]["Test"]["LastRankOnly"] == 3);
   BlockTimer::Reset();
@@ -247,7 +247,7 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   perf::SetInfo("Problem/Test/Info", "first");
   BlockTimer::Finalize(comm);
   nlohmann::json meta = {{"Problem", {{"MPISize", np}}}};
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   const double io1 = perf::GetResults().iter.time[Timer::IO].avg;
   const double total1 = perf::GetResults().iter.time[Timer::TOTAL].avg;
   CHECK(io1 >= 0.019);
@@ -258,6 +258,10 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   CHECK(meta["Problem"]["MPISize"] == np);
   CHECK(meta["ElapsedTime"]["Counts"]["IO"] == 1);
   CHECK(meta["ElapsedTime"]["Tallies"]["Test/Iter"]["Parent"] == "IO");
+  // Rows not used in the iteration are not written; TOTAL always is.
+  CHECK(!meta["ElapsedTime"]["Durations"].contains("KSP"));
+  CHECK(!meta["PeakMemoryGrowthMegabytes"]["Max"].contains("KSP"));
+  CHECK(meta["ElapsedTime"]["Durations"].contains("TOTAL"));
 
   BlockTimer::StartIteration();
   {
@@ -272,7 +276,7 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   perf::Add(its, 4);
   perf::Set(size, 200);
   BlockTimer::Finalize(comm);
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   const auto &r = perf::GetResults();
   CHECK(r.iteration == 2);
   CHECK(r.iter.count[Timer::IO].max == 1);
@@ -302,6 +306,24 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   CHECK(meta["Cumulative"]["ElapsedTime"]["Counts"]["IO"] == 2);
   CHECK(meta["ElapsedTime"]["Durations"]["IO"].is_number());
   CHECK(meta["ElapsedTime"]["MaxRank"]["IO"].is_number_integer());
+  for (const char *key : {"Durations", "Min", "Max", "MaxRank", "Counts"})
+  {
+    CHECK(!meta["ElapsedTime"][key].contains("INIT"));
+    CHECK(!meta["ElapsedTime"][key].contains("STARTUP"));
+    CHECK(meta["Cumulative"]["ElapsedTime"][key].contains("INIT"));
+    CHECK(!meta["Cumulative"]["ElapsedTime"][key].contains("KSP"));
+  }
+  for (const char *key : {"Min", "Max", "Sum", "MaxRank"})
+  {
+    const auto &growth = meta["PeakMemoryGrowthMegabytes"][key];
+    CHECK(!growth.contains("INIT"));
+    CHECK(growth.contains("IO"));
+    CHECK(growth.contains("Baseline"));
+    CHECK(growth.contains("Unattributed"));
+    CHECK(growth.contains("TOTAL"));
+  }
+  CHECK(!meta["PeakNodeMemoryGrowthMegabytes"]["Max"].contains("INIT"));
+  CHECK(meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"].contains("IO"));
   CHECK(meta["PeakMemoryMegabytes"]["Max"].get<double>() <=
         meta["Cumulative"]["PeakMemoryMegabytes"]["Max"].get<double>());
   BlockTimer::Reset();
@@ -343,7 +365,7 @@ TEST_CASE("PerfStats Cumulative Counts", "[perfstats][Serial][Parallel]")
       CHECK(r.cum_counter[CounterIndex(r, "Test/Its")].max == 6);
       CHECK(r.cum_counter[CounterIndex(r, "Test/Rows")].max == ((np > 1) ? 4 : 6));
       nlohmann::json meta = nlohmann::json::object();
-      perf::WriteJson(meta, true);
+      perf::WriteJson(meta);
       CHECK(meta["ElapsedTime"]["Counts"]["IO"] == 3);
       CHECK(meta["Cumulative"]["ElapsedTime"]["Counts"]["IO"] == 6);
       CHECK(meta["Cumulative"]["ElapsedTime"]["Tallies"]["Test/Busy"]["Count"] == 6);
@@ -655,13 +677,14 @@ TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
   BlockTimer::Reset();
 }
 
-TEST_CASE("PerfStats Imbalance And Communication Tallies", "[perfstats][Serial][Parallel]")
+TEST_CASE("PerfStats Tally Statistics And Communication Tallies",
+          "[perfstats][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
   BlockTimer::Reset();
-  const int imb = perf::RegisterTally("Test/Imbalance");
-  perf::AddTally(imb, 1.0 + rank);
+  const int spread = perf::RegisterTally("Test/Spread");
+  perf::AddTally(spread, 1.0 + rank);
   const int root_only = perf::RegisterTally("Test/RootOnly");
   if (rank == 0)
   {
@@ -688,11 +711,17 @@ TEST_CASE("PerfStats Imbalance And Communication Tallies", "[perfstats][Serial][
 
   BlockTimer::Finalize(comm);
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   const auto &tallies = meta["ElapsedTime"]["Tallies"];
-  CHECK_THAT(tallies["Test/Imbalance"]["Imbalance"].get<double>(),
-             WithinRel(2.0 * np / (np + 1.0), 1e-12));
-  CHECK(tallies["Test/RootOnly"]["Imbalance"] == 1.0);  // Over the ranks which ran it
+  const auto &t = tallies["Test/Spread"];
+  CHECK(t["Min"] == 1);
+  CHECK(t["Max"] == np);
+  CHECK(t["MaxRank"] == np - 1);
+  CHECK_THAT(t["Avg"].get<double>(), WithinRel(0.5 * (np + 1), 1e-12));
+  CHECK(t["Count"] == 1);
+  CHECK(!t.contains("Imbalance"));
+  CHECK(tallies["Test/RootOnly"]["Max"] == 1);
+  CHECK(tallies["Test/RootOnly"]["MaxRank"] == 0);
   CHECK(tallies["Reduce/KSP"]["Count"].get<long>() >= 1);
   CHECK(!tallies["Reduce/KSP"].contains("Parent"));  // Named after its row
   CHECK(tallies["Reduce"]["Parent"] == "TOTAL");
@@ -708,12 +737,12 @@ TEST_CASE("PerfStats Numeric Path Tokens", "[perfstats][Serial]")
   perf::SetInfo("Test/Info/2", "x");
   BlockTimer::Finalize(Mpi::World());
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   CHECK(meta["Test"]["Levels"].is_object());
   CHECK(meta["Test"]["Levels"]["0"]["Rows"] == 10);
   CHECK(meta["Test"]["Levels"]["1"]["Rows"] == 20);
   CHECK(meta["Test"]["Info"]["2"] == "x");
-  perf::WriteJson(meta, true);  // Erase and rewrite
+  perf::WriteJson(meta);  // Erase and rewrite
   CHECK(meta["Test"]["Levels"]["1"]["Rows"] == 20);
   BlockTimer::Reset();
 }

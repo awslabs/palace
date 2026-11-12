@@ -105,11 +105,17 @@ inline thread_local std::vector<char> open_tallies;
 // active at each measurement (BlockTimer::Current(), when a ScopedTally closes), TOTAL if
 // it was measured within several rows or between top-level timers. Its time includes that
 // of the rows nested in its scopes. Reported in palace.json under
-// ElapsedTime/Tallies/<name>, with the time imbalance over ranks.
+// ElapsedTime/Tallies/<name>, with the statistics of its time over ranks.
 //
 
 // Register (or look up) a tally. Ids are stable for the lifetime of the process.
 int RegisterTally(std::string_view name);
+
+// A tally of fine-grained work which runs asynchronously on a device (GPU): host clocks
+// around it measure kernel launches rather than the work. Registered as RegisterTally,
+// except when the device backend is enabled: then -1 (a no-op), so that it is absent from
+// the report. Call it after the device is configured.
+int RegisterHostOnlyTally(std::string_view name);
 
 // A tally measured in any phase (Parent TOTAL), additionally split by the exclusive row
 // active at the time into "<name>/<ROW>" sub-tallies (reported without Parent, which is
@@ -305,7 +311,6 @@ struct TimerResults
   std::vector<std::string> tally_names;
   std::vector<Timer::Index> tally_parents;
   std::vector<Stats> tally_time, tally_count, tally_nested;
-  std::vector<Stats> tally_active;  // Sum: number of ranks with a nonzero count
 };
 
 struct Results
@@ -322,9 +327,6 @@ struct Results
   // process did not grow in the iteration, its peak is the lower bound of the RSS sampled
   // instead, and it is all baseline.
   Stats mem_baseline, mem_unattributed, node_mem_baseline, node_mem_unattributed;
-  // Heap in use at the end of the iteration (allocator statistics, see
-  // memory_reporting::GetHeapMemory).
-  Stats heap_mem;
   std::vector<std::string> counter_paths;
   std::vector<Reduce> counter_reduce;
   std::vector<Accumulate> counter_acc;

@@ -33,10 +33,7 @@ using json = nlohmann::json;
 void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
   BlockTimer bt(Timer::IO);
-  {
-    perf::ScopedTally t(perf::RegisterTally("Wait/IO/SaveIteration"));
-    Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
-  }
+  Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
   auto rel_step = step_output.filename();
   auto operation =

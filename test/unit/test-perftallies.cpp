@@ -4,6 +4,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include "linalg/chebyshev.hpp"
@@ -75,6 +76,15 @@ TEST_CASE("PerfTallies Reduce", "[perfstats][Serial][Parallel]")
   CHECK(t.fixed_parent == Timer::TOTAL);
 }
 
+TEST_CASE("PerfTallies Host Only", "[perfstats][Serial][Parallel][GPU]")
+{
+  // Fine-grained tallies are not registered when the device backend is enabled.
+  const bool device = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  const int id = perf::RegisterHostOnlyTally("Test/HostOnly");
+  CHECK((id < 0) == device);
+  CHECK(perf::detail::registry.tally_ids.contains("Test/HostOnly") == !device);
+}
+
 TEST_CASE("PerfTallies Krylov", "[perfstats][Serial][Parallel]")
 {
   BlockTimer::Reset();
@@ -137,7 +147,7 @@ TEST_CASE("PerfTallies Nested Same Tally", "[perfstats][Serial]")
   CHECK(t.count == 3);
   BlockTimer::Finalize(Mpi::World());
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   CHECK(meta["ElapsedTime"]["Tallies"]["Main/LambdaMax"]["Nested"] == 2);
   CHECK(!meta["ElapsedTime"]["Tallies"]["Test/Outer"].contains("Nested"));
   BlockTimer::Reset();

@@ -56,7 +56,7 @@ public:
 
   void SetPerfTallies(const std::string &prefix) override
   {
-    perf_op = perf::RegisterTally(prefix + "/OpApply");
+    perf_op = perf::RegisterHostOnlyTally(prefix + "/OpApply");
   }
   int GetOrder() const { return order; }
   double GetMaxEigenvalue() const { return lambda_max; }
@@ -132,7 +132,7 @@ public:
 
   void SetPerfTallies(const std::string &prefix) override
   {
-    perf_op = perf::RegisterTally(prefix + "/OpApply");
+    perf_op = perf::RegisterHostOnlyTally(prefix + "/OpApply");
   }
   int GetOrder() const { return order; }
   double GetMaxEigenvalue() const { return theta + delta; }

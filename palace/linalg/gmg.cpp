@@ -137,9 +137,9 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   {
     auto Record = [&path](int order, double lambda_max)
     {
-      perf::Set(perf::RegisterCounter(path + "/Order", perf::Reduce::MAX,
-                                      perf::Accumulate::NONE),
-                order);
+      perf::Set(
+          perf::RegisterCounter(path + "/Order", perf::Reduce::MAX, perf::Accumulate::NONE),
+          order);
       perf::SetMin(perf::RegisterCounter(path + "/LambdaMax/Min", perf::Reduce::MIN,
                                          perf::Accumulate::MIN),
                    lambda_max);
@@ -178,15 +178,15 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::SetPerfTallies(const std::string &prefix)
 {
-  perf[0].pre = perf::RegisterTally(prefix + "/MG/Coarse");
+  perf[0].pre = perf::RegisterHostOnlyTally(prefix + "/MG/Coarse");
   for (std::size_t l = 1; l < B.size(); l++)
   {
     const auto lp = fmt::format("{}/MG/L{}/", prefix, l);
-    perf[l].pre = perf::RegisterTally(lp + "PreSmooth");
-    perf[l].post = perf::RegisterTally(lp + "PostSmooth");
-    perf[l].res = perf::RegisterTally(lp + "Residual");
-    perf[l].restr = perf::RegisterTally(lp + "Restriction");
-    perf[l].prol = perf::RegisterTally(lp + "Prolongation");
+    perf[l].pre = perf::RegisterHostOnlyTally(lp + "PreSmooth");
+    perf[l].post = perf::RegisterHostOnlyTally(lp + "PostSmooth");
+    perf[l].res = perf::RegisterHostOnlyTally(lp + "Residual");
+    perf[l].restr = perf::RegisterHostOnlyTally(lp + "Restriction");
+    perf[l].prol = perf::RegisterHostOnlyTally(lp + "Prolongation");
     B[l]->SetPerfTallies(lp + "Smoother");
   }
 }

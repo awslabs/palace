@@ -23,21 +23,20 @@ namespace palace::perf
 // Counter ids of a memory probe name (see MemoryProbe), registered once.
 struct MemoryProbeCounters
 {
-  int persistent, growth, transient, heap, events;
+  int persistent, growth, transient, events;
   explicit MemoryProbeCounters(std::string_view name);
 };
 
-// RSS, peak RSS (high-water mark) and heap in use over one or more segments, recorded
-// under Memory/<name>/: PersistentMegabytes (RSS growth), PeakGrowthMegabytes (high-water
-// mark growth), TransientMegabytes (in-segment peak above the final RSS, when the segment
-// set a new peak; otherwise zero) and HeapPersistentMegabytes (heap in use growth, which
-// also counts allocations served from freed but still resident heap), each the largest
-// over the events of the iteration, and Events. Each segment queries the RSS, the peak RSS
-// and the heap twice: avoid probes in hot paths (see MemoryProbeSite).
+// RSS and peak RSS (high-water mark) over one or more segments, recorded under
+// Memory/<name>/: PersistentMegabytes (RSS growth), PeakGrowthMegabytes (high-water mark
+// growth) and TransientMegabytes (in-segment peak above the final RSS, when the segment
+// set a new peak; otherwise zero), each the largest over the events of the iteration, and
+// Events. Each segment queries the RSS and the peak RSS twice: avoid probes in hot paths
+// (see MemoryProbeSite).
 class MemoryProbe
 {
-  long cur0 = 0, hwm0 = 0, heap0 = 0;
-  double persistent = 0.0, growth = 0.0, transient = 0.0, heap = 0.0;
+  long cur0 = 0, hwm0 = 0;
+  double persistent = 0.0, growth = 0.0, transient = 0.0;
   bool active = false, used = false;
 
 public:

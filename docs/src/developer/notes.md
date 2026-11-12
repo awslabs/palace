@@ -473,6 +473,12 @@ one in the same process (`BlockTimer::Reset`). The peak in `Cumulative` is the m
 iterations, exact for the run if any iteration was. The log's "Elapsed Time Report" table
 holds the totals over iterations so far, while the "Peak Memory" table is per iteration;
 from the second iteration on, an "Iteration N" table gives the times of the iteration alone.
+A timer row which was not used (zero count on all processes) in the iteration, or for the
+"Elapsed Time Report" in any iteration so far, is neither printed nor written to
+`palace.json` (`ElapsedTime` and the per-row `PeakMemoryGrowthMegabytes` and
+`PeakNodeMemoryGrowthMegabytes`; in `Cumulative`, rows not used in any iteration so far).
+`TOTAL` is always written, and so are `Baseline` and `Unattributed` in the memory growth
+maps, which are part of the decomposition of the peak even when zero.
 The tallies, counters and other fields below are only written to `palace.json`.
 
 Statistics over processes are written as `{Min, Avg, Max, Sum, MaxRank}` (or a subset, for
@@ -490,15 +496,15 @@ the average, `ElapsedTime/Min`, `PeakMemoryGrowthMegabytes/Sum`, ...).
     As a safeguard, a `perf::ScopedTally` opened while a scope of the same tally is open on
     the same thread is not counted: the outermost scope counts the time once, and the tally
     reports such scopes as `Nested`.
-    Phase tallies (`perf::RegisterPhaseTally`), such as `ParOperator/P` or `Reduce`, are
-    also split by the active row into `<name>/<ROW>`. Such per-row tallies (also the
-    `Assembly/<Kind>/<ROW>` tallies) are named after their row and have no `Parent`.
-    Each tally has an `Imbalance` (maximum over average across the processes which ran
-    it). The blocking reductions, barriers and broadcasts of `Mpi` are tallied as the phase
-    tally `Reduce` and the tallies `Barrier` and `Broadcast` (not split by row). The time of
-    a tally includes the time it spends waiting for other processes: blocking point-to-point
-    calls, such as the waits of the halo exchanges, are not timed separately; use an
-    external MPI profiler for them.
+    Phase tallies (`perf::RegisterPhaseTally`), such as `Reduce`, are also split by the
+    active row into `<name>/<ROW>`. Such per-row tallies (also the `Assembly/<Kind>/<ROW>`
+    tallies) are named after their row and have no `Parent`. Each tally has the `Min`,
+    `Avg`, `Max` and `MaxRank` of its time over processes (a process which did not run it
+    counts as zero), and its `Count`. The blocking reductions, barriers and broadcasts of
+    `Mpi` are tallied as the phase tally `Reduce` and the tallies `Barrier` and `Broadcast`
+    (not split by row). The time of a tally includes the time it spends waiting for other
+    processes: blocking point-to-point calls, such as the waits of the halo exchanges, are
+    not timed separately; use an external MPI profiler for them.
   - Counters (`perf::RegisterCounter`) are written at their path, for example
     `LinearSolver/<Role>/...` (also `LinearSolver/Main/Solves` and `Its` for the main
     linear solver, formerly `LinearSolver/TotalSolves` and `TotalIts`), reduced across
@@ -523,8 +529,18 @@ its solves and reduced as such: a solver which runs on a subcommunicator, as the
 of each wave port, has a role of its own, so that its counts do not depend on the number of
 processes. Solvers and smoothers take the role active at their
 construction. Sub-roles keep the blocks of a block preconditioner apart, such as `Main/ND`
-and `Main/H1` for the multigrid preconditioner of a boundary mode problem. Tallies use host clocks, so on GPU builds they
-measure kernel launches unless the measured region synchronizes.
+and `Main/H1` for the multigrid preconditioner of a boundary mode problem.
+
+Tallies use host clocks: around asynchronous device kernels, they would measure the kernel
+launches rather than the work. The fine-grained tallies (`perf::RegisterHostOnlyTally`: the
+multigrid levels and coarse solve, the smoother parts, `Chebyshev/OpApply`,
+`Krylov/ApplyBA` and `Orthogonalize`, `ParOperator/P` and `PT`) are therefore not
+registered, and absent from the report, when the device backend is enabled (as the
+`<Role>/Preconditioner` tallies of nested solvers). The timer rows, counters, the
+`Reduce`, `Barrier` and `Broadcast` tallies, which time host-blocking calls, and the
+`Startup` tallies are reported on all builds. The remaining, coarser tallies (such as
+`<Role>/LinearSolve` and `Assembly/<Kind>/<ROW>`) are kept on devices, where they do not
+include device work still running when they end.
 
 When comparing with earlier versions: the former "Coarse Solve" row is now "Coarse Setup" plus
 "Coarse Solve", and the former "Rebalancing" row is "Adapted Mesh Output" plus
@@ -545,13 +561,8 @@ You should read each row as "this phase increases the peak memory by this amount
 
 The RSS does not grow when an allocation is served from heap that was freed earlier but is
 still resident, so a phase that reuses memory shows zero growth however much it allocates.
-The heap in use, from the allocator's statistics (glibc `mallinfo2`, glibc 2.33 or later,
-or the macOS malloc zones; elsewhere, or when jemalloc, tcmalloc or mimalloc replaces
-glibc's malloc, the RSS, see `Memory/HeapSource`), sees such allocations: `HeapMegabytes`
-is the heap in use at the end of the iteration, and memory probes report
-`HeapPersistentMegabytes` (the growth of the heap in use over the probe) next to the
-RSS-based values. The probe of the error estimate, which runs for example at every time
-step, measures the first estimate of each iteration only (`perf::MemoryProbeSite`).
+The probe of the error estimate, which runs for example at every time step, measures the
+first estimate of each iteration only (`perf::MemoryProbeSite`).
 
 ## Profiling *Palace* on CPUs
 

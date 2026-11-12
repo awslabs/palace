@@ -14,17 +14,6 @@ namespace palace::memory_reporting
 long GetCurrentMemory();
 long GetPeakMemory();
 
-// Heap in use (allocated and not yet freed) in bytes, from the allocator's statistics:
-// glibc mallinfo2 (glibc 2.33 or later) or the macOS malloc zones. Otherwise, including
-// when jemalloc, tcmalloc or mimalloc replaces glibc's malloc, the current RSS. Unlike the
-// RSS, it grows when an allocation reuses freed but still resident heap. The cost grows
-// with the number of free chunks: avoid it in hot paths.
-long GetHeapMemory();
-
-// Source of GetHeapMemory: "mallinfo2" (with a note if glibc's arenas hold much less than
-// the RSS), "malloc_zone_statistics" or "rss" (with the replacement allocator, if any).
-std::string HeapMemorySource();
-
 // Shared-memory (node) communicator and node-leader communicator (MPI_COMM_NULL on
 // non-leaders) for comm, created once and cached for the group of comm (collective).
 struct NodeComms

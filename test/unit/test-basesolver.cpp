@@ -960,6 +960,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     const auto meta = Metadata(temp_dir);
     CHECK(meta.contains("ElapsedTime"));
     CHECK(meta.contains("Cumulative"));
+    // Only the rows used in the iteration are written, and TOTAL.
+    CHECK(meta["ElapsedTime"]["Durations"].contains("IO"));
+    CHECK(meta["ElapsedTime"]["Durations"].contains("TOTAL"));
+    CHECK(!meta["ElapsedTime"]["Durations"].contains("KSP"));
   }
   BlockTimer::Reset();
 }

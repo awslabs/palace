@@ -98,11 +98,11 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::SetPerfTallies(const std::string &prefix)
 {
-  perf_main = perf::RegisterTally(prefix + "/Main");
-  perf_aux = perf::RegisterTally(prefix + "/Aux");
-  perf_res = perf::RegisterTally(prefix + "/Residual");
-  perf_gt = perf::RegisterTally(prefix + "/GT");
-  perf_g = perf::RegisterTally(prefix + "/G");
+  perf_main = perf::RegisterHostOnlyTally(prefix + "/Main");
+  perf_aux = perf::RegisterHostOnlyTally(prefix + "/Aux");
+  perf_res = perf::RegisterHostOnlyTally(prefix + "/Residual");
+  perf_gt = perf::RegisterHostOnlyTally(prefix + "/GT");
+  perf_g = perf::RegisterHostOnlyTally(prefix + "/G");
   B->SetPerfTallies(prefix + "/Main");
   B_G->SetPerfTallies(prefix + "/Aux");
 }

@@ -140,13 +140,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `LinearSolver/<Role>`. New rows `Startup`, `Coarse Setup` (coarse solver setup and
     factorization, previously part of `Coarse Solve`, or of `Setup` for MUMPS), `Adapted
     Mesh Output` (previously part of `Rebalancing`) appear in the log and in `palace.json`.
-    `palace.json` (only) also holds inclusive tallies
-    (multigrid levels, smoothers, Krylov operator and orthogonalization, halo exchanges,
-    the blocking reductions, barriers and broadcasts of *Palace*, with their imbalance
-    across processes), solver counters, resolved solver choices and memory attribution
-    (peak RSS growth per row, with a baseline and an unattributed remainder, and memory
-    probes of the coarse factorization and error estimator). The log tables keep their
-    layout.
+    Timer rows which were not used in an iteration (or, in `Cumulative`, in the run so far)
+    are no longer written to `palace.json` nor printed in the log tables; `TOTAL` always
+    is. `palace.json` (only) also holds inclusive tallies (multigrid levels, smoothers,
+    Krylov operator and orthogonalization and parallel prolongations, on CPU runs only; the
+    blocking reductions, barriers and broadcasts of *Palace*; with their statistics over
+    processes), solver counters, resolved solver choices and memory attribution (peak RSS
+    growth per row, with a baseline and an unattributed remainder, and memory probes of the
+    coarse factorization and error estimator). The log tables keep their layout.
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still

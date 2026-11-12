@@ -112,7 +112,7 @@ TEST_CASE("PerfProbes Peak Memory Of Later Iterations", "[perfprobes][perfstats]
   CHECK(r.peak_mem.max < peak);
   CHECK(r.cum_peak_mem.max >= peak);
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta, true);
+  perf::WriteJson(meta);
   CHECK(meta["PeakMemoryMegabytes"]["LowerBound"] == true);
   CHECK(meta["PeakNodeMemoryMegabytes"]["LowerBound"] == true);
   CHECK(!meta["Cumulative"]["PeakMemoryMegabytes"].contains("LowerBound"));
@@ -131,74 +131,6 @@ TEST_CASE("PerfProbes Peak Memory Of Later Iterations", "[perfprobes][perfstats]
   CHECK(hwm >= peak);
 #endif
   escape = nullptr;
-  BlockTimer::Reset();
-}
-
-TEST_CASE("PerfProbes Heap Reuse", "[perfprobes][perfstats][Serial][Parallel]")
-{
-  MPI_Comm comm = Mpi::World();
-  constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-  BlockTimer::Reset();
-
-  // Leave 32 MB of freed but resident heap: small chunks (below any mmap threshold), every
-  // other one freed so that the freed chunks can neither coalesce nor shrink the heap. The
-  // allocator may still return their pages to the operating system; the RSS check below
-  // only applies if it did not.
-  constexpr std::size_t chunk = 4 << 10, n = 16384;
-  std::vector<std::unique_ptr<char[]>> chunks(n), reuse;
-  for (auto &c : chunks)
-  {
-    c.reset(new char[chunk]);
-    std::memset(c.get(), 1, chunk);
-  }
-  const long rss_before = memory_reporting::GetCurrentMemory();
-  for (std::size_t i = 0; i < n; i += 2)
-  {
-    chunks[i].reset();
-  }
-  const bool resident =
-      rss_before - memory_reporting::GetCurrentMemory() < static_cast<long>(8 << 20);
-  reuse.reserve(n / 2);
-  {
-    BlockTimer bt(Timer::CONSTRUCT);
-    perf::ScopedMemoryProbe probe("Test/Reuse");
-    for (std::size_t i = 0; i < n / 2; i++)
-    {
-      reuse.emplace_back(new char[chunk]);
-      std::memset(reuse.back().get(), 2, chunk);
-    }
-  }
-  BlockTimer::Finalize(comm);
-  const auto &r = perf::GetResults();
-
-  if (!memory_reporting::HeapMemorySource().starts_with("rss"))
-  {
-    // The allocations of the probe show up in the heap, whatever memory serves them.
-    CHECK(r.heap_mem.min * to_mb > 30.0);
-    const int heap = CounterIndex(r, "Memory/Test/Reuse/HeapPersistentMegabytes");
-    REQUIRE(heap >= 0);
-    CHECK(r.counter[heap].min > 30.0);
-  }
-#if defined(__GLIBC__)
-  // They were served from the freed heap: the RSS did not grow.
-  const int rss = CounterIndex(r, "Memory/Test/Reuse/PersistentMegabytes");
-  REQUIRE(rss >= 0);
-  if (resident)
-  {
-    CHECK(r.counter[rss].max < 8.0);
-  }
-  else
-  {
-    WARN("The freed heap was returned to the operating system: RSS check skipped");
-  }
-#else
-  static_cast<void>(resident);
-#endif
-  nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta, true);
-  CHECK(!meta.contains("HeapGrowthMegabytes"));
-  CHECK(meta["HeapMegabytes"]["Max"].get<double>() > 0.0);
-  CHECK(meta["Memory"]["HeapSource"] == memory_reporting::HeapMemorySource());
   BlockTimer::Reset();
 }
 

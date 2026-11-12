@@ -57,7 +57,6 @@ void MemoryProbe::Start()
 {
   cur0 = memory_reporting::GetCurrentMemory();
   hwm0 = memory_reporting::GetPeakMemory();
-  heap0 = memory_reporting::GetHeapMemory();
   BlockTimer::NoteRss(cur0);
   active = true;
 }
@@ -68,13 +67,11 @@ void MemoryProbe::Stop()
   {
     return;
   }
-  const long heap1 = memory_reporting::GetHeapMemory();
   const long cur1 = memory_reporting::GetCurrentMemory();
   BlockTimer::NoteRss(cur1);
   const long hwm1 = memory_reporting::GetPeakMemory();
   persistent += static_cast<double>(cur1 - cur0);
   growth += static_cast<double>(hwm1 - hwm0);
-  heap += static_cast<double>(heap1 - heap0);
   if (hwm1 > hwm0)
   {
     transient = std::max(transient, static_cast<double>(hwm1 - cur1));
@@ -91,7 +88,6 @@ MemoryProbeCounters::MemoryProbeCounters(std::string_view name)
   persistent = Max("/PersistentMegabytes");
   growth = Max("/PeakGrowthMegabytes");
   transient = Max("/TransientMegabytes");
-  heap = Max("/HeapPersistentMegabytes");
   events = RegisterCounter(base + "/Events", Reduce::MAX, Accumulate::SUM);
 }
 
@@ -104,9 +100,8 @@ void MemoryProbe::Record(const MemoryProbeCounters &c)
   SetMax(c.persistent, persistent * to_mb);
   SetMax(c.growth, growth * to_mb);
   SetMax(c.transient, transient * to_mb);
-  SetMax(c.heap, heap * to_mb);
   Add(c.events, 1.0);
-  persistent = growth = transient = heap = 0.0;
+  persistent = growth = transient = 0.0;
   used = false;
 }
 

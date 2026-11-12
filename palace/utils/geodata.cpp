@@ -29,7 +29,6 @@
 #include "utils/outputdir.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/prettyprint.hpp"
-#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
@@ -146,7 +145,6 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       use_mesh_partitioner &= smesh->Conforming();
     }
-    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad"));
     Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
   }
 
@@ -167,7 +165,6 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
-    perf::ScopedTally t(perf::RegisterTally("Wait/IO/MeshLoad"));
     Mpi::Barrier(comm);
   }
   if (node_comm != MPI_COMM_NULL)

@@ -17,17 +17,17 @@ namespace
 {
 
 // Inclusive tallies for the parallel prolongation P and its transpose in forward operator
-// applications: the full application, mostly local work (including the hanging node
-// constraints), and the halo exchange inside it.
+// applications, including the hanging node constraints and the halo exchange (not on
+// devices, see perf::RegisterHostOnlyTally).
 int ProlongationTallyP()
 {
-  static const int id = perf::RegisterPhaseTally("ParOperator/P");
+  static const int id = perf::RegisterHostOnlyTally("ParOperator/P");
   return id;
 }
 
 int ProlongationTallyPT()
 {
-  static const int id = perf::RegisterPhaseTally("ParOperator/PT");
+  static const int id = perf::RegisterHostOnlyTally("ParOperator/PT");
   return id;
 }
 
