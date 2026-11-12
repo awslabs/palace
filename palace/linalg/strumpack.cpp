@@ -126,7 +126,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // factors (implies 32), 256 narrow TRSM for any block size, 512 / 1024 triangular
   // inversion condition limit 1e4 / unlimited, 2048 BLACS contexts on demand, 4096 memory
   // parts A-C (interval table, sparse equilibration, no permutation copy), 8192 node-shared
-  // permutation.
+  // permutation, 16384 / 32768 / 65536 / 131072 triangular inversion condition limit 1e6 /
+  // 1e8 / 1e10 / 1e12.
   if (compression == SparseCompression::NONE && butterfly_l >= 1000)
   {
     const int flags = butterfly_l - 1000;
@@ -179,6 +180,22 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     if (flags & 8192)
     {
       setenv("STRUMPACK_LAB_MEM_SHARED_PERM", "1", 1);
+    }
+    if (flags & 16384)
+    {
+      setenv("STRUMPACK_SI_TRI_MAX_COND", "1e6", 1);
+    }
+    if (flags & 32768)
+    {
+      setenv("STRUMPACK_SI_TRI_MAX_COND", "1e8", 1);
+    }
+    if (flags & 65536)
+    {
+      setenv("STRUMPACK_SI_TRI_MAX_COND", "1e10", 1);
+    }
+    if (flags & 131072)
+    {
+      setenv("STRUMPACK_SI_TRI_MAX_COND", "1e12", 1);
     }
     if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
     {

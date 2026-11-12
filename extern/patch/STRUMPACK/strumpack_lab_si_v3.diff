@@ -1,0 +1,75 @@
+diff --git a/src/dense/DistTrsmNarrow.hpp b/src/dense/DistTrsmNarrow.hpp
+index 4169a6a1..392c4189 100644
+--- a/src/dense/DistTrsmNarrow.hpp
++++ b/src/dense/DistTrsmNarrow.hpp
+@@ -208,7 +208,8 @@ namespace strumpack {
+     }
+ 
+     // copies of the blocks of A used by the window chains (see
+-    // Solver::cptrsm_fanin), valid until A changes
++    // Solver::cptrsm_fanin), valid until A changes; each kb_i x kb_j
++    // block is stored packed (leading dimension kb_i)
+     struct Cache {
+       std::map<std::pair<int,long long>, std::vector<double>> L;
+       bool built = false;
+@@ -759,8 +760,7 @@ namespace strumpack {
+                             V.data() + std::size_t(cc)*ldv);
+               } else add(kbi, N, own.data(), kbi, V.data(), ldv);
+               auto& L = cache_->L[key(i, j)];
+-              const int ldl = Ald;
+-              blas::gemm('N', 'T', kbi, N, kbj, -1., L.data(), ldl,
++              blas::gemm('N', 'T', kbi, N, kbj, -1., L.data(), kbi,
+                          xr.data(), N, 1., V.data(), ldv);
+               break;
+             }
+@@ -861,8 +861,8 @@ namespace strumpack {
+               for (int qq=std::max(0, q-Pc+1); qq<q; qq++) {
+                 int j = blk(qq);
+                 auto& L = cache_->L[std::make_pair(k, (long long)t * nbl + j)];
+-                L.resize(std::size_t(lda) * (kbs(j) - 1) + kbs(t));
+-                recv(L.data(), kbs(t), kbs(j), lda,
++                L.resize(std::size_t(kbs(t)) * kbs(j));
++                recv(L.data(), kbs(t), kbs(j), kbs(t),
+                      g_.rank(myrow, colof(j)), tag_l);
+               }
+             }
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index a8ecd0f9..2cd39cf0 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -225,6 +225,35 @@ namespace strumpack {
+     std::cout << "#   kappa_1 by decade (1e0..):";
+     for (int d=0; d<20; d++) std::cout << " " << dec[d];
+     std::cout << std::endl;
++    // LAB: fronts and separator rows a given limit would invert (the
++    // condition numbers do not depend on the limit), and the same by level
++    std::cout << "#   would invert at limit (fronts, separator rows):";
++    for (double lim : {1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e10, 1e12}) {
++      int nl = 0; long long sl = 0;
++      for (int f=0; f<nf; f++)
++        if (all[6*f+4] <= lim) { nl++; sl += (long long)all[6*f+2]; }
++      std::cout << " " << lim << ": " << nl << ", " << sl << ";";
++    }
++    std::cout << std::endl;
++    int maxlev = 0;
++    for (int f=0; f<nf; f++) maxlev = std::max(maxlev, int(all[6*f]));
++    for (int l=0; l<=maxlev; l++) {
++      int nl = 0, il = 0, pmin = std::numeric_limits<int>::max(), pmax = 0;
++      long long sl = 0, isl = 0;
++      double cmin = std::numeric_limits<double>::infinity(), cmax = 0.;
++      for (int f=0; f<nf; f++) {
++        const double* r = &all[6*f];
++        if (int(r[0]) != l) continue;
++        nl++; sl += (long long)r[2];
++        if (r[5] > 0.) { il++; isl += (long long)r[2]; }
++        pmin = std::min(pmin, int(r[1])); pmax = std::max(pmax, int(r[1]));
++        cmin = std::min(cmin, r[4]); cmax = std::max(cmax, r[4]);
++      }
++      if (!nl) continue;
++      std::cout << "#   level " << l << " P " << pmin << "-" << pmax << ": "
++                << il << "/" << nl << " fronts, " << isl << "/" << sl
++                << " rows inverted, cond " << cmin << "-" << cmax << std::endl;
++    }
+     int shown = 0;
+     for (int f=0; f<nf && shown < 12; f++) {
+       const double* r = &all[6*f];

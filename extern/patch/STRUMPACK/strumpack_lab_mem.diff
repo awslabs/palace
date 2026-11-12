@@ -1,5 +1,5 @@
 diff --git a/src/sparse/CSRMatrixMPI.cpp b/src/sparse/CSRMatrixMPI.cpp
-index 2d24458d..920bfcfa 100644
+index 2d24458d..ee2b4af7 100644
 --- a/src/sparse/CSRMatrixMPI.cpp
 +++ b/src/sparse/CSRMatrixMPI.cpp
 @@ -33,6 +33,7 @@
@@ -43,15 +43,16 @@ index 2d24458d..920bfcfa 100644
      // cannot use openmp here
      for (integer_t r=0; r<lrows_; r++) {
        for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
-@@ -849,6 +858,79 @@ namespace strumpack {
+@@ -849,6 +858,102 @@ namespace strumpack {
      return eq;
    }
  
 +  /**
 +   * Column part of equilibration(), on entry eq.R holds the row
 +   * scaling. Every process computes the maxima of the columns it owns
-+   * (the columns of its rows, in the block-row distribution dist_):
-+   * the partial maxima of the other columns are sent to their owners,
++   * (the columns of its rows, in the block-row distribution dist_).
++   * The other columns of its rows are first reduced locally, then one
++   * (column, maximum) pair per distinct column is sent to its owner,
 +   * instead of reducing a vector of the global size n on every
 +   * process. The maxima are exact, so the scaling is the same. The
 +   * global column scaling eq.C is only built if it is used, for
@@ -62,28 +63,50 @@ index 2d24458d..920bfcfa 100644
 +    real_t small = blas::lamch<real_t>('S');
 +    real_t big = 1. / small;
 +    auto P = comm_.size();
++    auto lo = brow_, hi = brow_ + lrows_;
 +    std::vector<real_t> Cloc(lrows_, 0.);
 +    {
-+      std::vector<std::vector<integer_t>> sind(P);
-+      std::vector<std::vector<real_t>> sval(P);
-+      for (integer_t r=0; r<lrows_; r++)
-+        for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
-+          auto c = ind_[j];
-+          auto v = std::abs(val_[j]) * eq.R[r];
-+          if (c >= brow_ && c < brow_ + lrows_)
-+            Cloc[c-brow_] = std::max(Cloc[c-brow_], v);
-+          else {
-+            auto p = std::upper_bound(dist_.begin(), dist_.end(), c)
-+              - dist_.begin() - 1;
-+            sind[p].push_back(c);
-+            sval[p].push_back(v);
-+          }
++      using IdxVal_t = IdxVal<real_t,integer_t>;
++      std::vector<std::vector<IdxVal_t>> sbuf(P);
++      {
++        // distinct off-process columns, sorted, hence grouped by owner
++        std::vector<integer_t> hcol;
++        {
++          std::size_t noff = 0;
++          for (integer_t r=0; r<lrows_; r++)
++            for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++)
++              if (ind_[j] < lo || ind_[j] >= hi) noff++;
++          hcol.reserve(noff);
 +        }
-+      auto rind = comm_.all_to_all_v(sind);
-+      auto rval = comm_.all_to_all_v(sval);
-+      for (std::size_t k=0; k<rind.size(); k++) {
-+        auto& ck = Cloc[rind[k]-brow_];
-+        ck = std::max(ck, rval[k]);
++        for (integer_t r=0; r<lrows_; r++)
++          for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++)
++            if (ind_[j] < lo || ind_[j] >= hi) hcol.push_back(ind_[j]);
++        std::sort(hcol.begin(), hcol.end());
++        hcol.erase(std::unique(hcol.begin(), hcol.end()), hcol.end());
++        hcol.shrink_to_fit();
++        std::vector<real_t> hval(hcol.size(), 0.);
++        // cannot use openmp here
++        for (integer_t r=0; r<lrows_; r++)
++          for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
++            auto c = ind_[j];
++            auto v = std::abs(val_[j]) * eq.R[r];
++            auto& m = (c >= lo && c < hi) ? Cloc[c-lo] :
++              hval[std::lower_bound(hcol.begin(), hcol.end(), c)
++                   - hcol.begin()];
++            m = std::max(m, v);
++          }
++        for (std::size_t k=0, p=0; k<hcol.size(); ) {
++          auto k1 = std::lower_bound
++            (hcol.begin()+k, hcol.end(), dist_[p+1]) - hcol.begin();
++          sbuf[p].reserve(k1 - k);
++          for (; k<std::size_t(k1); k++)
++            sbuf[p].emplace_back(hcol[k], hval[k]);
++          p++;
++        }
++      }
++      for (const auto& iv : comm_.all_to_all_v(sbuf)) {
++        auto& m = Cloc[iv.i-lo];
++        m = std::max(m, iv.v);
 +      }
 +    }
 +    auto mM = std::minmax_element(Cloc.begin(), Cloc.end());
@@ -356,7 +379,7 @@ index 7e6effdd..3bfdf516 100644
      auto Aind = Ampi.ind();
      auto Aval = Ampi.val();
 diff --git a/src/sparse/ordering/MatrixReordering.cpp b/src/sparse/ordering/MatrixReordering.cpp
-index 7f706b19..68250a0a 100644
+index 7f706b19..1ffe30df 100644
 --- a/src/sparse/ordering/MatrixReordering.cpp
 +++ b/src/sparse/ordering/MatrixReordering.cpp
 @@ -66,6 +66,12 @@ namespace strumpack {
@@ -372,8 +395,29 @@ index 7f706b19..68250a0a 100644
    template<typename scalar_t,typename integer_t>
    MatrixReordering<scalar_t,integer_t>::~MatrixReordering() {}
  
+@@ -178,17 +184,17 @@ namespace strumpack {
+   MatrixReordering<scalar_t,integer_t>::nested_dissection_print
+   (const Opts_t& opts, integer_t nnz, bool verbose) const {
+     nested_dissection_print
+-      (opts, nnz, tree_.levels(), tree_.separators(), verbose);
++      (opts, perm_.size(), nnz, tree_.levels(), tree_.separators(), verbose);
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+   MatrixReordering<scalar_t,integer_t>::nested_dissection_print
+-  (const Opts_t& opts, integer_t nnz, int max_level,
++  (const Opts_t& opts, integer_t n, integer_t nnz, int max_level,
+    int total_separators, bool verbose) const {
+     if (verbose) {
+       std::cout << "# initial matrix:" << std::endl;
+       std::cout << "#   - number of unknowns = "
+-                << number_format_with_commas(perm_.size()) << std::endl;
++                << number_format_with_commas(n) << std::endl;
+       std::cout << "#   - number of nonzeros = "
+                 << number_format_with_commas(nnz) << std::endl;
+       std::cout << "# nested dissection reordering:" << std::endl;
 diff --git a/src/sparse/ordering/MatrixReordering.hpp b/src/sparse/ordering/MatrixReordering.hpp
-index c921f695..e35608b9 100644
+index c921f695..91561823 100644
 --- a/src/sparse/ordering/MatrixReordering.hpp
 +++ b/src/sparse/ordering/MatrixReordering.hpp
 @@ -51,6 +51,9 @@ namespace strumpack {
@@ -386,19 +430,31 @@ index c921f695..e35608b9 100644
  
      virtual ~MatrixReordering();
  
+@@ -77,7 +80,7 @@ namespace strumpack {
+                                integer_t max_dim_sep);
+ 
+     void
+-    nested_dissection_print(const Opts_t& opts, integer_t nnz,
++    nested_dissection_print(const Opts_t& opts, integer_t n, integer_t nnz,
+                             int max_level, int total_separators,
+                             bool verbose) const;
+ 
 diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
-index ff3b03a2..963eb1cc 100644
+index ff3b03a2..01b59f2d 100644
 --- a/src/sparse/ordering/MatrixReorderingMPI.cpp
 +++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
-@@ -29,6 +29,7 @@
+@@ -29,6 +29,10 @@
  
  #include <unordered_map>
  #include <algorithm>
 +#include <cstdlib>
++#if defined(__unix__) || defined(__APPLE__)
++#include <sys/statvfs.h>
++#endif
  
  #include "MatrixReorderingMPI.hpp"
  #include "StrumpackConfig.hpp"
-@@ -55,14 +56,118 @@
+@@ -55,14 +59,150 @@
  
  namespace strumpack {
  
@@ -479,13 +535,32 @@ index ff3b03a2..963eb1cc 100644
 +      (comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &shm_comm_);
 +    MPI_Comm_rank(shm_comm_, &lrank);
 +    MPI_Comm_set_errhandler(shm_comm_, MPI_ERRORS_RETURN);
-+    MPI_Aint bytes = (lrank == 0) ?
-+      MPI_Aint(2) * MPI_Aint(n_) * MPI_Aint(sizeof(integer_t)) : 0;
++    MPI_Aint bytes = (lrank == 0) ? shared_perm_bytes() : 0;
++    // If the window is backed by a tmpfs (usually /dev/shm on Linux)
++    // with less free space than its size, the allocation can succeed
++    // while touching the pages later raises SIGBUS (when the MPI
++    // library does not reserve the pages). Check the free space of
++    // /dev/shm, if there is one, before allocating.
++    int ok = 1;
++#if defined(__unix__) || defined(__APPLE__)
++    struct statvfs fs;
++    if (bytes && !statvfs("/dev/shm", &fs) &&
++        double(fs.f_bavail) * double(fs.f_frsize) < double(bytes))
++      ok = 0;
++#endif
++    // MPI_Win_allocate_shared is collective on the node: if it failed
++    // on some processes of a node only, MPI_Win_free below could
++    // hang. MPI libraries fail consistently on a node in practice
++    // (one segment per node, allocated by the leader).
 +    integer_t* base = nullptr;
-+    int ierr = MPI_Win_allocate_shared
-+      (bytes, sizeof(integer_t), MPI_INFO_NULL, shm_comm_, &base, &shm_win_);
-+    if (!comm_->all_reduce(int(ierr == MPI_SUCCESS), MPI_MIN)) {
-+      if (ierr == MPI_SUCCESS) MPI_Win_free(&shm_win_);
++    ok = comm_->all_reduce(ok, MPI_MIN);
++    if (ok) {
++      int ierr = MPI_Win_allocate_shared
++        (bytes, sizeof(integer_t), MPI_INFO_NULL, shm_comm_, &base, &shm_win_);
++      ok = comm_->all_reduce(int(ierr == MPI_SUCCESS), MPI_MIN);
++      if (!ok && ierr == MPI_SUCCESS) MPI_Win_free(&shm_win_);
++    }
++    if (!ok) {
 +      shm_win_ = MPI_WIN_NULL;
 +      MPI_Comm_free(&shm_comm_);
 +      shm_comm_ = MPI_COMM_NULL;
@@ -502,9 +577,9 @@ index ff3b03a2..963eb1cc 100644
 +    if (lrank == 0) {
 +      // rank 0 is the leader of its node, and rank 0 of leaders
 +      if (rank == 0) std::copy(perm_.begin(), perm_.end(), shm_perm_);
-+      const integer_t chunk = integer_t(1) << 28;
-+      for (integer_t i=0; i<n_; i+=chunk)
-+        MPI_Bcast(shm_perm_+i, int(std::min(chunk, n_-i)),
++      const std::size_t n = n_, chunk = std::size_t(1) << 28;
++      for (std::size_t i=0; i<n; i+=chunk)
++        MPI_Bcast(shm_perm_+i, int(std::min(chunk, n-i)),
 +                  mpi_type<integer_t>(), 0, leaders);
 +      for (integer_t i=0; i<n_; i++) shm_iperm_[shm_perm_[i]] = i;
 +      MPI_Comm_free(&leaders);
@@ -516,10 +591,23 @@ index ff3b03a2..963eb1cc 100644
 +    std::vector<integer_t>().swap(iperm_);
 +    return true;
 +  }
++
++  /**
++   * Collective. Replaces the node-shared permutation, if any, by a
++   * copy per process.
++   */
++  template<typename scalar_t,typename integer_t> void
++  MatrixReorderingMPI<scalar_t,integer_t>::unshare_perm() {
++    if (shm_win_ == MPI_WIN_NULL) return;
++    alloc_perm();
++    std::copy(shm_perm_, shm_perm_+n_, perm_.data());
++    std::copy(shm_iperm_, shm_iperm_+n_, iperm_.data());
++    free_shared_perm();
++  }
  
    template<typename scalar_t,typename integer_t> int
    MatrixReorderingMPI<scalar_t,integer_t>::nested_dissection
-@@ -71,6 +176,9 @@ namespace strumpack {
+@@ -71,6 +211,9 @@ namespace strumpack {
      if (!is_parallel(opts.reordering_method())) {
        auto rank = comm_->rank();
        auto P = comm_->size();
@@ -529,7 +617,7 @@ index ff3b03a2..963eb1cc 100644
        auto Aseq = A.gather_graph();
        SeparatorTree<integer_t> global_sep_tree;
        if (Aseq) { // only root
-@@ -129,8 +237,18 @@ namespace strumpack {
+@@ -129,8 +272,21 @@ namespace strumpack {
          Aseq.reset();
          global_sep_tree.check();
        }
@@ -538,8 +626,11 @@ index ff3b03a2..963eb1cc 100644
 +      if (shared && !share_perm()) {
 +        if (!rank)
 +          std::cerr << "# WARNING: STRUMPACK_LAB_MEM_SHARED_PERM: could not"
-+                    << " allocate the shared memory window, using a copy"
-+                    << " per process" << std::endl;
++                    << " allocate a shared memory window of "
++                    << shared_perm_bytes() / 1e6 << " MB per node"
++                    << " (MPI_Win_allocate_shared failed, or less free"
++                    << " space in /dev/shm), using a copy of the"
++                    << " permutation per process" << std::endl;
 +        shared = false;
 +        if (rank) alloc_perm();
 +      }
@@ -550,7 +641,7 @@ index ff3b03a2..963eb1cc 100644
        integer_t nbsep;
        if (!rank) nbsep = global_sep_tree.separators();
        comm_->broadcast(nbsep);
-@@ -141,10 +259,13 @@ namespace strumpack {
+@@ -141,10 +297,13 @@ namespace strumpack {
        tree_ = global_sep_tree.toptree(P);
        ltree_.check();
        tree_.check();
@@ -566,7 +657,7 @@ index ff3b03a2..963eb1cc 100644
        switch (opts.reordering_method()) {
        case ReorderingStrategy::GEOMETRIC: {
          if (nx*ny*nz*components != A.size()) {
-@@ -214,6 +335,8 @@ namespace strumpack {
+@@ -214,6 +373,8 @@ namespace strumpack {
    template<typename scalar_t,typename integer_t> int
    MatrixReorderingMPI<scalar_t,integer_t>::set_permutation
    (const Opts_t& opts, const CSRMPI_t& A, const int* p, int base) {
@@ -575,7 +666,17 @@ index ff3b03a2..963eb1cc 100644
      auto n = perm_.size();
      assert(A.size() == integer_t(n));
      if (base == 0) std::copy(p, p+n, perm_.data());
-@@ -290,8 +413,8 @@ namespace strumpack {
+@@ -247,6 +408,9 @@ namespace strumpack {
+   (const Opts_t& opts, CSM_t& A, F_t* F) {
+     if (opts.compression() == CompressionType::NONE)
+       return;
++    // compression enabled after a reordering with the shared
++    // permutation, which is modified here
++    unshare_perm();
+     auto n = A.size();
+     std::vector<integer_t> sorder(n, -1);
+ #pragma omp parallel
+@@ -290,8 +454,8 @@ namespace strumpack {
      }
      sub_graph_range = sub_graph_ranges[rank];
      dist_sep_range = dist_sep_ranges[rank];
@@ -586,19 +687,38 @@ index ff3b03a2..963eb1cc 100644
    }
  
    template<typename scalar_t,typename integer_t> void
+@@ -363,7 +527,7 @@ namespace strumpack {
+       integer_t max_level = comm_->all_reduce(local_levels, MPI_MAX);
+       if (comm_->is_root())
+         MatrixReordering<scalar_t,integer_t>::nested_dissection_print
+-          (opts, nnz, max_level, total_separators, true);
++          (opts, n_, nnz, max_level, total_separators, true);
+     }
+   }
+ 
 diff --git a/src/sparse/ordering/MatrixReorderingMPI.hpp b/src/sparse/ordering/MatrixReorderingMPI.hpp
-index 594acc11..5b30a04b 100644
+index 594acc11..8803d110 100644
 --- a/src/sparse/ordering/MatrixReorderingMPI.hpp
 +++ b/src/sparse/ordering/MatrixReorderingMPI.hpp
-@@ -133,8 +133,29 @@ namespace strumpack {
+@@ -85,6 +85,9 @@ namespace strumpack {
+ 
+   public:
+     MatrixReorderingMPI(integer_t n, const MPIComm& c);
++    // owns MPI handles (shared memory window and its communicator)
++    MatrixReorderingMPI(const MatrixReorderingMPI&) = delete;
++    MatrixReorderingMPI& operator=(const MatrixReorderingMPI&) = delete;
+     virtual ~MatrixReorderingMPI();
+ 
+     int nested_dissection(const Opts_t& opts, const CSRMPI_t& A,
+@@ -133,8 +136,32 @@ namespace strumpack {
  
      const SeparatorTree<integer_t>& ltree() const { return ltree_; }
  
 +    /**
 +     * The permutation and its inverse, in the node-shared window when
 +     * the permutation is shared per node (STRUMPACK_LAB_MEM_SHARED_PERM),
-+     * else in perm_ and iperm_ (perm() and iperm() are then empty on
-+     * all processes but the root).
++     * else in perm_ and iperm_ (perm() and iperm() are empty on all
++     * processes, the root included, when it is shared).
 +     */
 +    const integer_t* perm_data() const
 +    { return shm_perm_ ? shm_perm_ : perm_.data(); }
@@ -613,9 +733,12 @@ index 594acc11..5b30a04b 100644
 +    MPI_Comm shm_comm_ = MPI_COMM_NULL;
 +    MPI_Win shm_win_ = MPI_WIN_NULL;
 +    integer_t *shm_perm_ = nullptr, *shm_iperm_ = nullptr;
++    MPI_Aint shared_perm_bytes() const
++    { return MPI_Aint(2) * MPI_Aint(n_) * MPI_Aint(sizeof(integer_t)); }
 +    void alloc_perm();
 +    bool use_shared_perm(const Opts_t& opts) const;
 +    bool share_perm();
++    void unshare_perm();
 +    void free_shared_perm();
      SeparatorTree<integer_t> ltree_;
  

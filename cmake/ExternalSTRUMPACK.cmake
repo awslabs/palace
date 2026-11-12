@@ -313,6 +313,7 @@ list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s2.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_mem.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_pblas_blocksize.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_si_v3.diff"
 )
 
 include(ExternalProject)

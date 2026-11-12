@@ -1,5 +1,5 @@
 diff --git a/src/dense/DistTrsmNarrow.hpp b/src/dense/DistTrsmNarrow.hpp
-index 36ce2eca..f0ec847d 100644
+index 36ce2eca..4169a6a1 100644
 --- a/src/dense/DistTrsmNarrow.hpp
 +++ b/src/dense/DistTrsmNarrow.hpp
 @@ -47,6 +47,7 @@
@@ -10,14 +10,19 @@ index 36ce2eca..f0ec847d 100644
  
  #include "BLASLAPACKWrapper.hpp"
  #include "ScaLAPACKWrapper.hpp"
-@@ -155,6 +156,19 @@ namespace strumpack {
+@@ -155,6 +156,24 @@ namespace strumpack {
        return a;
      }
      inline int lcm(int a, int b) { return a / gcd(a, b) * b; }
-+    // rows of the logical blocks: those of PB_CptrsmB if they are a
-+    // multiple of nb, otherwise enlarged so that they are
-+    inline int logical_block(int nb, int nprow, int npcol) {
-+      return lcm(2 * pblas_nb * lcm(nprow, npcol), nb);
++    // rows of the logical blocks of an m x m matrix: those of PB_CptrsmB
++    // if they are a multiple of nb, otherwise their least common multiple
++    // with nb. Computed in long long and clamped to max(m, nb): any size
++    // >= m gives a single logical block, so the clamp only avoids an int
++    // overflow.
++    inline int logical_block(int m, int nb, int nprow, int npcol) {
++      long long l = 2LL * pblas_nb * (nprow / gcd(nprow, npcol)) * npcol;
++      l = l / gcd(int(l % nb), nb) * nb;
++      return int(std::min(l, (long long)std::max(m, nb)));
 +    }
 +    // LAB: STRUMPACK_LAB_NARROW_ANY_NB=1 uses the narrow solve for any block
 +    // size (not bitwise identical to PDTRSM unless nb <= 32 divides 64)
@@ -30,7 +35,7 @@ index 36ce2eca..f0ec847d 100644
  
      struct Grid {
        int nprow, npcol, myrow, mycol, ctxt;
-@@ -172,7 +186,8 @@ namespace strumpack {
+@@ -172,7 +191,8 @@ namespace strumpack {
      // 2 * pblas_nb rows) to start on block boundaries, and it matches
      // PDTRSM only for blocks of at most pblas_nb (the default block size).
      inline bool applicable(int M, int N, int nb, int nprow, int npcol) {
@@ -40,21 +45,21 @@ index 36ce2eca..f0ec847d 100644
        if (N > nb || M <= 0 || N <= 0) return false;
        auto dnroc = [](int n, int b, int p) {
          return (double)((((n + b - 1) / b) + p - 1) / p) * (double)b;
-@@ -263,7 +278,7 @@ namespace strumpack {
+@@ -263,7 +283,7 @@ namespace strumpack {
            build_lcache(An, nb, A, lda);
            cache_->built = true;
          }
 -        const int Alcmb = 2 * pblas_nb * lcm(nprow, npcol);
-+        const int Alcmb = logical_block(nb, nprow, npcol);
++        const int Alcmb = logical_block(An, nb, nprow, npcol);
          const double* Aptr = (Anp > 0 && Anq > 0) ? A : nullptr;
          auto Ap = [&](int i, int j) { return Aptr + i + std::size_t(j) * Ald; };
          auto gemmNT = [&](int M, int K, const double* a, const double* br,
-@@ -804,7 +819,7 @@ namespace strumpack {
+@@ -804,7 +824,7 @@ namespace strumpack {
          const int nprow = g_.nprow, npcol = g_.npcol,
            myrow = g_.myrow, mycol = g_.mycol, Pc = npcol;
          if (!(nprow > 1 && npcol > 1 && npcol <= nprow)) return;
 -        const int Alcmb = 2 * pblas_nb * lcm(nprow, npcol);
-+        const int Alcmb = logical_block(nb, nprow, npcol);
++        const int Alcmb = logical_block(An, nb, nprow, npcol);
          const int Aimb1 = firstnb(An, 0, nb, nb);
          if (Aimb1 != nb) return;
          Desc d{Aimb1, Aimb1, nb, nb, 0, 0, lda};
@@ -279,7 +284,7 @@ index bd25572f..5ab582d2 100644
                 const float* a, int ia, int ja, const int *desca,
                 float* b, int ib, int jb, const int *descb, int incb);
 diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
-index 6eca13d9..48779fad 100644
+index 6eca13d9..62e84ff9 100644
 --- a/src/sparse/fronts/FrontDenseMPI.cpp
 +++ b/src/sparse/fronts/FrontDenseMPI.cpp
 @@ -32,6 +32,7 @@
@@ -319,29 +324,31 @@ index 6eca13d9..48779fad 100644
                << ", max inverted " << kmax_inv
                << ", min kept " << kmin_kept << std::endl;
      std::cout << "#   kappa_1 by decade (1e0..):";
-@@ -222,6 +236,59 @@ namespace strumpack {
+@@ -222,6 +236,66 @@ namespace strumpack {
      }
    }
  
 +#if !defined(STRUMPACK_USE_SLATE_SCALAPACK)
-+  // t = |T| s for the lower (unit diagonal) or upper triangle T of A, s
-+  // and t replicated on all processes of the grid of A
++  // t = [|L| sL; |U| sU], with L the strictly lower part of A plus the
++  // unit diagonal and U the upper triangle of A, sL, sU and t replicated
++  // on all processes of the grid of A
 +  template<typename scalar_t> static std::vector<double>
-+  abs_tri_mv(const DistributedMatrix<scalar_t>& A, UpLo ul,
-+             const std::vector<double>& s) {
-+    std::vector<double> t(A.rows(), 0.);
++  abs_tri_mv(const DistributedMatrix<scalar_t>& A,
++             const std::vector<double>& sL, const std::vector<double>& sU) {
++    const int n = A.rows();
++    std::vector<double> t(2 * std::size_t(n), 0.);
 +    for (int c=0; c<A.lcols(); c++) {
 +      const int gc = A.coll2g(c);
 +      for (int r=0; r<A.lrows(); r++) {
 +        const int gr = A.rowl2g(r);
-+        if (ul == UpLo::U ? gr <= gc : gr > gc)
-+          t[gr] += std::abs(A(r,c)) * s[gc];
++        const double a = std::abs(A(r,c));
++        if (gr > gc) t[gr] += a * sL[gc];
++        else t[n + gr] += a * sU[gc];
 +      }
 +    }
-+    if (ul == UpLo::L)
-+      for (std::size_t i=0; i<t.size(); i++)
-+        if (A.rowg2p(i) == A.prow() && A.colg2p(i) == A.pcol())
-+          t[i] += s[i];
++    for (int i=0; i<n; i++)
++      if (A.rowg2p(i) == A.prow() && A.colg2p(i) == A.pcol())
++        t[i] += sL[i];
 +    A.grid()->Comm_active().all_reduce(t, MPI_SUM);
 +    return t;
 +  }
@@ -355,7 +362,8 @@ index 6eca13d9..48779fad 100644
 +    if (max_cond < 1) return 0;
 +    const int n = F11_.rows();
 +    std::vector<double> e(n, 1.);
-+    auto sL = abs_tri_mv(F11_, UpLo::L, e), sU = abs_tri_mv(F11_, UpLo::U, e);
++    // s = [|L11| e; |U11| e], then t = [|L11^-1| sL; |U11^-1| sU]
++    auto s = abs_tri_mv(F11_, e, e);
 +    DistM_t Finv(F11_);
 +    int info = scalapack::ptrtri
 +      ('U', 'N', n, Finv.data(), Finv.I(), Finv.J(), Finv.desc());
@@ -363,10 +371,14 @@ index 6eca13d9..48779fad 100644
 +    if (!info) {
 +      scalapack::ptrtri
 +        ('L', 'U', n, Finv.data(), Finv.I(), Finv.J(), Finv.desc());
-+      auto tL = abs_tri_mv(Finv, UpLo::L, sL),
-+        tU = abs_tri_mv(Finv, UpLo::U, sU);
-+      cond = std::max(*std::max_element(tL.begin(), tL.end()),
-+                      *std::max_element(tU.begin(), tU.end()));
++      std::vector<double> sL(s.begin(), s.begin() + n),
++        sU(s.begin() + n, s.end());
++      auto t = abs_tri_mv(Finv, sL, sU);
++      // max over t, a NaN (inverse with a NaN or Inf) gives infinity
++      cond = 0.;
++      for (auto v : t)
++        if (!(v <= cond))
++          cond = std::isnan(v) ? std::numeric_limits<double>::infinity() : v;
 +    }
 +    tri_inverted_ = grid()->Comm_active().all_reduce
 +      (int(cond <= max_cond), MPI_MIN);
@@ -379,7 +391,7 @@ index 6eca13d9..48779fad 100644
    template<typename scalar_t,typename integer_t> ReturnCode
    FrontDenseMPI<scalar_t,integer_t>::partial_factorization
    (const SPOptions<scalar_t>& opts) {
-@@ -230,6 +297,7 @@ namespace strumpack {
+@@ -230,6 +304,7 @@ namespace strumpack {
      trsm_cache_[0].reset();
      trsm_cache_[1].reset();
      inverted_ = false;
@@ -387,7 +399,7 @@ index 6eca13d9..48779fad 100644
      if (!this->dim_sep() || !grid()->active())
        return err_code;
      TaskTimer pf("FrontDenseMPI_factor");
-@@ -246,7 +314,7 @@ namespace strumpack {
+@@ -246,7 +321,7 @@ namespace strumpack {
  #else
      // 1-norm of F11 for the condition number test of the selective inversion (the norm
      // and the inverse are collective: the same choice on every process of the front)
@@ -396,7 +408,7 @@ index 6eca13d9..48779fad 100644
        si_max_cond<typename RealType<scalar_t>::value_type>() >= 1.;
      if (opts.selective_inversion())
        try_si = grid()->Comm_active().all_reduce(int(try_si), MPI_MIN);
-@@ -328,6 +396,17 @@ namespace strumpack {
+@@ -328,6 +403,17 @@ namespace strumpack {
        F11_ = std::move(F11inv);
        inverted_ = true;
      }
@@ -414,7 +426,7 @@ index 6eca13d9..48779fad 100644
  #endif
      if (Comm().is_root() && opts.verbose()) {
        auto time = pf.elapsed();
-@@ -508,7 +587,11 @@ namespace strumpack {
+@@ -508,7 +594,11 @@ namespace strumpack {
      } else if (this->dim_sep()) {
        if (!laswp_plan_.ready()) laswp_plan_ = F11.laswp_plan(piv);
        b.laswp(laswp_plan_);
@@ -427,7 +439,7 @@ index 6eca13d9..48779fad 100644
          trsv(UpLo::L, Trans::N, Diag::U, F11, b);
          if (this->dim_upd())
            gemv(Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
-@@ -577,7 +660,11 @@ namespace strumpack {
+@@ -577,7 +667,11 @@ namespace strumpack {
  #else
      if (this->dim_sep()) {
        TIMER_TIME(TaskType::SOLVE_UPPER, 0, t_s);
