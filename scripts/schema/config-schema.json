@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-4",
+  "$id": "urn:palace:schema:5-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -86,7 +86,7 @@
         "ReorderElements": {
           "type": "boolean",
           "description": "Reorder mesh elements to improve cache efficiency.",
-          "default": false,
+          "default": true,
           "x-palace-advanced": true
         },
         "CleanUnusedElements": {

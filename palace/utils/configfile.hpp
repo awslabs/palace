@@ -176,7 +176,7 @@ public:
 
   // Reorder elements based on spatial location after loading the serial mesh, which can
   // potentially increase memory coherency.
-  bool reorder_elements = false;
+  bool reorder_elements = true;
 
   // Remove elements (along with any associated unattached boundary elements) from the mesh
   // which do not have any material properties specified.

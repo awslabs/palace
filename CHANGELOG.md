@@ -41,6 +41,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - `config["Model"]["ReorderElements"]` now defaults to `true`: the elements of the mesh
+    are ordered along a Hilbert curve before it is partitioned, so that each process numbers
+    its elements and unknowns in a spatially local order. With the rebalancing of
+    [PR 1130](https://github.com/awslabs/palace/pull/1130), simulations on 192 to 6144
+    processes ran 2% faster in geometric mean when nonconforming adaptive and 6% when not
+    adaptive, though the number of eigensolver and adaptive frequency sweep iterations can
+    change in either direction. Set it to `false` to keep the element order of the mesh
+    file, for example for a
+    `config["Model"]["Partitioning"]` file written for it. SchemaVer 5-0-0
+    [PR 1185](https://github.com/awslabs/palace/pull/1185).
 
 #### New Features
 
