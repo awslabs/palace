@@ -2677,6 +2677,40 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
+// Partition the elements of a nonconforming mesh with METIS on the graph of their faces,
+// conforming and nonconforming, gathered on the root: first into the nodes, then on each
+// node into its processes, so that neighboring subdomains share a node. MFEM's default
+// partition splits the sequence of refinement tree leaves into equal chunks, which
+// fragments the subdomains as the mesh is refined. Returns false if the partition fails.
+bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
+                                           mfem::Array<int> &partitioning)
+{
+  MPI_Comm comm = mesh.GetComm();
+  std::vector<idx_t> xadj, adjncy;
+  std::vector<int> rank_ne, rank_node, part;
+  if (!GatherElementGraph(mesh, xadj, adjncy, rank_ne, rank_node))
+  {
+    return false;
+  }
+  int ok = 1;
+  if (Mpi::Root(comm))
+  {
+    part = PartitionGraphOnNodes(xadj, adjncy, rank_node);
+    ok = !part.empty();
+  }
+  Mpi::Broadcast(1, &ok, 0, comm);
+  if (!ok)
+  {
+    return false;
+  }
+  std::vector<int> displs(rank_ne.size());
+  std::exclusive_scan(rank_ne.begin(), rank_ne.end(), displs.begin(), 0);
+  partitioning.SetSize(mesh.GetNE());
+  MPI_Scatterv(part.data(), rank_ne.data(), displs.data(), MPI_INT,
+               partitioning.HostWrite(), mesh.GetNE(), MPI_INT, 0, comm);
+  return true;
+}
+
 }  // namespace
 
 void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
@@ -2788,7 +2822,17 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   {
     if (mesh->Nonconforming())
     {
-      mesh->Rebalance();
+      mfem::Array<int> partitioning;
+      if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
+      {
+        mesh->Rebalance(partitioning);
+      }
+      else
+      {
+        Mpi::Warning(comm, "Could not partition the nonconforming mesh on the root, "
+                           "rebalancing it with MFEM's default partition!\n");
+        mesh->Rebalance();
+      }
     }
     else
     {
