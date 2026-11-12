@@ -1461,12 +1461,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     for (int v = 0; v < serial.GetNV(); v++)
     {
       double *point = serial.GetVertex(v);
-      const double z = point[2] - 0.45 * (point[1] - 0.5);
+      const double x = point[0], z = point[2] - 0.45 * (point[1] - 0.5);
       if (z > 0.5 + 1.0e-12)
       {
-        const double t = std::clamp((point[0] - 0.25) / 0.5, 0.0, 1.0);
-        const double s = lower_left ? 0.1 + 0.9 * t : 1.0 - 0.9 * t;
+        const double t = std::clamp((x - 0.25) / 0.5, 0.0, 1.0);
+        const double s = lower_left ? 0.02 + 0.98 * t : 1.0 - 0.98 * t;
         point[2] = 0.5 + (z - 0.5) * s + 0.45 * (point[1] - 0.5);
+      }
+      // That side's x face too, to 0.01 from the lead's long edge.
+      if (lower_left && x < 0.25 - 1.0e-12)
+      {
+        point[0] = 0.25 - (0.25 - x) * 0.04;
+      }
+      else if (!lower_left && x > 0.75 + 1.0e-12)
+      {
+        point[0] = 0.75 + (x - 0.75) * 0.04;
       }
     }
     serial.SetCurvature(2);
@@ -1485,6 +1494,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     LocalResidency(*geometry);
     CHECK(geometry->GlobalPatchCount() == placed_count);
     const auto tilted_referenced = ReferencedSet(tilted);
+    // Every rank's referenced flags (reported with the variant's line below).
+    const int model_count = static_cast<int>(tilted_referenced.size());
+    std::vector<int> all_referenced(static_cast<std::size_t>(model_count * size)),
+        all_first(static_cast<std::size_t>(model_count * size));
+    MPI_Allgather(tilted_referenced.data(), model_count, MPI_INT, all_referenced.data(),
+                  model_count, MPI_INT, Mpi::World());
+    MPI_Allgather(first_referenced.data(), model_count, MPI_INT, all_first.data(),
+                  model_count, MPI_INT, Mpi::World());
+    std::ostringstream ranks_text;
+    for (int r = 0; r < size; r++)
+    {
+      ranks_text << " r" << r << ":";
+      for (int m = 0; m < model_count; m++)
+      {
+        ranks_text << all_first[r * model_count + m] << "->"
+                   << all_referenced[r * model_count + m]
+                   << (m + 1 < model_count ? "," : "");
+      }
+    }
+    const auto tilted_record = DomainBoundaryRecordWithoutTiming(tilted);
     std::vector<int> ranks_per_model = tilted_referenced,
                      root_referenced = tilted_referenced;
     Mpi::GlobalSum(static_cast<int>(ranks_per_model.size()), ranks_per_model.data(),
@@ -1502,7 +1531,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     WARN("setupmem: the top lowered on the "
          << (lower_left ? "left" : "right") << ": " << tilted.GetPatchCount()
          << " applied, " << variant_one_nonroot << " model(s) on one non-root rank only, "
-         << variant_changed << " of " << size << " rank(s) with a changed referenced set");
+         << variant_changed << " of " << size << " rank(s) with a changed referenced set; "
+         << tilted_record["Count"] << " DomainBoundary cells; referenced (first->this)"
+         << ranks_text.str());
     one_nonroot_rank_models += variant_one_nonroot;
     changed_ranks += variant_changed;
     std::shared_ptr<const SurfaceResponseGeometry> fresh_geometry;
