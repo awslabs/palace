@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-3",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3044,7 +3044,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation. SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), STRUMPACK (with `\"STRUMPACKCompressionType\": \"None\"`), and MUMPS factor the complex-valued matrix in complex arithmetic unless `\"PCMatReal\"` or `\"DropSmallEntries\"` is `true`, otherwise the equivalent real-valued system of twice the size is factored, which needs more memory.",
           "default": false
         },
         "DropSmallEntries": {

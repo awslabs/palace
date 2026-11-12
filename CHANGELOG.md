@@ -52,6 +52,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (without
+    `"SuperLU3DCommunicator"`), STRUMPACK (without compression), and MUMPS now factor the
+    complex-valued coarse-level matrix in complex arithmetic instead of the equivalent
+    real-valued system of twice the size, which reduces the memory of the factors by about
+    40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
+    factorization differs, so results change at the level of the linear solver tolerance.
+    `"PCMatReal"` or `"DropSmallEntries"` keep the real-valued system of twice the size.
+    SchemaVer 4-3-0 [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
