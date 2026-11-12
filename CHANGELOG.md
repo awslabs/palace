@@ -278,6 +278,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
+    *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
+    (`mumps@5.3:+double+complex`). [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
