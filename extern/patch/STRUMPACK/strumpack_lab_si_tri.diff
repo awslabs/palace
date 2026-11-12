@@ -1,0 +1,458 @@
+diff --git a/src/dense/DistTrsmNarrow.hpp b/src/dense/DistTrsmNarrow.hpp
+index 36ce2eca..f0ec847d 100644
+--- a/src/dense/DistTrsmNarrow.hpp
++++ b/src/dense/DistTrsmNarrow.hpp
+@@ -47,6 +47,7 @@
+ #include <algorithm>
+ #include <deque>
+ #include <map>
++#include <cstdlib>
+ 
+ #include "BLASLAPACKWrapper.hpp"
+ #include "ScaLAPACKWrapper.hpp"
+@@ -155,6 +156,19 @@ namespace strumpack {
+       return a;
+     }
+     inline int lcm(int a, int b) { return a / gcd(a, b) * b; }
++    // rows of the logical blocks: those of PB_CptrsmB if they are a
++    // multiple of nb, otherwise enlarged so that they are
++    inline int logical_block(int nb, int nprow, int npcol) {
++      return lcm(2 * pblas_nb * lcm(nprow, npcol), nb);
++    }
++    // LAB: STRUMPACK_LAB_NARROW_ANY_NB=1 uses the narrow solve for any block
++    // size (not bitwise identical to PDTRSM unless nb <= 32 divides 64)
++    inline bool lab_any_nb() {
++      static const bool on = [] {
++        const char* e = std::getenv("STRUMPACK_LAB_NARROW_ANY_NB");
++        return e && std::atoi(e) > 0; }();
++      return on;
++    }
+ 
+     struct Grid {
+       int nprow, npcol, myrow, mycol, ctxt;
+@@ -172,7 +186,8 @@ namespace strumpack {
+     // 2 * pblas_nb rows) to start on block boundaries, and it matches
+     // PDTRSM only for blocks of at most pblas_nb (the default block size).
+     inline bool applicable(int M, int N, int nb, int nprow, int npcol) {
+-      if (nb > pblas_nb || (2 * pblas_nb) % nb) return false;
++      if (!lab_any_nb() && (nb > pblas_nb || (2 * pblas_nb) % nb))
++        return false;
+       if (N > nb || M <= 0 || N <= 0) return false;
+       auto dnroc = [](int n, int b, int p) {
+         return (double)((((n + b - 1) / b) + p - 1) / p) * (double)b;
+@@ -263,7 +278,7 @@ namespace strumpack {
+           build_lcache(An, nb, A, lda);
+           cache_->built = true;
+         }
+-        const int Alcmb = 2 * pblas_nb * lcm(nprow, npcol);
++        const int Alcmb = logical_block(nb, nprow, npcol);
+         const double* Aptr = (Anp > 0 && Anq > 0) ? A : nullptr;
+         auto Ap = [&](int i, int j) { return Aptr + i + std::size_t(j) * Ald; };
+         auto gemmNT = [&](int M, int K, const double* a, const double* br,
+@@ -804,7 +819,7 @@ namespace strumpack {
+         const int nprow = g_.nprow, npcol = g_.npcol,
+           myrow = g_.myrow, mycol = g_.mycol, Pc = npcol;
+         if (!(nprow > 1 && npcol > 1 && npcol <= nprow)) return;
+-        const int Alcmb = 2 * pblas_nb * lcm(nprow, npcol);
++        const int Alcmb = logical_block(nb, nprow, npcol);
+         const int Aimb1 = firstnb(An, 0, nb, nb);
+         if (Aimb1 != nb) return;
+         Desc d{Aimb1, Aimb1, nb, nb, 0, 0, lda};
+diff --git a/src/dense/DistributedMatrix.cpp b/src/dense/DistributedMatrix.cpp
+index 00a5b57a..7213c098 100644
+--- a/src/dense/DistributedMatrix.cpp
++++ b/src/dense/DistributedMatrix.cpp
+@@ -1262,6 +1262,20 @@ namespace strumpack {
+     STRUMPACK_FLOPS(trsm_flops(s, alpha, A, B));
+   }
+ 
++  template<typename scalar_t> void trmm
++  (Side s, UpLo u, Trans ta, Diag d, scalar_t alpha,
++   const DistributedMatrix<scalar_t>& A, DistributedMatrix<scalar_t>& B) {
++    if (!A.active()) return;
++    assert(A.rows()==A.cols());
++    assert(s!=Side::L || A.cols()==B.rows());
++    assert(s!=Side::R || A.rows()==B.cols());
++    scalapack::ptrmm
++      (char(s), char(u), char(ta), char(d), B.rows(), B.cols(),
++       alpha, A.data(), A.I(), A.J(), A.desc(),
++       B.data(), B.I(), B.J(), B.desc());
++    STRUMPACK_FLOPS(trmm_flops(s, alpha, A, B));
++  }
++
+   template<typename scalar_t> void trsv
+   (UpLo ul, Trans ta, Diag d, const DistributedMatrix<scalar_t>& A,
+    DistributedMatrix<scalar_t>& B) {
+@@ -1490,6 +1504,19 @@ namespace strumpack {
+    const DistributedMatrix<std::complex<double>>& A,
+    DistributedMatrix<std::complex<double>>& B);
+ 
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, float alpha,
++   const DistributedMatrix<float>& A, DistributedMatrix<float>& B);
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, double alpha,
++   const DistributedMatrix<double>& A, DistributedMatrix<double>& B);
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, std::complex<float> alpha,
++   const DistributedMatrix<std::complex<float>>& A, DistributedMatrix<std::complex<float>>& B);
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, std::complex<double> alpha,
++   const DistributedMatrix<std::complex<double>>& A, DistributedMatrix<std::complex<double>>& B);
++
+   template void trsv
+   (UpLo ul, Trans ta, Diag d, const DistributedMatrix<float>& A,
+    DistributedMatrix<float>& B);
+diff --git a/src/dense/DistributedMatrix.hpp b/src/dense/DistributedMatrix.hpp
+index 292c6814..43e449a7 100644
+--- a/src/dense/DistributedMatrix.hpp
++++ b/src/dense/DistributedMatrix.hpp
+@@ -877,6 +877,15 @@ namespace strumpack {
+       a.npactives();
+   }
+ 
++  template<typename scalar_t> long long int
++  trmm_flops(Side s, scalar_t alpha, const DistributedMatrix<scalar_t>& a,
++             const DistributedMatrix<scalar_t>& b) {
++    if (!a.active()) return 0;
++    return (is_complex<scalar_t>() ? 4:1) *
++      blas::trmm_flops(b.rows(), b.cols(), alpha, char(s)) /
++      a.npactives();
++  }
++
+   template<typename scalar_t> long long int
+   gemm_flops(Trans ta, Trans tb, scalar_t alpha,
+              const DistributedMatrix<scalar_t>& a,
+@@ -935,6 +944,10 @@ namespace strumpack {
+   (Side s, UpLo u, Trans ta, Diag d, scalar_t alpha,
+    const DistributedMatrix<scalar_t>& A, DistributedMatrix<scalar_t>& B);
+ 
++  template<typename scalar_t> void trmm
++  (Side s, UpLo u, Trans ta, Diag d, scalar_t alpha,
++   const DistributedMatrix<scalar_t>& A, DistributedMatrix<scalar_t>& B);
++
+   template<typename scalar_t> void trsv
+   (UpLo ul, Trans ta, Diag d, const DistributedMatrix<scalar_t>& A,
+    DistributedMatrix<scalar_t>& B);
+diff --git a/src/dense/ScaLAPACKWrapper.cpp b/src/dense/ScaLAPACKWrapper.cpp
+index 73969790..a075598e 100644
+--- a/src/dense/ScaLAPACKWrapper.cpp
++++ b/src/dense/ScaLAPACKWrapper.cpp
+@@ -289,6 +289,31 @@ namespace strumpack {
+          const std::complex<double> *, int *, int *, const int *,
+          std::complex<double> *, int *, int *, const int *);
+ 
++      void STRUMPACK_FC_GLOBAL(pstrmm,PSTRMM)
++        (char *, char *, char *, char *, int *, int *, float *,
++         const float *, int *, int *, const int *,
++         float *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pdtrmm,PDTRMM)
++        (char *, char *, char *, char *, int *, int *, double *,
++         const double *, int *, int *, const int *,
++         double *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pctrmm,PCTRMM)
++        (char *, char *, char *, char *, int *, int *, std::complex<float> *,
++         const std::complex<float> *, int *, int *, const int *,
++         std::complex<float> *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pztrmm,PZTRMM)
++        (char *, char *, char *, char *, int *, int *, std::complex<double> *,
++         const std::complex<double> *, int *, int *, const int *,
++         std::complex<double> *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pstrtri,PSTRTRI)
++        (char *, char *, int *, float *, int *, int *, const int *, int *);
++      void STRUMPACK_FC_GLOBAL(pdtrtri,PDTRTRI)
++        (char *, char *, int *, double *, int *, int *, const int *, int *);
++      void STRUMPACK_FC_GLOBAL(pctrtri,PCTRTRI)
++        (char *, char *, int *, std::complex<float> *, int *, int *, const int *, int *);
++      void STRUMPACK_FC_GLOBAL(pztrtri,PZTRTRI)
++        (char *, char *, int *, std::complex<double> *, int *, int *, const int *, int *);
++
+       void STRUMPACK_FC_GLOBAL(pstrsv,PSTRSV)
+         (char *, char *, char *, int *,
+          const float *, int *, int *, const int *,
+@@ -983,6 +1008,71 @@ namespace strumpack {
+          a, &ia, &ja, desca, b, &ib, &jb, descb);
+     }
+ 
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     float alpha, const float* a, int ia, int ja, const int *desca,
++     float* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pstrmm,PSTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     double alpha, const double* a, int ia, int ja, const int *desca,
++     double* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pdtrmm,PDTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     std::complex<float> alpha, const std::complex<float>* a, int ia, int ja, const int *desca,
++     std::complex<float>* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pctrmm,PCTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     std::complex<double> alpha, const std::complex<double>* a, int ia, int ja, const int *desca,
++     std::complex<double>* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pztrmm,PZTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    int ptrtri
++    (char uplo, char diag, int n, float* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pstrtri,PSTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++    int ptrtri
++    (char uplo, char diag, int n, double* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pdtrtri,PDTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++    int ptrtri
++    (char uplo, char diag, int n, std::complex<float>* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pctrtri,PCTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++    int ptrtri
++    (char uplo, char diag, int n, std::complex<double>* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pztrtri,PZTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++
+     void ptrsv
+     (char uplo, char trans, char diag, int m,
+      const float* a, int ia, int ja, const int *desca,
+diff --git a/src/dense/ScaLAPACKWrapper.hpp b/src/dense/ScaLAPACKWrapper.hpp
+index bd25572f..5ab582d2 100644
+--- a/src/dense/ScaLAPACKWrapper.hpp
++++ b/src/dense/ScaLAPACKWrapper.hpp
+@@ -274,6 +274,31 @@ namespace strumpack {
+                int ia, int ja, const int *desca,
+                std::complex<double>* b, int ib, int jb, const int *descb);
+ 
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               float alpha, const float* a, int ia, int ja,
++               const int *desca, float* b, int ib, int jb,
++               const int *descb);
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               double alpha, const double* a, int ia, int ja,
++               const int *desca, double* b, int ib, int jb,
++               const int *descb);
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               std::complex<float> alpha, const std::complex<float>* a, int ia, int ja,
++               const int *desca, std::complex<float>* b, int ib, int jb,
++               const int *descb);
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               std::complex<double> alpha, const std::complex<double>* a, int ia, int ja,
++               const int *desca, std::complex<double>* b, int ib, int jb,
++               const int *descb);
++    int ptrtri(char uplo, char diag, int n, float* a, int ia, int ja,
++               const int *desca);
++    int ptrtri(char uplo, char diag, int n, double* a, int ia, int ja,
++               const int *desca);
++    int ptrtri(char uplo, char diag, int n, std::complex<float>* a, int ia, int ja,
++               const int *desca);
++    int ptrtri(char uplo, char diag, int n, std::complex<double>* a, int ia, int ja,
++               const int *desca);
++
+     void ptrsv(char uplo, char trans, char diag, int m,
+                const float* a, int ia, int ja, const int *desca,
+                float* b, int ib, int jb, const int *descb, int incb);
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index 6eca13d9..48779fad 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -32,6 +32,7 @@
+ #include <limits>
+ #include <cmath>
+ #include <cstdlib>
++#include <algorithm>
+ 
+ #include <type_traits>
+ #include <memory>
+@@ -165,6 +166,17 @@ namespace strumpack {
+       return e ? std::atof(e) :
+         1e-5 / (0.5 * double(std::numeric_limits<real_t>::epsilon()));
+     }
++    // LAB: STRUMPACK_SI_TRI=1 inverts the triangular factors L11, U11
++    // instead of F11, kept only if || |T^-1| |T| ||_inf <= STRUMPACK_SI_TRI_MAX_COND
++    // (default 1e3) for both (upstream candidate; see the lab notes)
++    bool si_tri() {
++      const char* e = std::getenv("STRUMPACK_SI_TRI");
++      return e && std::atoi(e) > 0;
++    }
++    double si_tri_max_cond() {
++      const char* e = std::getenv("STRUMPACK_SI_TRI_MAX_COND");
++      return e ? std::atof(e) : 1e3;
++    }
+     bool si_verbose() {
+       const char* e = std::getenv("STRUMPACK_SI_VERBOSE");
+       return e && std::atoi(e) > 0;
+@@ -205,7 +217,9 @@ namespace strumpack {
+     std::cout << "# STRUMPACK selective inversion: " << ninv << " of " << nf
+               << " distributed fronts inverted (" << sep_inv << " of " << sep_all
+               << " separator rows), kappa_1 max " << kmax << ", threshold "
+-              << si_max_cond<typename RealType<scalar_t>::value_type>()
++              << (si_tri() ? si_tri_max_cond() :
++                  si_max_cond<typename RealType<scalar_t>::value_type>())
++              << (si_tri() ? " (triangular factors)" : "")
+               << ", max inverted " << kmax_inv
+               << ", min kept " << kmin_kept << std::endl;
+     std::cout << "#   kappa_1 by decade (1e0..):";
+@@ -222,6 +236,59 @@ namespace strumpack {
+     }
+   }
+ 
++#if !defined(STRUMPACK_USE_SLATE_SCALAPACK)
++  // t = |T| s for the lower (unit diagonal) or upper triangle T of A, s
++  // and t replicated on all processes of the grid of A
++  template<typename scalar_t> static std::vector<double>
++  abs_tri_mv(const DistributedMatrix<scalar_t>& A, UpLo ul,
++             const std::vector<double>& s) {
++    std::vector<double> t(A.rows(), 0.);
++    for (int c=0; c<A.lcols(); c++) {
++      const int gc = A.coll2g(c);
++      for (int r=0; r<A.lrows(); r++) {
++        const int gr = A.rowl2g(r);
++        if (ul == UpLo::U ? gr <= gc : gr > gc)
++          t[gr] += std::abs(A(r,c)) * s[gc];
++      }
++    }
++    if (ul == UpLo::L)
++      for (std::size_t i=0; i<t.size(); i++)
++        if (A.rowg2p(i) == A.prow() && A.colg2p(i) == A.pcol())
++          t[i] += s[i];
++    A.grid()->Comm_active().all_reduce(t, MPI_SUM);
++    return t;
++  }
++
++  // LAB (STRUMPACK_SI_TRI): L11 <- L11^{-1}, U11 <- U11^{-1}, computed in a
++  // copy of F11 and kept only if || |T^-1| |T| ||_inf <= max_cond for both
++  template<typename scalar_t,typename integer_t> long long
++  FrontDenseMPI<scalar_t,integer_t>::invert_factors
++  (double max_cond, double& cond) {
++    cond = 0.;
++    if (max_cond < 1) return 0;
++    const int n = F11_.rows();
++    std::vector<double> e(n, 1.);
++    auto sL = abs_tri_mv(F11_, UpLo::L, e), sU = abs_tri_mv(F11_, UpLo::U, e);
++    DistM_t Finv(F11_);
++    int info = scalapack::ptrtri
++      ('U', 'N', n, Finv.data(), Finv.I(), Finv.J(), Finv.desc());
++    cond = std::numeric_limits<double>::infinity();
++    if (!info) {
++      scalapack::ptrtri
++        ('L', 'U', n, Finv.data(), Finv.I(), Finv.J(), Finv.desc());
++      auto tL = abs_tri_mv(Finv, UpLo::L, sL),
++        tU = abs_tri_mv(Finv, UpLo::U, sU);
++      cond = std::max(*std::max_element(tL.begin(), tL.end()),
++                      *std::max_element(tU.begin(), tU.end()));
++    }
++    tri_inverted_ = grid()->Comm_active().all_reduce
++      (int(cond <= max_cond), MPI_MIN);
++    if (tri_inverted_) F11_ = std::move(Finv);
++    return (is_complex<scalar_t>() ? 4 : 1) * 2 * (long long)n * n * n / 3 /
++      F11_.npactives();
++  }
++#endif
++
+   template<typename scalar_t,typename integer_t> ReturnCode
+   FrontDenseMPI<scalar_t,integer_t>::partial_factorization
+   (const SPOptions<scalar_t>& opts) {
+@@ -230,6 +297,7 @@ namespace strumpack {
+     trsm_cache_[0].reset();
+     trsm_cache_[1].reset();
+     inverted_ = false;
++    tri_inverted_ = false;
+     if (!this->dim_sep() || !grid()->active())
+       return err_code;
+     TaskTimer pf("FrontDenseMPI_factor");
+@@ -246,7 +314,7 @@ namespace strumpack {
+ #else
+     // 1-norm of F11 for the condition number test of the selective inversion (the norm
+     // and the inverse are collective: the same choice on every process of the front)
+-    bool try_si = opts.selective_inversion() &&
++    bool try_si = opts.selective_inversion() && !si_tri() &&
+       si_max_cond<typename RealType<scalar_t>::value_type>() >= 1.;
+     if (opts.selective_inversion())
+       try_si = grid()->Comm_active().all_reduce(int(try_si), MPI_MIN);
+@@ -328,6 +396,17 @@ namespace strumpack {
+       F11_ = std::move(F11inv);
+       inverted_ = true;
+     }
++    if (opts.selective_inversion() && si_tri() &&
++        err_code == ReturnCode::SUCCESS) {
++      double cond = 0.;
++      flops += invert_factors(si_tri_max_cond(), cond);
++      if (si_verbose() && Comm().is_root()) {
++        double r[6] = {double(etree_level_), double(Comm().size()),
++                       double(this->dim_sep()), double(this->dim_upd()), cond,
++                       tri_inverted_ ? 1. : 0.};
++        si_records.insert(si_records.end(), r, r + 6);
++      }
++    }
+ #endif
+     if (Comm().is_root() && opts.verbose()) {
+       auto time = pf.elapsed();
+@@ -508,7 +587,11 @@ namespace strumpack {
+     } else if (this->dim_sep()) {
+       if (!laswp_plan_.ready()) laswp_plan_ = F11.laswp_plan(piv);
+       b.laswp(laswp_plan_);
+-      if (b.cols() == 1) {
++      if (tri_inverted_) {
++        trmm(Side::L, UpLo::L, Trans::N, Diag::U, scalar_t(1.), F11, b);
++        if (this->dim_upd())
++          gemm(Trans::N, Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
++      } else if (b.cols() == 1) {
+         trsv(UpLo::L, Trans::N, Diag::U, F11, b);
+         if (this->dim_upd())
+           gemv(Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
+@@ -577,7 +660,11 @@ namespace strumpack {
+ #else
+     if (this->dim_sep()) {
+       TIMER_TIME(TaskType::SOLVE_UPPER, 0, t_s);
+-      if (y.cols() == 1) {
++      if (tri_inverted_) {
++        if (this->dim_upd())
++          gemm(Trans::N, Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
++        trmm(Side::L, UpLo::U, Trans::N, Diag::N, scalar_t(1.), F11, y);
++      } else if (y.cols() == 1) {
+         if (this->dim_upd())
+           gemv(Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
+         if (!inverted_) trsv(UpLo::U, Trans::N, Diag::N, F11, y);
+diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
+index 6e85b93c..a5e858e0 100644
+--- a/src/sparse/fronts/FrontDenseMPI.hpp
++++ b/src/sparse/fronts/FrontDenseMPI.hpp
+@@ -130,6 +130,11 @@ namespace strumpack {
+     // F11, F12, F21 hold F11^{-1}, F11^{-1} F12, F21 F11^{-1}
+     // (selective inversion, see SPOptions::enable_selective_inversion)
+     bool inverted_ = false;
++    // LAB (STRUMPACK_SI_TRI): F11 holds L11^{-1} (strictly lower) and U11^{-1}
++    bool tri_inverted_ = false;
++#if !defined(STRUMPACK_USE_SLATE_SCALAPACK)
++    long long invert_factors(double max_cond, double& cond);
++#endif
+     void si_report() const;
+     int etree_level_ = 0; // for the selective inversion summary
+ 

@@ -122,7 +122,11 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // selects candidate changes without compression: 1 FACTOR_MEMORY proportional mapping,
   // 2 cached solve tree dimensions, 4 front cost 1000 in the FACTOR_MEMORY mapping, 8
   // min-max process split, 16 small-P dynamic programming split, 32 selective inversion,
-  // 64 small right-hand side solve kernels.
+  // 64 small right-hand side solve kernels, 128 selective inversion of the triangular
+  // factors (implies 32), 256 narrow TRSM for any block size, 512 / 1024 triangular
+  // inversion condition limit 1e4 / unlimited, 2048 BLACS contexts on demand, 4096 memory
+  // parts A-C (interval table, sparse equilibration, no permutation copy), 8192 node-shared
+  // permutation.
   if (compression == SparseCompression::NONE && butterfly_l >= 1000)
   {
     const int flags = butterfly_l - 1000;
@@ -146,6 +150,36 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     {
       setenv("STRUMPACK_LAB_KERNELS", "1", 1);
     }
+    if (flags & 128)
+    {
+      setenv("STRUMPACK_SI_TRI", "1", 1);
+    }
+    if (flags & 256)
+    {
+      setenv("STRUMPACK_LAB_NARROW_ANY_NB", "1", 1);
+    }
+    if (flags & 512)
+    {
+      setenv("STRUMPACK_SI_TRI_MAX_COND", "1e4", 1);
+    }
+    if (flags & 1024)
+    {
+      setenv("STRUMPACK_SI_TRI_MAX_COND", "1e300", 1);
+    }
+    if (flags & 2048)
+    {
+      setenv("STRUMPACK_LAB_BLACS_LAZY", "1", 1);
+    }
+    if (flags & 4096)
+    {
+      setenv("STRUMPACK_LAB_MEM_INTERVALS", "1", 1);
+      setenv("STRUMPACK_LAB_MEM_EQUIL", "1", 1);
+      setenv("STRUMPACK_LAB_MEM_NOPERMCOPY", "1", 1);
+    }
+    if (flags & 8192)
+    {
+      setenv("STRUMPACK_LAB_MEM_SHARED_PERM", "1", 1);
+    }
     if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
     {
       if (flags & 1)
@@ -154,7 +188,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
             strumpack::ProportionalMapping::FACTOR_MEMORY);
       }
 #if defined(STRUMPACK_HAS_SELECTIVE_INVERSION)
-      if (flags & 32)
+      if (flags & (32 | 128))
       {
         this->solver_->options().enable_selective_inversion();
         setenv("STRUMPACK_SI_VERBOSE", "1", 1);

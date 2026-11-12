@@ -1,0 +1,304 @@
+diff --git a/src/dense/BLACSGrid.hpp b/src/dense/BLACSGrid.hpp
+index fa735363..02cc6db6 100644
+--- a/src/dense/BLACSGrid.hpp
++++ b/src/dense/BLACSGrid.hpp
+@@ -105,6 +105,16 @@ namespace strumpack {
+      */
+     BLACSGrid(const MPIComm& comm, int P) : comm_(comm), P_(P) { setup(); }
+ 
++    /**
++     * As BLACSGrid(const MPIComm& comm, int P). If lazy is true, the
++     * BLACS contexts with all processes (ctxt_all) and for the
++     * transposed layout are only created when they are first used
++     * (ctxt_all(), transpose_inplace()), which must then happen on
++     * all processes of the grid. Each context costs 4 communicators.
++     */
++    BLACSGrid(const MPIComm& comm, int P, bool lazy)
++      : comm_(comm), P_(P), lazy_(lazy) { setup(); }
++
+     /**
+      * Construct a BLACSGrid from an MPIComm object. The MPIComm will
+      * be moved. The BLACS grid will be created. This operation is
+@@ -162,6 +172,7 @@ namespace strumpack {
+       //std::cout << "WARNING copying a BLACS grid is expensive!!" << std::endl;
+       comm_ = grid.Comm();
+       P_ = grid.P();
++      lazy_ = grid.lazy_;
+       setup();
+       return *this;
+     }
+@@ -174,7 +185,9 @@ namespace strumpack {
+      */
+     BLACSGrid& operator=(BLACSGrid&& grid) {
+       comm_ = std::move(grid.comm_);
++      active_comm_ = std::move(grid.active_comm_);
+       P_ = grid.P_;
++      lazy_ = grid.lazy_;
+       ctxt_ = grid.ctxt_;
+       ctxt_all_ = grid.ctxt_all_;
+       ctxt_T_ = grid.ctxt_T_;
+@@ -217,7 +230,13 @@ namespace strumpack {
+      *
+      * This can be used as the last argument for a call to P*DGEMR2d.
+      */
+-    int ctxt_all() const { return ctxt_all_; }
++    int ctxt_all() const {
++      if (ctxt_all_ == -1 && lazy_ && !comm_.is_null()) {
++        ctxt_all_ = scalapack::Csys2blacs_handle(comm_.comm());
++        scalapack::Cblacs_gridinit(&ctxt_all_, "R", 1, P_);
++      }
++      return ctxt_all_;
++    }
+ 
+     /**
+      * Number of processor rows in the grid, -1 if this rank is idle
+@@ -303,8 +322,9 @@ namespace strumpack {
+   private:
+     MPIComm comm_;
+     int P_ = -1;
++    bool lazy_ = false;
+     int ctxt_ = -1;
+-    int ctxt_all_ = -1;
++    mutable int ctxt_all_ = -1;
+     int ctxt_T_ = -1;
+     int nprows_ = -1;
+     int npcols_ = -1;
+@@ -324,23 +344,31 @@ namespace strumpack {
+           if (comm_.rank() < active_procs) {
+             ctxt_ = scalapack::Csys2blacs_handle(active_comm_->comm());
+             scalapack::Cblacs_gridinit(&ctxt_, "C", nprows_, npcols_);
+-            ctxt_T_ = scalapack::Csys2blacs_handle(active_comm_->comm());
+-            scalapack::Cblacs_gridinit(&ctxt_T_, "R", npcols_, nprows_);
+-          } else ctxt_ = ctxt_T_ = -1;
++          } else ctxt_ = -1;
+         } else {
+           ctxt_ = scalapack::Csys2blacs_handle(comm_.comm());
+           scalapack::Cblacs_gridinit(&ctxt_, "C", nprows_, npcols_);
+-          ctxt_T_ = scalapack::Csys2blacs_handle(comm_.comm());
+-          scalapack::Cblacs_gridinit(&ctxt_T_, "R", npcols_, nprows_);
+         }
+-        ctxt_all_ = scalapack::Csys2blacs_handle(comm_.comm());
+-        scalapack::Cblacs_gridinit(&ctxt_all_, "R", 1, P_);
++        ctxt_T_ = ctxt_all_ = -1;
++        if (!lazy_) {
++          setup_T();
++          ctxt_all_ = scalapack::Csys2blacs_handle(comm_.comm());
++          scalapack::Cblacs_gridinit(&ctxt_all_, "R", 1, P_);
++        }
+         int dummy1, dummy2;
+         scalapack::Cblacs_gridinfo(ctxt_, &dummy1, &dummy2, &prow_, &pcol_);
+       }
+     }
+ 
++    // context of the transposed layout, on the active processes
++    void setup_T() {
++      if (ctxt_ == -1 || ctxt_T_ != -1) return;
++      ctxt_T_ = scalapack::Csys2blacs_handle(Comm_active().comm());
++      scalapack::Cblacs_gridinit(&ctxt_T_, "R", npcols_, nprows_);
++    }
++
+     void transpose_inplace() {
++      if (lazy_) setup_T();
+       std::swap(ctxt_, ctxt_T_);
+       std::swap(nprows_, npcols_);
+       std::swap(prow_, pcol_);
+diff --git a/src/sparse/SeparatorTree.cpp b/src/sparse/SeparatorTree.cpp
+index 746159b4..44326ed4 100644
+--- a/src/sparse/SeparatorTree.cpp
++++ b/src/sparse/SeparatorTree.cpp
+@@ -650,8 +650,9 @@ namespace strumpack {
+       if (subsize[node] < k) {
+         integer_t id = out.size();
+         out.emplace_back(0, pa_out, -1, -1);      // patched below
++        const integer_t cum0 = cum;
+         append_subtree(node);
+-        out[id].sep_end = cum;
++        out[id].sep_end = cum - cum0;             // size, see below
+         return id;
+       }
+       // Reserve this front; we fill its children and separator after we
+@@ -697,6 +698,7 @@ namespace strumpack {
+       // first so columns stay increasing/contiguous with the children).
+       std::sort(chain_nodes.begin(), chain_nodes.end(),
+                 [&off](integer_t a, integer_t b){ return off[a] < off[b]; });
++      const integer_t cum0 = cum;
+       for (integer_t cn : chain_nodes) append_cols(cn);
+       // Wire children: a front has 0 or 2 children; if >2, join with empty
+       // separators (left-deep) to preserve the invariant.
+@@ -705,7 +707,7 @@ namespace strumpack {
+         // single child: pair it with an empty leaf to keep 0-or-2.  Insert
+         // an empty leaf child before it in column order.
+         integer_t eid = out.size();
+-        out.emplace_back(cum, id, -1, -1);        // empty leaf (size 0)
++        out.emplace_back(0, id, -1, -1);          // empty leaf (size 0)
+         nl = eid; nr = kid_out[0];
+       } else if (kid_out.size() == 2) {
+         nl = kid_out[0]; nr = kid_out[1];
+@@ -713,7 +715,7 @@ namespace strumpack {
+         integer_t acc = kid_out[0];
+         for (std::size_t j=1; j+1<kid_out.size(); j++) {
+           integer_t jid = out.size();
+-          out.emplace_back(cum, id, acc, kid_out[j]); // empty joiner
++          out.emplace_back(0, id, acc, kid_out[j]); // empty joiner
+           out[acc].pa = jid; out[kid_out[j]].pa = jid;
+           acc = jid;
+         }
+@@ -722,27 +724,45 @@ namespace strumpack {
+       out[id].lch = nl; out[id].rch = nr;
+       if (nl != -1) out[nl].pa = id;
+       if (nr != -1) out[nr].pa = id;
+-      out[id].sep_end = cum;
++      out[id].sep_end = cum - cum0;               // size, see below
+       return id;
+     };
+     integer_t root_out = emit(root, -1);
+     out[root_out].pa = -1;
+ 
+     // The DFS reserves a parent front BEFORE its children, so front IDs are
+-    // in pre-order while columns/sep_end are already in postorder.  Renumber
+-    // fronts into postorder (children before parents) by sorting on sep_end.
++    // in pre-order, while the columns were appended in the postorder of the
++    // output tree (children left to right, then the front).  Renumber the
++    // fronts in that postorder and accumulate their sizes (held in sep_end
++    // so far).  Sorting on the end columns is ambiguous for the empty
++    // fronts (empty joiners and leaves, empty separators): a front without
++    // columns of its own would come before a child ending at the same
++    // column, and take over the child's columns.
+     integer_t no = out.size();
+-    std::vector<integer_t> order(no);
+-    for (integer_t i=0; i<no; i++) order[i] = i;
+-    std::stable_sort(order.begin(), order.end(),
+-                     [&out](integer_t a, integer_t b){
+-                       return out[a].sep_end < out[b].sep_end; });
+-    std::vector<integer_t> nid(no);
+-    for (integer_t i=0; i<no; i++) nid[order[i]] = i;
++    std::vector<integer_t> nid(no), order;
++    order.reserve(no);
++    {
++      std::vector<std::pair<integer_t,int>> st;
++      st.emplace_back(root_out, 0);
++      while (!st.empty()) {
++        integer_t n = st.back().first;
++        int state = st.back().second++;
++        integer_t c = (state == 0) ? out[n].lch : (state == 1) ? out[n].rch : -1;
++        if (state < 2) {
++          if (c != -1) st.emplace_back(c, 0);
++        } else {
++          nid[n] = order.size();
++          order.push_back(n);
++          st.pop_back();
++        }
++      }
++    }
+     std::vector<Separator<integer_t>> res; res.reserve(no);
++    integer_t end = 0;
+     for (integer_t i=0; i<no; i++) {
+       auto& s = out[order[i]];
+-      res.emplace_back(s.sep_end,
++      end += s.sep_end;
++      res.emplace_back(end,
+                        s.pa  == -1 ? -1 : nid[s.pa],
+                        s.lch == -1 ? -1 : nid[s.lch],
+                        s.rch == -1 ? -1 : nid[s.rch]);
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index 6eca13d9..366ef4b0 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -46,9 +46,9 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t>
+   FrontDenseMPI<scalar_t,integer_t>::FrontDenseMPI
+   (integer_t sep, integer_t sep_begin, integer_t sep_end,
+-   std::vector<integer_t>& upd, const MPIComm& comm, int P)
++   std::vector<integer_t>& upd, const MPIComm& comm, int P, bool lazy_grid)
+     : FrontMPI<scalar_t,integer_t>
+-    (sep, sep_begin, sep_end, upd, comm, P) {
++    (sep, sep_begin, sep_end, upd, comm, P, lazy_grid) {
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
+index 6e85b93c..9a733a45 100644
+--- a/src/sparse/fronts/FrontDenseMPI.hpp
++++ b/src/sparse/fronts/FrontDenseMPI.hpp
+@@ -63,7 +63,7 @@ namespace strumpack {
+     FrontDenseMPI(integer_t sep,
+                   integer_t sep_begin, integer_t sep_end,
+                   std::vector<integer_t>& upd,
+-                  const MPIComm& comm, int P);
++                  const MPIComm& comm, int P, bool lazy_grid=false);
+     FrontDenseMPI(const FDMPI_t&) = delete;
+     FrontDenseMPI& operator=(FDMPI_t const&) = delete;
+ 
+diff --git a/src/sparse/fronts/FrontFactory.cpp b/src/sparse/fronts/FrontFactory.cpp
+index 269e9ec2..b330e5be 100644
+--- a/src/sparse/fronts/FrontFactory.cpp
++++ b/src/sparse/fronts/FrontFactory.cpp
+@@ -28,6 +28,7 @@
+  */
+ #include <iostream>
+ #include <algorithm>
++#include <cstdlib>
+ 
+ #include "FrontFactory.hpp"
+ 
+@@ -286,8 +287,16 @@ namespace strumpack {
+     };
+     // (NONE, LOSSLESS, LOSSY or not compiled with HODLR)
+     if (!front) {
++      // without compression only the context of the front's own layout is
++      // used: the other two (4 communicators each) are created on demand
++      // LAB: only with STRUMPACK_LAB_BLACS_LAZY=1
++      static const bool lab_blacs_lazy = [] {
++        const char* e = std::getenv("STRUMPACK_LAB_BLACS_LAZY");
++        return e && *e && std::atoi(e);
++      }();
+       front = std::make_unique<FrontDenseMPI<scalar_t,integer_t>>
+-        (s, sbegin, send, upd, comm, P);
++        (s, sbegin, send, upd, comm, P,
++         lab_blacs_lazy && opts.compression() == CompressionType::NONE);
+       if (root) fc.dense++;
+     }
+     return front;
+diff --git a/src/sparse/fronts/FrontMPI.cpp b/src/sparse/fronts/FrontMPI.cpp
+index 600779e5..bc332d71 100644
+--- a/src/sparse/fronts/FrontMPI.cpp
++++ b/src/sparse/fronts/FrontMPI.cpp
+@@ -36,9 +36,9 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t>
+   FrontMPI<scalar_t,integer_t>::FrontMPI
+   (integer_t sep, integer_t sep_begin, integer_t sep_end,
+-   std::vector<integer_t>& upd, const MPIComm& comm, int P)
++   std::vector<integer_t>& upd, const MPIComm& comm, int P, bool lazy_grid)
+     : F_t(nullptr, nullptr, sep, sep_begin, sep_end, upd),
+-      blacs_grid_(comm, P) {
++      blacs_grid_(comm, P, lazy_grid) {
+   }
+ 
+   template<typename scalar_t,typename integer_t> integer_t
+diff --git a/src/sparse/fronts/FrontMPI.hpp b/src/sparse/fronts/FrontMPI.hpp
+index 8f548d44..192274af 100644
+--- a/src/sparse/fronts/FrontMPI.hpp
++++ b/src/sparse/fronts/FrontMPI.hpp
+@@ -59,7 +59,7 @@ namespace strumpack {
+   public:
+     FrontMPI(integer_t sep, integer_t sep_begin,
+              integer_t sep_end, std::vector<integer_t>& upd,
+-             const MPIComm& comm, int P);
++             const MPIComm& comm, int P, bool lazy_grid=false);
+ 
+     FrontMPI(const FrontMPI&) = delete;
+     FrontMPI& operator=(FrontMPI const&) = delete;
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
+index ff3b03a2..052b33fa 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -225,6 +225,9 @@ namespace strumpack {
+         (Aseq->ptr(), Aseq->ind(), perm_, iperm_);
+       Aseq.reset();
+     }
++    // build_sep_tree_from_perm changes the permutation (postorder of
++    // the elimination tree), on the root only
++    comm_->broadcast(perm_);
+     auto rank = comm_->rank();
+     auto P = comm_->size();
+     integer_t nbsep;
