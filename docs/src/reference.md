@@ -1986,7 +1986,21 @@ the electrostatic path (fixed trace and fixed flux on the raw field, self-consis
 the corrected field); that share is reported per feature type in the Maxwell
 `surface-response-uncovered-energy.csv`, the electrostatic table's columns with the mode
 `m` (or `f (GHz)` for a driven solve) and `exc` in place of `source`, written only when
-something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. The
+something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. With
+`"Diagnostics": {"UncoveredFeatureEnergy": true}` (off by default; Maxwell drivers only,
+refused on the electrostatic path) the same raw within-`R` energy is also written per FEATURE
+to `surface-response-uncovered-feature-energy.csv`: rows `m` (or `f (GHz)`), `exc`, `type`
+(the feature type of the uncovered table), `features` (the identification feature id whose
+uncovered portions hold the nearest perimeter foot; where portions of several features of
+one type cover the same perimeter piece, their ids joined by `+`), `portions`, `length (m)`
+and the bounding box `x min (m)` .. `z max (m)` of those portions, then `uncovered raw
+energy[k] (J)` per target interface, raw field only (the energies of the uncovered table's
+`evaluation` 0 and 1 rows). Per mode, type and interface the rows sum to the uncovered
+table's row up to the quadrature round-off; the feature id is the one of the requirements
+manifest (`--surface-response-preflight`) of the same configuration, so a feature row maps
+to its key (`Hash`). The partition costs one quadrature pass per target interface and
+measurement and keeps only the uncovered portions (already held for the uncovered table)
+and one reduced vector per measurement; every other output is unchanged. The
 Maxwell correction also writes `surface-response-model-energy.csv` (decisions 845 / 846):
 the electrostatic driver's column set exactly and in order as a strict prefix — `source`,
 `evaluation`, `model`, `patch count`, `patch weight`, `domain correction (J)` and
