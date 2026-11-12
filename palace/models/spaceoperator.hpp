@@ -511,6 +511,17 @@ public:
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);
 
+  // The driven system operator A = K + iω C - ω² (Mr + i Mi) + A2(ω), with
+  // A2(ω) = GetExtraSystemOperator(ω), applied through the finest level of
+  // P = GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω), which assembles the same
+  // terms, plus the matrix-free terms of A2. It refers to P, which must outlive it. Returns
+  // nullptr, at every ω, when the finest level can be a different matrix (real-valued,
+  // shifted, or for AMS and BoomerAMG, which flip the sign of the second-order absorbing
+  // boundary term) or is the assembled coarse matrix (a single level). Then use
+  // GetSystemMatrix.
+  std::unique_ptr<ComplexOperator> GetSystemOperator(double omega,
+                                                     const ComplexOperator &P);
+
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {

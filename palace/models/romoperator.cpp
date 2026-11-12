@@ -13,6 +13,7 @@
 #include <memory>
 #include <numbers>
 #include <numeric>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -325,26 +326,6 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
     m--;
   }
   q = svd.matrixV().col(m);
-}
-
-template <typename VecType>
-inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
-                                   const VecType &y, ComplexVector &u)
-{
-  u = 0.0;
-  for (std::size_t j = 0; j < n; j += 2)
-  {
-    if (j + 1 < n)
-    {
-      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());
-      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());
-    }
-    else
-    {
-      linalg::AXPY(y(j).real(), V[j], u.Real());
-      linalg::AXPY(y(j).imag(), V[j], u.Imag());
-    }
-  }
 }
 
 }  // namespace
@@ -973,16 +954,23 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   SetExcitationIndex(excitation_idx);
 
   // Compute HDM solution at the given frequency. The sparse A2 is stored as a member for
-  // PROM projection. The full frequency-dependent operator (A2 + low-rank Floquet DtN) is
-  // built locally for the HDM system matrix.
+  // PROM projection. The HDM system operator is applied through the preconditioner (see
+  // SpaceOperator::GetSystemOperator), or else built locally with the full
+  // frequency-dependent operator (A2 + low-rank Floquet DtN). A refers to P and A2_full,
+  // so both must outlive it.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2_full.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
+  std::unique_ptr<ComplexOperator> A2_full;
+  auto A = space_op.GetSystemOperator(omega, *P);
+  if (!A)
+  {
+    A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                 std::complex<double>(-omega * omega, 0.0), K.get(),
+                                 C.get(), M.get(), A2_full.get());
+  }
   ksp->SetOperators(*A, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
@@ -1745,7 +1733,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
-  ProlongatePROMSolution(V.size(), V, RHSr, u);
+  linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }
 
 RomOperator::WavePortDispersionFit
@@ -3869,14 +3857,13 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
 
     // Prolongate the basis block: u = Σ_j (v_conc_j y_j) V[j] (V real, y complex; the
     // v_conc factor undoes the port-row scaling baked into the synthesized pencil).
-    u = 0.0;
-    for (std::size_t j = 0; j < n_basis && j < static_cast<std::size_t>(est.eigvec.size());
-         j++)
+    const auto m = std::min(n_basis, static_cast<std::size_t>(est.eigvec.size()));
+    std::vector<std::complex<double>> y(m);
+    for (std::size_t j = 0; j < m; j++)
     {
-      const std::complex<double> yj = v_conc[static_cast<long>(j)] * est.eigvec(j);
-      linalg::AXPY(yj.real(), V[j], u.Real());
-      linalg::AXPY(yj.imag(), V[j], u.Imag());
+      y[j] = v_conc[static_cast<long>(j)] * est.eigvec(j);
     }
+    linalg::LinearCombination(std::span(V).first(m), y, u);
     const double unorm = linalg::Norml2(comm, u);
     if (unorm == 0.0)
     {

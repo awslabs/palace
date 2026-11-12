@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <numeric>
 #include <mfem.hpp>
@@ -44,6 +45,31 @@ namespace
 {
 
 constexpr bool skip_zeros = false;
+
+// Whether any of the coefficients has entries on any process.
+bool AnyNonEmpty(MPI_Comm comm,
+                 std::initializer_list<const MaterialPropertyCoefficient *> coeffs)
+{
+  bool any = false;
+  for (const auto *coeff : coeffs)
+  {
+    any = any || !coeff->empty();
+  }
+  Mpi::GlobalOr(1, &any, comm);
+  return any;
+}
+
+#if defined(MFEM_USE_MUMPS)
+// Block low-rank compression tolerance of MUMPS: as for the other problem types
+// (ConfigurePreconditionerSolver in ksp.cpp), MUMPS compresses its factorization only with
+// "STRUMPACKCompressionType": "BLR", and otherwise factors the matrix exactly.
+double GetMumpsBLRTol(const config::LinearSolverData &linear)
+{
+  return (linear.strumpack_compression_type == SparseCompression::BLR)
+             ? linear.strumpack_lr_tol
+             : 0.0;
+}
+#endif
 
 }  // namespace
 
@@ -217,15 +243,23 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // so assemble the complex-aware preconditioner on all ranks before non-port ranks
   // return. direct_pc_op only carries the assembled real matrix (2N x 2N in the
   // doubled-real case) into MfemWrapperSolver::SetOperator; its Mult is not meaningful.
+  //
+  // With complex_coarse_solve (and without pc_mat_real), the preconditioner is the exact
+  // complex-valued matrix. Otherwise, it is the real-valued approximation Ar + Ai, as for
+  // the coarse solve of MfemWrapperSolver, rather than Ar alone: the loss terms, which are
+  // imaginary at a real frequency, have the sign of the stiffness term of their block, so
+  // Ar + Ai keeps their magnitude. The conductivity term dominates the system matrix in a
+  // conductor meshed as a volume, where Ar is that of vacuum.
   direct_pc_op.reset();
-  if (!block_pc_ptr && !linear.pc_mat_real)
+  if (!block_pc_ptr)
   {
     const auto *Ar = dynamic_cast<const mfem::HypreParMatrix *>(opA->Real());
     const auto *Ai = dynamic_cast<const mfem::HypreParMatrix *>(opA->Imag());
     MFEM_VERIFY(!opA->Real() || Ar, "Expected assembled real boundary mode matrix!");
     MFEM_VERIFY(!opA->Imag() || Ai, "Expected assembled imaginary boundary mode matrix!");
     MFEM_VERIFY(Ar || Ai, "Empty boundary mode preconditioner matrix!");
-    if (linear.complex_coarse_solve && (normal || (Ar && Ai)))
+    const bool complex_pc = linear.complex_coarse_solve && !linear.pc_mat_real;
+    if (complex_pc && (normal || (Ar && Ai)))
     {
       // Wave-port solves must preserve the doubled dimension even when one matrix part is
       // absent: real and complex frequencies can otherwise alternate between N and 2N,
@@ -247,7 +281,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
       std::unique_ptr<Operator> P(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
       direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
     }
-    else if (!linear.complex_coarse_solve && Ar && Ai)
+    else if (Ar && Ai)
     {
       std::unique_ptr<Operator> P(mfem::Add(1.0, *Ar, 1.0, *Ai));
       direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
@@ -270,9 +304,10 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   {
     // Multigrid path: assemble preconditioner operators at all levels and set on the
     // block-diagonal preconditioner. The outer Krylov solver gets the monolithic opA.
-    // The preconditioner is a real approximation built at Re(omega); the imaginary parts
-    // of the complex-ω operator are carried only by the monolithic opA above, so the
-    // matching system matrix still sees the full complex frequency.
+    // The preconditioner is built at the real frequency Re(omega), with the loss terms of
+    // the system matrix at that frequency (see AssembleAttPreconditioner); the further
+    // imaginary parts of the complex-ω operator are carried only by the monolithic opA
+    // above, so the matching system matrix still sees the full complex frequency.
     att_mg_op = AssembleAttPreconditioner(omega.real(), sigma);
     ann_mg_op = AssembleAnnPreconditioner(omega.real());
     block_pc_ptr->SetBlockOperators(*att_mg_op, *ann_mg_op);
@@ -292,11 +327,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     }
 
     ksp->SetOperators(*opA, *opA);  // opA passed twice; pc uses block_pc_ptr
-  }
-  else if (linear.pc_mat_real)
-  {
-    ComplexWrapperOperator opP(opA->Real(), nullptr);
-    ksp->SetOperators(*opA, opP);
   }
   else
   {
@@ -576,7 +606,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 #if defined(MFEM_USE_MUMPS)
           return std::make_unique<MumpsSolver>(
               comm, MatrixSymmetry::UNSYMMETRIC, linear.sym_factorization,
-              linear.strumpack_lr_tol, reorder_reuse, verbose - 1);
+              GetMumpsBLRTol(linear), reorder_reuse, verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::CUDSS)
@@ -668,7 +698,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 #if defined(MFEM_USE_MUMPS)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<MumpsSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
-                                          linear.sym_factorization, linear.strumpack_lr_tol,
+                                          linear.sym_factorization, GetMumpsBLRTol(linear),
                                           true, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
@@ -752,108 +782,155 @@ std::unique_ptr<ComplexMultigridOperator>
 ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
 {
   MFEM_VERIFY(bmo, "AssembleAttPreconditioner requires BMO ctor (2D domain path)!");
-  const auto n_levels = bmo->GetNDSpaceHierarchy().GetNumLevels();
+  const auto &nd_spaces = bmo->GetNDSpaceHierarchy();
+  const auto &h1_aux_spaces = bmo->GetH1AuxSpaceHierarchy();
+  const auto n_levels = nd_spaces.GetNumLevels();
   auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
 
   // Material coefficients (same at all levels — indexed by element attribute, not by p).
   // The 2D MaterialOperator exposes the scalar out-of-plane μ⁻¹ directly via
   // GetCurlCurlInvPermeability(); material rotation (if any) was baked into iodata before
   // the operator was built.
-  MaterialPropertyCoefficient muinv_cc_func(mat_op.GetAttributeToMaterial(),
+  const auto &attr_to_mat = mat_op.GetAttributeToMaterial();
+  MaterialPropertyCoefficient muinv_cc_func(attr_to_mat,
                                             mat_op.GetCurlCurlInvPermeability());
 
-  // Preconditioner mass coefficient: -omega^2 eps - sigma/mu (+ London). When
-  // pc_mat_shifted is enabled (config), use absolute values to ensure well-conditioning
-  // near the shift target (where -omega^2 eps + kn^2/mu ≈ 0). This follows
-  // SpaceOperator's pc_mat_shifted pattern.
-  const bool shifted = linear.pc_mat_shifted;
+  // Preconditioner mass coefficient, from that of the system matrix at the real frequency
+  // ω: -ω² ε (1 - i tan(δ)) + iωσ - σ_shift μ⁻¹ (+ London). When pc_mat_shifted is enabled
+  // (config), use absolute values of the real terms to ensure well-conditioning near the
+  // shift target (where -ω² ε + kₙ²/μ ≈ 0). This follows SpaceOperator's pc_mat_shifted
+  // pattern. As for frequency domain problems (SpaceOperator::AssemblePreconditioner), the
+  // loss terms, imaginary in the system matrix, form the imaginary part of the
+  // preconditioner, or with pc_mat_real, their magnitudes are added to its real part, with
+  // |ε| for the permittivity. The conductivity term dominates the system matrix in a
+  // conductor meshed as a volume, where a preconditioner without it would be that of
+  // vacuum.
+  const bool shifted = linear.pc_mat_shifted, real_pc = linear.pc_mat_real;
   const double mass_coeff = shifted ? std::abs(omega * omega) : (-omega * omega);
   const double shift_coeff = shifted ? std::abs(sigma) : (-sigma);
-
-  MaterialPropertyCoefficient eps_shifted_pc(mat_op.GetAttributeToMaterial(),
-                                             mat_op.GetPermittivityReal(), mass_coeff);
-  eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),
-                                mat_op.GetInvPermeability(), shift_coeff);
+  MaterialPropertyCoefficient fr(
+      attr_to_mat, real_pc ? mat_op.GetPermittivityAbs() : mat_op.GetPermittivityReal(),
+      mass_coeff);
+  fr.AddCoefficient(attr_to_mat, mat_op.GetInvPermeability(), shift_coeff);
   if (mat_op.HasLondonDepth())
   {
-    eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),
-                                  mat_op.GetInvLondonDepth(), 1.0);
+    fr.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepth(), 1.0);
   }
-  // Frequency-dependent permittivity beyond ε∞: -ω² Re χ = Re g, shifted like the ε∞ mass.
+  MaterialPropertyCoefficient fi(mat_op.MaxCeedAttribute());
+  if (mat_op.HasConductivity())
+  {
+    (real_pc ? fr : fi)
+        .AddCoefficient(attr_to_mat, mat_op.GetConductivity(),
+                        real_pc ? std::abs(omega) : omega);
+  }
+  if (!real_pc && mat_op.HasLossTangent())
+  {
+    fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImag(), -omega * omega);
+  }
+  // Frequency-dependent permittivity beyond ε∞: Re g is mass-like, shifted like the
+  // ε∞ mass; Im g is loss-like, treated as the other imaginary terms above.
   for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
   {
     if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
         mat_op.HasFrequencyDependentPermittivitySupport(i))
     {
-      const double g =
-          mat_op
-              .EvaluateFrequencyDependentPermittivityA2(i, std::complex<double>(0.0, omega))
-              .real();
-      eps_shifted_pc.AddMaterialProperty(
-          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
-          shifted ? std::abs(g) : g);
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, shifted ? std::abs(g.real()) : g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, g.imag());
+      }
     }
   }
 
-  // Boundary coefficients for preconditioner (real part only, matching SpaceOperator).
-  int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
-  MaterialPropertyCoefficient fbr(max_bdr_attr);
+  // Boundary coefficients, with the losses of the resistive surface impedance, absorbing,
+  // surface conductivity, and rational impedance boundaries in the same way (with the real
+  // and imaginary parts of the complex coefficients summed for pc_mat_real, like in
+  // SpaceOperator).
+  const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
+  MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
+  auto &fb_loss = real_pc ? fbr : fbi;
+  const double damp_coeff = real_pc ? std::abs(omega) : omega;
   surf_z_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  surf_z_op.AddMassBdrCoefficients(shifted ? std::abs(omega * omega) : (-omega * omega),
-                                   fbr);
-  farfield_op.AddDampingBdrCoefficients(omega, fbr);
+  surf_z_op.AddMassBdrCoefficients(mass_coeff, fbr);
+  surf_z_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
+  farfield_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
   for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
   {
     farfield_op.AddDispersiveDampingBdrCoefficients(
-        k, omega * std::abs(farfield_op.GetDispersiveScale(k, omega)), fbr);
+        k, damp_coeff * std::abs(farfield_op.GetDispersiveScale(k, omega)), fb_loss);
   }
-  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
-  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
+  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
+  const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
-  // Assemble ND operators at all levels from one BilinearForm. Unlike SpaceOperator's
-  // configured-coarse/active-fine split, these domain coefficients are always nonzero.
-  constexpr bool assemble_q_data = false;
+  // Assemble ND operators at all levels, and the auxiliary H1 operators for Hiptmair
+  // smoothing from the same mass coefficients. Unlike SpaceOperator's configured-coarse/
+  // active-fine split, the real domain coefficients are always nonzero.
+  auto AssembleND = [&](const MaterialPropertyCoefficient *muinv,
+                        const MaterialPropertyCoefficient &f,
+                        const MaterialPropertyCoefficient &fb)
   {
-    BilinearForm att(bmo->GetNDSpaceHierarchy().GetFinestFESpace());
-    att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_pc);
-    if (!fbr.empty())
+    BilinearForm a(nd_spaces.GetFinestFESpace());
+    if (muinv)
     {
-      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(*muinv, f);
     }
-    auto att_ops = att.Assemble(bmo->GetNDSpaceHierarchy(), skip_zeros);
-
-    // Assemble the auxiliary H1 operators for Hiptmair smoothing from the same always-
-    // nonzero mass coefficient.
-    BilinearForm att_aux(bmo->GetH1AuxSpaceHierarchy().GetFinestFESpace());
-    att_aux.AddDomainIntegrator<DiffusionIntegrator>(eps_shifted_pc);
-    if (!fbr.empty())
+    else if (!f.empty())
     {
-      att_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
     }
-    auto att_aux_ops = att_aux.Assemble(bmo->GetH1AuxSpaceHierarchy(), skip_zeros);
-
-    for (std::size_t l = 0; l < n_levels; l++)
+    if (!fb.empty())
     {
-      const auto &nd_fespace_l = bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(l);
-      auto B_l = std::make_unique<ComplexParOperator>(std::move(att_ops[l]), nullptr,
-                                                      nd_fespace_l);
-      if (l < bmo->GetNDDbcTDofLists().size())
-      {
-        B_l->SetEssentialTrueDofs(bmo->GetNDDbcTDofLists()[l],
-                                  Operator::DiagonalPolicy::DIAG_ONE);
-      }
-      B->AddOperator(std::move(B_l));
-
-      const auto &h1_aux_l = bmo->GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(l);
-      auto B_aux_l = std::make_unique<ComplexParOperator>(std::move(att_aux_ops[l]),
-                                                          nullptr, h1_aux_l);
-      if (l < bmo->GetH1AuxDbcTDofLists().size())
-      {
-        B_aux_l->SetEssentialTrueDofs(bmo->GetH1AuxDbcTDofLists()[l],
-                                      Operator::DiagonalPolicy::DIAG_ONE);
-      }
-      B->AddAuxiliaryOperator(std::move(B_aux_l));
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
     }
+    return a.Assemble(nd_spaces, skip_zeros);
+  };
+  auto AssembleAux =
+      [&](const MaterialPropertyCoefficient &f, const MaterialPropertyCoefficient &fb)
+  {
+    BilinearForm a(h1_aux_spaces.GetFinestFESpace());
+    if (!f.empty())
+    {
+      a.AddDomainIntegrator<DiffusionIntegrator>(f);
+    }
+    if (!fb.empty())
+    {
+      a.AddBoundaryIntegrator<DiffusionIntegrator>(fb);
+    }
+    return a.Assemble(h1_aux_spaces, skip_zeros);
+  };
+  auto att_ops = AssembleND(&muinv_cc_func, fr, fbr);
+  auto att_aux_ops = AssembleAux(fr, fbr);
+  std::vector<std::unique_ptr<Operator>> att_i_ops(n_levels), att_aux_i_ops(n_levels);
+  if (has_imag)
+  {
+    att_i_ops = AssembleND(nullptr, fi, fbi);
+    att_aux_i_ops = AssembleAux(fi, fbi);
+  }
+  for (std::size_t l = 0; l < n_levels; l++)
+  {
+    auto B_l = std::make_unique<ComplexParOperator>(
+        std::move(att_ops[l]), std::move(att_i_ops[l]), nd_spaces.GetFESpaceAtLevel(l));
+    if (l < bmo->GetNDDbcTDofLists().size())
+    {
+      B_l->SetEssentialTrueDofs(bmo->GetNDDbcTDofLists()[l],
+                                Operator::DiagonalPolicy::DIAG_ONE);
+    }
+    B->AddOperator(std::move(B_l));
+
+    auto B_aux_l = std::make_unique<ComplexParOperator>(std::move(att_aux_ops[l]),
+                                                        std::move(att_aux_i_ops[l]),
+                                                        h1_aux_spaces.GetFESpaceAtLevel(l));
+    if (l < bmo->GetH1AuxDbcTDofLists().size())
+    {
+      B_aux_l->SetEssentialTrueDofs(bmo->GetH1AuxDbcTDofLists()[l],
+                                    Operator::DiagonalPolicy::DIAG_ONE);
+    }
+    B->AddAuxiliaryOperator(std::move(B_aux_l));
   }
 
   return B;
@@ -863,76 +940,124 @@ std::unique_ptr<ComplexMultigridOperator>
 ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
 {
   MFEM_VERIFY(bmo, "AssembleAnnPreconditioner requires BMO ctor (2D domain path)!");
-  const auto n_levels = bmo->GetH1SpaceHierarchy().GetNumLevels();
+  const auto &h1_spaces = bmo->GetH1SpaceHierarchy();
+  const auto n_levels = h1_spaces.GetNumLevels();
   auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
 
-  // Material coefficients matching AssembleAnn (real part only). The negative diffusion
-  // sign from the IBP is preserved — this matches the actual operator. In-plane tensors
-  // (μ⁻¹, ε) and scalar out-of-plane components are already in the local frame.
-  MaterialPropertyCoefficient neg_muinv_func(mat_op.GetAttributeToMaterial(),
-                                             mat_op.GetInvPermeability(), -1.0);
-
-  MaterialPropertyCoefficient poseps_h1_func(mat_op.GetAttributeToMaterial(),
-                                             mat_op.GetPermittivityScalar(), omega * omega);
+  // Material coefficients matching the system matrix at the real frequency ω, with the
+  // negative diffusion from the IBP and the mass coefficient ω² ε (1 - i tan(δ)) - iωσ
+  // (- London), whose loss terms are treated as for the ND block (see
+  // AssembleAttPreconditioner). In-plane tensors (μ⁻¹, ε) and scalar out-of-plane
+  // components are already in the local frame.
+  const auto &attr_to_mat = mat_op.GetAttributeToMaterial();
+  const bool real_pc = linear.pc_mat_real;
+  MaterialPropertyCoefficient neg_muinv_func(attr_to_mat, mat_op.GetInvPermeability(),
+                                             -1.0);
+  MaterialPropertyCoefficient fr(attr_to_mat,
+                                 real_pc ? mat_op.GetPermittivityAbsScalar()
+                                         : mat_op.GetPermittivityScalar(),
+                                 omega * omega);
   if (mat_op.HasLondonDepth())
   {
-    poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),
-                                  mat_op.GetInvLondonDepthScalar(), -1.0);
+    fr.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepthScalar(), -1.0);
   }
-  // Frequency-dependent permittivity beyond ε∞: ω² Re χ = -Re g.
+  MaterialPropertyCoefficient fi(mat_op.MaxCeedAttribute());
+  if (mat_op.HasConductivity())
+  {
+    (real_pc ? fr : fi)
+        .AddCoefficient(attr_to_mat, mat_op.GetConductivityScalar(),
+                        real_pc ? -std::abs(omega) : -omega);
+  }
+  if (!real_pc && mat_op.HasLossTangent())
+  {
+    fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImagScalar(), omega * omega);
+  }
+  // Frequency-dependent permittivity beyond ε∞: -g, with the opposite sign of the ND
+  // block in both real and imaginary slots.
   for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
   {
     if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
         mat_op.HasFrequencyDependentPermittivitySupport(i))
     {
-      poseps_h1_func.AddMaterialProperty(
-          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
-          -mat_op
-               .EvaluateFrequencyDependentPermittivityA2(i,
-                                                         std::complex<double>(0.0, omega))
-               .real());
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, -g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, -g.imag());
+      }
     }
   }
 
-  // Boundary coefficients (real part only).
-  int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
-  MaterialPropertyCoefficient nn_fbr(max_bdr_attr);
-  surf_z_op.AddStiffnessBdrCoefficients(-1.0, nn_fbr);
-  surf_z_op.AddMassBdrCoefficients(omega * omega, nn_fbr);
+  // Boundary coefficients, with the opposite sign of those of the ND block.
+  const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
+  MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
+  auto &fb_loss = real_pc ? fbr : fbi;
+  const double damp_coeff = real_pc ? std::abs(omega) : omega;
+  surf_z_op.AddStiffnessBdrCoefficients(-1.0, fbr);
+  surf_z_op.AddMassBdrCoefficients(omega * omega, fbr);
+  surf_z_op.AddDampingBdrCoefficients(-damp_coeff, fb_loss);
+  mode_assembly::AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -damp_coeff,
+                                                         fb_loss);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
   {
-    MaterialPropertyCoefficient cond_r(max_bdr_attr);
-    surf_sigma_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);
-    surf_rz_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);
-    if (!cond_r.empty())
+    farfield_op.AddDispersiveScalarDampingBdrCoefficients(
+        k, -damp_coeff * std::abs(farfield_op.GetDispersiveScale(k, omega)), fb_loss);
+  }
+  {
+    MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
+    auto &robin_loss = real_pc ? robin_r : robin_i;
+    surf_sigma_op.AddExtraSystemBdrCoefficients(omega, robin_r, robin_loss);
+    surf_rz_op.AddExtraSystemBdrCoefficients(omega, robin_r, robin_loss);
+    for (auto [robin, fb] : {std::pair{&robin_r, &fbr}, std::pair{&robin_i, &fbi}})
     {
-      cond_r *= -1.0;
-      nn_fbr.AddCoefficient(cond_r.GetAttributeToMaterial(),
-                            cond_r.GetMaterialProperties());
+      if (!robin->empty())
+      {
+        *robin *= -1.0;
+        fb->AddCoefficient(robin->GetAttributeToMaterial(), robin->GetMaterialProperties());
+      }
     }
   }
+  const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
   // Assemble H1 operators at all levels using hierarchy-aware assembly.
+  auto AssembleH1 = [&](const MaterialPropertyCoefficient *neg_muinv,
+                        const MaterialPropertyCoefficient &f,
+                        const MaterialPropertyCoefficient &fb)
   {
-    BilinearForm ann(bmo->GetH1SpaceHierarchy().GetFinestFESpace());
-    ann.AddDomainIntegrator<DiffusionMassIntegrator>(neg_muinv_func, poseps_h1_func);
-    if (!nn_fbr.empty())
+    BilinearForm a(h1_spaces.GetFinestFESpace());
+    if (neg_muinv)
     {
-      ann.AddBoundaryIntegrator<MassIntegrator>(nn_fbr);
+      a.AddDomainIntegrator<DiffusionMassIntegrator>(*neg_muinv, f);
     }
-    auto ann_ops = ann.Assemble(bmo->GetH1SpaceHierarchy(), skip_zeros);
-
-    for (std::size_t l = 0; l < n_levels; l++)
+    else if (!f.empty())
     {
-      const auto &h1_fespace_l = bmo->GetH1SpaceHierarchy().GetFESpaceAtLevel(l);
-      auto B_l = std::make_unique<ComplexParOperator>(std::move(ann_ops[l]), nullptr,
-                                                      h1_fespace_l);
-      if (l < bmo->GetH1DbcTDofLists().size())
-      {
-        B_l->SetEssentialTrueDofs(bmo->GetH1DbcTDofLists()[l],
-                                  Operator::DiagonalPolicy::DIAG_ONE);
-      }
-      B->AddOperator(std::move(B_l));
+      a.AddDomainIntegrator<MassIntegrator>(f);
     }
+    if (!fb.empty())
+    {
+      a.AddBoundaryIntegrator<MassIntegrator>(fb);
+    }
+    return a.Assemble(h1_spaces, skip_zeros);
+  };
+  auto ann_ops = AssembleH1(&neg_muinv_func, fr, fbr);
+  std::vector<std::unique_ptr<Operator>> ann_i_ops(n_levels);
+  if (has_imag)
+  {
+    ann_i_ops = AssembleH1(nullptr, fi, fbi);
+  }
+  for (std::size_t l = 0; l < n_levels; l++)
+  {
+    auto B_l = std::make_unique<ComplexParOperator>(
+        std::move(ann_ops[l]), std::move(ann_i_ops[l]), h1_spaces.GetFESpaceAtLevel(l));
+    if (l < bmo->GetH1DbcTDofLists().size())
+    {
+      B_l->SetEssentialTrueDofs(bmo->GetH1DbcTDofLists()[l],
+                                Operator::DiagonalPolicy::DIAG_ONE);
+    }
+    B->AddOperator(std::move(B_l));
   }
 
   return B;
