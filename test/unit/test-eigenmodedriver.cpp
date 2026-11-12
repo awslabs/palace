@@ -352,14 +352,12 @@ TEST_CASE_METHOD(
   }
 }
 
-// GENERIC candidate: controls of the generic contour route of the research Rayleigh-Ritz
-// solver on non-rational A2 contributions (separate tag, so the [eigenmodedriver] cases
-// stay as they are). Fixtures and expectations fixed before any build or run.
+// Frequency-dependent terms which are not rational in the frequency.
 
 TEST_CASE_METHOD(
     test::SharedTempDir,
     "Eigenmode driver: Djordjevic-Sarkar-filled PEC box from the constant modes",
-    "[eigenmodegeneric][Serial][Parallel]")
+    "[eigenmodedriver][Serial][Parallel]")
 {
 #if !defined(PALACE_WITH_SLEPC)
   SKIP("Requires the SLEPc eigensolver");
@@ -433,7 +431,7 @@ TEST_CASE_METHOD(
 
 TEST_CASE_METHOD(test::SharedTempDir,
                  "Eigenmode driver: surface conductivity on a face of a PEC box",
-                 "[eigenmodegeneric][Serial][Parallel]")
+                 "[eigenmodedriver][Serial][Parallel]")
 {
 #if !defined(PALACE_WITH_SLEPC)
   SKIP("Requires the SLEPc eigensolver");
