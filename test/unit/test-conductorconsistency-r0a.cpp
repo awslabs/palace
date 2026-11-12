@@ -59,18 +59,36 @@ using test::MakeSerialShortedCpwMesh;
 // KNOTS (over the slots, z = 0.8125 / 1.1875) stay inside elements: the DomainBoundary pass
 // (which locates the basis points) keeps the patch and the line coverage is what fails.
 // The void's faces get the boundary attribute 7; the box walls keep the Cartesian
-// attributes; the metal plane is untouched (the void does not reach y = 0.5).
-mfem::Mesh MakeSerialShortedCpwMeshWithVoid(int x_cell)
+// attributes; the metal plane is untouched (the void does not reach y = 0.5). [z0, z1] =
+// the void's z range (default: over the strip; lane fix-gate-claim: over the strip AND the
+// slots, [0.75, 1.25], so that the ring's top KNOTS lie in the void as well); x_extent =
+// the void's x extent in cells from x_cell h (default 1: the whole cell; lane
+// fix-gate-claim: a fraction, so that only the tetrahedra whose centres lie in the cell's
+// low-x part are removed and the void reaches one of the cell's two patches).
+mfem::Mesh MakeSerialShortedCpwMeshWithVoid(int x_cell, double z0 = 0.875,
+                                            double z1 = 1.125, double x_extent = 1.0)
 {
   constexpr double h = 0.125;
   mfem::Mesh base =
       mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::TETRAHEDRON, 2.0, 1.0, 2.0);
   auto InVoid = [&](const mfem::Vector &centre)
   {
-    return centre[1] > 0.75 && centre[2] > 0.875 && centre[2] < 1.125 &&
-           centre[0] > x_cell * h && centre[0] < (x_cell + 1) * h;
+    return centre[1] > 0.75 && centre[2] > z0 && centre[2] < z1 && centre[0] > x_cell * h &&
+           centre[0] < (x_cell + x_extent) * h;
   };
-  mfem::Mesh serial(3, base.GetNV(), base.GetNE() - 12, 0, 3);
+  int expected_removed = static_cast<int>(std::lround(12 * (z1 - z0) / 0.25));
+  if (x_extent < 1.0)
+  {
+    expected_removed = 0;
+    for (int e = 0; e < base.GetNE(); e++)
+    {
+      mfem::Vector centre(3);
+      base.GetElementCenter(e, centre);
+      expected_removed += InVoid(centre) ? 1 : 0;
+    }
+    MFEM_VERIFY(expected_removed > 0, "The partial stub void must remove a tetrahedron!");
+  }
+  mfem::Mesh serial(3, base.GetNV(), base.GetNE() - expected_removed, 0, 3);
   for (int v = 0; v < base.GetNV(); v++)
   {
     serial.AddVertex(base.GetVertex(v));
@@ -87,7 +105,8 @@ mfem::Mesh MakeSerialShortedCpwMeshWithVoid(int x_cell)
     }
     serial.AddElement(base.GetElement(e)->Duplicate(&serial));
   }
-  MFEM_VERIFY(removed == 12, "The stub void must remove exactly twelve tetrahedra!");
+  MFEM_VERIFY(removed == expected_removed,
+              "The stub void must remove exactly " << expected_removed << " tetrahedra!");
   serial.FinalizeTopology(true);  // the boundary elements of every exterior face
   // The wall attributes from the base mesh by the face's vertex set; a face no wall had
   // (the void's) gets 7.
@@ -1835,6 +1854,188 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_FALSE(record.excluded);
     CHECK(response.GetConductorConsistencyPortions().empty());
   }
+#endif
+}
+
+// Lane fix-gate-claim (decisions 1532 / 1533; OI-CONDUCTOR-GATE-EXCLUDED-PATCH-WITHOUT-RAW-
+// CLAIM-ABORT): on the Maxwell path the applied patches are distributed by their APPLIED
+// position, the raw claims (C5) are owned by the PLACED index. The fixture = the shorted
+// CPW stub with a void over the strip AND the slots (y > 0.75) at one x-cell, chosen so
+// that the patches there shift a later patch's applied position by an odd count: the
+// ring's top knots of the patches there lie outside the mesh, so the DomainBoundary pass
+// excludes them at the placement (placed, never applied) and every later patch's applied
+// position is below its placed index. With the strip at V every
+// applied patch is excluded by the gate; each one's raw claim must be served raw (the
+// ConductorConsistency share) at any rank count. At np = 2 the case REQUIRES an excluded
+// patch whose applied position and placed index fall on different ranks (the defect's
+// class: before the fix the gate aborted there).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator conductor-consistency gate serves an excluded "
+                 "Maxwell patch's raw claim from its owner (applied position != placed "
+                 "index)",
+                 "[surfaceresponseoperator][conductorconsistency][r0a][maxwell][gateclaim]"
+                 "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double h = 0.125;
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.3, "gateclaim");
+  json config = ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  auto Build = [&](mfem::Mesh serial, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  // The intact stub: the candidate x-cells = the cells of the patches' origins in table
+  // order (the root's table, broadcast).
+  int intact_count = 0;
+  std::vector<int> candidate_cells;
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(MakeSerialShortedCpwMesh(mfem::Element::TETRAHEDRON), meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    intact_count = response.GetPatchCount();
+    if (Mpi::Root(Mpi::World()))
+    {
+      for (const auto &assignment : response.GetPatchAssignments())
+      {
+        const int cell = static_cast<int>(std::floor(assignment.origin[0] / h));
+        if (cell >= 1 && cell <= 14 &&
+            std::find(candidate_cells.begin(), candidate_cells.end(), cell) ==
+                candidate_cells.end())
+        {
+          candidate_cells.push_back(cell);
+        }
+      }
+    }
+    int candidate_count = static_cast<int>(candidate_cells.size());
+    Mpi::Broadcast(1, &candidate_count, 0, Mpi::World());
+    candidate_cells.resize(candidate_count);
+    Mpi::Broadcast(candidate_count, candidate_cells.data(), 0, Mpi::World());
+  }
+  REQUIRE(intact_count > 2);
+  REQUIRE_FALSE(candidate_cells.empty());
+  // The void's x-cell: the first candidate whose DomainBoundary exclusions shift some
+  // applied patch's position by an ODD count below its placed index (the two differ
+  // modulo 2, i.e. they fall on different ranks at np = 2); the same cell at every np. A
+  // whole-cell void reaches both patches of the cell on every edge (an even shift), so the
+  // void is the cell's low-x part (x_extent).
+  constexpr double x_extent = 0.4;
+  int x_cell = -1;
+  for (const int cell : candidate_cells)
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata =
+        Build(MakeSerialShortedCpwMeshWithVoid(cell, 0.75, 1.25, x_extent), meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    int odd_shift = 0;
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &assignments = response.GetPatchAssignments();
+      for (std::size_t k = 0; k < assignments.size(); k++)
+      {
+        odd_shift += (assignments[k].global_index - static_cast<int>(k)) % 2 != 0 ? 1 : 0;
+      }
+    }
+    Mpi::Broadcast(1, &odd_shift, 0, Mpi::World());
+    if (odd_shift > 0)
+    {
+      x_cell = cell;
+      break;
+    }
+  }
+  REQUIRE(x_cell >= 1);
+  REQUIRE(x_cell <= 14);
+
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  IoData iodata =
+      Build(MakeSerialShortedCpwMeshWithVoid(x_cell, 0.75, 1.25, x_extent), meshes);
+  SpaceOperator space(iodata, meshes);
+  SurfaceResponseOperator response(iodata, space);
+  REQUIRE(response.HasConductorConsistencyProbes());
+  const int applied_count = response.GetPatchCount();
+  CHECK(applied_count <
+        intact_count);  // the DomainBoundary exclusions: placed, not applied
+  CHECK(applied_count > 0);
+  GridFunction field(space.GetNDSpace(), true);
+  StubField stub;
+  stub.amplitude = 1.0;
+  stub.x0 = 0.5;
+  stub.x1 = 2.0;
+  mfem::VectorFunctionCoefficient coefficient(
+      3, [&stub](const mfem::Vector &x, mfem::Vector &E) { stub(x, E); });
+  field.Real().ProjectCoefficient(coefficient);
+  field.Imag() = 0.0;
+  ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+  field.Real().GetTrueDofs(E.Real());
+  field.Imag().GetTrueDofs(E.Imag());
+  const auto records = response.ApplyConductorConsistencyGate(E, 0, 5.0, false);
+
+  // The root's applied table: position k = the applied position, global_index = the placed
+  // index; counts on the root (the records are the root's under ROOT_ONLY), broadcast.
+  // counts: excluded, applied != placed, holder != owner, outside the applied table.
+  const int size = Mpi::Size(Mpi::World());
+  int counts[4] = {0, 0, 0, 0};
+  if (Mpi::Root(Mpi::World()))
+  {
+    const auto &assignments = response.GetPatchAssignments();
+    std::map<int, int> position_of;
+    for (std::size_t k = 0; k < assignments.size(); k++)
+    {
+      position_of[assignments[k].global_index] = static_cast<int>(k);
+      counts[1] += assignments[k].global_index != static_cast<int>(k) ? 1 : 0;
+    }
+    for (const auto &record : records)
+    {
+      if (!record.excluded)
+      {
+        continue;
+      }
+      counts[0]++;
+      const auto position = position_of.find(record.patch);
+      if (position == position_of.end())
+      {
+        counts[3]++;
+        continue;
+      }
+      counts[2] += position->second % size != record.patch % size ? 1 : 0;
+    }
+  }
+  Mpi::Broadcast(4, counts, 0, Mpi::World());
+  CHECK(counts[0] > 1);
+  CHECK(counts[1] > 0);
+  CHECK(counts[3] == 0);
+  if (size == 2)
+  {
+    REQUIRE(counts[2] > 0);  // the defect's class is exercised
+  }
+  // Every excluded patch's raw claim is served raw, on every rank.
+  const auto &served = response.GetConductorConsistencyPortionRecord();
+  CHECK_FALSE(served.portions.empty());
+  CHECK(served.length > 0.0);
+  std::set<std::size_t> served_patches;
+  for (const auto &patches : served.patches)
+  {
+    served_patches.insert(patches.begin(), patches.end());
+  }
+  CHECK(static_cast<int>(served_patches.size()) == counts[0]);
+  const auto statistics = response.GetStatistics();
+  const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+  CHECK(diagnostics["Count"].get<int>() == counts[0]);
+  CHECK(diagnostics.contains("RawPortions"));
 #endif
 }
 

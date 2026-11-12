@@ -30050,6 +30050,10 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   int tested_records = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
+  // Decision 1544 (the per-mode scaling audit): the root's patch table positions by
+  // global index, sorted once per pass at its first exclusion (each excluded record
+  // scanned the whole table: excluded x patches on the root).
+  std::vector<std::pair<int, std::size_t>> assignment_positions;
   for (const auto &record : records)
   {
     const bool floor_applied = record.normalization > record.amplitude;
@@ -30131,12 +30135,21 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
       excluded_claims += record.claim_length * mesh_coordinate_scale;
       excluded_cells += record.cell_length * mesh_coordinate_scale;
       // The root's patch table (the patches CSV) follows the exclusion.
-      for (auto &assignment : patch_assignments)
+      if (assignment_positions.empty())
       {
-        if (assignment.global_index == record.patch)
+        assignment_positions.reserve(patch_assignments.size());
+        for (std::size_t k = 0; k < patch_assignments.size(); k++)
         {
-          assignment.weight = 0.0;
+          assignment_positions.emplace_back(patch_assignments[k].global_index, k);
         }
+        std::sort(assignment_positions.begin(), assignment_positions.end());
+      }
+      for (auto it =
+               std::lower_bound(assignment_positions.begin(), assignment_positions.end(),
+                                std::pair<int, std::size_t>(record.patch, 0));
+           it != assignment_positions.end() && it->first == record.patch; ++it)
+      {
+        patch_assignments[it->second].weight = 0.0;
       }
     }
     if (record.max_ratio > max_ratio || max_patch < 0)
@@ -30148,18 +30161,38 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   // S7diag R1 (decision 758): the excluded patches' raw claims (built at construction by
   // the DomainBoundary rule) are served raw from this excitation on: the electrostatic
   // driver keeps their within-R energy in E_ft / E_ff / E_sc as the ConductorConsistency
-  // share, never dropped. C5: each rank packs the claims of ITS excluded patches (the
-  // owner decided `excluded` before the gather; the claims are local), the items are
-  // allgathered and appended on EVERY rank in ascending patch order with the portions in
-  // claim order = the former loop's sequence over the sorted records (the same dedupe
-  // decisions, the same `length` sum), so the portions list is identical on every rank.
+  // share, never dropped. C5: the claims are local to their OWNERS (the placed index modulo
+  // the rank count, the claim build's rule); the items are allgathered and appended on
+  // EVERY rank in ascending patch order with the portions in claim order = the former
+  // loop's sequence over the sorted records (the same dedupe decisions, the same `length`
+  // sum), so the portions list is identical on every rank. Lane fix-gate-claim (decision
+  // 1533): the record's HOLDER is not always the claim's owner (the Maxwell path
+  // distributes the applied patches by their applied position in
+  // ConfigureMaxwellResponse, not by the placed index), so the pass's excluded patches are
+  // gathered first and each rank packs the ones it owns (the form of
+  // RecordUnprobedPatchClaims and the MaxwellPatchExcluded ledger).
   {
-    std::vector<std::pair<int, int>> excluded_local;
+    std::vector<double> excluded_held;
     for (const auto &record : patch_records)
     {
       if (record.excluded && !record.record_only)
       {
-        excluded_local.emplace_back(record.patch, record.patch);
+        excluded_held.push_back(static_cast<double>(record.patch));
+      }
+    }
+    std::vector<int> excluded_patches;
+    for (const double value : AllgatherRecords(excluded_held))
+    {
+      excluded_patches.push_back(static_cast<int>(std::llround(value)));
+    }
+    std::sort(excluded_patches.begin(), excluded_patches.end());
+    const int rank = Mpi::Rank(fespace.GetComm()), size = Mpi::Size(fespace.GetComm());
+    std::vector<std::pair<int, int>> excluded_local;
+    for (const int patch : excluded_patches)
+    {
+      if (patch % size == rank)
+      {
+        excluded_local.emplace_back(patch, patch);
       }
     }
     for (const auto &item :
@@ -38528,6 +38561,21 @@ double SurfaceResponseOperator::GetPatchWeight() const
   }
   Mpi::GlobalSum(1, &weight, fespace.GetComm());
   return weight;
+}
+
+std::map<int, double>
+MaxwellPatchMaxLoopResiduals(const SurfaceResponseOperator::MaxwellResponse &response)
+{
+  std::map<int, double> by_patch;
+  for (const auto &loop : response.path_loop_residuals)
+  {
+    if (loop.kind == 0)
+    {
+      auto &value = by_patch[loop.patch];
+      value = std::max(value, loop.residual);
+    }
+  }
+  return by_patch;
 }
 
 }  // namespace palace

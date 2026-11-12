@@ -373,11 +373,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - `Mpi::BroadcastLarge` now bounds every single `MPI_Bcast` it issues IN BYTES, by the
     compile-time constant `mpi::BROADCAST_LARGE_CHUNK_BYTES` = 2^28 bytes (the element count
     per call = that / `sizeof(T)`, at least 1; an explicit chunk is capped at it), instead of
-    INT_MAX elements. On Open MPI 5.0.8 + libfabric-aws 2.6.0 one broadcast of ~2^31 bytes
-    segfaults in the transport, so the restart from a nonconforming mesh whose serialized
+    INT_MAX elements. On Open MPI 5.0.8 + libfabric-aws 2.6.0 the broadcast of the mesh's
+    serialized text in chunks of up to INT_MAX `MPI_CHAR` elements (~2^31 bytes) segfaults in
+    the transport (one broadcast of 2^28 `MPI_DOUBLE` elements = 2^31 bytes passes; the
+    failing size is not located), so the restart from a nonconforming mesh whose serialized
     text exceeds 2^31 bytes crashed in the mesh distribution
     (OI-NC-LOAD-BYTESTRING-ABOVE-2GIB-SEGFAULT). Results are bitwise unchanged (the same
     bytes are delivered in the same order).
+  - The conductor-consistency gate of the surface-response correction no longer aborts
+    ("excluded patch ... without a raw claim record") on the Maxwell path at more than one
+    rank when an excluded patch is held by a rank other than its raw claim's owner (the
+    applied position vs the placed index; a regression of the round-1 memory fix): the
+    excluded patches are gathered and each owner serves its raw claims (lane fix-gate-claim;
+    decision 1533; results bitwise for every run that completed before).
+  - The Maxwell surface-response patch-energy CSV no longer rebuilds a response's per-patch
+    maximum loop residuals for every row on the root (rows x loop records: a chip-scale
+    eigenmode postprocessing stalled there, OI-PATCH-ENERGY-CSV-QUADRATIC-ROOT-WRITER), and
+    the conductor-consistency gate no longer scans the whole patch table per excluded patch;
+    both are indexed once (decision 1544; the same bytes are written).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.

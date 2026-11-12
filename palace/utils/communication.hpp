@@ -356,9 +356,9 @@ public:
 
   // Global broadcast from root for buffers whose length may exceed INT_MAX (e.g. a
   // serialized multi-GB mesh). Chunks the transfer so that no single MPI_Bcast carries
-  // more than mpi::BROADCAST_LARGE_CHUNK_BYTES bytes (which also respects the int count
-  // limit of the classic MPI interface). The chunk length in elements is exposed for
-  // testing the chunking logic with small buffers; it is capped at the byte bound.
+  // more than max(mpi::BROADCAST_LARGE_CHUNK_BYTES, sizeof(T)) bytes (which also respects
+  // the int count limit of the classic MPI interface). The chunk length in elements is
+  // exposed for testing the chunking logic with small buffers; capped at the byte bound.
   template <typename T>
   static constexpr std::int64_t BroadcastLargeChunk()
   {
