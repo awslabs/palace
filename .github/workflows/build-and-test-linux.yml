@@ -248,15 +248,15 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
-      # Julia is needed for the antenna postprocessing example below; the
-      # regression sweep itself uses the Catch2 binary and doesn't need it.
+      # Julia is only needed for the antenna postprocessing example below (same
+      # gate); the regression sweep itself uses the Catch2 binary.
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
-        if: needs.filter.outputs.test == 'true'
+        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
         with:
           version: '1'
 
       - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
-        if: needs.filter.outputs.test == 'true'
+        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
@@ -380,9 +380,9 @@ jobs:
           fi
 
           # Disable Open MPI's CPU binding (as in spack-macos.yml): with two ranks, each is
-          # bound to one core, shared by its OpenMP threads.
-          if [[ "${{ matrix.mpi }}" == 'openmpi' ]] && \
-             [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+          # bound to one core, so concurrent cases all pile onto the same two cores, and
+          # each rank's OpenMP threads share its core.
+          if [[ "${{ matrix.mpi }}" == 'openmpi' ]]; then
             export OMPI_MCA_hwloc_base_binding_policy=none
             export PRTE_MCA_hwloc_default_binding_policy=none
           fi
@@ -411,9 +411,21 @@ jobs:
       # NOTE: Fork PRs get a read-only GITHUB_TOKEN and cannot push to gh-pages;
       # for those the coverage report is still available via the artifact below.
       - name: Deploy coverage to gh-pages
+        id: deploy-coverage
+        continue-on-error: true
         if: |
           needs.filter.outputs.test == 'true' && matrix.with-coverage &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: palace-build/coverage_html
+          destination_dir: ${{ github.event_name == 'pull_request' && format('previews/PR{0}/coverage', github.event.pull_request.number) || format('coverage/{0}', github.sha) }}
+          keep_files: true
+
+      # Concurrent PR previews (docs and coverage) race to push gh-pages: retry once.
+      - name: Retry coverage deploy to gh-pages
+        if: steps.deploy-coverage.outcome == 'failure'
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -454,8 +466,9 @@ jobs:
           use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
           fail_ci_if_error: false
 
+      # The coverage entry skips regression: its plain twin runs the same suite.
       - name: Run regression tests
-        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
+        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers && !matrix.with-coverage
         # CTest owns per-case scheduling for the [Regression] cases (label
         # "regression"). The configured MPI rank count and PROCESSORS property
         # reserve matching ctest slots so -j can fan out safely.
