@@ -16,11 +16,18 @@ spelling, so the two policies are:
            pre-integration binary, whose ModelData::crack_bdr_elements defaults to true);
   default  omits the key (upstream's default; per-boundary "Crack" entries are the caller's business).
 
-Every fresh writer takes --crack-policy with CRACK_POLICY_DEFAULT as its default value.
+Every fresh writer takes --crack-policy with CRACK_POLICY_DEFAULT as its default value. The library-build
+orchestrators (the coupon planner, the straight-family builder, the device adapter, the spatial
+qualification) take it too, pass it to the writers they run, and key their caches by it (decision 1586).
 """
+
+from pathlib import Path
 
 CRACK_KEY = "CrackInternalBoundaryElements"
 CRACK_POLICIES = ("legacy", "default")
+# This module's own path: the orchestrators' Tool / Generator fingerprints include its bytes, so a change of
+# the policy rules (or of CRACK_POLICY_DEFAULT) changes their cache keys.
+CRACK_POLICY_SOURCE = Path(__file__).resolve()
 
 # The library models and every record of the stage-F freeze were made on cracked meshes, so the
 # writers default to "legacy" (decision 1570; USER decision 1566 (5): no library rebuild now).
@@ -37,11 +44,28 @@ def add_crack_policy_argument(parser):
              f"(upstream's uncracked default) (default: {CRACK_POLICY_DEFAULT})")
 
 
+def check_crack_policy(policy):
+    """Return `policy` if it is one of CRACK_POLICIES; refuse anything else."""
+    if policy not in CRACK_POLICIES:
+        raise ValueError(f"unknown crack policy {policy!r} (expected one of {CRACK_POLICIES})")
+    return policy
+
+
+def crack_policy_of(args):
+    """The crack policy of parsed orchestrator options: args.crack_policy, else CRACK_POLICY_DEFAULT (the
+    orchestrators' spec functions are also called with partial option namespaces)."""
+    return check_crack_policy(getattr(args, "crack_policy", CRACK_POLICY_DEFAULT))
+
+
+def crack_policy_arguments(crack_policy):
+    """The command-line arguments that pass `crack_policy` to a writer or orchestrator run as a subprocess."""
+    return ["--crack-policy", check_crack_policy(crack_policy)]
+
+
 def apply_crack_policy(model, policy):
     """Set Model.CrackInternalBoundaryElements of a fresh config's Model dict per the policy; returns
     the dict. A fresh writer's Model never carries the key already: that is refused."""
-    if policy not in CRACK_POLICIES:
-        raise ValueError(f"unknown crack policy {policy!r} (expected one of {CRACK_POLICIES})")
+    check_crack_policy(policy)
     if CRACK_KEY in model:
         raise ValueError(f"Model.{CRACK_KEY} is already set; a crack policy applies to a fresh Model only")
     if policy == "legacy":

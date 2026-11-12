@@ -135,6 +135,8 @@ import build_configs  # noqa: E402
 if str(TOOLS.parents[1] / "surface_response_identification") not in sys.path:
     sys.path.insert(0, str(TOOLS.parents[1] / "surface_response_identification"))
 from signature_library import refuse_duplicate_signatures  # noqa: E402
+from crack_policy import (  # noqa: E402
+    CRACK_KEY, CRACK_POLICY_DEFAULT, add_crack_policy_argument, check_crack_policy, crack_policy_of)
 import build_plan  # noqa: E402
 import case_inputs  # noqa: E402
 from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
@@ -393,7 +395,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     try:
         run_config, inputs = case_inputs.derive(case, directory, mesh_path=identity["Path"], physics_run=physics_run,
                                                 out_dir=case_root / "inputs", mesh=remote_mesh, output_root=f"{remote_case}/main",
-                                                traces_remote=remote_traces, radial_shells=radial_shells)
+                                                traces_remote=remote_traces, radial_shells=radial_shells,
+                                                crack_policy=crack_policy_of(args))
     except (case_inputs.CaseInputError, ValueError) as error:
         raise CaseStop("Inputs", f"the run inputs of {case_id} cannot be derived from its sources: {error}")
     write_json(case_root / "inputs" / "run-config.json", run_config)
@@ -418,7 +421,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     if controls_only:
         reused_main = load_reused_main(Path(reuse_root), case_id, identity_sha256=identity["SHA256"], run_config=run_config,
                                        trace_digests={source["Name"]: source["SHA256"] for source in inputs["Sources"]},
-                                       main_prefix=f"{prefix}-p{physics_run['Order']}")
+                                       main_prefix=f"{prefix}-p{physics_run['Order']}", crack_policy=inputs["CrackPolicy"])
         record["ReusedMain"] = reused_main
         if control_amplitudes is None:
             control_amplitudes = Path(reused_main["Reducer"]["Directory"])
@@ -444,7 +447,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                             "ComparedConfig": ("the base config (parent labels) of the radial-shell relabel"
                                                                if comparison_config is not run_config else "the run config"),
                                             "ReferenceOrder": reference["ReferenceOrder"], "ReferenceLinearTol": reference["LinearTol"],
-                                            "RunOrder": physics_run["Order"], "RunLinearTol": physics_run["LinearTol"]}
+                                            "RunOrder": physics_run["Order"], "RunLinearTol": physics_run["LinearTol"],
+                                            "CrackPolicy": reference_crack_policy(inputs["CrackPolicy"], reference_config)}
     record["Reference"] = reference if reference is not None else {
         "Rule": "--reference none: the coupon runs on its own inputs; without reference matrices the verdict is "
                 "PendingQualification (every p-sequence control passed) or Failed, never Passed"}
@@ -742,7 +746,39 @@ def stored_plan_trace_pins(stored_case_root):
     return pins
 
 
-def load_reused_main(reuse_root, case_id, *, identity_sha256, run_config, trace_digests, main_prefix):
+CROSS_FORM_REFERENCE_RULE = ("decision 1597 (3a): a stored reference config without Model.CrackInternalBoundaryElements was "
+                             "made on the pre-integration binary, where an unset key cracked the mesh: it reads as the "
+                             "legacy policy; a run under another policy is compared with it as a RECORDED cross-form pair "
+                             "(the numeric gates unchanged) and its qualification carries the Label")
+
+
+def stored_crack_policy(stored):
+    """The crack policy a stored qualify run's case record names (Inputs.CrackPolicy); an absent field reads as
+    legacy: the runs stored before the policy was recorded were cracked (decision 1597 (2))."""
+    return check_crack_policy((stored.get("Inputs") or {}).get("CrackPolicy") or "legacy")
+
+
+def reference_crack_policy(run_policy, reference_config):
+    """The crack-policy pair of a reference comparison (decision 1597 (3a)): the reference config's policy is
+    legacy, recorded by its key (true) or assumed (no key); Label names a cross-form pair, else None."""
+    value = reference_config.get("Model", {}).get(CRACK_KEY)
+    if value is not None and value is not True:
+        raise CaseStop("Reference", f"the reference config sets Model.{CRACK_KEY} = {value!r}: no crack policy writes it")
+    reference = "legacy"
+    basis = f"Model.{CRACK_KEY} true" if value is True else "assumed: no record"
+    cross_form = check_crack_policy(run_policy) != reference
+    return {"Run": run_policy, "Reference": reference, "ReferenceBasis": basis, "CrossForm": cross_form,
+            "Label": (f"reference crack policy: {reference} ({basis}) vs run: {run_policy}" if cross_form else None),
+            "Rule": CROSS_FORM_REFERENCE_RULE}
+
+
+def cross_form_reference_label(record):
+    """The cross-form label of a case record's reference comparison (reference_crack_policy), else None."""
+    return (((record.get("Reference") or {}).get("ConfigEqualsDerived") or {}).get("CrackPolicy") or {}).get("Label")
+
+
+def load_reused_main(reuse_root, case_id, *, identity_sha256, run_config, trace_digests, main_prefix,
+                     crack_policy=CRACK_POLICY_DEFAULT):
     """The stored qualify run under `reuse_root` (its library-qualification.json + <case>/) whose
     main stage a controls-only job reuses (CONTROLS_ONLY_RULE), checked for identity with this
     run's inputs - the identity mesh digest, the run config apart from the remote paths, every
@@ -777,6 +813,12 @@ def load_reused_main(reuse_root, case_id, *, identity_sha256, run_config, trace_
     if stored_config_sha256 != (stored.get("Inputs") or {}).get("ConfigSHA256"):
         raise CaseStop("ReuseMain", f"the stored run config {stored_config_path} ({stored_config_sha256[:12]}...) is not the one its record "
                                     f"pinned ({(stored.get('Inputs') or {}).get('ConfigSHA256', '')[:12]}...): the stored root was rewritten")
+    stored_policy = stored_crack_policy(stored)
+    if stored_policy != check_crack_policy(crack_policy):
+        raise CaseStop("ReuseMain", f"the stored run of {case_id} was solved under the crack policy {stored_policy}"
+                                    f"{'' if (stored.get('Inputs') or {}).get('CrackPolicy') else ' (assumed: no record)'}, "
+                                    f"this run's is {crack_policy}: a stored main stage is never reused across crack "
+                                    f"policies (decisions 1586 / 1597)")
     differences = case_inputs.config_differences(run_config, json.loads(stored_config_path.read_text()), ignore_solver=())
     if differences:
         raise CaseStop("ReuseMain", f"the run config derived now differs from the stored run's outside the remote paths: {differences[:12]}",
@@ -1412,6 +1454,10 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         ref_pma=ma_ms_offsets.reference_p_ma(reference_dir, reference_interface_types) if reference_dir else None,
         p_sequence_summary=p_sequence_summary, reference_order=reference_order, gates_sha256=gates_digest,
         interfaces=context["interfaces"], gated_order=gated["Order"], amplitudes=coupon_amplitudes)
+    # Decision 1597 (a): a qualification against a cross-form reference says so in its outcome, never silently.
+    cross_form = cross_form_reference_label(record)
+    if cross_form:
+        gate_record["CrossFormReference"] = cross_form
     write_json(case_root / "qualification.json", gate_record)
     record["Qualification"] = {"Verdict": gate_record["Verdict"], "Reason": gate_record["Reason"],
                                "GatesPassed": gate_record["GatesPassed"], "NotApplicable": gate_record["NotApplicable"],
@@ -1431,6 +1477,8 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                                                          "Offsets": (offsets["Distributions"].get(label) if offsets else None),
                                                          "WeightedPMA": (offsets["Weighted"].get(label) if offsets else None)}
                                                  for label in informational}}
+    if cross_form:
+        record["Qualification"]["CrossFormReference"] = cross_form
     stage_keys = ("H1", "Order", "MeanPCGIterations", "MaxPCGIterations", "SecondsPerPCGIteration", "WorkerWallSeconds",
                   "ReducerWallSeconds", "StageWallSeconds", "NodeHours")
     record["Cost"] = {"MainStage": {key: main_cost.get(key) for key in stage_keys},
@@ -1797,6 +1845,8 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
                                   "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"],
                                   "UnjudgedTypes": list(record["Qualification"].get("UnjudgedTypes") or [])}
+        if record["Qualification"].get("CrossFormReference"):
+            model["Qualification"]["CrossFormReference"] = record["Qualification"]["CrossFormReference"]
         model["QualificationStatus"] = qualification_status_of_verdict(record["Qualification"]["Verdict"])
         model["QualificationStatusRule"] = QUALIFICATION_STATUS_RULE
         if record.get("BuildGateOverride"):
@@ -1926,6 +1976,16 @@ def reducer_ranks_of(record):
     return reducer.get("Ranks") if reducer else None
 
 
+def cross_form_reference_counts(records):
+    """{label: coupons} over the records whose qualification carries a CrossFormReference label (decision 1597 (a))."""
+    counts = {}
+    for record in records:
+        label = (record.get("Qualification") or {}).get("CrossFormReference")
+        if label:
+            counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
 def library_totals(records, *, args, remote, profile, wall_seconds, first_submission, last_fetch, jobs, cap):
     node_hours = sum((record.get("Cost") or {}).get("JobNodeHours") or 0.0 for record in records)
     return {"CouponsAttempted": len(records),
@@ -1935,6 +1995,8 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
             "CouponsPlanned": sum(record["Status"] == STATUS_PLANNED for record in records),
             "CouponsSkipped": sum(record["Status"] == STATUS_SKIPPED for record in records),
             "CouponsUnsupported": sum(record["Status"] == STATUS_UNSUPPORTED for record in records),
+            # Decision 1597 (a): the coupons whose verdict was obtained against a cross-form reference, by label.
+            "CouponsCrossFormReference": cross_form_reference_counts(records),
             "StoppedCoupons": {record["Case"]: record["StoppedBy"] for record in records if record["StoppedBy"]},
             "NodeHours": node_hours,
             "CriticalPathSeconds": ((last_fetch - first_submission) if first_submission and last_fetch else None),
@@ -2203,6 +2265,9 @@ def run_qualify(args, *, log=log_line):
 
 
 def add_arguments(parser):
+    # Decision 1586: the crack policy of the derived run configs (case_inputs.derive -> make_config), recorded per
+    # case (Inputs.CrackPolicy); a stored main stage is reused only under the same policy (decision 1597).
+    add_crack_policy_argument(parser)
     parser.add_argument("--build-record", type=Path, required=True, help="library-build.json of coupon-library build")
     parser.add_argument("--reference", type=lambda text: None if text.lower() == "none" else Path(text), required=True,
                         help="graded_v2 reference campaign directory (inputs-<key>/, case-<key>-fabricated/) or 'none' "
@@ -2271,6 +2336,18 @@ def add_arguments(parser):
     parser.add_argument("--gates", type=Path, default=gate_evaluation.GATES_FILE)
 
 
+def library_summary_line(record):
+    """The LIBRARY line of a run: the coupon counts by status (+ the cross-form reference labels, decision 1597 (a))."""
+    totals = record["Library"]
+    return (f"LIBRARY attempted {totals['CouponsAttempted']} qualified {totals['CouponsQualified']} pending {totals['CouponsPending']} "
+            f"failed {totals['CouponsFailed']} planned {totals['CouponsPlanned']} skipped {totals['CouponsSkipped']} "
+            f"unsupported {totals['CouponsUnsupported']} "
+            + "".join(f"cross-form-reference {count} ({label}) "
+                      for label, count in sorted(totals.get("CouponsCrossFormReference", {}).items()))
+            + f"node-h {totals['NodeHours']:.3f} jobs {totals['JobsSubmitted']}/{totals['MaxJobs']} (cap {totals['UserJobCap']}); "
+            f"record {Path(record['Root']) / LIBRARY_QUALIFICATION_RECORD}")
+
+
 def run_from_args(args):
     record = run_qualify(args)
     totals = record["Library"]
@@ -2279,11 +2356,7 @@ def run_from_args(args):
         verdict = (case.get("Qualification") or {}).get("Verdict")
         print(f"{case['Case']}: {case['Status']}" + (f" verdict {verdict}" if verdict else "")
               + (f" stopped-by {stopped['Kind']}: {stopped['Message']}" if stopped else ""), flush=True)
-    print(f"LIBRARY attempted {totals['CouponsAttempted']} qualified {totals['CouponsQualified']} pending {totals['CouponsPending']} "
-          f"failed {totals['CouponsFailed']} planned {totals['CouponsPlanned']} skipped {totals['CouponsSkipped']} "
-          f"unsupported {totals['CouponsUnsupported']} "
-          f"node-h {totals['NodeHours']:.3f} jobs {totals['JobsSubmitted']}/{totals['MaxJobs']} (cap {totals['UserJobCap']}); "
-          f"record {Path(record['Root']) / LIBRARY_QUALIFICATION_RECORD}")
+    print(library_summary_line(record))
     if args.dry_run:
         return 0 if totals["CouponsPlanned"] == totals["CouponsAttempted"] else 1
     return 0 if totals["CouponsQualified"] == totals["CouponsAttempted"] else 1

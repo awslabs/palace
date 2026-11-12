@@ -50,7 +50,7 @@ import local_pieces  # noqa: E402  (surface_response_identification, on sys.path
 from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
 import trace_basis  # noqa: E402
 from mixed_mesh import SHELL_LABEL_STRIDE  # noqa: E402
-from crack_policy import CRACK_KEY  # noqa: E402  (surface_response_identification, as local_pieces)
+from crack_policy import CRACK_KEY, CRACK_POLICY_DEFAULT, check_crack_policy  # noqa: E402  (surface_response_identification, as local_pieces)
 
 PHYSICS_RUN_KEY = "PhysicsRun"
 JOB_POLICY_KEY = "JobPolicy"
@@ -346,7 +346,7 @@ def apply_unrefined_crack_seams(config, mesh_path, fabricated):
 
 
 def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, output_root="<output>", traces_remote=None,
-           radial_shells=None):
+           radial_shells=None, crack_policy=CRACK_POLICY_DEFAULT):
     """The run inputs of a case: (config, record).  `mesh` is the value written into
     Model.Mesh (default: the local mesh path), `traces_remote` the directory written
     into every DataFile (default: the local trace directory); Problem.Output is
@@ -354,7 +354,9 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
     (the census of a radial-shell relabel) derives the base config against the parent
     MA labels and expands it (expand_radial_shells); the record then carries the base
     config under BaseConfig (the reference comparison view) and the shell map under
-    RadialShells."""
+    RadialShells.  `crack_policy` is the producer's (make_config; decision 1570) and is recorded
+    under CrackPolicy (decisions 1586 / 1597)."""
+    check_crack_policy(crack_policy)
     files = case["Source"]["Files"]
     paths = load_case_sources(directory, files)
     process = tomllib.loads(paths["Process"].read_text())
@@ -428,7 +430,7 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
         terminal_conductors, fabricated, physics_run["Order"], radius, float(fabrication["SubstratePermittivity"]),
         layers, interfaces, edges, available_attributes=config_available,
         terminal_traces={conductor: f"{traces_remote}/{path.name}" for conductor, path in conductor_traces.items()},
-        edge_exclude_segments=foreign_edges, edge_exclude_segment_sagittas=foreign_sagittas)
+        edge_exclude_segments=foreign_edges, edge_exclude_segment_sagittas=foreign_sagittas, crack_policy=crack_policy)
     config["Problem"]["Output"] = output_root
     config["Solver"]["Linear"]["Tol"] = physics_run["LinearTol"]
     unrefined_crack_seams = apply_unrefined_crack_seams(config, Path(mesh_path), fabricated)
@@ -448,7 +450,7 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
     record = {"Origin": "case", "Directory": str(directory), "Model": model["Name"],
               "Kind": "fabricated" if fabricated else "thin", "FabricatedCase": case.get(FABRICATED_CASE_KEY),
               "SourceSHA256": {role: files[role]["SHA256"] for role in files},
-              "PhysicsRun": dict(physics_run), "Interfaces": interface_types(config),
+              "PhysicsRun": dict(physics_run), "CrackPolicy": crack_policy, "Interfaces": interface_types(config),
               "InterfaceTypes": sorted(set(interface_types(config).values())),
               "Sources": sources, "ZeroTraceIndices": zero_indices,
               "Traces": {"Directory": str(trace_dir), "Rule": "regenerated from the bound trace basis in the mesh frame "
