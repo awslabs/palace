@@ -278,6 +278,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - The superbuild patches the BLACS of ScaLAPACK to receive messages with derived
+    datatypes packed and unpack them locally. This works around an MPICH bug for processes
+    on the same node, which corrupts or aborts the complex-valued distributed
+    factorizations of STRUMPACK and MUMPS: packed messages received in several shared
+    memory segments cannot be unpacked into complex-valued elements split across segments.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
     *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
     (`mumps@5.3:+double+complex`). [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
