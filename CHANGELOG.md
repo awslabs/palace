@@ -42,6 +42,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
+#### New Features
+
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
+    that far fields can be computed when the outer boundary is not a valid integration
+    surface, or away from the truncation. The fields of each face are taken from the side
+    facing the center of the bounding box of the surface. SchemaVer 4-2-3.
+    [PR 1110](https://github.com/awslabs/palace/pull/1110).
+
 #### Performance Improvements
 
   - Added a STRUMPACK patch for

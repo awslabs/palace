@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-2",
+  "$id": "urn:palace:schema:4-2-3",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1786,7 +1786,7 @@
         "FarField": {
           "$ref": "#/$defs/FarField",
           "title": "Far Field",
-          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+          "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium."
         }
       }
     },
@@ -1915,7 +1915,7 @@
     "FarField": {
       "type": "object",
       "title": "Far Field",
-      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium.",
       "additionalProperties": false,
       "required": [
         "Attributes"
