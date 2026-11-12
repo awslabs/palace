@@ -21,6 +21,10 @@ RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
 # Copy inputs needed to install dependencies before the Palace source tree.
 COPY spack_repo /opt/palace/spack_repo
 
+# Add neoverse_v3 (Graviton5) to Spack v1.2's vendored archspec; see the
+# "Extend archspec" step in the build-container action.
+ENV ARCHSPEC_EXTENSION_CPU_DIR=/opt/palace/spack_repo/archspec
+
 # Set up spack repo and apply patches to builtin spack packages
 RUN mkdir -p /opt/spack-environment && \
     # Link our local spack repo to /opt/spack-environment

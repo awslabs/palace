@@ -21,9 +21,17 @@ inputs:
 runs:
   using: composite
   steps:
+    # Spack v1.2 vendors archspec 0.2.6, which does not know neoverse_v3
+    # (Graviton5). Extend it with spack_repo/archspec until Spack ships an
+    # archspec that includes archspec/archspec-json#168. The container build sets
+    # the same variable in PalaceDockerfile.
+    - name: Extend archspec
+      shell: bash
+      run: echo "ARCHSPEC_EXTENSION_CPU_DIR=$GITHUB_WORKSPACE/spack_repo/archspec" >> "$GITHUB_ENV"
+
     # .git is excluded from the build context, so describe the version here and
-    # pass it to the build. Runs first: later steps edit tracked files (e.g. the
-    # target pin rewrites spack.yaml), which would mark the version -dirty.
+    # pass it to the build. Runs before any step that edits tracked files (e.g.
+    # the target pin rewrites spack.yaml), which would mark the version -dirty.
     - name: Describe Palace version
       shell: bash
       run: |
