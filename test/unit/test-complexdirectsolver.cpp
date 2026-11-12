@@ -3,12 +3,18 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
+#include "fem/mesh.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/mumpscomplex.hpp"
 #include "linalg/operator.hpp"
@@ -18,7 +24,12 @@
 #include "linalg/superlu.hpp"
 #include "linalg/superlucomplex.hpp"
 #include "linalg/vector.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 #if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_MUMPS)
 
@@ -262,6 +273,220 @@ TEST_CASE("MUMPS complex arithmetic solver", "[mumps][Serial][Parallel]")
   TestComplexDirectSolver(solver, ref, 1.0e-10, sym == MatrixSymmetry::UNSYMMETRIC);
 }
 #endif
+
+namespace
+{
+
+using json = nlohmann::json;
+
+// The sparse direct solver types of this build ("Type" of config["Solver"]["Linear"]).
+std::vector<std::string> SparseDirectSolverTypes()
+{
+  std::vector<std::string> types;
+#if defined(MFEM_USE_STRUMPACK)
+  types.push_back("STRUMPACK");
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  types.push_back("SuperLU");
+#endif
+#if defined(MFEM_USE_MUMPS)
+  types.push_back("MUMPS");
+#endif
+  return types;
+}
+
+// Whether the solver is the complex arithmetic solver of the sparse direct solver type.
+bool IsComplexArithmeticSolver(const std::string &type, Solver<ComplexOperator> *pc)
+{
+#if defined(MFEM_USE_STRUMPACK)
+  if (type == "STRUMPACK")
+  {
+    return dynamic_cast<StrumpackComplexSolver *>(pc) != nullptr;
+  }
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  if (type == "SuperLU")
+  {
+    return dynamic_cast<SuperLUComplexSolver *>(pc) != nullptr;
+  }
+#endif
+#if defined(MFEM_USE_MUMPS)
+  if (type == "MUMPS")
+  {
+    return dynamic_cast<MumpsComplexSolver *>(pc) != nullptr;
+  }
+#endif
+  return false;
+}
+
+// ComplexKspSolver whose preconditioner can be inspected.
+class InspectableComplexKspSolver : public ComplexKspSolver
+{
+public:
+  using ComplexKspSolver::ComplexKspSolver;
+
+  Solver<ComplexOperator> *GetPreconditioner() { return pc.get(); }
+};
+
+// Driven problem on a cube of lossy dielectric with PEC walls at z = 0 and z = 1 (essential
+// boundary conditions) and a lumped port on x = 0, without multigrid: the preconditioner
+// matrix is a ComplexParOperator with real and imaginary parts and eliminated essential
+// degrees of freedom, built and solved as in a simulation.
+struct DrivenTestProblem
+{
+  IoData iodata{Units(1.0e-3, 1.0e-3)};
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  std::unique_ptr<SpaceOperator> space_op;
+
+  DrivenTestProblem(const json &linear)
+  {
+    iodata.model.L0 = 1.0e-3;
+    iodata.model.Lc = 1.0;
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.order = 2;
+    iodata.solver.driven.sample_f = {1.0};
+    iodata.solver.linear = config::LinearSolverData(linear);
+    iodata.domains = config::DomainData(
+        json{{"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                                      {"Permittivity", 4.0},
+                                                      {"LossTan", 0.3}})})}});
+    // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = sz), 5 (x = 0).
+    iodata.boundaries = config::BoundaryData(
+        json{{"PEC", json::object({{"Attributes", json::array({1, 6})}})},
+             {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                       {"R", 50.0},
+                                                       {"Excitation", 1},
+                                                       {"Attributes", json::array({5})},
+                                                       {"Direction", "+Z"}})})}});
+    iodata.CheckConfiguration();
+    auto smesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
+    iodata.NondimensionalizeInputs(smesh);
+    mesh.push_back(
+        std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), Mpi::World())));
+    space_op = std::make_unique<SpaceOperator>(iodata, mesh);
+  }
+
+  std::unique_ptr<InspectableComplexKspSolver> MakeKspSolver()
+  {
+    return std::make_unique<InspectableComplexKspSolver>(iodata, space_op->GetNDSpaces(),
+                                                         &space_op->GetH1Spaces());
+  }
+
+  // Solve the driven problem at the given multiple of the sample frequency, from a zero
+  // initial guess. Returns the number of linear solver iterations.
+  int Solve(InspectableComplexKspSolver &ksp, double f_scale, ComplexVector &E)
+  {
+    using namespace std::complex_literals;
+    const double omega = f_scale * iodata.solver.driven.sample_f.front();
+    auto K = space_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space_op->GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op->GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    auto A = space_op->GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                       K.get(), C.get(), M.get(), A2.get());
+    auto P = space_op->GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    ksp.SetOperators(*A, *P);
+    ComplexVector RHS;
+    RHS.UseDevice(true);
+    REQUIRE(space_op->GetExcitationVector(1, omega, RHS));
+    E.SetSize(RHS.Size());
+    E.UseDevice(true);
+    E = 0.0;
+    const int it = ksp.NumTotalMultIterations();
+    ksp.Mult(RHS, E);
+    CHECK(ksp.GetConverged());
+    return ksp.NumTotalMultIterations() - it;
+  }
+};
+
+json LinearOptions(const std::string &type, json options)
+{
+  options["Type"] = type;
+  options["KSPType"] = "GMRES";
+  options["Tol"] = 1.0e-10;
+  options["MaxIts"] = 200;
+  options["MGMaxLevels"] = 1;
+  return options;
+}
+
+}  // namespace
+
+TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
+          "[strumpack][superlu][mumps][Serial][Parallel]")
+{
+  // ConfigurePreconditionerSolver uses the complex arithmetic solvers where they apply,
+  // and they solve the ComplexParOperator of a simulation (assembled again for a new
+  // operator after the previous assembly was released, essential boundary conditions
+  // eliminated) as the equivalent real-valued system of twice the size does.
+  MPI_Comm comm = Mpi::World();
+  const auto type = GENERATE(from_range(SparseDirectSolverTypes()));
+  INFO("type " << type);
+
+  // Reference: the equivalent real-valued system of twice the size (DropSmallEntries keeps
+  // it with ComplexCoarseSolve).
+  ComplexVector E_ref;
+  int n = 0;
+  {
+    DrivenTestProblem problem(LinearOptions(
+        type, json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}));
+    auto ksp = problem.MakeKspSolver();
+    auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    CHECK(problem.Solve(*ksp, 1.0, E_ref) <= 2);
+    n = E_ref.Size();
+    CHECK(pc->GetSolver().Height() == 2 * n);
+  }
+
+  // Complex arithmetic, also with the ParMETIS column ordering.
+  for (const std::string ordering : {"Default", "ParMETIS"})
+  {
+    INFO("ordering " << ordering);
+    DrivenTestProblem problem(LinearOptions(
+        type, json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", ordering}}));
+    auto ksp = problem.MakeKspSolver();
+    CHECK(IsComplexArithmeticSolver(type, ksp->GetPreconditioner()));
+    ComplexVector E;
+    CHECK(problem.Solve(*ksp, 1.0, E) <= 2);
+    E -= E_ref;
+    CHECK(linalg::Norml2(comm, E) / linalg::Norml2(comm, E_ref) < 1.0e-8);
+    CHECK(problem.Solve(*ksp, 1.2, E) <= 2);
+  }
+
+  // The cases which keep the equivalent real-valued system of twice the size.
+  std::vector<json> block_options = {
+      json{{"ComplexCoarseSolve", true}, {"PCMatReal", true}},
+      json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}};
+  if (type == "SuperLU")
+  {
+    block_options.push_back(
+        json{{"ComplexCoarseSolve", true}, {"SuperLU3DCommunicator", true}});
+  }
+  if (type == "STRUMPACK")
+  {
+    block_options.push_back(
+        json{{"ComplexCoarseSolve", true}, {"STRUMPACKCompressionType", "BLR"}});
+  }
+  for (const auto &options : block_options)
+  {
+    INFO("options " << options.dump());
+    DrivenTestProblem problem(LinearOptions(type, options));
+    auto ksp = problem.MakeKspSolver();
+    CHECK(dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner()));
+  }
+
+  // The real-valued approximation.
+  {
+    DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", false}}));
+    auto ksp = problem.MakeKspSolver();
+    auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    ComplexVector E;
+    problem.Solve(*ksp, 1.0, E);
+    CHECK(pc->GetSolver().Height() == n);
+  }
+}
 
 }  // namespace palace
 

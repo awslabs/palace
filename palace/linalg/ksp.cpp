@@ -11,8 +11,11 @@
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
+#include "linalg/mumpscomplex.hpp"
 #include "linalg/strumpack.hpp"
+#include "linalg/strumpackcomplex.hpp"
 #include "linalg/superlu.hpp"
+#include "linalg/superlucomplex.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -127,6 +130,15 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
       linear.complex_coarse_solve, linear.drop_small_entries, linear.reorder_reuse);
 }
 
+// Whether the sparse direct solvers which support it factor the complex-valued matrix of a
+// complex-valued coarse solve in complex arithmetic, instead of the equivalent real-valued
+// system of twice the size (see MfemWrapperSolver). The complex arithmetic solvers do not
+// drop small entries.
+[[maybe_unused]] bool UseComplexArithmetic(const config::LinearSolverData &linear)
+{
+  return linear.complex_coarse_solve && !linear.pc_mat_real && !linear.drop_small_entries;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
@@ -158,6 +170,16 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        // Only with a 2D process grid.
+        if (UseComplexArithmetic(linear) && !linear.superlu_3d)
+        {
+          pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization,
+                                                      linear.reorder_reuse, print);
+          break;
+        }
+      }
       pc = MakeWrapperSolver<OperType, SuperLUSolver>(
           linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
           print);
@@ -165,6 +187,17 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        // Only without compression.
+        if (UseComplexArithmetic(linear) &&
+            linear.strumpack_compression_type == SparseCompression::NONE)
+        {
+          pc = std::make_unique<StrumpackComplexSolver>(comm, linear.sym_factorization,
+                                                        linear.reorder_reuse, print);
+          break;
+        }
+      }
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
@@ -181,6 +214,19 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        if (UseComplexArithmetic(linear))
+        {
+          pc = std::make_unique<MumpsComplexSolver>(
+              comm, pc_mat_sym, linear.sym_factorization,
+              (linear.strumpack_compression_type == SparseCompression::BLR)
+                  ? linear.strumpack_lr_tol
+                  : 0.0,
+              linear.reorder_reuse, print);
+          break;
+        }
+      }
       pc = MakeWrapperSolver<OperType, MumpsSolver>(
           linear, comm, pc_mat_sym, linear.sym_factorization,
           (linear.strumpack_compression_type == SparseCompression::BLR)
