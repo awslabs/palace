@@ -205,78 +205,96 @@ void SensitivityExport::AddObjective(nlohmann::json entry, const Vector *g, doub
 
 void SensitivityExport::Write(const std::filesystem::path &dir) const
 {
-  const auto all_points = Mpi::GatherOnRoot(points, comm);
-  std::vector<std::vector<double>> all_gradients;
-  for (const auto &gradient : gradients)
+  // Gather and write one array at a time, so that the root process holds at most one array
+  // of the whole region.
+  const bool root = Mpi::Root(comm);
+  if (root)
   {
-    all_gradients.push_back(Mpi::GatherOnRoot(gradient, comm));
+    std::filesystem::create_directories(dir);
   }
-  std::vector<int> counts, attributes;
-  for (const auto &attr_list : boundary)
-  {
-    counts.push_back(static_cast<int>(attr_list.size()));
-    attributes.insert(attributes.end(), attr_list.begin(), attr_list.end());
-  }
-  const auto all_counts = Mpi::GatherOnRoot(counts, comm);
-  const auto all_attributes = Mpi::GatherOnRoot(attributes, comm);
-  if (!Mpi::Root(comm))
-  {
-    return;
-  }
-
-  std::filesystem::create_directories(dir);
-  nlohmann::json meta = {{"Format", "PalaceSensitivity"},
-                         {"Version", 1},
-                         {"ProblemType", ToString(iodata.problem.type)},
-                         {"LengthUnit", iodata.model.L0},
-                         {"NumPoints", all_points.size() / 3},
-                         {"ByteOrder", "LittleEndian"}};
+  std::size_t num_points = 0;
+  nlohmann::json meta;
   if (shape)
   {
-    auto fp = OpenBinary(dir / "points.bin");
-    WriteBinary(fp, all_points);
-    meta["Points"] = "points.bin";
-    const auto &region = *iodata.sensitivity.shape;
-    nlohmann::json json_region = nlohmann::json::object();
-    if (region.bbmin)
     {
-      const double scale = iodata.units.GetMeshLengthRelativeScale();
-      std::array<double, 3> bbmin = *region.bbmin, bbmax = *region.bbmax;
-      for (int c = 0; c < 3; c++)
+      const auto all_points = Mpi::GatherOnRoot(points, comm);
+      if (root)
       {
-        bbmin[c] *= scale;
-        bbmax[c] *= scale;
+        num_points = all_points.size() / 3;
+        auto fp = OpenBinary(dir / "points.bin");
+        WriteBinary(fp, all_points);
+        meta["Points"] = "points.bin";
       }
-      json_region["BoundingBoxMin"] = bbmin;
-      json_region["BoundingBoxMax"] = bbmax;
     }
-    if (!region.attributes.empty())
-    {
-      json_region["Attributes"] = region.attributes;
-    }
-    if (!json_region.empty())
-    {
-      meta["Region"] = json_region;
-    }
+    const auto &region = *iodata.sensitivity.shape;
     if (region.boundary_tags)
     {
-      std::vector<std::int64_t> offsets(all_counts.size() + 1, 0);
-      for (std::size_t k = 0; k < all_counts.size(); k++)
+      std::vector<int> counts, attributes;
+      for (const auto &attr_list : boundary)
       {
-        offsets[k + 1] = offsets[k] + all_counts[k];
+        counts.push_back(static_cast<int>(attr_list.size()));
+        attributes.insert(attributes.end(), attr_list.begin(), attr_list.end());
       }
-      auto fb = OpenBinary(dir / "boundary.bin");
-      WriteBinary(fb, offsets);
-      WriteBinary(fb,
-                  std::vector<std::int32_t>(all_attributes.begin(), all_attributes.end()));
-      meta["Boundary"] = "boundary.bin";
+      const auto all_counts = Mpi::GatherOnRoot(counts, comm);
+      const auto all_attributes = Mpi::GatherOnRoot(attributes, comm);
+      if (root)
+      {
+        std::vector<std::int64_t> offsets(all_counts.size() + 1, 0);
+        for (std::size_t k = 0; k < all_counts.size(); k++)
+        {
+          offsets[k + 1] = offsets[k] + all_counts[k];
+        }
+        auto fb = OpenBinary(dir / "boundary.bin");
+        WriteBinary(fb, offsets);
+        WriteBinary(
+            fb, std::vector<std::int32_t>(all_attributes.begin(), all_attributes.end()));
+        meta["Boundary"] = "boundary.bin";
+      }
     }
     for (std::size_t i = 0; i < objectives.size(); i++)
     {
-      auto fg = OpenBinary(dir / objectives[i].at("Gradient").get<std::string>());
-      WriteBinary(fg, all_gradients[i]);
+      const auto all_gradient = Mpi::GatherOnRoot(gradients[i], comm);
+      if (root)
+      {
+        auto fg = OpenBinary(dir / objectives[i].at("Gradient").get<std::string>());
+        WriteBinary(fg, all_gradient);
+      }
+    }
+    if (root)
+    {
+      nlohmann::json json_region = nlohmann::json::object();
+      if (region.bbmin)
+      {
+        const double scale = iodata.units.GetMeshLengthRelativeScale();
+        std::array<double, 3> bbmin = *region.bbmin, bbmax = *region.bbmax;
+        for (int c = 0; c < 3; c++)
+        {
+          bbmin[c] *= scale;
+          bbmax[c] *= scale;
+        }
+        json_region["BoundingBoxMin"] = bbmin;
+        json_region["BoundingBoxMax"] = bbmax;
+      }
+      if (!region.attributes.empty())
+      {
+        json_region["Attributes"] = region.attributes;
+      }
+      if (!json_region.empty())
+      {
+        meta["Region"] = json_region;
+      }
     }
   }
+  if (!root)
+  {
+    return;
+  }
+  meta["Format"] = "PalaceSensitivity";
+  meta["Version"] = 1;
+  meta["ProblemType"] = ToString(iodata.problem.type);
+  meta["LengthUnit"] = iodata.model.L0;
+  meta["NumPoints"] = num_points;
+  meta["ByteOrder"] = "LittleEndian";
   meta["Objectives"] = objectives;
 
   std::ofstream fo(dir / "sensitivity.json");
