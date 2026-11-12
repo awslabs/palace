@@ -9,6 +9,8 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include "linalg/mumps.hpp"
+#include "linalg/mumpscomplex.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
@@ -18,7 +20,7 @@
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
-#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_SUPERLU)
+#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_MUMPS)
 
 namespace palace
 {
@@ -243,6 +245,21 @@ TEST_CASE("SuperLU complex arithmetic solver", "[superlu][Serial][Parallel]")
       std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-10, unsymmetric);
+}
+#endif
+
+#if defined(MFEM_USE_MUMPS)
+TEST_CASE("MUMPS complex arithmetic solver", "[mumps][Serial][Parallel]")
+{
+  // Complex symmetric and unsymmetric matrices.
+  MPI_Comm comm = Mpi::World();
+  const auto sym = GENERATE(MatrixSymmetry::SYMMETRIC, MatrixSymmetry::UNSYMMETRIC);
+  MumpsComplexSolver solver(comm, sym, SymbolicFactorization::DEFAULT, 0.0, true, 0);
+  MfemWrapperSolver<ComplexOperator> ref(
+      std::make_unique<MumpsSolver>(comm, sym, SymbolicFactorization::DEFAULT, 0.0, true,
+                                    0),
+      true, true, false, true);
+  TestComplexDirectSolver(solver, ref, 1.0e-10, sym == MatrixSymmetry::UNSYMMETRIC);
 }
 #endif
 
