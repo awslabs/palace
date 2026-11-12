@@ -1,0 +1,19 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 91349dc2..6e49ab43 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -372,9 +372,11 @@ int main(int argc, char* argv[]) { getopt_long(argc, argv, \"\", 0, 0); }"
+ 
+ 
+ if(STRUMPACK_USE_MPI)
+-  # the default blocksize when using ScaLAPACK,
+-  # might be changed when using SLATE, see below
+-  set(STRUMPACK_PBLAS_BLOCKSIZE "32")
++  # the default blocksize when using ScaLAPACK (can be set on the
++  # command line), might be changed when using SLATE, see below
++  if(NOT DEFINED STRUMPACK_PBLAS_BLOCKSIZE)
++    set(STRUMPACK_PBLAS_BLOCKSIZE "32")
++  endif()
+   if(DEFINED TPL_SCALAPACK_LIBRARIES)
+     set(SCALAPACK_FOUND TRUE)
+     set(SCALAPACK_LIBRARIES ${TPL_SCALAPACK_LIBRARIES})

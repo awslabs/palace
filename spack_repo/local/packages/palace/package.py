@@ -209,6 +209,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             patch("strumpack-lab-si-tri.diff", when="@8.1.0"),
             patch("strumpack-lab-s2.diff", when="@8.1.0"),
             patch("strumpack-lab-mem.diff", when="@8.1.0"),
+            patch("strumpack-lab-pblas-blocksize.diff", when="@8.1.0"),
         ],
     )
 

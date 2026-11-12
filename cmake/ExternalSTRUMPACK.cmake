@@ -159,6 +159,7 @@ list(APPEND STRUMPACK_OPTIONS
   "-DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}"
   "-DCMAKE_Fortran_FLAGS=${CMAKE_Fortran_FLAGS}"
   "-DSTRUMPACK_USE_MPI=ON"
+  "-DSTRUMPACK_PBLAS_BLOCKSIZE=128"
   "-DTPL_ENABLE_PARMETIS=ON"
   "-DTPL_METIS_LIBRARIES=${METIS_LIBRARIES}"
   "-DTPL_METIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
@@ -311,6 +312,7 @@ list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_si_tri.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s2.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_mem.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_pblas_blocksize.diff"
 )
 
 include(ExternalProject)
