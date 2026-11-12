@@ -19,6 +19,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
+    (off by default; refused by the electrostatic driver): the raw within-`R` energy of the
+    uncovered requirements (`surface-response-uncovered-energy.csv`) split per type by
+    identification FEATURE into `surface-response-uncovered-feature-energy.csv` (the label's
+    portions, length and bounding box, the energy per target interface; overlapping features
+    of one type share a `+`-joined label), one quadrature pass per interface; per mode, type
+    and interface the rows sum to the uncovered table (lane ctx002-miss, decision 1567 (b)).
+
   - Added the magnetic (inductive) defect of finite-thickness metal to the Maxwell
     self-consistent surface-response correction for the 2D translational model families
     (mx-sc-magnetic DESIGN-v2 option (C); USER decision 1221 D2-D8; decisions 1227 / 1229):
