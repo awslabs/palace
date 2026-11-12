@@ -321,7 +321,8 @@ continuous integration works, we manually apply those PR as part setting Spack
 up in our runners (the `setup-runner` workflow).
 
 If you are working with Spack and *Palace* locally, you might need to apply the
-same patches. To apply a patch in `spack_repo/patches`:
+same patches. `mfem_superlu_dist_without_parmetis.diff` is required to build the
+default `palace~parmetis` with SuperLU_DIST. To apply a patch in `spack_repo/patches`:
 
 ```bash
 cd $(spack location --repo builtin)

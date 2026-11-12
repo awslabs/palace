@@ -58,6 +58,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build with cuDSS sparse direct solver",
         when="@0.19:",
     )
+    variant(
+        "parmetis",
+        default=False,
+        description="Build with ParMETIS column ordering for sparse direct solvers",
+        when="@0.20:",
+    )
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
     variant(
@@ -150,14 +156,19 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")
-        depends_on("mumps+metis+parmetis")
+        depends_on("mumps+metis")
+        depends_on("mumps+parmetis", when="@:0.19")
+        depends_on("mumps+parmetis", when="+parmetis")
+        depends_on("mumps~parmetis", when="~parmetis")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis")
+        depends_on("superlu-dist+parmetis", when="@:0.19")
+        depends_on("superlu-dist+parmetis", when="+parmetis")
+        depends_on("superlu-dist~parmetis", when="~parmetis")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -167,7 +178,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("+strumpack"):
         depends_on("fortran", type="build")
-        depends_on("strumpack+butterflypack+zfp+parmetis")
+        depends_on("strumpack+butterflypack+zfp")
+        depends_on("strumpack+parmetis", when="@:0.19")
+        depends_on("strumpack+parmetis", when="+parmetis")
+        depends_on("strumpack~parmetis", when="~parmetis")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
@@ -329,7 +343,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # As of version 5.1.0, the PETSc fork of METIS provides a better mesh
     # partitioning.
     depends_on("metis+petsc_patches+gkrand")
-    depends_on("parmetis+petsc_patches")
+    depends_on("parmetis+petsc_patches", when="@:0.19")
+    depends_on("parmetis+petsc_patches", when="+parmetis")
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.15.0")
@@ -681,6 +696,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
             self.define_from_variant("PALACE_WITH_CUDSS", "cudss"),
+            self.define_from_variant("PALACE_WITH_PARMETIS", "parmetis"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
@@ -737,7 +753,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.spec.satisfies("+superlu-dist"):
                 args.append(self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix))
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
-            args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
+            if self.spec.satisfies("@:0.19") or self.spec.satisfies("+parmetis"):
+                args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
         else:
             # Pass libraries down to the ExternalMFEM cmake file. Needed only
