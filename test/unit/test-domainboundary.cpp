@@ -1085,6 +1085,20 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                           ContainsSubstring("4 vs 2 DomainBoundary patches"));
   }
 
+  // setupmem S2 (decision 1554): the placement writes the shared geometry's patch list in
+  // place; a construction that throws in it (above) leaves the geometry as a completed one
+  // does, so a construction after it on the first mesh reproduces the first's, bit for bit.
+  {
+    SurfaceResponseOperator after_throw(iodata, laplace, &geometry);
+    CHECK(after_throw.DomainBoundaryContainmentReused());
+    CHECK(after_throw.GetPatchCount() == 14);
+    CHECK(DomainBoundaryRecordWithoutTiming(after_throw) == first_record);
+    const auto after_throw_probe = ProbeResponse(after_throw);
+    REQUIRE(after_throw_probe.size() == first_probe.size());
+    CHECK(std::memcmp(after_throw_probe.data(), first_probe.data(),
+                      first_probe.size() * sizeof(double)) == 0);
+  }
+
   // A curved mesh refuses the reuse (its boundary moves under refinement): recomputed, the
   // same classification on this straight-sided order-2 copy.
   {
