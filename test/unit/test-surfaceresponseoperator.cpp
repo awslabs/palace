@@ -3064,6 +3064,88 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator island cor
 #endif
 }
 
+// Lane setupmem-impl (decision 1553): with S1 a model's matrix files are read on the root
+// and on the ranks that reference the model only, so a corrupt file fails on a subset of
+// the ranks; the status exchange after the model loop and after the referenced build makes
+// EVERY rank throw (exception mode) instead of leaving the others in the next collective.
+// The island's convex-corner model with a truncated FabricatedMatrix (upper-triangular
+// entries missing): the root throws the file's error, every other rank the exchange's, and
+// the ranks stay in step (a construction after it succeeds as before it).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator a corrupt model file fails on every rank (setupmem)",
+    "[surfaceresponseoperator][setupmem][3d][corner][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto corrupt_matrix_path = temp.temp_dir / "setupmem-corrupt-corner-fabricated.csv";
+  const auto corrupt_library_path =
+      temp.temp_dir / "fabrication-process-setupmem-corrupt-corner-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    REQUIRE(library["Models"].size() == 2);
+    auto &corner = library["Models"][1];
+    REQUIRE(corner["Topology"] == "ConvexCorner");
+    std::ifstream matrix_input(corner["FabricatedMatrix"].get<std::string>());
+    REQUIRE(matrix_input);
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(matrix_input, line);)
+    {
+      lines.push_back(line);
+    }
+    REQUIRE(lines.size() > 2);
+    std::ofstream matrix_output(corrupt_matrix_path);
+    for (std::size_t i = 0; i < 1 + (lines.size() - 1) / 2; i++)
+    {
+      matrix_output << lines[i] << "\n";
+    }
+    corner["FabricatedMatrix"] = corrupt_matrix_path.string();
+    library["Name"] = "unit-test-process-convex-3d-corrupt-corner";
+    std::ofstream output(corrupt_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      convex_library_3d_path.string();
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  LaplaceOperator laplace(iodata, meshes);
+  const bool root = Mpi::Root(Mpi::World());
+  const int size = Mpi::Size(Mpi::World());
+  int clean_patch_count = 0;
+  {
+    SurfaceResponseOperator clean(iodata, laplace);
+    clean_patch_count = clean.GetPatchCount();
+    REQUIRE(clean.GetModelCount() == 2);
+    // The ranks that read the corner model's files (the root reads every model's).
+    int reading = (root || clean.ReferencesModelLocally(1)) ? 1 : 0;
+    Mpi::GlobalSum(1, &reading, Mpi::World());
+    WARN("setupmem: the corner model's files are read on " << reading << " of " << size
+                                                           << " rank(s)");
+  }
+  auto corrupt_config = config;
+  corrupt_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      corrupt_library_path.string();
+  IoData corrupt_iodata(corrupt_config, false);
+  corrupt_iodata.boundaries.cracked_attributes.insert(9);
+  CHECK_THROWS_WITH(SurfaceResponseOperator(corrupt_iodata, laplace),
+                    Catch::Matchers::ContainsSubstring(
+                        root ? "is missing an upper-triangular entry"
+                             : "The response-model matrices failed on another rank in "
+                               "the model loop"));
+  // The ranks are in step after the failure: the next construction's collectives match.
+  SurfaceResponseOperator after(iodata, laplace);
+  CHECK(after.GetPatchCount() == clean_patch_count);
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interior hats",
                  "[surfaceresponseoperator][3d][spatial][cache][Serial][Parallel]")
 {
