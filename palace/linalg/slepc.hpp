@@ -282,7 +282,11 @@ public:
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 , solved via
-// linearization: L₀ y = λ L₁ y .
+// linearization: L₀ y = λ L₁ y . With rational terms (AddPoleTerms), the problem is
+//   T(λ) x = (P(λ) + Σₜ (Σⱼ cₜⱼ λ² / (λ - pₜⱼ)) Bₜ) x = 0 ,
+// and the linearization is still exact: each pole adds the auxiliary block
+// wₜⱼ = λ² x / (λ - pₜⱼ), which satisfies pₜⱼ wₜⱼ = λ (wₜⱼ - λ x) (Su and Bai, Solving
+// rational eigenvalue problems via linearization, SIAM J. Matrix Anal. Appl. 2011).
 class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 {
 public:
@@ -297,9 +301,37 @@ public:
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
 
+  // A rational term (Σⱼ cⱼ λ² / (λ - pⱼ)) B of the eigenvalue problem (B is not owned).
+  // The auxiliary unknown of each pole exists only on the true dofs where B has a nonzero
+  // row (mask is 1 there, 0 elsewhere). A full-size auxiliary block would give the
+  // linearization the eigenvalue pⱼ once per true dof outside the support of B, with a
+  // zero physical part: these are not eigenvalues of T.
+  struct PoleTerm
+  {
+    const ComplexOperator *B;
+    std::vector<std::complex<double>> poles, coeffs;
+    Vector mask;
+  };
+  std::vector<PoleTerm> pole_terms;
+
+  // Workspace vectors for the auxiliary blocks, in the order of pole_terms and their poles.
+  mutable std::vector<ComplexVector> xa, ya;
+  mutable ComplexVector za;
+
+  // y += Σₜ Bₜ (Σⱼ sₜⱼ aₜⱼ) for the auxiliary blocks a: sₜⱼ = cₜⱼ for the operator L₀, or
+  // sₜⱼ = cₜⱼ σ γ / (σ - pₜⱼ) for the right-hand side of the shift-and-invert solve.
+  void AddPoleTermsMult(const std::vector<ComplexVector> &a, bool shifted,
+                        ComplexVector &y) const;
+
+  // Restrict an auxiliary block of the given rational term to the support of its B.
+  void MaskPoleBlock(const PoleTerm &term, ComplexVector &a) const;
+
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
+
+  void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                        const ComplexOperator &M, ScaleType type);
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -310,9 +342,19 @@ protected:
 public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
-  using SlepcEigenvalueSolver::SetOperators;
+  // Without C, the problem is still solved through the linearization (for rational terms).
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
+
+  // Add the rational term (Σⱼ cⱼ λ² / (λ - pⱼ)) B to the problem, with distinct nonzero
+  // poles pⱼ. Must be called on every process before SetOperators. The linear solver
+  // (SetLinearSolver) must then solve with T(σ), which includes every rational term at the
+  // shift σ, and σ must not be a pole.
+  void AddPoleTerms(const ComplexOperator &B,
+                    const std::vector<std::complex<double>> &poles,
+                    const std::vector<std::complex<double>> &coeffs);
 
   void SetBMat(const Operator &B) override;
 

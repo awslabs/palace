@@ -105,7 +105,96 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "absorbing boundaries), none found; using a linear eigensolver!\n");
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+
+  // Frequency-dependent permittivity pole terms as the only frequency-dependent terms:
+  // A2(λ) = Σₘ gₘ(λ) Bₘ with gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ) is rational with known poles, and
+  // the linearized eigensolver represents it exactly, with one auxiliary block per pole
+  // (SlepcPEPLinearSolver::AddPoleTerms). The problem is then a linear eigenvalue problem:
+  // there is no polynomial seed and no nonlinear refinement. Djordjevic-Sarkar terms and
+  // the frequency-dependent boundary terms are not of this form, and keep the Hybrid seed
+  // and the Quasi-Newton refinement. RefineNonlinear = false keeps the Hybrid seed as the
+  // output.
+  std::vector<std::unique_ptr<ComplexOperator>> pole_ops;
+  std::vector<std::vector<std::complex<double>>> pole_p, pole_c;
+#if defined(PALACE_WITH_SLEPC)
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
+      iodata.solver.eigenmode.refine_nonlinear &&
+      iodata.solver.eigenmode.type != EigenSolverBackend::ARPACK &&
+      iodata.solver.eigenmode.pep_linear)
+  {
+    const auto &mat_op = space_op.GetMaterialOp();
+    const auto &farfield_op = space_op.GetFarfieldOp();
+    bool poles_only = space_op.GetWavePortOp().Size() == 0 &&
+                      space_op.GetSurfaceConductivityOp().Size() == 0 &&
+                      space_op.GetRationalImpedanceOp().GetNumBoundaries() == 0 &&
+                      farfield_op.NumDispersiveMaterials() == 0 &&
+                      (farfield_op.GetAttrList().Size() == 0 || farfield_op.GetOrder() < 2);
+    for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
+          mat_op.HasDjordjevicSarkarPermittivity(m))
+      {
+        poles_only = false;
+      }
+    }
+    for (std::size_t m = 0;
+         poles_only && m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      if (!mat_op.HasFrequencyDependentPermittivitySupport(m))
+      {
+        continue;  // No contribution (SpaceOperator::GetExtraSystemMatrix)
+      }
+      auto B = space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO);
+      if (!B)
+      {
+        continue;  // No nonzero pole (exact zero poles are in the conductivity of C)
+      }
+      // A2 holds gₘ(λ)·Bₘ, and the operator is on the imaginary slot: it applies i·Bₘ.
+      auto &p = pole_p.emplace_back();
+      auto &c = pole_c.emplace_back();
+      for (const auto &term : mat_op.GetPermittivityPoleTerms(m))
+      {
+        p.push_back(term.pole);
+        c.push_back(-1i * term.residue);
+      }
+      pole_ops.push_back(std::move(B));
+    }
+    if (!pole_ops.empty())
+    {
+      // The terms must be the complete A2(λ): any other contribution is an error here, not
+      // an approximation. Checked at one complex λ, off the interpolation points.
+      const std::complex<double> l(-0.01 * target, 1.05 * target);
+      ComplexVector v, r, r_poles;
+      space_op.GetRandomInitialVector(v, 2);
+      r.SetSize(v.Size());
+      r.UseDevice(true);
+      r_poles.SetSize(v.Size());
+      r_poles.UseDevice(true);
+      funcA2(l)->Mult(v, r);
+      r_poles = 0.0;
+      for (std::size_t t = 0; t < pole_ops.size(); t++)
+      {
+        std::complex<double> s = 0.0;
+        for (std::size_t j = 0; j < pole_p[t].size(); j++)
+        {
+          s += pole_c[t][j] * l * l / (l - pole_p[t][j]);
+        }
+        pole_ops[t]->AddMult(v, r_poles, s);
+      }
+      const double norm = linalg::Norml2(space_op.GetComm(), r);
+      r_poles.AXPY(-1.0, r);
+      const double err = linalg::Norml2(space_op.GetComm(), r_poles);
+      MFEM_VERIFY(err <= 1.0e-10 * norm,
+                  "The permittivity pole terms do not reproduce the frequency-dependent "
+                  "operator (relative difference "
+                      << err / norm << ")!");
+    }
+  }
+#endif
+  const bool exact_poles = !pole_ops.empty();
+  const bool hybrid_seed =
+      has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID && !exact_poles;
+  if (hybrid_seed)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
     auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
@@ -246,8 +335,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           auto pep_linear = std::make_unique<slepc::SlepcPEPLinearSolver>(
               space_op.GetComm(), iodata.problem.verbose);
-          if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
-              iodata.solver.eigenmode.refine_nonlinear &&
+          if (exact_poles)
+          {
+            std::size_t num_poles = 0;
+            for (std::size_t t = 0; t < pole_ops.size(); t++)
+            {
+              pep_linear->AddPoleTerms(*pole_ops[t], pole_p[t], pole_c[t]);
+              num_poles += pole_p[t].size();
+            }
+            Mpi::Print(
+                " Frequency-dependent permittivity linearized exactly ({:d} pole{}), "
+                "without nonlinear refinement\n",
+                num_poles, (num_poles > 1) ? "s" : "");
+          }
+          if (hybrid_seed && iodata.solver.eigenmode.refine_nonlinear &&
               space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
           {
             // The seed solve from one start can miss one mode of a degenerate pair, which
@@ -294,7 +395,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    if (has_A2)
+    if (hybrid_seed)
     {
       eigen->SetOperators(*Kp, *Cp, *Mp, scale);
     }
@@ -308,9 +409,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
-  const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
-                         ? iodata.solver.eigenmode.linear_tol
-                         : iodata.solver.eigenmode.tol;
+  const double tol =
+      hybrid_seed ? iodata.solver.eigenmode.linear_tol : iodata.solver.eigenmode.tol;
   eigen->SetTol(tol);
   eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
@@ -438,7 +538,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // to the complex system matrix.
   std::unique_ptr<ComplexOperator> A;
   std::unique_ptr<ComplexOperator> A2_shift;
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  if (hybrid_seed)
   {
     // Invert the same W-aware polynomial used by the seed eigensolver.
     A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
@@ -446,7 +546,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
+    // SLP applies the exact nonlinear operator at the target; with exactly linearized
+    // permittivity poles, A2 at the target completes T(σ); linear problems have no A2.
     A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
                                                              : std::move(A2);
     A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
@@ -476,7 +577,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  if (hybrid_seed)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), std::move(eigen),
