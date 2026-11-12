@@ -70,12 +70,20 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
     return 0.0;
   }
   auto comm = GetComm();
+  // P = ½ ∫ (Eₜ × Hₜ*)·ẑ for E = (Eₜ + ẑEₙ) e^{-ikₙz}, whose transverse magnetic field is
+  // Hₜ = μ⁻¹ (kₙ ẑ×Eₜ + i ∇ₜEₙ×ẑ) / ω, so that
+  //   P = (1/2ω) ∫ μ⁻¹ (kₙ* |Eₜ|² + i Eₜ·∇ₜEₙ*)  (real μ).
+  // With Atn = -(μ⁻¹∇ₜφₙ, φₜ), etᴴ Atn en = -∫ μ⁻¹ Eₜ*·∇ₜEₙ, the conjugate of minus the
+  // second integral. Without the conjugate, the second term is only right when Eₙ is in
+  // quadrature with Eₜ, as for a lossless mode: for a lossy mode, it adds a spurious
+  // imaginary part to P, which inflates |P| and lowers Z_PV = Re{|V|² / 2P}.
   std::complex<double> P = 0.5 * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
   if (Atnr && en.Size() == GetH1TrueVSize())
   {
     ComplexWrapperOperator Atn(const_cast<mfem::HypreParMatrix *>(Atnr.get()),
                                const_cast<mfem::HypreParMatrix *>(Atni.get()));
-    P += std::complex<double>(0.0, 1.0) / (2.0 * omega) * linalg::Dot(comm, en, Atn, et);
+    P -= std::complex<double>(0.0, 1.0) / (2.0 * omega) *
+         std::conj(linalg::Dot(comm, en, Atn, et));
   }
   return P;
 }

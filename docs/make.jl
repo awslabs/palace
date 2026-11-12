@@ -128,9 +128,20 @@ makedocs(
     ]
 )
 
-deploydocs(
-    repo="github.com/awslabs/palace.git",
-    devbranch="main",
-    push_preview=true,
-    forcepush=true
-)
+# Concurrent PR previews (docs and coverage) race to push gh-pages, and the loser's
+# --force-with-lease push is rejected. Each deploydocs call clones gh-pages afresh, so retry.
+for attempt = 1:5
+    try
+        deploydocs(
+            repo="github.com/awslabs/palace.git",
+            devbranch="main",
+            push_preview=true,
+            forcepush=true
+        )
+        break
+    catch e
+        (e isa ProcessFailedException && attempt < 5) || rethrow()
+        @warn "Failed to push gh-pages (attempt $attempt), retrying" exception=e
+        sleep(10 * attempt)
+    end
+end

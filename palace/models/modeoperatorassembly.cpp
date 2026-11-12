@@ -238,21 +238,7 @@ ModeOperatorModel::ModeOperatorModel(
     }
     MaterialPropertyCoefficient damp_n(max_bdr_attr);
     surf_z_op.AddDampingBdrCoefficients(-1.0, damp_n);
-    if (farfield_op.GetAttrList().Size() > 0)
-    {
-      // Scalar inverse impedance of the domain material adjacent to each farfield boundary
-      // element, like for the in-plane term (assumes an isotropic farfield material). The
-      // boundary attribute to material map is indexed by libCEED boundary attribute: a mesh
-      // boundary attribute maps to one of these per neighboring domain attribute.
-      const auto &inv_z = mat_op.GetInvImpedance();
-      const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
-      for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
-      {
-        const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
-        MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
-        damp_n.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), -1.0);
-      }
-    }
+    AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -1.0, damp_n);
     if (!damp_n.empty())
     {
       anni.AddBoundaryIntegrator<MassIntegrator>(damp_n);
@@ -450,6 +436,39 @@ void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_siz
   en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
   const auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
   ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
+}
+
+std::complex<double> PropagationConstant(std::complex<double> kn2,
+                                         std::complex<double> omega)
+{
+  // Real kₙ² at the real frequency Re{ω}, for kₙ² = n²ω² − k_c² with real n² and k_c².
+  const double kn2_real = (omega.imag() != 0.0 && omega.real() != 0.0)
+                              ? kn2.real() + 0.5 * kn2.imag() * omega.imag() / omega.real()
+                              : kn2.real();
+  return (kn2_real < 0.0) ? std::complex<double>(0.0, -1.0) * std::sqrt(-kn2)
+                          : std::sqrt(kn2);
+}
+
+void AddFarfieldScalarDampingBdrCoefficients(const MaterialOperator &mat_op,
+                                             const FarfieldBoundaryOperator &farfield_op,
+                                             double coeff, MaterialPropertyCoefficient &fb)
+{
+  if (farfield_op.GetAttrList().Size() == 0)
+  {
+    return;
+  }
+  // Scalar inverse impedance of the domain material adjacent to each farfield boundary
+  // element, like for the in-plane term. The boundary attribute to material map is indexed
+  // by libCEED boundary attribute: a mesh boundary attribute maps to one of these per
+  // neighboring domain attribute.
+  const auto &inv_z = mat_op.GetInvImpedance();
+  const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
+  for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
+  {
+    const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
+    MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
+    fb.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), coeff);
+  }
 }
 
 double TargetDistance(std::complex<double> kn, double kn_target)

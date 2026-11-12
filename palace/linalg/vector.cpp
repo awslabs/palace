@@ -117,6 +117,8 @@ void ComplexVector::Set(const std::complex<double> *py, int size, bool on_dev)
   }
   else
   {
+    MFEM_VERIFY(use_dev, "ComplexVector::Set got a device pointer, but the vector is not "
+                         "set to use the device (UseDevice(true))!");
     MFEM_ABORT("ComplexVector::Set using a device pointer is not implemented when MFEM is "
                "not configured to use the device!");
   }
@@ -158,6 +160,8 @@ void ComplexVector::Get(std::complex<double> *py, int size, bool on_dev) const
   }
   else
   {
+    MFEM_VERIFY(use_dev, "ComplexVector::Get got a device pointer, but the vector is not "
+                         "set to use the device (UseDevice(true))!");
     MFEM_ABORT("ComplexVector::Get using a device pointer is not implemented when MFEM is "
                "not configured to use the device!");
   }
