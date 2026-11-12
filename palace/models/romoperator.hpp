@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <memory>
@@ -277,10 +278,23 @@ protected:
   // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
   // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
   // The frequency-dependent scalar g_k(ω) is computed during SolvePROM.
+  //
+  // A mode vector is v = sum_d e_pol(d) v_comp[d] with frequency-independent components, so
+  // V^T v_comp[d] is projected once per basis update and V^T v follows for any
+  // polarization.
+  struct ReducedFloquetOrder
+  {
+    int port_idx;
+    const FloquetOrder *order;  // Not owned, points into FloquetPortData::orders
+    // Column d is V^T v_comp[d].
+    Eigen::Matrix<std::complex<double>, Eigen::Dynamic, 3> comp_V;
+  };
+  std::vector<ReducedFloquetOrder> floquet_orders_reduced;
   struct ReducedFloquetMode
   {
     int port_idx;
     const FloquetOrder *order;  // Not owned — points into FloquetPortData::orders
+    std::size_t order_idx;      // Index into floquet_orders_reduced
     bool is_te;
     Eigen::VectorXcd vk_V;    // v_k^T V (row vector, size n_basis)
     Eigen::VectorXcd Vh_cvk;  // V^H conj(v_k) (column vector, size n_basis)

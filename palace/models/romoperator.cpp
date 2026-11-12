@@ -288,6 +288,14 @@ inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
   Mpi::GlobalSum(n - n0, br.data() + n0, comm);
 }
 
+// V^T v = sum_d e_pol(d) V^T v_comp[d] for a Floquet mode with polarization e_pol.
+inline Eigen::VectorXcd CombineFloquetComponents(
+    const Eigen::Matrix<std::complex<double>, Eigen::Dynamic, 3> &comp_V,
+    const mfem::Vector &e_pol)
+{
+  return comp_V.col(0) * e_pol(0) + comp_V.col(1) * e_pol(1) + comp_V.col(2) * e_pol(2);
+}
+
 inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
 {
   // Compute the coefficients of the minimal rational interpolation (MRI):
@@ -1256,6 +1264,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   if (dim_V_old == 0)
   {
     // First time: enumerate all Floquet modes with for_dtn flag.
+    floquet_orders_reduced.clear();
     floquet_reduced.clear();
     for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
     {
@@ -1265,35 +1274,59 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
         {
           continue;
         }
+        floquet_orders_reduced.push_back({port_idx, &order, {}});
         for (bool is_te : {true, false})
         {
           ReducedFloquetMode rm;
           rm.port_idx = port_idx;
           rm.order = &order;
+          rm.order_idx = floquet_orders_reduced.size() - 1;
           rm.is_te = is_te;
-          rm.vk_V.resize(dim_V_new);
-          rm.Vh_cvk.resize(dim_V_new);
           floquet_reduced.push_back(std::move(rm));
+        }
+      }
+    }
+  }
+  if (!floquet_orders_reduced.empty())
+  {
+    // Project the Cartesian components onto the new basis vectors with a single reduction.
+    const int n_new = dim_V_new - dim_V_old;
+    const std::size_t n_comp = 3 * floquet_orders_reduced.size();
+    std::vector<std::complex<double>> dots(n_comp * n_new);
+    for (std::size_t k = 0; k < floquet_orders_reduced.size(); k++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        const auto &v_comp = floquet_orders_reduced[k].order->v_comp[d];
+        auto *dk = dots.data() + (3 * k + d) * n_new;
+        for (int i = 0; i < n_new; i++)
+        {
+          dk[i] = {V[dim_V_old + i] * v_comp.Real(), V[dim_V_old + i] * v_comp.Imag()};
+        }
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(dots.size()), dots.data(), comm);
+    for (std::size_t k = 0; k < floquet_orders_reduced.size(); k++)
+    {
+      auto &comp_V = floquet_orders_reduced[k].comp_V;
+      comp_V.conservativeResize(dim_V_new, Eigen::NoChange);
+      for (int d = 0; d < 3; d++)
+      {
+        const auto *dk = dots.data() + (3 * k + d) * n_new;
+        for (int i = 0; i < n_new; i++)
+        {
+          comp_V(dim_V_old + i, d) = dk[i];
         }
       }
     }
   }
   for (auto &rm : floquet_reduced)
   {
-    // Compute V^T v_k for new basis vectors [dim_V_old, dim_V_new).
-    rm.vk_V.conservativeResize(dim_V_new);
-    rm.Vh_cvk.conservativeResize(dim_V_new);
-    for (int i = dim_V_old; i < dim_V_new; i++)
-    {
-      // V[i] is real. v_k is complex. V[i]^T v_k = (V[i] · v_k_real) + j(V[i] · v_k_imag).
-      double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
-      double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
-      Mpi::GlobalSum(1, &dr, comm);
-      Mpi::GlobalSum(1, &di, comm);
-      std::complex<double> vt_vi(dr, di);
-      rm.vk_V(i) = vt_vi;               // v_k^T V[i]
-      rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
-    }
+    // Uses the polarization of the last Initialize(omega). It only changes with frequency
+    // scaling, and then SolvePROM recombines at each frequency.
+    const auto &comp_V = floquet_orders_reduced[rm.order_idx].comp_V;
+    rm.vk_V = CombineFloquetComponents(comp_V, rm.order->e_pol[rm.is_te ? 0 : 1]);
+    rm.Vh_cvk = rm.vk_V.conjugate();
   }
 }
 
@@ -1530,23 +1563,14 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // (per-frequency state refreshed by the Initialize(omega) at the top of SolvePROM).
 
     // When k_F scales with frequency, the mode vectors v_k change (polarization rotation).
-    // Reproject onto the PROM basis V for the current frequency.
+    // Recombine the stored component projections, with no HDM-size work or communication.
     if (space_op.GetMaterialOp().HasFloquetFrequencyScaling())
     {
-      MPI_Comm comm = space_op.GetComm();
-      auto dim_V = static_cast<int>(V.size());
       for (auto &rm : floquet_reduced)
       {
-        for (int i = 0; i < dim_V; i++)
-        {
-          double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
-          double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
-          Mpi::GlobalSum(1, &dr, comm);
-          Mpi::GlobalSum(1, &di, comm);
-          std::complex<double> vt_vi(dr, di);
-          rm.vk_V(i) = vt_vi;
-          rm.Vh_cvk(i) = std::conj(vt_vi);
-        }
+        const auto &comp_V = floquet_orders_reduced[rm.order_idx].comp_V;
+        rm.vk_V = CombineFloquetComponents(comp_V, rm.order->e_pol[rm.is_te ? 0 : 1]);
+        rm.Vh_cvk = rm.vk_V.conjugate();
       }
     }
 
