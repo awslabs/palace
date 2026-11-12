@@ -1295,12 +1295,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // keeping this rank's local ORIGINAL patches (S2). On the sheared-cut lead (14 applied of
 // 18 placed patches at shear 0.45, 16 at 0.2) with CURVED meshes (the containment test runs
 // at every construction): (1) after a construction every rank holds matrix entries exactly
-// for the models it references, and at more than one rank some model is referenced by ONE
-// rank only; (2) a second construction on the SAME geometry where the applied set changes
-// (shear 0.2: 2 DomainBoundary cells come back) changes the referenced sets, keeps the
-// geometry's local residency, and acts bit for bit as a construction on a FRESH geometry on
-// that mesh; (3) a third construction back on the first mesh acts as the first, bit for
-// bit.
+// for the models it references; (2) a second construction on the SAME geometry where the
+// applied set changes (shear 0.2: 2 DomainBoundary cells come back) keeps the geometry's
+// local residency and acts bit for bit as a construction on a FRESH geometry on that mesh;
+// (3) a third construction back on the first mesh acts as the first, bit for bit; (4)
+// (decision 1556) re-constructions on meshes that remove ONE end-cap corner give, by
+// construction, a model referenced on exactly one non-root rank and a rank whose referenced
+// set changes.
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator referenced-only model matrices and the moved "
                  "patch list across AMR re-constructions (setupmem)",
@@ -1399,15 +1400,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     single_rank_models += referencing_ranks[model] == 1 ? 1 : 0;
   }
-  // A model referenced on ONE rank only (its matrices built there and in the root's loop,
-  // held nowhere else after the construction): exercised at 8 ranks (14 patches on 8
-  // ranks); at fewer ranks the count is reported.
+  // Reported only: 0 at 2 and at 8 ranks on this mesh (decision 1556: the earlier
+  // "exercised at 8 ranks" was never run there and was wrong); the property is asserted by
+  // construction in (4).
   WARN("setupmem: " << single_rank_models << " model(s) referenced on one rank only at "
                     << size << " rank(s)");
-  if (size >= 8)
-  {
-    CHECK(single_rank_models > 0);
-  }
   const auto first_probe = ProbeResponse(first);
   REQUIRE(!first_probe.empty());
 
@@ -1424,13 +1421,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto second_referenced = ReferencedSet(second);
     int changed = second_referenced != first_referenced ? 1 : 0;
     Mpi::GlobalSum(1, &changed, Mpi::World());
-    // The referenced set of some rank changed between the cycles (exercised at 8 ranks).
+    // Reported only (the 2 returning cells do not change any rank's set here, decision
+    // 1556); a set that changes is asserted by construction in (4).
     WARN("setupmem: the referenced set changed on " << changed << " of " << size
                                                     << " rank(s)");
-    if (size >= 8)
-    {
-      CHECK(changed > 0);
-    }
     std::shared_ptr<const SurfaceResponseGeometry> fresh_geometry;
     SurfaceResponseOperator fresh(iodata, second_laplace, &fresh_geometry);
     REQUIRE(fresh.GetPatchCount() == second.GetPatchCount());
@@ -1450,6 +1444,81 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(third_probe.size() == first_probe.size());
   CHECK(std::memcmp(third_probe.data(), first_probe.data(),
                     first_probe.size() * sizeof(double)) == 0);
+
+  // (4) Decision 1556: both S1 properties BY CONSTRUCTION. The same geometry on a mesh
+  // whose top face is lowered towards the lead's end cap on ONE side (above the end cap, in
+  // the unsheared frame, z -> 0.5 + (z - 0.5) s(x), s = 0.1 on that side and 1 on the
+  // other, linear across the lead; the metal and the placed patches unchanged): that side's
+  // convex-corner coupon leaves the domain (DomainBoundary), the other corner stays. In (1)
+  // the two corner patches are on two different ranks (no model is on one rank only), so in
+  // one of the two variants the corner model is referenced on exactly ONE rank that is not
+  // the root; the rank that held the removed corner has a different referenced set than in
+  // (1) (the AMR re-construction on the shared geometry). Each acts bit for bit as a
+  // construction on a FRESH geometry on that mesh.
+  auto MakeTiltedCurvedMeshes = [&](bool lower_left)
+  {
+    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(0.45, false);
+    for (int v = 0; v < serial.GetNV(); v++)
+    {
+      double *point = serial.GetVertex(v);
+      const double z = point[2] - 0.45 * (point[1] - 0.5);
+      if (z > 0.5 + 1.0e-12)
+      {
+        const double t = std::clamp((point[0] - 0.25) / 0.5, 0.0, 1.0);
+        const double s = lower_left ? 0.1 + 0.9 * t : 1.0 - 0.9 * t;
+        point[2] = 0.5 + (z - 0.5) * s + 0.45 * (point[1] - 0.5);
+      }
+    }
+    serial.SetCurvature(2);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return meshes;
+  };
+  int one_nonroot_rank_models = 0, changed_ranks = 0;
+  for (const bool lower_left : {true, false})
+  {
+    CAPTURE(lower_left);
+    auto tilted_meshes = MakeTiltedCurvedMeshes(lower_left);
+    LaplaceOperator tilted_laplace(iodata, tilted_meshes);
+    SurfaceResponseOperator tilted(iodata, tilted_laplace, &geometry);
+    LocalResidency(*geometry);
+    CHECK(geometry->GlobalPatchCount() == placed_count);
+    const auto tilted_referenced = ReferencedSet(tilted);
+    std::vector<int> ranks_per_model = tilted_referenced,
+                     root_referenced = tilted_referenced;
+    Mpi::GlobalSum(static_cast<int>(ranks_per_model.size()), ranks_per_model.data(),
+                   Mpi::World());
+    Mpi::Broadcast(static_cast<int>(root_referenced.size()), root_referenced.data(), 0,
+                   Mpi::World());
+    int variant_one_nonroot = 0;
+    for (std::size_t model = 0; model < ranks_per_model.size(); model++)
+    {
+      variant_one_nonroot +=
+          (ranks_per_model[model] == 1 && !root_referenced[model]) ? 1 : 0;
+    }
+    int variant_changed = tilted_referenced != first_referenced ? 1 : 0;
+    Mpi::GlobalSum(1, &variant_changed, Mpi::World());
+    WARN("setupmem: the top lowered on the "
+         << (lower_left ? "left" : "right") << ": " << tilted.GetPatchCount()
+         << " applied, " << variant_one_nonroot << " model(s) on one non-root rank only, "
+         << variant_changed << " of " << size << " rank(s) with a changed referenced set");
+    one_nonroot_rank_models += variant_one_nonroot;
+    changed_ranks += variant_changed;
+    std::shared_ptr<const SurfaceResponseGeometry> fresh_geometry;
+    SurfaceResponseOperator fresh(iodata, tilted_laplace, &fresh_geometry);
+    REQUIRE(fresh.GetPatchCount() == tilted.GetPatchCount());
+    CHECK(ReferencedSet(fresh) == tilted_referenced);
+    const auto tilted_probe = ProbeResponse(tilted), fresh_probe = ProbeResponse(fresh);
+    REQUIRE(tilted_probe.size() == fresh_probe.size());
+    CHECK(std::memcmp(tilted_probe.data(), fresh_probe.data(),
+                      tilted_probe.size() * sizeof(double)) == 0);
+  }
+  if (size >= 2)
+  {
+    CHECK(one_nonroot_rank_models > 0);
+    CHECK(changed_ranks > 0);
+  }
 #endif
 }
 
