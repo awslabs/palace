@@ -20,9 +20,10 @@ StrumpackSchurSolver::StrumpackSchurSolver(const mfem::HypreParMatrix &A,
   MPI_Comm comm = A.GetComm();
   MFEM_VERIFY(A.GetGlobalNumRows() <= INT_MAX,
               "STRUMPACK Schur complement needs fewer than 2^31 unknowns!");
-  // The Schur complement needs no matching (and a sequential graph reordering without
-  // compression, STRUMPACK's defaults).
+  // The Schur complement needs neither matching nor the GPU (and a sequential graph
+  // reordering without compression, STRUMPACK's defaults).
   solver.options().set_matching(strumpack::MatchingJob::NONE);
+  solver.options().disable_gpu();
 
   // The local rows with global columns: the block-row distributed CSR STRUMPACK takes (it
   // copies the entries).
