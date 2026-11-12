@@ -303,6 +303,11 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"
   b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294
 )
+# LAB (throwaway A/B branch): candidate STRUMPACK changes, off unless enabled at run time
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s1.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s3.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

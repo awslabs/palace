@@ -1,0 +1,295 @@
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 83ce2ec2..6d3c85b1 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -27,6 +27,8 @@
+  *
+  */
+ #include <stack>
++#include <limits>
++#include <cmath>
+ 
+ #include "EliminationTreeMPIDist.hpp"
+ #include "Redistribute.hpp"
+@@ -39,6 +41,98 @@
+ 
+ namespace strumpack {
+ 
++  namespace {
++    // cost of a front in the FACTOR_MEMORY mapping, in factor entries: the
++    // solve phase also pays per front (extend-add index maps, kernel calls),
++    // about as much as reading 1000 factor entries; without it a subtree of
++    // very many tiny fronts (factor memory small) is mapped to too few
++    // processes
++    float pm_front_cost() {
++      static const float c = [] {
++        const char* e = std::getenv("STRUMPACK_PM_FRONT_COST");
++        return float((e && *e) ? std::max(0., std::atof(e)) : 0.);
++      }();
++      return c;
++    }
++    int pm_dp_max() {
++      static const int d = [] {
++        const char* e = std::getenv("STRUMPACK_PM_DP");
++        return (e && *e) ? std::max(0, std::atoi(e)) : 0;
++      }();
++      return d;
++    }
++    // f(n, p) of the distributed tree nodes during the construction (prop_map)
++    const std::vector<float>* g_fdist = nullptr;
++    int g_fdist_ld = 0;
++    // bottom-up f(n, p) = own/p + min_q max(f(l,q), f(r,p-q)), p = 1..ld-1, of
++    // a binary tree given by lch/rch and subtree work; leaf_f(n, f) may
++    // provide f for leaves (otherwise W/p)
++    template<typename integer_t, typename LeafF> void
++    pm_dp_tree(integer_t nn, integer_t root, const integer_t* lch,
++               const integer_t* rch, const float* work, std::size_t ld,
++               std::vector<float>& f, LeafF leaf_f) {
++      f.assign(std::size_t(nn) * ld, 0.f);
++      if (nn <= 0 || root < 0) return;
++      std::vector<std::pair<integer_t,bool>> st{{root, false}};
++      while (!st.empty()) {
++        auto [n, done] = st.back();
++        st.pop_back();
++        auto l = lch[n], r = rch[n];
++        if (!done) {
++          st.push_back({n, true});
++          if (l != -1 && r != -1) {
++            st.push_back({r, false});
++            st.push_back({l, false});
++          }
++          continue;
++        }
++        float* fn = f.data() + n * ld;
++        const float W = work[n];
++        if (l == -1 || r == -1) {
++          fn[0] = 0.f;
++          for (std::size_t p=1; p<ld; p++) fn[p] = W / p;
++          leaf_f(n, fn);
++          continue;
++        }
++        const float* fl = f.data() + l * ld;
++        const float* fr = f.data() + r * ld;
++        const float own = std::max(0.f, W - work[l] - work[r]);
++        fn[1] = W;
++        for (std::size_t p=2; p<ld; p++) {
++          float best = std::numeric_limits<float>::max();
++          for (std::size_t q=1; q<p; q++) best = std::min(best, std::max(fl[q], fr[p-q]));
++          fn[p] = own / p + best;
++        }
++      }
++    }
++    // the split Pl in [1, P-1] minimizing max(f(l, Pl), f(r, P-Pl)), given
++    // the f of the two children (ld-1 >= P entries), starting from Pl
++    int pm_dp_choose(const float* fl, const float* fr, int P, int Pl) {
++      float best = std::max(fl[Pl], fr[P-Pl]);
++      for (int q=1; q<P; q++) {
++        float c = std::max(fl[q], fr[P-q]);
++        if (c < best) { best = c; Pl = q; }
++      }
++      return Pl;
++    }
++    // split P processes over two subtrees with works wl, wr: the integer
++    // Pl in [1, P-1] that minimizes max(wl/Pl, wr/(P-Pl)), instead of
++    // rounding the proportional share
++    int pm_split(int P, float wl, float wr) {
++      int Pl = std::max(1, std::min(int(std::round(P * wl / (wl + wr))), P-1));
++      static const int mm = [] {
++        const char* e = std::getenv("STRUMPACK_PM_MINMAX");
++        return (e && *e) ? std::atoi(e) : 0;
++      }();
++      if (!mm || P <= 2 || !(wl + wr > 0)) return Pl;
++      auto cost = [&](int q) { return std::max(wl / q, wr / (P - q)); };
++      int q0 = std::max(1, std::min(int(std::floor(P * wl / (wl + wr))), P-1));
++      int q1 = std::max(1, std::min(q0 + 1, P-1));
++      for (int q : {q0, q1}) if (cost(q) < cost(Pl)) Pl = q;
++      return Pl;
++    }
++  }
++
+   template<typename scalar_t,typename integer_t> MPI_Datatype
+   EliminationTreeMPIDist<scalar_t,integer_t>::ParallelFront::pf_mpi_type = MPI_DATATYPE_NULL;
+ 
+@@ -75,6 +169,35 @@ namespace strumpack {
+         dtree_work[dsep] = nd_.tree().is_leaf(dsep) ? sbuf[i] : sbuf[i+1];
+       }
+     }
++    // f(n, p) of the distributed tree for the process split (see
++    // prop_map_sub_graphs): local tree of the own leaf, all-gathered, then
++    // combined over the distributed separators
++    std::vector<float> fdist;
++    const int pmax = std::min(P_, pm_dp_max());
++    if (pmax >= 2 && prop_map_ != ProportionalMapping::PEAK_MEMORY) {
++      const std::size_t ld = pmax + 1;
++      std::vector<float> fall(ld * P_, 0.f), floc;
++      const auto& lt = nd_.ltree();
++      if (!lt.is_empty()) {
++        pm_dp_tree<integer_t>(lt.separators(), lt.root(), lt.lch, lt.rch,
++                              ltree_work.data(), ld, floc,
++                              [](integer_t, float*) {});
++        std::copy(floc.begin() + lt.root()*ld, floc.begin() + (lt.root()+1)*ld,
++                  fall.begin() + ld*rank_);
++      } else
++        for (std::size_t p=1; p<ld; p++) fall[ld*rank_+p] = dleaf_work / p;
++      comm_.all_gather(fall.data(), ld);
++      const auto& dt = nd_.tree();
++      pm_dp_tree<integer_t>
++        (dt.separators(), dt.root(), dt.lch, dt.rch, dtree_work.data(), ld, fdist,
++         [&](integer_t n, float* fn) {
++          if (dt.is_leaf(n))
++            std::copy(fall.begin() + ld*nd_.proc_dist_sep[n],
++                      fall.begin() + ld*(nd_.proc_dist_sep[n]+1), fn);
++        });
++      g_fdist = &fdist;
++      g_fdist_ld = ld;
++    }
+ 
+     local_range_ = {A.size(), 0};
+     MPIComm::control_start("proportional_mapping");
+@@ -82,6 +205,8 @@ namespace strumpack {
+       (opts, lupd, ltree_work, dist_upd, dleaf_upd, dtree_work,
+        nd_.tree().root(), 0, P_, 0, 0, comm_, 0);
+     MPIComm::control_stop("proportional_mapping");
++    g_fdist = nullptr;
++    g_fdist_ld = 0;
+ 
+     MPIComm::control_start("block_row_A_to_prop_A");
+     if (local_range_.first > local_range_.second)
+@@ -537,6 +662,7 @@ namespace strumpack {
+     upd[sep].shrink_to_fit();
+     float d1 = sep_end - sep_begin, d2 = upd[sep].size();
+     fs += d1*(d1 + 2.*d2); // factor size up to and including this node
++    if (prop_map_ == ProportionalMapping::FACTOR_MEMORY) fs += pm_front_cost();
+     switch (prop_map_) {
+     case ProportionalMapping::FLOPS: {
+       //          getrf            + 2 * trsm     + gemm
+@@ -666,6 +792,7 @@ namespace strumpack {
+         }
+         float d1 = sep_end - sep_begin, d2 = dist_upd.size();
+         fs += d1*(d1 + 2.*d2);   // factor size up to and including this node
++        if (prop_map_ == ProportionalMapping::FACTOR_MEMORY) fs += pm_front_cost();
+         switch (prop_map_) {
+         case ProportionalMapping::FLOPS: {
+           //          getrf            + 2 * trsm     + gemm
+@@ -788,7 +915,10 @@ namespace strumpack {
+     auto chr = nd_.tree().rch[dsep];
+     auto wl = dist_subtree_work[chl];
+     auto wr = dist_subtree_work[chr];
+-    int Pl = std::max(1, std::min(int(std::round(P * wl / (wl + wr))), P-1));
++    int Pl = pm_split(P, wl, wr);
++    if (g_fdist && P >= 2 && P < g_fdist_ld)
++      Pl = pm_dp_choose(g_fdist->data() + chl * g_fdist_ld,
++                        g_fdist->data() + chr * g_fdist_ld, P, Pl);
+     int Pr = std::max(1, P - Pl);
+     auto cl = fcomm.sub(0, Pl);
+     auto cr = fcomm.sub(P-Pr, Pr);
+@@ -824,6 +954,22 @@ namespace strumpack {
+       F_t* parent;
+       bool left;
+     };
++    // For small process counts, rounding the proportional share
++    // can leave one process with much more than its share (a P = 2 node
++    // always gives each child one process). f(n, p) is the smallest max
++    // per-process work of subtree n on p processes (its own front split over
++    // the p processes), computed bottom-up for p <= pmax; a node with
++    // P <= pmax processes splits them as f prescribes.
++    const int pmax = std::min(P, pm_dp_max());
++    std::vector<float> fdp;
++    if (pmax >= 2 && prop_map_ != ProportionalMapping::PEAK_MEMORY)
++      pm_dp_tree<integer_t>(tree.nr_sep, tree.root, tree.lchild, tree.rchild,
++                            tree.work, pmax + 1, fdp, [](integer_t, float*) {});
++    auto dp_split = [&](integer_t chl, integer_t chr, int Pm, int Pl) {
++      if (fdp.empty() || Pm > pmax) return Pl;
++      return pm_dp_choose(fdp.data() + chl * (pmax + 1),
++                          fdp.data() + chr * (pmax + 1), Pm, Pl);
++    };
+     std::stack<MapData> fstack;
+     fstack.emplace
+       (MapData{tree.root, P0, P, P0_sib, P_sib,
+@@ -869,8 +1015,7 @@ namespace strumpack {
+           } else {
+             auto wl = tree.work[chl];
+             auto wr = tree.work[chr];
+-            int Pl = std::max
+-              (1, std::min(int(std::round(m.P * wl / (wl + wr))), m.P-1));
++            int Pl = dp_split(chl, chr, m.P, pm_split(m.P, wl, wr));
+             int Pr = std::max(1, m.P - Pl);
+             fstack.emplace
+               (MapData{chl, m.P0, Pl, m.P0+m.P-Pr, Pr,
+diff --git a/src/sparse/fronts/Front.cpp b/src/sparse/fronts/Front.cpp
+index 1dc72b54..ff66142b 100644
+--- a/src/sparse/fronts/Front.cpp
++++ b/src/sparse/fronts/Front.cpp
+@@ -220,8 +220,9 @@ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t> void
+   Front<scalar_t,integer_t>::multifrontal_solve(DenseM_t& b) const {
+-    auto max_dupd = max_dim_upd();
+-    auto lvls = levels();
++    int lvls;
++    integer_t max_dupd;
++    solve_tree_dims(lvls, max_dupd);
+     std::vector<DenseM_t> CB(lvls);
+     // for (auto& cb : CB)
+     //   cb = DenseM_t(max_dupd, b.cols());
+@@ -489,8 +490,9 @@ namespace strumpack {
+   Front<scalar_t,integer_t>::forward_multifrontal_solve
+   (DenseM_t& bloc, DistM_t* bdist, DistM_t& bupd, DenseM_t& seqbupd,
+    int etree_level) const {
+-    auto max_dupd = max_dim_upd();
+-    auto lvls = levels();
++    int lvls;
++    integer_t max_dupd;
++    solve_tree_dims(lvls, max_dupd);
+     std::vector<DenseM_t> CB(lvls);
+     // for (auto& cb : CB)
+     //   cb = DenseM_t(max_dupd, bloc.cols());
+@@ -504,8 +506,9 @@ namespace strumpack {
+   Front<scalar_t,integer_t>::backward_multifrontal_solve
+   (DenseM_t& yloc, DistM_t* ydist, DistM_t& yupd, DenseM_t& seqyupd,
+    int etree_level) const {
+-    auto max_dupd = max_dim_upd();
+-    auto lvls = levels();
++    int lvls;
++    integer_t max_dupd;
++    solve_tree_dims(lvls, max_dupd);
+     std::vector<DenseM_t> CB(lvls);
+     // for (auto& cb : CB)
+     //   cb = DenseM_t(max_dupd, yloc.cols());
+diff --git a/src/sparse/fronts/Front.hpp b/src/sparse/fronts/Front.hpp
+index 3d712c32..ace257f9 100644
+--- a/src/sparse/fronts/Front.hpp
++++ b/src/sparse/fronts/Front.hpp
+@@ -33,6 +33,7 @@
+ #include <vector>
+ #include <cmath>
+ #include <typeinfo>
++#include <cstdlib>
+ 
+ #include "StrumpackParameters.hpp"
+ #include "misc/TaskTimer.hpp"
+@@ -503,6 +504,24 @@ namespace strumpack {
+       return ReturnCode::INACCURATE_INERTIA;
+     }
+ 
++    // levels() and max_dim_upd() of the subtree, computed at the first solve
++    // (O(#fronts) traversals otherwise repeated for every solve)
++    mutable int solve_levels_ = -1;
++    mutable integer_t solve_max_dupd_ = -1;
++    void solve_tree_dims(int& lvls, integer_t& max_dupd) const {
++      static const bool cache = [] {
++        const char* e = std::getenv("STRUMPACK_LAB_DIMS_CACHE");
++        return e && *e && std::atoi(e);
++      }();
++      if (!cache) { lvls = levels(); max_dupd = max_dim_upd(); return; }
++      if (solve_levels_ < 0) {
++        solve_levels_ = levels();
++        solve_max_dupd_ = max_dim_upd();
++      }
++      lvls = solve_levels_;
++      max_dupd = solve_max_dupd_;
++    }
++
+   private:
+     Front(const Front&) = delete;
+     Front& operator=(Front const&) = delete;

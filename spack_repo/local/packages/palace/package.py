@@ -202,6 +202,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
                 when="@8.1.0",
             ),
+            # LAB (throwaway A/B branch)
+            patch("strumpack-lab-s1.diff", when="@8.1.0"),
+            patch("strumpack-lab-s3.diff", when="@8.1.0"),
         ],
     )
 

@@ -3,6 +3,11 @@
 
 #include "strumpack.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+#include <type_traits>
+#include "utils/communication.hpp"
+
 #if defined(MFEM_USE_STRUMPACK)
 
 namespace palace
@@ -111,6 +116,43 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // else
   {
     this->DisableGPU();
+  }
+
+  // LAB (throwaway A/B branch): Solver.Linear.STRUMPACKButterflyLevels = 1000 + flags
+  // selects candidate changes without compression: 1 FACTOR_MEMORY proportional mapping,
+  // 2 cached solve tree dimensions, 4 front cost 1000 in the FACTOR_MEMORY mapping, 8
+  // min-max process split, 16 small-P dynamic programming split.
+  if (compression == SparseCompression::NONE && butterfly_l >= 1000)
+  {
+    const int flags = butterfly_l - 1000;
+    if (flags & 2)
+    {
+      setenv("STRUMPACK_LAB_DIMS_CACHE", "1", 1);
+    }
+    if (flags & 4)
+    {
+      setenv("STRUMPACK_PM_FRONT_COST", "1000", 1);
+    }
+    if (flags & 8)
+    {
+      setenv("STRUMPACK_PM_MINMAX", "1", 1);
+    }
+    if (flags & 16)
+    {
+      setenv("STRUMPACK_PM_DP", "16", 1);
+    }
+    if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
+    {
+      if (flags & 1)
+      {
+        this->solver_->options().set_proportional_mapping(
+            strumpack::ProportionalMapping::FACTOR_MEMORY);
+      }
+    }
+    if (Mpi::Root(comm))
+    {
+      std::printf("STRUMPACK LAB flags %d\n", flags);
+    }
   }
 }
 
