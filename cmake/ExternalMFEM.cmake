@@ -526,6 +526,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/67dd11d697fafba16d8826172343a42e7a0c5df1.diff"
   17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392
 )
+# https://github.com/mfem/mfem/pull/5732
+# SuperLUSolver frees the factors on all the process layers of a SuperLU_DIST 9 3D process
+# grid.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5732.diff
+  "https://github.com/mfem/mfem/commit/5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff"
+  7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
@@ -543,5 +551,5 @@ ExternalProject_Add(mfem
     git clean -fd &&
     git apply --exclude=CHANGELOG "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
-  TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
+  TEST_COMMAND      ${PALACE_MAKE_COMMAND} ex1 ex1p
 )

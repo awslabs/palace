@@ -230,6 +230,10 @@ if(NOT "${CMAKE_INSTALL_RPATH_USE_LINK_PATH}" STREQUAL "")
   )
 endif()
 
+# Sub-make for the external project steps: $(MAKE) passes the parent make's jobserver, which
+# GNU make 4.3 and later otherwise drop (building at -j1)
+set(PALACE_MAKE_COMMAND "$(MAKE)")
+
 # Add other third-party dependency builds
 include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)
