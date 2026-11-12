@@ -15,6 +15,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
+#include "linalg/ksp.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
@@ -263,21 +264,21 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   int its = 0;
   if (curl_before > 0.0)
   {
-    JacobiSmoother<Operator> jacobi(comm);
-    jacobi.SetOperator(*K);
-    CgSolver<Operator> pcg(comm, 0);
-    pcg.SetOperator(*K);
-    pcg.SetPreconditioner(jacobi);
-    pcg.SetInitialGuess(false);
-    pcg.SetRelTol(1.0e-12);
-    pcg.SetAbsTol(0.0);
-    pcg.SetMaxIter(10000);
-    pcg.Mult(r, psi_film);
+    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(1.0e-12);
+    pcg->SetAbsTol(0.0);
+    pcg->SetMaxIter(10000);
+    const auto &cg = *pcg;
+    KspSolver ksp(std::move(pcg), std::make_unique<JacobiSmoother<Operator>>(comm),
+                  "LondonCut");
+    ksp.SetOperators(*K, *K);
+    ksp.Mult(r, psi_film);
     MFEM_VERIFY(
-        pcg.GetConverged(),
+        cg.GetConverged(),
         "London cut generator curl projection did not converge, norm(Ax-b)/norm(b) = "
-            << pcg.GetFinalRes() / pcg.GetInitialRes() << "!");
-    its = pcg.GetNumIterations();
+            << cg.GetFinalRes() / cg.GetInitialRes() << "!");
+    its = cg.GetNumIterations();
     psi = 0.0;
     psi.SetSubVector(film_faces, psi_film);
     Ct->AddMult(psi, c0, -1.0);

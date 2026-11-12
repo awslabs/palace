@@ -4,7 +4,9 @@
 #ifndef PALACE_LINALG_BLOCK_PRECOND_HPP
 #define PALACE_LINALG_BLOCK_PRECOND_HPP
 
+#include <array>
 #include <memory>
+#include <string>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
@@ -36,6 +38,7 @@ class BlockDiagonalPreconditioner : public Solver<OperType>
 private:
   int block0_size;
   std::unique_ptr<Solver<OperType>> pc0, pc1;
+  std::array<std::string, 2> names;  // Of the blocks, for their performance tallies
   const OperType *L10 = nullptr;  // Lower off-diagonal (not owned), may be null.
   mutable VecType x0, y0, x1, y1, t1;
 
@@ -44,8 +47,10 @@ private:
   static void InsertSubVector(const VecType &src, VecType &dst, int offset, int size);
 
 public:
+  // The tallies of the sub-solvers are registered as <prefix>/<name> (see SetPerfTallies).
   BlockDiagonalPreconditioner(int block0_size, std::unique_ptr<Solver<OperType>> &&pc0,
-                              std::unique_ptr<Solver<OperType>> &&pc1);
+                              std::unique_ptr<Solver<OperType>> &&pc1,
+                              std::array<std::string, 2> names = {"Block0", "Block1"});
 
   // Set operators on each block's sub-solver independently.
   void SetBlockOperators(const OperType &op0, const OperType &op1);
@@ -56,6 +61,12 @@ public:
 
   // SetOperator for the monolithic system (no-op; use SetBlockOperators instead).
   void SetOperator(const OperType &op) override;
+
+  void SetPerfTallies(const std::string &prefix) override
+  {
+    pc0->SetPerfTallies(prefix + "/" + names[0]);
+    pc1->SetPerfTallies(prefix + "/" + names[1]);
+  }
 
   void Mult(const VecType &x, VecType &y) const override;
 };

@@ -46,7 +46,7 @@ KspStats::KspStats(std::string_view role)
   restarts = RegisterCounter(Path("Restarts"));
   mean_reduction =
       RegisterCounter(Path("MeanReductionFactor"), Reduce::MAX, Accumulate::NONE);
-  min_reduction = RegisterCounter(Path("MinReductionFactor"), Reduce::MAX, Accumulate::MIN);
+  min_reduction = RegisterCounter(Path("MinReductionFactor"), Reduce::MIN, Accumulate::MIN);
   max_reduction = RegisterCounter(Path("MaxReductionFactor"), Reduce::MAX, Accumulate::MAX);
   max_rel_res = RegisterCounter(Path("MaxFinalRelRes"), Reduce::MAX, Accumulate::MAX);
   for (int b = 0; b < NUM_BUCKETS; b++)

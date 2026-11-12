@@ -21,7 +21,6 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
-#include "utils/perfprobes.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -31,7 +30,6 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 {
   const bool world_root = Mpi::Root(comm);
   const int world_size = Mpi::Size(comm);
-  perf::SetVerification(iodata.problem.verbose);
 
   std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
   {
@@ -61,9 +59,8 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
   MFEM_VERIFY(solver, "Unknown problem type in palace::Run!");
 
   // From here on, a failing process first writes the performance report collected so far.
-  perf::FailureReport failure_report(comm,
-                                     [&solver](MPI_Comm c, const nlohmann::json &error)
-                                     { solver->ReportFailure(c, error); });
+  perf::FailureReport failure_report(comm, [&solver](const nlohmann::json &error)
+                                     { solver->ReportFailure(error); });
 
   std::vector<std::unique_ptr<Mesh>> mesh;
   {

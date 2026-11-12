@@ -13,7 +13,9 @@ namespace palace::perf
 {
 
 // Linear solve statistics for one solver role, written under LinearSolver/<role> (see
-// perf::LinearSolverPath). All values are rank-uniform.
+// perf::LinearSolverPath). All values are uniform over the processes which run the role's
+// solves (all of them, except for solvers on a subcommunicator, such as the mode solver of
+// each wave port, which has a role of its own): they are reduced as such.
 class KspStats
 {
 public:

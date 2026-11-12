@@ -3,7 +3,6 @@
 
 #include "failurereport.hpp"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -16,7 +15,6 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
-#include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
 namespace palace::perf
@@ -93,23 +91,15 @@ public:
 
 struct State
 {
-  bool active = false;
-  MPI_Comm comm = MPI_COMM_NULL;  // Duplicate, for the agreement step and the report
+  bool active = false, root = false;
   FailureReport::Writer writer;
-  double timeout = 0.0;
+  double grace = 0.0;
   std::terminate_handler prev_terminate = nullptr;
   std::unique_ptr<TailBuffer> err_buf;
   std::streambuf *prev_err = nullptr;
 #if defined(MFEM_USE_EXCEPTIONS)
   mfem::ErrorAction prev_action = mfem::MFEM_ERROR_THROW;
 #endif
-
-  // Each process posts exactly one agreement reduction while the FailureReport is alive:
-  // {1, 1 on the root} when it fails, {0, 0} in the destructor otherwise. The sums are the
-  // number of processes which failed and whether the root did.
-  bool posted = false, completed = false;
-  MPI_Request request = MPI_REQUEST_NULL;
-  int failed[2] = {0, 0}, num_failed[2] = {0, 0};
 };
 
 State state;
@@ -125,36 +115,6 @@ bool MpiActive()
   MPI_Initialized(&initialized);
   MPI_Finalized(&finalized);
   return initialized && !finalized;
-}
-
-void PostAgreement(bool failed)
-{
-  state.failed[0] = failed;
-  state.failed[1] = failed && Mpi::Root(state.comm);
-  state.posted = true;
-  MPI_Iallreduce(state.failed, state.num_failed, 2, MPI_INT, MPI_SUM, state.comm,
-                 &state.request);
-}
-
-bool AllFailed()
-{
-  return state.completed && state.num_failed[0] == Mpi::Size(state.comm);
-}
-
-// Wait for the agreement step to complete, up to the deadline.
-void WaitAgreement(Timer::TimePoint deadline)
-{
-  while (!state.completed)
-  {
-    int done = 0;
-    MPI_Test(&state.request, &done, MPI_STATUS_IGNORE);
-    state.completed = done;
-    if (done || Timer::Now() > deadline)
-    {
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
 }
 
 bool Report(std::string_view message, std::string_view fallback)
@@ -182,70 +142,31 @@ bool Report(std::string_view message, std::string_view fallback)
   {
     return false;
   }
+  if (!state.root)
+  {
+    // No collective is safe, as the other processes may not fail: give the root the time
+    // to write its report, should it fail too (it then aborts all processes).
+    std::this_thread::sleep_for(std::chrono::duration<double>(state.grace));
+    return false;
+  }
   std::string msg(message);
   if (msg.empty())
   {
     msg = state.err_buf->LastMessage(message_age);
   }
   msg.erase(msg.find_last_not_of(" \t\r\n") + 1);
-  nlohmann::json error = {{"Message", msg.empty() ? std::string(fallback) : msg},
-                          {"Phase", Timer::names[BlockTimer::Current()]}};
-
-  // The failure may have happened within a verification probe: report as usual.
-  ClearPause();
-
-  // Agreement step: wait for all processes to fail, up to the timeout. A non-root process
-  // which gives up waits for up to twice as long more before it aborts, unless the
-  // agreement shows that the root did not fail (see FailureReport).
-  const auto t0 = Timer::Now();
-  if (!state.posted)
+  const nlohmann::json error = {{"Message", msg.empty() ? std::string(fallback) : msg},
+                                {"Phase", Timer::names[BlockTimer::Current()]}};
+  try
   {
-    PostAgreement(true);
+    state.writer(error);
   }
-  const auto timeout =
-      std::chrono::duration_cast<Timer::Clock::duration>(Timer::Duration(state.timeout));
-  WaitAgreement(t0 + timeout);
-  if (!AllFailed() && !Mpi::Root(state.comm))
+  catch (...)
   {
-    const auto deadline = t0 + 3 * timeout;
-    WaitAgreement(deadline);
-    if (state.completed && !AllFailed() && state.num_failed[1] > 0)
-    {
-      // The root writes its own report: give it the time to (it aborts all processes), at
-      // least the timeout from now, as it may have failed just before the deadline.
-      std::this_thread::sleep_until(std::max(deadline, Timer::Now() + timeout));
-    }
+    // The report is best effort.
+    return false;
   }
-  const bool collective = AllFailed();
-  const double wait = Timer::Duration(Timer::Now() - t0).count();
-  detail::comm_wait += wait;
-  AddTally(RegisterTally("Wait/FailureReport"), wait, 1, wait);
-  error["Collective"] = collective;
-  if (collective)
-  {
-    try
-    {
-      state.writer(state.comm, error);
-    }
-    catch (...)
-    {
-      // The report is best effort. The other processes may wait in a collective of the
-      // report which this one left: abort all of them now.
-      PMPI_Abort(MPI_COMM_WORLD, 1);
-    }
-    MPI_Barrier(state.comm);  // No process aborts before the root has written
-  }
-  else if (Mpi::Root(state.comm))
-  {
-    try
-    {
-      state.writer(MPI_COMM_SELF, error);
-    }
-    catch (...)
-    {
-    }
-  }
-  return collective;
+  return true;
 }
 
 [[noreturn]] void OnTerminate()
@@ -290,14 +211,12 @@ bool Report(std::string_view message, std::string_view fallback)
 
 }  // namespace
 
-FailureReport::FailureReport(MPI_Comm comm, Writer writer, double timeout)
+FailureReport::FailureReport(MPI_Comm comm, Writer writer, double grace)
 {
   MFEM_VERIFY(!state.active, "Only one FailureReport may be active at a time!");
-  MPI_Comm_dup(comm, &state.comm);
+  state.root = Mpi::Root(comm);
   state.writer = std::move(writer);
-  state.timeout = timeout;
-  state.posted = state.completed = false;
-  state.request = MPI_REQUEST_NULL;
+  state.grace = grace;
   state.err_buf = std::make_unique<TailBuffer>(mfem::err.rdbuf());
   state.prev_err = mfem::err.rdbuf(state.err_buf.get());
 #if defined(MFEM_USE_EXCEPTIONS)
@@ -320,34 +239,11 @@ FailureReport::~FailureReport()
   mfem::err.rdbuf(state.prev_err);
   state.err_buf.reset();
   state.writer = nullptr;
-  if (std::uncaught_exceptions() == 0)
-  {
-    // Also completes the agreement step of a process which reported a failure and did not
-    // abort, so that the communicator can be freed.
-    if (!state.posted)
-    {
-      PostAgreement(false);
-    }
-    MPI_Wait(&state.request, MPI_STATUS_IGNORE);
-    MPI_Comm_free(&state.comm);
-  }
-  state.comm = MPI_COMM_NULL;
 }
 
-bool ReportFailure(std::string_view message)
+bool ReportFailure(std::string_view message, std::string_view fallback)
 {
-  return Report(message, "Unknown error");
+  return Report(message, fallback);
 }
 
 }  // namespace palace::perf
-
-#if defined(PALACE_WITH_MPI_ABORT_HOOK)
-// Interpose MPI_Abort (profiling interface) to write the failure report first. The symbol
-// is weak so that a static tool library's own MPI_Abort takes precedence at link time (the
-// dynamic linker ignores weakness, see FailureReport).
-extern "C" __attribute__((weak)) int MPI_Abort(MPI_Comm comm, int errorcode)
-{
-  palace::perf::Report({}, fmt::format("MPI_Abort called with error code {}", errorcode));
-  return PMPI_Abort(comm, errorcode);
-}
-#endif

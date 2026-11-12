@@ -346,7 +346,10 @@ error-estimation cost; a large `Estimation` remainder means work outside estimat
 construction and solve. Those remainder rows are meant to be small in a good breakdown,
 since they are the leftover after calling out the informative sub-pieces.
 
-The (average) rows in the table should add up to the Total line at the bottom.
+The (average) rows in the table should add up to the Total line at the bottom. Total
+(`TOTAL`) is not an exclusive row: it is the elapsed wall time of the run (of the iteration,
+for a per-iteration report), so it includes everything, also the (usually negligible) time
+between top-level timers which no other row counts.
 
 The categories for breaking down the total simulation time are:
 
@@ -385,7 +388,6 @@ Postprocessing                  // < Time spent in postprocessing once the field
                                 //   near fields to far fields
   Paraview                      // < Processing and writing Paraview fields for visualization
   Grid function                 // < Processing and writing grid function fields for visualization
-Verification                    // < Opt-in verification checks (zero unless enabled)
 Disk IO                         // < Disk read/write time for loading the mesh file and
                                 //   writing CSV fields
 -----------------------
@@ -441,20 +443,46 @@ and `PeakNodeMemoryGrowthMegabytes` keys, alongside the `ElapsedTime` data.
 
 The report (`SchemaVersion` 2, implemented in `utils/perfstats.hpp`) is reduced across MPI
 processes once per report, in `BlockTimer::Finalize`, with no other synchronization. For
-adaptive mesh refinement, each `iterationX/palace.json` describes that iteration only:
-`BlockTimer::StartIteration` restarts all times, counts and tallies. It does not reset the
-peak RSS of the process, which would also change the peak that `getrusage` and job
-schedulers report: the peak of an iteration is the peak RSS of the process if it grew in the
-iteration, and otherwise unknown and bounded below by the largest RSS at the iteration
-boundaries and at the timer events while the peak did not grow (sampled with the heap,
-below), flagged with `"LowerBound": true` in `PeakMemoryMegabytes` and
-`PeakNodeMemoryMegabytes`. The `Cumulative` block holds sums over iterations for times and
-counts and the maximum for peak memory (exact). The log's "Elapsed Time Report" table
-holds the totals over iterations so far, while the "Peak Memory" table is per iteration.
+adaptive mesh refinement, the top level of each `iterationX/palace.json` describes that
+iteration only, as if it were a simulation of its own: `BlockTimer::StartIteration`
+restarts all times, counts and tallies, and the work between iterations is charged to the
+iteration using the new mesh. The `palace.json` of the output directory is the report of
+the last iteration, **not of the whole run**: the run so far is in the `Cumulative` block of each
+report, with the same layout as the top level (`ElapsedTime`, the peak memory and the
+counters) holding sums over iterations for times and counts and the maximum for peak memory.
+Times are additive: the `Durations` (average over processes) of the iterations add up to
+those of `Cumulative`, including `TOTAL`. `Min`, `Max` and `MaxRank` in `Cumulative` are
+over each process's own totals.
 
-  - `ElapsedTime`: per exclusive timer row (keys are `Timer::names`, including
-    `VERIFICATION` for the opt-in verification checks), `Durations` (average over
-    processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
+Counts (`ElapsedTime/Counts`, the `Count` and `Nested` of tallies, and counters reduced as a
+maximum, such as `LinearSolver/<Role>/Solves`) are the **maximum over processes** of each
+process's count, not their sum. In `Cumulative`, they are the sums of the counts of the
+iteration reports, so that the counts of the iterations add up to them as well (a count
+which differs between processes may thus exceed the total of every single process).
+Counters accumulated as a sum and reduced as `{Min, Avg, Max, MaxRank}` hold instead the
+statistics over processes of each process's total.
+
+The peak RSS of the process is not reset at the start of an iteration: *Palace* does not use
+`/proc/self/clear_refs`, which would also change the peak that `getrusage`, `wait4` and job
+schedulers report. The peak of an iteration is the peak RSS of the process (`getrusage`) if
+it grew in the iteration, and otherwise unknown: it is then bounded below by the largest RSS
+sampled in the iteration (at its boundaries, at timer events while the peak did not grow, at
+most every 0.1 s, and at the memory probes), flagged with `"LowerBound": true` in
+`PeakMemoryMegabytes` and `PeakNodeMemoryMegabytes`. The same holds for a run after another
+one in the same process (`BlockTimer::Reset`). The peak in `Cumulative` is the maximum over
+iterations, exact for the run if any iteration was. The log's "Elapsed Time Report" table
+holds the totals over iterations so far, while the "Peak Memory" table is per iteration;
+from the second iteration on, an "Iteration N" table gives the times of the iteration alone.
+The tallies, counters and other fields below are only written to `palace.json`.
+
+Statistics over processes are written as `{Min, Avg, Max, Sum, MaxRank}` (or a subset, for
+example without `Sum` for times), `MaxRank` being the process of the maximum; statistics
+over nodes have `MaxNode`, the index of the node of the maximum, instead. Times and memory
+growth per timer row are maps from the row to each statistic (`ElapsedTime/Durations` is
+the average, `ElapsedTime/Min`, `PeakMemoryGrowthMegabytes/Sum`, ...).
+
+  - `ElapsedTime`: per exclusive timer row (keys are `Timer::names`), `Durations` (average
+    over processes), `Min`, `Max`, `MaxRank` and `Counts`. `Tallies` holds inclusive
     measurements which do not interrupt the timer rows and may overlap each other; each
     names the row it is measured within as `Parent` (the row active when it is measured,
     `TOTAL` if that differs between its measurements or processes), includes the time of
@@ -462,15 +490,18 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     As a safeguard, a `perf::ScopedTally` opened while a scope of the same tally is open on
     the same thread is not counted: the outermost scope counts the time once, and the tally
     reports such scopes as `Nested`.
-    Phase tallies (`perf::RegisterPhaseTally`), such as `Halo/P` or `Reduce`, are also
-    split by the active row into `<name>/<ROW>`. Each tally has an `Imbalance` (maximum
+    Phase tallies (`perf::RegisterPhaseTally`), such as `ParOperator/P` or `Reduce`, are
+    also split by the active row into `<name>/<ROW>`. Such per-row tallies (also the
+    `Assembly/<Kind>/<ROW>` tallies) are named after their row and have no `Parent`.
+    Each tally has an `Imbalance` (maximum
     over average across the processes which ran it) and, when it contains any, `Wait`, the
     time blocked in communication inside it, and `Work`, the rest of its time (each `{Min,
     Avg, Max, MaxRank}`, `Work` with its own `Imbalance`; tallies that (almost) only wait
     have no `Work`). A rank that waits for slower neighbors shows the delay in `Wait`, so the
     imbalance of `Work` is closer to the load imbalance than the imbalance of the time. The
     waits counted are the blocking reductions, barriers and broadcasts of `Mpi` (tallied as
-    the phase tallies `Reduce`, `Barrier` and `Broadcast`) and, with the CMake option
+    the phase tally `Reduce` and the tallies `Barrier` and `Broadcast`, not split by row)
+    and, with the CMake option
     `PALACE_WITH_MPI_WAIT_TALLY` (default off, Spack variant `+mpi-wait-tally`, enabled in
     the *Palace* containers), the calls to `MPI_Wait`, `MPI_Waitall`,
     `MPI_Waitany` and `MPI_Waitsome` that block, tallied as `Wait/MPI`. These wrappers use
@@ -487,60 +518,46 @@ holds the totals over iterations so far, while the "Peak Memory" table is per it
     other blocking point-to-point calls, collectives inside other libraries, and waits on
     other threads.
   - Counters (`perf::RegisterCounter`) are written at their path, for example
-    `LinearSolver/<Role>/...`, reduced across processes as a sum, minimum, maximum or
-    `{Min, Avg, Max, MaxRank}`.
+    `LinearSolver/<Role>/...` (also `LinearSolver/Main/Solves` and `Its` for the main
+    linear solver, formerly `LinearSolver/TotalSolves` and `TotalIts`), reduced across
+    processes as a sum, minimum, maximum or `{Min, Avg, Max, MaxRank}`.
   - Information set with `perf::SetInfo` (resolved solver choices) is written as is.
 
 Each solver role records the reduction factor (final / initial residual)^(1 / iterations)
 of its solves with at least one iteration as `LinearSolver/<Role>/MeanReductionFactor`,
 `MinReductionFactor` and `MaxReductionFactor`: values close to one mean that the
-preconditioner barely reduces the error. In verification mode, the main solver also records
-`Verification/CoarseSolve/Main/MaxForwardError` for direct coarse solvers,
-‖x - M A x‖ / ‖x‖ for a random x after each coarse solver setup, with A the operator given
-to the coarse solver (complex for complex problems, also when the coarse solver factors its
-real-valued approximation). For hypre coarse solvers (AMS, BoomerAMG), which are not exact,
-it is not computed: the reduction factor of the solver role covers the quality of the
-cycle. It also records `Verification/Preconditioner/Main/MaxErrorPropagatorGrowth` for the
-preconditioner M of the system operator A, once per solver object (so once per adaptive
-mesh refinement iteration), after its first solve with at least one iteration: the
-geometric mean growth of the error over the power iterations 9 to 16 of I - M A. It
-approaches the spectral radius ρ(I - M A) if I - M A is normal and is a growth rate
-otherwise; values above one mean that the error grows under the preconditioner (also
-expected on the null space of a singular operator, such as the magnetostatic curl-curl
-operator), and values which are not finite are written as `null` (maxima and minima keep
-them). The verification checks, including the coarse solve residual check, are charged to
-the exclusive `Verification` row (`VERIFICATION`, zero when verification is off) and the
-two probes also to their own tallies, `Main/Verification/...`; they pause the other timers,
-tallies and counters (`perf::ScopedPause`, which also leaves out their blocking waits from
-`Wait/MPI` and their nested scopes from `Nested`). The coarse solve checks apply the
-operator given to the coarse solver, as the preconditioner check applies the system
-operator: they keep no assembled copy of a matrix, so that verification does not raise
-the peak memory.
+preconditioner barely reduces the error. `Krylov/ApplyBA` counts one event per iteration
+(the operator and the preconditioner applications). The multigrid preconditioners record
+the order of the Chebyshev smoother of each level and the range of its largest eigenvalue
+estimates over the setups of the iteration, `LinearSolver/<Role>/Chebyshev/L<l>/Order` and
+`LambdaMax/{Min,Max}` (`Primary` and `Auxiliary` for distributive relaxation).
 
-Reports written at the end of an iteration have `"Complete": true`. If a process fails
-(an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the report
-collected so far with `"Complete": false` and an `Error` block (`Message`, the innermost
-timer row as `Phase`, `Iteration` and `Collective`), see `utils/failurereport.hpp`. A report
+Reports written at the end of an iteration have `"Complete": true`. If the root process
+fails (an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the
+report collected so far with `"Complete": false` and an `Error` block (`Message`, the
+innermost timer row as `Phase`, and `Iteration`), see `utils/failurereport.hpp`. A report
 in `palace.json` therefore no longer means that the run finished: readers must check
-`Complete`. Failing processes wait up to 10 s for all processes to fail: if they do, the
-report is reduced as usual (`Collective` true); otherwise the root process, if it failed,
-writes its own values under `RootProcess` instead of the usual keys (`Collective` false),
-and a failure of other processes alone leaves `palace.json` as it was (they wait for about
-20 s more before aborting, all of it and at least 10 s once they know that the root failed,
-so that the root can write its report). The wait is part of the innermost timer row and is
-also reported as the tally `Wait/FailureReport`, as communication wait. Fatal signals, for
-example an out-of-memory kill, are not reported.
-`MPI_Abort` is interposed by a weak definition in libpalace which calls `PMPI_Abort` (CMake
-option `PALACE_WITH_MPI_ABORT_HOOK`). The dynamic linker ignores weakness: with a static
-libpalace the definition is part of the executable and bypasses a tool's `MPI_Abort`
-preloaded with `LD_PRELOAD`, and with a shared libpalace it applies through the library
-order. The hook does not see calls bound inside a shared MFEM library on macOS (two-level
-namespace) or those of the Fortran bindings of MPI (used by MUMPS and ARPACK).
+`Complete`. A failing process does not know whether the others fail too, so no collective
+is safe: the root writes its own values, without any communication, under `RootProcess`
+instead of the usual keys, and aborts right away. Another failing process waits for 2 s
+(so that the root can finish its report if it fails too, as for a check on a global
+quantity), then aborts: a failure of non-root processes alone leaves `palace.json` as it
+was. Fatal signals, for example an out-of-memory kill, are not reported.
+`MPI_Abort` is interposed by a weak definition in the `palace` executable and the unit
+tests, not in libpalace (CMake option `PALACE_WITH_MPI_ABORT_HOOK`, `utils/mpiabort.cpp`),
+which calls the next definition of `MPI_Abort`, so that a profiling tool preloaded with
+`LD_PRELOAD` still receives the call. The hook does not see calls bound inside a shared
+MFEM library on macOS (two-level namespace) or those of the Fortran bindings of MPI (used
+by MUMPS and ARPACK).
 
 Solver roles (`perf::ScopedRole`, `BaseKspSolver` role) keep the statistics of nested
 solvers apart from the main linear solver (`Main`, which is also the mode solver of a
-boundary mode problem; wave port mode solvers are `ModeEigen`, the projections of lumped
-port modes `PortProjection`). Solvers and smoothers take the role active at their
+boundary mode problem; the mode solver of wave port i is `ModeEigen/Port<i>`, the
+projections of lumped port modes `PortProjection`, the curl projection of the London cut
+generator `LondonCut`). The statistics of a role are uniform over the processes which run
+its solves and reduced as such: a solver which runs on a subcommunicator, as the mode solver
+of each wave port, has a role of its own, so that its counts do not depend on the number of
+processes. Solvers and smoothers take the role active at their
 construction. Sub-roles keep the blocks of a block preconditioner apart, such as `Main/ND`
 and `Main/H1` for the multigrid preconditioner of a boundary mode problem. Tallies use host clocks, so on GPU builds they
 measure kernel launches unless the measured region synchronizes.
@@ -564,22 +581,13 @@ You should read each row as "this phase increases the peak memory by this amount
 
 The RSS does not grow when an allocation is served from heap that was freed earlier but is
 still resident, so a phase that reuses memory shows zero growth however much it allocates.
-`HeapGrowthMegabytes` (in `palace.json`, with `Min`, `Max`, `Sum` and `MaxRank` per row, a
-`Baseline` and an `Unattributed` entry) holds instead the net growth of the heap in use per
-phase, from the allocator's statistics: glibc `mallinfo2` (glibc 2.33 or later) or the macOS
-malloc zones. Elsewhere, or when jemalloc, tcmalloc or mimalloc replaces glibc's malloc, it
-falls back to the RSS (see `Memory/HeapSource`). It can be negative, and baseline, rows and
-unattributed add up to the heap in use at the end of the iteration (`HeapMegabytes`). The
-heap is sampled at timer events while the time spent in these samples stays below 0.05% of
-the elapsed time plus 1 ms; the samples at iteration boundaries and for memory probes are
-always taken. `Memory/Heap/QuerySeconds` counts the time of all of them, next to `Samples`
-and `SkippedSamples`, except the first query, which also detects the allocator, and the
-`Memory/HeapSource` check. The growth since a skipped sample spans several phases and goes
-to the innermost row open throughout (to `Unattributed` if none); `Coverage` gives, per
-row, the smallest fraction over processes of its exclusive time whose growth was charged
-to it. Memory probes report `HeapPersistentMegabytes` next to the RSS-based values. The
-probe of the error estimate, which runs for example at every time step, measures the first
-estimate of each iteration only (`perf::MemoryProbeSite`).
+The heap in use, from the allocator's statistics (glibc `mallinfo2`, glibc 2.33 or later,
+or the macOS malloc zones; elsewhere, or when jemalloc, tcmalloc or mimalloc replaces
+glibc's malloc, the RSS, see `Memory/HeapSource`), sees such allocations: `HeapMegabytes`
+is the heap in use at the end of the iteration, and memory probes report
+`HeapPersistentMegabytes` (the growth of the heap in use over the probe) next to the
+RSS-based values. The probe of the error estimate, which runs for example at every time
+step, measures the first estimate of each iteration only (`perf::MemoryProbeSite`).
 
 ## Profiling *Palace* on CPUs
 

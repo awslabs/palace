@@ -4,18 +4,12 @@
 #ifndef PALACE_UTILS_PERFPROBES_HPP
 #define PALACE_UTILS_PERFPROBES_HPP
 
-#include <cstdint>
 #include <string>
 #include <string_view>
-#include <vector>
-#include <mpi.h>
 
 namespace mfem
 {
-class Operator;
-class ParMesh;
 class Solver;
-class Vector;
 }  // namespace mfem
 
 namespace palace::perf
@@ -23,13 +17,8 @@ namespace palace::perf
 
 //
 // Probes feeding the performance report: memory attribution of large consumers, resolved
-// solver decisions, assembly tallies and opt-in verification checks.
+// solver decisions and assembly tallies.
 //
-
-// Opt-in verification checks, enabled by Problem.Verbose >= 2 or PALACE_PERF_VERIFY=1.
-// They may synchronize and cost a little, but do not change any numerics.
-void SetVerification(int verbose);
-bool Verification();
 
 // Counter ids of a memory probe name (see MemoryProbe), registered once.
 struct MemoryProbeCounters
@@ -117,22 +106,6 @@ int AssemblyTally(AssemblyKind kind);
 // Hierarchy summary of a hypre BoomerAMG or AMS solver after setup, written as counters
 // under LinearSolver/<Role>/AMG or LinearSolver/<Role>/AMS/{G,Pi}.
 void RecordHypreHierarchy(const mfem::Solver &solver, std::string_view role);
-
-// Fill x with uniform random entries in [-1, 1], seeded by the rank and a stream index,
-// without changing the state of the C library generator (unlike mfem::Vector::Randomize).
-void SetRandom(mfem::Vector &x, MPI_Comm comm, int stream = 0);
-
-// Relative residual ‖b - A x‖ / ‖b‖ (collective on comm).
-double RelativeResidual(const mfem::Operator &A, const mfem::Vector &b,
-                        const mfem::Vector &x, MPI_Comm comm);
-
-// Rank-order-sensitive hashes of the mesh partition and of the true DOF counts per rank
-// (collective), written as Info under Verification/.
-void RecordPartitionHash(const mfem::ParMesh &mesh, const std::vector<long> &tdofs);
-
-// FNV-1a over raw bytes, exposed for testing.
-std::uint64_t HashBytes(const void *data, std::size_t n,
-                        std::uint64_t h = 14695981039346656037ull);
 
 }  // namespace palace::perf
 

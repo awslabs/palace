@@ -8,6 +8,7 @@
 #include <numbers>
 #include <vector>
 #include <Eigen/Dense>
+#include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -20,6 +21,8 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfstats.hpp"
+#include "utils/timer.hpp"
 
 using namespace palace;
 using namespace nlohmann;
@@ -389,6 +392,44 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
   auto A2_complex = space_op.GetExtraSystemMatrix(std::complex<double>(omega, 1.0e-3),
                                                   Operator::DIAG_ZERO);
   CHECK_FALSE(A2_complex);
+}
+
+TEST_CASE("WavePortOperator mode solver statistics per port",
+          "[waveportoperator][perfstats][Serial][Parallel]")
+{
+  // The mode solver of each port runs on the processes of the port only and has a solver
+  // role of its own, so that its statistics do not depend on the number of processes.
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  BlockTimer::Reset();
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 1);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  BlockTimer::Finalize(comm);
+  auto Value = [](const std::string &path)
+  {
+    const auto &r = perf::GetResults();
+    for (std::size_t i = 0; i < r.counter_paths.size(); i++)
+    {
+      if (r.counter_paths[i] == path)
+      {
+        return (r.counter[i].n > 0) ? r.counter[i].max : -1.0;
+      }
+    }
+    return -1.0;
+  };
+  for (const auto &[idx, data] : wp_op)
+  {
+    CAPTURE(idx);
+    CHECK(Value(fmt::format("EigenSolver/ModeEigen/Port{}/Solves", idx)) == 1.0);
+    CHECK(Value(fmt::format("LinearSolver/ModeEigen/Port{}/Solves", idx)) >= 1.0);
+  }
+  CHECK(Value("EigenSolver/ModeEigen/Solves") == -1.0);
+  BlockTimer::Reset();
 }
 
 // The circuit-synthesis modal correction W(ω) = Σ_p g_full,p s_full,p s_full,pᵀ −

@@ -218,6 +218,10 @@ Additional build options are (with default values in brackets):
     the unit tests define the wrappers, not the `libpalace` library. They pass every call
     on to an MPI profiling tool loaded at run time (for example with `LD_PRELOAD`), but
     conflict with one linked into the executable: leave the option off for such a tool
+  - `PALACE_WITH_MPI_ABORT_HOOK [ON]` :  Interpose `MPI_Abort` in the `palace` executable
+    and the unit tests (not in `libpalace`) to write the performance report collected so
+    far to `palace.json` when *Palace* aborts. The call is passed on to an MPI profiling
+    tool loaded at run time
   - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
   - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
     `palace.json`), for builds from a source tree without Git metadata. When empty, the

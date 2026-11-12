@@ -108,6 +108,10 @@ if(PALACE_WITH_MPI_WAIT_TALLY)
   target_link_libraries(unit-tests PRIVATE ${CMAKE_DL_LIBS})
   target_compile_definitions(unit-tests PRIVATE PALACE_WITH_MPI_WAIT_TALLY)
 endif()
+if(PALACE_WITH_MPI_ABORT_HOOK)
+  target_sources(unit-tests PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiabort.cpp)
+  target_link_libraries(unit-tests PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
@@ -320,8 +324,7 @@ catch_discover_tests(unit-tests
 # Processes which really abort: the failure report they leave in palace.json.
 if(PALACE_WITH_MPI_ABORT_HOOK)
   foreach(np 2 4)
-    foreach(mode root-abort last-abort root-last-abort root-last-dtor-abort all-abort
-                 all-throw)
+    foreach(mode root-abort all-throw)
       add_test(NAME failure-report-${mode}-np${np}
         COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:unit-tests>
                 -DMPIEXEC=${MPIEXEC_EXECUTABLE} -DNP_FLAG=${MPIEXEC_NUMPROC_FLAG}

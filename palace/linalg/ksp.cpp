@@ -3,7 +3,6 @@
 
 #include "ksp.hpp"
 
-#include <cmath>
 #include <type_traits>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -18,7 +17,6 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
-#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
@@ -266,55 +264,6 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
 }
 
-// Growth rate of the error under the error propagator I - M A of the preconditioner M for
-// A: the geometric mean of the growth over the second half of a short power iteration. It
-// approaches the spectral radius ρ(I - M A) if I - M A is normal, and is a growth rate
-// (between ρ and the norm) otherwise. Not finite if the iteration overflows or breaks down.
-template <OperatorType OperType>
-double ErrorPropagatorGrowth(const OperType &A, const Solver<OperType> &M, MPI_Comm comm)
-{
-  using VecType =
-      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
-  constexpr int its = 16;
-  VecType x(A.Height()), r(A.Height()), z(A.Height());
-  x.UseDevice(true);
-  r.UseDevice(true);
-  z.UseDevice(true);
-  if constexpr (std::is_same_v<OperType, ComplexOperator>)
-  {
-    perf::SetRandom(x.Real(), comm, 2);
-    perf::SetRandom(x.Imag(), comm, 3);
-  }
-  else
-  {
-    perf::SetRandom(x, comm, 2);
-  }
-  x *= 1.0 / linalg::Norml2(comm, x);
-  double log_growth = 0.0;
-  for (int k = 0; k < its; k++)
-  {
-    A.Mult(x, r);
-    z = 0.0;
-    M.Mult(r, z);
-    x -= z;
-    const double norm = linalg::Norml2(comm, x);
-    if (norm == 0.0)
-    {
-      return 0.0;  // Exact preconditioner
-    }
-    if (!std::isfinite(norm))
-    {
-      return norm;
-    }
-    x *= 1.0 / norm;
-    if (k >= its / 2)
-    {
-      log_growth += std::log(norm);
-    }
-  }
-  return std::exp(log_growth / (its - its / 2));
-}
-
 }  // namespace
 
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
@@ -412,8 +361,6 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
     {
       pc->SetOperator(pc_op);
     }
-    // Only the main solver is checked, as for the coarse solve (see MfemWrapperSolver).
-    check_op = (check_pc && perf::Verification() && role == "Main") ? &op : nullptr;
   }
 }
 
@@ -440,27 +387,6 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   }
   perf_stats.Record(ksp->GetNumIterations(), ksp->GetConverged(), ksp->GetNumRestarts(),
                     ksp->GetInitialRes(), ksp->GetFinalRes());
-  if (check_op && ksp->GetNumIterations() > 0)
-  {
-    // After a solve which applied the preconditioner, so that a lazy coarse factorization
-    // is not part of the check, and charged to the verification row and its own tally only.
-    double growth;
-    {
-      BlockTimer bt(Timer::VERIFICATION);
-      perf::ScopedTally t(perf::RegisterTally(role + "/Verification/ErrorPropagator"));
-      perf::ScopedPause pause;
-      growth = ErrorPropagatorGrowth(*check_op, *pc, ksp->GetComm());
-    }
-    const std::string base = "Verification/Preconditioner/" + role;
-    perf::SetMax(perf::RegisterCounter(base + "/MaxErrorPropagatorGrowth",
-                                       perf::Reduce::MAX, perf::Accumulate::MAX),
-                 growth);
-    perf::Add(
-        perf::RegisterCounter(base + "/Checks", perf::Reduce::MAX, perf::Accumulate::SUM),
-        1.0);
-    check_op = nullptr;
-    check_pc = false;
-  }
 }
 
 template class BaseKspSolver<Operator>;

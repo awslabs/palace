@@ -5,6 +5,7 @@
 #define PALACE_UTILS_COMMUNICATION_HPP
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <complex>
 #include <cstdint>
@@ -33,9 +34,10 @@ void AddCollective(Collective kind, double seconds, std::size_t bytes);
 // Record a blocking MPI_Wait family call (from mpiwait.cpp, defined in commstats.cpp).
 void AddWait(double seconds);
 
-// Set by every call of the MPI_Wait wrappers (mpiwait.cpp), and whether another profiling
-// tool underneath them receives the calls.
-extern bool mpi_wait_seen, mpi_wait_tool;
+// Set by the calls of the MPI_Wait wrappers (mpiwait.cpp, from any thread), and whether
+// another profiling tool underneath them receives the calls.
+extern std::atomic<bool> mpi_wait_seen;
+extern bool mpi_wait_tool;
 
 // Whether the MPI_Wait wrappers intercept the calls made from libpalace: they may not be
 // linked in, or the libraries may bind to the MPI library directly (macOS two-level

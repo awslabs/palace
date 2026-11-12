@@ -444,7 +444,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (B)
     {
-      perf::ScopedTally t(this->perf_apply);
+      // Part of the event of the operator application above: one per iteration, as GMRES.
+      perf::ScopedTally t(this->perf_apply, 0);
       ApplyB(B, r, z, this->use_timer);
     }
     else

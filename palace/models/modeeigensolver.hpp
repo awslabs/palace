@@ -7,6 +7,7 @@
 #include <complex>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 #include <mfem.hpp>
@@ -67,7 +68,8 @@ public:
   // Bare FE space constructor (WavePort). No multigrid — Att/Ann are evaluated from the
   // shared parametric component bank. `solver_comm` restricts solver setup to
   // port ranks; pass MPI_COMM_NULL to fall back to the FE space comm. For 3D wave port
-  // submeshes `normal` is the outward surface normal.
+  // submeshes `normal` is the outward surface normal. `perf_role` names the solver role in
+  // the performance report (see perf_role below).
   ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
                   SurfaceImpedanceOperator &surf_z_op,
                   FarfieldBoundaryOperator &farfield_op,
@@ -78,7 +80,8 @@ public:
                   const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
                   double eig_tol, EigenvalueSolver::WhichType which_eig,
                   const config::LinearSolverData &linear, EigenSolverBackend eigen_backend,
-                  int verbose, MPI_Comm solver_comm = MPI_COMM_NULL);
+                  int verbose, MPI_Comm solver_comm = MPI_COMM_NULL,
+                  std::string_view perf_role = "ModeEigen");
 
   // BoundaryModeOperator constructor (BoundaryMode 2D domain path). Aliases frequency-
   // independent matrices from the operator, delegates frequency-dependent assembly to
@@ -170,7 +173,10 @@ private:
   BoundaryModeOperator *bmo = nullptr;
 
   // Solver role for the performance report: the boundary mode problem's own solver is the
-  // main solver ("Main"), wave port mode solvers are nested ("ModeEigen").
+  // main solver ("Main"), wave port mode solvers are nested, one role per port
+  // ("ModeEigen/Port<index>"). A port's solves run on the processes of its own
+  // communicator only, so that the statistics of a role are uniform over the processes
+  // which run it, as their reduction (maximum) requires, for any number of processes.
   std::string perf_role;
 
   // Complete frequency-parametric components shared by exact and reduced solves.
@@ -270,7 +276,7 @@ private:
   // solver setup. `solver_comm` is the WavePort sub-communicator when not null; it's
   // derived from the FE space comm for the bare-ctor default path and for the
   // hierarchy ctor.
-  void Init(MPI_Comm solver_comm);
+  void Init(MPI_Comm solver_comm, std::string_view role);
 };
 
 }  // namespace palace

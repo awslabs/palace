@@ -36,7 +36,6 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
@@ -794,8 +793,8 @@ TEST_CASE("ModeEigenSolver solver statistics in the performance report",
           "[boundarymodeoperator][perfstats][Serial]")
 {
   // The boundary mode problem's solver is the main solver: its solves are the problem's
-  // LinearSolver/TotalSolves and its eigensolves are under EigenSolver, as before the
-  // solver roles, and its coarse solve is verified. Wave port mode solvers are nested.
+  // LinearSolver/Main/Solves and its eigensolves are under EigenSolver, as before the
+  // solver roles. Wave port mode solvers are nested.
   auto Value = [](const std::string &path)
   {
     const auto &r = perf::GetResults();
@@ -810,33 +809,37 @@ TEST_CASE("ModeEigenSolver solver statistics in the performance report",
   };
 
   BlockTimer::Reset();
-  perf::SetVerification(2);
   REQUIRE(SolveRectangularModesMultigrid(1, [](IoData &) {}).size() >= 1);
-  perf::SetVerification(0);
   BlockTimer::Finalize(Mpi::World());
-  CHECK(Value("LinearSolver/TotalSolves") > 0.0);
-  CHECK(Value("LinearSolver/TotalIts") >= Value("LinearSolver/TotalSolves"));
+  CHECK(Value("LinearSolver/Main/Solves") > 0.0);
+  CHECK(Value("LinearSolver/Main/Its") >= Value("LinearSolver/Main/Solves"));
   CHECK(Value("EigenSolver/Solves") == 1.0);
   CHECK(Value("LinearSolver/ModeEigen/Solves") == -1.0);
   CHECK(Value("EigenSolver/ModeEigen/Solves") == -1.0);
-  CHECK(Value("Verification/CoarseSolve/Main/Checks") >= 1.0);
 
   // The blocks of the multigrid preconditioner have sub-roles of their own: their coarse
-  // solvers and smoothers are reported apart, including the eigenvalue estimates of the
-  // smoothers, which run outside the scope of the role.
+  // solvers, smoothers and multigrid tallies are reported apart, including the eigenvalue
+  // estimates of the smoothers, which run outside the scope of the role.
   BlockTimer::Reset();
   REQUIRE(SolveRectangularModesMultigrid(2, [](IoData &) {}).size() >= 1);
   BlockTimer::Finalize(Mpi::World());
-  CHECK(Value("LinearSolver/TotalSolves") > 0.0);
+  CHECK(Value("LinearSolver/Main/Solves") > 0.0);
   CHECK(Value("LinearSolver/Main/ND/Coarse/Setups") >= 1.0);
   CHECK(Value("LinearSolver/Main/H1/Coarse/Setups") >= 1.0);
   CHECK(Value("LinearSolver/Main/Coarse/Setups") == -1.0);
   {
     nlohmann::json meta = nlohmann::json::object();
     perf::WriteJson(meta);
-    CHECK(meta["LinearSolver"]["Main"]["ND"]["Chebyshev"].is_array());
-    CHECK(meta["LinearSolver"]["Main"]["H1"]["Chebyshev"].is_array());
+    const auto &nd = meta["LinearSolver"]["Main"]["ND"]["Chebyshev"]["L1"];
+    CHECK(nd["Primary"]["LambdaMax"]["Min"].get<double>() > 0.0);
+    CHECK(nd["Primary"]["LambdaMax"]["Min"] <= nd["Primary"]["LambdaMax"]["Max"]);
+    CHECK(nd["Auxiliary"]["LambdaMax"]["Max"].get<double>() > 0.0);
+    const auto &h1 = meta["LinearSolver"]["Main"]["H1"]["Chebyshev"]["L1"];
+    CHECK(h1["Order"].get<int>() > 0);
+    CHECK(h1["LambdaMax"]["Min"] <= h1["LambdaMax"]["Max"]);
     const auto &tallies = meta["ElapsedTime"]["Tallies"];
+    CHECK(tallies.contains("Main/ND/MG/L1/PreSmooth"));
+    CHECK(tallies.contains("Main/H1/MG/Coarse"));
     CHECK(tallies.contains("Main/ND/LambdaMax"));
     CHECK(tallies.contains("Main/H1/LambdaMax"));
     CHECK(!tallies.contains("Main/LambdaMax"));
@@ -848,7 +851,7 @@ TEST_CASE("ModeEigenSolver solver statistics in the performance report",
   BlockTimer::Finalize(Mpi::World());
   CHECK(Value("LinearSolver/ModeEigen/Solves") > 0.0);
   CHECK(Value("EigenSolver/ModeEigen/Solves") == 1.0);
-  CHECK(Value("LinearSolver/TotalSolves") == -1.0);
+  CHECK(Value("LinearSolver/Main/Solves") == -1.0);
   BlockTimer::Reset();
 }
 

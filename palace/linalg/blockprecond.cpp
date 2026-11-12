@@ -57,8 +57,9 @@ void BlockDiagonalPreconditioner<ComplexOperator>::InsertSubVector(const Complex
 template <OperatorType OperType>
 BlockDiagonalPreconditioner<OperType>::BlockDiagonalPreconditioner(
     int block0_size, std::unique_ptr<Solver<OperType>> &&pc0,
-    std::unique_ptr<Solver<OperType>> &&pc1)
-  : Solver<OperType>(), block0_size(block0_size), pc0(std::move(pc0)), pc1(std::move(pc1))
+    std::unique_ptr<Solver<OperType>> &&pc1, std::array<std::string, 2> names)
+  : Solver<OperType>(), block0_size(block0_size), pc0(std::move(pc0)), pc1(std::move(pc1)),
+    names(std::move(names))
 {
 }
 

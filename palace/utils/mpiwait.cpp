@@ -24,9 +24,18 @@ namespace
 
 using Clock = std::chrono::steady_clock;
 
-// The next definition of an MPI function and whether it belongs to another tool (it
-// differs from the MPI library's profiling entry point). Without dynamic symbols (static
-// MPI), the profiling entry point.
+// Whether two symbols are defined in the same shared object.
+bool SameObject(void *a, void *b)
+{
+  Dl_info ia, ib;
+  return a == b ||
+         (a && b && dladdr(a, &ia) && dladdr(b, &ib) && ia.dli_fbase == ib.dli_fbase);
+}
+
+// The next definition of an MPI function and whether it belongs to another tool: it is
+// defined outside the MPI library which defines the profiling entry point (the MPI
+// function may be an alias of the profiling entry point, or a distinct function which
+// calls it). Without dynamic symbols (static MPI), the profiling entry point.
 template <typename F>
 struct Next
 {
@@ -38,7 +47,7 @@ struct Next
     if (next)
     {
       f = reinterpret_cast<F>(next);
-      tool = (next != dlsym(RTLD_NEXT, pname));
+      tool = !SameObject(next, dlsym(RTLD_NEXT, pname));
     }
     palace::perf::detail::mpi_wait_tool |= tool;
   }
@@ -54,7 +63,13 @@ struct NextFunctions
 
 const NextFunctions &Functions()
 {
-  palace::perf::detail::mpi_wait_seen = true;
+  // Relaxed: only MpiWaitTally reads it, after a call on the same thread. Written once set
+  // only, not to share the cache line between threads on every call.
+  auto &seen = palace::perf::detail::mpi_wait_seen;
+  if (!seen.load(std::memory_order_relaxed))
+  {
+    seen.store(true, std::memory_order_relaxed);
+  }
   static const NextFunctions functions;
   return functions;
 }

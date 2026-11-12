@@ -12,7 +12,8 @@ namespace palace::perf
 namespace detail
 {
 
-bool mpi_wait_seen = false, mpi_wait_tool = false;
+std::atomic<bool> mpi_wait_seen = false;
+bool mpi_wait_tool = false;
 
 namespace
 {
@@ -25,12 +26,13 @@ struct CommTallies
 
 // Communication tallies, registered together and with all their rows at once: which rows
 // communicate can depend on the rank (root-only waits, collectives on sub-communicators).
+// Barriers and broadcasts are rare outside of setup: they are not split by row.
 const CommTallies &Tallies()
 {
   static const CommTallies t = {
       RegisterPhaseTally("Reduce"),
-      RegisterPhaseTally("Barrier"),
-      RegisterPhaseTally("Broadcast"),
+      RegisterTally("Barrier"),
+      RegisterTally("Broadcast"),
       RegisterPhaseTally("Wait/MPI"),
       RegisterCounter("Communication/ReduceBytes", Reduce::STATS, Accumulate::SUM),
       RegisterCounter("Communication/BroadcastBytes", Reduce::STATS, Accumulate::SUM),
@@ -83,7 +85,7 @@ void AddWait(double seconds)
     PMPI_Is_thread_main(&flag);
     return flag != 0;
   }();
-  if (!main_thread || registry.suspended || registry.paused)
+  if (!main_thread || registry.suspended)
   {
     return;
   }
@@ -101,10 +103,10 @@ bool MpiWaitTally()
 {
   static const bool intercepted = []()
   {
-    mpi_wait_seen = false;
+    mpi_wait_seen.store(false, std::memory_order_relaxed);
     MPI_Request request = MPI_REQUEST_NULL;
     MPI_Wait(&request, MPI_STATUS_IGNORE);
-    return mpi_wait_seen;
+    return mpi_wait_seen.load(std::memory_order_relaxed);
   }();
   return intercepted;
 }

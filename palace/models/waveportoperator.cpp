@@ -648,7 +648,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            const MaterialOperator &mat_op,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
-                           const mfem::Array<int> &dbc_attr)
+                           const mfem::Array<int> &dbc_attr, int idx)
   : mat_op(mat_op), excitation(data.excitation), active(data.active),
     include_in_synthesis(data.include_in_synthesis), port_linear(linear)
 {
@@ -829,12 +829,14 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // Configure the boundary mode solver. Matrix assembly is MPI-collective on the FE space
   // communicator (all processes), so the config + construction must happen on all
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
+  // Each port has a solver role of its own: its statistics are uniform over port_comm.
   {
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
         data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-        port_linear, data.eigen_solver, data.verbose, port_comm);
+        port_linear, data.eigen_solver, data.verbose, port_comm,
+        fmt::format("ModeEigen/Port{}", idx));
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -1750,7 +1752,7 @@ void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &bound
     port_dbc_bcs.Sort();
     port_dbc_bcs.Unique();
     ports.try_emplace(idx, data, boundaries, domains, problem_type, solver.linear, units,
-                      mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
+                      mat_op, nd_fespace, h1_fespace, port_dbc_bcs, idx);
   }
   MFEM_VERIFY(
       ports.empty() || problem_type == ProblemType::DRIVEN ||

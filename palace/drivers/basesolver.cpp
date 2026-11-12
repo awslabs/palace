@@ -22,7 +22,6 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
-#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
@@ -403,15 +402,6 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
   {
     ndofs[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
   }
-  if (perf::Verification())
-  {
-    std::vector<long> tdofs(fespaces.GetNumLevels());
-    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
-    {
-      tdofs[l] = fespaces.GetFESpaceAtLevel(l).GetTrueVSize();
-    }
-    perf::RecordPartitionHash(fespace.GetParMesh(), tdofs);
-  }
   if (root)
   {
     json meta = LoadMetadata(post_dir);
@@ -491,12 +481,12 @@ void BaseSolver::ReportPerformance(MPI_Comm comm) const
   }
 }
 
-void BaseSolver::ReportFailure(MPI_Comm comm, const json &error) const
+void BaseSolver::ReportFailure(const json &error) const
 {
-  BlockTimer::Finalize(comm);
-  Mpi::Print(comm, "\nPerformance report before the failure ({}):\n",
-             error.value("Collective", false) ? "all processes" : "root process only");
-  BlockTimer::Print(comm);
+  BlockTimer::Finalize(MPI_COMM_SELF);
+  Mpi::Print(MPI_COMM_SELF,
+             "\nPerformance report before the failure (root process only):\n");
+  BlockTimer::Print(MPI_COMM_SELF);
   if (root)
   {
     json meta = LoadMetadata(post_dir);

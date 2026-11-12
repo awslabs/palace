@@ -17,16 +17,17 @@ namespace
 {
 
 // Inclusive tallies for the parallel prolongation P and its transpose in forward operator
-// applications (local work plus the halo exchange inside them).
-int HaloTallyP()
+// applications: the full application, mostly local work (including the hanging node
+// constraints), and the halo exchange inside it.
+int ProlongationTallyP()
 {
-  static const int id = perf::RegisterPhaseTally("Halo/P");
+  static const int id = perf::RegisterPhaseTally("ParOperator/P");
   return id;
 }
 
-int HaloTallyPT()
+int ProlongationTallyPT()
 {
-  static const int id = perf::RegisterPhaseTally("Halo/PT");
+  static const int id = perf::RegisterPhaseTally("ParOperator/PT");
   return id;
 }
 
@@ -275,7 +276,7 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
   {
-    perf::ScopedTally t(HaloTallyP());
+    perf::ScopedTally t(ProlongationTallyP());
     if (dbc_tdof_list.Size())
     {
       auto &tx = trial_fespace.GetTVector<Vector>();
@@ -293,7 +294,7 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
   A->Mult(lx, ly);
 
   {
-    perf::ScopedTally t(HaloTallyPT());
+    perf::ScopedTally t(ProlongationTallyPT());
     RestrictionMatrixMult(ly, y);
   }
   if (dbc_tdof_list.Size())
@@ -371,7 +372,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
   {
-    perf::ScopedTally t(HaloTallyP());
+    perf::ScopedTally t(ProlongationTallyP());
     if (dbc_tdof_list.Size())
     {
       auto &tx = trial_fespace.GetTVector<Vector>();
@@ -390,7 +391,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
 
   auto &ty = test_fespace.GetTVector<Vector>();
   {
-    perf::ScopedTally t(HaloTallyPT());
+    perf::ScopedTally t(ProlongationTallyPT());
     RestrictionMatrixMult(ly, ty);
   }
   if (dbc_tdof_list.Size())
@@ -584,7 +585,7 @@ void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
   {
-    perf::ScopedTally t(HaloTallyP());
+    perf::ScopedTally t(ProlongationTallyP());
     if (dbc_tdof_list.Size())
     {
       auto &tx = trial_fespace.GetTVector<ComplexVector>();
@@ -604,7 +605,7 @@ void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
   A->Mult(lx, ly);
 
   {
-    perf::ScopedTally t(HaloTallyPT());
+    perf::ScopedTally t(ProlongationTallyPT());
     RestrictionMatrixMult(ly, y);
   }
   if (dbc_tdof_list.Size())
@@ -704,7 +705,7 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
   {
-    perf::ScopedTally t(HaloTallyP());
+    perf::ScopedTally t(ProlongationTallyP());
     if (dbc_tdof_list.Size())
     {
       auto &tx = trial_fespace.GetTVector<ComplexVector>();
@@ -725,7 +726,7 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 
   auto &ty = test_fespace.GetTVector<ComplexVector>();
   {
-    perf::ScopedTally t(HaloTallyPT());
+    perf::ScopedTally t(ProlongationTallyPT());
     RestrictionMatrixMult(ly, ty);
   }
   if (dbc_tdof_list.Size())

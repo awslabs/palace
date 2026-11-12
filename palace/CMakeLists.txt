@@ -42,7 +42,7 @@ set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB for high-order field interpolation")
 set(PALACE_WITH_MPI_WAIT_TALLY OFF CACHE BOOL "Time blocking MPI_Wait calls for the performance report through the MPI profiling interface (executables only)")
-set(PALACE_WITH_MPI_ABORT_HOOK ON CACHE BOOL "Interpose MPI_Abort to write the performance report when Palace aborts")
+set(PALACE_WITH_MPI_ABORT_HOOK ON CACHE BOOL "Interpose MPI_Abort to write the performance report when Palace aborts (executables only)")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -366,6 +366,10 @@ set(TARGET_NAME palace)
 add_executable(${TARGET_NAME} ${CMAKE_SOURCE_DIR}/main.cpp)
 if(PALACE_WITH_MPI_WAIT_TALLY)
   target_sources(${TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiwait.cpp)
+  target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_DL_LIBS})
+endif()
+if(PALACE_WITH_MPI_ABORT_HOOK)
+  target_sources(${TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiabort.cpp)
   target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_DL_LIBS})
 endif()
 target_link_libraries(${TARGET_NAME}
@@ -756,11 +760,6 @@ target_link_libraries(
 if(PALACE_WITH_GSLIB)
   target_compile_definitions(${LIB_TARGET_NAME}
     PUBLIC PALACE_WITH_GSLIB
-  )
-endif()
-if(PALACE_WITH_MPI_ABORT_HOOK)
-  target_compile_definitions(${LIB_TARGET_NAME}
-    PUBLIC PALACE_WITH_MPI_ABORT_HOOK
   )
 endif()
 if(PALACE_WITH_GPU_AWARE_MPI)

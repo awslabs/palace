@@ -189,7 +189,8 @@ public:
                const config::DomainData &domains, ProblemType problem_type,
                const config::LinearSolverData &linear, const Units &units,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
+               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr,
+               int idx);
 
   ~WavePortData();
 

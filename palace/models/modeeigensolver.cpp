@@ -56,7 +56,7 @@ ModeEigenSolver::ModeEigenSolver(
     const FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
     int num_modes, int num_vec, double eig_tol, EigenvalueSolver::WhichType which_eig,
     const config::LinearSolverData &linear, EigenSolverBackend eigen_backend, int verbose,
-    MPI_Comm solver_comm)
+    MPI_Comm solver_comm, std::string_view perf_role)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
     normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
@@ -85,7 +85,7 @@ ModeEigenSolver::ModeEigenSolver(
       nd_fespace, h1_fespace, mat_op, normal, surf_z_op, farfield_op, surf_sigma_op,
       surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
 
-  Init(solver_comm);
+  Init(solver_comm, perf_role);
 }
 
 ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
@@ -111,12 +111,12 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
       nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
       surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
 
-  Init(nd_fespace.GetComm());
+  Init(nd_fespace.GetComm(), "Main");
 }
 
-void ModeEigenSolver::Init(MPI_Comm solver_comm)
+void ModeEigenSolver::Init(MPI_Comm solver_comm, std::string_view role)
 {
-  perf_role = bmo ? "Main" : "ModeEigen";
+  perf_role = role;
   nd_size = nd_fespace.GetTrueVSize();
   h1_size = h1_fespace.GetTrueVSize();
 
@@ -688,9 +688,11 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
     h1_gmg->EnableTimer();
   }
 
-  // Combine into block-diagonal preconditioner.
+  // Combine into block-diagonal preconditioner, with the tallies of the blocks under their
+  // sub-roles.
   auto block_pc = std::make_unique<BlockDiagonalPreconditioner<ComplexOperator>>(
-      nd_size, std::move(nd_gmg), std::move(h1_gmg));
+      nd_size, std::move(nd_gmg), std::move(h1_gmg),
+      std::array<std::string, 2>{"ND", "H1"});
   block_pc_ptr = block_pc.get();
 
   // Outer Krylov solver — use the user-configured type from Solver.Linear.KSPType.

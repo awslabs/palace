@@ -3,8 +3,8 @@
 
 #include "gmg.hpp"
 
+#include <fmt/format.h>
 #include <mfem.hpp>
-#include <nlohmann/json.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
@@ -131,35 +131,44 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     R[l].UseDevice(true);
   }
 
-  // Resolved Chebyshev smoother parameters per level (level 0 is the coarse solver).
-  auto Cheby = [](const Solver<OperType> *B) -> nlohmann::json
+  // Resolved Chebyshev smoother parameters per level (level 0 is the coarse solver): the
+  // order and the range of the largest eigenvalue estimates over the setups.
+  auto Cheby = [](const Solver<OperType> *smoother, const std::string &path)
   {
-    if (const auto *c = dynamic_cast<const ChebyshevSmoother<OperType> *>(B))
+    auto Record = [&path](int order, double lambda_max)
     {
-      return {{"Order", c->GetOrder()}, {"LambdaMax", c->GetMaxEigenvalue()}};
-    }
-    if (const auto *c = dynamic_cast<const ChebyshevSmoother1stKind<OperType> *>(B))
+      perf::Set(perf::RegisterCounter(path + "/Order", perf::Reduce::MAX,
+                                      perf::Accumulate::NONE),
+                order);
+      perf::SetMin(perf::RegisterCounter(path + "/LambdaMax/Min", perf::Reduce::MIN,
+                                         perf::Accumulate::MIN),
+                   lambda_max);
+      perf::SetMax(perf::RegisterCounter(path + "/LambdaMax/Max", perf::Reduce::MAX,
+                                         perf::Accumulate::MAX),
+                   lambda_max);
+    };
+    if (const auto *c = dynamic_cast<const ChebyshevSmoother<OperType> *>(smoother))
     {
-      return {{"Order", c->GetOrder()}, {"LambdaMax", c->GetMaxEigenvalue()}};
+      Record(c->GetOrder(), c->GetMaxEigenvalue());
     }
-    return nullptr;
+    else if (const auto *c =
+                 dynamic_cast<const ChebyshevSmoother1stKind<OperType> *>(smoother))
+    {
+      Record(c->GetOrder(), c->GetMaxEigenvalue());
+    }
   };
-  auto levels = nlohmann::json::array();
   for (std::size_t l = 1; l < n_levels; l++)
   {
+    const auto path = perf::LinearSolverPath(role, fmt::format("Chebyshev/L{}", l));
     if (const auto *d = dynamic_cast<const DistRelaxationSmoother<OperType> *>(B[l].get()))
     {
-      levels.push_back({{"Primary", Cheby(d->GetSmoother())},
-                        {"Auxiliary", Cheby(d->GetAuxiliarySmoother())}});
+      Cheby(d->GetSmoother(), path + "/Primary");
+      Cheby(d->GetAuxiliarySmoother(), path + "/Auxiliary");
     }
     else
     {
-      levels.push_back(Cheby(B[l].get()));
+      Cheby(B[l].get(), path);
     }
-  }
-  if (!levels.empty())
-  {
-    perf::SetInfo(perf::LinearSolverPath(role, "Chebyshev"), levels);
   }
 
   this->height = op.Height();

@@ -5,14 +5,10 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
-#include <random>
 #include <_hypre_parcsr_ls.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
-#include <nlohmann/json.hpp>
 #include "linalg/ams.hpp"
-#include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/perfstats.hpp"
 
@@ -21,8 +17,6 @@ namespace palace::perf
 
 namespace
 {
-
-bool verification = false;
 
 constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
 
@@ -59,22 +53,12 @@ void RecordAmg(HYPRE_Solver solver, const std::string &base)
 
 }  // namespace
 
-void SetVerification(int verbose)
-{
-  const char *env = std::getenv("PALACE_PERF_VERIFY");
-  verification = (verbose >= 2) || (env && std::string_view(env) != "0");
-}
-
-bool Verification()
-{
-  return verification;
-}
-
 void MemoryProbe::Start()
 {
   cur0 = memory_reporting::GetCurrentMemory();
   hwm0 = memory_reporting::GetPeakMemory();
-  heap0 = BlockTimer::QueryHeap();
+  heap0 = memory_reporting::GetHeapMemory();
+  BlockTimer::NoteRss(cur0);
   active = true;
 }
 
@@ -84,8 +68,9 @@ void MemoryProbe::Stop()
   {
     return;
   }
-  const long heap1 = BlockTimer::QueryHeap();
+  const long heap1 = memory_reporting::GetHeapMemory();
   const long cur1 = memory_reporting::GetCurrentMemory();
+  BlockTimer::NoteRss(cur1);
   const long hwm1 = memory_reporting::GetPeakMemory();
   persistent += static_cast<double>(cur1 - cur0);
   growth += static_cast<double>(hwm1 - hwm0);
@@ -175,73 +160,6 @@ void RecordHypreHierarchy(const mfem::Solver &solver, std::string_view role)
     RecordAmg(hypre_AMSDataPoissonAlphaAMG(data) ? hypre_AMSDataPoissonAlphaAMG(data)
                                                  : hypre_AMSDataPoissonAlphaXAMG(data),
               base + "/Pi");
-  }
-}
-
-void SetRandom(mfem::Vector &x, MPI_Comm comm, int stream)
-{
-  std::seed_seq seq{Mpi::Rank(comm), stream};
-  std::mt19937_64 gen(seq);
-  std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  double *X = x.HostWrite();
-  for (int i = 0; i < x.Size(); i++)
-  {
-    X[i] = dist(gen);
-  }
-}
-
-double RelativeResidual(const mfem::Operator &A, const mfem::Vector &b,
-                        const mfem::Vector &x, MPI_Comm comm)
-{
-  mfem::Vector r(b.Size());
-  r.UseDevice(true);
-  A.Mult(x, r);
-  r -= b;
-  const double nr = std::sqrt(mfem::InnerProduct(comm, r, r));
-  const double nb = std::sqrt(mfem::InnerProduct(comm, b, b));
-  return (nb > 0.0) ? nr / nb : nr;
-}
-
-std::uint64_t HashBytes(const void *data, std::size_t n, std::uint64_t h)
-{
-  const auto *p = static_cast<const unsigned char *>(data);
-  for (std::size_t i = 0; i < n; i++)
-  {
-    h = (h ^ p[i]) * 1099511628211ull;
-  }
-  return h;
-}
-
-void RecordPartitionHash(const mfem::ParMesh &mesh, const std::vector<long> &tdofs)
-{
-  MPI_Comm comm = mesh.GetComm();
-  const int rank = Mpi::Rank(comm);
-  // Per-rank hashes of the local elements (vertex coordinates, attributes) and of the
-  // true DOF counts, combined across ranks in rank order.
-  std::uint64_t h[2] = {HashBytes(&rank, sizeof(rank)), HashBytes(&rank, sizeof(rank))};
-  mfem::Array<int> v;
-  for (int e = 0; e < mesh.GetNE(); e++)
-  {
-    const int attr = mesh.GetAttribute(e);
-    h[0] = HashBytes(&attr, sizeof(attr), h[0]);
-    mesh.GetElementVertices(e, v);
-    for (int i : v)
-    {
-      h[0] = HashBytes(mesh.GetVertex(i), sizeof(double) * mesh.SpaceDimension(), h[0]);
-    }
-  }
-  h[1] = HashBytes(tdofs.data(), sizeof(long) * tdofs.size(), h[1]);
-  std::vector<std::uint64_t> all(2 * Mpi::Size(comm));
-  MPI_Gather(h, 2, MPI_UINT64_T, all.data(), 2, MPI_UINT64_T, 0, comm);
-  if (Mpi::Root(comm))
-  {
-    std::uint64_t g[2] = {14695981039346656037ull, 14695981039346656037ull};
-    for (std::size_t i = 0; i < all.size(); i++)
-    {
-      g[i % 2] = HashBytes(&all[i], sizeof(std::uint64_t), g[i % 2]);
-    }
-    SetInfo("Verification/PartitionHash", fmt::format("{:016x}", g[0]));
-    SetInfo("Verification/DofHash", fmt::format("{:016x}", g[1]));
   }
 }
 

@@ -36,7 +36,10 @@ enum class Reduce
   STATS  // {"Min", "Avg", "Max", "MaxRank"} over the ranks which set the counter
 };
 
-// How a counter is accumulated over iterations for the Cumulative block.
+// How a counter is accumulated over iterations for the Cumulative block. A counter reduced
+// as SUM, MIN or MAX and accumulated as SUM is the sum of its values in the iteration
+// reports (for example a MAX-reduced count: the sum over iterations of the maximum over
+// ranks); a STATS counter holds the statistics over ranks of each rank's accumulated value.
 enum class Accumulate
 {
   SUM,
@@ -79,7 +82,6 @@ struct Registry
   std::unordered_map<std::string, int> tally_ids, counter_ids;
   std::vector<std::string> roles;
   bool suspended = false;  // Set while BlockTimer::Finalize reduces (not tallied)
-  int paused = 0;          // ScopedPause depth: tallies and counters record nothing
 };
 
 // Row of a tally measured within rows a and b (-1: none): TOTAL if they differ.
@@ -117,7 +119,8 @@ inline thread_local std::vector<char> open_tallies;
 int RegisterTally(std::string_view name);
 
 // A tally measured in any phase (Parent TOTAL), additionally split by the exclusive row
-// active at the time into "<name>/<ROW>" sub-tallies (Parent ROW). The sub-tallies of all
+// active at the time into "<name>/<ROW>" sub-tallies (reported without Parent, which is
+// ROW). The sub-tallies of all
 // rows are registered with it, contiguously: the registration order does not depend on the
 // rows which each rank runs, and finding the sub-tally of a row needs no lookup.
 int RegisterPhaseTally(std::string_view name);
@@ -136,7 +139,7 @@ void RegisterCommunicationTallies();
 // Add to a tally: elapsed seconds, of which wait seconds were blocked in communication.
 inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
 {
-  if (id >= 0 && detail::registry.paused == 0)
+  if (id >= 0)
   {
     auto &t = detail::registry.tallies[id];
     t.time += seconds;
@@ -160,15 +163,17 @@ inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
 // wait inside it. A negative id is a no-op. As a safeguard, so is a scope nested in an open
 // scope of the same tally on the same thread (for example a tallied helper which a tallied
 // entry point also calls): the outermost scope counts the time once, and the nested scope
-// is counted as Nested in the report.
+// is counted as Nested in the report. A scope adds count events (one by default, zero for a
+// scope which continues the event of a previous one).
 class ScopedTally
 {
   int id;
+  long count;
   Timer::TimePoint t0;
   double w0 = 0.0;
 
 public:
-  explicit ScopedTally(int id) : id(id)
+  explicit ScopedTally(int id, long count = 1) : id(id), count(count)
   {
     if (id >= 0)
     {
@@ -180,10 +185,7 @@ public:
       }
       if (open[id])
       {
-        if (detail::registry.paused == 0)
-        {
-          detail::registry.tallies[id].nested++;
-        }
+        detail::registry.tallies[id].nested++;
         this->id = -1;
         return;
       }
@@ -198,39 +200,12 @@ public:
     {
       const double seconds = Timer::Duration(Timer::Now() - t0).count();
       detail::open_tallies[id] = 0;
-      AddTally(id, seconds, 1, detail::comm_wait - w0);
+      AddTally(id, seconds, count, detail::comm_wait - w0);
     }
   }
   ScopedTally(const ScopedTally &) = delete;
   ScopedTally &operator=(const ScopedTally &) = delete;
 };
-
-// Pause all reporting in a scope: nested BlockTimer rows, tallies and counters record
-// nothing, and the time stays in the row active before. For verification probes, which are
-// measured by their own tally around the scope instead.
-class ScopedPause
-{
-public:
-  ScopedPause()
-  {
-    detail::registry.paused++;
-    BlockTimer::Pause(true);
-  }
-  ~ScopedPause()
-  {
-    detail::registry.paused = std::max(detail::registry.paused - 1, 0);  // See ClearPause
-    BlockTimer::Pause(false);
-  }
-  ScopedPause(const ScopedPause &) = delete;
-  ScopedPause &operator=(const ScopedPause &) = delete;
-};
-
-// End all pauses, for a failure inside a ScopedPause (see FailureReport).
-inline void ClearPause()
-{
-  detail::registry.paused = 0;
-  BlockTimer::ClearPause();
-}
 
 //
 // Counters: a number written to palace.json at a slash-separated path (for example
@@ -243,10 +218,6 @@ int RegisterCounter(std::string_view path, Reduce reduce = Reduce::MAX,
 
 inline void Add(int id, double v)
 {
-  if (detail::registry.paused)
-  {
-    return;
-  }
   auto &c = detail::registry.counters[id];
   c.value += v;
   c.set = true;
@@ -263,10 +234,6 @@ inline bool IsSet(int id)
 
 inline void Set(int id, double v)
 {
-  if (detail::registry.paused)
-  {
-    return;
-  }
   auto &c = detail::registry.counters[id];
   c.value = v;
   c.set = true;
@@ -274,10 +241,6 @@ inline void Set(int id, double v)
 // SetMax and SetMin keep a value which is not a number (NaN) once set.
 inline void SetMax(int id, double v)
 {
-  if (detail::registry.paused)
-  {
-    return;
-  }
   auto &c = detail::registry.counters[id];
   if (!c.set || std::isnan(v) || (!std::isnan(c.value) && v > c.value))
   {
@@ -287,10 +250,6 @@ inline void SetMax(int id, double v)
 }
 inline void SetMin(int id, double v)
 {
-  if (detail::registry.paused)
-  {
-    return;
-  }
   auto &c = detail::registry.counters[id];
   if (!c.set || std::isnan(v) || (!std::isnan(c.value) && v < c.value))
   {
@@ -325,13 +284,6 @@ void SetInfo(std::string_view path, const nlohmann::json &value);
 //
 std::string_view CurrentRole();
 
-// Whether a role is the main solver's or one of its sub-roles: verification checks only
-// run for these, which run on all processes of the problem.
-inline bool IsMainRole(std::string_view role)
-{
-  return role == "Main" || role.starts_with("Main/");
-}
-
 class ScopedRole
 {
 public:
@@ -341,9 +293,7 @@ public:
   ScopedRole &operator=(const ScopedRole &) = delete;
 };
 
-// Path of a linear solver statistic for the given role: the main solver's solve and
-// iteration totals keep their historical names (LinearSolver/TotalSolves, TotalIts),
-// everything else is under LinearSolver/<role>/<field>.
+// Path of a linear solver statistic for the given role: LinearSolver/<role>/<field>.
 std::string LinearSolverPath(std::string_view role, std::string_view field);
 
 //
@@ -357,6 +307,9 @@ struct Stats
   int n = 0;          // Number of contributing ranks (or nodes)
 };
 
+// Counts (timer rows, tally Count and Nested) are reported as the maximum over ranks. In
+// cum, their max is the sum over iterations of the reported maxima (as for the counters,
+// see Accumulate), so that the Cumulative counts add up the iteration reports.
 struct TimerResults
 {
   std::vector<Stats> time, count, rank_mem, node_mem;  // Per Timer::Index
@@ -372,7 +325,7 @@ struct Results
   int num_nodes = 0;
   int peak_lower_bound = 0;  // Processes whose peak of the iteration is only a lower bound
   TimerResults iter, cum;    // This iteration and iterations 1..N
-  Stats peak_mem, cur_mem;  // Per-rank peak (this iteration) and current RSS
+  Stats peak_mem, cur_mem;   // Per-rank peak (this iteration) and current RSS
   Stats peak_node_mem, cur_node_mem;
   Stats cum_peak_mem, cum_peak_node_mem;  // Max over iterations
   // Peak memory attribution: peak = baseline (peak RSS at the iteration start) + sum of the
@@ -380,13 +333,9 @@ struct Results
   // process did not grow in the iteration, its peak is the lower bound of the RSS sampled
   // instead, and it is all baseline.
   Stats mem_baseline, mem_unattributed, node_mem_baseline, node_mem_unattributed;
-  // Heap in use (allocator statistics, see memory_reporting::GetHeapMemory): growth per
-  // row, at the iteration start (baseline), outside any row (unattributed) and at the end
-  // of the iteration. Baseline + rows + unattributed = end, per rank.
-  // Unattributed also holds the growth across skipped samples; heap_coverage is the
-  // fraction of each row's samples charged to it.
-  std::vector<Stats> heap_growth, heap_coverage;
-  Stats heap_baseline, heap_unattributed, heap_mem;
+  // Heap in use at the end of the iteration (allocator statistics, see
+  // memory_reporting::GetHeapMemory).
+  Stats heap_mem;
   std::vector<std::string> counter_paths;
   std::vector<Reduce> counter_reduce;
   std::vector<Accumulate> counter_acc;
@@ -397,9 +346,8 @@ const Results &GetResults();
 
 // Write the performance report into the palace.json object (global root only). Removes
 // keys written by previous iterations first. "Complete" is true, unless an error (see
-// FailureReport) is given: then it is false and the error is written under "Error". If the
-// error is not "Collective", the report holds the root process's own values and is written
-// under "RootProcess" instead.
+// FailureReport) is given: then it is false, the error is written under "Error" and the
+// report, which holds the root process's own values, under "RootProcess".
 void WriteJson(nlohmann::json &meta, const nlohmann::json *error = nullptr);
 
 }  // namespace palace::perf

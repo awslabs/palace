@@ -3,12 +3,12 @@
 
 # Runs the hidden "Failure report on abort" test case, which aborts on purpose, and checks
 # the palace.json it leaves. Arguments (-D): EXE, MPIEXEC, NP_FLAG, NP, PREFLAGS, POSTFLAGS,
-# MODE (<root|last|root-last|all>[-dtor]-<abort|throw>) and DIR. The test case waits for
-# 1 s for all processes to fail.
+# MODE (root-abort: the root process alone fails, through an MFEM error message and
+# MPI_Abort; all-throw: all processes fail, through an uncaught exception) and DIR. Either
+# way, the root writes its own report.
 
 file(REMOVE_RECURSE "${DIR}")
 file(MAKE_DIRECTORY "${DIR}")
-string(TIMESTAMP t0 "%s" UTC)
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env PALACE_TEST_FAILURE=${MODE} PALACE_TEST_FAILURE_DIR=${DIR}
           ${MPIEXEC} ${NP_FLAG} ${NP} ${PREFLAGS} ${EXE} ${POSTFLAGS}
@@ -18,8 +18,6 @@ execute_process(
   ERROR_VARIABLE out
   TIMEOUT 300
 )
-string(TIMESTAMP t1 "%s" UTC)
-math(EXPR elapsed "${t1} - ${t0}")
 if(NOT rc MATCHES "^[0-9]+$" OR rc EQUAL 0)
   message(FATAL_ERROR "The run did not abort (${rc}):\n${out}")
 endif()
@@ -36,39 +34,12 @@ function(expect path expected)
   endif()
 endfunction()
 
-if(MODE MATCHES "^all" OR (MODE MATCHES "^root-last" AND NP EQUAL 2))
-  set(failed all)
-elseif(MODE MATCHES "^last")
-  set(failed last)
+expect(Complete OFF)
+expect(Error/Phase EPS)
+if(MODE MATCHES "throw$")
+  expect(Error/Message "Test failure")
 else()
-  set(failed root)
+  expect(Error/Message "Test failure on rank 0")
 endif()
-if(failed STREQUAL "last")
-  # Only a non-root process fails: palace.json is left as it was, and the process waits
-  # for 3 s (for the root to fail too) before aborting.
-  string(JSON value ERROR_VARIABLE err GET "${meta}" Complete)
-  if(NOT err)
-    message(FATAL_ERROR "Unexpected report:\n${meta}")
-  endif()
-  expect(Problem/MPISize ${NP})
-  if(elapsed LESS 3)
-    message(FATAL_ERROR "Aborted after ${elapsed} s, before the end of the wait:\n${out}")
-  endif()
-else()
-  expect(Complete OFF)
-  expect(Error/Phase EPS)
-  if(MODE MATCHES "throw$")
-    expect(Error/Message "Test failure")
-  else()
-    expect(Error/Message "Test failure on rank 0")
-  endif()
-  if(failed STREQUAL "all")
-    expect(Error/Collective ON)
-    expect(Test/Ranks ${NP})
-    expect(ElapsedTime/Counts/EPS 1)
-  else()
-    expect(Error/Collective OFF)
-    expect(RootProcess/Test/Ranks 1)
-    expect(RootProcess/ElapsedTime/Counts/EPS 1)
-  endif()
-endif()
+expect(RootProcess/Test/Ranks 1)
+expect(RootProcess/ElapsedTime/Counts/EPS 1)

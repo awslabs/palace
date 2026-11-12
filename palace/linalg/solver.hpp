@@ -116,30 +116,17 @@ private:
   // Call the wrapped solver's SetOperator.
   void SetInnerOperator(const mfem::HypreParMatrix &op);
   // Performance probes: memory of the factorization (SetOperator and the first Mult) for
-  // direct solvers, hierarchy summary for hypre solvers, and the optional residual check of
-  // the first solve after each setup, against the operator given to SetOperator (not owned;
-  // for complex operators, through the equivalent-real block of its parts or their sum, as
-  // factored by the solver).
+  // direct solvers, hierarchy summary for hypre solvers.
   std::string role;
   bool direct;
   mutable bool first_mult = false;
   mutable perf::MemoryProbe probe;
-  const OperType *res_check = nullptr;
-  bool res_block = false;
   void BeginSetup();
-  void EndSetup(const OperType &op, bool block);
-  void FinishSetup(const std::vector<std::pair<const Vector *, const Vector *>> &bx) const;
+  void EndSetup();
+  void FinishSetup() const;
 
-  // Optional forward error check of the first solve after each setup of a direct solver,
-  // ‖x - M A x‖ / ‖x‖ for a random x and A the operator given to SetOperator (not owned):
-  // for complex operators the complex operator, also when the solver uses the real-valued
-  // approximation.
-  const OperType *op_check = nullptr;
-  MPI_Comm check_comm = MPI_COMM_NULL;
-  void CheckForwardError() const;
-
-  // Apply the wrapped solver, finishing the setup probes after the first application.
-  void Apply(const VecType &x, VecType &y, bool first) const;
+  // Apply the wrapped solver.
+  void Apply(const VecType &x, VecType &y) const;
 
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,

@@ -16,7 +16,6 @@
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
-#include "utils/perfprobes.hpp"
 #include "utils/perfstats.hpp"
 #include "utils/timer.hpp"
 
@@ -56,7 +55,7 @@ int TallyIndex(const perf::TimerResults &r, const std::string &name)
   return -1;
 }
 
-// Exact inverse of a diagonal matrix: a direct coarse solver for the verification checks.
+// Exact inverse of a diagonal matrix: a direct coarse solver.
 class DiagonalSolver : public mfem::Solver
 {
   mfem::Vector d;
@@ -308,6 +307,76 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   BlockTimer::Reset();
 }
 
+TEST_CASE("PerfStats Cumulative Counts", "[perfstats][Serial][Parallel]")
+{
+  // Counts are maxima over ranks; the Cumulative counts are the sums of the counts of the
+  // iteration reports, also when the busiest rank changes between iterations. A STATS
+  // counter holds the statistics over ranks of each rank's sum instead.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  BlockTimer::Reset();
+  const int its =
+      perf::RegisterCounter("Test/Its", perf::Reduce::MAX, perf::Accumulate::SUM);
+  const int rows =
+      perf::RegisterCounter("Test/Rows", perf::Reduce::STATS, perf::Accumulate::SUM);
+  const int tally = perf::RegisterTally("Test/Busy");
+  for (int it = 0; it < 2; it++)
+  {
+    const int busy = (it == 0) ? 0 : np - 1;
+    const int n = (rank == busy) ? 3 : 1;
+    for (int k = 0; k < n; k++)
+    {
+      BlockTimer bt(Timer::IO);
+      perf::ScopedTally st(tally);
+    }
+    perf::Add(its, n);
+    perf::Add(rows, n);
+    BlockTimer::Finalize(comm);
+    const auto &r = perf::GetResults();
+    CHECK(r.iter.count[Timer::IO].max == 3);
+    if (it == 1)
+    {
+      const int t = TallyIndex(r.cum, "Test/Busy");
+      REQUIRE(t >= 0);
+      CHECK(r.cum.count[Timer::IO].max == 6);
+      CHECK(r.cum.tally_count[t].max == 6);
+      CHECK(r.cum_counter[CounterIndex(r, "Test/Its")].max == 6);
+      CHECK(r.cum_counter[CounterIndex(r, "Test/Rows")].max == ((np > 1) ? 4 : 6));
+      nlohmann::json meta = nlohmann::json::object();
+      perf::WriteJson(meta);
+      CHECK(meta["ElapsedTime"]["Counts"]["IO"] == 3);
+      CHECK(meta["Cumulative"]["ElapsedTime"]["Counts"]["IO"] == 6);
+      CHECK(meta["Cumulative"]["ElapsedTime"]["Tallies"]["Test/Busy"]["Count"] == 6);
+      CHECK(meta["Cumulative"]["Test"]["Its"] == 6);
+    }
+    else
+    {
+      BlockTimer::StartIteration();
+    }
+  }
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfStats Reset Clears Suspension", "[perfstats][Serial]")
+{
+  // A suspension of the communication tallies left by a failure inside Finalize does not
+  // outlive a Reset.
+  BlockTimer::Reset();
+  const int tally = perf::RegisterTally("Test/AfterSuspension");
+  perf::detail::registry.suspended = true;
+  BlockTimer::Reset();
+  CHECK_FALSE(perf::detail::registry.suspended);
+  {
+    BlockTimer bt(Timer::IO);
+    perf::AddTally(tally, 1.0);
+  }
+  BlockTimer::Finalize(Mpi::World());
+  const auto &r = perf::GetResults();
+  CHECK(r.iter.count[Timer::IO].max == 1);
+  CHECK(r.iter.tally_count[TallyIndex(r.iter, "Test/AfterSuspension")].max == 1);
+  BlockTimer::Reset();
+}
+
 TEST_CASE("PerfStats Roles", "[perfstats][Serial]")
 {
   CHECK(perf::CurrentRole() == "Main");
@@ -321,8 +390,8 @@ TEST_CASE("PerfStats Roles", "[perfstats][Serial]")
     CHECK(perf::CurrentRole() == "DivFree");
   }
   CHECK(perf::CurrentRole() == "Main");
-  CHECK(perf::LinearSolverPath("Main", "Solves") == "LinearSolver/TotalSolves");
-  CHECK(perf::LinearSolverPath("Main", "Its") == "LinearSolver/TotalIts");
+  CHECK(perf::LinearSolverPath("Main", "Solves") == "LinearSolver/Main/Solves");
+  CHECK(perf::LinearSolverPath("Main", "Its") == "LinearSolver/Main/Its");
   CHECK(perf::LinearSolverPath("Main", "MaxIts") == "LinearSolver/Main/MaxIts");
   CHECK(perf::LinearSolverPath("DivFree", "Solves") == "LinearSolver/DivFree/Solves");
 }
@@ -490,160 +559,63 @@ TEST_CASE("PerfStats Tally Parents", "[perfstats][Serial][Parallel]")
   BlockTimer::Reset();
 }
 
-TEST_CASE("PerfStats Verification Of Coarse Solve And Preconditioner",
-          "[perfstats][Serial][Parallel]")
+TEST_CASE("PerfStats Krylov Solver Statistics", "[perfstats][Serial][Parallel]")
 {
+  // The operator application tally of the Krylov solvers counts one event per iteration
+  // (the operator and the preconditioner), and the reduction factors are reduced as their
+  // names say.
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
-  constexpr int n = 20;
+  constexpr int n = 8;
   HYPRE_BigInt row_starts[2] = {static_cast<HYPRE_BigInt>(rank) * n,
                                 static_cast<HYPRE_BigInt>(rank + 1) * n};
-  std::vector<std::unique_ptr<mfem::SparseMatrix>> diags;
-  auto Identity = [&](double s)
+  mfem::SparseMatrix diag(n), diag4(n);
+  for (int i = 0; i < n; i++)
   {
-    diags.push_back(std::make_unique<mfem::SparseMatrix>(n));
-    for (int i = 0; i < n; i++)
-    {
-      diags.back()->Set(i, i, s);
-    }
-    diags.back()->Finalize();
-    return std::make_unique<mfem::HypreParMatrix>(comm, static_cast<HYPRE_BigInt>(np) * n,
-                                                  row_starts, diags.back().get());
-  };
-  auto A1 = Identity(1.0), A2 = Identity(2.0), A4 = Identity(4.0);
-  auto Amg = []()
-  {
-    auto amg = std::make_unique<mfem::HypreBoomerAMG>();
-    amg->SetPrintLevel(0);
-    return amg;
-  };
-  auto Direct = []() { return std::make_unique<DiagonalSolver>(); };
+    diag.Set(i, i, 1.0 + i);
+    diag4.Set(i, i, 4.0);
+  }
+  diag.Finalize();
+  diag4.Finalize();
+  mfem::HypreParMatrix A(comm, static_cast<HYPRE_BigInt>(np) * n, row_starts, &diag),
+      A4(comm, static_cast<HYPRE_BigInt>(np) * n, row_starts, &diag4);
   auto Value = [](const std::string &path)
   {
     const auto &r = perf::GetResults();
     const int i = CounterIndex(r, path);
     return (i >= 0 && r.counter[i].n > 0) ? r.counter[i].max : -1.0;
   };
-  const std::string growth = "Verification/Preconditioner/Main/MaxErrorPropagatorGrowth",
-                    checks = "Verification/Preconditioner/Main/Checks",
-                    forward = "Verification/CoarseSolve/Main/MaxForwardError";
-
-  SECTION("Off by default")
+  auto Check = [&](std::unique_ptr<IterativeSolver<Operator>> &&krylov,
+                   const std::string &role)
   {
-    perf::SetVerification(0);
     BlockTimer::Reset();
-    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
-                  std::make_unique<MfemWrapperSolver<Operator>>(Direct()), "Main");
-    Vector b(n), x(n);
+    krylov->SetRelTol(1.0e-10);
+    krylov->SetMaxIter(100);
+    // M = (4 I)^-1 for A = diag(1, ..., n): one iteration per distinct eigenvalue.
+    KspSolver ksp(std::move(krylov),
+                  std::make_unique<MfemWrapperSolver<Operator>>(
+                      std::make_unique<DiagonalSolver>()),
+                  role);
+    ksp.SetOperators(A, A4);
+    Vector b(A.Height()), x(A.Height());
     b = 1.0;
-    ksp.SetOperators(*A2, *A4);
+    ksp.Mult(b, x);
     ksp.Mult(b, x);
     BlockTimer::Finalize(comm);
-    CHECK(Value(growth) == -1.0);
-    CHECK(Value(forward) == -1.0);
     const auto &r = perf::GetResults();
-    CHECK(r.iter.count[Timer::VERIFICATION].max == 0);
-    CHECK(r.iter.time[Timer::VERIFICATION].max == 0.0);
-  }
-
-  SECTION("Real-valued")
-  {
-    // A = 2 I and M = (4 I)^-1 exactly: I - M A = I / 2.
-    perf::SetVerification(2);
-    BlockTimer::Reset();
-    auto pc = std::make_unique<MfemWrapperSolver<Operator>>(Direct());
-    pc->EnableTimer(true, Timer::KSP_COARSE_SOLVE);
-    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0), std::move(pc), "Main");
-    Vector b(n), x(n);
-    b = 0.0;
-    ksp.SetOperators(*A2, *A4);
-    ksp.Mult(b, x);  // No iteration: not checked yet
-    BlockTimer::Finalize(comm);
-    CHECK(Value(checks) == -1.0);
-    b = 1.0;
-    ksp.Mult(b, x);
-    ksp.SetOperators(*A2, *A4);
-    ksp.Mult(b, x);  // Checked after the first solve with iterations only
-    BlockTimer::Finalize(comm);
-    CHECK_THAT(Value(growth), WithinRel(0.5, 1.0e-10));
-    CHECK(Value(checks) == 1.0);
-    CHECK_THAT(Value(forward), WithinAbs(0.0, 1.0e-12));
-
-    // The 16 preconditioner applications of the check and the coarse solve of the forward
-    // error check are not counted as the solver's, only in their own tallies.
-    const auto &r = perf::GetResults();
-    const double applies = Value("LinearSolver/Main/Coarse/Applies");
-    CHECK(applies > 0.0);
-    CHECK(applies < 16.0);
-    CHECK(r.iter.count[Timer::KSP_COARSE_SOLVE].max +
-              r.iter.count[Timer::KSP_COARSE_SETUP].max ==
-          applies);
-    CHECK(r.iter.tally_count[TallyIndex(r.iter, "Main/Verification/ErrorPropagator")].max ==
-          1);
-    CHECK(r.iter.tally_count[TallyIndex(r.iter, "Main/Verification/CoarseForwardError")]
-              .max == 2);
-    CHECK(r.iter.tally_parents[TallyIndex(r.iter, "Main/Verification/ErrorPropagator")] ==
-          Timer::VERIFICATION);
-
-    // One verification row scope per check: the probe, and the forward error and the
-    // residual checks after each of the two setups.
-    CHECK(r.iter.count[Timer::VERIFICATION].max == 5);
-    CHECK(r.iter.time[Timer::VERIFICATION].min > 0.0);
-  }
-
-  SECTION("No forward error for hypre coarse solvers")
-  {
-    perf::SetVerification(2);
-    BlockTimer::Reset();
-    KspSolver ksp(std::make_unique<CgSolver<Operator>>(comm, 0),
-                  std::make_unique<MfemWrapperSolver<Operator>>(Amg()), "Main");
-    Vector b(n), x(n);
-    b = 1.0;
-    ksp.SetOperators(*A2, *A4);
-    ksp.Mult(b, x);
-    BlockTimer::Finalize(comm);
-    CHECK(Value(forward) == -1.0);
-    CHECK_THAT(Value(growth), WithinRel(0.5, 1.0e-6));
-  }
-
-  SECTION("Complex-valued with a real-valued coarse solve")
-  {
-    // A = (2 + i) I and M = ((2 + 1) I)^-1, the real-valued approximation: the error
-    // propagators of the coarse solve and of the preconditioner are (1 - i) I / 3.
-    perf::SetVerification(2);
-    BlockTimer::Reset();
-    double total = 0.0, sum = 0.0;
-    {
-      BlockTimer bt(Timer::KSP);  // All of the time is in the exclusive rows
-      ComplexWrapperOperator A(A2.get(), A1.get());
-      ComplexKspSolver ksp(std::make_unique<GmresSolver<ComplexOperator>>(comm, 0),
-                           std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-                               Direct(), true, /*complex_matrix*/ false),
-                           "Main");
-      ComplexVector b(n), x(n);
-      b = 1.0;
-      ksp.SetOperators(A, A);
-      ksp.Mult(b, x);
-      BlockTimer::Finalize(comm);
-      const auto &r = perf::GetResults();
-      for (int i = 0; i < Timer::NUM_TIMINGS; i++)
-      {
-        if (i == Timer::TOTAL)
-        {
-          total = r.iter.time[i].avg;
-        }
-        else
-        {
-          sum += r.iter.time[i].avg;
-        }
-      }
-    }
-    CHECK_THAT(Value(growth), WithinRel(std::sqrt(2.0) / 3.0, 1.0e-10));
-    CHECK_THAT(Value(forward), WithinRel(std::sqrt(2.0) / 3.0, 1.0e-10));
-    CHECK(perf::GetResults().iter.time[Timer::VERIFICATION].min > 0.0);
-    CHECK_THAT(sum, WithinAbs(total, 1.0e-4));
-  }
-  perf::SetVerification(0);
+    const double its = Value("LinearSolver/" + role + "/Its");
+    CHECK(its >= 2.0);
+    CHECK(r.iter.tally_count[TallyIndex(r.iter, role + "/Krylov/ApplyBA")].max == its);
+    const int i = CounterIndex(r, "LinearSolver/" + role + "/MinReductionFactor");
+    REQUIRE(i >= 0);
+    CHECK(r.counter_reduce[i] == perf::Reduce::MIN);
+    CHECK(Value("LinearSolver/" + role + "/MinReductionFactor") <=
+          Value("LinearSolver/" + role + "/MeanReductionFactor"));
+    CHECK(Value("LinearSolver/" + role + "/MeanReductionFactor") <=
+          Value("LinearSolver/" + role + "/MaxReductionFactor"));
+  };
+  Check(std::make_unique<CgSolver<Operator>>(comm, 0), "TestCg");
+  Check(std::make_unique<GmresSolver<Operator>>(comm, 0), "TestGmres");
   BlockTimer::Reset();
 }
 
@@ -723,12 +695,15 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
     CHECK(reg.tallies[bar].wait > 0.01);
   }
   CHECK(reg.tallies[reg.tally_ids.at("Barrier")].count >= 1);
+  CHECK(!reg.tally_ids.contains("Barrier/TOTAL"));  // Not split by row, unlike Reduce
+  CHECK(reg.tally_ids.contains("Reduce/TOTAL"));
 
   // Rank 0 works while the others block in MPI_Wait for its message: the wait lands in
   // their exchange, the work in rank 0's.
   const int ex = perf::RegisterTally("Test/Exchange");
   const auto it = reg.tally_ids.find("Wait/MPI");
   const long waits0 = (it != reg.tally_ids.end()) ? reg.tallies[it->second].count : 0;
+  Mpi::Barrier(comm);  // Start together, so that the others wait for all of rank 0's work
   {
     BlockTimer bt(Timer::KSP);
     perf::ScopedTally t(ex);
@@ -771,7 +746,10 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
   CHECK(!tallies["Test/Imbalance"].contains("Wait"));
   CHECK(tallies["Test/RootOnly"]["Imbalance"] == 1.0);  // Over the ranks which ran it
   CHECK(tallies["Test/Reduce"]["Wait"]["Max"].get<double>() > 0.0);
-  CHECK(tallies["Test/Reduce"]["Work"].contains("Imbalance"));
+  if (tallies["Test/Reduce"].contains("Work"))  // Omitted when it (almost) only waits
+  {
+    CHECK(tallies["Test/Reduce"]["Work"].contains("Imbalance"));
+  }
   CHECK(meta["Communication"]["MPIWaitTally"] == perf::detail::MpiWaitTally());
   CHECK(!tallies["Reduce"].contains("Work"));  // Pure wait
   if (perf::detail::MpiWaitTally() && np > 1)
@@ -781,30 +759,8 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
     CHECK(e["Work"]["Max"].get<double>() >= 0.049);
     CHECK(e["Work"]["MaxRank"] == 0);
     CHECK(e["Work"]["Imbalance"].get<double>() > 1.0);
-    CHECK(tallies["Wait/MPI/KSP"]["Parent"] == "KSP");
+    CHECK(!tallies["Wait/MPI/KSP"].contains("Parent"));
   }
-  BlockTimer::Reset();
-}
-
-TEST_CASE("PerfStats Pause Wait And Nesting", "[perfstats][Serial]")
-{
-  // Blocking waits and nested scopes in a paused scope are not counted either.
-  BlockTimer::Reset();
-  perf::detail::AddWait(0.0);  // Registers the communication tallies
-  const auto &reg = perf::detail::registry;
-  const int id = perf::RegisterTally("Test/PausedNesting");
-  const auto &wait = reg.tallies[reg.tally_ids.at("Wait/MPI")];
-  const long waits = wait.count;
-  {
-    perf::ScopedTally outer(id);
-    perf::ScopedPause pause;
-    perf::ScopedTally inner(id);
-    perf::detail::AddWait(0.5);
-  }
-  CHECK(wait.count == waits);
-  CHECK(reg.tallies[id].nested == 0);
-  CHECK(reg.tallies[id].count == 1);
-  CHECK(reg.tallies[id].wait >= 0.5 - 1.0e-12);  // The clock runs for the enclosing scope
   BlockTimer::Reset();
 }
 

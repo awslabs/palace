@@ -345,12 +345,12 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     const auto it = reg.counter_ids.find(path);
     return (it != reg.counter_ids.end()) ? reg.counters[it->second].value : 0.0;
   };
-  const double main_solves = LocalCounter("LinearSolver/TotalSolves"),
+  const double main_solves = LocalCounter("LinearSolver/Main/Solves"),
                projections = LocalCounter("LinearSolver/PortProjection/Solves");
   ComplexVector port_primary_ht_cn;
   port_primary_ht_cn.UseDevice(true);
   space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn);
-  CHECK(LocalCounter("LinearSolver/TotalSolves") == main_solves);
+  CHECK(LocalCounter("LinearSolver/Main/Solves") == main_solves);
   CHECK(LocalCounter("LinearSolver/PortProjection/Solves") == projections + 1.0);
   // As palace GridFunction: Undo restriction
   GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());

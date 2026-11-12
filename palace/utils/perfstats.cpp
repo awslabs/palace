@@ -6,12 +6,12 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <set>
 #include <tuple>
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
-#include "utils/perfprobes.hpp"
 
 namespace palace
 {
@@ -38,6 +38,13 @@ struct State
   long peak_at_start = 0, cur_at_start = 0;
   double cum_peak = 0.0;
   double cum_node_peak = 0.0, last_node_peak = 0.0;
+
+  // Sums over the previous iterations of the reported counts (maxima over ranks), see
+  // TimerResults: per timer row, per tally name and per counter path (counters reduced as
+  // SUM, MIN or MAX and accumulated as SUM).
+  std::vector<double> cum_row_counts = std::vector<double>(Timer::NUM_TIMINGS, 0.0);
+  std::map<std::string, std::pair<double, double>> cum_tally_counts;  // {Count, Nested}
+  std::map<std::string, double> cum_counter_values;
 };
 
 State state;
@@ -140,8 +147,7 @@ std::string CounterKey(const detail::CounterData &c)
 }
 
 // For each canonical (rank-consistent) entry, the local index or -1, and the keys. Fast
-// path when all ranks registered the same entries in the same order (reported in
-// verification mode as Verification/ConsistentRegistration).
+// path when all ranks registered the same entries in the same order.
 std::tuple<std::vector<int>, std::vector<std::string>, std::vector<int>,
            std::vector<std::string>>
 CanonicalOrder(MPI_Comm comm)
@@ -178,10 +184,6 @@ CanonicalOrder(MPI_Comm comm)
     }
     return v;
   };
-  if (Verification())
-  {
-    SetInfo("Verification/ConsistentRegistration", consistent);
-  }
   if (consistent)
   {
     return {Identity(tkeys.size()), tkeys, Identity(ckeys.size()), ckeys};
@@ -265,7 +267,7 @@ double AccumulateValue(Accumulate acc, double cum, bool cum_set, double v, bool 
 // of the process is not reset (the reset would also change the peak seen by getrusage,
 // wait4 and the accounting of job schedulers): a peak of the iteration which did not raise
 // it is unknown and bounded below by the RSS at the iteration boundaries and at the timer
-// events where it was sampled (rss_sampled, see Timer::RssSampled).
+// events and memory probes where it was sampled (rss_sampled, see Timer::RssSampled).
 std::pair<double, bool> IterationPeakMemory(long rss_sampled)
 {
   const long peak = memory_reporting::GetPeakMemory();
@@ -394,7 +396,15 @@ json ElapsedTimeJson(const TimerResults &r)
     if (r.tally_count[i].max > 0)
     {
       auto t = StatsJson(r.tally_time[i]);
-      t["Parent"] = Timer::names[r.tally_parents[i]];
+      // Per-row tallies "<name>/<ROW>" (such as the splits of a phase tally) are named
+      // after their row: no Parent.
+      const auto &name = r.tally_names[i];
+      const auto parent = Timer::names[r.tally_parents[i]];
+      if (!(name.size() > parent.size() && name.ends_with(parent) &&
+            name[name.size() - parent.size() - 1] == '/'))
+      {
+        t["Parent"] = parent;
+      }
       t["Count"] = Num(r.tally_count[i].max);
       SetImbalance(t, r.tally_time[i], r.tally_active[i]);
       if (r.tally_nested[i].max > 0)
@@ -422,9 +432,9 @@ json PeakJson(const Stats &s, bool node)
 {
   constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
   return {{"Min", s.min * to_mb},
+          {"Avg", s.avg * to_mb},
           {"Max", s.max * to_mb},
-          {"Average", s.avg * to_mb},
-          {"Total", s.sum * to_mb},
+          {"Sum", s.sum * to_mb},
           {node ? "MaxNode" : "MaxRank", s.max_rank}};
 }
 
@@ -434,6 +444,65 @@ json IterationPeakJson(const Stats &s, bool node, bool lower_bound)
   auto j = PeakJson(s, node);
   j["LowerBound"] = lower_bound;
   return j;
+}
+
+// Whether the Cumulative value of a counter is the sum of its reported iteration values.
+bool SummedCounter(Reduce reduce, Accumulate acc)
+{
+  return acc == Accumulate::SUM && reduce != Reduce::STATS;
+}
+
+// Reported value of a counter not reduced as STATS.
+double CounterValue(Reduce reduce, const Stats &s)
+{
+  return (reduce == Reduce::SUM) ? s.sum : (reduce == Reduce::MIN) ? s.min : s.max;
+}
+
+// Add the counts of the iteration report to the sums over iterations, see TimerResults.
+void CommitCounts()
+{
+  if (!state.finalized)
+  {
+    // No report of the iteration (not collective): this rank's own counts.
+    const auto &timer = BlockTimer::GlobalTimer();
+    for (int i = 0; i < Timer::NUM_TIMINGS; i++)
+    {
+      state.cum_row_counts[i] += timer.Counts(static_cast<Timer::Index>(i));
+    }
+    for (const auto &t : detail::registry.tallies)
+    {
+      auto &[count, nested] = state.cum_tally_counts[t.name];
+      count += static_cast<double>(t.count);
+      nested += static_cast<double>(t.nested);
+    }
+    for (const auto &c : detail::registry.counters)
+    {
+      if (SummedCounter(c.reduce, c.acc) && c.set)
+      {
+        state.cum_counter_values[c.path] += c.value;
+      }
+    }
+    return;
+  }
+  const auto &r = state.results;
+  for (int i = 0; i < Timer::NUM_TIMINGS; i++)
+  {
+    state.cum_row_counts[i] += r.iter.count[i].max;
+  }
+  for (std::size_t i = 0; i < r.iter.tally_names.size(); i++)
+  {
+    auto &[count, nested] = state.cum_tally_counts[r.iter.tally_names[i]];
+    count += r.iter.tally_count[i].max;
+    nested += r.iter.tally_nested[i].max;
+  }
+  for (std::size_t i = 0; i < r.counter_paths.size(); i++)
+  {
+    if (SummedCounter(r.counter_reduce[i], r.counter_acc[i]) && r.counter[i].n > 0)
+    {
+      state.cum_counter_values[r.counter_paths[i]] +=
+          CounterValue(r.counter_reduce[i], r.counter[i]);
+    }
+  }
 }
 
 void Commit()
@@ -544,10 +613,6 @@ ScopedRole::~ScopedRole()
 
 std::string LinearSolverPath(std::string_view role, std::string_view field)
 {
-  if (role == "Main" && (field == "Solves" || field == "Its"))
-  {
-    return (field == "Solves") ? "LinearSolver/TotalSolves" : "LinearSolver/TotalIts";
-  }
   return fmt::format("LinearSolver/{}/{}", role, field);
 }
 
@@ -564,10 +629,10 @@ void WriteJson(json &meta, const json *error)
   constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
 
   // Remove everything written by a previous iteration.
-  for (const char *key : {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
-                          "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes",
-                          "PeakNodeMemoryMegabytes", "HeapGrowthMegabytes", "HeapMegabytes",
-                          "Cumulative", "Complete", "Error", "RootProcess"})
+  for (const char *key :
+       {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
+        "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes", "PeakNodeMemoryMegabytes",
+        "HeapMegabytes", "Cumulative", "Complete", "Error", "RootProcess"})
   {
     meta.erase(key);
   }
@@ -595,10 +660,10 @@ void WriteJson(json &meta, const json *error)
     meta["Error"]["Iteration"] = r.iteration;
   }
 
-  // The values of the root process alone (failure report without a collective) are not
-  // statistics over processes: they go under RootProcess instead of the usual keys.
+  // The values of the root process alone (failure report) are not statistics over
+  // processes: they go under RootProcess instead of the usual keys.
   json root_only;
-  json &out = (error && !error->value("Collective", true)) ? root_only : meta;
+  json &out = error ? root_only : meta;
   out["ElapsedTime"] = ElapsedTimeJson(r.iter);
   for (int i = 0; i < Timer::NUM_TIMINGS; i++)
   {
@@ -630,27 +695,6 @@ void WriteJson(json &meta, const json *error)
   out["PeakMemoryMegabytes"] = IterationPeakJson(r.peak_mem, false, r.peak_lower_bound > 0);
   out["PeakNodeMemoryMegabytes"] =
       IterationPeakJson(r.peak_node_mem, true, r.peak_lower_bound > 0);
-  auto &heap = out["HeapGrowthMegabytes"];
-  auto HeapRow = [&heap](const std::string &key, const Stats &s)
-  {
-    heap["Min"][key] = s.min * to_mb;
-    heap["Max"][key] = s.max * to_mb;
-    heap["Sum"][key] = s.sum * to_mb;
-    heap["MaxRank"][key] = s.max_rank;
-  };
-  for (int i = 0; i < Timer::NUM_TIMINGS; i++)
-  {
-    HeapRow(std::string(Timer::names[i]), r.heap_growth[i]);
-  }
-  HeapRow("Baseline", r.heap_baseline);
-  HeapRow("Unattributed", r.heap_unattributed);
-  for (int i = 0; i < Timer::NUM_TIMINGS; i++)
-  {
-    if (r.heap_coverage[i].n > 0)
-    {
-      heap["Coverage"][std::string(Timer::names[i])] = r.heap_coverage[i].min;
-    }
-  }
   out["HeapMegabytes"] = PeakJson(r.heap_mem, false);
 
   json cum;
@@ -691,27 +735,24 @@ void BlockTimer::Finalize(MPI_Comm comm)
   using namespace perf;
   auto &reg = detail::registry;
 
-  reg.suspended = true;
+  // The reductions below are not tallied, also if one of them fails.
+  struct Suspend
+  {
+    bool &flag;
+    explicit Suspend(bool &flag) : flag(flag) { flag = true; }
+    ~Suspend() { flag = false; }
+  } suspend(reg.suspended);
 
   // Drain any open timers.
   while (!stack.empty())
   {
     timer.MarkTime(stack.back());
     timer.MarkMemory(stack.back());
-    timer.MarkHeap(stack.back(), HeapGapRow(), true);
     stack.pop_back();
-    HeapEvent(true);
   }
   timer.MarkIterationEnd();
   timer.MarkMemory(Timer::TOTAL, timer.MemoryFromStart());
-  timer.MarkHeap(Timer::NUM_TIMINGS, HeapGapRow(), true);
-  HeapEvent(true);
-  Set(RegisterCounter("Memory/Heap/QuerySeconds", Reduce::STATS, Accumulate::SUM),
-      timer.HeapQueryTime());
-  Set(RegisterCounter("Memory/Heap/Samples", Reduce::MAX, Accumulate::SUM),
-      static_cast<double>(timer.HeapSamples()));
-  Set(RegisterCounter("Memory/Heap/SkippedSamples", Reduce::MAX, Accumulate::SUM),
-      static_cast<double>(timer.HeapSkipped()));
+  const long heap_mem = memory_reporting::GetHeapMemory();
   SetInfo("Memory/HeapSource", memory_reporting::HeapMemorySource());
   SetInfo("Communication/MPIWaitTally", detail::MpiWaitTally());
   if (detail::MpiWaitTally())
@@ -739,7 +780,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (7 * N + 14 * T + 2 * C + 10));
+  buf.reserve(STRIDE * (5 * N + 14 * T + 2 * C + 7));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -819,22 +860,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   PushEntry(buf, cum_peak, true, rank);
   PushEntry(buf, baseline_mem, true, rank);
   PushEntry(buf, unattr_mem, true, rank);
-  for (int i = 0; i < N; i++)
-  {
-    PushEntry(buf,
-              static_cast<double>((i == Timer::TOTAL)
-                                      ? timer.HeapAtLastSample() - timer.HeapAtStart()
-                                      : timer.HeapData(i)),
-              true, rank);
-  }
-  PushEntry(buf, static_cast<double>(timer.HeapAtStart()), true, rank);
-  PushEntry(buf, static_cast<double>(timer.HeapData(N)), true, rank);
-  PushEntry(buf, static_cast<double>(timer.HeapAtLastSample()), true, rank);
-  for (int i = 0; i < N; i++)
-  {
-    const double coverage = timer.HeapCoverage(i);
-    PushEntry(buf, coverage, coverage >= 0.0, rank);
-  }
+  PushEntry(buf, static_cast<double>(heap_mem), true, rank);
   StatsAllreduce(buf, comm);
 
   // Node memory: sum over the ranks of each node, then statistics over nodes. A process
@@ -932,11 +958,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
   r.cum_peak_mem = Next();
   r.mem_baseline = Next();
   r.mem_unattributed = Next();
-  NextN(r.heap_growth, N);
-  r.heap_baseline = Next();
-  r.heap_unattributed = Next();
   r.heap_mem = Next();
-  NextN(r.heap_coverage, N);
   e = node_buf.data();
   NextN(r.iter.node_mem, N);
   r.peak_node_mem = Next();
@@ -951,13 +973,38 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   r.iter.tally_names = tkeys;
   r.cum.tally_names = tkeys;
-  reg.suspended = false;
   for (int i = 0; i < C; i++)
   {
     const auto sep = ckeys[i].rfind('\x1f');
     r.counter_paths.push_back(ckeys[i].substr(0, sep));
     r.counter_reduce.push_back(static_cast<Reduce>(ckeys[i][sep + 1] - '0'));
     r.counter_acc.push_back(static_cast<Accumulate>(ckeys[i][sep + 2] - '0'));
+  }
+
+  // Cumulative counts: the sums of the reported counts of the iterations (see
+  // TimerResults), rather than the maximum over ranks of each rank's sum.
+  for (int i = 0; i < N; i++)
+  {
+    r.cum.count[i].max = state.cum_row_counts[i] + r.iter.count[i].max;
+  }
+  for (int i = 0; i < T; i++)
+  {
+    const auto it = state.cum_tally_counts.find(tkeys[i]);
+    const auto [count, nested] =
+        (it != state.cum_tally_counts.end()) ? it->second : std::pair{0.0, 0.0};
+    r.cum.tally_count[i].max = count + r.iter.tally_count[i].max;
+    r.cum.tally_nested[i].max = nested + r.iter.tally_nested[i].max;
+  }
+  for (int i = 0; i < C; i++)
+  {
+    if (SummedCounter(r.counter_reduce[i], r.counter_acc[i]) && r.cum_counter[i].n > 0)
+    {
+      const auto it = state.cum_counter_values.find(r.counter_paths[i]);
+      const double v =
+          ((it != state.cum_counter_values.end()) ? it->second : 0.0) +
+          ((r.counter[i].n > 0) ? CounterValue(r.counter_reduce[i], r.counter[i]) : 0.0);
+      r.cum_counter[i].min = r.cum_counter[i].max = r.cum_counter[i].sum = v;
+    }
   }
   state.finalized = true;
 }
@@ -967,12 +1014,12 @@ void BlockTimer::StartIteration()
   using namespace perf;
   state.cum_peak = std::max(state.cum_peak, IterationPeakMemory(timer.RssSampled()).first);
   state.cum_node_peak = std::max(state.cum_node_peak, state.last_node_peak);
+  CommitCounts();
   Commit();
   state.info = json::object();
   state.peak_at_start = memory_reporting::GetPeakMemory();
   state.cur_at_start = memory_reporting::GetCurrentMemory();
   timer.StartIteration();
-  heap_open = stack.size();
   state.iteration++;
   detail::iteration_serial++;
   state.finalized = false;
@@ -983,7 +1030,6 @@ void BlockTimer::Reset()
   using namespace perf;
   timer = Timer();
   stack.clear();
-  heap_open = 0;
   started = false;
   // Registrations are kept (ids may be cached by callers); values are cleared.
   for (auto &t : detail::registry.tallies)
@@ -998,8 +1044,12 @@ void BlockTimer::Reset()
     c.set = c.cum_set = false;
   }
   detail::registry.roles.clear();
+  detail::registry.suspended = false;
   detail::iteration_serial++;
   state = State();
+  // A peak of the process reached before (by a previous run) is not part of this run.
+  state.peak_at_start = memory_reporting::GetPeakMemory();
+  state.cur_at_start = memory_reporting::GetCurrentMemory();
 }
 
 void BlockTimer::Print(MPI_Comm comm)
@@ -1090,30 +1140,6 @@ void BlockTimer::Print(MPI_Comm comm)
   {
     Table(fmt::format("Iteration {:d} (s)", r.iteration), "Min.", "Max.", "Avg.",
           TimeRow(r.iter));
-  }
-
-  // Inclusive tallies (totals over all iterations).
-  bool any = false;
-  for (std::size_t i = 0; i < r.cum.tally_names.size() && !any; i++)
-  {
-    any = r.cum.tally_count[i].max > 0;
-  }
-  if (any)
-  {
-    constexpr int ht = 38;
-    Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}{:>{}s}\n", "Inclusive Tallies (s)", ht,
-               "Min.", w, "Max.", w, "Avg.", w, "Count", w);
-    Mpi::Print(comm, "{}\n", std::string(ht + 4 * w, '='));
-    for (std::size_t i = 0; i < r.cum.tally_names.size(); i++)
-    {
-      if (r.cum.tally_count[i].max > 0)
-      {
-        const auto &t = r.cum.tally_time[i];
-        Mpi::Print(comm, "{:<{}s}{:>{}.3f}{:>{}.3f}{:>{}.3f}{:>{}d}\n",
-                   r.cum.tally_names[i], ht, t.min, w, t.max, w, t.avg, w,
-                   static_cast<long>(r.cum.tally_count[i].max), w);
-      }
-    }
   }
 }
 
