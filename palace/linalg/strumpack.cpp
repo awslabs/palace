@@ -121,7 +121,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // LAB (throwaway A/B branch): Solver.Linear.STRUMPACKButterflyLevels = 1000 + flags
   // selects candidate changes without compression: 1 FACTOR_MEMORY proportional mapping,
   // 2 cached solve tree dimensions, 4 front cost 1000 in the FACTOR_MEMORY mapping, 8
-  // min-max process split, 16 small-P dynamic programming split.
+  // min-max process split, 16 small-P dynamic programming split, 32 selective inversion,
+  // 64 small right-hand side solve kernels.
   if (compression == SparseCompression::NONE && butterfly_l >= 1000)
   {
     const int flags = butterfly_l - 1000;
@@ -141,6 +142,10 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     {
       setenv("STRUMPACK_PM_DP", "16", 1);
     }
+    if (flags & 64)
+    {
+      setenv("STRUMPACK_LAB_KERNELS", "1", 1);
+    }
     if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
     {
       if (flags & 1)
@@ -148,6 +153,13 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
         this->solver_->options().set_proportional_mapping(
             strumpack::ProportionalMapping::FACTOR_MEMORY);
       }
+#if defined(STRUMPACK_HAS_SELECTIVE_INVERSION)
+      if (flags & 32)
+      {
+        this->solver_->options().enable_selective_inversion();
+        setenv("STRUMPACK_SI_VERBOSE", "1", 1);
+      }
+#endif
     }
     if (Mpi::Root(comm))
     {

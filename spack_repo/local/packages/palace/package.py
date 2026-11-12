@@ -205,6 +205,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # LAB (throwaway A/B branch)
             patch("strumpack-lab-s1.diff", when="@8.1.0"),
             patch("strumpack-lab-s3.diff", when="@8.1.0"),
+            patch("strumpack-lab-s45.diff", when="@8.1.0"),
         ],
     )
 

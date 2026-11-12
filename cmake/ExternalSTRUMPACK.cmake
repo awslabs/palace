@@ -307,6 +307,7 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s1.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s3.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_s45.diff"
 )
 
 include(ExternalProject)
