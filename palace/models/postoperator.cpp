@@ -346,6 +346,7 @@ PostOperator<solver_t>::PostOperator(
       surface_response_self_consistent_enabled =
           solver_t != ProblemType::BOUNDARYMODE && response.IncludesSelfConsistent();
       surface_response_patch_energy_enabled = response.patch_energy;
+      surface_response_uncovered_feature_energy_enabled = response.uncovered_feature_energy;
       surface_response_op =
           std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
       // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records of
@@ -363,6 +364,7 @@ PostOperator<solver_t>::PostOperator(
         surface_response_postprocess_enabled = false;
         surface_response_self_consistent_enabled = false;
         surface_response_patch_energy_enabled = false;
+        surface_response_uncovered_feature_energy_enabled = false;
       }
       else
       {
@@ -1965,6 +1967,15 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           }
         }
       }
+      if (surface_response_uncovered_feature_energy_enabled &&
+          !surface_response_uncovered.empty())
+      {
+        // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): the uncovered energy of
+        // the same field split per type by feature; a diagnostic partition no energy column
+        // of any other table reads.
+        result.uncovered_feature = surf_post_op.GetInterfaceUncoveredFeatureEdgeEnergies(
+            target_interfaces, *E, D_recovered.get(), surface_response_uncovered);
+      }
       if (surface_response_within_r_volume_energy_enabled)
       {
         // COL-3 (R-MAG-15): the raw field's within-box volume energies per patch (E and
@@ -2648,6 +2659,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   PrintSurfaceResponsePortionEnergies(output_index, excitation);
   PrintSurfaceResponseModelRawEnergies(output_index, excitation);
   PrintSurfaceResponseExclusionEnergies(output_index, excitation);
+  PrintSurfaceResponseUncoveredFeatureEnergies(output_index, excitation);
   PrintSurfaceResponseLoopFit(output_index, excitation);
 }
 
@@ -2797,6 +2809,147 @@ void PostOperator<solver_t>::PrintSurfaceResponseExclusionEnergies(double output
                             units.Dimensionalize<VT::ENERGY>(interface_raw),
                             interface_raw > 0.0 ? energy / interface_raw : 0.0);
     }
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseUncoveredFeatureEnergies(
+    double output_index, int excitation) const
+{
+  // Diagnostics.UncoveredFeatureEnergy (lane ctx002-miss, decision 1567 (b); diagnostic
+  // only). Root only (the caller returns on the other ranks). A plain text table (the type
+  // and features columns are text): rows = the Maxwell key (f (GHz) / m), exc, the
+  // uncovered requirement's type, its feature label (an identification feature id, or the
+  // '+'-joined ids where portions of several features cover one perimeter piece), the
+  // label's portions, their summed length and bounding box (m), then per target interface
+  // the raw field's within-R energy (J) whose nearest perimeter foot lies on the label's
+  // pieces. Per (type, interface) the rows sum to the raw-field rows (evaluations 0 and 1)
+  // of surface-response-uncovered-energy.csv. The file is removed at the first print
+  // whatever the option (a stale table of an earlier run never reads as this run's).
+  using VT = Units::ValueType;
+  const auto path = post_dir / "surface-response-uncovered-feature-energy.csv";
+  const bool first_print = !surface_response_uncovered_feature_started;
+  if (first_print)
+  {
+    fs::remove(path);
+    surface_response_uncovered_feature_started = true;
+  }
+  const auto &result = *surface_response_measurement;
+  if (result.uncovered_feature.empty())
+  {
+    return;
+  }
+  const auto target_interfaces = surface_response_op->GetTargetInterfaces();
+  if (first_print || !fs::exists(path))
+  {
+    std::ofstream output(path);
+    MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
+    output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
+           << ",exc,type,features,portions,length (m),x min (m),y min (m),z min (m),x max "
+              "(m),y max (m),z max (m)";
+    for (const int interface : target_interfaces)
+    {
+      output << fmt::format(",uncovered raw energy[{}] (J)", interface);
+    }
+    output << '\n';
+  }
+  // The portions per (type, feature): count, length and bounding box.
+  struct PortionSummary
+  {
+    int portions = 0;
+    double length = 0.0;
+    std::array<double, 3> min{}, max{};
+  };
+  std::map<std::pair<std::string, int>, PortionSummary> summaries;
+  for (const auto &portion : surface_response_uncovered)
+  {
+    auto &summary = summaries[{portion.type, portion.feature}];
+    const bool first = summary.portions == 0;
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+      const double low = std::min(portion.p0[d], portion.p1[d]);
+      const double high = std::max(portion.p0[d], portion.p1[d]);
+      summary.min[d] = first ? low : std::min(summary.min[d], low);
+      summary.max[d] = first ? high : std::max(summary.max[d], high);
+    }
+    summary.portions++;
+    summary.length += std::sqrt(length2);
+  }
+  std::set<std::pair<std::string, std::string>> keys;
+  for (const auto &[interface, energies] : result.uncovered_feature)
+  {
+    (void)interface;
+    for (const auto &[key, energy] : energies)
+    {
+      (void)energy;
+      keys.insert(key);
+    }
+  }
+  std::ofstream output(path, std::ios::app);
+  MFEM_VERIFY(output, "Unable to open " << path.string() << " for appending!");
+  for (const auto &key : keys)
+  {
+    const auto &[type, label] = key;
+    PortionSummary label_summary;
+    std::size_t begin = 0;
+    while (begin <= label.size())
+    {
+      const auto end = label.find('+', begin);
+      const int feature = std::stoi(
+          label.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
+      const auto summary = summaries.find({type, feature});
+      MFEM_VERIFY(summary != summaries.end(), "Uncovered feature label \""
+                                                  << label << "\" of type " << type
+                                                  << " names no uncovered portion!");
+      for (int d = 0; d < 3; d++)
+      {
+        label_summary.min[d] = label_summary.portions == 0
+                                   ? summary->second.min[d]
+                                   : std::min(label_summary.min[d], summary->second.min[d]);
+        label_summary.max[d] = label_summary.portions == 0
+                                   ? summary->second.max[d]
+                                   : std::max(label_summary.max[d], summary->second.max[d]);
+      }
+      label_summary.portions += summary->second.portions;
+      label_summary.length += summary->second.length;
+      if (end == std::string::npos)
+      {
+        break;
+      }
+      begin = end + 1;
+    }
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      output << fmt::format("{:.8e},{}", output_index, excitation);
+    }
+    else
+    {
+      output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
+                            excitation);
+    }
+    output << fmt::format(",{},{},{},{:+.12e}", type, label, label_summary.portions,
+                          units.Dimensionalize<VT::LENGTH>(label_summary.length));
+    for (const auto &bound : {label_summary.min, label_summary.max})
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        output << fmt::format(",{:+.12e}", units.Dimensionalize<VT::LENGTH>(bound[d]));
+      }
+    }
+    for (const int interface : target_interfaces)
+    {
+      double energy = 0.0;
+      const auto energies = result.uncovered_feature.find(interface);
+      if (energies != result.uncovered_feature.end())
+      {
+        const auto entry = energies->second.find(key);
+        energy = entry != energies->second.end() ? entry->second : 0.0;
+      }
+      output << fmt::format(",{:+.12e}", units.Dimensionalize<VT::ENERGY>(energy));
+    }
+    output << '\n';
   }
 }
 

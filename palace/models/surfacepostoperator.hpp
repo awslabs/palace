@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
@@ -344,6 +345,20 @@ public:
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
   std::map<int, std::map<std::string, double>> GetInterfacePartitionedEdgeEnergies(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<UncoveredPerimeterPortion> &portions) const;
+  // Diagnostics.UncoveredFeatureEnergy (lane ctx002-miss, decision 1567 (b); diagnostic
+  // only): the uncovered within-R energy of GetInterfaceUncoveredEdgeEnergies split per
+  // TYPE by FEATURE, keyed (type, label). Per type, the exact piece partition of that
+  // type's portions (PartitionedEdgePieces, the PatchEnergy pieces) labels every piece by
+  // the ascending '+'-joined ids of the features whose portions cover it; a quadrature
+  // point counts for the label of the piece holding its nearest perimeter foot. ONE
+  // quadrature pass per interface with GetLocalSurfaceIntegral's rule and weight. Per
+  // (interface, type) the labels sum to that type's by_type entry of
+  // GetInterfaceUncoveredEdgeEnergies up to the quadrature round-off (and the points whose
+  // foot lies exactly on an interior piece end: a set of measure zero).
+  std::map<int, std::map<std::pair<std::string, std::string>, double>>
+  GetInterfaceUncoveredFeatureEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
   // OI-MX-LOOPGATE (decision 955): the within-R energy of each requested interface on the

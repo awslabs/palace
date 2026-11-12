@@ -306,6 +306,9 @@ protected:
       surface_response_exclusion_energy;
   bool surface_response_exclusion_energy_enabled = false;
   bool surface_response_within_r_volume_energy_enabled = false;  // COL-3 (R-MAG-15)
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): off by default (every output
+  // then byte-identical to a run without the option).
+  bool surface_response_uncovered_feature_energy_enabled = false;
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B): the per-patch export
@@ -361,6 +364,9 @@ protected:
     // Section 8: per target interface, the raw field's within-R energy per exclusion class
     // (surface-response-exclusion-energy.csv); empty without Diagnostics.ExclusionEnergy.
     std::map<int, std::map<std::string, double>> exclusion_energy_partition;
+    // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): per target interface, the raw
+    // field's uncovered within-R energy per (type, feature label); empty when off.
+    std::map<int, std::map<std::pair<std::string, std::string>, double>> uncovered_feature;
     // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
     // placed patch the raw field's within-box volume energies (empty when off).
     std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;
@@ -464,6 +470,13 @@ protected:
   // Maxwell keys), a plain text table appended per print, root only.
   void PrintSurfaceResponseExclusionEnergies(double output_index, int excitation) const;
   mutable bool surface_response_exclusion_energy_started = false;
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)):
+  // surface-response-uncovered-feature-energy.csv (per type and feature label of the
+  // uncovered requirements: portions, length, bounding box and the raw field's within-R
+  // energy per target interface), a plain text table appended per print, root only.
+  void PrintSurfaceResponseUncoveredFeatureEnergies(double output_index,
+                                                    int excitation) const;
+  mutable bool surface_response_uncovered_feature_started = false;
   // OI-MX-LOOPGATE (decision 955): surface-response-loop-fit.csv (per evaluation the
   // maximum and response-weighted circulating share, the remainder / fallback patch counts
   // and the rho-weighted claim length) and surface-response-loop-remainder-energy.csv (per

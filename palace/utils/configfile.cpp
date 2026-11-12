@@ -1746,14 +1746,17 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           "Response-correction \"Diagnostics.WithinRVolumeEnergy\" writes per-patch "
           "columns of surface-response-patch-energy.csv and requires "
           "\"PatchEnergy\": true!");
+      data.uncovered_feature_energy =
+          diagnostics->value("UncoveredFeatureEnergy", data.uncovered_feature_energy);
       for (const auto &[key, value] : diagnostics->items())
       {
         (void)value;
-        MFEM_VERIFY(
-            key == "ExclusionEnergy" || key == "WithinRVolumeEnergy",
-            "Response-correction \"Diagnostics\" has an unknown key \""
-                << key
-                << "\" (ExclusionEnergy and WithinRVolumeEnergy are the only keys)!");
+        MFEM_VERIFY(key == "ExclusionEnergy" || key == "WithinRVolumeEnergy" ||
+                        key == "UncoveredFeatureEnergy",
+                    "Response-correction \"Diagnostics\" has an unknown key \""
+                        << key
+                        << "\" (ExclusionEnergy, WithinRVolumeEnergy and "
+                           "UncoveredFeatureEnergy are the only keys)!");
       }
     }
     if (auto domain_boundary = correction.find("DomainBoundary");
@@ -2066,6 +2069,13 @@ SolverData::SolverData(const json &solver)
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");
   eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)) is written by the Maxwell
+  // PostOperator only: refused on the electrostatic path rather than silently ignored.
+  MFEM_VERIFY(!electrostatic.response_correction ||
+                  !electrostatic.response_correction->uncovered_feature_energy,
+              "Response-correction \"Diagnostics.UncoveredFeatureEnergy\" is a Maxwell "
+              "diagnostic (surface-response-uncovered-feature-energy.csv); the "
+              "electrostatic driver does not write it!");
   magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
   boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");

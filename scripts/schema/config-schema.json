@@ -3482,6 +3482,11 @@
                   "type": "boolean",
                   "description": "Write per placed patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box into `surface-response-patch-energy.csv` (`within-R magnetic energy (J)` = 1/2 int mu^-1 |B|^2, `within-R electric energy (J)` = 1/2 int eps |E|^2, `within-R volume (m^3)` = the box volume the quadrature resolves): a translational patch's box = its model's edge span +- R laterally, +- R normally, its longitudinal cell; a spatial patch's = its support box x [-R, R]. Summed over the element quadrature points inside the box (a point is in or out: the box faces are resolved to ~h, an ESTIMATE for a share census, not a trace form; a patch without a box prints NaN). Requires `PatchEnergy: true`. Off by default: bitwise off (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15: the census of the spatial families' magnetic energy that decides the (A)-3D scope).",
                   "default": false
+                },
+                "UncoveredFeatureEnergy": {
+                  "type": "boolean",
+                  "description": "DIAGNOSTIC (lane ctx002-miss, decision 1567 (b); the Maxwell drivers only, refused by the electrostatic driver): write `surface-response-uncovered-feature-energy.csv`: the raw field's within-R energy of the uncovered requirements (the rows of `surface-response-uncovered-energy.csv`) split per type by the FEATURE (identification feature id; a perimeter piece several features' portions cover carries their union label) whose portion holds the nearest perimeter foot, per target interface, with each label's portion count, length and bounding box; per (type, interface) the rows sum to the uncovered-energy row of the raw field. One quadrature pass per interface and measurement when on.",
+                  "default": false
                 }
               }
             },

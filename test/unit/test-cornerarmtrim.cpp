@@ -2389,7 +2389,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(csv_ft - Joule(model_ft) + Joule(cells), WithinRel(Joule(raw), 1.0e-10));
 
   // (d) The Maxwell uncovered table: (ConvexCorner, Total) x (fixed trace, fixed flux,
-  // self-consistent) for mode 1, excitation 0.
+  // self-consistent) for mode 1, excitation 0. Diagnostics.UncoveredFeatureEnergy is off:
+  // its table is not written (decision 1567 (b)).
+  CHECK_FALSE(fs::exists(output_dir / "surface-response-uncovered-feature-energy.csv"));
   REQUIRE(fs::is_regular_file(output_dir / "surface-response-uncovered-energy.csv"));
   const TextCsv uncovered_table =
       ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy.csv");
@@ -2427,6 +2429,267 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  WithinRel(Joule(uncovered) / corrected_by_evaluation[evaluation], 1.0e-9));
     }
   }
+#endif
+}
+
+// Diagnostics.UncoveredFeatureEnergy (lane ctx002-miss, decision 1567 (b)): on the lead
+// fixture above (one isolated-edge model; two Missing convex corners, 4 portions of total
+// length 2 R each) the eigenmode PostOperator fed E = -grad V writes
+// surface-response-uncovered-feature-energy.csv: (a) the per-(type, feature) energies of
+// GetInterfaceUncoveredFeatureEdgeEnergies sum per type to
+// GetInterfaceUncoveredEdgeEnergies (one row per corner); (b) with the portions split over
+// two types and one portion copied under another feature id (an overlap), every type's
+// labels still sum to its by_type entry and the overlap is one union label; (c) the CSV
+// rows sum to the raw-field rows of surface-response-uncovered-energy.csv and carry each
+// corner's portions and length.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell uncovered feature energies sum to the uncovered table",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "maxwell-uncovered-feature-lead.mesh";
+  const auto basis_path = temp.temp_dir / "maxwell-uncovered-feature-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-maxwell-uncovered-feature-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-maxwell-uncovered-feature-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  const fs::path output_dir = temp.temp_dir / "maxwell-uncovered-feature";
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "Both"},
+                        {"Diagnostics", {{"UncoveredFeatureEnergy", true}}}}}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+  }
+  REQUIRE(perimeter.size() == 8);
+  std::set<int> features;
+  for (const auto &portion : perimeter)
+  {
+    CHECK(portion.type == "ConvexCorner");
+    features.insert(portion.feature);
+  }
+  REQUIRE(features.size() == 2);
+
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[1]) + 0.3 * x[2] * x[2]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+
+  // (a) One label per corner; per type the labels sum to the uncovered energy.
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto CheckSums =
+      [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions)
+  {
+    const auto by_type =
+        surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, portions);
+    const auto by_feature = surf_post_op.GetInterfaceUncoveredFeatureEdgeEnergies(
+        {4}, field, nullptr, portions);
+    REQUIRE(by_type.count(4) == 1);
+    REQUIRE(by_feature.count(4) == 1);
+    std::map<std::string, double> sums;
+    for (const auto &[key, energy] : by_feature.at(4))
+    {
+      CHECK(energy > 0.0);
+      sums[key.first] += energy;
+    }
+    CHECK(sums.size() == by_type.at(4).by_type.size());
+    for (const auto &[type, energy] : by_type.at(4).by_type)
+    {
+      REQUIRE(sums.count(type) == 1);
+      CHECK_THAT(sums.at(type), WithinRel(energy, 1.0e-12));
+    }
+    return by_feature.at(4);
+  };
+  const auto corners = CheckSums(perimeter);
+  REQUIRE(corners.size() == 2);
+  for (const int feature : features)
+  {
+    CHECK(corners.count({"ConvexCorner", std::to_string(feature)}) == 1);
+  }
+
+  // (b) The second corner retyped and one of the first corner's portions copied under
+  // another feature id: the copy's piece is one union label of the two ids.
+  auto mixed = perimeter;
+  const int first = *features.begin(), second = *features.rbegin();
+  for (auto &portion : mixed)
+  {
+    if (portion.feature == second)
+    {
+      portion.type = "SpatialEdgeCluster";
+    }
+  }
+  const auto copied = std::find_if(mixed.begin(), mixed.end(), [&](const auto &portion)
+                                   { return portion.feature == first; });
+  REQUIRE(copied != mixed.end());
+  auto overlap = *copied;
+  overlap.feature = 1000 + second;
+  mixed.push_back(overlap);
+  const auto split = CheckSums(mixed);
+  CHECK(split.count({"SpatialEdgeCluster", std::to_string(second)}) == 1);
+  CHECK(split.count({"ConvexCorner", std::to_string(first)}) == 1);
+  CHECK(split.count({"ConvexCorner",
+                     std::to_string(first) + "+" + std::to_string(1000 + second)}) == 1);
+  double split_total = 0.0, corners_total = 0.0;
+  for (const auto &[key, energy] : split)
+  {
+    (void)key;
+    split_total += energy;
+  }
+  for (const auto &[key, energy] : corners)
+  {
+    (void)key;
+    corners_total += energy;
+  }
+  CHECK_THAT(split_total, WithinRel(corners_total, 1.0e-12));
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  // (c) The CSV: one row per corner (4 portions, length 2 R, a box around the portions);
+  // the rows sum to the uncovered table's raw-field ConvexCorner rows.
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  const fs::path feature_path =
+      output_dir / "surface-response-uncovered-feature-energy.csv";
+  REQUIRE(fs::is_regular_file(feature_path));
+  const TextCsv feature_table = ReadTrimmedCsv(feature_path);
+  REQUIRE(feature_table.rows.size() == 2);
+  double csv_sum = 0.0;
+  for (const auto &row : feature_table.rows)
+  {
+    CHECK(std::stoi(row[feature_table.Column("m")]) == 1);
+    CHECK(std::stoi(row[feature_table.Column("exc")]) == 0);
+    CHECK(row[feature_table.Column("type")] == "ConvexCorner");
+    CHECK(features.count(std::stoi(row[feature_table.Column("features")])) == 1);
+    CHECK(std::stoi(row[feature_table.Column("portions")]) == 4);
+    CHECK_THAT(std::stod(row[feature_table.Column("length (m)")]),
+               WithinAbs(2.0 * R, 1.0e-9));
+    for (const char *axis : {"x", "y", "z"})
+    {
+      CHECK(std::stod(row[feature_table.Column(fmt::format("{} min (m)", axis))]) <=
+            std::stod(row[feature_table.Column(fmt::format("{} max (m)", axis))]));
+    }
+    csv_sum += std::stod(row[feature_table.Column("uncovered raw energy[4] (J)")]);
+  }
+  const TextCsv uncovered_table =
+      ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy.csv");
+  int raw_rows = 0;
+  for (const auto &row : uncovered_table.rows)
+  {
+    const int evaluation = std::stoi(row[uncovered_table.Column("evaluation")]);
+    if (evaluation < 2 && row[uncovered_table.Column("type")] == "ConvexCorner")
+    {
+      raw_rows++;
+      CHECK_THAT(
+          csv_sum,
+          WithinRel(std::stod(row[uncovered_table.Column("uncovered raw energy[4] (J)")]),
+                    1.0e-11));
+    }
+  }
+  CHECK(raw_rows == 2);
 #endif
 }
 

@@ -9,6 +9,7 @@
 #include <complex>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -1417,6 +1418,163 @@ SurfacePostOperator::PartitionInterfaceEdgeEnergies(
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     energies.at(entries[i].first)[entries[i].second] += local_energies[i];
+  }
+  return energies;
+}
+
+std::map<int, std::map<std::pair<std::string, std::string>, double>>
+SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions) const
+{
+  // Per type (in the order of first appearance) the type's portions relabelled by feature:
+  // the token "m<feature>" makes PartitionedEdgePieces order a union label by feature id.
+  std::vector<std::string> types;
+  std::vector<std::vector<UncoveredPerimeterPortion>> portions_by_type;
+  for (const auto &portion : portions)
+  {
+    auto type = std::find(types.begin(), types.end(), portion.type);
+    if (type == types.end())
+    {
+      types.push_back(portion.type);
+      portions_by_type.emplace_back();
+      type = std::prev(types.end());
+    }
+    auto relabelled = portion;
+    relabelled.type = "m" + std::to_string(portion.feature);
+    portions_by_type[type - types.begin()].push_back(std::move(relabelled));
+  }
+  auto FeatureLabel = [](const std::string &label)
+  {
+    // "m12+m40" -> "12+40".
+    std::string features;
+    for (std::size_t i = 0; i < label.size(); i++)
+    {
+      if (label[i] == 'm' && (i == 0 || label[i - 1] == '+'))
+      {
+        continue;
+      }
+      features += label[i];
+    }
+    return features;
+  };
+  auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::map<int, std::map<std::pair<std::string, std::string>, double>> energies;
+  std::vector<double> local_energies;
+  std::vector<std::tuple<int, std::size_t, std::string>>
+      entries;  // (interface, type, label)
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "Uncovered feature energies require a matching edge distance!");
+    energies.emplace(idx, std::map<std::pair<std::string, std::string>, double>{});
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    const double radius = data.edge_distances.back();
+    std::vector<PartitionedEdgePieces> pieces;
+    std::vector<std::size_t> offsets;  // the type's first entry in local_energies
+    for (std::size_t type = 0; type < types.size(); type++)
+    {
+      const UncoveredEdgeIntervals intervals(
+          tree, portions_by_type[type], kSignatureParameterToleranceOverRadius * radius);
+      pieces.emplace_back(intervals);
+      offsets.push_back(local_energies.size());
+      for (const auto &label : pieces.back().groups)
+      {
+        local_energies.push_back(0.0);
+        entries.emplace_back(idx, type, FeatureLabel(label));
+      }
+    }
+    if (entries.empty() || std::get<0>(entries.back()) != idx)
+    {
+      continue;  // no portion on this interface's perimeter
+    }
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    const int quadrature_order = data.ownership_quadrature_order;
+    const std::optional<OwnershipQuadrature> ownership_rules =
+        quadrature_order > 0 ? std::optional<OwnershipQuadrature>(quadrature_order)
+                             : std::nullopt;
+    mfem::Vector point(mesh.SpaceDimension());
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      const auto geometry = h1_fespace.GetBE(be)->GetGeomType();
+      const mfem::IntegrationRule &rule =
+          ownership_rules
+              ? ownership_rules->Get(geometry)
+              : mfem::IntRules.Get(geometry, fem::DefaultIntegrationOrder::Get(*T));
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &ip = rule.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, point);
+        const auto nearest = tree.Nearest(point);
+        const double within =
+            1.0 - EdgeDistanceOutsideWeight(std::sqrt(nearest.distance_squared), radius,
+                                            data.edge_distance_smoothing);
+        if (within <= 0.0)
+        {
+          continue;
+        }
+        // PartitionedEdgeCoefficient's foot test, per type.
+        const auto &segment = tree.GetSegment(nearest.segment);
+        double length2 = 0.0, projection = 0.0;
+        for (int d = 0; d < point.Size(); d++)
+        {
+          const double chord = segment.p1[d] - segment.p0[d];
+          length2 += chord * chord;
+          projection += (point(d) - segment.p0[d]) * chord;
+        }
+        const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+        std::optional<double> value;
+        for (std::size_t type = 0; type < types.size(); type++)
+        {
+          const auto list = pieces[type].by_segment.find(nearest.segment);
+          if (list == pieces[type].by_segment.end() || list->second.empty())
+          {
+            continue;
+          }
+          auto piece = std::upper_bound(list->second.begin(), list->second.end(), foot,
+                                        [](double x, const auto &p) { return x < p.a; });
+          if (piece == list->second.begin())
+          {
+            continue;
+          }
+          piece = std::prev(piece);
+          const bool last = std::next(piece) == list->second.end();
+          if (!(foot >= piece->a && (foot < piece->b || (last && foot == piece->b))))
+          {
+            continue;
+          }
+          if (!value)
+          {
+            value = PhysicalQuadratureWeight(*T, ip, axisymmetric) *
+                    (within * coefficient->Eval(*T, ip));
+          }
+          local_energies[offsets[type] + piece->group] += *value;
+        }
+      }
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    const auto &[idx, type, label] = entries[i];
+    energies.at(idx)[{types[type], label}] += local_energies[i];
   }
   return energies;
 }

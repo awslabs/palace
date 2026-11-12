@@ -974,6 +974,19 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
       json{{"SurfaceResponseCorrection", patch_energy}});
   REQUIRE(maxwell_patch_energy.surface_response_correction);
   CHECK(maxwell_patch_energy.surface_response_correction->patch_energy);
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): off by default, parsed on the
+  // Maxwell path, refused on the electrostatic path (no silent no-op).
+  CHECK_FALSE(maxwell_patch_energy.surface_response_correction->uncovered_feature_energy);
+  auto uncovered_feature = automatic_correction;
+  uncovered_feature["Diagnostics"] = {{"UncoveredFeatureEnergy", true}};
+  const config::SolverData maxwell_uncovered_feature(
+      json{{"SurfaceResponseCorrection", uncovered_feature}});
+  REQUIRE(maxwell_uncovered_feature.surface_response_correction);
+  CHECK(maxwell_uncovered_feature.surface_response_correction->uncovered_feature_energy);
+  CHECK_THROWS(config::SolverData(
+      json{{"Electrostatic", {{"ResponseCorrection", uncovered_feature}}}}));
+  uncovered_feature["Diagnostics"] = {{"UncoveredFeatureEnergies", true}};
+  CHECK_THROWS(config::SolverData(json{{"SurfaceResponseCorrection", uncovered_feature}}));
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;

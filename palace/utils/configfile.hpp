@@ -1649,6 +1649,15 @@ public:
     // off (one pass over the mesh per measurement when on).
     bool within_r_volume_energy = false;
 
+    // Diagnostics.UncoveredFeatureEnergy (diagnostic-only lane ctx002-miss, decision 1567
+    // (b); the Maxwell drivers only): the raw field's within-R energy of the uncovered
+    // requirements (the rows of surface-response-uncovered-energy.csv) split per type by
+    // the FEATURE whose portion holds the nearest perimeter foot, written to
+    // surface-response-uncovered-feature-energy.csv; per (type, interface) the rows sum to
+    // the uncovered-energy row of the raw field. OFF by default: bitwise off (one
+    // quadrature pass per interface and measurement when on).
+    bool uncovered_feature_energy = false;
+
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
     // identification / placement (a valid config and library). RecordRaw: the affected
