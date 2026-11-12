@@ -10,5 +10,5 @@ class Strumpack(BuiltinStrumpack):
     """STRUMPACK, in this repository so that Palace can apply its patches to it."""
 
     def cmake_args(self):
-        # LAB (throwaway): PBLAS block size 128
-        return super().cmake_args() + [self.define("STRUMPACK_PBLAS_BLOCKSIZE", "128")]
+        # LAB (throwaway): PBLAS block size 64
+        return super().cmake_args() + [self.define("STRUMPACK_PBLAS_BLOCKSIZE", "64")]
