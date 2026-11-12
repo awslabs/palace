@@ -30809,6 +30809,23 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       shared_local_patches.push_back(placed_patches[patch_idx]);
     }
   }
+  // decision 1554: a throw (exception mode) between the first write below and the adoption
+  // at the end leaves the shared geometry as a completed placement does (this rank's local
+  // originals), not its partly written list; dismissed at the normal end.
+  struct SharedListRestore
+  {
+    const SurfaceResponseGeometry *geometry;
+    std::vector<ResponsePatchData> *local;
+    std::size_t global_count;
+    ~SharedListRestore()
+    {
+      if (geometry)
+      {
+        geometry->AdoptLocalPatches(std::move(*local), global_count);
+      }
+    }
+  } shared_list_restore{moves_shared_list ? cached_geometry.get() : nullptr,
+                        &shared_local_patches, unplaced_patch_count};
   std::vector<PlacementOriginalFields> original_fields;
 #if defined(PALACE_RESPONSE_PLACEMENT_MOVE_CHECK)
   const std::vector<ResponsePatchData> unplaced_patches = config.patches;
@@ -31645,6 +31662,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
 #endif
   PlacementOwnership placement{std::move(placed_patches),
                                std::move(spatially_owned_patches)};
+  shared_list_restore.geometry = nullptr;
   if (moves_shared_list)
   {
     // The shared geometry keeps this rank's local originals until the next construction
