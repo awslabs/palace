@@ -481,20 +481,6 @@ void BaseSolver::ReportPerformance(MPI_Comm comm) const
   }
 }
 
-void BaseSolver::ReportFailure(const json &error) const
-{
-  BlockTimer::Finalize(MPI_COMM_SELF);
-  Mpi::Print(MPI_COMM_SELF,
-             "\nPerformance report before the failure (root process only):\n");
-  BlockTimer::Print(MPI_COMM_SELF);
-  if (root)
-  {
-    json meta = LoadMetadata(post_dir);
-    perf::WriteJson(meta, &error);
-    WriteMetadata(post_dir, meta);
-  }
-}
-
 void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
 {
   if (root)

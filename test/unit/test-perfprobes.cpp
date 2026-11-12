@@ -112,7 +112,7 @@ TEST_CASE("PerfProbes Peak Memory Of Later Iterations", "[perfprobes][perfstats]
   CHECK(r.peak_mem.max < peak);
   CHECK(r.cum_peak_mem.max >= peak);
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   CHECK(meta["PeakMemoryMegabytes"]["LowerBound"] == true);
   CHECK(meta["PeakNodeMemoryMegabytes"]["LowerBound"] == true);
   CHECK(!meta["Cumulative"]["PeakMemoryMegabytes"].contains("LowerBound"));
@@ -195,7 +195,7 @@ TEST_CASE("PerfProbes Heap Reuse", "[perfprobes][perfstats][Serial][Parallel]")
   static_cast<void>(resident);
 #endif
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   CHECK(!meta.contains("HeapGrowthMegabytes"));
   CHECK(meta["HeapMegabytes"]["Max"].get<double>() > 0.0);
   CHECK(meta["Memory"]["HeapSource"] == memory_reporting::HeapMemorySource());

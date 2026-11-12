@@ -1,20 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <chrono>
-#include <cstdlib>
 #include <fstream>
 #include <memory>
-#include <sstream>
-#include <stdexcept>
-#include <thread>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
-#include "utils/failurereport.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -930,169 +924,42 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SaveIteration is MPI collective",
                             "V.gf.000000"));
 }
 
-// Failure report: the performance report collected so far, flagged incomplete. The hooks
-// themselves abort the processes: see "Failure report on abort" below.
-TEST_CASE_METHOD(palace::test::SharedTempDir, "Failure report in palace.json",
+// The report written at the end of each AMR iteration is archived with the iteration, and
+// the final report of the run replaces it in the output directory.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Performance report per iteration in palace.json",
                  "[basesolver][perfstats][Serial][Parallel]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
-  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.problem.output = temp_dir.string();
   BlockTimer::Reset();
-  TestSolver solver(iodata, Mpi::Root(comm), np);
-  auto writer = [&solver](const nlohmann::json &error) { solver.ReportFailure(error); };
-  auto Metadata = [&]()
-  { return nlohmann::json::parse(ReadFile(temp_dir / "palace.json")); };
-  auto Seconds = [](Timer::TimePoint t0)
-  { return Timer::Duration(Timer::Now() - t0).count(); };
-  const int counter = perf::RegisterCounter("Test/Ranks", perf::Reduce::SUM);
-  constexpr double grace = 0.2;
-
-  // The root writes its own values, without any communication: the other processes wait in
-  // a barrier, as when they wait for it in a collective.
-  SECTION("The root process fails")
+  TestSolver solver(iodata, Mpi::Root(comm), Mpi::Size(comm));
+  auto Metadata = [&](const fs::path &dir)
+  { return nlohmann::json::parse(ReadFile(dir / "palace.json")); };
+  if (Mpi::Root(comm))
   {
-    {
-      perf::FailureReport report(comm, writer, grace);
-      BlockTimer bt(Timer::EPS);
-      perf::Add(counter, 1.0);
-      if (Mpi::Root(comm))
-      {
-        const auto t0 = Timer::Now();
-        CHECK(perf::ReportFailure("Test failure on the root"));
-        CHECK(Seconds(t0) < grace);  // No wait
-        CHECK_FALSE(perf::ReportFailure("Second failure"));  // Reported once
-      }
-      Mpi::Barrier(comm);
-    }
-    if (Mpi::Root(comm))
-    {
-      const auto meta = Metadata();
-      CHECK(meta["Complete"] == false);
-      CHECK(meta["Error"]["Message"] == "Test failure on the root");
-      CHECK(meta["Error"]["Phase"] == "EPS");
-      CHECK(meta["Error"]["Iteration"] == 1);
-      CHECK_FALSE(meta["Error"].contains("Collective"));
-      CHECK_FALSE(meta.contains("ElapsedTime"));  // No statistics over processes
-      const auto &own = meta["RootProcess"];
-      CHECK(own["Test"]["Ranks"] == 1);
-      CHECK(own["ElapsedTime"]["Counts"]["EPS"] == 1);
-    }
+    CHECK_FALSE(Metadata(temp_dir).contains("ElapsedTime"));  // No report yet
   }
 
-  SECTION("A non-root process fails")
+  // As in BaseSolver::SolveEstimateMarkRefine: report the first iteration, then archive it.
+  solver.ReportPerformance(comm);
+  BlockTimer::StartIteration();
+  SaveIteration(comm, temp_dir, 1, 1);
+  if (Mpi::Root(comm))
   {
-    solver.ReportPerformance(comm);
-    {
-      perf::FailureReport report(comm, writer, grace);
-      if (rank == np - 1 && np > 1)
-      {
-        // Waits for the grace period, then returns (the hooks abort).
-        const auto t0 = Timer::Now();
-        CHECK_FALSE(perf::ReportFailure("Test failure on the last process"));
-        CHECK(Seconds(t0) >= grace);
-      }
-      Mpi::Barrier(comm);
-    }
-    if (Mpi::Root(comm))
-    {
-      const auto meta = Metadata();
-      CHECK(meta["Complete"] == true);  // Unchanged: nothing is written
-      CHECK_FALSE(meta.contains("Error"));
-    }
+    CHECK(Metadata(temp_dir / "iteration1").contains("ElapsedTime"));
+    CHECK(Metadata(temp_dir / "iteration1").contains("Cumulative"));
   }
 
-  SECTION("Failure off the main thread")
+  // The final report of the run.
+  solver.ReportPerformance(comm);
+  if (Mpi::Root(comm))
   {
-    {
-      perf::FailureReport report(comm, writer, grace);
-      bool reported = true;
-      std::thread t([&reported]() { reported = perf::ReportFailure("Test failure"); });
-      t.join();
-      CHECK_FALSE(reported);  // No report: the hooks abort directly
-    }
-    if (Mpi::Root(comm))
-    {
-      CHECK_FALSE(Metadata().contains("Complete"));
-    }
-  }
-
-  SECTION("Message printed by MFEM")
-  {
-    std::stringstream sink;  // Silence the test message
-    auto *prev = mfem::err.rdbuf(sink.rdbuf());
-    {
-      perf::FailureReport report(comm, writer);
-      mfem::err << "\n\nVerification failed: (n > 0) is false:\n --> Test message\n"
-                << " ... in function: f\n ... in file: f.cpp:1\n";
-      if (Mpi::Root(comm))
-      {
-        CHECK(perf::ReportFailure(""));
-      }
-    }
-    mfem::err.rdbuf(prev);
-    CHECK(sink.str().find("Test message") != std::string::npos);  // Still forwarded
-    if (Mpi::Root(comm))
-    {
-      CHECK(Metadata()["Error"]["Message"] ==
-            "Verification failed: (n > 0) is false:\n --> Test message\n ... in function: "
-            "f\n ... in file: f.cpp:1");
-    }
+    const auto meta = Metadata(temp_dir);
+    CHECK(meta.contains("ElapsedTime"));
+    CHECK(meta.contains("Cumulative"));
   }
   BlockTimer::Reset();
-}
-
-namespace
-{
-
-void Throw()
-{
-  throw std::runtime_error("Test failure");
-}
-
-// The exception escapes a noexcept function: std::terminate.
-void ThrowUncaught() noexcept
-{
-  Throw();
-}
-
-}  // namespace
-
-// Aborts on purpose: run by the failure-report-* tests (failure_report_test.cmake), which
-// check the palace.json left in PALACE_TEST_FAILURE_DIR. PALACE_TEST_FAILURE selects the
-// failing processes and the hook: root-abort (the root, with an MFEM error message and
-// MPI_Abort) or all-throw (all processes, with an uncaught exception).
-TEST_CASE("Failure report on abort", "[.failure-report][Parallel]")
-{
-  const char *mode_env = std::getenv("PALACE_TEST_FAILURE");
-  const char *dir = std::getenv("PALACE_TEST_FAILURE_DIR");
-  if (!mode_env || !dir)
-  {
-    SKIP("PALACE_TEST_FAILURE and PALACE_TEST_FAILURE_DIR are not set");
-  }
-  MPI_Comm comm = MPI_COMM_WORLD;
-  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
-  const std::string mode(mode_env);
-  Units units(1.0, 1.0);
-  IoData iodata(units);
-  iodata.problem.output = dir;
-  BlockTimer::Reset();
-  TestSolver solver(iodata, Mpi::Root(comm), np);
-  perf::FailureReport report(comm, [&solver](const nlohmann::json &error)
-                             { solver.ReportFailure(error); });
-  BlockTimer bt(Timer::EPS);
-  perf::Add(perf::RegisterCounter("Test/Ranks", perf::Reduce::SUM), 1.0);
-  if (mode == "all-throw")
-  {
-    ThrowUncaught();
-  }
-  if (mode == "root-abort" && rank == 0)
-  {
-    mfem::err << "\n\nTest failure on rank " << rank << "\n";  // As MFEM errors do
-    MPI_Abort(comm, 2);
-  }
-  Mpi::Barrier(comm);  // The others wait for the failing processes
-  FAIL("Not aborted");
 }

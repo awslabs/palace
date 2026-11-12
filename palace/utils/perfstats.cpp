@@ -411,16 +411,6 @@ json ElapsedTimeJson(const TimerResults &r)
       {
         t["Nested"] = Num(r.tally_nested[i].max);
       }
-      if (r.tally_wait[i].max > 0.0)
-      {
-        t["Wait"] = StatsJson(r.tally_wait[i]);
-        if (r.tally_work[i].max >
-            1.0e-3 * r.tally_time[i].max)  // Not for (almost) pure waits
-        {
-          t["Work"] = StatsJson(r.tally_work[i]);
-          SetImbalance(t["Work"], r.tally_work[i], r.tally_active[i]);
-        }
-      }
       tallies[r.tally_names[i]] = std::move(t);
     }
   }
@@ -511,11 +501,10 @@ void Commit()
   for (auto &t : reg.tallies)
   {
     t.cum_time += t.time;
-    t.cum_wait += t.wait;
     t.cum_count += t.count;
     t.cum_nested += t.nested;
     t.cum_row = detail::MergeRow(t.cum_row, t.row);
-    t.time = t.wait = 0.0;
+    t.time = 0.0;
     t.count = t.nested = 0;
     t.row = -1;
   }
@@ -623,7 +612,7 @@ const Results &GetResults()
   return state.results;
 }
 
-void WriteJson(json &meta, const json *error)
+void WriteJson(json &meta)
 {
   const auto &r = GetResults();
   constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
@@ -632,7 +621,7 @@ void WriteJson(json &meta, const json *error)
   for (const char *key :
        {"ElapsedTime", "LinearSolver", "PeakMemoryGrowthMegabytes",
         "PeakNodeMemoryGrowthMegabytes", "PeakMemoryMegabytes", "PeakNodeMemoryMegabytes",
-        "HeapMegabytes", "Cumulative", "Complete", "Error", "RootProcess"})
+        "HeapMegabytes", "Cumulative"})
   {
     meta.erase(key);
   }
@@ -653,49 +642,39 @@ void WriteJson(json &meta, const json *error)
   }
 
   meta["SchemaVersion"] = SCHEMA_VERSION;
-  meta["Complete"] = (error == nullptr);
-  if (error)
-  {
-    meta["Error"] = *error;
-    meta["Error"]["Iteration"] = r.iteration;
-  }
-
-  // The values of the root process alone (failure report) are not statistics over
-  // processes: they go under RootProcess instead of the usual keys.
-  json root_only;
-  json &out = error ? root_only : meta;
-  out["ElapsedTime"] = ElapsedTimeJson(r.iter);
+  meta["ElapsedTime"] = ElapsedTimeJson(r.iter);
   for (int i = 0; i < Timer::NUM_TIMINGS; i++)
   {
     std::string key(Timer::names[i]);
     const auto &rm = r.iter.rank_mem[i];
     const auto &nm = r.iter.node_mem[i];
-    out["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
-    out["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
-    out["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
-    out["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
-    out["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
-    out["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
-    out["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
-    out["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
+    meta["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
   }
   for (const auto &[key, rm, nm] :
        {std::tuple{"Baseline", r.mem_baseline, r.node_mem_baseline},
         std::tuple{"Unattributed", r.mem_unattributed, r.node_mem_unattributed}})
   {
-    out["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
-    out["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
-    out["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
-    out["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
-    out["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
-    out["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
-    out["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
-    out["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
+    meta["PeakMemoryGrowthMegabytes"]["Min"][key] = rm.min * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["Max"][key] = rm.max * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = rm.sum * to_mb;
+    meta["PeakMemoryGrowthMegabytes"]["MaxRank"][key] = rm.max_rank;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = nm.min * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = nm.max * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = nm.sum * to_mb;
+    meta["PeakNodeMemoryGrowthMegabytes"]["MaxNode"][key] = nm.max_rank;
   }
-  out["PeakMemoryMegabytes"] = IterationPeakJson(r.peak_mem, false, r.peak_lower_bound > 0);
-  out["PeakNodeMemoryMegabytes"] =
+  meta["PeakMemoryMegabytes"] =
+      IterationPeakJson(r.peak_mem, false, r.peak_lower_bound > 0);
+  meta["PeakNodeMemoryMegabytes"] =
       IterationPeakJson(r.peak_node_mem, true, r.peak_lower_bound > 0);
-  out["HeapMegabytes"] = PeakJson(r.heap_mem, false);
+  meta["HeapMegabytes"] = PeakJson(r.heap_mem, false);
 
   json cum;
   cum["ElapsedTime"] = ElapsedTimeJson(r.cum);
@@ -705,7 +684,7 @@ void WriteJson(json &meta, const json *error)
   {
     if (r.counter[i].n > 0)
     {
-      At(out, r.counter_paths[i]) = CounterJson(r.counter_reduce[i], r.counter[i]);
+      At(meta, r.counter_paths[i]) = CounterJson(r.counter_reduce[i], r.counter[i]);
     }
     if (r.counter_acc[i] != Accumulate::NONE && r.cum_counter[i].n > 0)
     {
@@ -714,13 +693,9 @@ void WriteJson(json &meta, const json *error)
   }
   if (!state.info.empty())
   {
-    out.merge_patch(state.info);
+    meta.merge_patch(state.info);
   }
-  out["Cumulative"] = std::move(cum);
-  if (&out == &root_only)
-  {
-    meta["RootProcess"] = std::move(root_only);
-  }
+  meta["Cumulative"] = std::move(cum);
 }
 
 }  // namespace perf
@@ -754,11 +729,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   timer.MarkMemory(Timer::TOTAL, timer.MemoryFromStart());
   const long heap_mem = memory_reporting::GetHeapMemory();
   SetInfo("Memory/HeapSource", memory_reporting::HeapMemorySource());
-  SetInfo("Communication/MPIWaitTally", detail::MpiWaitTally());
-  if (detail::MpiWaitTally())
-  {
-    SetInfo("Communication/MPIWaitTool", detail::mpi_wait_tool);
-  }
 
   const int rank = Mpi::Rank(comm);
   constexpr int N = Timer::NUM_TIMINGS;
@@ -780,7 +750,7 @@ void BlockTimer::Finalize(MPI_Comm comm)
 
   // Pack everything into one buffer for a single reduction.
   std::vector<double> buf;
-  buf.reserve(STRIDE * (5 * N + 14 * T + 2 * C + 7));
+  buf.reserve(STRIDE * (5 * N + 10 * T + 2 * C + 7));
   for (int i = 0; i < N; i++)
   {
     PushEntry(buf, timer.Data(static_cast<Timer::Index>(i)), true, rank);
@@ -805,8 +775,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   for (int i = 0; i < T; i++)
   {
     const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
-    PushEntry(buf, t ? t->wait : 0.0, true, rank);
-    PushEntry(buf, t ? t->time - t->wait : 0.0, true, rank);
     PushEntry(buf, t ? t->nested : 0.0, true, rank);
     PushEntry(buf, (t && t->count > 0) ? 1.0 : 0.0, true, rank);
     const int row = !t ? -1 : (t->fixed_parent >= 0) ? t->fixed_parent : t->row;
@@ -841,9 +809,6 @@ void BlockTimer::Finalize(MPI_Comm comm)
   for (int i = 0; i < T; i++)
   {
     const auto *t = (tidx[i] >= 0) ? &reg.tallies[tidx[i]] : nullptr;
-    const double wait = t ? t->cum_wait + t->wait : 0.0;
-    PushEntry(buf, wait, true, rank);
-    PushEntry(buf, t ? t->cum_time + t->time - wait : 0.0, true, rank);
     PushEntry(buf, t ? t->cum_nested + t->nested : 0.0, true, rank);
     PushEntry(buf, (t && t->cum_count + t->count > 0) ? 1.0 : 0.0, true, rank);
     const int row = !t                       ? -1
@@ -863,12 +828,8 @@ void BlockTimer::Finalize(MPI_Comm comm)
   PushEntry(buf, static_cast<double>(heap_mem), true, rank);
   StatsAllreduce(buf, comm);
 
-  // Node memory: sum over the ranks of each node, then statistics over nodes. A process
-  // alone (failure report of the root) does not split (or replace the cached) node
-  // communicators.
-  static const memory_reporting::NodeComms self_comms{MPI_COMM_SELF, MPI_COMM_SELF, 0};
-  const auto &nc =
-      (comm == MPI_COMM_SELF) ? self_comms : memory_reporting::GetNodeComms(comm);
+  // Node memory: sum over the ranks of each node, then statistics over nodes.
+  const auto &nc = memory_reporting::GetNodeComms(comm);
   std::vector<double> node_local(N + 4), node_sum(N + 4, 0.0);
   for (int i = 0; i < N; i++)
   {
@@ -921,15 +882,13 @@ void BlockTimer::Finalize(MPI_Comm comm)
   };
   auto NextTallyExtras = [&Next](TimerResults &t, int n)
   {
-    for (auto *v : {&t.tally_wait, &t.tally_work, &t.tally_nested, &t.tally_active})
+    for (auto *v : {&t.tally_nested, &t.tally_active})
     {
       v->resize(n);
     }
     t.tally_parents.resize(n);
     for (int i = 0; i < n; i++)
     {
-      t.tally_wait[i] = Next();
-      t.tally_work[i] = Next();
       t.tally_nested[i] = Next();
       t.tally_active[i] = Next();
       // The row of all processes which measured the tally, TOTAL if they differ.
@@ -1034,7 +993,7 @@ void BlockTimer::Reset()
   // Registrations are kept (ids may be cached by callers); values are cleared.
   for (auto &t : detail::registry.tallies)
   {
-    t.time = t.cum_time = t.wait = t.cum_wait = 0.0;
+    t.time = t.cum_time = 0.0;
     t.count = t.cum_count = t.nested = t.cum_nested = 0;
     t.row = t.cum_row = -1;
   }

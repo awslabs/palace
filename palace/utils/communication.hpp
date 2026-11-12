@@ -5,7 +5,6 @@
 #define PALACE_UTILS_COMMUNICATION_HPP
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <complex>
 #include <cstdint>
@@ -29,31 +28,30 @@ enum class Collective
   BARRIER,
   BROADCAST
 };
-void AddCollective(Collective kind, double seconds, std::size_t bytes);
+void AddCollective(Collective kind, double seconds);
 
-// Record a blocking MPI_Wait family call (from mpiwait.cpp, defined in commstats.cpp).
-void AddWait(double seconds);
-
-// Set by the calls of the MPI_Wait wrappers (mpiwait.cpp, from any thread), and whether
-// another profiling tool underneath them receives the calls.
-extern std::atomic<bool> mpi_wait_seen;
-extern bool mpi_wait_tool;
-
-// Whether the MPI_Wait wrappers intercept the calls made from libpalace: they may not be
-// linked in, or the libraries may bind to the MPI library directly (macOS two-level
-// namespaces). Tested once, with a call on a null request (MPI must be initialized).
-bool MpiWaitTally();
-
-// Time a blocking collective call.
-template <typename F>
-void TimeCollective(Collective kind, std::size_t bytes, F &&f)
+// Time a blocking collective call in a scope. Not a function template taking the call as a
+// lambda: PETSc's logging headers redefine MPI_Allreduce and others as macros, so the
+// lambdas of the inline Mpi functions would differ between translation units while sharing
+// the instantiation of such a template.
+class ScopedCollective
 {
-  const auto t0 = std::chrono::steady_clock::now();
-  f();
-  AddCollective(
-      kind, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(),
-      bytes);
-}
+  Collective kind;
+  std::chrono::steady_clock::time_point t0;
+
+public:
+  explicit ScopedCollective(Collective kind)
+    : kind(kind), t0(std::chrono::steady_clock::now())
+  {
+  }
+  ~ScopedCollective()
+  {
+    AddCollective(
+        kind, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+  }
+  ScopedCollective(const ScopedCollective &) = delete;
+  ScopedCollective &operator=(const ScopedCollective &) = delete;
+};
 
 }  // namespace perf::detail
 
@@ -265,8 +263,8 @@ public:
   // Barrier on the communicator.
   static void Barrier(MPI_Comm comm = World())
   {
-    perf::detail::TimeCollective(perf::detail::Collective::BARRIER, 0,
-                                 [&]() { MPI_Barrier(comm); });
+    perf::detail::ScopedCollective t(perf::detail::Collective::BARRIER);
+    MPI_Barrier(comm);
   }
 
   // Return processor's rank in the communicator.
@@ -292,9 +290,8 @@ public:
   template <typename T>
   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)
   {
-    perf::detail::TimeCollective(
-        perf::detail::Collective::REDUCE, len * sizeof(T),
-        [&]() { MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm); });
+    perf::detail::ScopedCollective t(perf::detail::Collective::REDUCE);
+    MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm);
   }
 
   // Global minimum (in-place, result is broadcast to all processes).
@@ -370,8 +367,8 @@ public:
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
   {
-    perf::detail::TimeCollective(perf::detail::Collective::BROADCAST, len * sizeof(T), [&]()
-                                 { MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm); });
+    perf::detail::ScopedCollective t(perf::detail::Collective::BROADCAST);
+    MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm);
   }
 
   // Global broadcast from root for buffers whose length may exceed INT_MAX (e.g. a
@@ -383,16 +380,12 @@ public:
                              std::int64_t max_chunk = std::numeric_limits<int>::max())
   {
     MFEM_ASSERT(len >= 0 && max_chunk > 0, "Invalid BroadcastLarge lengths!");
-    perf::detail::TimeCollective(
-        perf::detail::Collective::BROADCAST, len * sizeof(T),
-        [&]()
-        {
-          for (std::int64_t offset = 0; offset < len; offset += max_chunk)
-          {
-            const int n = static_cast<int>(std::min(max_chunk, len - offset));
-            MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
-          }
-        });
+    perf::detail::ScopedCollective t(perf::detail::Collective::BROADCAST);
+    for (std::int64_t offset = 0; offset < len; offset += max_chunk)
+    {
+      const int n = static_cast<int>(std::min(max_chunk, len - offset));
+      MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
+    }
   }
 
   // Allgather a fixed count of items per rank; every rank ends up with the concatenated

@@ -211,11 +211,11 @@ TEST_CASE("PerfStats Stale Counters Of Other Ranks", "[perfstats][Parallel]")
   }
   BlockTimer::Finalize(comm);
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   CHECK(meta["Test"]["LastRankOnly"] == 3);
   BlockTimer::StartIteration();
   BlockTimer::Finalize(comm);
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   CHECK(!meta.contains("Test"));
   CHECK(meta["Cumulative"]["Test"]["LastRankOnly"] == 3);
   BlockTimer::Reset();
@@ -247,7 +247,7 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   perf::SetInfo("Problem/Test/Info", "first");
   BlockTimer::Finalize(comm);
   nlohmann::json meta = {{"Problem", {{"MPISize", np}}}};
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   const double io1 = perf::GetResults().iter.time[Timer::IO].avg;
   const double total1 = perf::GetResults().iter.time[Timer::TOTAL].avg;
   CHECK(io1 >= 0.019);
@@ -272,7 +272,7 @@ TEST_CASE("PerfStats Per-Iteration And Cumulative", "[perfstats][Serial][Paralle
   perf::Add(its, 4);
   perf::Set(size, 200);
   BlockTimer::Finalize(comm);
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   const auto &r = perf::GetResults();
   CHECK(r.iteration == 2);
   CHECK(r.iter.count[Timer::IO].max == 1);
@@ -343,7 +343,7 @@ TEST_CASE("PerfStats Cumulative Counts", "[perfstats][Serial][Parallel]")
       CHECK(r.cum_counter[CounterIndex(r, "Test/Its")].max == 6);
       CHECK(r.cum_counter[CounterIndex(r, "Test/Rows")].max == ((np > 1) ? 4 : 6));
       nlohmann::json meta = nlohmann::json::object();
-      perf::WriteJson(meta);
+      perf::WriteJson(meta, true);
       CHECK(meta["ElapsedTime"]["Counts"]["IO"] == 3);
       CHECK(meta["Cumulative"]["ElapsedTime"]["Counts"]["IO"] == 6);
       CHECK(meta["Cumulative"]["ElapsedTime"]["Tallies"]["Test/Busy"]["Count"] == 6);
@@ -585,17 +585,17 @@ TEST_CASE("PerfStats Krylov Solver Statistics", "[perfstats][Serial][Parallel]")
     const int i = CounterIndex(r, path);
     return (i >= 0 && r.counter[i].n > 0) ? r.counter[i].max : -1.0;
   };
-  auto Check = [&](std::unique_ptr<IterativeSolver<Operator>> &&krylov,
-                   const std::string &role)
+  auto Check =
+      [&](std::unique_ptr<IterativeSolver<Operator>> &&krylov, const std::string &role)
   {
     BlockTimer::Reset();
     krylov->SetRelTol(1.0e-10);
     krylov->SetMaxIter(100);
     // M = (4 I)^-1 for A = diag(1, ..., n): one iteration per distinct eigenvalue.
-    KspSolver ksp(std::move(krylov),
-                  std::make_unique<MfemWrapperSolver<Operator>>(
-                      std::make_unique<DiagonalSolver>()),
-                  role);
+    KspSolver ksp(
+        std::move(krylov),
+        std::make_unique<MfemWrapperSolver<Operator>>(std::make_unique<DiagonalSolver>()),
+        role);
     ksp.SetOperators(A, A4);
     Vector b(A.Height()), x(A.Height());
     b = 1.0;
@@ -655,7 +655,7 @@ TEST_CASE("PerfStats Phase Tallies", "[perfstats][Serial][Parallel]")
   BlockTimer::Reset();
 }
 
-TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
+TEST_CASE("PerfStats Imbalance And Communication Tallies", "[perfstats][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
@@ -668,99 +668,35 @@ TEST_CASE("PerfStats Wait And Work", "[perfstats][Serial][Parallel]")
     perf::AddTally(root_only, 1.0);
   }
 
-  // A reduction inside a scope is its wait.
-  const int red = perf::RegisterTally("Test/Reduce");
+  // Palace's own collectives are tallied: reductions per row, barriers in total.
+  const auto &reg = perf::detail::registry;
+  const int reduce = perf::RegisterPhaseTally("Reduce");
+  const long reduces0 = reg.tallies[reduce].count;
   {
-    perf::ScopedTally t(red);
+    BlockTimer bt(Timer::KSP);
     double v = 1.0;
     Mpi::GlobalSum(1, &v, comm);
   }
-  const auto &reg = perf::detail::registry;
-  const auto &tr = reg.tallies[red];
-  CHECK(tr.wait > 0.0);
-  CHECK(tr.wait <= tr.time);
-
-  // So is a barrier, behind a slow rank.
-  const int bar = perf::RegisterTally("Test/Barrier");
-  {
-    perf::ScopedTally t(bar);
-    if (rank == 0)
-    {
-      Sleep(20);
-    }
-    Mpi::Barrier(comm);
-  }
-  if (rank > 0)
-  {
-    CHECK(reg.tallies[bar].wait > 0.01);
-  }
-  CHECK(reg.tallies[reg.tally_ids.at("Barrier")].count >= 1);
+  CHECK(reg.tallies[reduce].count == reduces0 + 1);
+  CHECK(reg.tallies[perf::PhaseTallyRow(reduce, Timer::KSP)].count >= 1);
+  const int barrier = reg.tally_ids.at("Barrier");
+  const long barriers0 = reg.tallies[barrier].count;
+  Mpi::Barrier(comm);
+  CHECK(reg.tallies[barrier].count == barriers0 + 1);
   CHECK(!reg.tally_ids.contains("Barrier/TOTAL"));  // Not split by row, unlike Reduce
   CHECK(reg.tally_ids.contains("Reduce/TOTAL"));
 
-  // Rank 0 works while the others block in MPI_Wait for its message: the wait lands in
-  // their exchange, the work in rank 0's.
-  const int ex = perf::RegisterTally("Test/Exchange");
-  const auto it = reg.tally_ids.find("Wait/MPI");
-  const long waits0 = (it != reg.tally_ids.end()) ? reg.tallies[it->second].count : 0;
-  Mpi::Barrier(comm);  // Start together, so that the others wait for all of rank 0's work
-  {
-    BlockTimer bt(Timer::KSP);
-    perf::ScopedTally t(ex);
-    int msg = 0;
-    if (rank == 0)
-    {
-      Sleep(50);
-      std::vector<MPI_Request> req(np - 1);
-      for (int p = 1; p < np; p++)
-      {
-        MPI_Isend(&msg, 1, MPI_INT, p, 0, comm, &req[p - 1]);
-      }
-      MPI_Waitall(np - 1, req.data(), MPI_STATUSES_IGNORE);
-    }
-    else
-    {
-      MPI_Request req;
-      MPI_Irecv(&msg, 1, MPI_INT, 0, 0, comm, &req);
-      MPI_Wait(&req, MPI_STATUS_IGNORE);
-    }
-  }
-  if (perf::detail::MpiWaitTally() && rank > 0)
-  {
-    const auto &te = reg.tallies[ex];
-    CHECK(te.wait > 0.04);
-    CHECK(te.time - te.wait < 0.04);
-    const auto &tw = reg.tallies[reg.tally_ids.at("Wait/MPI")];
-    CHECK(tw.count >= waits0 + 1);
-    CHECK(reg.tallies[reg.tally_ids.at("Wait/MPI/KSP")].time >= te.wait - 1.0e-12);
-  }
-#if defined(PALACE_WITH_MPI_WAIT_TALLY)
-  CHECK(perf::detail::MpiWaitTally());  // The test executable has the wrappers
-#endif
   BlockTimer::Finalize(comm);
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   const auto &tallies = meta["ElapsedTime"]["Tallies"];
   CHECK_THAT(tallies["Test/Imbalance"]["Imbalance"].get<double>(),
              WithinRel(2.0 * np / (np + 1.0), 1e-12));
-  CHECK(!tallies["Test/Imbalance"].contains("Wait"));
   CHECK(tallies["Test/RootOnly"]["Imbalance"] == 1.0);  // Over the ranks which ran it
-  CHECK(tallies["Test/Reduce"]["Wait"]["Max"].get<double>() > 0.0);
-  if (tallies["Test/Reduce"].contains("Work"))  // Omitted when it (almost) only waits
-  {
-    CHECK(tallies["Test/Reduce"]["Work"].contains("Imbalance"));
-  }
-  CHECK(meta["Communication"]["MPIWaitTally"] == perf::detail::MpiWaitTally());
-  CHECK(!tallies["Reduce"].contains("Work"));  // Pure wait
-  if (perf::detail::MpiWaitTally() && np > 1)
-  {
-    const auto &e = tallies["Test/Exchange"];
-    CHECK(e["Wait"]["Max"].get<double>() > 0.04);
-    CHECK(e["Work"]["Max"].get<double>() >= 0.049);
-    CHECK(e["Work"]["MaxRank"] == 0);
-    CHECK(e["Work"]["Imbalance"].get<double>() > 1.0);
-    CHECK(!tallies["Wait/MPI/KSP"].contains("Parent"));
-  }
+  CHECK(tallies["Reduce/KSP"]["Count"].get<long>() >= 1);
+  CHECK(!tallies["Reduce/KSP"].contains("Parent"));  // Named after its row
+  CHECK(tallies["Reduce"]["Parent"] == "TOTAL");
+  CHECK(!meta.contains("Communication"));
   BlockTimer::Reset();
 }
 
@@ -772,12 +708,12 @@ TEST_CASE("PerfStats Numeric Path Tokens", "[perfstats][Serial]")
   perf::SetInfo("Test/Info/2", "x");
   BlockTimer::Finalize(Mpi::World());
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   CHECK(meta["Test"]["Levels"].is_object());
   CHECK(meta["Test"]["Levels"]["0"]["Rows"] == 10);
   CHECK(meta["Test"]["Levels"]["1"]["Rows"] == 20);
   CHECK(meta["Test"]["Info"]["2"] == "x");
-  perf::WriteJson(meta);  // Erase and rewrite
+  perf::WriteJson(meta, true);  // Erase and rewrite
   CHECK(meta["Test"]["Levels"]["1"]["Rows"] == 20);
   BlockTimer::Reset();
 }

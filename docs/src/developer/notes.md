@@ -493,30 +493,12 @@ the average, `ElapsedTime/Min`, `PeakMemoryGrowthMegabytes/Sum`, ...).
     Phase tallies (`perf::RegisterPhaseTally`), such as `ParOperator/P` or `Reduce`, are
     also split by the active row into `<name>/<ROW>`. Such per-row tallies (also the
     `Assembly/<Kind>/<ROW>` tallies) are named after their row and have no `Parent`.
-    Each tally has an `Imbalance` (maximum
-    over average across the processes which ran it) and, when it contains any, `Wait`, the
-    time blocked in communication inside it, and `Work`, the rest of its time (each `{Min,
-    Avg, Max, MaxRank}`, `Work` with its own `Imbalance`; tallies that (almost) only wait
-    have no `Work`). A rank that waits for slower neighbors shows the delay in `Wait`, so the
-    imbalance of `Work` is closer to the load imbalance than the imbalance of the time. The
-    waits counted are the blocking reductions, barriers and broadcasts of `Mpi` (tallied as
-    the phase tally `Reduce` and the tallies `Barrier` and `Broadcast`, not split by row)
-    and, with the CMake option
-    `PALACE_WITH_MPI_WAIT_TALLY` (default off, Spack variant `+mpi-wait-tally`, enabled in
-    the *Palace* containers), the calls to `MPI_Wait`, `MPI_Waitall`,
-    `MPI_Waitany` and `MPI_Waitsome` that block, tallied as `Wait/MPI`. These wrappers use
-    the MPI profiling interface and are compiled into the executables only. They see the C
-    calls of the code linked into the executable, including the halo exchanges of statically
-    or directly linked MFEM and hypre and the sparse direct solvers, but not Fortran bindings
-    (MUMPS) or dependencies bound directly to the MPI library (macOS two-level namespaces).
-    `Communication/MPIWaitTally` says whether they intercept the calls made from `libpalace`
-    (tested at startup). Each wrapper calls the next definition of its function, so an MPI
-    profiling tool loaded after the executable (for example with `LD_PRELOAD`) still receives
-    every call; `Communication/MPIWaitTool` is then true, and every call, blocking or not, is
-    timed and counted in `Wait/MPI`. A tool linked into the executable itself conflicts with
-    the wrappers: build without the option. Not counted at all: `MPI_Recv`, `MPI_Probe` and
-    other blocking point-to-point calls, collectives inside other libraries, and waits on
-    other threads.
+    Each tally has an `Imbalance` (maximum over average across the processes which ran
+    it). The blocking reductions, barriers and broadcasts of `Mpi` are tallied as the phase
+    tally `Reduce` and the tallies `Barrier` and `Broadcast` (not split by row). The time of
+    a tally includes the time it spends waiting for other processes: blocking point-to-point
+    calls, such as the waits of the halo exchanges, are not timed separately; use an
+    external MPI profiler for them.
   - Counters (`perf::RegisterCounter`) are written at their path, for example
     `LinearSolver/<Role>/...` (also `LinearSolver/Main/Solves` and `Its` for the main
     linear solver, formerly `LinearSolver/TotalSolves` and `TotalIts`), reduced across
@@ -531,24 +513,6 @@ preconditioner barely reduces the error. `Krylov/ApplyBA` counts one event per i
 the order of the Chebyshev smoother of each level and the range of its largest eigenvalue
 estimates over the setups of the iteration, `LinearSolver/<Role>/Chebyshev/L<l>/Order` and
 `LambdaMax/{Min,Max}` (`Primary` and `Auxiliary` for distributive relaxation).
-
-Reports written at the end of an iteration have `"Complete": true`. If the root process
-fails (an MFEM error, `MPI_Abort` or an uncaught exception), `palace.json` still gets the
-report collected so far with `"Complete": false` and an `Error` block (`Message`, the
-innermost timer row as `Phase`, and `Iteration`), see `utils/failurereport.hpp`. A report
-in `palace.json` therefore no longer means that the run finished: readers must check
-`Complete`. A failing process does not know whether the others fail too, so no collective
-is safe: the root writes its own values, without any communication, under `RootProcess`
-instead of the usual keys, and aborts right away. Another failing process waits for 2 s
-(so that the root can finish its report if it fails too, as for a check on a global
-quantity), then aborts: a failure of non-root processes alone leaves `palace.json` as it
-was. Fatal signals, for example an out-of-memory kill, are not reported.
-`MPI_Abort` is interposed by a weak definition in the `palace` executable and the unit
-tests, not in libpalace (CMake option `PALACE_WITH_MPI_ABORT_HOOK`, `utils/mpiabort.cpp`),
-which calls the next definition of `MPI_Abort`, so that a profiling tool preloaded with
-`LD_PRELOAD` still receives the call. The hook does not see calls bound inside a shared
-MFEM library on macOS (two-level namespace) or those of the Fortran bindings of MPI (used
-by MUMPS and ARPACK).
 
 Solver roles (`perf::ScopedRole`, `BaseKspSolver` role) keep the statistics of nested
 solvers apart from the main linear solver (`Main`, which is also the mode solver of a

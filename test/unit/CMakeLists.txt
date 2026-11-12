@@ -103,16 +103,6 @@ if(PALACE_WITH_ENZYME)
   target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
 endif()
 
-if(PALACE_WITH_MPI_WAIT_TALLY)
-  target_sources(unit-tests PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiwait.cpp)
-  target_link_libraries(unit-tests PRIVATE ${CMAKE_DL_LIBS})
-  target_compile_definitions(unit-tests PRIVATE PALACE_WITH_MPI_WAIT_TALLY)
-endif()
-if(PALACE_WITH_MPI_ABORT_HOOK)
-  target_sources(unit-tests PRIVATE ${CMAKE_SOURCE_DIR}/utils/mpiabort.cpp)
-  target_link_libraries(unit-tests PRIVATE ${CMAKE_DL_LIBS})
-endif()
-
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
 
@@ -276,7 +266,7 @@ catch_discover_tests(unit-tests
 # MPI tests  
 catch_discover_tests(unit-tests
   TEST_PREFIX "mpi-"
-  TEST_SPEC "[Parallel]~[Regression]~[Long]~[failure-report]"
+  TEST_SPEC "[Parallel]~[Regression]~[Long]"
   TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
@@ -320,26 +310,6 @@ catch_discover_tests(unit-tests
     SKIP_RETURN_CODE 4
     ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
-
-# Processes which really abort: the failure report they leave in palace.json.
-if(PALACE_WITH_MPI_ABORT_HOOK)
-  foreach(np 2 4)
-    foreach(mode root-abort all-throw)
-      add_test(NAME failure-report-${mode}-np${np}
-        COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:unit-tests>
-                -DMPIEXEC=${MPIEXEC_EXECUTABLE} -DNP_FLAG=${MPIEXEC_NUMPROC_FLAG}
-                -DNP=${np} "-DPREFLAGS=${MPIEXEC_PREFLAGS}"
-                "-DPOSTFLAGS=${MPIEXEC_POSTFLAGS}" -DMODE=${mode}
-                -DDIR=${CMAKE_CURRENT_BINARY_DIR}/failure-report/${mode}-np${np}
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/failure_report_test.cmake
-      )
-      set_tests_properties(failure-report-${mode}-np${np} PROPERTIES
-        PROCESSORS ${np}
-        ENVIRONMENT "${PALACE_TESTS_OMP_ENV}"
-      )
-    endforeach()
-  endforeach()
-endif()
 
 # GPU tests (if available)
 if(PALACE_WITH_CUDA)

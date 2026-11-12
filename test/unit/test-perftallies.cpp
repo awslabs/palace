@@ -69,13 +69,9 @@ TEST_CASE("PerfTallies Reduce", "[perfstats][Serial][Parallel]")
   double buf[3] = {1.0, 2.0, 3.0};
   Mpi::GlobalSum(3, buf, Mpi::World());
   const auto &t = Tally("Reduce");
-  const auto &reg = perf::detail::registry;
-  const auto &c = reg.counters[reg.counter_ids.at("Communication/ReduceBytes")];
   const long count = t.count;
-  const double bytes = c.value;
   Mpi::GlobalMax(3, buf, Mpi::World());
   CHECK(t.count == count + 1);
-  CHECK(c.value == bytes + 3 * sizeof(double));
   CHECK(t.fixed_parent == Timer::TOTAL);
 }
 
@@ -141,7 +137,7 @@ TEST_CASE("PerfTallies Nested Same Tally", "[perfstats][Serial]")
   CHECK(t.count == 3);
   BlockTimer::Finalize(Mpi::World());
   nlohmann::json meta = nlohmann::json::object();
-  perf::WriteJson(meta);
+  perf::WriteJson(meta, true);
   CHECK(meta["ElapsedTime"]["Tallies"]["Main/LambdaMax"]["Nested"] == 2);
   CHECK(!meta["ElapsedTime"]["Tallies"]["Test/Outer"].contains("Nested"));
   BlockTimer::Reset();

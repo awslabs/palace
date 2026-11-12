@@ -829,7 +829,7 @@ TEST_CASE("ModeEigenSolver solver statistics in the performance report",
   CHECK(Value("LinearSolver/Main/Coarse/Setups") == -1.0);
   {
     nlohmann::json meta = nlohmann::json::object();
-    perf::WriteJson(meta);
+    perf::WriteJson(meta, true);
     const auto &nd = meta["LinearSolver"]["Main"]["ND"]["Chebyshev"]["L1"];
     CHECK(nd["Primary"]["LambdaMax"]["Min"].get<double>() > 0.0);
     CHECK(nd["Primary"]["LambdaMax"]["Min"] <= nd["Primary"]["LambdaMax"]["Max"]);

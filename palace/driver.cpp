@@ -6,7 +6,6 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include <nlohmann/json.hpp>
 #include "drivers/basesolver.hpp"
 #include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
@@ -17,7 +16,6 @@
 #include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
-#include "utils/failurereport.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
@@ -57,10 +55,6 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
     return nullptr;
   }();
   MFEM_VERIFY(solver, "Unknown problem type in palace::Run!");
-
-  // From here on, a failing process first writes the performance report collected so far.
-  perf::FailureReport failure_report(comm, [&solver](const nlohmann::json &error)
-                                     { solver->ReportFailure(error); });
 
   std::vector<std::unique_ptr<Mesh>> mesh;
   {

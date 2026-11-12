@@ -142,22 +142,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Mesh Output` (previously part of `Rebalancing`) appear in the log and in `palace.json`.
     `palace.json` (only) also holds inclusive tallies
     (multigrid levels, smoothers, Krylov operator and orthogonalization, halo exchanges,
-    reductions and waits, each split into communication wait and work, with their
-    imbalance across processes), solver counters, resolved solver choices and memory
-    attribution (peak RSS growth per row, with a baseline and an unattributed remainder,
-    and memory probes of the coarse factorization and error estimator). The log tables keep
-    their layout. The communication waits
-    are the blocking reductions, barriers and broadcasts of *Palace* and, with the new CMake
-    option `PALACE_WITH_MPI_WAIT_TALLY` (default off; Spack variant `+mpi-wait-tally`,
-    enabled in the *Palace* containers), the blocking `MPI_Wait` family calls of the code
-    linked into the `palace` executable, timed through the MPI profiling interface (not
-    Fortran bindings such as MUMPS); `Communication/MPIWaitTally` says whether they are in
-    use. The wrappers pass the calls on to a profiling tool loaded at run time; leave the
-    option off to link such a tool into the executable. When a run fails on the root
-    process, `palace.json` still gets the root's own report collected so far (under
-    `RootProcess`), flagged with `"Complete": false` and an `Error` block, so a report no
-    longer means that the run finished: check `Complete`. The `palace` executable interposes
-    `MPI_Abort` for this (new CMake option `PALACE_WITH_MPI_ABORT_HOOK`, default on).
+    the blocking reductions, barriers and broadcasts of *Palace*, with their imbalance
+    across processes), solver counters, resolved solver choices and memory attribution
+    (peak RSS growth per row, with a baseline and an unattributed remainder, and memory
+    probes of the coarse factorization and error estimator). The log tables keep their
+    layout.
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still

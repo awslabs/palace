@@ -60,7 +60,6 @@ struct TallyData
   int fixed_parent = -1;
   int row = -1, cum_row = -1;
   double time = 0.0, cum_time = 0.0;
-  double wait = 0.0, cum_wait = 0.0;  // Part of time blocked in communication
   long count = 0, cum_count = 0;
   long nested = 0, cum_nested = 0;  // Scopes opened inside a scope of the same tally
   int phase_base = -1;  // For phase tallies: first of NUM_TIMINGS contiguous sub-tally ids
@@ -95,10 +94,6 @@ inline Registry registry;
 // Serial number of the reporting iteration, unique over the process (also over Resets).
 inline long iteration_serial = 0;
 
-// Seconds this thread has spent blocked in communication: in the MPI_Wait family (requests
-// that had not completed yet, see commstats.cpp) and in Palace's blocking reductions.
-inline thread_local double comm_wait = 0.0;
-
 // Whether a ScopedTally of each tally id is open on this thread.
 inline thread_local std::vector<char> open_tallies;
 
@@ -110,9 +105,7 @@ inline thread_local std::vector<char> open_tallies;
 // active at each measurement (BlockTimer::Current(), when a ScopedTally closes), TOTAL if
 // it was measured within several rows or between top-level timers. Its time includes that
 // of the rows nested in its scopes. Reported in palace.json under
-// ElapsedTime/Tallies/<name>, with the time imbalance over ranks and, when nonzero, the
-// time blocked in communication within the tally (Wait) and the rest (Work = time - Wait),
-// each reduced over ranks.
+// ElapsedTime/Tallies/<name>, with the time imbalance over ranks.
 //
 
 // Register (or look up) a tally. Ids are stable for the lifetime of the process.
@@ -131,25 +124,23 @@ inline int PhaseTallyRow(int id, Timer::Index row)
   return detail::registry.tallies[id].phase_base + row;
 }
 
-// Register the communication tallies and counters (Reduce, Barrier, Broadcast, Wait/MPI).
+// Register the communication tallies (Reduce, Barrier, Broadcast).
 // Call it where all ranks reach it in the same order, before any rank-dependent
 // registration; otherwise they are registered at the first communication.
 void RegisterCommunicationTallies();
 
-// Add to a tally: elapsed seconds, of which wait seconds were blocked in communication.
-inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
+// Add elapsed seconds to a tally.
+inline void AddTally(int id, double seconds, long count = 1)
 {
   if (id >= 0)
   {
     auto &t = detail::registry.tallies[id];
     t.time += seconds;
-    t.wait += wait;
     t.count += count;
     if (t.phase_base >= 0)
     {
       auto &s = detail::registry.tallies[t.phase_base + BlockTimer::Current()];
       s.time += seconds;
-      s.wait += wait;
       s.count += count;
     }
     else if (t.fixed_parent < 0)
@@ -159,18 +150,17 @@ inline void AddTally(int id, double seconds, long count = 1, double wait = 0.0)
   }
 }
 
-// Time a scope into a tally (two clock reads, no system calls), with the communication
-// wait inside it. A negative id is a no-op. As a safeguard, so is a scope nested in an open
-// scope of the same tally on the same thread (for example a tallied helper which a tallied
-// entry point also calls): the outermost scope counts the time once, and the nested scope
-// is counted as Nested in the report. A scope adds count events (one by default, zero for a
-// scope which continues the event of a previous one).
+// Time a scope into a tally (two clock reads, no system calls). A negative id is a no-op.
+// As a safeguard, so is a scope nested in an open scope of the same tally on the same
+// thread (for example a tallied helper which a tallied entry point also calls): the
+// outermost scope counts the time once, and the nested scope is counted as Nested in the
+// report. A scope adds count events (one by default, zero for a scope which continues the
+// event of a previous one).
 class ScopedTally
 {
   int id;
   long count;
   Timer::TimePoint t0;
-  double w0 = 0.0;
 
 public:
   explicit ScopedTally(int id, long count = 1) : id(id), count(count)
@@ -190,7 +180,6 @@ public:
         return;
       }
       open[id] = 1;
-      w0 = detail::comm_wait;
       t0 = Timer::Now();
     }
   }
@@ -200,7 +189,7 @@ public:
     {
       const double seconds = Timer::Duration(Timer::Now() - t0).count();
       detail::open_tallies[id] = 0;
-      AddTally(id, seconds, count, detail::comm_wait - w0);
+      AddTally(id, seconds, count);
     }
   }
   ScopedTally(const ScopedTally &) = delete;
@@ -315,7 +304,7 @@ struct TimerResults
   std::vector<Stats> time, count, rank_mem, node_mem;  // Per Timer::Index
   std::vector<std::string> tally_names;
   std::vector<Timer::Index> tally_parents;
-  std::vector<Stats> tally_time, tally_count, tally_wait, tally_work, tally_nested;
+  std::vector<Stats> tally_time, tally_count, tally_nested;
   std::vector<Stats> tally_active;  // Sum: number of ranks with a nonzero count
 };
 
@@ -345,10 +334,8 @@ struct Results
 const Results &GetResults();
 
 // Write the performance report into the palace.json object (global root only). Removes
-// keys written by previous iterations first. "Complete" is true, unless an error (see
-// FailureReport) is given: then it is false, the error is written under "Error" and the
-// report, which holds the root process's own values, under "RootProcess".
-void WriteJson(nlohmann::json &meta, const nlohmann::json *error = nullptr);
+// keys written by previous iterations first.
+void WriteJson(nlohmann::json &meta);
 
 }  // namespace palace::perf
 
