@@ -126,9 +126,10 @@ class StrumpackSchurFactorization : public DirectSchurFactorization
 public:
   explicit StrumpackSchurFactorization(MPI_Comm comm) : comm(comm), sp(comm, false)
   {
-    // The Schur complement needs no matching (and a sequential graph reordering without
-    // compression, STRUMPACK's defaults).
+    // The Schur complement needs neither matching nor the GPU (and a sequential graph
+    // reordering without compression, STRUMPACK's defaults).
     sp.options().set_matching(strumpack::MatchingJob::NONE);
+    sp.options().disable_gpu();
   }
 
   bool Factor(const DirectSchurBlocks &A, std::vector<T> &schur) override
