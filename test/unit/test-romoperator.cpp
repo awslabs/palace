@@ -284,7 +284,8 @@ TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]
   prom_op.UpdatePROM(v, "test");
   REQUIRE(prom_op.GetReducedDimension() == 1);
 
-  ComplexVector u;
+  ComplexVector u(v.Size());
+  u.UseDevice(true);
   prom_op.SolvePROM(1, 1.0, u);  // Exercise the cancelling first-frequency path first.
   constexpr double omega = 2.0;
   prom_op.SolvePROM(1, omega, u);
