@@ -816,6 +816,14 @@ void IoData::CheckConfiguration()
   MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
+#if !defined(PALACE_WITH_PARMETIS)
+  if (solver.linear.sym_factorization == SymbolicFactorization::PARMETIS)
+  {
+    Mpi::Warning("ParMETIS column ordering requested but Palace was not built with "
+                 "ParMETIS support, using METIS instead!\n");
+    solver.linear.sym_factorization = SymbolicFactorization::METIS;
+  }
+#endif
 
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;

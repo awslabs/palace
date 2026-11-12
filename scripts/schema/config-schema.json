@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-3",
+  "$id": "urn:palace:schema:4-2-4",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2346,7 +2346,7 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Use ParMETIS column ordering. Requires *Palace* built with ParMETIS (`PALACE_WITH_PARMETIS=ON`), otherwise METIS is used."
         },
         {
           "const": "Scotch",
