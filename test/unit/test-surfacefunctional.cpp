@@ -2739,6 +2739,17 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     CHECK_THROWS_WITH(Check([](config::MaterialData &m) { m.epsilon_r = 4.0; }),
                       Catch::Matchers::ContainsSubstring(
                           "attributes 1 and 2 have a different speed of light"));
+    // The same ε∞ and speed of light there, but a permittivity which depends on frequency
+    // on one side only.
+    CHECK_THROWS_WITH(Check(
+                          [](config::MaterialData &m)
+                          {
+                            m.permittivity_terms.push_back(
+                                config::PermittivityPoleData{{-2.0, 5.0}, {1.2, -0.4}});
+                          }),
+                      Catch::Matchers::ContainsSubstring(
+                          "attributes 1 and 2 have a different speed of light or "
+                          "frequency-dependent permittivity"));
   }
 }
 

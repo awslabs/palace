@@ -294,7 +294,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
 
   // Check the materials on the far-field surface. The Stratton-Chu integrand assumes an
   // isotropic medium, and on an interior surface it uses the medium of the traced side for
-  // both sides, which must then be the same (same speed of light). Both sides of each
+  // both sides, which must then be the same (same speed of light, and the same material if
+  // its permittivity depends on frequency). Both sides of each
   // boundary element are checked, including face neighbor elements on parallel interfaces,
   // and the result is combined across processes so that all of them fail consistently.
   if (!postpro.farfield.empty())
@@ -325,9 +326,13 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       {
         const int attr2 = FET.Elem2->Attribute;
         anisotropic[attr2 - 1] = !mat_op.IsIsotropic(attr2);
+        // The speed of light is that at ε∞: frequency-dependent materials are the same
+        // only as one material, since two models can share ε∞.
         const double c1 = mat_op.GetLightSpeedMax(attr1),
                      c2 = mat_op.GetLightSpeedMax(attr2);
-        if (std::abs(c1 - c2) > 1.0e-12 * std::max(c1, c2))
+        if (std::abs(c1 - c2) > 1.0e-12 * std::max(c1, c2) ||
+            mat_op.GetFrequencyDependentPermittivityModelMaterial(attr1) !=
+                mat_op.GetFrequencyDependentPermittivityModelMaterial(attr2))
         {
           // Keep the pair with the smallest attributes, for a deterministic message.
           const auto [a, b] = std::minmax(attr1, attr2);
@@ -361,7 +366,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
                 "FarField requires the same material on both sides of an interior surface, "
                 "but attributes " +
                     std::to_string(mismatch[0]) + " and " + std::to_string(mismatch[1]) +
-                    " have a different speed of light.");
+                    " have a different speed of light or frequency-dependent "
+                    "permittivity.");
   }
 
   farfield = FarFieldData(postpro.farfield, *nd_fespace.GetParMesh(), bdr_attr_marker);
