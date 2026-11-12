@@ -151,6 +151,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1143](https://github.com/awslabs/palace/pull/1143), these solves could abort with
     an MPI error at high process counts, or give a poor preconditioner which needs more
     linear solver iterations. [PR 1164](https://github.com/awslabs/palace/pull/1164).
+  - Fixed SuperLU_DIST solves with `config["Solver"]["Linear"]["SuperLU3DCommunicator"]`,
+    which gave wrong solutions and crashed at exit. SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#254](https://github.com/xiaoyeli/superlu_dist/pull/254) and
+    [xiaoyeli/superlu_dist#255](https://github.com/xiaoyeli/superlu_dist/pull/255) fix the
+    solutions with several right-hand sides and uneven rows, and the refactorizations with
+    the same sparsity pattern, on a 3D process grid. An MFEM patch for
+    [mfem/mfem#5732](https://github.com/mfem/mfem/pull/5732) frees the factors on all the
+    process layers. ParMETIS ordering, which SuperLU_DIST does not support with a 3D process
+    grid and with which it hung, now falls back to METIS with a warning, and a patch for
+    [xiaoyeli/superlu_dist#256](https://github.com/xiaoyeli/superlu_dist/pull/256) makes
+    SuperLU_DIST return an error for it instead of hanging.
+    [PR 1167](https://github.com/awslabs/palace/pull/1167).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
