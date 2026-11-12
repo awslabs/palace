@@ -12,6 +12,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/blockprecond.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/complexcsr.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/cudss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
@@ -33,7 +34,9 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/strumpackcomplex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/superlucomplex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
 )
 
