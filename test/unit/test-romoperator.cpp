@@ -1086,14 +1086,21 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
              {{"Index", 1}, {"Attributes", json::array({1, 2, 3, 4, 5, 6})}})})}}}};
   setup_json["Boundaries"] = {
       {"LumpedPort",
-       json::array({json::object(
-           {{"Index", 1},
-            {"R", 50.0},
-            {"L", 1.0e-9},
-            {"C", 1.0e-12},
-            {"Excitation", uint(1)},
-            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
-                                                    {"Direction", "+Z"}})})}})})}};
+       json::array(
+           {json::object(
+                {{"Index", 1},
+                 {"R", 50.0},
+                 {"L", 1.0e-9},
+                 {"C", 1.0e-12},
+                 {"Excitation", uint(1)},
+                 {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                         {"Direction", "+Z"}})})}}),
+            json::object(
+                {{"Index", 2},
+                 {"R", 50.0},
+                 {"Excitation", uint(2)},
+                 {"Elements", json::array({json::object({{"Attributes", json::array({1})},
+                                                         {"Direction", "+Y"}})})}})})}};
   setup_json["Solver"] = {
       {"Order", 1UL},
       {"Device", "CPU"},
@@ -1121,7 +1128,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   linalg::SetRandom(comm, sample.Imag(), 43);
   rom_op.UpdatePROM(sample, "postprocessing_sample");
   REQUIRE(rom_op.GetReducedDimension() > 0);
-  post_op.ConfigureReducedPostprocessing(rom_op);
+  post_op.ConfigureReducedPostprocessing(rom_op, iodata.solver.driven.adaptive_tol);
   REQUIRE(post_op.HasReducedPostprocessing());
 
   // Construct a deterministic complex field directly in the PROM space. This gives both
@@ -1150,7 +1157,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega_back);
   post_op.MeasureAndPrintAll(1, 1, E, B, omega_back);
   const Measurement full = post_op.GetMeasurement();
-  REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(rom_op));
+  REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(1, rom_op));
   post_op.MeasureAndPrintReduced(1, 1, nullptr, omega_back, y, rom_op);
   const Measurement reduced = post_op.GetMeasurement();
   REQUIRE(post_op.HasReducedPostprocessing());
@@ -1207,6 +1214,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
   CHECK(close(reduced.lumped_port_inductor_energy, full.lumped_port_inductor_energy));
   CHECK(close(reduced.lumped_port_capacitor_energy, full.lumped_port_capacitor_energy));
+
+  // A NaN in the reduced solution reverts to full postprocessing.
+  const double tol = iodata.solver.driven.adaptive_tol;
+  post_op.ConfigureReducedPostprocessing(rom_op, tol);
+  Eigen::VectorXcd y_nan = y;
+  y_nan(0) = std::numeric_limits<double>::quiet_NaN();
+  post_op.MeasureAndPrintReduced(1, 0, &E, omega_front, y_nan, rom_op);
+  CHECK_FALSE(post_op.HasReducedPostprocessing());
+
+  // Each excitation is checked at its first point: after the first passes, a field
+  // inconsistent with the reduced solution of the second reverts.
+  post_op.ConfigureReducedPostprocessing(rom_op, tol);
+  post_op.MeasureAndPrintReduced(1, 0, &E, omega_front, y, rom_op);
+  REQUIRE(post_op.HasReducedPostprocessing());
+  REQUIRE(post_op.ReducedPostprocessingNeedsField(2, rom_op));
+  E *= 1.001;
+  post_op.MeasureAndPrintReduced(2, 0, &E, omega_front, y, rom_op);
+  CHECK_FALSE(post_op.HasReducedPostprocessing());
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -1259,7 +1284,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(rom_op.GetReducedDimension() > 0);
 
   DrivenPostOperatorTest post_op(iodata, space_op);
-  post_op.ConfigureReducedPostprocessing(rom_op);
+  post_op.ConfigureReducedPostprocessing(rom_op, iodata.solver.driven.adaptive_tol);
   CHECK_FALSE(post_op.HasReducedPostprocessing());
 }
 

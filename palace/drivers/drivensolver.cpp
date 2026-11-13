@@ -410,7 +410,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
   prom_op.PrepareOnlineExcitations();
-  post_op.ConfigureReducedPostprocessing(prom_op);
+  post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
@@ -433,7 +433,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     prom_op.SolvePROM(excitation_idx, omega);
     const bool reduced = post_op.HasReducedPostprocessing() &&
                          !post_op.WillWriteFields(static_cast<int>(omega_i));
-    const bool expand = !reduced || post_op.ReducedPostprocessingNeedsField(prom_op);
+    const bool expand =
+        !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx, prom_op);
     if (expand)
     {
       prom_op.ExpandPROMSolution(E);
