@@ -3,6 +3,7 @@
 
 #include "operator.hpp"
 
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -18,6 +19,13 @@
 
 namespace palace::ceed
 {
+
+namespace
+{
+
+bool UseLinearElementAssembly(Ceed ceed, CeedOperator op);
+
+}  // namespace
 
 Operator::Operator(int h, int w) : palace::Operator(h, w)
 {
@@ -102,6 +110,19 @@ void Operator::Finalize()
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedOperatorCheckReady(op[id]));
     PalaceCeedCall(ceed, CeedOperatorCheckReady(op_t[id]));
+
+    // Apply the leaves that qualify with their element matrices.
+    CeedInt count;
+    CeedOperator *children;
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op[id], &count));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op[id], &children));
+    for (CeedInt j = 0; j < count; j++)
+    {
+      if (UseLinearElementAssembly(ceed, children[j]))
+      {
+        PalaceCeedCall(ceed, CeedOperatorSetLinearElementAssembly(children[j], true));
+      }
+    }
   }
 }
 
@@ -262,6 +283,164 @@ bool SameContext(Ceed ceed, Ceed object_ceed)
   ScopedContext parent;
   PalaceCeedCall(ceed, CeedGetParent(object_ceed, &parent.value));
   return parent.value == ceed;
+}
+
+// Element assembly (CeedOperatorSetLinearElementAssembly) replaces the streaming of the
+// passive QData and the basis contractions of partial assembly by the streaming of the
+// element matrices. It is considered on the CPU backends that implement it, for
+// single-component leaves of non-tensor (simplex) H1 and boundary bases with up to 45 nodes
+// per element (H1 p <= 4 on tetrahedra), and chosen when it moves fewer bytes, counting
+// the contraction flops at the flop-per-byte balance of a fully loaded CPU socket.
+// Setting PALACE_CEED_ELEMENT_ASSEMBLY=0 in the environment disables it.
+bool UseLinearElementAssembly(Ceed ceed, CeedOperator op)
+{
+  static const bool enabled = []()
+  {
+    const char *env = std::getenv("PALACE_CEED_ELEMENT_ASSEMBLY");
+    return !env || std::strcmp(env, "0") != 0;
+  }();
+  if (!enabled)
+  {
+    return false;
+  }
+  const char *resource;
+  PalaceCeedCall(ceed, CeedGetResource(CeedOperatorReturnCeed(op), &resource));
+  bool supported = false;
+  for (const char *prefix : {"/cpu/self/opt", "/cpu/self/avx", "/cpu/self/xsmm",
+                             "/cpu/self/sve", "/cpu/self/sme"})
+  {
+    supported = supported || std::strncmp(resource, prefix, std::strlen(prefix)) == 0;
+  }
+  bool composite, at_points;
+  PalaceCeedCall(ceed, CeedOperatorIsComposite(op, &composite));
+  PalaceCeedCall(ceed, CeedOperatorIsAtPoints(op, &at_points));
+  if (!supported || composite || at_points)
+  {
+    return false;
+  }
+  // A single active restriction and basis for the input and the output, without passive
+  // outputs.
+  ScopedRestriction restriction;
+  ScopedBasis basis;
+  {
+    CeedInt num_fields[2];
+    CeedOperatorField *fields[2];
+    PalaceCeedCall(ceed, CeedOperatorGetFields(op, &num_fields[0], &fields[0],
+                                               &num_fields[1], &fields[1]));
+    for (int k = 0; k < 2; k++)
+    {
+      bool active = false;
+      for (CeedInt i = 0; i < num_fields[k]; i++)
+      {
+        ScopedRestriction field_restriction;
+        ScopedBasis field_basis;
+        ScopedVector vector;
+        PalaceCeedCall(ceed, CeedOperatorFieldGetData(fields[k][i], nullptr,
+                                                      &field_restriction.value,
+                                                      &field_basis.value, &vector.value));
+        if (vector.value != CEED_VECTOR_ACTIVE)
+        {
+          if (k == 1)
+          {
+            return false;
+          }
+          continue;
+        }
+        if (!restriction.value)
+        {
+          PalaceCeedCall(ceed, CeedElemRestrictionReferenceCopy(field_restriction.value,
+                                                                &restriction.value));
+          PalaceCeedCall(ceed, CeedBasisReferenceCopy(field_basis.value, &basis.value));
+        }
+        if (field_restriction.value != restriction.value ||
+            field_basis.value != basis.value)
+        {
+          return false;
+        }
+        active = true;
+      }
+      if (!active)
+      {
+        return false;
+      }
+    }
+  }
+  if (basis.value == CEED_BASIS_NONE)
+  {
+    return false;
+  }
+  constexpr CeedInt max_nodes = 45;
+  bool tensor;
+  CeedInt nodes, components, dim;
+  CeedFESpace space;
+  PalaceCeedCall(ceed, CeedBasisIsTensor(basis.value, &tensor));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(restriction.value, &nodes));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(restriction.value, &components));
+  PalaceCeedCall(ceed, CeedBasisGetFESpace(basis.value, &space));
+  PalaceCeedCall(ceed, CeedBasisGetDimension(basis.value, &dim));
+  if (tensor || components != 1 || nodes <= 0 || nodes > max_nodes)
+  {
+    return false;
+  }
+  // Leaves with a curl or a divergence (below) keep partial assembly: element matrices of
+  // curl-curl terms do not preserve the discrete curl-gradient cancellation of the factored
+  // action, which perturbs ill-conditioned (e.g. near-resonant driven) solves beyond
+  // rounding. So do all volume H(curl) and H(div) leaves in 3D, whose mass terms are mostly
+  // bandwidth bound either way.
+  if (space != CEED_FE_SPACE_H1 && dim == 3)
+  {
+    return false;
+  }
+  ScopedQFunction qf;
+  CeedInt num_in, num_out;
+  CeedQFunctionField *qf_in, *qf_out;
+  PalaceCeedCall(ceed, CeedOperatorGetQFunction(op, &qf.value));
+  PalaceCeedCall(ceed,
+                 CeedQFunctionGetFields(qf.value, &num_in, &qf_in, &num_out, &qf_out));
+  {
+    // The element matrices are reassembled when the context changes, which a QFunction
+    // writing to its context would do at every application.
+    CeedQFunctionContext context;
+    bool writable = false;
+    PalaceCeedCall(ceed, CeedQFunctionGetContext(qf.value, &context));
+    if (context)
+    {
+      PalaceCeedCall(ceed, CeedQFunctionIsContextWritable(qf.value, &writable));
+      PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&context));
+    }
+    if (writable)
+    {
+      return false;
+    }
+  }
+  // Per element, partial assembly streams the passive QData and the element dofs and
+  // performs the basis contractions, while element assembly streams the element matrix.
+  constexpr double flops_per_byte = 4.0;
+  CeedInt num_qpts;
+  PalaceCeedCall(ceed, CeedOperatorGetNumQuadraturePoints(op, &num_qpts));
+  double pa_bytes = 4.0 * nodes, pa_flops = 0.0;
+  for (CeedInt i = 0; i < num_in + num_out; i++)
+  {
+    CeedEvalMode mode;
+    CeedInt field_size;
+    PalaceCeedCall(ceed,
+                   CeedQFunctionFieldGetData(i < num_in ? qf_in[i] : qf_out[i - num_in],
+                                             nullptr, &field_size, &mode));
+    if (mode == CEED_EVAL_CURL || mode == CEED_EVAL_DIV)
+    {
+      return false;
+    }
+    if (mode == CEED_EVAL_NONE)
+    {
+      pa_bytes += 8.0 * field_size * num_qpts;
+    }
+    else if (mode != CEED_EVAL_WEIGHT)
+    {
+      pa_flops += 2.0 * field_size * num_qpts * nodes;
+    }
+  }
+  const double ea_bytes = 8.0 * nodes * nodes + 4.0 * nodes;
+  return ea_bytes <= pa_bytes + pa_flops / flops_per_byte;
 }
 
 struct PackedField
