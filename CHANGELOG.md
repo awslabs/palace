@@ -28,9 +28,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     partition the region only, and in which `remesh_region.py` re-meshes a redesign. Online
     runs can refine the region adaptively. Runs on CPUs and GPUs, with the direct
     factorizations on the CPU. Includes optional block low-rank environment factorization
-    with MUMPS (`"FactorizationTol"`), hierarchical compression of the interface operator
-    (`"InterfaceOffdiagTol"`), and iterative environment and region solves above a size
-    limit (`"DirectMaxSize"`). The factorizations use the sparse direct solver that
+    with MUMPS (`"FactorizationTol"`), and iterative environment and region solves above a
+    size limit (`"DirectMaxSize"`). The factorizations use the sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names, if any. Magnetostatic substructuring
     supports `"FluxLoop"` and `"SurfaceCurrent"` excitations, alone or together (flux loops
     also grouped or held at zero fluxoid), with the films and `"Superconductor"` boundaries

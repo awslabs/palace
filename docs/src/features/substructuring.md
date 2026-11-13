@@ -97,19 +97,13 @@ holds the whole mesh while it writes the mesh of the region. The
 [transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
 the position of their centroids.
 
-### Optional approximations
+### Optional approximation
 
-Two optional settings trade a controlled loss of accuracy for resources. Both default to `0`,
-which keeps the condensation exact.
-
-  - `"FactorizationTol"`: relative tolerance of a block low-rank (BLR) approximation of the
-    environment factorization, which reduces the time to condense the environment. It is used
-    when *Palace* is built with MUMPS. The error in the extracted matrices follows the tolerance
-    but is not bounded by it; `1e-12` is a conservative choice.
-  - `"InterfaceOffdiagTol"`: relative tolerance of a hierarchical (HODLR) compression of
-    ``\bm{S}_E``, which reduces its memory for large interfaces. It does not reduce the time to
-    condense the environment, and it is not available with London sheets (flux loops and
-    `"Superconductor"` boundaries), whose region solve factors the dense ``\bm{S}_E``.
+`"FactorizationTol"` trades a controlled loss of accuracy for time: it is the relative
+tolerance of a block low-rank (BLR) approximation of the environment factorization, which
+reduces the time to condense the environment. It is used when *Palace* is built with MUMPS.
+The error in the extracted matrices follows the tolerance but is not bounded by it; `1e-12` is
+a conservative choice. The default, `0`, keeps the condensation exact.
 
 ### Adaptive mesh refinement
 

@@ -1257,10 +1257,6 @@ public:
   // Optional path for the serialized environment DtN model (offline/online reuse).
   std::string save_model = "";
 
-  // Relative tolerance of the hierarchical (HODLR) compression of the interface operator
-  // S_E (0: dense S_E).
-  double interface_offdiag_tol = 0.0;
-
   // Relative block low-rank (BLR) tolerance of the MUMPS environment factorization (0:
   // exact factorization).
   double factorization_tol = 0.0;

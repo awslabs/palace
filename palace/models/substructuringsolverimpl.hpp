@@ -21,7 +21,6 @@
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "linalg/gmg.hpp"
-#include "linalg/hodlr.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
@@ -279,16 +278,15 @@ private:
 
 // Materialized DtN: applies the precomputed interface operator S_E to a distributed
 // interface vector (gathered by an Allreduce): each rank multiplies its own dense row
-// block, or applies the replicated HODLR form and reads back its rows.
+// block.
 class MaterializedDtN : public mfem::Operator
 {
 public:
   MaterializedDtN(const std::vector<double> &S_rows, int row_off,
-                  const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm,
-                  const Hodlr *hodlr = nullptr)
+                  const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm)
     : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
       row_off(row_off), gamma_global(gamma_global), nG_global(nG_global), comm(comm),
-      hodlr(hodlr), xg(nG_global)
+      xg(nG_global)
   {
     // Each rank owns a contiguous block of the global interface order, in rank order.
     const int nloc = static_cast<int>(std::count_if(
@@ -301,12 +299,6 @@ public:
       disp[r] = disp[r - 1] + cnt[r - 1];
     }
     xo.resize(nloc);
-    if (hodlr)
-    {
-      xp.resize(nG_global);
-      yp.resize(nG_global);
-      yg.resize(nG_global);
-    }
   }
 
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
@@ -323,26 +315,6 @@ public:
                    cnt.data(), disp.data(), MPI_DOUBLE, comm);
     double *yy = y.HostWrite();
     std::fill(yy, yy + height, 0.0);
-    if (hodlr)
-    {
-      for (int k = 0; k < nG_global; k++)
-      {
-        xp[k] = xg[hodlr->perm[k]];
-      }
-      hodlr->Mult(xp.data(), yp.data());
-      for (int k = 0; k < nG_global; k++)
-      {
-        yg[hodlr->perm[k]] = yp[k];
-      }
-      for (int i = 0; i < height; i++)
-      {
-        if (gamma_global[i] >= 0)
-        {
-          yy[i] = yg[gamma_global[i]];
-        }
-      }
-      return;
-    }
     for (int i = 0; i < height; i++)
     {
       if (gamma_global[i] >= 0)
@@ -365,9 +337,8 @@ private:
   const std::vector<int> &gamma_global;
   int nG_global;
   MPI_Comm comm;
-  const Hodlr *hodlr;
   std::vector<int> cnt, disp;
-  mutable std::vector<double> xo, xg, xp, yp, yg;
+  mutable std::vector<double> xo, xg;
 };
 
 }  // namespace substructuring
@@ -485,8 +456,6 @@ struct SubstructuringSolver::Impl
   int nG_global = 0;
   std::vector<double> S_rows;
   int gamma_off = 0, gamma_nloc = 0;
-  // Optional compressed (HODLR) form of S_E, replicated, used in place of S_rows.
-  std::unique_ptr<Hodlr> hodlr;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn;
 
   // Dirichlet-lift modes: the environment condensed onto Gamma + a set of Dirichlet lifts
@@ -510,7 +479,6 @@ struct SubstructuringSolver::Impl
   // Rank-independent presence flags (the distributed arrays are empty on ranks that own no
   // interface DOFs, so their emptiness must not gate collectives).
   bool have_sk = false, have_gk = false;
-  std::unique_ptr<Hodlr> hodlr_K;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_K;
   bool env_built = false;  // environment interior solver set up
 
@@ -898,11 +866,6 @@ struct SubstructuringSolver::Impl
 
   // Save S_E, the region mesh and the sections to the model file. Collective.
   void SaveModel(const std::string &model_path, int sig_w);
-
-  // HODLR compression of S_E (and S^K): its well-separated interface blocks are low rank,
-  // although S_E is not. Built on rank 0 from the gathered rows, broadcast, and applied
-  // replicated. Collective.
-  void CompressInterface(double hodlr_tol);
 
   // The region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct
   // factor, region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact

@@ -5,7 +5,6 @@
 
 #include <cmath>
 #include <limits>
-#include <numeric>
 #include <utility>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -949,90 +948,6 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
         SK_rows[q] = S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
       }
     }
-  }
-}
-
-void SubstructuringSolver::Impl::CompressInterface(double hodlr_tol)
-{
-  const int nG = nG_global;
-  MPI_Comm comm = parent_fes.GetComm();
-  const int rank = Mpi::Rank(comm);
-  // Interface DOF coordinates (replicated) for the clustering: the DOF interpolation
-  // points (H1 nodes, Nedelec edge midpoints) of the parent DOFs.
-  std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
-      coords(static_cast<std::size_t>(nG) * 3, 0.0);
-  const int nt0 = parent_fes.GetTrueVSize();
-  std::vector<double> tdof_xyz(static_cast<std::size_t>(nt0) * 3, 0.0);
-  std::vector<char> have(nt0, 0);
-  mfem::Array<int> edofs;
-  mfem::Vector phys;
-  for (int e = 0; e < parent_fes.GetNE(); e++)
-  {
-    const mfem::FiniteElement *fe = parent_fes.GetFE(e);
-    mfem::ElementTransformation *T = parent.GetElementTransformation(e);
-    const mfem::IntegrationRule &nodes = fe->GetNodes();
-    parent_fes.GetElementDofs(e, edofs);
-    for (int j = 0; j < edofs.Size(); j++)
-    {
-      const int ldof = edofs[j] >= 0 ? edofs[j] : -1 - edofs[j];
-      const int t = parent_fes.GetLocalTDofNumber(ldof);
-      if (t < 0 || have[t])
-      {
-        continue;
-      }
-      T->Transform(nodes.IntPoint(j), phys);
-      for (int d = 0; d < phys.Size() && d < 3; d++)
-      {
-        tdof_xyz[static_cast<std::size_t>(t) * 3 + d] = phys(d);
-      }
-      have[t] = 1;
-    }
-  }
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_gamma[i])
-    {
-      for (int d = 0; d < 3; d++)
-      {
-        coords_loc[static_cast<std::size_t>(gamma_global[i]) * 3 + d] =
-            tdof_xyz[static_cast<std::size_t>(ParentTrueDof(i)) * 3 + d];
-      }
-    }
-  }
-  MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
-  // Compress a dense interface operator, replacing its row blocks.
-  auto compress = [&](std::vector<double> &rows, const char *name)
-  {
-    const std::vector<double> S_full = GatherRows(rows, nG);
-    std::vector<double> buf;
-    int buflen = 0;
-    if (rank == 0)
-    {
-      Hodlr h;
-      h.n = nG;
-      h.perm.assign(nG, 0);
-      std::vector<int> idx(nG);
-      std::iota(idx.begin(), idx.end(), 0);
-      BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);
-      buf = h.Serialize();
-      buflen = static_cast<int>(buf.size());
-    }
-    MPI_Bcast(&buflen, 1, MPI_INT, 0, comm);
-    buf.resize(buflen);
-    MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);
-    auto h = std::make_unique<Hodlr>(Hodlr::Deserialize(buf));
-    const long long ret = h->Storage();
-    rows.clear();
-    rows.shrink_to_fit();
-    Mpi::Print(comm, " HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n",
-               name, hodlr_tol,
-               100.0 * static_cast<double>(ret) / (static_cast<double>(nG) * nG));
-    return h;
-  };
-  hodlr = compress(S_rows, "S_E");
-  if (have_sk)
-  {
-    hodlr_K = compress(SK_rows, "S^K");
   }
 }
 

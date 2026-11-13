@@ -280,11 +280,6 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
   if (magnetostatic)
   {
     SetUpSheets(ra_arr, std::move(two_sided));
-    // The region solve factors A_region_free + S_E with the dense S_E (see
-    // EnsureRegionFactor), which the compression discards.
-    MFEM_VERIFY(!has_sheets || sub.interface_offdiag_tol == 0.0,
-                "Substructuring with London superconductor sheets needs the dense "
-                "interface operator (\"InterfaceOffdiagTol\": 0)!");
     mag_eps = (model_eps > 0.0) ? model_eps
               : has_sheets      ? kMagRegularizationSheets
                                 : kMagRegularization;
@@ -549,7 +544,7 @@ std::string SubstructuringSolver::Impl::SetUpRegionSolver()
     // S_E is a worse preconditioner than none) or A_region_free, chosen at the first
     // solve batch (EnsureRegionFactor).
     region_direct = true;
-    region_dense_eligible = !hodlr && nG > 0 && nG <= kDirectCondensedMaxInterface;
+    region_dense_eligible = nG > 0 && nG <= kDirectCondensedMaxInterface;
     pc = std::make_unique<CallableSolver>(A_region_free->Height(),
                                           [this](const mfem::Vector &r, mfem::Vector &z)
                                           { ApplyRegionFactor(r, z); });
@@ -676,20 +671,12 @@ void SubstructuringSolver::CondenseEnvironment()
       impl->SaveModel(model_path, sig_w);
     }
   }
-  // Optional HODLR compression of the interface operators.
-  if (subcfg.interface_offdiag_tol > 0.0 && nG > 0)
-  {
-    impl->CompressInterface(subcfg.interface_offdiag_tol);
-  }
-
   impl->mat_dtn = std::make_unique<substructuring::MaterializedDtN>(
-      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm,
-      impl->hodlr.get());
+      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   if (impl->have_sk)
   {
     impl->mat_dtn_K = std::make_unique<substructuring::MaterializedDtN>(
-        impl->SK_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm,
-        impl->hodlr_K.get());
+        impl->SK_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
 
   const std::string region_solver = impl->SetUpRegionSolver();
