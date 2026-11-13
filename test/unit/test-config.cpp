@@ -252,6 +252,38 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK_FALSE(ValidateConfig(config).empty());
 }
 
+TEST_CASE("Config Terminal and PrescribedPotential are exclusive",
+          "[config][prescribedpotential][Serial]")
+{
+  // A configuration may not specify both Terminal and PrescribedPotential boundaries (the
+  // electrostatic terminal excitations and the coupon's prescribed-potential basis): the
+  // boundary validation refuses the pair, so IoData does; either one alone passes it.
+  json boundaries = {{"Ground", {{"Attributes", {1}}}},
+                     {"Terminal", {{{"Index", 1}, {"Attributes", {2}}}}},
+                     {"PrescribedPotential",
+                      {{{"Index", 2}, {"Attributes", {3}}, {"DataFile", "trace.csv"}}}}};
+  const auto error = config::Validate(config::BoundaryData(boundaries));
+  REQUIRE(error.has_value());
+  CHECK_THAT(*error, Catch::Matchers::ContainsSubstring(
+                         "\"Terminal\" and \"PrescribedPotential\" cannot both be "
+                         "specified"));
+  for (const auto *key : {"Terminal", "PrescribedPotential"})
+  {
+    INFO("without " << key);
+    auto single = boundaries;
+    single.erase(key);
+    CHECK_FALSE(config::Validate(config::BoundaryData(single)).has_value());
+  }
+  json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                 {"Model", {{"Mesh", "mesh.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", boundaries}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "\"Terminal\" and \"PrescribedPotential\" cannot both be "
+                        "specified"));
+}
+
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
   SECTION("Basic passing config with bool excitation")

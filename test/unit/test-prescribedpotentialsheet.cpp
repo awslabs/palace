@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -24,11 +25,16 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
+#include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -167,6 +173,64 @@ void ConstantE(const mfem::Vector &x, mfem::Vector &E)
   E(2) = 0.0;
 }
 
+// An electrostatic coupon read from its configuration, as the electrostatic driver sets it
+// up: the mesh loaded by mesh::ReadMesh with the crack form of the configuration, the
+// Laplace operator, and the error estimator of ElectrostaticSolver (its recovery space
+// broken across the sheet attributes of the configuration where the mesh has interior faces
+// there).
+struct PrescribedSheetCoupon
+{
+  IoData iodata;
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  std::unique_ptr<LaplaceOperator> laplace_op;
+  std::unique_ptr<GradFluxErrorEstimator<Vector>> estimator;
+
+  explicit PrescribedSheetCoupon(const json &config) : iodata(config, false)
+  {
+    meshes.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    laplace_op = std::make_unique<LaplaceOperator>(iodata, meshes);
+    const auto &linear = iodata.solver.linear;
+    estimator = std::make_unique<GradFluxErrorEstimator<Vector>>(
+        laplace_op->GetMaterialOp(), laplace_op->GetNDSpace(), laplace_op->GetRTSpaces(),
+        linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg,
+        iodata.boundaries.GetSheetAttributes());
+  }
+
+  // The largest error indicator of the field that jumps across the sheet.
+  double JumpIndicator(const GradFluxErrorEstimator<Vector> &jump_estimator) const
+  {
+    mfem::VectorFunctionCoefficient coeff(3, JumpE);
+    mfem::ParGridFunction gf(&laplace_op->GetNDSpace().Get());
+    gf.ProjectCoefficient(coeff);
+    Vector E(laplace_op->GetNDSpace().GetTrueVSize());
+    gf.ParallelProject(E);
+    ErrorIndicator indicator;
+    jump_estimator.AddErrorIndicator(E, 0.5, indicator);
+    return indicator.Max(Mpi::World());
+  }
+
+  // The interface dielectric energies of the jump field (SurfacePostOperator from the
+  // configuration, as PostOperator builds it), by entry index.
+  std::vector<double> JumpInterfaceEnergies(const std::vector<int> &indices) const
+  {
+    SurfacePostOperator surf_post_op(iodata, laplace_op->GetMaterialOp(),
+                                     laplace_op->GetH1Space(), laplace_op->GetNDSpace());
+    GridFunction E(laplace_op->GetNDSpace());
+    mfem::VectorFunctionCoefficient f(3, JumpE);
+    E.Real().ProjectCoefficient(f);
+    Vector e(laplace_op->GetNDSpace().GetTrueVSize());
+    E.Real().GetTrueDofs(e);
+    E.Real().SetFromTrueDofs(e);
+    E.Real().ExchangeFaceNbrData();
+    std::vector<double> energies;
+    for (const int idx : indices)
+    {
+      energies.push_back(surf_post_op.GetInterfaceElectricFieldEnergy(idx, E));
+    }
+    return energies;
+  }
+};
+
 }  // namespace
 
 TEST_CASE("PrescribedPotential sheet classification",
@@ -295,6 +359,93 @@ TEST_CASE("PrescribedPotential sheet on an uncracked mesh",
     CHECK_THAT(sum_const, WithinRel(2.0 * avg_const, 1.0e-10));
     CHECK_THAT(sum_jump, WithinRel(sum_const, 1.0e-10));
     CHECK(std::abs(avg_jump) < 1.0e-10 * avg_const);
+  }
+}
+
+TEST_CASE("PrescribedPotential sheet end to end in both crack forms",
+          "[prescribedpotential][errorestimator][surfacepostoperator][Serial][Parallel]")
+{
+  // P3-31 (SL2 review m-4 (b); SD-201; PLAN-ERRATUM-1560 E-1): an electrostatic coupon with
+  // an interior PrescribedPotential sheet (its trace, or its one-volt conductor), read from
+  // its configuration under the legacy key (the sheet is cracked) and the new default (not
+  // cracked), through the electrostatic driver's wiring: the driver's error estimator
+  // recovers the flux of a field that jumps across the sheet exactly in both forms (a
+  // broken recovery space on the uncracked mesh, the crack on the legacy one), and the
+  // interface dielectric energies of SurfacePostOperator built from the configuration sum
+  // both sides of the uncracked sheet, equal to the per-copy sum on the cracked one.
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const bool sheet_is_terminal = GENERATE(false, true);
+  CAPTURE(static_cast<int>(type), sheet_is_terminal);
+  test::SharedTempDir temp;
+  const auto mesh_path = temp.temp_dir / "sheet-cube.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    auto smesh = MakeInteriorSheetCubeMesh(4, type);
+    std::ofstream output(mesh_path);
+    smesh.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  json boundaries = PrescribedSheetBoundaries(sheet_is_terminal);
+  boundaries["Postprocessing"] = {{"Dielectric", json::array({{{"Index", 1},
+                                                               {"Attributes", {sheet_attr}},
+                                                               {"Type", "Default"},
+                                                               {"Thickness", 2.0e-3},
+                                                               {"Permittivity", 10.0}},
+                                                              {{"Index", 2},
+                                                               {"Attributes", {sheet_attr}},
+                                                               {"Type", "MS"},
+                                                               {"Thickness", 2.0e-3},
+                                                               {"Permittivity", 10.0}}})}};
+  auto Config = [&](bool legacy_key)
+  {
+    json config = {
+        {"Problem",
+         {{"Type", "Electrostatic"}, {"Verbose", 0}, {"Output", temp.temp_dir.string()}}},
+        {"Model", {{"Mesh", mesh_path.string()}}},
+        {"Domains",
+         {{"Materials", json::array({{{"Attributes", {1}}, {"Permittivity", 2.0}}})}}},
+        {"Boundaries", boundaries},
+        {"Solver",
+         {{"Order", 1},
+          {"Linear", {{"EstimatorTol", 1.0e-14}, {"EstimatorMaxIts", 10000}}}}}};
+    if (legacy_key)
+    {
+      config["Model"]["CrackInternalBoundaryElements"] = true;
+    }
+    return config;
+  };
+  PrescribedSheetCoupon legacy(Config(true)), uncracked(Config(false));
+  REQUIRE(legacy.iodata.boundaries.cracked_attributes.contains(sheet_attr));
+  REQUIRE(!uncracked.iodata.boundaries.cracked_attributes.contains(sheet_attr));
+
+  // The recovery space is broken across the uncracked sheet only; the flux of the jump
+  // field is recovered in both forms (indicator at round-off), not on a continuous space.
+  CHECK(uncracked.estimator->GetFluxSpace().GlobalTrueVSize() >
+        uncracked.laplace_op->GetRTSpace().GlobalTrueVSize());
+  CHECK(legacy.estimator->GetFluxSpace().GlobalTrueVSize() ==
+        legacy.laplace_op->GetRTSpace().GlobalTrueVSize());
+  const auto &linear = uncracked.iodata.solver.linear;
+  GradFluxErrorEstimator<Vector> continuous(
+      uncracked.laplace_op->GetMaterialOp(), uncracked.laplace_op->GetNDSpace(),
+      uncracked.laplace_op->GetRTSpaces(), linear.estimator_tol, linear.estimator_max_it, 0,
+      linear.estimator_mg);
+  const double reference = uncracked.JumpIndicator(continuous);
+  const double broken = uncracked.JumpIndicator(*uncracked.estimator);
+  const double cracked = legacy.JumpIndicator(*legacy.estimator);
+  CAPTURE(reference, broken, cracked);
+  CHECK(reference > 1.0e-2);
+  CHECK(broken < 1.0e-6 * reference);
+  CHECK(cracked < 1.0e-6 * reference);
+
+  // The two-sided interface energies (Default and MS: the permittivity 2 on both sides
+  // makes both substrate sides) equal the per-copy sums of the cracked sheet.
+  const auto legacy_energies = legacy.JumpInterfaceEnergies({1, 2});
+  const auto uncracked_energies = uncracked.JumpInterfaceEnergies({1, 2});
+  for (std::size_t i = 0; i < legacy_energies.size(); i++)
+  {
+    INFO("interface " << i + 1);
+    CHECK(legacy_energies[i] > 0.0);
+    CHECK_THAT(uncracked_energies[i], WithinRel(legacy_energies[i], 1.0e-10));
   }
 }
 
