@@ -68,15 +68,15 @@ set(EXTERN_HYPRE_GIT_TAG
 
 # libCEED
 set(EXTERN_LIBCEED_URL
-  "https://github.com/CEED/libCEED.git" CACHE STRING
+  "https://github.com/dnpham23/libCEED.git" CACHE STRING
   "URL for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_BRANCH
-  "main" CACHE STRING
+  "linear-element-assembly" CACHE STRING
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "v1.0.1" CACHE STRING
+  "2d55eaab7b9ce16969f7963d149e1329660d0bf0" CACHE STRING
   "Git tag for external libCEED build"
 )
 

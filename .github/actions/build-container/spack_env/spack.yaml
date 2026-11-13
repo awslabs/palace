@@ -38,6 +38,9 @@ spack:
     # We do not want to include the full Python stack in the container
     rdma-core:
       require: ~pyverbs
+    # libCEED with CeedOperatorSetLinearElementAssembly, from the local package
+    libceed:
+      require: "@1.1.0.lea"
   container:
     format: docker
     template: PalaceDockerfile
