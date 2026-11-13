@@ -320,10 +320,21 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
 void ConcretizeBoundaries(const config::BoundaryData &boundaries,
                           const config::DomainData &domains, json &j_boundaries)
 {
-  // Extruded PML, the last PML block.
-  if (j_boundaries.contains("PML") && !domains.pml.empty())
+  // Extruded PML: each entry matches the first block of its index (the configuration is
+  // resolved before the extrusion replaces each entry with the blocks of its parts).
+  if (j_boundaries.contains("PML") && j_boundaries["PML"].is_array())
   {
-    ConcretizePML(domains.pml.back(), j_boundaries["PML"]);
+    auto &j_pml = j_boundaries["PML"];
+    for (std::size_t i = 0; i < j_pml.size(); i++)
+    {
+      const auto it = std::ranges::find_if(
+          domains.pml, [&](const auto &pml)
+          { return pml.IsExtruded() && pml.extrusion.entry == static_cast<int>(i); });
+      if (it != domains.pml.end())
+      {
+        ConcretizePML(*it, j_pml[i]);
+      }
+    }
   }
 
   // Absorbing (farfield) boundary. Only touch it if the user declared it.

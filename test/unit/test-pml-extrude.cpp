@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
@@ -101,6 +102,17 @@ config::PMLData MakePML(json extra = json::object())
   return config::PMLData(pml, true);
 }
 
+// Extrude the entry pml of config["Boundaries"]["PML"], whose surface must be one part, and
+// replace it with its block.
+void ExtrudeEntry(std::unique_ptr<mfem::Mesh> &mesh, config::PMLData &pml,
+                  const config::BoundaryData &boundaries = {})
+{
+  std::vector<config::PMLData> blocks = {pml};
+  mesh::ExtrudePML(mesh, blocks, boundaries);
+  REQUIRE(blocks.size() == 1);
+  pml = std::move(blocks[0]);
+}
+
 // Position of the nodal degree of freedom j of element e (or boundary element) of a mesh
 // with H1 nodes.
 mfem::Vector NodePosition(const mfem::Mesh &mesh, int e, int j, bool bdr = false)
@@ -149,7 +161,7 @@ TEST_CASE("ExtrudePML on a sphere", "[pml][geodata][Serial]")
   auto mesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, order));
   const int ne = mesh->GetNE(), nbe = mesh->GetNBE();
   auto pml = MakePML();
-  mesh::ExtrudePML(mesh, pml, {});
+  ExtrudeEntry(mesh, pml, {});
 
   // The default core is the centre of the bounding box of the sphere.
   CHECK(pml.extrusion.center[0] == pml.extrusion.center[1]);
@@ -250,7 +262,7 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
       mesh = std::move(copy);
     }
     auto pml = MakePML(extra);
-    mesh::ExtrudePML(mesh, pml, boundaries);
+    ExtrudeEntry(mesh, pml, boundaries);
   };
 
   // A core outside of the box: the face x = 1 faces away from it.
@@ -277,7 +289,7 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     }
     mesh->SetAttributes();
     auto pml = MakePML(extra);
-    mesh::ExtrudePML(mesh, pml, {});
+    ExtrudeEntry(mesh, pml, {});
     return pml.extrusion.depth;
   };
   CHECK(ExtrudeFace(json::object()) == config::PMLData::Extrusion::Depth::NORMAL);
@@ -288,12 +300,12 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
   {
     auto mesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, 1));
     auto pml = MakePML({{"Thickness", 0.01}});
-    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, pml, {}),
+    CHECK_THROWS_WITH(ExtrudeEntry(mesh, pml, {}),
                       ContainsSubstring("The extruded PML does not fit") &&
                           ContainsSubstring("a sphere around its centre"));
     mesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, 1));
     pml = MakePML({{"Thickness", 10.0}});
-    CHECK_NOTHROW(mesh::ExtrudePML(mesh, pml, {}));
+    CHECK_NOTHROW(ExtrudeEntry(mesh, pml, {}));
     CHECK(pml.extrusion.depth == config::PMLData::Extrusion::Depth::DISTANCE);
   }
   // No boundary elements, and a back attribute of the mesh.
@@ -317,7 +329,7 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     }
     mesh->SetAttributes();
     auto pml = MakePML();
-    mesh::ExtrudePML(mesh, pml, boundaries);
+    ExtrudeEntry(mesh, pml, boundaries);
   };
   config::BoundaryData boundaries;
   CHECK_NOTHROW(ExtrudeWithPort(boundaries));
@@ -346,7 +358,7 @@ TEST_CASE("ExtrudePML extends other boundaries through the layer", "[pml][geodat
   mesh->SetAttributes();
   const int nbe = mesh->GetNBE();
   auto pml = MakePML();
-  mesh::ExtrudePML(mesh, pml, {});
+  ExtrudeEntry(mesh, pml, {});
   // The sides have 8 boundary edges with the face, each extended into 2 quadrilaterals in
   // the plane of its side, and the mesh has no exterior face without a boundary element.
   int n_side = 0;
@@ -398,8 +410,9 @@ mfem::Mesh MakeBoxTop(mfem::Element::Type type, int n, int order)
 }
 
 // Cylinder of radius 1 around the z-axis, z ∈ [-1, 1], meshed from the box [-1, 1]³, with
-// the nodes of its wall (boundary attribute 1) on the cylinder, and its caps of boundary
-// attribute 2.
+// the nodes of its wall (boundary attribute 1) on the cylinder (by the smooth map (x, y) ↦
+// (x (1 - y² / 2)^½, y (1 - x² / 2)^½) of the square onto the disk), and its caps of
+// boundary attribute 2.
 mfem::Mesh MakeCylinder(mfem::Element::Type type, int n, int order)
 {
   auto mesh = MakeBox(type, n, order);
@@ -407,13 +420,8 @@ mfem::Mesh MakeCylinder(mfem::Element::Type type, int n, int order)
       [](const mfem::Vector &x, mfem::Vector &y)
       {
         y = x;
-        const double r = std::hypot(x(0), x(1)),
-                     r_inf = std::max(std::abs(x(0)), std::abs(x(1)));
-        if (r > 0.0)
-        {
-          y(0) *= r_inf / r;
-          y(1) *= r_inf / r;
-        }
+        y(0) = x(0) * std::sqrt(1.0 - 0.5 * x(1) * x(1));
+        y(1) = x(1) * std::sqrt(1.0 - 0.5 * x(0) * x(0));
       });
   for (int be = 0; be < mesh.GetNBE(); be++)
   {
@@ -489,7 +497,7 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
   // The face z = 1 of a box, along its normal.
   auto smesh = std::make_unique<mfem::Mesh>(MakeBoxTop(type, 2, order));
   auto pml = MakePML({{"Attributes", {2}}});
-  mesh::ExtrudePML(smesh, pml, {});
+  ExtrudeEntry(smesh, pml, {});
   REQUIRE(pml.extrusion.depth == Depth::NORMAL);
   CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x) { return x(2) - 1.0; }) <
         1.0e-12);
@@ -499,7 +507,7 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
   {
     smesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, order));
     pml = MakePML();
-    mesh::ExtrudePML(smesh, pml, {});
+    ExtrudeEntry(smesh, pml, {});
     REQUIRE(pml.extrusion.depth == Depth::DISTANCE);
     CHECK_THAT(pml.extrusion.distance, Matchers::WithinAbs(1.0, 1.0e-12));
     CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x) { return x.Norml2() - 1.0; }) <
@@ -508,10 +516,180 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
     // The wall of a cylinder, at the distance 1 from its axis.
     smesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, 2, order));
     pml = MakePML({{"Attributes", {1}}, {"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}});
-    mesh::ExtrudePML(smesh, pml, {});
+    ExtrudeEntry(smesh, pml, {});
     REQUIRE(pml.extrusion.depth == Depth::DISTANCE);
     CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x)
                      { return std::hypot(x(0), x(1)) - 1.0; }) < 1.0e-12);
+  }
+}
+
+namespace
+{
+
+// Extrude the entries of config["Boundaries"]["PML"], replaced by the blocks of their
+// parts.
+std::vector<config::PMLData> ExtrudeEntries(std::unique_ptr<mfem::Mesh> &mesh,
+                                            const std::vector<json> &entries)
+{
+  std::vector<config::PMLData> blocks;
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    blocks.emplace_back(entries[i], true).extrusion.entry = static_cast<int>(i);
+  }
+  mesh::ExtrudePML(mesh, blocks, {});
+  return blocks;
+}
+
+// Number of boundary elements with the given attribute, and whether every exterior face of
+// the mesh has a boundary element.
+int CountBdrElements(const mfem::Mesh &mesh, int attr)
+{
+  int count = 0;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    count += (mesh.GetBdrAttribute(be) == attr);
+  }
+  return count;
+}
+
+bool ExteriorHasBdrElements(const mfem::Mesh &mesh)
+{
+  std::vector<bool> has_bdr(mesh.GetNumFaces(), false);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    has_bdr[mesh.GetBdrElementFaceIndex(be)] = true;
+  }
+  for (int f = 0; f < mesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    mesh.GetFaceElements(f, &e1, &e2);
+    if (e2 < 0 && !has_bdr[f])
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+TEST_CASE("ExtrudePML splits the surface into parts", "[pml][geodata][Serial]")
+{
+  using Depth = config::PMLData::Extrusion::Depth;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int n = 2;
+
+  SECTION("Pipe")
+  {
+    // The ends z = ±1 of the box (attributes 5 and 6) of one entry are two flat parts, each
+    // along its own normal, or of two entries with their own thickness. The walls
+    // (attribute 1) extend through both layers.
+    for (const bool two : {false, true})
+    {
+      auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, n, 1));
+      for (int be = 0; be < mesh->GetNBE(); be++)
+      {
+        mfem::Vector c(3);
+        mfem::IsoparametricTransformation T;
+        mesh->GetBdrElementTransformation(be, &T);
+        T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+        mesh->SetBdrAttribute(be, (c(2) > 1.0 - 1.0e-12)    ? 6
+                                  : (c(2) < -1.0 + 1.0e-12) ? 5
+                                                            : 1);
+      }
+      mesh->SetAttributes();
+      const int ne = mesh->GetNE(), n_walls = CountBdrElements(*mesh, 1);
+      const json end = {{"Thickness", 0.1}, {"Layers", 2}};
+      auto blocks =
+          two ? ExtrudeEntries(mesh,
+                               {{{"Attributes", {5}}, {"Thickness", 0.1}, {"Layers", 2}},
+                                {{"Attributes", {6}}, {"Thickness", 0.2}, {"Layers", 3}}})
+              : ExtrudeEntries(
+                    mesh, {{{"Attributes", {5, 6}}, {"Thickness", 0.1}, {"Layers", 2}}});
+      REQUIRE(blocks.size() == 2);
+      for (const auto &block : blocks)
+      {
+        REQUIRE(block.extrusion.depth == Depth::NORMAL);
+        const double nz = block.extrusion.plane[2];
+        CHECK_THAT(std::abs(nz), Matchers::WithinAbs(1.0, 1.0e-12));
+        CHECK(DepthError(*mesh, block,
+                         [&](const mfem::Vector &x) { return nz * x(2) - 1.0; }) < 1.0e-12);
+      }
+      CHECK(blocks[0].attributes != blocks[1].attributes);
+      CHECK(blocks[0].extrusion.back_attribute == blocks[1].extrusion.back_attribute);
+      CHECK(MinExtrudedJacobian(*mesh, ne, 1) > 0.0);
+      // 4 n edges at each end, each extended into one quadrilateral per layer.
+      CHECK(CountBdrElements(*mesh, 1) == n_walls + 4 * n * (two ? 2 + 3 : 2 * 2));
+      CHECK(ExteriorHasBdrElements(*mesh));
+    }
+  }
+
+  SECTION("Cube")
+  {
+    // With the normal extrusion, each face is a cuboid along its normal, whose sides exposed
+    // along the edges of the cube have the back attribute.
+    auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 3, 1));
+    const int ne = mesh->GetNE(), nbe = mesh->GetNBE();
+    auto blocks = ExtrudeEntries(mesh, {{{"Attributes", {1}},
+                                         {"Thickness", 0.5},
+                                         {"Layers", 2},
+                                         {"Extrusion", "Normal"}}});
+    CHECK(MinExtrudedJacobian(*mesh, ne, 1) > 0.0);
+    CHECK(ExteriorHasBdrElements(*mesh));
+    const int back = blocks[0].extrusion.back_attribute;
+    REQUIRE(blocks.size() == 6);
+    for (const auto &block : blocks)
+    {
+      REQUIRE(block.extrusion.depth == Depth::NORMAL);
+      const auto &plane = block.extrusion.plane;
+      CHECK(DepthError(*mesh, block,
+                       [&](const mfem::Vector &x)
+                       { return plane[0] * x(0) + plane[1] * x(1) + plane[2] * x(2) - 1.0; }) <
+            1.0e-12);
+      CHECK(block.extrusion.back_attribute == back);
+    }
+    // The back of each face, and 4 sides of n edges each with one quadrilateral per layer.
+    CHECK(CountBdrElements(*mesh, back) == nbe + 6 * 4 * 3 * 2);
+  }
+
+  SECTION("Closed cylinder")
+  {
+    // The caps (attribute 2) are two flat parts along their normals, and the wall
+    // (attribute 1) is at the distance 1 from its axis. The layers meet only along the
+    // rims, where both have exposed sides.
+    auto mesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, n, 2));
+    const int ne = mesh->GetNE(), n_caps = CountBdrElements(*mesh, 2),
+              n_wall = CountBdrElements(*mesh, 1);
+    auto blocks =
+        ExtrudeEntries(mesh, {{{"Attributes", {2}}, {"Thickness", 0.1}, {"Layers", 2}},
+                              {{"Attributes", {1}},
+                               {"Thickness", 0.1},
+                               {"Layers", 2},
+                               {"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}}});
+    REQUIRE(blocks.size() == 3);
+    CHECK(MinExtrudedJacobian(*mesh, ne, 2) > 0.0);
+    CHECK(ExteriorHasBdrElements(*mesh));
+    for (int b = 0; b < 2; b++)
+    {
+      REQUIRE(blocks[b].extrusion.depth == Depth::NORMAL);
+      const double nz = blocks[b].extrusion.plane[2];
+      CHECK(DepthError(*mesh, blocks[b],
+                       [&](const mfem::Vector &x) { return nz * x(2) - 1.0; }) < 1.0e-12);
+    }
+    REQUIRE(blocks[2].extrusion.depth == Depth::DISTANCE);
+    CHECK(DepthError(*mesh, blocks[2], [](const mfem::Vector &x)
+                     { return std::hypot(x(0), x(1)) - 1.0; }) < 1.0e-12);
+    // The rim of each cap has 4 n edges, with one exposed side per layer on each of the two
+    // layers which meet there.
+    const int back = blocks[0].extrusion.back_attribute;
+    CHECK(CountBdrElements(*mesh, back) == n_caps + n_wall + 2 * 2 * (4 * n * 2));
+
+    // The wall is curved, and cannot be extruded along its normal.
+    mesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, n, 2));
+    CHECK_THROWS_WITH(
+        ExtrudeEntries(
+            mesh, {{{"Attributes", {1}}, {"Thickness", 0.1}, {"Extrusion", "Normal"}}}),
+        Matchers::ContainsSubstring("is curved"));
   }
 }
 
@@ -545,7 +723,7 @@ TEST_CASE("ExtrudePML along the normal of a periodic boundary", "[pml][geodata][
     boundaries.periodic.boundary_pairs[1].receiver_attributes = {4};
     auto mesh = std::make_unique<mfem::Mesh>(periodic_mesh);
     auto pml = MakePML(extra);
-    mesh::ExtrudePML(mesh, pml, boundaries);
+    ExtrudeEntry(mesh, pml, boundaries);
     return std::make_pair(std::move(mesh), pml);
   };
   const int ne = periodic_mesh.GetNE(), nbe = periodic_mesh.GetNBE();
@@ -588,7 +766,8 @@ TEST_CASE("ExtrudePML along the normal of a periodic boundary", "[pml][geodata][
     boundaries.periodic.boundary_pairs[0].receiver_attributes = {3};
     auto pml =
         MakePML({{"Attributes", {6}}, {"Center", {{0.5, 0.0, -1.0}, {0.5, 1.0, -1.0}}}});
-    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, pml, boundaries),
+    std::vector<config::PMLData> blocks = {pml};
+    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, blocks, boundaries),
                       Matchers::ContainsSubstring("would flare the two sides"));
   }
 }
@@ -972,7 +1151,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   domains.pml[0].kappa_max.fill(1.5);
   domains.pml[0].frequency_dependent = frequency_dependent;
   domains.pml[0].alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
-  mesh::ExtrudePML(serial_mesh, domains.pml[0], {});
+  mesh::ExtrudePML(serial_mesh, domains.pml, {});
   std::vector<std::unique_ptr<Mesh>> mesh;
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   for (int l = 0; l < refine; l++)
@@ -1092,10 +1271,10 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
 namespace
 {
 
-// Driven configuration with config["Boundaries"]["PML"].
+// Driven configuration with config["Boundaries"]["PML"], of one entry or an array of them.
 json MakeConfig(json pml, json boundaries = json::object())
 {
-  boundaries["PML"] = pml;
+  boundaries["PML"] = pml.is_array() ? pml : json::array({pml});
   return json{
       {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
       {"Model", {{"Mesh", "test.msh"}}},
@@ -1124,8 +1303,8 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
     CHECK(data.reference_frequency == 1.0);
     auto config = IoData::ConcretizeDefaults(iodata, MakeConfig(pml));
     CHECK(ValidateConfig(config).empty());
-    CHECK(config["Boundaries"]["PML"]["Layers"] == 4);
-    CHECK(config["Boundaries"]["PML"]["SigmaMax"] == "Auto");
+    CHECK(config["Boundaries"]["PML"][0]["Layers"] == 4);
+    CHECK(config["Boundaries"]["PML"][0]["SigmaMax"] == "Auto");
     IoData iodata2(config, false);
     CHECK(iodata2.domains.pml.at(0).extrusion.layers == 4);
   }
@@ -1137,6 +1316,67 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
     const auto &ex = iodata.domains.pml.at(0).extrusion;
     CHECK(ex.layers == 3);
     CHECK(iodata.domains.pml[0].sigma_max == std::array<double, 3>{2.0, 2.0, 2.0});
+  }
+
+  // Several entries are the last PML blocks, in order, each resolved with its own defaults,
+  // and their surfaces must be disjoint.
+  {
+    const json entries = {{{"Attributes", {4}}, {"Thickness", 0.5}},
+                          {{"Attributes", {5, 6}}, {"Thickness", 0.2}, {"Layers", 8}}};
+    auto config = MakeConfig(entries);
+    config["Domains"]["Materials"][0]["Attributes"] = {1, 2};
+    config["Domains"]["PML"] = {{{"Attributes", {2}}}};
+    CHECK(ValidateConfig(config).empty());
+    IoData iodata(config, false);
+    REQUIRE(iodata.domains.pml.size() == 3);
+    CHECK(!iodata.domains.pml[0].IsExtruded());
+    CHECK(iodata.domains.pml[1].extrusion.entry == 0);
+    CHECK(iodata.domains.pml[2].extrusion.entry == 1);
+    CHECK(iodata.domains.pml[2].extrusion.attributes == std::vector<int>{5, 6});
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Boundaries"]["PML"][0]["Layers"] == 4);
+    CHECK(resolved["Boundaries"]["PML"][1]["Layers"] == 8);
+    CHECK(ValidateConfig(resolved).empty());
+    auto overlap = entries;
+    overlap[1]["Attributes"] = {4, 6};
+    CHECK_THROWS_WITH(IoData(MakeConfig(overlap), false),
+                      ContainsSubstring("is in more than one entry"));
+  }
+
+  // The entries form an array, and the extrusion is "Normal" or "Radial", with "Center"
+  // only for the radial extrusion.
+  {
+    auto config = MakeConfig(pml);
+    config["Boundaries"]["PML"] = pml;
+    CHECK_FALSE(ValidateConfig(config).empty());
+    CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("array of entries"));
+  }
+  for (const auto &[extrusion, center, valid] :
+       std::vector<std::tuple<std::string, bool, bool>>{{"Normal", false, true},
+                                                        {"Radial", false, true},
+                                                        {"Radial", true, true},
+                                                        {"Normal", true, false},
+                                                        {"Ray", false, false}})
+  {
+    auto entry = pml;
+    entry["Extrusion"] = extrusion;
+    if (center)
+    {
+      entry["Center"] = {0.0, 0.0, 0.0};
+    }
+    INFO("Extrusion: " << extrusion << ", Center: " << center);
+    CHECK(ValidateConfig(MakeConfig(entry)).empty() == valid);
+    if (valid)
+    {
+      IoData iodata(MakeConfig(entry), false);
+      CHECK(iodata.domains.pml.at(0).extrusion.type ==
+            ((extrusion == "Normal") ? config::PMLData::Extrusion::Type::NORMAL
+                                     : config::PMLData::Extrusion::Type::RADIAL));
+    }
+    else
+    {
+      CHECK_THROWS_WITH(IoData(MakeConfig(entry), false), ContainsSubstring("PML."));
+    }
   }
 
   // The surface cannot have another boundary condition, the layer is refined uniformly or
@@ -1198,7 +1438,7 @@ TEST_CASE("Config extruded PML center", "[config][schema][pml][Serial]")
     CHECK(ex.has_center);
     CHECK(json(ex.center) == ((center == point) ? json{point, point} : segment));
     const auto resolved = IoData::ConcretizeDefaults(iodata, Config(center));
-    CHECK(resolved["Boundaries"]["PML"]["Center"] == center);
+    CHECK(resolved["Boundaries"]["PML"][0]["Center"] == center);
     CHECK(ValidateConfig(resolved).empty());
     IoData iodata2(resolved, false);
     CHECK(iodata2.domains.pml.at(0).extrusion.center == ex.center);
@@ -1207,7 +1447,7 @@ TEST_CASE("Config extruded PML center", "[config][schema][pml][Serial]")
     const auto config = MakeConfig({{"Attributes", {4}}, {"Thickness", 0.5}});
     IoData iodata(config, false);
     CHECK(!iodata.domains.pml.at(0).extrusion.has_center);
-    CHECK(!IoData::ConcretizeDefaults(iodata, config)["Boundaries"]["PML"].contains(
+    CHECK(!IoData::ConcretizeDefaults(iodata, config)["Boundaries"]["PML"][0].contains(
         "Center"));
   }
 

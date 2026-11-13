@@ -28,14 +28,16 @@
     ],
     "PEC": { "Attributes": [4] },
     "PML":
-    {
-      "Attributes": [5],
-      "Thickness": 0.1,
-      "Layers": 7,
-      "Center": [0.0, 0.0, -9.6],
-      "Order": 3,
-      "ReferenceFrequency": 3.0
-    }
+    [
+      {
+        "Attributes": [5],
+        "Thickness": 0.1,
+        "Layers": 7,
+        "Center": [0.0, 0.0, -9.6],
+        "Order": 3,
+        "ReferenceFrequency": 3.0
+      }
+    ]
   },
   "Solver":
   {

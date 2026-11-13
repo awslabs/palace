@@ -1202,9 +1202,11 @@ MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_de
       serial_mesh->SetBdrAttribute(i, (center(2) > 1.0 - 1.0e-12) ? 1 : 2);
     }
     serial_mesh->SetAttributes();
-    pml = config::PMLData(
-        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true);
-    mesh::ExtrudePML(serial_mesh, pml, {});
+    std::vector<config::PMLData> blocks = {config::PMLData(
+        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true)};
+    mesh::ExtrudePML(serial_mesh, blocks, {});
+    REQUIRE(blocks.size() == 1);
+    pml = blocks[0];
   }
   else
   {

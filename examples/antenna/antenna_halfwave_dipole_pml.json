@@ -23,11 +23,13 @@
     "Boundaries":
     {
         "PML":
-        {
-            "Attributes": [4],
-            "Thickness": 1.0,  // m
-            "Layers": 4
-        },
+        [
+            {
+                "Attributes": [4],
+                "Thickness": 1.0,  // m
+                "Layers": 4
+            }
+        ],
         "PEC":
         {
           "Attributes": [1, 2]

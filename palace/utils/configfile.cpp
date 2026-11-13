@@ -395,6 +395,15 @@ PMLData::PMLData(const json &pml, bool extruded)
       }
       ex.has_center = true;
     }
+    if (auto it = pml.find("Extrusion"); it != pml.end())
+    {
+      MFEM_VERIFY(it->is_string() && (*it == "Normal" || *it == "Radial"),
+                  "\"PML.Extrusion\" must be \"Normal\" or \"Radial\"!");
+      ex.type = (*it == "Normal") ? Extrusion::Type::NORMAL : Extrusion::Type::RADIAL;
+      MFEM_VERIFY(ex.type != Extrusion::Type::NORMAL || !ex.has_center,
+                  "\"PML.Center\" is only used for the radial extrusion, not with "
+                  "\"Extrusion\": \"Normal\"!");
+    }
     ex.back_attribute = pml.value("BackAttribute", ex.back_attribute);
     MFEM_VERIFY(!pml.contains("BackAttribute") || ex.back_attribute > 0,
                 "\"PML.BackAttribute\" must be positive!");

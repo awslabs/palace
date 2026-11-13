@@ -163,7 +163,7 @@ example in place of the `"Absorbing"` boundary on the outer sphere of the
 ```json
 "Boundaries":
 {
-  "PML": { "Attributes": [4], "Thickness": 1.0, "Layers": 4 }
+  "PML": [{ "Attributes": [4], "Thickness": 1.0, "Layers": 4 }]
 }
 ```
 

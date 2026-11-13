@@ -298,13 +298,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 
   // Extrude the PML regions from the refined surface of the mesh, so that they are not
   // refined.
-  for (auto &pml : iodata.domains.pml)
+  if (std::ranges::any_of(iodata.domains.pml,
+                          [](const auto &pml) { return pml.IsExtruded(); }))
   {
-    if (pml.IsExtruded())
-    {
-      ExtrudePML(smesh, pml, iodata.boundaries);
-      ApplyPMLExtrusion(iodata);
-    }
+    ExtrudePML(smesh, iodata.domains.pml, iodata.boundaries);
+    ApplyPMLExtrusion(iodata);
   }
 
   // Exterior-boundary check and optional material-interface / crack boundary element
@@ -3163,15 +3161,40 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
 
 void ApplyPMLExtrusion(IoData &iodata, MPI_Comm comm)
 {
-  for (auto &pml : iodata.domains.pml)
+  // With comm, the extruded blocks of the root, one for each part of each entry of
+  // config["Boundaries"]["PML"], replace those of the other processes, which may still be
+  // the entries. The extruded blocks are the last ones.
+  auto &blocks = iodata.domains.pml;
+  if (comm != MPI_COMM_NULL)
   {
-    if (!pml.IsExtruded())
+    std::map<int, config::PMLData> entries;
+    std::vector<config::PMLData> extruded;
+    for (const auto &pml : blocks)
     {
-      continue;
+      if (pml.IsExtruded())
+      {
+        entries.try_emplace(pml.extrusion.entry, pml);
+        extruded.push_back(pml);
+      }
     }
-    auto &ex = pml.extrusion;
-    if (comm != MPI_COMM_NULL)
+    std::erase_if(blocks, [](const auto &pml) { return pml.IsExtruded(); });
+    const bool root = Mpi::Root(comm);
+    int num_blocks = static_cast<int>(extruded.size());
+    Mpi::Broadcast(1, &num_blocks, 0, comm);
+    if (!root)
     {
+      extruded.clear();
+    }
+    for (int b = 0; b < num_blocks; b++)
+    {
+      int entry = root ? extruded[b].extrusion.entry : 0;
+      Mpi::Broadcast(1, &entry, 0, comm);
+      if (!root)
+      {
+        extruded.push_back(entries.at(entry));
+      }
+      auto &pml = extruded[b];
+      auto &ex = pml.extrusion;
       int n = static_cast<int>(pml.attributes.size());
       Mpi::Broadcast(1, &n, 0, comm);
       pml.attributes.resize(n);
@@ -3186,6 +3209,15 @@ void ApplyPMLExtrusion(IoData &iodata, MPI_Comm comm)
       Mpi::Broadcast(1, &ex.distance, 0, comm);
       Mpi::Broadcast(4, ex.plane.data(), 0, comm);
     }
+    blocks.insert(blocks.end(), extruded.begin(), extruded.end());
+  }
+  for (auto &pml : blocks)
+  {
+    if (!pml.IsExtruded())
+    {
+      continue;
+    }
+    auto &ex = pml.extrusion;
     for (std::size_t i = 0; i < pml.attributes.size(); i++)
     {
       auto &attributes = iodata.domains.attributes;
@@ -3275,19 +3307,21 @@ bool SamePlane(const std::array<double, 4> &a, const std::array<double, 4> &b, d
 namespace mesh
 {
 
-void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
+void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLData> &pml,
                 const config::BoundaryData &boundaries)
 {
-  // The extruded layer is built on the faces of the boundary with the given attributes.
-  // Each geometry node of a face moves along its direction d to the depths ξ_k = k t / N,
-  // k = 1, ..., N: each triangle becomes N prisms and each quadrilateral N hexahedra. A
-  // flat surface is extruded along its outward normal, unless a core is configured; any
-  // other surface along the ray of each node from its closest point on the core. With the
-  // face vertices ordered so that their normal points out of the element below (as for the
-  // faces of MFEM meshes on the exterior boundary), the bottom face of each new element is
-  // its face 0, with its outward normal pointing along d (the reference coordinate z of the
-  // prism or hexahedron is the depth into its layer).
-  auto &ex = pml.extrusion;
+  // Each extruded block of pml is an entry of config["Boundaries"]["PML"], whose surface is
+  // split into parts, each of which becomes one block. Each geometry node of a face of a
+  // part moves along its direction d to the depths ξ_k = k t / N, k = 1, ..., N: each
+  // triangle becomes N prisms and each quadrilateral N hexahedra. A node on an edge between
+  // two parts moves once for each. A flat part is extruded along its outward normal, unless
+  // a core is configured or the extrusion is radial; any other part along the ray of each
+  // node from its closest point on the core. With the face vertices ordered so that their
+  // normal points out of the element below (as for the faces of MFEM meshes on the exterior
+  // boundary), the bottom face of each new element is its face 0, with its outward normal
+  // pointing along d (the reference coordinate z of the prism or hexahedron is the depth
+  // into its layer).
+  using Extrusion = config::PMLData::Extrusion;
   const mfem::Mesh &mesh = *orig_mesh;
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "config[\"Boundaries\"][\"PML\"] requires a 3D mesh!");
@@ -3295,33 +3329,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
               "config[\"Boundaries\"][\"PML\"] requires a conforming mesh (the refinement "
               "boxes and spheres make meshes with hexahedra, prisms, or pyramids "
               "nonconforming)!");
-  const std::string surface =
-      fmt::format("the PML boundary with attributes {}", fmt::join(ex.attributes, ", "));
-  auto IsSurface = [&ex](int attr)
-  { return std::ranges::binary_search(ex.attributes, attr); };
-
-  // Faces of the surface, on the exterior boundary, and the elements below them.
-  std::vector<int> faces, elems;
-  {
-    std::unordered_set<int> seen;
-    for (int be = 0; be < mesh.GetNBE(); be++)
-    {
-      const int attr = mesh.GetBdrAttribute(be);
-      const int f = mesh.GetBdrElementFaceIndex(be);
-      if (!IsSurface(attr) || !seen.insert(f).second)
-      {
-        continue;
-      }
-      int e1, e2;
-      mesh.GetFaceElements(f, &e1, &e2);
-      MFEM_VERIFY(e2 < 0, "Boundary attribute " << attr << " of " << surface
-                                                << " is not on the exterior boundary of "
-                                                   "the mesh!");
-      faces.push_back(f);
-      elems.push_back(e1);
-    }
-  }
-  MFEM_VERIFY(!faces.empty(), "No boundary elements found for " << surface << "!");
+  const int nv = mesh.GetNV(), ne = mesh.GetNE(), nbe = mesh.GetNBE();
 
   // Sample points of the faces: the uniform points of the geometry order, which include the
   // vertices, with the outward unit normal at each.
@@ -3348,11 +3356,40 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
   bbmax -= bbmin;
   const double tol = 1.0e-10 * bbmax.Normlinf();
 
-  // The plane (n, h), n · x = h, of each face, or a zero normal for a curved face, and
-  // whether the surface is flat.
-  std::vector<std::array<double, 4>> face_planes;
-  for (const int f : faces)
+  // Faces of the surface of each entry, on the exterior boundary, with their plane (n, h),
+  // n · x = h, or a zero normal for a curved face.
+  std::vector<int> entries;
+  for (std::size_t i = 0; i < pml.size(); i++)
   {
+    if (pml[i].IsExtruded())
+    {
+      entries.push_back(static_cast<int>(i));
+    }
+  }
+  const int num_entries = static_cast<int>(entries.size());
+  auto Surface = [&](int k)
+  {
+    return fmt::format("the PML boundary with attributes {}",
+                       fmt::join(pml[entries[k]].extrusion.attributes, ", "));
+  };
+  std::vector<std::vector<int>> entry_faces(num_entries);
+  std::unordered_map<int, std::array<double, 4>> face_plane;
+  for (int be = 0; be < nbe; be++)
+  {
+    const int attr = mesh.GetBdrAttribute(be), f = mesh.GetBdrElementFaceIndex(be);
+    const auto it = std::ranges::find_if(
+        entries, [&](int i)
+        { return std::ranges::binary_search(pml[i].extrusion.attributes, attr); });
+    if (it == entries.end() || face_plane.contains(f))
+    {
+      continue;
+    }
+    const int k = static_cast<int>(it - entries.begin());
+    int e1, e2;
+    mesh.GetFaceElements(f, &e1, &e2);
+    MFEM_VERIFY(e2 < 0, "Boundary attribute " << attr << " of " << Surface(k)
+                                              << " is not on the exterior boundary of "
+                                                 "the mesh!");
     std::array<double, 4> plane{};
     bool flat = true;
     ForEachSample(f,
@@ -3364,71 +3401,161 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
                     }
                     flat = flat && SamePlane(plane, normal, x, tol);
                   });
-    face_planes.push_back(flat ? plane : std::array<double, 4>{});
+    face_plane[f] = flat ? plane : std::array<double, 4>{};
+    entry_faces[k].push_back(f);
   }
-  const bool flat = std::ranges::all_of(face_planes, [&](const auto &plane)
-                                        { return SamePlane(face_planes[0], plane, tol); });
+  auto IsFlat = [&](int f) { return face_plane.at(f) != std::array<double, 4>{}; };
 
-  // The core is, by default, the centre of the bounding box of the surface.
-  const bool normal_extrusion = flat && !ex.has_center;
-  if (!ex.has_center)
+  // Parts: the faces of an entry connected through their edges, and only the coplanar ones
+  // for normal extrusion.
+  struct Part
   {
-    std::array<double, 3> lo, hi;
-    lo.fill(std::numeric_limits<double>::infinity());
-    hi.fill(-std::numeric_limits<double>::infinity());
-    for (const int f : faces)
-    {
-      ForEachSample(f,
-                    [&](const mfem::Vector &x, const mfem::Vector &)
-                    {
-                      for (int c = 0; c < 3; c++)
-                      {
-                        lo[c] = std::min(lo[c], x(c));
-                        hi[c] = std::max(hi[c], x(c));
-                      }
-                    });
-    }
-    for (int c = 0; c < 3; c++)
-    {
-      ex.center[0][c] = ex.center[1][c] = 0.5 * (lo[c] + hi[c]);
-    }
-  }
-  // The core is printed exactly, in the form of "PML.Center".
-  const std::string core =
-      (ex.center[0] == ex.center[1])
-          ? fmt::format("point [{}, {}, {}]", ex.center[0][0], ex.center[0][1],
-                        ex.center[0][2])
-          : fmt::format("segment [[{}, {}, {}], [{}, {}, {}]]", ex.center[0][0],
-                        ex.center[0][1], ex.center[0][2], ex.center[1][0], ex.center[1][1],
-                        ex.center[1][2]);
-  auto Direction = [&](const double *x, double *d)
-  {
-    if (normal_extrusion)
-    {
-      std::copy_n(face_planes[0].begin(), 3, d);
-    }
-    else
-    {
-      GetRay(ex.center, x, d);
-    }
+    int entry;
+    std::vector<int> faces;
+    std::array<double, 3> center;  // Of the bounding box
+    std::string name;
+    bool normal;
+    config::PMLData block;
   };
-
-  // The depth into the layer is n · x - h for normal extrusion. For radial extrusion, every
-  // face must face its closest point on the core (the outward normal makes an acute angle
-  // with the ray): rays from the closest points on a convex set never cross, so the layer
-  // is then valid for any thickness. The depth is |x - p| - r₀, if the distance from the
-  // core is r₀ within the tolerance.
-  std::string depth;
-  if (normal_extrusion)
+  std::vector<Part> parts;
+  mfem::Array<int> verts;
+  auto FaceEdges = [&](int f)
   {
-    ex.depth = config::PMLData::Extrusion::Depth::NORMAL;
-    ex.plane = face_planes[0];
-    depth = fmt::format("along its normal ({:.6g}, {:.6g}, {:.6g})", face_planes[0][0],
-                        face_planes[0][1], face_planes[0][2]);
+    mesh.GetFaceVertices(f, verts);
+    std::vector<std::pair<int, int>> edges;
+    for (int j = 0; j < verts.Size(); j++)
+    {
+      edges.push_back(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
+    }
+    return edges;
+  };
+  for (int k = 0; k < num_entries; k++)
+  {
+    const auto &data = pml[entries[k]];
+    const auto type = data.extrusion.type;
+    const auto &faces = entry_faces[k];
+    MFEM_VERIFY(!faces.empty(), "No boundary elements found for " << Surface(k) << "!");
+    std::map<std::pair<int, int>, std::vector<int>> edge_faces;
+    for (std::size_t i = 0; i < faces.size(); i++)
+    {
+      for (const auto &e : FaceEdges(faces[i]))
+      {
+        edge_faces[e].push_back(static_cast<int>(i));
+      }
+      if (type == Extrusion::Type::NORMAL && !IsFlat(faces[i]))
+      {
+        mesh.GetFaceTransformation(faces[i], &T);
+        T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), x);
+        MFEM_ABORT("The face of " << Surface(k) << " at (" << x(0) << ", " << x(1) << ", "
+                                  << x(2)
+                                  << ") is curved, which \"Extrusion\": \"Normal\" cannot "
+                                     "extrude! Use the radial extrusion for a curved "
+                                     "surface.");
+      }
+    }
+    std::vector<int> part(faces.size(), -1);
+    const int first_part = static_cast<int>(parts.size());
+    for (std::size_t i = 0; i < faces.size(); i++)
+    {
+      if (part[i] >= 0)
+      {
+        continue;
+      }
+      parts.emplace_back().entry = k;
+      std::vector<int> stack = {static_cast<int>(i)};
+      part[i] = static_cast<int>(parts.size()) - 1;
+      while (!stack.empty())
+      {
+        const int j = stack.back();
+        stack.pop_back();
+        for (const auto &e : FaceEdges(faces[j]))
+        {
+          for (const int l : edge_faces.at(e))
+          {
+            if (part[l] < 0 &&
+                (type != Extrusion::Type::NORMAL ||
+                 SamePlane(face_plane.at(faces[j]), face_plane.at(faces[l]), tol)))
+            {
+              part[l] = part[i];
+              stack.push_back(l);
+            }
+          }
+        }
+      }
+    }
+    // The faces of each part in the order of their boundary elements, which keeps the order
+    // of the extruded elements of a surface of one part.
+    for (std::size_t i = 0; i < faces.size(); i++)
+    {
+      parts[part[i]].faces.push_back(faces[i]);
+    }
+    for (int p = first_part; p < static_cast<int>(parts.size()); p++)
+    {
+      std::array<double, 3> lo, hi;
+      lo.fill(mfem::infinity());
+      hi.fill(-mfem::infinity());
+      for (const int f : parts[p].faces)
+      {
+        ForEachSample(f,
+                      [&](const mfem::Vector &x, const mfem::Vector &)
+                      {
+                        for (int c = 0; c < 3; c++)
+                        {
+                          lo[c] = std::min(lo[c], x(c));
+                          hi[c] = std::max(hi[c], x(c));
+                        }
+                      });
+      }
+      for (int c = 0; c < 3; c++)
+      {
+        parts[p].center[c] = 0.5 * (lo[c] + hi[c]);
+      }
+      const auto &c = parts[p].center;
+      parts[p].name = (parts.size() == static_cast<std::size_t>(first_part + 1))
+                          ? Surface(k)
+                          : fmt::format("the part around ({:.6g}, {:.6g}, {:.6g}) of {}",
+                                        c[0], c[1], c[2], Surface(k));
+    }
   }
-  else
+
+  // The direction and the depth of each part. Normal extrusion has the depth n · x - h.
+  // For radial extrusion, every face must face its closest point on the core (the outward
+  // normal makes an acute angle with the ray): rays from the closest points on a convex set
+  // never cross, so the layer is then valid for any thickness. The depth is |x - p| - r₀, if
+  // the distance from the core is r₀ within the tolerance.
+  std::vector<std::string> depth_text;
+  for (auto &p : parts)
   {
-    for (const int f : faces)
+    p.block = pml[entries[p.entry]];
+    auto &ex = p.block.extrusion;
+    const auto &plane0 = face_plane.at(p.faces[0]);
+    const bool flat = std::ranges::all_of(
+        p.faces, [&](int f) { return SamePlane(plane0, face_plane.at(f), tol); });
+    p.normal = (ex.type == Extrusion::Type::NORMAL) ||
+               (ex.type == Extrusion::Type::DEFAULT && flat && !ex.has_center);
+    if (p.normal)
+    {
+      ex.depth = Extrusion::Depth::NORMAL;
+      ex.plane = plane0;
+      depth_text.push_back(fmt::format("along its normal ({:.6g}, {:.6g}, {:.6g})",
+                                       plane0[0], plane0[1], plane0[2]));
+      continue;
+    }
+
+    // The core is, by default, the centre of the bounding box of the part.
+    if (!ex.has_center)
+    {
+      ex.center[0] = ex.center[1] = p.center;
+    }
+    // The core is printed exactly, in the form of "Center".
+    const std::string core =
+        (ex.center[0] == ex.center[1])
+            ? fmt::format("point [{}, {}, {}]", ex.center[0][0], ex.center[0][1],
+                          ex.center[0][2])
+            : fmt::format("segment [[{}, {}, {}], [{}, {}, {}]]", ex.center[0][0],
+                          ex.center[0][1], ex.center[0][2], ex.center[1][0],
+                          ex.center[1][1], ex.center[1][2]);
+    for (const int f : p.faces)
     {
       ForEachSample(f,
                     [&](const mfem::Vector &x, const mfem::Vector &normal)
@@ -3439,16 +3566,17 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
                           dist > tol &&
                               normal(0) * d[0] + normal(1) * d[1] + normal(2) * d[2] > 0.0,
                           "The face of "
-                              << surface << " at (" << x(0) << ", " << x(1) << ", " << x(2)
+                              << p.name << " at (" << x(0) << ", " << x(1) << ", " << x(2)
                               << ") does not face its closest point on the " << core
                               << ", from which the rays of the extrusion start! Every face "
-                                 "of the surface must face the core, or the rays would "
-                                 "cross (set \"PML.Center\").");
+                                 "must face the core, or the rays would cross: set "
+                                 "\"Center\", or use \"Extrusion\": \"Normal\" for a "
+                                 "surface of flat patches.");
                     });
     }
     double sum = 0.0, lo = mfem::infinity(), hi = -mfem::infinity();
     int count = 0;
-    for (const int f : faces)
+    for (const int f : p.faces)
     {
       ForEachSample(f,
                     [&](const mfem::Vector &x, const mfem::Vector &)
@@ -3465,52 +3593,85 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
     MFEM_VERIFY(
         deviation <= PML_DISTANCE_TOL * ex.thickness,
         "The extruded PML does not fit "
-            << surface << ", whose distance from the " << core << " is " << lo << " to "
+            << p.name << ", whose distance from the " << core << " is " << lo << " to "
             << hi << " (the deviation from the mean " << ex.distance << " is "
             << 100.0 * deviation / ex.thickness << "% of the thickness, above "
             << 100.0 * PML_DISTANCE_TOL
             << "%)! The surface must be flat (extruded along its normal) or at a constant "
                "distance from the core (a sphere around its centre, or the wall of a "
-               "cylinder around its axis). Set \"PML.Center\" to the centre of a sphere "
-               "or the axis of a cylinder.");
-    ex.depth = config::PMLData::Extrusion::Depth::DISTANCE;
-    depth = fmt::format("along the rays from the {}, at the distance {:.6g} (within "
-                        "{:.2g}% of the thickness)",
-                        core, ex.distance, 100.0 * deviation / ex.thickness);
+               "cylinder around its axis). Set \"Center\" to the centre of a sphere or the "
+               "axis of a cylinder, or use \"Extrusion\": \"Normal\" for a surface of flat "
+               "patches.");
+    ex.depth = Extrusion::Depth::DISTANCE;
+    depth_text.push_back(fmt::format("along the rays from the {}, at the distance {:.6g} "
+                                     "(within {:.2g}% of the thickness)",
+                                     core, ex.distance, 100.0 * deviation / ex.thickness));
   }
-
-  // Columns of vertices along the directions of the vertices of the surface, and edges of
-  // the surface.
-  const int nv = mesh.GetNV(), ne = mesh.GetNE(), nbe = mesh.GetNBE();
-  const int nf = static_cast<int>(faces.size()), N = ex.layers;
-  const double h = ex.thickness / N;
-  std::unordered_map<int, int> column;
-  std::vector<mfem::Vector> column_base;  // Positions of the vertices of the surface
-  std::set<std::pair<int, int>> surface_edges;
-  mfem::Array<int> verts;
-  for (const int f : faces)
+  auto Direction = [&](const Part &p, const double *x, double *d)
   {
-    mesh.GetFaceVertices(f, verts);
-    mesh.GetFaceTransformation(f, &T);
-    for (int j = 0; j < verts.Size(); j++)
+    const auto &ex = p.block.extrusion;
+    if (p.normal)
     {
-      if (column.try_emplace(verts[j], static_cast<int>(column_base.size())).second)
+      std::copy_n(ex.plane.begin(), 3, d);
+    }
+    else
+    {
+      GetRay(ex.center, x, d);
+    }
+  };
+
+  // Columns of vertices along the directions of the vertices of each part, and the edges of
+  // each part with their number of faces in it.
+  struct Column
+  {
+    double x[3], d[3], h;
+    int layers;
+  };
+  std::map<std::pair<int, int>, int> column;  // (part, vertex) → first new vertex
+  std::vector<Column> column_base;
+  std::map<std::pair<int, int>, std::vector<int>> edge_parts;  // edge → parts
+  std::vector<std::map<std::pair<int, int>, int>> part_edges(parts.size());
+  std::unordered_map<int, std::vector<int>> vertex_parts;
+  int num_new_vertices = 0;
+  for (std::size_t p = 0; p < parts.size(); p++)
+  {
+    const int N = parts[p].block.extrusion.layers;
+    for (const int f : parts[p].faces)
+    {
+      mesh.GetFaceVertices(f, verts);
+      mesh.GetFaceTransformation(f, &T);
+      for (int j = 0; j < verts.Size(); j++)
       {
-        T.Transform(mfem::Geometries.GetVertices(T.GetGeometryType())->IntPoint(j),
-                    column_base.emplace_back(3));
+        if (column.try_emplace({static_cast<int>(p), verts[j]}, nv + num_new_vertices)
+                .second)
+        {
+          num_new_vertices += N;
+          vertex_parts[verts[j]].push_back(static_cast<int>(p));
+          T.Transform(mfem::Geometries.GetVertices(T.GetGeometryType())->IntPoint(j), x);
+          auto &c = column_base.emplace_back();
+          std::copy_n(x.GetData(), 3, c.x);
+          Direction(parts[p], x.GetData(), c.d);
+          c.layers = N;
+          c.h = parts[p].block.extrusion.thickness / N;
+        }
+        const auto edge = std::minmax(verts[j], verts[(j + 1) % verts.Size()]);
+        if (part_edges[p][edge]++ == 0)
+        {
+          edge_parts[edge].push_back(static_cast<int>(p));
+        }
       }
-      surface_edges.insert(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
     }
   }
-  auto LayerVertex = [&](int v, int k)
-  { return (k == 0) ? v : nv + column.at(v) * N + k - 1; };
+  auto LayerVertex = [&](int p, int v, int k)
+  { return (k == 0) ? v : column.at({p, v}) + k - 1; };
 
   // Ports and Floquet boundaries must not touch the surface, and periodic boundaries only
-  // when it is extruded along its normal, the same direction on the two sides of the
-  // periodic boundary. The other boundaries through the edges of the surface are extruded
-  // into quadrilaterals with their attribute, with the two boundary elements of a face of a
+  // parts extruded along their normal, the same direction on the two sides of the periodic
+  // boundary. The other boundaries through the edges of a part are extruded into
+  // quadrilaterals with their attribute, with the two boundary elements of a face of a
   // periodic boundary (merged by mfem::Mesh::MakePeriodic) into two on the same face, so
-  // that the layer is periodic too.
+  // that the layer is periodic too. The edges of a part on another part are extruded into
+  // its exposed sides, with the back attribute.
   std::vector<int> rejected, periodic;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -3536,138 +3697,198 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
   }
   std::ranges::sort(rejected);
   std::ranges::sort(periodic);
-  std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> sides;  // (attr, face)
+  std::map<std::pair<int, std::pair<int, int>>, std::vector<std::pair<int, int>>>
+      sides;  // (part, edge) → (attr, face)
   int num_sides = 0;
+  auto AddSide = [&](int p, const std::pair<int, int> &edge, int attr, int face)
+  {
+    auto &side = sides[{p, edge}];
+    if (std::ranges::none_of(side, [&](const auto &s) { return s.first == attr; }))
+    {
+      MFEM_VERIFY(side.empty() || side[0].second == face,
+                  "Boundary attributes " << side[0].first << " and " << attr
+                                         << " share an edge of " << parts[p].name
+                                         << ", which cannot be extruded!");
+      side.emplace_back(attr, face);
+      num_sides += parts[p].block.extrusion.layers;
+    }
+  };
   for (int be = 0; be < nbe; be++)
   {
     const int attr = mesh.GetBdrAttribute(be);
-    if (IsSurface(attr))
+    if (face_plane.contains(mesh.GetBdrElementFaceIndex(be)))
     {
       continue;
     }
     mesh.GetBdrElementVertices(be, verts);
-    const bool touches =
-        std::ranges::any_of(verts, [&](int v) { return column.contains(v); });
-    MFEM_VERIFY(!touches || !std::ranges::binary_search(rejected, attr),
-                "Boundary attribute " << attr << " of a port or Floquet boundary touches "
-                                      << surface << ", which is not supported!");
-    MFEM_VERIFY(
-        !touches || normal_extrusion || !std::ranges::binary_search(periodic, attr),
-        "Periodic boundary attribute "
-            << attr << " touches " << surface
-            << ", which is extruded along rays: the rays would flare the two sides "
-               "of the periodic boundary differently! Only a flat boundary extruded "
-               "along its normal (without \"PML.Center\") may have periodic "
-               "boundaries along its edges.");
+    std::set<int> touched;
+    for (const int v : verts)
+    {
+      const auto it = vertex_parts.find(v);
+      if (it != vertex_parts.end())
+      {
+        touched.insert(it->second.begin(), it->second.end());
+      }
+    }
+    for (const int p : touched)
+    {
+      MFEM_VERIFY(!std::ranges::binary_search(rejected, attr),
+                  "Boundary attribute " << attr << " of a port or Floquet boundary touches "
+                                        << parts[p].name << ", which is not supported!");
+      MFEM_VERIFY(
+          parts[p].normal || !std::ranges::binary_search(periodic, attr),
+          "Periodic boundary attribute "
+              << attr << " touches " << parts[p].name
+              << ", which is extruded along rays: the rays would flare the two sides of "
+                 "the periodic boundary differently! Only a flat part extruded along its "
+                 "normal may have periodic boundaries along its edges.");
+    }
     const int face = mesh.GetBdrElementFaceIndex(be);
     for (int j = 0; j < verts.Size(); j++)
     {
-      const std::pair<int, int> edge = std::minmax(verts[j], verts[(j + 1) % verts.Size()]);
-      if (!surface_edges.contains(edge))
+      const auto it = edge_parts.find(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
+      for (const int p : (it == edge_parts.end()) ? std::vector<int>{} : it->second)
       {
-        continue;
-      }
-      auto &side = sides[edge];
-      if (std::ranges::none_of(side, [&](const auto &s) { return s.first == attr; }))
-      {
-        MFEM_VERIFY(side.empty() || side[0].second == face,
-                    "Boundary attributes " << side[0].first << " and " << attr
-                                           << " share an edge of " << surface
-                                           << ", which cannot be extruded!");
-        side.emplace_back(attr, face);
-        num_sides++;
+        AddSide(p, it->first, attr, face);
       }
     }
   }
 
-  // Attributes of the extruded elements, one per attribute of the elements below, and of
-  // the back of the layer.
-  ex.base_attributes.clear();
-  for (const int e : elems)
+  // Attributes of the extruded elements, one per part and attribute of the elements below,
+  // and of the back of each layer: by default, one larger than the largest boundary
+  // attribute of the mesh and of the configured back attributes.
+  int attr_max = mesh.attributes.Max(), back_max = mesh.bdr_attributes.Max();
+  for (const int i : entries)
   {
-    ex.base_attributes.push_back(mesh.GetAttribute(e));
+    const int back = pml[i].extrusion.back_attribute;
+    MFEM_VERIFY(back == 0 || mesh.bdr_attributes.Find(back) < 0,
+                "\"BackAttribute\" " << back
+                                     << " is already a boundary attribute of the mesh!");
+    back_max = std::max(back_max, back);
   }
-  std::ranges::sort(ex.base_attributes);
-  ex.base_attributes.erase(std::ranges::unique(ex.base_attributes).begin(),
-                           ex.base_attributes.end());
-  const int attr_max = mesh.attributes.Max();
-  pml.attributes.resize(ex.base_attributes.size());
-  std::iota(pml.attributes.begin(), pml.attributes.end(), attr_max + 1);
-  auto PMLAttribute = [&](int attr)
+  std::vector<std::vector<int>> face_attr(parts.size());
+  for (std::size_t p = 0; p < parts.size(); p++)
   {
-    return attr_max + 1 +
-           static_cast<int>(std::ranges::lower_bound(ex.base_attributes, attr) -
-                            ex.base_attributes.begin());
-  };
-  if (ex.back_attribute == 0)
-  {
-    ex.back_attribute = mesh.bdr_attributes.Max() + 1;
+    auto &block = parts[p].block;
+    auto &ex = block.extrusion;
+    if (ex.back_attribute == 0)
+    {
+      ex.back_attribute = back_max + 1;
+    }
+    ex.base_attributes.clear();
+    for (const int f : parts[p].faces)
+    {
+      int e1, e2;
+      mesh.GetFaceElements(f, &e1, &e2);
+      ex.base_attributes.push_back(mesh.GetAttribute(e1));
+    }
+    std::ranges::sort(ex.base_attributes);
+    ex.base_attributes.erase(std::ranges::unique(ex.base_attributes).begin(),
+                             ex.base_attributes.end());
+    block.attributes.resize(ex.base_attributes.size());
+    std::iota(block.attributes.begin(), block.attributes.end(), attr_max + 1);
+    for (const int f : parts[p].faces)
+    {
+      int e1, e2;
+      mesh.GetFaceElements(f, &e1, &e2);
+      face_attr[p].push_back(
+          attr_max + 1 +
+          static_cast<int>(
+              std::ranges::lower_bound(ex.base_attributes, mesh.GetAttribute(e1)) -
+              ex.base_attributes.begin()));
+    }
+    attr_max += static_cast<int>(block.attributes.size());
+
+    // The exposed sides, on the edges of the part on another part.
+    for (const auto &[edge, n] : part_edges[p])
+    {
+      if (n == 1 && edge_parts.at(edge).size() > 1)
+      {
+        AddSide(static_cast<int>(p), edge, ex.back_attribute, -1);
+      }
+    }
   }
-  MFEM_VERIFY(mesh.bdr_attributes.Find(ex.back_attribute) < 0,
-              "\"PML.BackAttribute\" " << ex.back_attribute
-                                       << " is already a boundary attribute of the mesh!");
 
   // Build the new mesh: the original elements and boundary elements, followed by the
   // extruded ones.
-  auto new_mesh =
-      std::make_unique<mfem::Mesh>(3, nv + static_cast<int>(column_base.size()) * N,
-                                   ne + nf * N, nbe + nf + num_sides * N, 3);
+  int num_new_elements = 0;
+  for (const auto &p : parts)
+  {
+    num_new_elements += static_cast<int>(p.faces.size()) * p.block.extrusion.layers;
+  }
+  auto new_mesh = std::make_unique<mfem::Mesh>(
+      3, nv + num_new_vertices, ne + num_new_elements,
+      nbe + static_cast<int>(face_plane.size()) + num_sides, 3);
   for (int v = 0; v < nv; v++)
   {
     new_mesh->AddVertex(mesh.GetVertex(v));
   }
-  for (const auto &x0 : column_base)
+  for (const auto &c : column_base)
   {
-    double r[3];
-    Direction(x0.GetData(), r);
-    for (int k = 1; k <= N; k++)
+    for (int k = 1; k <= c.layers; k++)
     {
-      new_mesh->AddVertex(x0(0) + k * h * r[0], x0(1) + k * h * r[1], x0(2) + k * h * r[2]);
+      new_mesh->AddVertex(c.x[0] + k * c.h * c.d[0], c.x[1] + k * c.h * c.d[1],
+                          c.x[2] + k * c.h * c.d[2]);
     }
   }
   for (int e = 0; e < ne; e++)
   {
     new_mesh->AddElement(mesh.GetElement(e)->Duplicate(new_mesh.get()));
   }
-  for (int i = 0; i < nf; i++)
+  struct NewElement
   {
-    mesh.GetFaceVertices(faces[i], verts);
-    const int m = verts.Size(), attr = PMLAttribute(mesh.GetAttribute(elems[i]));
-    for (int k = 0; k < N; k++)
+    int part, face, layer;
+  };
+  std::vector<NewElement> new_elements;
+  for (std::size_t p = 0; p < parts.size(); p++)
+  {
+    for (std::size_t i = 0; i < parts[p].faces.size(); i++)
     {
-      int v[8];
-      for (int j = 0; j < m; j++)
+      mesh.GetFaceVertices(parts[p].faces[i], verts);
+      const int m = verts.Size();
+      for (int k = 0; k < parts[p].block.extrusion.layers; k++)
       {
-        v[j] = LayerVertex(verts[j], k);
-        v[m + j] = LayerVertex(verts[j], k + 1);
+        int v[8];
+        for (int j = 0; j < m; j++)
+        {
+          v[j] = LayerVertex(static_cast<int>(p), verts[j], k);
+          v[m + j] = LayerVertex(static_cast<int>(p), verts[j], k + 1);
+        }
+        (m == 3) ? new_mesh->AddWedge(v, face_attr[p][i])
+                 : new_mesh->AddHex(v, face_attr[p][i]);
+        new_elements.push_back({static_cast<int>(p), parts[p].faces[i], k});
       }
-      (m == 3) ? new_mesh->AddWedge(v, attr) : new_mesh->AddHex(v, attr);
     }
   }
   for (int be = 0; be < nbe; be++)
   {
     new_mesh->AddBdrElement(mesh.GetBdrElement(be)->Duplicate(new_mesh.get()));
   }
-  for (const int f : faces)
+  for (std::size_t p = 0; p < parts.size(); p++)
   {
-    mesh.GetFaceVertices(f, verts);
-    int v[4];
-    for (int j = 0; j < verts.Size(); j++)
+    const auto &ex = parts[p].block.extrusion;
+    for (const int f : parts[p].faces)
     {
-      v[j] = LayerVertex(verts[j], N);
+      mesh.GetFaceVertices(f, verts);
+      int v[4];
+      for (int j = 0; j < verts.Size(); j++)
+      {
+        v[j] = LayerVertex(static_cast<int>(p), verts[j], ex.layers);
+      }
+      (verts.Size() == 3) ? new_mesh->AddBdrTriangle(v, ex.back_attribute)
+                          : new_mesh->AddBdrQuad(v, ex.back_attribute);
     }
-    (verts.Size() == 3) ? new_mesh->AddBdrTriangle(v, ex.back_attribute)
-                        : new_mesh->AddBdrQuad(v, ex.back_attribute);
   }
-  for (const auto &[edge, side] : sides)
+  for (const auto &[key, side] : sides)
   {
+    const auto &[p, edge] = key;
     for (const auto &[attr, face] : side)
     {
-      for (int k = 0; k < N; k++)
+      for (int k = 0; k < parts[p].block.extrusion.layers; k++)
       {
-        new_mesh->AddBdrQuad(LayerVertex(edge.first, k), LayerVertex(edge.second, k),
-                             LayerVertex(edge.second, k + 1),
-                             LayerVertex(edge.first, k + 1), attr);
+        new_mesh->AddBdrQuad(LayerVertex(p, edge.first, k), LayerVertex(p, edge.second, k),
+                             LayerVertex(p, edge.second, k + 1),
+                             LayerVertex(p, edge.first, k + 1), attr);
       }
     }
   }
@@ -3690,14 +3911,13 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
     for (int e = 0; e < new_mesh->GetNE(); e++)
     {
       const mfem::IntegrationRule &ir = new_nodes.FESpace()->GetFE(e)->GetNodes();
-      const int i = (e - ne) / N, k = (e - ne) % N;
       if (e < ne)
       {
         mesh.GetElementTransformation(e, &T);
       }
       else
       {
-        mesh.GetFaceTransformation(faces[i], &T);
+        mesh.GetFaceTransformation(new_elements[e - ne].face, &T);
       }
       new_nodes.FESpace()->GetElementVDofs(e, vdofs);
       loc.SetSize(vdofs.Size());
@@ -3710,14 +3930,16 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
         }
         else
         {
+          const auto &[p, f, k] = new_elements[e - ne];
+          const auto &ex = parts[p].block.extrusion;
           mfem::IntegrationPoint ip_face;
           ip_face.Set2(ip.x, ip.y);
           T.Transform(ip_face, x);
-          double r[3];
-          Direction(x.GetData(), r);
+          double d[3];
+          Direction(parts[p], x.GetData(), d);
           for (int c = 0; c < 3; c++)
           {
-            x(c) += (k + ip.z) * h * r[c];
+            x(c) += (k + ip.z) * ex.thickness / ex.layers * d[c];
           }
         }
         for (int c = 0; c < 3; c++)
@@ -3742,21 +3964,45 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
         T.SetIntPoint(&ir->IntPoint(j));
         if (T.Jacobian().Det() <= 0.0)
         {
+          const auto &[p, f, k] = new_elements[e - ne];
           T.Transform(ir->IntPoint(j), x);
           MFEM_ABORT("The element of layer "
-                     << (e - ne) % N + 1 << " extruded from " << surface
+                     << k + 1 << " extruded from " << parts[p].name
                      << " has a non-positive Jacobian at (" << x(0) << ", " << x(1) << ", "
                      << x(2) << "): the faces of the surface must face their direction ("
-                     << depth << ")!");
+                     << depth_text[p] << ")!");
         }
       }
     }
   }
 
-  Mpi::Print("Extruded {:d} layer{} of {:d} element{} from {} (thickness {:.3e}, {}), "
-             "with attributes {} and back boundary attribute {:d}\n",
-             N, (N > 1) ? "s" : "", nf, (nf > 1) ? "s" : "", surface, ex.thickness, depth,
-             fmt::join(pml.attributes, ", "), ex.back_attribute);
+  // Each entry is replaced by the blocks of its parts.
+  std::vector<config::PMLData> blocks;
+  for (std::size_t i = 0, k = 0; i < pml.size(); i++)
+  {
+    if (!pml[i].IsExtruded())
+    {
+      blocks.push_back(std::move(pml[i]));
+      continue;
+    }
+    for (std::size_t p = 0; p < parts.size(); p++)
+    {
+      if (parts[p].entry != static_cast<int>(k))
+      {
+        continue;
+      }
+      const auto &ex = parts[p].block.extrusion;
+      const int N = ex.layers, nf = static_cast<int>(parts[p].faces.size());
+      Mpi::Print("Extruded {:d} layer{} of {:d} element{} from {} (thickness {:.3e}, {}), "
+                 "with attributes {} and back boundary attribute {:d}\n",
+                 N, (N > 1) ? "s" : "", nf, (nf > 1) ? "s" : "", parts[p].name,
+                 ex.thickness, depth_text[p], fmt::join(parts[p].block.attributes, ", "),
+                 ex.back_attribute);
+      blocks.push_back(std::move(parts[p].block));
+    }
+    k++;
+  }
+  pml = std::move(blocks);
   orig_mesh = std::move(new_mesh);
 }
 
