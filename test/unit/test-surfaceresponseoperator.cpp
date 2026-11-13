@@ -726,9 +726,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
   empty_library["Name"] = "unit-test-empty-process";
   empty_library["Models"] = json::array();
   const auto empty_library_path = temp.temp_dir / "surface-process-empty.json";
-  std::ofstream empty_library_output(empty_library_path);
-  empty_library_output << empty_library.dump(2) << "\n";
-  empty_library_output.close();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream empty_library_output(empty_library_path);
+    empty_library_output << empty_library.dump(2) << "\n";
+    empty_library_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
   auto empty_library_config = automatic_config;
   empty_library_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       empty_library_path.string();
@@ -3978,9 +3982,13 @@ TEST_CASE_METHOD(
       (*linear_spatial_requirement)["Geometry"]["PlanViewBoundary"];
   const auto exact_linear_spatial_library_path =
       temp.temp_dir / "fabrication-process-linear-spatial-exact-mask-3d.json";
-  std::ofstream exact_linear_spatial_library_output(exact_linear_spatial_library_path);
-  exact_linear_spatial_library_output << exact_linear_spatial_library.dump(2) << "\n";
-  exact_linear_spatial_library_output.close();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream exact_linear_spatial_library_output(exact_linear_spatial_library_path);
+    exact_linear_spatial_library_output << exact_linear_spatial_library.dump(2) << "\n";
+    exact_linear_spatial_library_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
 
   // Version-2 round trip: a model carrying a feature's canonical Signature matches that
   // feature by key (and only that feature), independent of the mesh ordering.
@@ -4003,10 +4011,12 @@ TEST_CASE_METHOD(
     // A Signature model's Edges must be the Signature's portions in its canonical frame:
     // the legacy Edges inherited here (the classifier's mesh-frame description, process
     // normal +y) are refused at library load (fail closed), never re-canonicalised.
+    if (Mpi::Root(Mpi::World()))
     {
       std::ofstream output(signature_library_path);
       output << signature_library.dump(2) << "\n";
     }
+    Mpi::Barrier(Mpi::World());
     {
       IoData legacy_edges_iodata(linear_spatial_config, false);
       legacy_edges_iodata.boundaries.cracked_attributes.insert(9);
@@ -4055,10 +4065,12 @@ TEST_CASE_METHOD(
           labelled_library_path.string();
       auto WriteAndIdentify = [&](const json &library, const std::string &suffix)
       {
+        if (Mpi::Root(Mpi::World()))
         {
           std::ofstream output(labelled_library_path);
           output << library.dump(2) << "\n";
         }
+        Mpi::Barrier(Mpi::World());
         IoData iodata(labelled_config, false);
         iodata.boundaries.cracked_attributes.insert(9);
         iodata.boundaries.cracked_attributes.insert(10);
@@ -4095,9 +4107,13 @@ TEST_CASE_METHOD(
                                 "portion 0 (Conductor 1, Interfaces [MA, MS, SA])"));
     }
     signature_model.erase("Edges");  // keyed and built by the Signature alone
-    std::ofstream signature_library_output(signature_library_path);
-    signature_library_output << signature_library.dump(2) << "\n";
-    signature_library_output.close();
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ofstream signature_library_output(signature_library_path);
+      signature_library_output << signature_library.dump(2) << "\n";
+      signature_library_output.close();
+    }
+    Mpi::Barrier(Mpi::World());
     IoData signature_iodata(linear_spatial_config, false);
     signature_iodata.boundaries.cracked_attributes.insert(9);
     signature_iodata.boundaries.cracked_attributes.insert(10);
@@ -4153,9 +4169,13 @@ TEST_CASE_METHOD(
       {
         const auto library_path =
             temp.temp_dir / ("fabrication-process-near-match-" + tag + "-3d.json");
-        std::ofstream output(library_path);
-        output << library.dump(2) << "\n";
-        output.close();
+        if (Mpi::Root(Mpi::World()))
+        {
+          std::ofstream output(library_path);
+          output << library.dump(2) << "\n";
+          output.close();
+        }
+        Mpi::Barrier(Mpi::World());
         auto config = linear_spatial_config;
         config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
             library_path.string();
@@ -4300,9 +4320,13 @@ TEST_CASE_METHOD(
             (*cluster_feature)["Signature"]["Portions"].size());
       const auto edges_library_path =
           temp.temp_dir / "fabrication-process-v2-signature-edges-3d.json";
-      std::ofstream edges_library_output(edges_library_path);
-      edges_library_output << edges_library.dump(2) << "\n";
-      edges_library_output.close();
+      if (Mpi::Root(Mpi::World()))
+      {
+        std::ofstream edges_library_output(edges_library_path);
+        edges_library_output << edges_library.dump(2) << "\n";
+        edges_library_output.close();
+      }
+      Mpi::Barrier(Mpi::World());
       auto edges_config = linear_spatial_config;
       auto &edges_correction =
           edges_config["Solver"]["Electrostatic"]["ResponseCorrection"];
@@ -4508,9 +4532,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         finger_model["Interfaces"] = SignatureInterfaces(*finger_signature);
         finger_model["Edges"] = ChordedSignatureEdges(*finger_signature, finger_R);
         CHECK(finger_model["Edges"].size() >= 3 + 2 * 18);  // 18 chords per quarter circle
-        std::ofstream output(finger_library_path);
-        output << finger_library.dump(2) << "\n";
-        output.close();
+        if (Mpi::Root(Mpi::World()))
+        {
+          std::ofstream output(finger_library_path);
+          output << finger_library.dump(2) << "\n";
+          output.close();
+        }
+        Mpi::Barrier(Mpi::World());
         finger_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
             finger_library_path.string();
       }
@@ -6156,9 +6184,17 @@ TEST_CASE_METHOD(
   empty_spatial_library["Models"] = json::array();
   const auto empty_spatial_library_path =
       temp.temp_dir / "surface-process-empty-spatial-3d.json";
-  std::ofstream empty_spatial_library_output(empty_spatial_library_path);
-  empty_spatial_library_output << empty_spatial_library.dump(2) << "\n";
-  empty_spatial_library_output.close();
+  // Every rank reads a library file itself (ReadProcessLibrary): the root writes each
+  // shared file and no rank reads it before the write is complete. An every-rank write
+  // truncates the file under a rank that is already reading it (a rank-local parse error
+  // that deadlocks the other ranks in their next collective).
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream empty_spatial_library_output(empty_spatial_library_path);
+    empty_spatial_library_output << empty_spatial_library.dump(2) << "\n";
+    empty_spatial_library_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
   auto empty_spatial_config = missing_spatial_cluster_config;
   empty_spatial_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
       empty_spatial_library_path.string();
@@ -6220,9 +6256,13 @@ TEST_CASE_METHOD(
   exact_mask_model["PlanViewBoundary"] = plan_view_boundary;
   const auto exact_mask_library_path =
       temp.temp_dir / "surface-process-spatial-cluster-exact-mask-3d.json";
-  std::ofstream exact_mask_output(exact_mask_library_path);
-  exact_mask_output << exact_mask_library.dump(2) << "\n";
-  exact_mask_output.close();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream exact_mask_output(exact_mask_library_path);
+    exact_mask_output << exact_mask_library.dump(2) << "\n";
+    exact_mask_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
 
   auto exact_mask_config = spatial_cluster_config;
   exact_mask_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -6271,9 +6311,13 @@ TEST_CASE_METHOD(
   mismatched_coordinate = mismatched_coordinate.get<long long int>() + 1;
   const auto mismatched_mask_library_path =
       temp.temp_dir / "surface-process-spatial-cluster-mismatched-mask-3d.json";
-  std::ofstream mismatched_mask_output(mismatched_mask_library_path);
-  mismatched_mask_output << mismatched_mask_library.dump(2) << "\n";
-  mismatched_mask_output.close();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream mismatched_mask_output(mismatched_mask_library_path);
+    mismatched_mask_output << mismatched_mask_library.dump(2) << "\n";
+    mismatched_mask_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
   CheckPlanViewMaskStatus(mismatched_mask_library_path, "Missing", "mismatched");
 
   // Spatial clusters match each physical edge's complete boundary law. The second
