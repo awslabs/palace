@@ -152,9 +152,9 @@ public:
 // also more accurate than full-pivoting QR near a lossless resonance, where the QR
 // truncates the numerical rank and drops the resonant mode. The QR is used, on all
 // processes together, when an LU solution is not finite (an exactly singular matrix) or a
-// column has a normwise backward error above n ε (pivot growth). The componentwise backward
-// error, while invariant to scaling, exceeds n ε for LU solutions of badly scaled systems
-// without pivot growth. Returns true if the QR was used.
+// column has a normwise backward error above max(n, 16) ε (pivot growth) or not finite. The
+// componentwise backward error, while invariant to scaling, exceeds n ε for LU solutions of
+// badly scaled systems without pivot growth. Returns true if the QR was used.
 bool SolveReducedSystem(MPI_Comm comm, const Eigen::MatrixXcd &A, Eigen::MatrixXcd &B);
 
 // Projections Vᵀ A V of symmetric operators A onto the real vectors V, replicated on every

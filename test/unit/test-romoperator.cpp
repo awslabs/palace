@@ -3,7 +3,9 @@
 
 #include <array>
 #include <fstream>
+#include <limits>
 #include <numbers>
+#include <random>
 #include <tuple>
 #include <vector>
 #include <Eigen/Dense>
@@ -2400,5 +2402,114 @@ TEST_CASE("RomOperator-SolveReducedSystem", "[romoperator][Serial]")
     CHECK(SolveReducedSystem(comm, A, x));
     CHECK(x.col(0).isZero());
     CHECK(backward_error(A, x.col(1), bw) < 1.0e-14);
+  }
+}
+
+TEST_CASE("RomOperator-SolveReducedSystem-Small", "[romoperator][Serial]")
+{
+  // The LU backward-error tolerance has headroom over the round-off of the residual itself
+  // for n = 1 and n = 2, so random systems do not fall back to QR.
+  using Matrix = Eigen::MatrixXcd;
+  MPI_Comm comm = Mpi::World();
+  std::mt19937 gen(1234);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  auto random = [&](int rows, int cols)
+  {
+    Matrix R(rows, cols);
+    for (auto &r : R.reshaped())
+    {
+      r = {dist(gen), dist(gen)};
+    }
+    return R;
+  };
+  for (int n : {1, 2})
+  {
+    CAPTURE(n);
+    int fallbacks = 0;
+    for (int t = 0; t < 10000; t++)
+    {
+      const Matrix A = random(n, n);
+      Matrix x = random(n, 1);
+      fallbacks += SolveReducedSystem(comm, A, x);
+    }
+    CHECK(fallbacks == 0);
+  }
+}
+
+TEST_CASE("RomOperator-SolveReducedSystem-NonFinite", "[romoperator][Serial]")
+{
+  // A finite LU solution whose backward-error bound overflows is not verified, so QR is
+  // used. (A residual that overflows implies an overflowing bound, |Aᵢⱼ xⱼ| ≤ ‖A‖ ‖x‖.)
+  using Matrix = Eigen::MatrixXcd;
+  MPI_Comm comm = Mpi::World();
+  const double huge = 1.0e308;
+
+  SECTION("Bound overflows")
+  {
+    // x = (1e-300, 1e10) is finite but ‖A‖ |x| = 1e310.
+    Matrix A = Matrix::Zero(2, 2);
+    A(0, 0) = 1.0e300;
+    A(1, 1) = 1.0e-10;
+    Matrix x = Matrix::Ones(2, 1);
+    REQUIRE(Matrix(A.partialPivLu().solve(x)).allFinite());
+    CHECK(SolveReducedSystem(comm, A, x));
+    // The condition number 1e310 is singular to working precision for the rank-revealing
+    // QR, which drops the second column.
+    CHECK(x.allFinite());
+  }
+
+  SECTION("Right-hand side overflows")
+  {
+    // x = b is exact, but the bound |b| + ‖A‖ |x| = 2e308 overflows.
+    const Matrix A = Matrix::Identity(2, 2);
+    Matrix x = Matrix::Constant(2, 1, huge);
+    CHECK(SolveReducedSystem(comm, A, x));
+    CHECK(x.isApprox(Matrix::Constant(2, 1, huge)));
+  }
+}
+
+TEST_CASE("RomOperator-SolveReducedSystem-Parallel", "[romoperator][Serial][Parallel]")
+{
+  // The choice of QR is collective: with Wilkinson's matrix (pivot growth, see
+  // RomOperator-SolveReducedSystem) on all ranks and a nonzero right-hand side only on rank
+  // 0, LU is accurate (x = 0) on the other ranks, but every rank falls back to QR.
+  using Matrix = Eigen::MatrixXcd;
+  MPI_Comm comm = Mpi::World();
+  constexpr int m = 64;
+  Matrix A = Matrix::Identity(m, m);
+  for (int j = 0; j < m; j++)
+  {
+    for (int i = j + 1; i < m; i++)
+    {
+      A(i, j) = -1.0;
+    }
+  }
+  A.col(m - 1).setOnes();
+  std::mt19937 gen(1234);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  Matrix b(m, 1);
+  for (int i = 0; i < m; i++)
+  {
+    b(i) = {dist(gen), dist(gen)};
+  }
+  if (Mpi::Rank(comm) != 0)
+  {
+    b.setZero();
+  }
+  Matrix x = b;
+  const int use_qr = SolveReducedSystem(comm, A, x);
+  int qr_min = use_qr, qr_max = use_qr;
+  Mpi::GlobalMin(1, &qr_min, comm);
+  Mpi::GlobalMax(1, &qr_max, comm);
+  CHECK(use_qr == 1);
+  CHECK(qr_min == qr_max);
+  const double backward_error =
+      (b - A * x).lpNorm<Eigen::Infinity>() /
+      (A.cwiseAbs().rowwise().sum().maxCoeff() * x.lpNorm<Eigen::Infinity>() +
+       b.lpNorm<Eigen::Infinity>() + std::numeric_limits<double>::min());
+  CHECK(backward_error < 1.0e-14);
+  if (Mpi::Rank(comm) != 0)
+  {
+    CHECK(x.isZero());
   }
 }
