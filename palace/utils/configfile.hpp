@@ -1171,6 +1171,12 @@ public:
   // direct solver.
   bool complex_coarse_solve = false;
 
+  // Whether ComplexCoarseSolve was not specified (complex_coarse_solve is then false). The
+  // sparse direct solvers with an implementation in complex arithmetic then choose between
+  // the complex-valued matrix and the real-valued approximation at setup, from the measured
+  // error of the latter (see MeasuredComplexCoarseSolver).
+  bool complex_coarse_auto = true;
+
   // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
   // solver.
   bool drop_small_entries = false;

@@ -115,14 +115,17 @@ poles).
 
     This simulation benefits from the `"ComplexCoarseSolve"` option. This
     setting uses a complex preconditioner of the form `P = [Ar, -Ai; Ai, Ar]` rather than
-    the default `P = Ar + Ai`, where `A` is the true system matrix with
+    the real-valued approximation `P = Ar + Ai`, where `A` is the true system matrix with
     real and imaginary  parts `Ar` and `Ai`. While the resulting system is four times larger, it
     preserves the coupling between real and imaginary parts which can be significant
     for problems with strong imaginary components. For this particular problem, this
     approach accelerates convergence by several factors, though at the cost of increased
     memory usage. SuperLU_DIST, STRUMPACK, and MUMPS factor the complex-valued matrix
     `Ar + i Ai` in complex arithmetic, which needs less memory than the equivalent
-    real-valued system.
+    real-valued system. When the option is omitted, these solvers measure the error of
+    the real-valued approximation at setup and switch to the complex-valued matrix when
+    a measured value exceeds 1 (see
+    [the problem guide](../guide/problem.md#Driven-problems-in-the-frequency-domain)).
 
 ## Analysis and Results
 
