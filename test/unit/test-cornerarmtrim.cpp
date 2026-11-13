@@ -5308,7 +5308,6 @@ TEST_CASE_METHOD(
     CHECK_THAT(lines[0], ContainsSubstring("DERIVED"));
     CHECK_THAT(lines[0], ContainsSubstring("parents"));
     const fs::path trimmed = temp.temp_dir / "scp-es-clipped-correction-trimmed.csv";
-    if (Mpi::Root(Mpi::World()))
     {
       std::ofstream output(trimmed);
       for (std::size_t i = 1; i < lines.size(); i++)
@@ -5316,7 +5315,6 @@ TEST_CASE_METHOD(
         output << lines[i] << '\n';
       }
     }
-    Mpi::Barrier(Mpi::World());
     const TextCsv clipped = ReadTrimmedCsv(trimmed);
     REQUIRE(clipped.rows.size() == 4);
     std::ifstream metadata_input(es_straddling_dir / "palace.json");
