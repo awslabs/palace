@@ -2279,3 +2279,126 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
 }
+
+TEST_CASE("RomOperator-SolveReducedSystem", "[romoperator][Serial]")
+{
+  // LU solves well and ill-conditioned systems, and full-pivoting QR takes over for
+  // singular matrices and for LU solutions with a large backward error in any column.
+  using Matrix = Eigen::MatrixXcd;
+  using VectorC = Eigen::VectorXcd;
+  constexpr int n = 12;
+  std::srand(1234);
+  auto backward_error = [](const Matrix &A, const Matrix &x, const Matrix &b)
+  {
+    return (b - A * x).lpNorm<Eigen::Infinity>() /
+           (A.cwiseAbs().rowwise().sum().maxCoeff() * x.lpNorm<Eigen::Infinity>() +
+            b.lpNorm<Eigen::Infinity>());
+  };
+  auto with_singular_values = [](const Eigen::VectorXd &s)
+  {
+    Eigen::HouseholderQR<Matrix> qr_u(Matrix::Random(s.size(), s.size())),
+        qr_v(Matrix::Random(s.size(), s.size()));
+    const Matrix U = qr_u.householderQ(), W = qr_v.householderQ();
+    return Matrix(U * s.cast<std::complex<double>>().asDiagonal() * W.adjoint());
+  };
+  MPI_Comm comm = Mpi::World();
+  const VectorC b = VectorC::Random(n);
+
+  SECTION("Conditioning")
+  {
+    // Condition numbers 1e10 and 1e17 (singular to working precision): the LU solution is
+    // backward stable, accurate to cond ε for the first.
+    const double s_min = GENERATE(1.0e-10, 1.0e-17);
+    CAPTURE(s_min);
+    Eigen::VectorXd s = Eigen::VectorXd::LinSpaced(n, 0.0, -3.0)
+                            .unaryExpr([](double e) { return std::pow(10.0, e); });
+    s(n - 1) = s_min;
+    const Matrix A = with_singular_values(s);
+    Matrix x = b;
+    CHECK_FALSE(SolveReducedSystem(comm, A, x));
+    CHECK(backward_error(A, x, b) < 1.0e-14);
+    if (s_min > 1.0e-12)
+    {
+      const VectorC x_ref = A.fullPivHouseholderQr().solve(b);
+      CHECK((x - x_ref).norm() < 1.0e-4 * x_ref.norm());
+    }
+  }
+
+  SECTION("Singular")
+  {
+    // With a zero column, the LU solution is not finite and the rank-revealing QR gives a
+    // solution of norm ~ |b| / 1e-3, the smallest nonzero singular value.
+    Eigen::VectorXd s = Eigen::VectorXd::LinSpaced(n, 0.0, -3.0)
+                            .unaryExpr([](double e) { return std::pow(10.0, e); });
+    Matrix A = with_singular_values(s);
+    A.col(3).setZero();
+    Matrix x = b;
+    CHECK(SolveReducedSystem(comm, A, x));
+    CHECK(x.allFinite());
+    CHECK(x.norm() < 1.0e4 * b.norm());
+  }
+
+  SECTION("Synthesized PROM slice")
+  {
+    // A 4 x 4 slice (a port row and three sample rows) of the synthesized L⁻¹, R⁻¹, C of a
+    // PROM, assembled over its band: LU is used, and agrees with QR.
+    Eigen::Matrix4d Linv, Rinv, Cm;
+    Linv << 2998545461200.4326, -34515.101667958588, -10465.943783918958,
+        3513.9848630862389, -34515.101667958588, 173468600268174.75, 15792824677.864006,
+        -336687502.83115691, -10465.943783918958, 15792824677.864006, 180665882176297.28,
+        -15959410866.884502, 3513.9848630862389, -336687502.83115691, -15959410866.884502,
+        219574225649943.19;
+    Rinv << 0.019999999999999997, -2.1956837108787159e-27, 1.6467627831590372e-27,
+        2.058453478948796e-28, -2.1956837108787159e-27, 1.0834394534387061e-12,
+        8.4753080346694756e-14, -3.3998897726139405e-15, 1.6467627831590372e-27,
+        8.4753080346694756e-14, 6.4383392861610713e-13, -6.4336602257112816e-14,
+        2.058453478948796e-28, -3.3998897726139405e-15, -6.4336602257112816e-14,
+        1.5291552997921576e-12;
+    Cm << 2.0238965694568905e-16, -2.8627695194548223e-25, -8.7168790786791186e-26,
+        2.9378257887998199e-26, -2.8627695194548223e-25, 1.7708375637436778e-13,
+        -7.4949467469211133e-25, 3.0069730146889297e-26, -8.7168790786791186e-26,
+        -7.4949467469211133e-25, 1.7708375648713082e-13, 5.5852088951741535e-25,
+        2.9378257887998199e-26, 3.0069730146889297e-26, 5.5852088951741535e-25,
+        1.7708375640806658e-13;
+    for (double f : {2.5e9, 6.0e9, 9.9e9})
+    {
+      const double w = 2.0 * std::numbers::pi * f;
+      Matrix A = Linv.cast<std::complex<double>>() +
+                 (1i * w) * Rinv.cast<std::complex<double>>() -
+                 (w * w) * Cm.cast<std::complex<double>>();
+      A /= A.cwiseAbs().maxCoeff();
+      const VectorC b4 = VectorC::Random(4);
+      Matrix x = b4;
+      CHECK_FALSE(SolveReducedSystem(comm, A, x));
+      const VectorC x_ref = A.fullPivHouseholderQr().solve(b4);
+      CHECK((x - x_ref).norm() < 1.0e-12 * x_ref.norm());
+    }
+  }
+
+  SECTION("Pivot growth")
+  {
+    // Partial pivoting on Wilkinson's matrix (1 on the diagonal and in the last column, -1
+    // below the diagonal) does not swap rows and the entries of the last column of U grow
+    // as 2^(k-1), so the LU solution has a large backward error. The matrix itself is well
+    // conditioned.
+    constexpr int m = 64;
+    Matrix A = Matrix::Identity(m, m);
+    for (int j = 0; j < m; j++)
+    {
+      for (int i = j + 1; i < m; i++)
+      {
+        A(i, j) = -1.0;
+      }
+    }
+    A.col(m - 1).setOnes();
+    const VectorC bw = VectorC::Random(m);
+    VectorC x_lu = A.partialPivLu().solve(bw);
+    REQUIRE(!(backward_error(A, x_lu, bw) < 1.0e-12));
+    // A zero first column of the right-hand side does not hide the error of the second.
+    Matrix x(m, 2);
+    x << VectorC::Zero(m), bw;
+    CHECK(SolveReducedSystem(comm, A, x));
+    CHECK(x.col(0).isZero());
+    CHECK(backward_error(A, x.col(1), bw) < 1.0e-14);
+  }
+}

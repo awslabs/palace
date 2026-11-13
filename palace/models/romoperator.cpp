@@ -404,6 +404,24 @@ std::vector<Eigen::MatrixXd> ProjectSymmetricOperators(MPI_Comm comm,
   return result;
 }
 
+bool SolveReducedSystem(MPI_Comm comm, const Eigen::MatrixXcd &A, Eigen::MatrixXcd &B)
+{
+  Eigen::MatrixXcd X = A.partialPivLu().solve(B);
+  const double tol = A.rows() * std::numeric_limits<double>::epsilon();
+  const double norm_A = A.cwiseAbs().rowwise().sum().maxCoeff();
+  const Eigen::RowVectorXd error = (B - A * X).cwiseAbs().colwise().maxCoeff();
+  const Eigen::RowVectorXd bound =
+      norm_A * X.cwiseAbs().colwise().maxCoeff() + B.cwiseAbs().colwise().maxCoeff();
+  bool use_qr = !X.allFinite() || (error.array() > tol * bound.array()).any();
+  Mpi::GlobalOr(1, &use_qr, comm);
+  if (use_qr)
+  {
+    X = A.fullPivHouseholderQr().solve(B);
+  }
+  B = std::move(X);
+  return use_qr;
+}
+
 void MinimalRationalInterpolation::AddSolutionSample(double omega,
                                                      const Eigen::VectorXcd &c)
 {
@@ -1367,13 +1385,15 @@ void RomOperator::SolvePROM(double omega)
     }
     Y.col(k++) = b;
   }
-
-  // Compute the PROM solutions at the given frequency. The PROM is solved on every process
-  // so the matrix-vector product for vector expansion does not require communication.
-  // QR solve, for maximal stability. The small system is cheap to compute but can be
-  // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
-  // into separate columns.
-  Y = Ar.fullPivHouseholderQr().solve(Y).eval();
+  if (SolveReducedSystem(space_op.GetComm(), Ar, Y) && !warned_qr)
+  {
+    Mpi::Warning(space_op.GetComm(),
+                 "PROM system is singular or its LU solution is inaccurate at ω = "
+                 "{:.3e}; using rank-revealing QR (further occurrences are not "
+                 "reported)!\n",
+                 omega);
+    warned_qr = true;
+  }
 }
 
 void RomOperator::ExpandPROMSolution(int excitation_idx, ComplexVector &u) const

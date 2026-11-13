@@ -146,6 +146,17 @@ public:
   const auto &GetSamplePoints() const { return z; }
 };
 
+// Dense solver for the PROM system A X = B, which is solved redundantly on every process,
+// overwriting B with X. LU with partial pivoting is blocked, so it stays cheap at large n
+// when all processes factor concurrently, and backward stable unless the pivots grow. It is
+// also more accurate than full-pivoting QR near a lossless resonance, where the QR
+// truncates the numerical rank and drops the resonant mode. The QR is used, on all
+// processes together, when an LU solution is not finite (an exactly singular matrix) or a
+// column has a normwise backward error above n ε (pivot growth). The componentwise backward
+// error, while invariant to scaling, exceeds n ε for LU solutions of badly scaled systems
+// without pivot growth. Returns true if the QR was used.
+bool SolveReducedSystem(MPI_Comm comm, const Eigen::MatrixXcd &A, Eigen::MatrixXcd &B);
+
 // Projections Vᵀ A V of symmetric operators A onto the real vectors V, replicated on every
 // process.
 std::vector<Eigen::MatrixXd> ProjectSymmetricOperators(MPI_Comm comm,
@@ -260,6 +271,7 @@ protected:
   // PROM matrix Ar at the frequency of the last SolvePROM, and the reduced solutions of all
   // excitations, one column per excitation.
   Eigen::MatrixXcd Ar, Y;
+  bool warned_qr = false;
   std::set<int> warned_modal_reaction;  // Ports
 
   // Column of an excitation in RHS1, RHS1r, and Y.
