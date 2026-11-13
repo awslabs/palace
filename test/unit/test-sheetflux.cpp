@@ -21,12 +21,14 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -216,8 +218,49 @@ json FluxRecoveryIslandConfig(const fs::path &mesh_path, const fs::path &partiti
 // by the electrostatic error estimator as the driver builds it; on a broken flux space also
 // the probe entry 5 with the CONTINUOUS recovery (the RT space, not broken across the
 // island), i.e. what a D on the RT space gives there.
+// The per-side D read AT the island faces, one-sided (MS reads the substrate side, MA the
+// vacuum side; no sum-sides marker), directly through the coefficient. The
+// SurfacePostOperator refuses FluxRecovery on an interior sheet (decision 1600, R-b), so
+// its FluxRecovery energies never read an element's DOFs on the sheet faces: these reads
+// are the ones that fail when the per-side holder hands both sides the same version of a
+// split DOF (P3-B review MAJOR-1).
+class RecoveredFluxPostOperator : public PostOperator<ProblemType::ELECTROSTATIC>
+{
+public:
+  using PostOperator<ProblemType::ELECTROSTATIC>::PostOperator;
+  const GridFunction *RecoveredD() const { return this->D_recovered.get(); }
+};
+
+template <InterfaceDielectric Type>
+double IslandSideEnergy(const GridFunction &E, const GridFunction *D,
+                        const MaterialOperator &mat_op)
+{
+  auto &mesh = *E.ParFESpace()->GetParMesh();
+  mesh.ExchangeFaceNbrData();
+  InterfaceDielectricCoefficient<Type> coeff(E, mat_op, 2.0e-3, 10.0, nullptr, D);
+  double sum = 0.0;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (mesh.GetBdrAttribute(be) != island_attr)
+    {
+      continue;
+    }
+    auto *T = mesh.GetBdrElementTransformation(be);
+    const auto &ir = mfem::IntRules.Get(T->GetGeometryType(), 6);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      sum += coeff.Eval(*T, ip) * ip.weight * T->Weight();
+    }
+  }
+  Mpi::GlobalSum(1, &sum, mesh.GetComm());
+  return sum;
+}
+
 struct IslandFluxEnergies
 {
+  double island_ms = 0.0, island_ma = 0.0;
   std::vector<double> energies;
   double continuous_probe = 0.0;
   bool broken = false;
@@ -230,7 +273,7 @@ IslandFluxEnergies RecoverIslandFluxEnergies(const json &config)
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
   LaplaceOperator laplace_op(iodata, mesh);
-  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+  RecoveredFluxPostOperator post_op(iodata, laplace_op);
   REQUIRE(post_op.NeedsRecoveredElectricFlux());
   mfem::FunctionCoefficient V_coeff(
       [](const mfem::Vector &x) { return 1.0 - x(2) + 0.3 * x(0) * x(1) - 0.2 * x(1); });
@@ -271,6 +314,10 @@ IslandFluxEnergies RecoverIslandFluxEnergies(const json &config)
   {
     result.energies.push_back(energies.interfaces.at(idx).energy);
   }
+  result.island_ms = IslandSideEnergy<InterfaceDielectric::MS>(E, post_op.RecoveredD(),
+                                                               laplace_op.GetMaterialOp());
+  result.island_ma = IslandSideEnergy<InterfaceDielectric::MA>(E, post_op.RecoveredD(),
+                                                               laplace_op.GetMaterialOp());
   if (result.broken)
   {
     const auto continuous = Estimator({});
@@ -395,6 +442,13 @@ TEST_CASE_METHOD(test::SharedTempDir,
     // MEASURED (np 1 / 2 / 3): <= 1e-14 relative; frozen at 1e-12.
     CHECK_THAT(uncracked.energies[i], WithinRel(cracked.energies[i], 1.0e-12));
   }
+  INFO("island MS per side " << std::setprecision(17) << uncracked.island_ms << " cracked "
+                             << cracked.island_ms << "; island MA per side "
+                             << uncracked.island_ma << " cracked " << cracked.island_ma);
+  CHECK(cracked.island_ms > 0.0);
+  CHECK(cracked.island_ma > 0.0);
+  CHECK_THAT(uncracked.island_ms, WithinRel(cracked.island_ms, 1.0e-10));
+  CHECK_THAT(uncracked.island_ma, WithinRel(cracked.island_ma, 1.0e-10));
   // The probe plane reads the normal flux of the elements facing the island: there the
   // per-side recovery differs from the continuous one. (The open interface does not show
   // it on this Cartesian hexahedral mesh: the normal flux of its faces is decoupled from
@@ -509,6 +563,95 @@ TEST_CASE_METHOD(
   Compare(batched_legacy, streamed_legacy, 1.0e-12, "legacy: batched vs streamed");
   Compare(batched_default, batched_legacy, 1.0e-12,
           "per side (default) vs cracked (legacy)");
+}
+
+// P3-14 (SD-3202, T1; P3-B review MAJOR-1): tetrahedra, Order 2, the WHOLE plane x = 0.5 a
+// Ground sheet (uncracked, the new default), a uniform E = (1, 0, 0): the recovered D on
+// the flux space broken across the sheet is exactly 4 E below and E above; the per-side D
+// read at the island faces one-sided (MS substrate side, MA vacuum side) must equal the
+// read of the exact constant fields (4, 0, 0) / (1, 0, 0) on the RT space.
+TEST_CASE_METHOD(
+    test::SharedTempDir,
+    "Per-side recovered flux read one-sided at an uncracked sheet on tetrahedra",
+    "[sheetflux][Serial][Parallel]")
+{
+  const auto mesh_path = WriteIslandMesh(temp_dir, mfem::Element::TETRAHEDRON);
+  json config = {
+      {"Problem",
+       {{"Type", "Electrostatic"},
+        {"Verbose", 0},
+        {"Output", (temp_dir / "postpro-tet2").string()}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains",
+       {{"Materials", json::array({{{"Attributes", {1}}, {"Permittivity", 4.0}},
+                                   {{"Attributes", {2}}, {"Permittivity", 1.0}}})}}},
+      {"Boundaries",
+       {{"Ground", {{"Attributes", {island_attr, open_attr}}}},
+        {"Terminal", json::array({{{"Index", 1}, {"Attributes", {1}}}})},
+        {"Postprocessing",
+         {{"Dielectric", json::array({{{"Index", 1},
+                                       {"Attributes", {3}},
+                                       {"Type", "MA"},
+                                       {"Thickness", 2.0e-3},
+                                       {"Permittivity", 10.0},
+                                       {"FluxRecovery", true}}})}}}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Linear", {{"EstimatorTol", 1.0e-14}, {"EstimatorMaxIts", 10000}}}}}};
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+  LaplaceOperator laplace_op(iodata, mesh);
+  RecoveredFluxPostOperator post_op(iodata, laplace_op);
+  REQUIRE(post_op.NeedsRecoveredElectricFlux());
+  auto X = [](double dx)
+  {
+    mfem::Vector v(3);
+    v = 0.0;
+    v(0) = dx;
+    return v;
+  };
+  mfem::VectorConstantCoefficient E_coeff(X(1.0));
+  GridFunction E(laplace_op.GetNDSpace());
+  E.Real().ProjectCoefficient(E_coeff);
+  Vector e(laplace_op.GetNDSpace().GetTrueVSize());
+  E.Real().GetTrueDofs(e);
+  E.Real().SetFromTrueDofs(e);
+  E.Real().ExchangeFaceNbrData();
+  const auto &linear = iodata.solver.linear;
+  GradFluxErrorEstimator<Vector> estimator(
+      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+      linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg,
+      iodata.boundaries.GetSheetAttributes());
+  REQUIRE(estimator.GetFluxSpace().IsBroken());
+  Vector d(estimator.GetFluxSpace().GetTrueVSize());
+  estimator.RecoverFlux(e, d);
+  post_op.SetRecoveredElectricFlux(d);
+  auto Exact = [&](double dx)
+  {
+    auto D = std::make_unique<GridFunction>(laplace_op.GetRTSpace());
+    mfem::VectorConstantCoefficient c(X(dx));
+    D->Real().ProjectCoefficient(c);
+    Vector t(laplace_op.GetRTSpace().GetTrueVSize());
+    D->Real().GetTrueDofs(t);
+    D->Real().SetFromTrueDofs(t);
+    D->Real().ExchangeFaceNbrData();
+    return D;
+  };
+  const auto D_sub = Exact(4.0), D_vac = Exact(1.0);
+  const auto &mat_op = laplace_op.GetMaterialOp();
+  const double ms =
+      IslandSideEnergy<InterfaceDielectric::MS>(E, post_op.RecoveredD(), mat_op);
+  const double ms_exact = IslandSideEnergy<InterfaceDielectric::MS>(E, D_sub.get(), mat_op);
+  const double ma =
+      IslandSideEnergy<InterfaceDielectric::MA>(E, post_op.RecoveredD(), mat_op);
+  const double ma_exact = IslandSideEnergy<InterfaceDielectric::MA>(E, D_vac.get(), mat_op);
+  INFO("tetrahedra MS per side " << std::setprecision(17) << ms << " exact " << ms_exact
+                                 << "; MA per side " << ma << " exact " << ma_exact);
+  CHECK(ms_exact > 0.0);
+  CHECK(ma_exact > 0.0);
+  CHECK_THAT(ms, WithinRel(ms_exact, 1.0e-8));
+  CHECK_THAT(ma, WithinRel(ma_exact, 1.0e-8));
 }
 
 }  // namespace palace
