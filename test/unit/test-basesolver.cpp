@@ -1010,9 +1010,14 @@ TEST_CASE("ExceedsPredictedMaxSize stops before an oversized solve", "[basesolve
   config::RefinementData refinement;
   refinement.max_size = 100000000;
 
-  SECTION("Predicted rule (default): the S5 P4 c9 -> c10 step stops, c8 -> c9 does not")
+  // The default is upstream's rule (USER decision 1636 (4)).
+  CHECK_FALSE(refinement.max_size_predicted);
+
+  SECTION(
+      "Predicted rule (MaxSizePredicted = true): the S5 P4 c9 -> c10 step stops, c8 -> c9 "
+      "does not")
   {
-    CHECK(refinement.max_size_predicted);
+    refinement.max_size_predicted = true;
     // The last solved size (67,992,598) is below MaxSize, so the legacy loop-head check
     // would have let the 196,931,656-unknown c10 solve run (x2.9 MaxSize).
     CHECK(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
@@ -1022,7 +1027,8 @@ TEST_CASE("ExceedsPredictedMaxSize stops before an oversized solve", "[basesolve
     CHECK(ExceedsPredictedMaxSize(refinement, 50000000, 1000, 2001));
   }
 
-  SECTION("Legacy rule (MaxSizePredicted = false) never stops before the solve")
+  SECTION(
+      "Upstream rule (MaxSizePredicted = false, the default) never stops before the solve")
   {
     refinement.max_size_predicted = false;
     CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
@@ -1031,6 +1037,7 @@ TEST_CASE("ExceedsPredictedMaxSize stops before an oversized solve", "[basesolve
 
   SECTION("No MaxSize (<= 0) means no size constraint")
   {
+    refinement.max_size_predicted = true;
     refinement.max_size = 0;
     CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
     refinement.max_size = -1;

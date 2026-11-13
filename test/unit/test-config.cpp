@@ -1378,16 +1378,20 @@ TEST_CASE("Config interface dielectric edge refinement", "[config][Serial]")
 
 TEST_CASE("Config refinement MaxSizePredicted", "[config][Serial]")
 {
-  // Default: MaxSize is checked against the predicted size of the refined mesh.
-  config::RefinementData predicted({{"MaxIts", 4}, {"MaxSize", 100000000}});
-  CHECK(predicted.max_size == 100000000);
-  CHECK(predicted.max_size_predicted);
+  // Default = upstream's rule (USER decision 1636 (4)): MaxSize is checked only against the
+  // last solved size.
+  config::RefinementData unset({{"MaxIts", 4}, {"MaxSize", 100000000}});
+  CHECK(unset.max_size == 100000000);
+  CHECK_FALSE(unset.max_size_predicted);
 
-  // Legacy rule (MaxSize checked only against the last solved size) stays selectable to
-  // reproduce runs whose final AMR solve exceeded MaxSize.
-  config::RefinementData legacy(
+  // The predictive stop (MaxSize checked against the predicted size of the refined mesh
+  // before its solve) is selected explicitly, as the fabrication-response writers do.
+  config::RefinementData predicted(
+      {{"MaxIts", 4}, {"MaxSize", 100000000}, {"MaxSizePredicted", true}});
+  CHECK(predicted.max_size_predicted);
+  config::RefinementData upstream(
       {{"MaxIts", 4}, {"MaxSize", 100000000}, {"MaxSizePredicted", false}});
-  CHECK_FALSE(legacy.max_size_predicted);
+  CHECK_FALSE(upstream.max_size_predicted);
 }
 
 TEST_CASE("Config refinement MinElementSize", "[config][Serial]")

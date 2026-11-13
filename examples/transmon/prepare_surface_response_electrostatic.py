@@ -44,6 +44,8 @@ def refinement_block(args):
     block["SaveAdaptMesh"] = args.save_adapt_mesh
     if args.amr_max_size > 0:
         block["MaxSize"] = args.amr_max_size
+        # The predictive MaxSize stop, stated: off by default in the integrated Palace (USER 1636 (4)).
+        block["MaxSizePredicted"] = True
     block["UniformLevels"] = 0
     block["SerialUniformLevels"] = 0
     return block

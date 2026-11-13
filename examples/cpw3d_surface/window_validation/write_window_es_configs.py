@@ -265,6 +265,8 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
         refinement.update({
             "Tol": 0.01, "UpdateFraction": 0.7, "MaximumImbalance": 1.15, "MaxNCLevels": 8, "Nonconformal": True,
             "SaveAdaptIterations": True, "SaveAdaptMesh": False, "MaxSize": settings["MaxSize"],
+            # The predictive MaxSize stop, stated: off by default in the integrated Palace (USER 1636 (4)).
+            "MaxSizePredicted": True,
         })
     return {
         "Problem": {"Type": "Electrostatic", "Verbose": verbose, "Output": postpro, "OutputFormats": {"Paraview": False, "GridFunction": False}},

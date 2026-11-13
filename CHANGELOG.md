@@ -277,14 +277,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
-  - AMR now checks `config["Model"]["Refinement"]["MaxSize"]` against the predicted size
+  - With the new optional `config["Model"]["Refinement"]["MaxSizePredicted"]` set to `true`,
+    AMR checks `config["Model"]["Refinement"]["MaxSize"]` against the predicted size
     of each refined mesh (the last solved number of degrees of freedom scaled by the
     element-count growth of the refinement step) and stops before the solve when the
     prediction exceeds it; the last solved mesh is the final result and `palace.json`
     records the stop under `"AdaptiveMeshRefinement"`/`"MaxSizeStop"`. Previously the
     check used only the last solved size, so the final solve could exceed `"MaxSize"` by
-    the growth of one Dörfler step (observed 2-3x). The new optional
-    `"MaxSizePredicted": false` restores the previous rule for reproducibility.
+    the growth of one Dörfler step (observed 2-3x); that remains the default rule (off by default, as upstream).
 
 #### Performance Improvements
 
