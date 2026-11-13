@@ -724,8 +724,7 @@ TEST_CASE("Batched interface response refuses a two-qualifying-side sheet",
 }
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator identification on impedance-type metals in every "
-                 "crack form",
+                 "SurfaceResponseOperator on impedance-type metals in every crack form",
                  "[surfaceresponseoperator][sheetenergy][maxwell][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
