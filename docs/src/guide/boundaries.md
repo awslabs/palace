@@ -96,9 +96,9 @@ can be:
     point or segment, for example as a spherical PML on the outer sphere of the domain (see
     [Extruded perfectly matched layer](#Extruded-perfectly-matched-layer)).
 
-The meshed PML is the more general one: periodic boundaries may cross it. The extruded PML
-does not require meshing the layer, and terminates flat and curved boundaries. Both use the
-same stretch parameters, and the guidelines on the
+The extruded PML does not require meshing the layer, and terminates flat and curved
+boundaries; the meshed PML terminates any box-shaped domain. Both use the same stretch
+parameters, and the guidelines on the
 [absorption of the layer](#Absorption-and-discretization-of-the-layer),
 [eigenmode simulations and postprocessing](#Eigenmode-simulations-and-postprocessing-with-PML-regions),
 and [linear solvers](#Linear-solvers-with-PML-regions) apply to both.
@@ -196,8 +196,11 @@ The extruded layer is refined with the rest of the mesh by parallel uniform refi
 adaptive mesh refinement
 ([`"MaxIts"`](../config/reference.md#config-model-refinement-maxits)), which must be
 nonconformal for its prisms and hexahedra. `"SerialUniformLevels"` and the refinement
-`"Boxes"` and `"Spheres"` are applied before the extrusion. Ports, periodic, or Floquet
-boundaries which touch the extruded boundary are not supported.
+`"Boxes"` and `"Spheres"` are applied before the extrusion. Periodic boundaries may cross a
+flat boundary extruded along its normal, as on top of a Floquet cell, and continue through
+the layer, but not a boundary extruded along rays, which would flare the two sides of the
+periodic boundary differently. Ports or Floquet boundaries which touch the extruded boundary
+are not supported.
 
 ### Absorption and discretization of the layer
 

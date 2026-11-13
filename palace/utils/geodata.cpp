@@ -3505,10 +3505,13 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
   auto LayerVertex = [&](int v, int k)
   { return (k == 0) ? v : nv + column.at(v) * N + k - 1; };
 
-  // Ports, periodic, and Floquet boundaries must not touch the surface. The other
-  // boundaries through the edges of the surface are extruded into quadrilaterals with their
-  // attribute.
-  std::vector<int> rejected;
+  // Ports and Floquet boundaries must not touch the surface, and periodic boundaries only
+  // when it is extruded along its normal, the same direction on the two sides of the
+  // periodic boundary. The other boundaries through the edges of the surface are extruded
+  // into quadrilaterals with their attribute, with the two boundary elements of a face of a
+  // periodic boundary (merged by mfem::Mesh::MakePeriodic) into two on the same face, so
+  // that the layer is periodic too.
+  std::vector<int> rejected, periodic;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
     for (const auto &elem : data.elements)
@@ -3526,13 +3529,15 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
   }
   for (const auto &data : boundaries.periodic.boundary_pairs)
   {
-    rejected.insert(rejected.end(), data.donor_attributes.begin(),
+    periodic.insert(periodic.end(), data.donor_attributes.begin(),
                     data.donor_attributes.end());
-    rejected.insert(rejected.end(), data.receiver_attributes.begin(),
+    periodic.insert(periodic.end(), data.receiver_attributes.begin(),
                     data.receiver_attributes.end());
   }
   std::ranges::sort(rejected);
-  std::map<std::pair<int, int>, int> sides;
+  std::ranges::sort(periodic);
+  std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> sides;  // (attr, face)
+  int num_sides = 0;
   for (int be = 0; be < nbe; be++)
   {
     const int attr = mesh.GetBdrAttribute(be);
@@ -3541,24 +3546,36 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
       continue;
     }
     mesh.GetBdrElementVertices(be, verts);
-    if (std::ranges::binary_search(rejected, attr))
-    {
-      MFEM_VERIFY(std::ranges::none_of(verts, [&](int v) { return column.contains(v); }),
-                  "Boundary attribute "
-                      << attr << " of a port, periodic, or Floquet boundary touches "
-                      << surface << ", which is not supported!");
-      continue;
-    }
+    const bool touches =
+        std::ranges::any_of(verts, [&](int v) { return column.contains(v); });
+    MFEM_VERIFY(!touches || !std::ranges::binary_search(rejected, attr),
+                "Boundary attribute " << attr << " of a port or Floquet boundary touches "
+                                      << surface << ", which is not supported!");
+    MFEM_VERIFY(
+        !touches || normal_extrusion || !std::ranges::binary_search(periodic, attr),
+        "Periodic boundary attribute "
+            << attr << " touches " << surface
+            << ", which is extruded along rays: the rays would flare the two sides "
+               "of the periodic boundary differently! Only a flat boundary extruded "
+               "along its normal (without \"PML.Center\") may have periodic "
+               "boundaries along its edges.");
+    const int face = mesh.GetBdrElementFaceIndex(be);
     for (int j = 0; j < verts.Size(); j++)
     {
       const std::pair<int, int> edge = std::minmax(verts[j], verts[(j + 1) % verts.Size()]);
-      if (surface_edges.contains(edge))
+      if (!surface_edges.contains(edge))
       {
-        const auto [it, inserted] = sides.try_emplace(edge, attr);
-        MFEM_VERIFY(inserted || it->second == attr, "Boundary attributes "
-                                                        << it->second << " and " << attr
-                                                        << " share an edge of " << surface
-                                                        << ", which cannot be extruded!");
+        continue;
+      }
+      auto &side = sides[edge];
+      if (std::ranges::none_of(side, [&](const auto &s) { return s.first == attr; }))
+      {
+        MFEM_VERIFY(side.empty() || side[0].second == face,
+                    "Boundary attributes " << side[0].first << " and " << attr
+                                           << " share an edge of " << surface
+                                           << ", which cannot be extruded!");
+        side.emplace_back(attr, face);
+        num_sides++;
       }
     }
   }
@@ -3592,9 +3609,9 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
 
   // Build the new mesh: the original elements and boundary elements, followed by the
   // extruded ones.
-  auto new_mesh = std::make_unique<mfem::Mesh>(
-      3, nv + static_cast<int>(column_base.size()) * N, ne + nf * N,
-      nbe + nf + static_cast<int>(sides.size()) * N, 3);
+  auto new_mesh =
+      std::make_unique<mfem::Mesh>(3, nv + static_cast<int>(column_base.size()) * N,
+                                   ne + nf * N, nbe + nf + num_sides * N, 3);
   for (int v = 0; v < nv; v++)
   {
     new_mesh->AddVertex(mesh.GetVertex(v));
@@ -3642,13 +3659,16 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
     (verts.Size() == 3) ? new_mesh->AddBdrTriangle(v, ex.back_attribute)
                         : new_mesh->AddBdrQuad(v, ex.back_attribute);
   }
-  for (const auto &[edge, attr] : sides)
+  for (const auto &[edge, side] : sides)
   {
-    for (int k = 0; k < N; k++)
+    for (const auto &[attr, face] : side)
     {
-      new_mesh->AddBdrQuad(LayerVertex(edge.first, k), LayerVertex(edge.second, k),
-                           LayerVertex(edge.second, k + 1), LayerVertex(edge.first, k + 1),
-                           attr);
+      for (int k = 0; k < N; k++)
+      {
+        new_mesh->AddBdrQuad(LayerVertex(edge.first, k), LayerVertex(edge.second, k),
+                             LayerVertex(edge.second, k + 1),
+                             LayerVertex(edge.first, k + 1), attr);
+      }
     }
   }
   constexpr bool generate_bdr = false;

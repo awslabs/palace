@@ -60,8 +60,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 // them, the back attribute, the default core, and the form of the depth into the layer are
 // written to the configuration of the PML. Checks that the surface has one of the shapes
 // of the depth, that every face of the surface faces its direction, that every extruded
-// element has a positive Jacobian, and that no port, periodic, or Floquet boundary touches
-// the surface.
+// element has a positive Jacobian, that no port or Floquet boundary touches the surface, and
+// that only a surface extruded along its normal has periodic boundaries along its edges.
 void ExtrudePML(std::unique_ptr<mfem::Mesh> &mesh, config::PMLData &pml,
                 const config::BoundaryData &boundaries);
 

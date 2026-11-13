@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -301,8 +302,8 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
   CHECK_THROWS_WITH(ExtrudeFace({{"BackAttribute", 2}}),
                     ContainsSubstring("is already a boundary attribute"));
 
-  // Ports, periodic, and Floquet boundaries which touch the surface: the surface is the face
-  // z = 1 of the box, along its normal (attribute 1), and the rest of the box is attribute 2.
+  // Ports which touch the surface: the surface is the face z = 1 of the box, along its
+  // normal (attribute 1), and the rest of the box is attribute 2.
   auto ExtrudeWithPort = [&](const config::BoundaryData &boundaries)
   {
     auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, 1));
@@ -325,10 +326,6 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
                     ContainsSubstring("touches the PML boundary"));
   boundaries.lumpedport.clear();
   boundaries.waveport[1].attributes = {2};
-  CHECK_THROWS_WITH(ExtrudeWithPort(boundaries),
-                    ContainsSubstring("touches the PML boundary"));
-  boundaries.waveport.clear();
-  boundaries.periodic.boundary_pairs.emplace_back().donor_attributes = {2};
   CHECK_THROWS_WITH(ExtrudeWithPort(boundaries),
                     ContainsSubstring("touches the PML boundary"));
 }
@@ -515,6 +512,84 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
     REQUIRE(pml.extrusion.depth == Depth::DISTANCE);
     CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x)
                      { return std::hypot(x(0), x(1)) - 1.0; }) < 1.0e-12);
+  }
+}
+
+TEST_CASE("ExtrudePML along the normal of a periodic boundary", "[pml][geodata][Serial]")
+{
+  // The top z = 1 of the cell [0, 1]³, periodic in x and y: the layer along its normal is
+  // periodic too, with each periodic boundary extended through it on the faces between its
+  // columns across the seams, as two boundary elements of the donor and receiver attributes
+  // on each face.
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE(1, 2);
+  auto cell = mfem::Mesh::MakeCartesian3D(3, 3, 2, type, 1.0, 1.0, 1.0);
+  cell.SetCurvature(order);
+  std::vector<mfem::Vector> translations(2, mfem::Vector(3));
+  for (int i = 0; i < 2; i++)
+  {
+    translations[i] = 0.0;
+    translations[i](i) = 1.0;
+  }
+  const auto periodic_mesh =
+      mfem::Mesh::MakePeriodic(cell, cell.CreatePeriodicVertexMapping(translations));
+  auto Extrude = [&](json extra)
+  {
+    // Boundary attributes of mfem::Mesh::MakeCartesian3D: 1 to 6 for z = 0, y = 0, x = 1,
+    // y = 1, x = 0, z = 1.
+    config::BoundaryData boundaries;
+    boundaries.periodic.boundary_pairs.resize(2);
+    boundaries.periodic.boundary_pairs[0].donor_attributes = {5};
+    boundaries.periodic.boundary_pairs[0].receiver_attributes = {3};
+    boundaries.periodic.boundary_pairs[1].donor_attributes = {2};
+    boundaries.periodic.boundary_pairs[1].receiver_attributes = {4};
+    auto mesh = std::make_unique<mfem::Mesh>(periodic_mesh);
+    auto pml = MakePML(extra);
+    mesh::ExtrudePML(mesh, pml, boundaries);
+    return std::make_pair(std::move(mesh), pml);
+  };
+  const int ne = periodic_mesh.GetNE(), nbe = periodic_mesh.GetNBE();
+  auto [mesh, pml] = Extrude({{"Attributes", {6}}});
+  REQUIRE(pml.extrusion.depth == config::PMLData::Extrusion::Depth::NORMAL);
+  CHECK(DepthError(*mesh, pml, [](const mfem::Vector &x) { return x(2) - 1.0; }) < 1.0e-12);
+  CHECK(MinExtrudedJacobian(*mesh, ne, order) > 0.0);
+  std::map<int, int> count;
+  for (int be = nbe; be < mesh->GetNBE(); be++)
+  {
+    const int attr = mesh->GetBdrAttribute(be);
+    if (attr == pml.extrusion.back_attribute)
+    {
+      continue;
+    }
+    count[attr]++;
+    int e1, e2;
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &e1, &e2);
+    CHECK(e1 >= ne);
+    CHECK(e2 >= ne);
+  }
+  CHECK(count == std::map<int, int>{{2, 6}, {3, 6}, {4, 6}, {5, 6}});
+
+  // Along rays, the two sides of the periodic boundaries would flare differently, as for a
+  // top curved into a cylinder of radius 2 around an axis along y.
+  {
+    auto curved = mfem::Mesh::MakeCartesian3D(3, 3, 2, type, 1.0, 1.0, 1.0);
+    curved.SetCurvature(2);
+    curved.Transform(
+        [](const mfem::Vector &x, mfem::Vector &y)
+        {
+          y = x;
+          y(2) = x(2) * (std::sqrt(4.0 - (x(0) - 0.5) * (x(0) - 0.5)) - 1.0);
+        });
+    auto mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakePeriodic(curved, curved.CreatePeriodicVertexMapping(translations)));
+    config::BoundaryData boundaries;
+    boundaries.periodic.boundary_pairs.resize(1);
+    boundaries.periodic.boundary_pairs[0].donor_attributes = {5};
+    boundaries.periodic.boundary_pairs[0].receiver_attributes = {3};
+    auto pml =
+        MakePML({{"Attributes", {6}}, {"Center", {{0.5, 0.0, -1.0}, {0.5, 1.0, -1.0}}}});
+    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, pml, boundaries),
+                      Matchers::ContainsSubstring("would flare the two sides"));
   }
 }
 
