@@ -1,10 +1,25 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <complex>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include "driver.hpp"
 #include "drivers/eigensolver.hpp"
+#include "surfaceresponse-fixtures.hpp"
+#include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/iodata.hpp"
+#include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
+#include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 
 using palace::BuildComplexSumOperator;
 using palace::ComplexWrapperOperator;
@@ -165,3 +180,138 @@ TEST_CASE("Eigenmode maximum-weight assignment", "[eigensolver][surface-response
     CHECK_THROWS(MaximumWeightModeAssignment({{1.0, -0.1}}));
   }
 }
+
+namespace palace
+{
+
+// SD-507 (eigen #8) / SD-503 (P3-09): with field output the eigen driver stages the raw
+// and the assigned self-consistent corrected eigenvectors in host memory and releases both
+// eigensolvers before postprocessing (upstream #825); without field output the
+// postprocessing reads them from the solvers. Both forms must write bitwise the same
+// tables, and the first written mode must carry the corrected field (registered on the
+// lazily created ParaView collection). Two modes, CorrectionMode Both, on the convex PEC
+// island of the fixtures (written to a mesh file), in both crack forms.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Eigenmode corrected postprocessing staged = unstaged",
+                 "[eigensolver][surface-response][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Legacy: the island sheet (attribute 9) is cracked; default (the key unset): it is not.
+  const bool legacy = GENERATE(true, false);
+  INFO("crack policy: " << (legacy ? "legacy" : "default"));
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "staged-island.mesh";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(comm);
+  test::json config = ConvexMaxwellIslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  // Mesh units are metres, unscaled, as the library's R (m).
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  if (legacy)
+  {
+    config["Model"]["CrackInternalBoundaryElements"] = true;
+  }
+  else
+  {
+    config["Model"].erase("CrackInternalBoundaryElements");
+  }
+  config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
+  // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
+  auto Run = [&](const std::string &stem, int save)
+  {
+    test::json run = config;
+    const fs::path output = temp.temp_dir / (stem + (legacy ? "-legacy" : "-default"));
+    run["Problem"]["Output"] = output.string();
+    run["Solver"]["Eigenmode"]["Save"] = save;
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr);
+    Mpi::Barrier(comm);
+    return output;
+  };
+  const fs::path unstaged = Run("unstaged", 0);
+  const fs::path staged = Run("staged", 2);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+
+  // Both modes carry a corrected and a self-consistent surface participation.
+  const Table table = test::LoadCsv(unstaged / "surface-Q-corrected.csv");
+  const auto &modes = test::ColumnByHeader(table, "m").data;
+  const auto &corrected = test::ColumnByHeader(table, "p_surf corrected").data;
+  const auto &self_consistent = test::ColumnByHeader(table, "p_surf self-consistent").data;
+  REQUIRE(modes.size() == 2);
+  for (std::size_t i = 0; i < modes.size(); i++)
+  {
+    INFO("mode " << modes[i]);
+    CHECK(std::isfinite(corrected[i]));
+    CHECK(corrected[i] > 0.0);
+    CHECK(std::isfinite(self_consistent[i]));
+    CHECK(self_consistent[i] > 0.0);
+  }
+
+  // Every table is bitwise the same with and without the staging.
+  std::vector<std::string> names;
+  for (const auto &entry : fs::directory_iterator(unstaged))
+  {
+    if (entry.is_regular_file() && entry.path().extension() == ".csv")
+    {
+      names.push_back(entry.path().filename().string());
+    }
+  }
+  std::size_t staged_count = 0;
+  for (const auto &entry : fs::directory_iterator(staged))
+  {
+    staged_count += (entry.is_regular_file() && entry.path().extension() == ".csv");
+  }
+  REQUIRE(names.size() > 1);
+  CHECK(staged_count == names.size());
+  for (const auto &name : names)
+  {
+    INFO("table " << name);
+    REQUIRE(fs::is_regular_file(staged / name));
+    CHECK(test::ReadFile(staged / name) == test::ReadFile(unstaged / name));
+  }
+
+  // The staged run wrote fields, and its first written mode holds the corrected field.
+  CHECK_FALSE(fs::exists(unstaged / "paraview"));
+  REQUIRE(fs::is_directory(staged / "paraview"));
+  fs::path first_cycle;
+  for (const auto &entry : fs::recursive_directory_iterator(staged / "paraview"))
+  {
+    const auto name = entry.path().filename().string();
+    const auto collection = entry.path().parent_path().filename().string();
+    const bool boundary = collection.size() >= 9 &&
+                          collection.compare(collection.size() - 9, 9, "_boundary") == 0;
+    if (entry.is_directory() && name.rfind("Cycle", 0) == 0 && !boundary &&
+        (first_cycle.empty() || entry.path() < first_cycle))
+    {
+      first_cycle = entry.path();
+    }
+  }
+  REQUIRE_FALSE(first_cycle.empty());
+  INFO("first cycle " << first_cycle.string());
+  bool has_corrected_field = false;
+  for (const auto &entry : fs::directory_iterator(first_cycle))
+  {
+    has_corrected_field =
+        has_corrected_field ||
+        (entry.is_regular_file() &&
+         test::ReadFile(entry.path()).find("E_corrected_real") != std::string::npos);
+  }
+  CHECK(has_corrected_field);
+#endif
+}
+
+}  // namespace palace
