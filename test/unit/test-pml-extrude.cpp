@@ -655,8 +655,9 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
           const auto ctx_s = pml::PackContext(header, cartesian, {0}, {b});
           const auto ctx_j = pml::PackContext(header, p, {0}, {b});
           std::array<double, 9> coeff_s, coeff_j;
-          muinv ? PMLMuInvCoeff(ctx_s.data(), 1, x.data(), coeff_s.data())
-                : PMLEpsCoeff(ctx_s.data(), 1, x.data(), coeff_s.data());
+          const CeedScalar zero[3] = {0.0, 0.0, 0.0};
+          PMLCoeffAt(ctx_s.data(), 1, x.data(), 0.0, zero, muinv ? coeff_s.data() : nullptr,
+                     muinv ? nullptr : coeff_s.data());
           const bool magnitude = (part == pml::TensorPart::STRETCH_MAGNITUDE_REAL ||
                                   part == pml::TensorPart::STRETCH_MAGNITUDE_IMAG);
           const auto s_part = magnitude ? std::complex<double>(std::abs(s)) : s;

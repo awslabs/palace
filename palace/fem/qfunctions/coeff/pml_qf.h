@@ -9,19 +9,19 @@
 #endif
 #include "coeff_qf.h"
 
-// Device-callable evaluation of the Cartesian PML material tensors at a quadrature point,
-// from the physical coordinate x and a packed QFunction context.
+// Device-callable evaluation of the PML material tensors at a quadrature point, from the
+// physical coordinate x and a packed QFunction context.
 //
-// With the diagonal coordinate stretch S = diag(s_x, s_y, s_z), where (Palace e^{+iωt}
-// time convention)
+// For a coordinate stretch with the Jacobian J, Maxwell's equations in the stretched
+// coordinates are equivalent to Maxwell's equations in the real coordinates with the
+// transformed (complex, symmetric) material tensors
+//                 μ̃⁻¹ = Jᵀ μ⁻¹ J / det(J) ,     ε̃ = det(J) J⁻¹ ε J⁻ᵀ ,
+// for general (anisotropic, lossy) background tensors μ⁻¹ and ε = ε' + i ε''. The Cartesian
+// stretch has J = S = diag(s_x, s_y, s_z), where (Palace e^{+iωt} time convention)
 //                       s_a(x, ω) = κ_a(x) + σ_a(x) / (α_a(x) + iω) ,
-// Maxwell's equations in the stretched coordinates are equivalent to Maxwell's equations
-// in the real coordinates with the transformed (complex, symmetric) material tensors
-//                 μ̃⁻¹ = S μ⁻¹ S / det(S) ,     ε̃ = det(S) S⁻¹ ε S⁻¹ ,
 // that is, μ̃⁻¹_ij = μ⁻¹_ij s_i s_j / (s_x s_y s_z) and ε̃_ij = ε_ij (s_x s_y s_z) / (s_i
-// s_j). These hold for general (anisotropic, lossy) background tensors μ⁻¹ and ε = ε' + i
-// ε''. For an isotropic background they reduce to the classic uniaxial PML tensors μ̃⁻¹_ii =
-// μ⁻¹ s_i / (s_j s_k), ε̃_ii = ε s_j s_k / s_i. The frequency ω is the complex solve
+// s_j): for an isotropic background, the classic uniaxial PML tensors μ̃⁻¹_ii = μ⁻¹ s_i /
+// (s_j s_k), ε̃_ii = ε s_j s_k / s_i. The frequency ω is the complex solve
 // frequency for a frequency-dependent stretch (so that the stretch is the analytic
 // continuation for complex eigenfrequencies), or a fixed real reference frequency ω₀ for a
 // static stretch.
@@ -53,7 +53,9 @@
 //     [18..26]  Im{ε}
 //
 // The profile parameters are graded with depth d into the layer of thickness t on each face
-// as σ = σ_max (d/t)ⁿ, κ = 1 + (κ_max - 1)(d/t)ⁿ, α = α_max (d/t)ⁿ.
+// as σ = σ_max (d/t)ⁿ, κ = 1 + (κ_max - 1)(d/t)ⁿ, α = α_max (d/t)ⁿ. The tensors T̂ of the
+// magnitudes of the stretch factors use J with the stretch factors replaced by their
+// magnitudes.
 //
 // For a PML extruded from a boundary of the mesh, the stretch maps the point x at the depth
 // ξ into the layer, along the unit vector d from its closest point p on a core segment, to
@@ -62,14 +64,12 @@
 //                 J̃ = ∂x̃/∂x = I + (s - 1) d ∇ξᵀ + (ξ̃ - ξ) ∇d ,
 // with ∇d = (I - d dᵀ) / |x - p| for p at an end of the core segment and (I - d dᵀ - e eᵀ)
 // / |x - p| inside of it, for its unit direction e. The material tensors are those above
-// for the general stretch J̃ in place of S,
-//                 μ̃⁻¹ = J̃ᵀ μ⁻¹ J̃ / det(J̃) ,     ε̃ = det(J̃) J̃⁻¹ ε J̃⁻ᵀ ,
-// which are complex symmetric, and J̃ = I at the interface with the physical region (ξ =
-// 0). The depth ξ and its gradient are interpolated from the depth of the mesh nodes. On a
-// sphere around a point core, J̃ = s d dᵀ + (r̃ / r) (I - d dᵀ): the spherical PML. With
-// d ∇ξᵀ = n nᵀ and ∇d = 0, it is the Cartesian stretch of a face with normal n. The tensors
-// with the magnitudes of the stretch factors use J̃ with s and |x - p| + ξ̃ - ξ replaced by
-// their magnitudes. The extruded stretch section of the context is:
+// for J = J̃, and J̃ = I at the interface with the physical region (ξ = 0). The depth ξ and
+// its gradient are interpolated from the depth of the mesh nodes. On a sphere around a
+// point core, J̃ = s d dᵀ + (r̃ / r) (I - d dᵀ): the spherical PML. With d ∇ξᵀ = n nᵀ and ∇d
+// = 0, it is the Cartesian stretch of a face with normal n. For the tensors T̂, s and |x -
+// p| + ξ̃ - ξ in J̃ are replaced by their magnitudes. The extruded stretch section of the
+// context is:
 //     [25]      1 for an extruded stretch (the Cartesian entries above are then zero)
 //     [26..31]  end points of the core segment (a point if they are equal)
 //     [32..35]  layer thickness t, σ_max, κ_max, and α_max
@@ -211,135 +211,142 @@ CEED_QFUNCTION_HELPER CeedScalar PMLScaledPart(CeedInt part, CeedScalar c_re,
              : c_re * t_re - c_im * t_im;
 }
 
-// Stretch factor f = f_re + i f_im of a tensor entry, replaced by its magnitude for the
-// parts with the magnitudes of the stretch factors.
-CEED_QFUNCTION_HELPER void PMLStretchFactorPart(CeedInt part, CeedScalar *f_re,
-                                                CeedScalar *f_im)
+// Adjugate B = adj(A) and determinant of a complex 3 x 3 matrix A (column-major).
+CEED_QFUNCTION_HELPER void PMLComplexAdj33(const CeedScalar A_re[9],
+                                           const CeedScalar A_im[9], CeedScalar B_re[9],
+                                           CeedScalar B_im[9], CeedScalar *det_re,
+                                           CeedScalar *det_im)
 {
-  if (part == PALACE_PML_PART_MAG_RE || part == PALACE_PML_PART_MAG_IM)
+  for (CeedInt j = 0; j < 3; j++)
   {
-    *f_re = sqrt(*f_re * *f_re + *f_im * *f_im);
-    *f_im = 0.0;
+    for (CeedInt i = 0; i < 3; i++)
+    {
+      // adj(A)_ij = A_(j+1)(i+1) A_(j+2)(i+2) - A_(j+1)(i+2) A_(j+2)(i+1).
+      const CeedInt j1 = (j + 1) % 3, j2 = (j + 2) % 3, i1 = (i + 1) % 3, i2 = (i + 2) % 3;
+      CeedScalar p_re, p_im, q_re, q_im;
+      PMLComplexMult(A_re[j1 + 3 * i1], A_im[j1 + 3 * i1], A_re[j2 + 3 * i2],
+                     A_im[j2 + 3 * i2], &p_re, &p_im);
+      PMLComplexMult(A_re[j1 + 3 * i2], A_im[j1 + 3 * i2], A_re[j2 + 3 * i1],
+                     A_im[j2 + 3 * i1], &q_re, &q_im);
+      B_re[i + 3 * j] = p_re - q_re;
+      B_im[i + 3 * j] = p_im - q_im;
+    }
+  }
+  *det_re = *det_im = 0.0;
+  for (CeedInt k = 0; k < 3; k++)
+  {
+    CeedScalar p_re, p_im;
+    PMLComplexMult(A_re[3 * k], A_im[3 * k], B_re[k], B_im[k], &p_re, &p_im);
+    *det_re += p_re;
+    *det_im += p_im;
   }
 }
 
-// Stretch factors s_a and their product det(S) = s_x s_y s_z at x.
-CEED_QFUNCTION_HELPER void PMLStretchDet(const CeedIntScalar *ctx, const CeedScalar x[3],
-                                         CeedScalar s_re[3], CeedScalar s_im[3],
-                                         CeedScalar *det_re, CeedScalar *det_im)
-{
-  PMLStretch(ctx, x, s_re, s_im);
-  PMLComplexMult(s_re[0], s_im[0], s_re[1], s_im[1], det_re, det_im);
-  PMLComplexMult(*det_re, *det_im, s_re[2], s_im[2], det_re, det_im);
-}
-
-// Requested part of c μ̃⁻¹ (3 x 3, column-major), with μ̃⁻¹_ij = μ⁻¹_ij s_i s_j / det(S) for
-// the background material b and c the μ̃⁻¹ prefactor in the context header.
-CEED_QFUNCTION_HELPER void PMLMuInvCoeffStretch(const CeedIntScalar *ctx,
-                                                const CeedIntScalar *b,
-                                                const CeedScalar s_re[3],
-                                                const CeedScalar s_im[3], CeedScalar det_re,
-                                                CeedScalar det_im, CeedScalar coeff[9])
+// Requested part of c μ̃⁻¹ (3 x 3, column-major), with μ̃⁻¹ = Jᵀ μ⁻¹ J / det(J) for the
+// background material b and c the μ̃⁻¹ prefactor in the context header.
+CEED_QFUNCTION_HELPER void PMLMuInvCoeffJacobian(const CeedIntScalar *ctx,
+                                                 const CeedIntScalar *b,
+                                                 const CeedScalar J_re[9],
+                                                 const CeedScalar J_im[9],
+                                                 CeedScalar coeff[9])
 {
   const CeedInt part = PMLPart(ctx);
   const CeedScalar c_re = ctx[2].second, c_im = ctx[3].second;
-  for (CeedInt j = 0; j < 3; j++)
+  CeedScalar adj_re[9], adj_im[9], det_re, det_im, M_re[9], M_im[9];
+  PMLComplexAdj33(J_re, J_im, adj_re, adj_im, &det_re, &det_im);
+  for (CeedInt j = 0; j < 3; j++)  // M = μ⁻¹ J
   {
     for (CeedInt i = 0; i < 3; i++)
     {
-      const CeedScalar mu_inv = b[i + 3 * j].second;
-      if (mu_inv == 0.0)
+      M_re[i + 3 * j] = M_im[i + 3 * j] = 0.0;
+      for (CeedInt k = 0; k < 3; k++)
       {
-        coeff[i + 3 * j] = 0.0;
-        continue;
+        M_re[i + 3 * j] += b[i + 3 * k].second * J_re[k + 3 * j];
+        M_im[i + 3 * j] += b[i + 3 * k].second * J_im[k + 3 * j];
       }
-      CeedScalar f_re, f_im;
-      PMLComplexMult(s_re[i], s_im[i], s_re[j], s_im[j], &f_re, &f_im);
-      PMLComplexDiv(f_re, f_im, det_re, det_im, &f_re, &f_im);
-      PMLStretchFactorPart(part, &f_re, &f_im);
-      coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, mu_inv * f_re, mu_inv * f_im);
     }
   }
-}
-
-// Requested part of c ε̃ (3 x 3, column-major), with ε̃_ij = ε_ij det(S) / (s_i s_j) for the
-// complex permittivity ε_ij = ε'_ij + i ε''_ij of the background material b and c the ε̃
-// prefactor in the context header.
-CEED_QFUNCTION_HELPER void PMLEpsCoeffStretch(const CeedIntScalar *ctx,
-                                              const CeedIntScalar *b,
-                                              const CeedScalar s_re[3],
-                                              const CeedScalar s_im[3], CeedScalar det_re,
-                                              CeedScalar det_im, CeedScalar coeff[9])
-{
-  const CeedInt part = PMLPart(ctx);
-  const CeedScalar c_re = ctx[4].second, c_im = ctx[5].second;
   for (CeedInt j = 0; j < 3; j++)
   {
     for (CeedInt i = 0; i < 3; i++)
     {
-      const CeedScalar eps_re = b[9 + i + 3 * j].second, eps_im = b[18 + i + 3 * j].second;
-      if (eps_re == 0.0 && eps_im == 0.0)
+      CeedScalar t_re = 0.0, t_im = 0.0;
+      for (CeedInt k = 0; k < 3; k++)
       {
-        coeff[i + 3 * j] = 0.0;
-        continue;
+        CeedScalar p_re, p_im;
+        PMLComplexMult(J_re[k + 3 * i], J_im[k + 3 * i], M_re[k + 3 * j], M_im[k + 3 * j],
+                       &p_re, &p_im);
+        t_re += p_re;
+        t_im += p_im;
       }
-      CeedScalar f_re, f_im, t_re, t_im;
-      PMLComplexMult(s_re[i], s_im[i], s_re[j], s_im[j], &f_re, &f_im);
-      PMLComplexDiv(det_re, det_im, f_re, f_im, &f_re, &f_im);
-      PMLStretchFactorPart(part, &f_re, &f_im);
-      PMLComplexMult(eps_re, eps_im, f_re, f_im, &t_re, &t_im);
+      PMLComplexDiv(t_re, t_im, det_re, det_im, &t_re, &t_im);
       coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, t_re, t_im);
     }
   }
 }
 
-// Requested part of c μ̃⁻¹ at x. Returns false (and leaves coeff unset) for attributes
-// outside of the PML regions.
-CEED_QFUNCTION_HELPER bool PMLMuInvCoeff(const CeedIntScalar *ctx, CeedInt attr,
-                                         const CeedScalar x[3], CeedScalar coeff[9])
+// Requested part of c ε̃ (3 x 3, column-major), with ε̃ = det(J) J⁻¹ ε J⁻ᵀ = adj(J) ε
+// adj(J)ᵀ / det(J) for the complex permittivity of the background material b and c the ε̃
+// prefactor in the context header.
+CEED_QFUNCTION_HELPER void
+PMLEpsCoeffJacobian(const CeedIntScalar *ctx, const CeedIntScalar *b,
+                    const CeedScalar J_re[9], const CeedScalar J_im[9], CeedScalar coeff[9])
 {
-  const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
-  if (!b)
+  const CeedInt part = PMLPart(ctx);
+  const CeedScalar c_re = ctx[4].second, c_im = ctx[5].second;
+  CeedScalar adj_re[9], adj_im[9], det_re, det_im, M_re[9], M_im[9];
+  PMLComplexAdj33(J_re, J_im, adj_re, adj_im, &det_re, &det_im);
+  for (CeedInt j = 0; j < 3; j++)  // M = ε adj(J)ᵀ
   {
-    return false;
+    for (CeedInt i = 0; i < 3; i++)
+    {
+      M_re[i + 3 * j] = M_im[i + 3 * j] = 0.0;
+      for (CeedInt k = 0; k < 3; k++)
+      {
+        CeedScalar p_re, p_im;
+        PMLComplexMult(b[9 + i + 3 * k].second, b[18 + i + 3 * k].second, adj_re[j + 3 * k],
+                       adj_im[j + 3 * k], &p_re, &p_im);
+        M_re[i + 3 * j] += p_re;
+        M_im[i + 3 * j] += p_im;
+      }
+    }
   }
-  CeedScalar s_re[3], s_im[3], det_re, det_im;
-  PMLStretchDet(ctx, x, s_re, s_im, &det_re, &det_im);
-  PMLMuInvCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, coeff);
-  return true;
+  for (CeedInt j = 0; j < 3; j++)
+  {
+    for (CeedInt i = 0; i < 3; i++)
+    {
+      CeedScalar t_re = 0.0, t_im = 0.0;
+      for (CeedInt k = 0; k < 3; k++)
+      {
+        CeedScalar p_re, p_im;
+        PMLComplexMult(adj_re[i + 3 * k], adj_im[i + 3 * k], M_re[k + 3 * j],
+                       M_im[k + 3 * j], &p_re, &p_im);
+        t_re += p_re;
+        t_im += p_im;
+      }
+      PMLComplexDiv(t_re, t_im, det_re, det_im, &t_re, &t_im);
+      coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, t_re, t_im);
+    }
+  }
 }
 
-// Requested part of c ε̃ at x. Returns false (and leaves coeff unset) for attributes outside
-// of the PML regions.
-CEED_QFUNCTION_HELPER bool PMLEpsCoeff(const CeedIntScalar *ctx, CeedInt attr,
-                                       const CeedScalar x[3], CeedScalar coeff[9])
+// Jacobian J = diag(s_x, s_y, s_z) (complex 3 x 3, column-major) of the Cartesian stretch
+// at x, or the one with the magnitudes of the stretch factors.
+CEED_QFUNCTION_HELPER void PMLCartesianJacobian(const CeedIntScalar *ctx,
+                                                const CeedScalar x[3], bool magnitude,
+                                                CeedScalar J_re[9], CeedScalar J_im[9])
 {
-  const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
-  if (!b)
+  CeedScalar s_re[3], s_im[3];
+  PMLStretch(ctx, x, s_re, s_im);
+  for (CeedInt k = 0; k < 9; k++)
   {
-    return false;
+    J_re[k] = J_im[k] = 0.0;
   }
-  CeedScalar s_re[3], s_im[3], det_re, det_im;
-  PMLStretchDet(ctx, x, s_re, s_im, &det_re, &det_im);
-  PMLEpsCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, coeff);
-  return true;
-}
-
-// Both of the above, sharing the stretch evaluation.
-CEED_QFUNCTION_HELPER bool PMLMuInvEpsCoeff(const CeedIntScalar *ctx, CeedInt attr,
-                                            const CeedScalar x[3], CeedScalar mu_coeff[9],
-                                            CeedScalar eps_coeff[9])
-{
-  const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
-  if (!b)
+  for (CeedInt a = 0; a < 3; a++)
   {
-    return false;
+    J_re[4 * a] = magnitude ? sqrt(s_re[a] * s_re[a] + s_im[a] * s_im[a]) : s_re[a];
+    J_im[4 * a] = magnitude ? 0.0 : s_im[a];
   }
-  CeedScalar s_re[3], s_im[3], det_re, det_im;
-  PMLStretchDet(ctx, x, s_re, s_im, &det_re, &det_im);
-  PMLMuInvCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, mu_coeff);
-  PMLEpsCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, eps_coeff);
-  return true;
 }
 
 // Whether the stretch of the context is that of an extruded PML.
@@ -463,150 +470,31 @@ CEED_QFUNCTION_HELPER void PMLExtrudedJacobian(const CeedIntScalar *ctx,
   }
 }
 
-// Adjugate B = adj(A) and determinant of a complex 3 x 3 matrix A (column-major).
-CEED_QFUNCTION_HELPER void PMLComplexAdj33(const CeedScalar A_re[9],
-                                           const CeedScalar A_im[9], CeedScalar B_re[9],
-                                           CeedScalar B_im[9], CeedScalar *det_re,
-                                           CeedScalar *det_im)
-{
-  for (CeedInt j = 0; j < 3; j++)
-  {
-    for (CeedInt i = 0; i < 3; i++)
-    {
-      // adj(A)_ij = A_(j+1)(i+1) A_(j+2)(i+2) - A_(j+1)(i+2) A_(j+2)(i+1).
-      const CeedInt j1 = (j + 1) % 3, j2 = (j + 2) % 3, i1 = (i + 1) % 3, i2 = (i + 2) % 3;
-      CeedScalar p_re, p_im, q_re, q_im;
-      PMLComplexMult(A_re[j1 + 3 * i1], A_im[j1 + 3 * i1], A_re[j2 + 3 * i2],
-                     A_im[j2 + 3 * i2], &p_re, &p_im);
-      PMLComplexMult(A_re[j1 + 3 * i2], A_im[j1 + 3 * i2], A_re[j2 + 3 * i1],
-                     A_im[j2 + 3 * i1], &q_re, &q_im);
-      B_re[i + 3 * j] = p_re - q_re;
-      B_im[i + 3 * j] = p_im - q_im;
-    }
-  }
-  *det_re = *det_im = 0.0;
-  for (CeedInt k = 0; k < 3; k++)
-  {
-    CeedScalar p_re, p_im;
-    PMLComplexMult(A_re[3 * k], A_im[3 * k], B_re[k], B_im[k], &p_re, &p_im);
-    *det_re += p_re;
-    *det_im += p_im;
-  }
-}
-
-// Requested part of c μ̃⁻¹ (3 x 3, column-major), with μ̃⁻¹ = J̃ᵀ μ⁻¹ J̃ / det(J̃) for the
-// background material b and c the μ̃⁻¹ prefactor in the context header.
-CEED_QFUNCTION_HELPER void PMLMuInvCoeffJacobian(const CeedIntScalar *ctx,
-                                                 const CeedIntScalar *b,
-                                                 const CeedScalar J_re[9],
-                                                 const CeedScalar J_im[9],
-                                                 CeedScalar coeff[9])
-{
-  const CeedInt part = PMLPart(ctx);
-  const CeedScalar c_re = ctx[2].second, c_im = ctx[3].second;
-  CeedScalar adj_re[9], adj_im[9], det_re, det_im, M_re[9], M_im[9];
-  PMLComplexAdj33(J_re, J_im, adj_re, adj_im, &det_re, &det_im);
-  for (CeedInt j = 0; j < 3; j++)  // M = μ⁻¹ J̃
-  {
-    for (CeedInt i = 0; i < 3; i++)
-    {
-      M_re[i + 3 * j] = M_im[i + 3 * j] = 0.0;
-      for (CeedInt k = 0; k < 3; k++)
-      {
-        M_re[i + 3 * j] += b[i + 3 * k].second * J_re[k + 3 * j];
-        M_im[i + 3 * j] += b[i + 3 * k].second * J_im[k + 3 * j];
-      }
-    }
-  }
-  for (CeedInt j = 0; j < 3; j++)
-  {
-    for (CeedInt i = 0; i < 3; i++)
-    {
-      CeedScalar t_re = 0.0, t_im = 0.0;
-      for (CeedInt k = 0; k < 3; k++)
-      {
-        CeedScalar p_re, p_im;
-        PMLComplexMult(J_re[k + 3 * i], J_im[k + 3 * i], M_re[k + 3 * j], M_im[k + 3 * j],
-                       &p_re, &p_im);
-        t_re += p_re;
-        t_im += p_im;
-      }
-      PMLComplexDiv(t_re, t_im, det_re, det_im, &t_re, &t_im);
-      coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, t_re, t_im);
-    }
-  }
-}
-
-// Requested part of c ε̃ (3 x 3, column-major), with ε̃ = det(J̃) J̃⁻¹ ε J̃⁻ᵀ = adj(J̃) ε
-// adj(J̃)ᵀ / det(J̃) for the complex permittivity of the background material b and c the ε̃
-// prefactor in the context header.
-CEED_QFUNCTION_HELPER void
-PMLEpsCoeffJacobian(const CeedIntScalar *ctx, const CeedIntScalar *b,
-                    const CeedScalar J_re[9], const CeedScalar J_im[9], CeedScalar coeff[9])
-{
-  const CeedInt part = PMLPart(ctx);
-  const CeedScalar c_re = ctx[4].second, c_im = ctx[5].second;
-  CeedScalar adj_re[9], adj_im[9], det_re, det_im, M_re[9], M_im[9];
-  PMLComplexAdj33(J_re, J_im, adj_re, adj_im, &det_re, &det_im);
-  for (CeedInt j = 0; j < 3; j++)  // M = ε adj(J̃)ᵀ
-  {
-    for (CeedInt i = 0; i < 3; i++)
-    {
-      M_re[i + 3 * j] = M_im[i + 3 * j] = 0.0;
-      for (CeedInt k = 0; k < 3; k++)
-      {
-        CeedScalar p_re, p_im;
-        PMLComplexMult(b[9 + i + 3 * k].second, b[18 + i + 3 * k].second, adj_re[j + 3 * k],
-                       adj_im[j + 3 * k], &p_re, &p_im);
-        M_re[i + 3 * j] += p_re;
-        M_im[i + 3 * j] += p_im;
-      }
-    }
-  }
-  for (CeedInt j = 0; j < 3; j++)
-  {
-    for (CeedInt i = 0; i < 3; i++)
-    {
-      CeedScalar t_re = 0.0, t_im = 0.0;
-      for (CeedInt k = 0; k < 3; k++)
-      {
-        CeedScalar p_re, p_im;
-        PMLComplexMult(adj_re[i + 3 * k], adj_im[i + 3 * k], M_re[k + 3 * j],
-                       M_im[k + 3 * j], &p_re, &p_im);
-        t_re += p_re;
-        t_im += p_im;
-      }
-      PMLComplexDiv(t_re, t_im, det_re, det_im, &t_re, &t_im);
-      coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, t_re, t_im);
-    }
-  }
-}
-
 // Requested parts of c μ̃⁻¹ and/or c ε̃ (either may be null) at a quadrature point with the
-// coordinates x, for the Cartesian stretch, or for the extruded one at the depth ξ with the
-// gradient grad_xi. Returns false (and leaves the coefficients unset) for attributes
-// outside of the PML regions.
+// coordinates x, from the Jacobian of the Cartesian stretch, or of the extruded one at the
+// depth ξ with the gradient grad_xi. Returns false (and leaves the coefficients unset) for
+// attributes outside of the PML regions.
 CEED_QFUNCTION_HELPER bool PMLCoeffAt(const CeedIntScalar *ctx, CeedInt attr,
                                       const CeedScalar x[3], CeedScalar xi,
                                       const CeedScalar grad_xi[3], CeedScalar mu_coeff[9],
                                       CeedScalar eps_coeff[9])
 {
-  if (!PMLIsExtruded(ctx))
-  {
-    return (mu_coeff && eps_coeff) ? PMLMuInvEpsCoeff(ctx, attr, x, mu_coeff, eps_coeff)
-           : mu_coeff              ? PMLMuInvCoeff(ctx, attr, x, mu_coeff)
-                                   : PMLEpsCoeff(ctx, attr, x, eps_coeff);
-  }
   const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
   if (!b)
   {
     return false;
   }
   const CeedInt part = PMLPart(ctx);
+  const bool magnitude = (part == PALACE_PML_PART_MAG_RE || part == PALACE_PML_PART_MAG_IM);
   CeedScalar J_re[9], J_im[9];
-  PMLExtrudedJacobian(ctx, x, xi, grad_xi,
-                      part == PALACE_PML_PART_MAG_RE || part == PALACE_PML_PART_MAG_IM,
-                      J_re, J_im);
+  if (PMLIsExtruded(ctx))
+  {
+    PMLExtrudedJacobian(ctx, x, xi, grad_xi, magnitude, J_re, J_im);
+  }
+  else
+  {
+    PMLCartesianJacobian(ctx, x, magnitude, J_re, J_im);
+  }
   if (mu_coeff)
   {
     PMLMuInvCoeffJacobian(ctx, b, J_re, J_im, mu_coeff);

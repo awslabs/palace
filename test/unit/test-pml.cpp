@@ -151,8 +151,9 @@ bool EvalCoeff(const pml::Stretch &p, const pml::Background &b,
   const auto ctx = pml::PackContext(header, p, {0}, {b});
   REQUIRE(!ctx.empty());
   const CeedScalar xp[3] = {x[0], x[1], x[2]};
-  return muinv ? PMLMuInvCoeff(ctx.data(), 1, xp, coeff.data())
-               : PMLEpsCoeff(ctx.data(), 1, xp, coeff.data());
+  const CeedScalar grad_xi[3] = {0.0, 0.0, 0.0};
+  return PMLCoeffAt(ctx.data(), 1, xp, 0.0, grad_xi, muinv ? coeff.data() : nullptr,
+                    muinv ? nullptr : coeff.data());
 }
 
 void CheckCoeff(const pml::Stretch &p, const pml::Background &b, std::complex<double> c,
