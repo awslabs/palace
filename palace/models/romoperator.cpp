@@ -380,33 +380,27 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
 
 }  // namespace
 
-MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
+void MinimalRationalInterpolation::AddSolutionSample(double omega,
+                                                     const Eigen::VectorXcd &c)
 {
-  z.reserve(max_size);
-  Q.resize(max_size, ComplexVector());
-}
-
-void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                     MPI_Comm comm,
-                                                     Orthogonalization orthog_type)
-{
-  // Compute the coefficients for the minimal rational interpolation of the state u used
-  // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
-  // stored by its QR decomposition.
-  MFEM_VERIFY(dim_Q + 1 <= Q.size(),
-              "Unable to increase basis storage size, increase maximum number of vectors!");
-  R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
+  // Compute the coefficients for the minimal rational interpolation of the state u = V c
+  // used as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
+  // stored by its QR decomposition, computed from the coefficients since V is orthonormal.
+  const auto S = static_cast<Eigen::Index>(z.size());
+  const auto m = std::max(Q.rows(), 2 * c.size());
+  Eigen::VectorXcd x = Eigen::VectorXcd::Zero(m);
+  x(Eigen::seqN(0, c.size(), 2)) = c;
+  x(Eigen::seqN(1, c.size(), 2)) = (1i * omega) * c;
+  Q.conservativeResizeLike(Eigen::MatrixXcd::Zero(m, S + 1));
+  R.conservativeResizeLike(Eigen::MatrixXcd::Zero(S + 1, S + 1));
+  for (int pass = 0; pass < 2; pass++)  // CGS2
   {
-    std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {{1.0, 0.0}, {0.0, omega}};
-    Q[dim_Q].SetSize(2 * u.Size());
-    Q[dim_Q].UseDevice(true);
-    Q[dim_Q].SetBlocks(blocks, s);
+    const Eigen::VectorXcd h = Q.leftCols(S).adjoint() * x;
+    x -= Q.leftCols(S) * h;
+    R.col(S).head(S) += h;
   }
-  linalg::OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
-  R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
-  Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
-  dim_Q++;
+  R(S, S) = x.norm();
+  Q.col(S) = x / R(S, S).real();
   ComputeMRI(R, q);
   z.push_back(omega);
 }
@@ -754,7 +748,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // Set up MinimalRationalInterpolation.
   for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
   {
-    mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
+    mri.try_emplace(excitation_idx);
   }
 }
 
@@ -1138,7 +1132,8 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
+                                         std::string_view node_label)
 {
   RHS1r_online.clear();
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
@@ -1224,16 +1219,26 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
                "times accidentally).");
   }
 
+  // Coefficients of u in the updated basis (a part below the tolerance is dropped).
+  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_new);
+  if (has_real)
+  {
+    c.real() = orth_R.col(dim_V_old);
+  }
+  if (has_imag)
+  {
+    c.imag() = orth_R.col(dim_V_new - 1);
+  }
   if (dim_V_new == dim_V_old)
   {
-    return;
+    return c;
   }
 
   // Update the projections for the new basis vectors (the resized matrices keep those for
-  // the previous ones): the operators and the excitation, together. With a Floquet wave
-  // vector, the stiffness matrix can be nonsymmetric: Hermitian (domain Floquet terms) or
-  // with an antisymmetric real part (Floquet terms of second-order farfield boundaries,
-  // with a frequency dependent wave vector).
+  // the previous ones): the operators, the excitation, and the Gram matrix, together. With
+  // a Floquet wave vector, the stiffness matrix can be nonsymmetric: Hermitian (domain
+  // Floquet terms) or with an antisymmetric real part (Floquet terms of second-order
+  // farfield boundaries, with a frequency dependent wave vector).
   const auto n0 = static_cast<int>(dim_V_old), n = static_cast<int>(dim_V_new);
   BasisProjection proj(V, n0);
   Kr.conservativeResize(n, n);
@@ -1292,7 +1297,32 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     RHS1r.conservativeResize(n);
     proj.AddVector(RHS1, &RHS1r(n0));
   }
+  // Inner products of the new basis vectors with the basis, for the Gram matrix.
+  Eigen::MatrixXcd G(n, n - n0);
+  if (weight_op_W)
+  {
+    for (int j = n0; j < n; j++)
+    {
+      proj.Add(nullptr, V[j], 0, &G(0, j - n0), false);
+    }
+  }
   proj.Compute(comm, proj_ws);
+
+  if (weight_op_W)
+  {
+    // Extend the Cholesky factor of VᵀV.
+    const Eigen::MatrixXd Gr = G.real();
+    gram_L.conservativeResizeLike(Eigen::MatrixXd::Zero(n, n));
+    auto L21 = gram_L.bottomLeftCorner(n - n0, n0);
+    L21 = gram_L.topLeftCorner(n0, n0)
+              .triangularView<Eigen::Lower>()
+              .solve(Gr.topRows(n0))
+              .transpose();
+    Eigen::LLT<Eigen::MatrixXd> llt(Gr.bottomRows(n - n0) - L21 * L21.transpose());
+    MFEM_VERIFY(llt.info() == Eigen::Success,
+                "Euclidean Gram matrix of the PROM basis is not positive definite!");
+    gram_L.bottomRightCorner(n - n0, n - n0) = llt.matrixL();
+  }
   // Initialize map entries for new ports that haven't been projected yet (first call).
   for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
   {
@@ -1351,6 +1381,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+  return c;
 }
 
 std::vector<double> RomOperator::FindMaxError(int excitation_idx, std::size_t N) const
@@ -1358,13 +1389,28 @@ std::vector<double> RomOperator::FindMaxError(int excitation_idx, std::size_t N)
   return mri.at(excitation_idx).FindMaxError(N, space_op.GetComm());
 }
 
-void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
+void RomOperator::UpdateMRI(int excitation_idx, double omega, const Eigen::VectorXcd &c)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
+  // The MRI needs the coefficients in an orthonormal basis: with a weight operator, those
+  // in the basis Q of V = Q Lᵀ.
+  auto &mri_e = mri.at(excitation_idx);
+  if (weight_op_W)
+  {
+    mri_e.AddSolutionSample(omega, gram_L.topRows(c.size()).transpose() * c);
+  }
+  else
+  {
+    mri_e.AddSolutionSample(omega, c);
+  }
 }
 
-void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+double RomOperator::BasisNorm(const Eigen::VectorXcd &c) const
+{
+  return weight_op_W ? (gram_L.topRows(c.size()).transpose() * c).norm() : c.norm();
+}
+
+void RomOperator::SolvePROM(int excitation_idx, double omega)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
@@ -1377,7 +1423,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // No basis states ill-defined: return zero vector to match current behaviour.
   if (V.empty())
   {
-    u = 0.0;
+    RHSr.resize(0);
     return;
   }
 
@@ -1667,13 +1713,22 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     RHSr += (1i * omega) * RHS1r;
   }
 
-  // Compute PROM solution at the given frequency and expand into high-dimensional space.
-  // The PROM is solved on every process so the matrix-vector product for vector expansion
-  // does not require communication.
+  // Compute PROM solution at the given frequency. The PROM is solved on every process so
+  // the matrix-vector product for vector expansion does not require communication.
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
+}
+
+void RomOperator::ExpandPROMSolution(ComplexVector &u) const
+{
+  BlockTimer bt(Timer::SOLVE_PROM);
+  if (V.empty())
+  {
+    u = 0.0;
+    return;
+  }
   linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }
 
