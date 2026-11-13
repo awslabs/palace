@@ -175,10 +175,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # The STRUMPACK version of the superbuild, with
     # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
-    # fix https://github.com/pghysels/STRUMPACK/pull/164, and the solver changes of
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, the solver changes of
     # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
-    # solves with a few right-hand sides. Kept off the `with` blocks so the Palace variants
-    # are not folded into the patch condition.
+    # solves with a few right-hand sides, and the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/167 for the Schur complements of
+    # substructuring. Kept off the `with` blocks so the Palace variants are not folded into
+    # the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -200,6 +202,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/"
                 "strumpack_pr165.diff",
                 sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "ceae7bf924d9ef505791937db58ac1ae609d2f10/extern/patch/STRUMPACK/"
+                "strumpack_pr167.diff",
+                sha256="c05abf224416247af48f2f29b7ae785a87304920aaa1ea7f373e6c49fb286f86",
                 when="@8.1.0",
             ),
         ],
@@ -513,6 +522,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "c79f309399361b2d6aadc207087ca6dc475513b4.diff",
                 sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
                 when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5518
+            patch(
+                "https://github.com/mfem/mfem/compare/"
+                "3001edfcf4fd91535273ebdf450e9fa4c7bd6776..."
+                "ec92e77c63715a2673fdfe415b7935fcfb8d62ce.diff",
+                sha256="7d39edc1f76e05242a30f42a2cd17f8d76bf5d657c1c0a66d251b2024e4601e7",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
             # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)

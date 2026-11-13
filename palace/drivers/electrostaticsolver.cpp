@@ -11,16 +11,61 @@
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
+void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                                     MPI_Comm comm) const
+{
+  SubstructuringSolver::UseModelLength(iodata, comm);
+  BaseSolver::Preprocess(iodata, smesh, comm);
+}
+
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring: condense the environment to a Dirichlet-to-Neumann operator on the
+  // interface and solve the region against it.
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    const std::vector<int> terminals = sub.TerminalIndices();
+    const int n = static_cast<int>(terminals.size());
+    MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
+
+    // Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region solves against the
+    // condensed environment; only the fields to be saved need the environment interior.
+    BlockTimer bt1(Timer::POSTPRO);
+    Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
+               (n > 1) ? "s" : "");
+    const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
+    const bool adapt = (iodata.model.refinement.max_it > 0);
+    std::vector<Vector> fields, region_fields;
+    const mfem::DenseMatrix C =
+        sub.CapacitanceMatrix(terminals, &fields, n_save, adapt ? &region_fields : nullptr);
+    PostprocessCapacitance(terminals, C);
+    if (n_save > 0)
+    {
+      sub.WriteParaView(post_dir.string(),
+                        std::vector<int>(terminals.begin(), terminals.begin() + n_save),
+                        fields);
+    }
+    Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
+               (n > 1) ? "s" : "");
+    // Adaptive refinement of the region only (the indicators are zero on the environment).
+    ErrorIndicator indicator =
+        adapt ? sub.RegionErrorIndicator(region_fields, C) : ErrorIndicator();
+    return {indicator, sub.GlobalTrueVSize()};
+  }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
@@ -108,7 +153,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
-  mfem::DenseMatrix C(V.size()), Cm(V.size());
+  mfem::DenseMatrix C(V.size());
   for (int i = 0; i < C.Height(); i++)
   {
     // Diagonal: Cᵢᵢ = 2 Uₑ(Vᵢ) / Vᵢ² = (Vᵢᵀ K Vᵢ) / Vᵢ² (with ∀i, Vᵢ = 1)
@@ -116,7 +161,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     auto &D_gf = post_op.GetDomainPostOp().D;
     V_gf.SetFromTrueDofs(V[i]);
     post_op.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);
-    C(i, i) = Cm(i, i) = linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf);
+    C(i, i) = linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf);
 
     // Off-diagonals: Cᵢⱼ = Uₑ(Vᵢ + Vⱼ) / (Vᵢ Vⱼ) - 1/2 (Vᵢ/Vⱼ Cᵢᵢ + Vⱼ/Vᵢ Cⱼⱼ)
     //                    = (Vⱼᵀ K Vᵢ) / (Vᵢ Vⱼ)
@@ -124,14 +169,39 @@ void ElectrostaticSolver::PostprocessTerminals(
     {
       V_gf.SetFromTrueDofs(V[j]);
       C(i, j) = linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf);
-      Cm(i, j) = -C(i, j);
-      Cm(i, i) -= Cm(i, j);
     }
 
     // Copy lower triangle from already computed upper triangle.
     for (int j = 0; j < i; j++)
     {
       C(i, j) = C(j, i);
+    }
+  }
+  std::vector<int> terminal_idx;
+  for (const auto &[idx, data] : terminal_sources)
+  {
+    terminal_idx.push_back(idx);
+  }
+  PostprocessCapacitance(terminal_idx, C);
+}
+
+void ElectrostaticSolver::PostprocessCapacitance(const std::vector<int> &terminal_idx,
+                                                 const mfem::DenseMatrix &C) const
+{
+  // Mutual capacitance matrix from the upper triangle of C: Cmᵢⱼ = -Cᵢⱼ and Cmᵢᵢ the row
+  // sum of C.
+  const int n = C.Height();
+  mfem::DenseMatrix Cm(n);
+  for (int i = 0; i < n; i++)
+  {
+    Cm(i, i) = C(i, i);
+    for (int j = i + 1; j < n; j++)
+    {
+      Cm(i, j) = -C(i, j);
+      Cm(i, i) -= Cm(i, j);
+    }
+    for (int j = 0; j < i; j++)
+    {
       Cm(i, j) = Cm(j, i);
       Cm(i, i) -= Cm(i, j);
     }
@@ -147,27 +217,23 @@ void ElectrostaticSolver::PostprocessTerminals(
   using VT = Units::ValueType;
 
   // Write capacitance matrix data.
-  auto PrintMatrix = [&terminal_sources, this](const std::string &file,
-                                               const std::string &name,
-                                               const std::string &unit,
-                                               const mfem::DenseMatrix &mat, double scale)
+  auto PrintMatrix = [&terminal_idx, this](const std::string &file, const std::string &name,
+                                           const std::string &unit,
+                                           const mfem::DenseMatrix &mat, double scale)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
-    int j = 0;
-    for (const auto &[idx2, data2] : terminal_sources)
+    for (std::size_t j = 0; j < terminal_idx.size(); j++)
     {
+      const int idx2 = terminal_idx[j];
       output.table.insert(fmt::format("i2{}", idx2),
                           fmt::format("{}[i][{}] {}", name, idx2, unit));
-      // Use the fact that iterator over i and j is the same span.
       output.table["i"] << idx2;
-
       auto &col = output.table[fmt::format("i2{}", idx2)];
-      for (std::size_t i = 0; i < terminal_sources.size(); i++)
+      for (std::size_t i = 0; i < terminal_idx.size(); i++)
       {
-        col << mat(i, j) * scale;
+        col << mat(static_cast<int>(i), static_cast<int>(j)) * scale;
       }
-      j++;
     }
     output.WriteFullTableTrunc();
   };
@@ -181,7 +247,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     TableWithCSVFile terminal_V(post_dir / "terminal-V.csv");
     terminal_V.table.insert(Column("i", "i", 0, 0, 2, ""));
     terminal_V.table.insert("Vinc", "V_inc[i] (V)");
-    for (const auto &[idx, data] : terminal_sources)
+    for (int idx : terminal_idx)
     {
       terminal_V.table["i"] << double(idx);
       terminal_V.table["Vinc"] << iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);

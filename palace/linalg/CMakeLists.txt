@@ -20,19 +20,23 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/floquetcorrection.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gmg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hcurl.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/hodlr.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hypre.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lowrank.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mumps.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/mumpsschur.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/schursolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/strumpackschur.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
 )

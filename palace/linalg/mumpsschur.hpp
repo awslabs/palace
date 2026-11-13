@@ -1,0 +1,74 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef PALACE_LINALG_MUMPS_SCHUR_HPP
+#define PALACE_LINALG_MUMPS_SCHUR_HPP
+
+#include <mfem.hpp>
+
+#if defined(MFEM_USE_MUMPS)
+
+#include <utility>
+#include <vector>
+#include <dmumps_c.h>
+#include "linalg/schursolver.hpp"
+#include "utils/labels.hpp"
+
+namespace palace
+{
+
+// MUMPS partial factorization with a Schur complement: factors the symmetric positive
+// definite parent-space operator A (rows/cols outside the eliminated subsystem set to
+// identity) with the given Schur variables left unfactored, returning the dense Schur
+// complement on rank 0 -- for the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from one
+// partial factorization instead of |Gamma| back-solves. The same factorization then solves
+// the internal problem (A_EE, the Schur variables fixed at 0), which serves every other
+// environment solve.
+class MumpsSchurSolver : public SchurSolver<double>
+{
+public:
+  // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
+  // Schur rows/columns should appear (replicated on all ranks); empty for a plain
+  // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
+  // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
+  // avoids MUMPS's per-rank workspace). ordering is the fill-reducing ordering ("Default":
+  // METIS); MUMPS computes a Schur complement only after a sequential analysis, so with
+  // Schur variables a parallel ordering is replaced by its sequential counterpart.
+  MumpsSchurSolver(const mfem::HypreParMatrix &A,
+                   const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
+                   bool serial = false,
+                   SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
+
+  ~MumpsSchurSolver() override;
+
+  std::vector<double> ReleaseSchur() override { return std::move(schur); }
+
+  void SolveInternal(const std::vector<const mfem::Vector *> &X,
+                     const std::vector<mfem::Vector *> &Y) override;
+
+private:
+  void Check(const char *phase) const;
+
+  // The solution rows held by this rank (ISOL_loc), nb columns of SOL_loc, sent to the
+  // ranks owning them. Collective.
+  void Redistribute(int nb, const std::vector<mfem::Vector *> &Y, int c0);
+
+  MPI_Comm comm;
+  int rank = 0;
+  // active: this rank takes part in the factorization; distributed: right-hand sides and
+  // solutions stay distributed (MUMPS >= 5.3), else they pass through rank 0.
+  bool serial = false, active = true, distributed = false;
+  HYPRE_BigInt n_glob, row0 = 0;
+  int n_loc, n_schur, nsol_loc = 0;
+  std::vector<int> row_cnt, row_disp, schur_rows;
+  std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;
+  std::vector<double> val, schur, rhs, sol_loc;
+  double scale = 1.0;
+  DMUMPS_STRUC_C id{};
+};
+
+}  // namespace palace
+
+#endif
+
+#endif  // PALACE_LINALG_MUMPS_SCHUR_HPP

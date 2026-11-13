@@ -1,0 +1,21 @@
+{
+  "Problem": { "Type": "Magnetostatic", "Output": "postpro/two_sided_swapped" },
+  "Model": { "Mesh": "mesh/ring_disk_split.msh", "L0": 1.0e-6 },
+  "Domains": { "Materials": [
+    { "Attributes": [1], "Permeability": 1.0 },
+    { "Attributes": [8], "Permeability": 1.0 } ] },
+  "Boundaries": {
+    "PEC": { "Attributes": [2,3] },
+    "Superconductor": [
+      { "Attributes": [5], "PenetrationDepth": 0.1, "Thickness": 0.2, "TwoSided": true } ],
+    "SurfaceCurrent": [
+      { "Index": 1, "Attributes": [4], "Direction": [0.0,1.0,0.0],
+        "Aperture": { "Attributes": [5,6,7], "Direction": "+Z" } } ],
+    "FluxLoop": [
+      { "Index": 2, "FilmAttributes": [5], "HoleAttributes": [6], "FluxAmounts": [1.0], "Direction": "+Z" } ] },
+  "Solver": { "Order": 1,
+    "Magnetostatic": { "Save": 0 },
+    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
+    "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [8] },
+      "SaveModel": "environment_two_sided_swapped.model" } }
+}
