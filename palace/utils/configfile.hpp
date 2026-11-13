@@ -270,11 +270,12 @@ public:
     // By default, the parts of the surface are its connected parts, and a flat part is
     // extruded along its normal, unless the center is configured. For NORMAL, the parts are
     // the flat patches (connected, coplanar faces), each extruded along its normal. For
-    // RADIAL, every connected part is extruded along rays. Any other part is extruded along
-    // the rays from the closest point of each surface point on the core, the segment from
-    // center[0] to center[1] (a point if they are equal), in mesh length units
-    // (nondimensionalized at load time). Unless configured (has_center), this is the centre
-    // of the bounding box of the part, set by the extrusion.
+    // RADIAL, every connected part is extruded radially. Any other part is extruded away
+    // from the closest point of each surface point on the core, the axis-aligned box with
+    // the lower and upper corners center[0] and center[1] (a point, a segment, or a
+    // rectangle where they share coordinates), in mesh length units (nondimensionalized at
+    // load time). Unless configured (has_center), this is the centre of the bounding box of
+    // the part, moved onto the open sides of a box, set by the extrusion.
     enum class Type
     {
       DEFAULT,
@@ -297,14 +298,19 @@ public:
     // Form of the depth into the layer, set by the extrusion (see
     // fem/qfunctions/coeff/pml_qf.h): a flat surface extruded along its normal, on the
     // plane n · x = h of plane = (n, h), or a surface extruded along the rays from the core
-    // at the distance r₀ (distance) from it.
+    // at the distance r₀ (distance) from it, or a box extruded per component, whose layer
+    // is the Cartesian PML with the inner faces box (its lower and upper corners) on the
+    // sides with a face of the surface (box_sides, ordered {-x, +x, -y, +y, -z, +z}).
     enum class Depth : int
     {
       NORMAL = 1,
-      DISTANCE = 2
+      DISTANCE = 2,
+      BOX = 3
     } depth = Depth::NORMAL;
     std::array<double, 4> plane{};
     double distance = 0.0;
+    std::array<std::array<double, 3>, 2> box{};
+    std::array<bool, 6> box_sides{};
   } extrusion;
 
   bool IsExtruded() const { return !extrusion.attributes.empty(); }

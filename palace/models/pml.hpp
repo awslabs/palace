@@ -63,8 +63,7 @@ struct LayerGeometry
 // The coordinate stretch of the PML. element_size is the size of the PML elements normal to
 // each face, measured on the mesh. For an extruded PML, the profile is that of face 0,
 // along the direction of the extrusion, at the depth of the given form (see
-// config::PMLData::Extrusion), with the core segment from center[0] to center[1] (a point
-// if they are equal).
+// config::PMLData::Extrusion), with the core box of the corners center[0] and center[1].
 struct Stretch
 {
   LayerGeometry geometry;

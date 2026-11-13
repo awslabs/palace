@@ -257,7 +257,7 @@ void ConcretizePML(const config::PMLData &pml, json &j_pml)
                          {"KappaMax", pml.kappa_max[0]},
                          {"AlphaMax", pml.alpha_max[0]},
                          {"FrequencyDependent", pml.frequency_dependent}});
-    // The core in the form it was given (a point or a segment), or the default.
+    // The core in the form it was given (a point or the corners of a box), or the default.
     const auto &center = pml.extrusion.center;
     if (pml.extrusion.has_center)
     {

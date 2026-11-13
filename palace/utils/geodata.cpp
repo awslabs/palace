@@ -3204,10 +3204,15 @@ void ApplyPMLExtrusion(IoData &iodata, MPI_Comm comm)
       Mpi::Broadcast(1, &ex.back_attribute, 0, comm);
       Mpi::Broadcast(6, ex.center[0].data(), 0, comm);
       int depth = static_cast<int>(ex.depth);
+      std::array<int, 6> sides;
+      std::ranges::copy(ex.box_sides, sides.begin());
       Mpi::Broadcast(1, &depth, 0, comm);
+      Mpi::Broadcast(6, sides.data(), 0, comm);
       ex.depth = static_cast<config::PMLData::Extrusion::Depth>(depth);
+      std::ranges::copy(sides, ex.box_sides.begin());
       Mpi::Broadcast(1, &ex.distance, 0, comm);
       Mpi::Broadcast(4, ex.plane.data(), 0, comm);
+      Mpi::Broadcast(6, ex.box[0].data(), 0, comm);
     }
     blocks.insert(blocks.end(), extruded.begin(), extruded.end());
   }
@@ -3245,22 +3250,15 @@ void ApplyPMLExtrusion(IoData &iodata, MPI_Comm comm)
   }
 }
 
-// Closest point of x on the core of an extruded PML, the segment from core[0] to core[1] (a
-// point if they are equal).
+// Closest point of x on the core of an extruded PML, the axis-aligned box with the lower
+// and upper corners core[0] and core[1].
 std::array<double, 3> ClosestPointOnCore(const std::array<std::array<double, 3>, 2> &core,
                                          const double *x)
 {
-  double t = 0.0, ee = 0.0;
-  for (int c = 0; c < 3; c++)
-  {
-    t += (x[c] - core[0][c]) * (core[1][c] - core[0][c]);
-    ee += (core[1][c] - core[0][c]) * (core[1][c] - core[0][c]);
-  }
-  t = (ee > 0.0) ? std::clamp(t / ee, 0.0, 1.0) : 0.0;
   std::array<double, 3> p;
   for (int c = 0; c < 3; c++)
   {
-    p[c] = core[0][c] + t * (core[1][c] - core[0][c]);
+    p[c] = std::clamp(x[c], core[0][c], core[1][c]);
   }
   return p;
 }
@@ -3412,7 +3410,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
   {
     int entry;
     std::vector<int> faces;
-    std::array<double, 3> center;  // Of the bounding box
+    std::array<double, 3> lo, hi, center;  // Of the bounding box
     std::string name;
     bool normal;
     config::PMLData block;
@@ -3506,6 +3504,8 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
                         }
                       });
       }
+      parts[p].lo = lo;
+      parts[p].hi = hi;
       for (int c = 0; c < 3; c++)
       {
         parts[p].center[c] = 0.5 * (lo[c] + hi[c]);
@@ -3518,11 +3518,42 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
     }
   }
 
-  // The direction and the depth of each part. Normal extrusion has the depth n · x - h.
-  // For radial extrusion, every face must face its closest point on the core (the outward
-  // normal makes an acute angle with the ray): rays from the closest points on a convex set
-  // never cross, so the layer is then valid for any thickness. The depth is |x - p| - r₀, if
-  // the distance from the core is r₀ within the tolerance.
+  // The direction and the depth of each part. Normal extrusion moves the nodes of a flat
+  // part by the thickness along its normal, with the depth n · x - h. A box, whose faces
+  // are all flat, normal to the axes, and on the sides of its bounding box, moves each node
+  // x by t (x_i - p_i) / g_i along each axis i, for the closest point p of x on the core
+  // and the distance g_i along the axis from p_i to the side beyond x_i: the outside of its
+  // layer is the bounding box grown by t on its sides with a face (its PML sides), and the
+  // layer is the Cartesian PML with the bounding box as its inner faces. The core must lie
+  // on the other (open) sides, from which nothing moves, so that the layer ends flush with
+  // them; by default, it is the centre of the bounding box moved onto the open sides. Any
+  // other part moves along the rays d = (x - p) / |x - p| from the core, by default the
+  // centre of its bounding box, and must be at a constant distance r₀ from it within the
+  // tolerance, with the depth |x - p| - r₀. Every face must face its direction (rays from
+  // the closest points on a convex set never cross, so the layer is then valid for any
+  // thickness).
+  auto Direction = [&](const Part &p, const double *x, double *d)
+  {
+    const auto &ex = p.block.extrusion;
+    if (p.normal)
+    {
+      std::copy_n(ex.plane.begin(), 3, d);
+    }
+    else if (ex.depth == Extrusion::Depth::BOX)
+    {
+      const auto q = ClosestPointOnCore(ex.center, x);
+      for (int c = 0; c < 3; c++)
+      {
+        d[c] = (x[c] > q[c])   ? (x[c] - q[c]) / (ex.box[1][c] - q[c])
+               : (x[c] < q[c]) ? (x[c] - q[c]) / (q[c] - ex.box[0][c])
+                               : 0.0;
+      }
+    }
+    else
+    {
+      GetRay(ex.center, x, d);
+    }
+  };
   std::vector<std::string> depth_text;
   for (auto &p : parts)
   {
@@ -3542,8 +3573,54 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
       continue;
     }
 
-    // The core is, by default, the centre of the bounding box of the part.
-    if (!ex.has_center)
+    // A box has its faces on its PML sides, and its core on its open sides.
+    auto Axis = [](const std::array<double, 4> &plane)
+    {
+      for (int a = 0; a < 3; a++)
+      {
+        if (std::abs(plane[a]) > 1.0 - 1.0e-10)
+        {
+          return a;
+        }
+      }
+      return -1;
+    };
+    const bool box = std::ranges::all_of(
+        p.faces, [&](int f) { return IsFlat(f) && Axis(face_plane.at(f)) >= 0; });
+    if (box)
+    {
+      ex.depth = Extrusion::Depth::BOX;
+      ex.box = {p.lo, p.hi};
+      ex.box_sides.fill(false);
+      for (const int f : p.faces)
+      {
+        const auto &plane = face_plane.at(f);
+        const int a = Axis(plane);
+        const bool upper = plane[a] > 0.0;
+        if (std::abs(plane[3] - (upper ? p.hi[a] : -p.lo[a])) > tol)
+        {
+          mesh.GetFaceTransformation(f, &T);
+          T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), x);
+          MFEM_ABORT("The face of "
+                     << p.name << " at (" << x(0) << ", " << x(1) << ", " << x(2)
+                     << ") is not on the bounding box of the part, which is not a box (it "
+                        "is L-shaped or stepped)! Use \"Extrusion\": \"Normal\" to extrude "
+                        "each flat patch along its normal, or split the surface into "
+                        "entries which are boxes.");
+        }
+        ex.box_sides[2 * a + upper] = true;
+      }
+      if (!ex.has_center)
+      {
+        ex.center[0] = ex.center[1] = p.center;
+        for (int a = 0; a < 3; a++)
+        {
+          ex.center[0][a] = ex.box_sides[2 * a] ? ex.center[0][a] : p.lo[a];
+          ex.center[1][a] = ex.box_sides[2 * a + 1] ? ex.center[1][a] : p.hi[a];
+        }
+      }
+    }
+    else if (!ex.has_center)
     {
       ex.center[0] = ex.center[1] = p.center;
     }
@@ -3552,27 +3629,52 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
         (ex.center[0] == ex.center[1])
             ? fmt::format("point [{}, {}, {}]", ex.center[0][0], ex.center[0][1],
                           ex.center[0][2])
-            : fmt::format("segment [[{}, {}, {}], [{}, {}, {}]]", ex.center[0][0],
+            : fmt::format("box [[{}, {}, {}], [{}, {}, {}]]", ex.center[0][0],
                           ex.center[0][1], ex.center[0][2], ex.center[1][0],
                           ex.center[1][1], ex.center[1][2]);
+    if (box)
+    {
+      // The core is on the open sides, and inside of the PML sides.
+      for (int f = 0; f < 6; f++)
+      {
+        const int a = f / 2;
+        const double gap = (f % 2) ? p.hi[a] - ex.center[1][a] : ex.center[0][a] - p.lo[a];
+        MFEM_VERIFY(ex.box_sides[f] ? gap > tol : std::abs(gap) <= tol,
+                    "The " << core << " of the extrusion from " << p.name
+                           << (ex.box_sides[f] ? " is not inside of its side "
+                                               : " is not on its open side ")
+                           << "{-x, +x, -y, +y, -z, +z}[" << f << "], at "
+                           << ((f % 2) ? p.hi[a] : p.lo[a])
+                           << "! The core of a box must lie on every side of its bounding "
+                              "box without a face of the surface, so that the layer ends "
+                              "flush with it, and inside of the others: set \"Center\" "
+                              "accordingly.");
+      }
+      depth_text.push_back(fmt::format("per component from the {}, a box with the PML "
+                                       "sides {{-x, +x, -y, +y, -z, +z}} {}",
+                                       core, ex.box_sides));
+    }
     for (const int f : p.faces)
     {
       ForEachSample(f,
                     [&](const mfem::Vector &x, const mfem::Vector &normal)
                     {
                       double d[3];
-                      const double dist = GetRay(ex.center, x.GetData(), d);
+                      Direction(p, x.GetData(), d);
                       MFEM_VERIFY(
-                          dist > tol &&
-                              normal(0) * d[0] + normal(1) * d[1] + normal(2) * d[2] > 0.0,
+                          normal(0) * d[0] + normal(1) * d[1] + normal(2) * d[2] > 0.0,
                           "The face of "
                               << p.name << " at (" << x(0) << ", " << x(1) << ", " << x(2)
                               << ") does not face its closest point on the " << core
-                              << ", from which the rays of the extrusion start! Every face "
-                                 "must face the core, or the rays would cross: set "
-                                 "\"Center\", or use \"Extrusion\": \"Normal\" for a "
-                                 "surface of flat patches.");
+                              << ", from which the extrusion starts! Every face must face "
+                                 "the core, or the layer would fold: set \"Center\", or "
+                                 "use \"Extrusion\": \"Normal\" for a surface of flat "
+                                 "patches.");
                     });
+    }
+    if (box)
+    {
+      continue;
     }
     double sum = 0.0, lo = mfem::infinity(), hi = -mfem::infinity();
     int count = 0;
@@ -3597,28 +3699,80 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
             << hi << " (the deviation from the mean " << ex.distance << " is "
             << 100.0 * deviation / ex.thickness << "% of the thickness, above "
             << 100.0 * PML_DISTANCE_TOL
-            << "%)! The surface must be flat (extruded along its normal) or at a constant "
+            << "%)! The surface must be flat (extruded along its normal), at a constant "
                "distance from the core (a sphere around its centre, or the wall of a "
-               "cylinder around its axis). Set \"Center\" to the centre of a sphere or the "
-               "axis of a cylinder, or use \"Extrusion\": \"Normal\" for a surface of flat "
+               "cylinder around its axis), or a box with its faces normal to the "
+               "coordinate axes. Set \"Center\" to the centre of a sphere or the axis of a "
+               "cylinder, or use \"Extrusion\": \"Normal\" for a surface of flat "
                "patches.");
     ex.depth = Extrusion::Depth::DISTANCE;
     depth_text.push_back(fmt::format("along the rays from the {}, at the distance {:.6g} "
                                      "(within {:.2g}% of the thickness)",
                                      core, ex.distance, 100.0 * deviation / ex.thickness));
   }
-  auto Direction = [&](const Part &p, const double *x, double *d)
+
+  // Position of the vertex v of the face f.
+  auto FaceVertex = [&](int f, int v)
   {
-    const auto &ex = p.block.extrusion;
-    if (p.normal)
-    {
-      std::copy_n(ex.plane.begin(), 3, d);
-    }
-    else
-    {
-      GetRay(ex.center, x, d);
-    }
+    mesh.GetFaceVertices(f, verts);
+    mesh.GetFaceTransformation(f, &T);
+    const int j = static_cast<int>(std::ranges::find(verts, v) - verts.begin());
+    T.Transform(mfem::Geometries.GetVertices(T.GetGeometryType())->IntPoint(j), x);
+    return std::array<double, 3>{x(0), x(1), x(2)};
   };
+
+  // In a box, an interface between two materials across a face must stay flat in the layer:
+  // the nodes on it must not move across it.
+  for (const auto &p : parts)
+  {
+    if (p.block.extrusion.depth != Extrusion::Depth::BOX)
+    {
+      continue;
+    }
+    std::map<std::pair<int, int>, std::vector<int>> edge_faces;
+    for (const int f : p.faces)
+    {
+      for (const auto &e : FaceEdges(f))
+      {
+        edge_faces[e].push_back(f);
+      }
+    }
+    for (const auto &[e, f] : edge_faces)
+    {
+      int e1, e2, e3, e4;
+      if (f.size() != 2 || !SamePlane(face_plane.at(f[0]), face_plane.at(f[1]), tol))
+      {
+        continue;
+      }
+      mesh.GetFaceElements(f[0], &e1, &e2);
+      mesh.GetFaceElements(f[1], &e3, &e4);
+      const int a1 = mesh.GetAttribute(e1), a2 = mesh.GetAttribute(e3);
+      if (a1 == a2)
+      {
+        continue;
+      }
+      const auto x1 = FaceVertex(f[0], e.first), x2 = FaceVertex(f[0], e.second);
+      const auto &n = face_plane.at(f[0]);
+      // The normal m = (x2 - x1) × n of the interface, through the edge and normal to the
+      // face.
+      const double u[3] = {x2[0] - x1[0], x2[1] - x1[1], x2[2] - x1[2]};
+      double m[3] = {u[1] * n[2] - u[2] * n[1], u[2] * n[0] - u[0] * n[2],
+                     u[0] * n[1] - u[1] * n[0]};
+      const double m_norm = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+      for (const auto &y : {x1, x2})
+      {
+        double d[3];
+        Direction(p, y.data(), d);
+        MFEM_VERIFY(std::abs(d[0] * m[0] + d[1] * m[1] + d[2] * m[2]) <= 1.0e-8 * m_norm,
+                    "The interface between the materials of the domain attributes "
+                        << a1 << " and " << a2 << " crosses " << p.name << " at (" << y[0]
+                        << ", " << y[1] << ", " << y[2]
+                        << "), and the extrusion would move it across: make the core "
+                           "span the layers, as a segment \"Center\" through a substrate, "
+                           "so that each layer stays flat through the PML.");
+      }
+    }
+  }
 
   // Columns of vertices along the directions of the vertices of each part, and the edges of
   // each part with their number of faces in it.
@@ -3743,13 +3897,38 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
                  "the periodic boundary differently! Only a flat part extruded along its "
                  "normal may have periodic boundaries along its edges.");
     }
+    // A layer extruded along rays which ends on the boundary must end flush with it: the
+    // nodes on the edge move along the boundary.
     const int face = mesh.GetBdrElementFaceIndex(be);
+    mesh.GetBdrElementTransformation(be, &T);
+    const auto &corners = *mfem::Geometries.GetVertices(T.GetGeometryType());
     for (int j = 0; j < verts.Size(); j++)
     {
       const auto it = edge_parts.find(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
       for (const int p : (it == edge_parts.end()) ? std::vector<int>{} : it->second)
       {
         AddSide(p, it->first, attr, face);
+        for (const int k : {j, (j + 1) % verts.Size()})
+        {
+          if (parts[p].normal || part_edges[p].at(it->first) != 1)
+          {
+            continue;
+          }
+          T.SetIntPoint(&corners.IntPoint(k));
+          T.Transform(corners.IntPoint(k), x);
+          mfem::CalcOrtho(T.Jacobian(), normal);
+          double d[3];
+          Direction(parts[p], x.GetData(), d);
+          MFEM_VERIFY(std::abs(d[0] * normal(0) + d[1] * normal(1) + d[2] * normal(2)) <=
+                          1.0e-8 * normal.Norml2(),
+                      "The layer extruded from "
+                          << parts[p].name << " does not end flush with the boundary "
+                          << "attribute " << attr << " at (" << x(0) << ", " << x(1) << ", "
+                          << x(2)
+                          << "): the core must lie on that boundary, as the centre of a "
+                             "half sphere on its ground plane, or on the open sides of a "
+                             "box (set \"Center\").");
+        }
       }
     }
   }
@@ -3919,6 +4098,22 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
       {
         mesh.GetFaceTransformation(new_elements[e - ne].face, &T);
       }
+      // For a box, the displacements of the vertices of the face, interpolated bilinearly:
+      // the displacement has kinks at the sides of the core, which would fold elements of
+      // higher order across them.
+      const bool box =
+          (e >= ne) &&
+          parts[new_elements[e - ne].part].block.extrusion.depth == Extrusion::Depth::BOX;
+      double d_vertex[4][3];
+      if (box)
+      {
+        const auto &corners = *mfem::Geometries.GetVertices(T.GetGeometryType());
+        for (int j = 0; j < corners.GetNPoints(); j++)
+        {
+          T.Transform(corners.IntPoint(j), x);
+          Direction(parts[new_elements[e - ne].part], x.GetData(), d_vertex[j]);
+        }
+      }
       new_nodes.FESpace()->GetElementVDofs(e, vdofs);
       loc.SetSize(vdofs.Size());
       for (int j = 0; j < ir.GetNPoints(); j++)
@@ -3936,7 +4131,23 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
           ip_face.Set2(ip.x, ip.y);
           T.Transform(ip_face, x);
           double d[3];
-          Direction(parts[p], x.GetData(), d);
+          if (box)
+          {
+            const bool triangle = (T.GetGeometryType() == mfem::Geometry::TRIANGLE);
+            const double w[4] = {triangle ? 1.0 - ip.x - ip.y : (1.0 - ip.x) * (1.0 - ip.y),
+                                 triangle ? ip.x : ip.x * (1.0 - ip.y),
+                                 triangle ? ip.y : ip.x * ip.y,
+                                 triangle ? 0.0 : (1.0 - ip.x) * ip.y};
+            for (int c = 0; c < 3; c++)
+            {
+              d[c] = w[0] * d_vertex[0][c] + w[1] * d_vertex[1][c] + w[2] * d_vertex[2][c] +
+                     (triangle ? 0.0 : w[3] * d_vertex[3][c]);
+            }
+          }
+          else
+          {
+            Direction(parts[p], x.GetData(), d);
+          }
           for (int c = 0; c < 3; c++)
           {
             x(c) += (k + ip.z) * ex.thickness / ex.layers * d[c];

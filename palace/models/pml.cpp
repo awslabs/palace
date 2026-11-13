@@ -186,14 +186,22 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
 
   // The extrusion built the layer of an extruded PML, of known thickness and element size:
   // the stretch is along the direction of the extrusion, at the depth of the form the
-  // extrusion found for the surface.
+  // extrusion found for the surface. The layer of a box is the Cartesian PML whose inner
+  // faces are the bounding box of the surface, on its sides with a face of the surface.
   if (data.IsExtruded())
   {
     const auto &ex = data.extrusion;
     LayerGeometry geometry;
-    geometry.thickness[0] = ex.thickness;
-    stretch = BuildStretch(data, geometry, n_r, {ex.thickness / ex.layers}, fe_order);
-    stretch.extruded = true;
+    std::array<double, 6> element_size{};
+    const bool box = (ex.depth == config::PMLData::Extrusion::Depth::BOX);
+    for (int f = 0; f < (box ? 6 : 1); f++)
+    {
+      geometry.inner[f] = box ? ex.box[f % 2][f / 2] : 0.0;
+      geometry.thickness[f] = (!box || ex.box_sides[f]) ? ex.thickness : 0.0;
+      element_size[f] = ex.thickness / ex.layers;
+    }
+    stretch = BuildStretch(data, geometry, n_r, element_size, fe_order);
+    stretch.extruded = !box;
     stretch.depth = ex.depth;
     stretch.center = ex.center;
     stretch.distance = ex.distance;

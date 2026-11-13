@@ -64,13 +64,16 @@
 //                 J̃ = ∂x̃/∂x = I + (s - 1) d ∇ξᵀ + (ξ̃ - ξ) ∇d .
 // The material tensors are those above for J = J̃, and J̃ = I at the interface with the
 // physical region (ξ = 0). The depth is a closed form of x, for one of two shapes of the
-// surface the layer is extruded from:
+// surface the layer is extruded from (the layer of a box extruded per component is the
+// Cartesian PML above):
 //   - Normal extrusion of a flat surface on the plane n · x = h: d = n, ξ = n · x - h, and
 //     J̃ = I + (s - 1) n nᵀ, the Cartesian stretch along n.
 //   - Radial extrusion of a surface at the distance r₀ from its core (a sphere around a
 //     point, the wall of a cylinder around a segment): d = (x - p) / |x - p| for the
-//     closest point p of x on the core, ξ = |x - p| - r₀, and ∇ξ = d. With
-//     P = ∂(x - p)/∂x, ∇d = (P - d dᵀ) / |x - p|.
+//     closest point p of x on the core, an axis-aligned box (a point, a segment, or a
+//     rectangle where its corners share coordinates), ξ = |x - p| - r₀, and ∇ξ = d. For
+//     the diagonal P = ∂(x - p)/∂x, one along the axes on which x is outside of the core
+//     and zero along the others, ∇d = (P - d dᵀ) / |x - p|.
 // Negative depths, of points of a sampled curved surface inside of r₀, are zero. On a
 // sphere around a point core, J̃ = s d dᵀ + (r̃ / r) (I - d dᵀ): the spherical PML. For the
 // tensors T̂, s and |x - p| + ξ̃ - ξ in J̃ are replaced by their magnitudes. The extruded
@@ -78,7 +81,7 @@
 //     [25]      form of the depth: PALACE_PML_CARTESIAN (then the entries below are zero,
 //               and otherwise the Cartesian entries [1..24] above), PALACE_PML_NORMAL, or
 //               PALACE_PML_DISTANCE
-//     [26..31]  end points of the core segment (a point if they are equal)
+//     [26..31]  lower and upper corners of the core box
 //     [32..35]  layer thickness t, σ_max, κ_max, and α_max
 //     [36]      r₀ for PALACE_PML_DISTANCE
 //     [37..40]  the plane (n, h) of the surface for PALACE_PML_NORMAL
@@ -419,26 +422,20 @@ CEED_QFUNCTION_HELPER void PMLStretchIntegral(const CeedIntScalar *ctx, CeedScal
   *im += q_im;
 }
 
-// Unit vector d from the closest point p of x on the core segment of the extruded stretch to
-// x, the distance |x - p|, and ∇d (3 x 3, column-major, (∇d)_ij = ∂d_i / ∂x_j), with the
-// Jacobian dp = ∂p/∂x.
+// Unit vector d from the closest point p of x on the core box of the extruded stretch to x,
+// the distance |x - p|, and ∇d (3 x 3, column-major, (∇d)_ij = ∂d_i / ∂x_j), with the
+// diagonal Jacobian dp = ∂p/∂x.
 CEED_QFUNCTION_HELPER void PMLRay(const CeedIntScalar *ctx, const CeedScalar x[3],
                                   CeedScalar d[3], CeedScalar *dist, CeedScalar grad_d[9])
 {
-  const CeedIntScalar *a = ctx + PALACE_PML_HEADER_SIZE + 26, *b = a + 3;
-  CeedScalar e[3], ee = 0.0, t = 0.0;
+  const CeedIntScalar *lo = ctx + PALACE_PML_HEADER_SIZE + 26, *hi = lo + 3;
+  CeedScalar p[3], dp[3];
   for (CeedInt c = 0; c < 3; c++)
   {
-    e[c] = b[c].second - a[c].second;
-    ee += e[c] * e[c];
-    t += (x[c] - a[c].second) * e[c];
-  }
-  t = (ee > 0.0) ? t / ee : 0.0;
-  const bool inside = (t > 0.0 && t < 1.0);
-  t = (t < 0.0) ? 0.0 : (t > 1.0) ? 1.0 : t;
-  for (CeedInt c = 0; c < 3; c++)
-  {
-    d[c] = x[c] - a[c].second - t * e[c];
+    const bool inside = (x[c] > lo[c].second && x[c] < hi[c].second);
+    p[c] = inside ? x[c] : (x[c] <= lo[c].second) ? lo[c].second : hi[c].second;
+    dp[c] = inside ? 1.0 : 0.0;
+    d[c] = x[c] - p[c];
   }
   *dist = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
   for (CeedInt c = 0; c < 3; c++)
@@ -449,8 +446,7 @@ CEED_QFUNCTION_HELPER void PMLRay(const CeedIntScalar *ctx, const CeedScalar x[3
   {
     for (CeedInt i = 0; i < 3; i++)
     {
-      const CeedScalar dp = inside ? e[i] * e[j] / ee : 0.0;
-      grad_d[i + 3 * j] = ((i == j) - dp - d[i] * d[j]) / *dist;
+      grad_d[i + 3 * j] = ((i == j) * (1.0 - dp[i]) - d[i] * d[j]) / *dist;
     }
   }
 }
