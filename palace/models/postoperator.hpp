@@ -349,6 +349,7 @@ protected:
   // nothing if the measurement is not solver appropriate.
   void MeasureDomainFieldEnergy() const;
   void MeasureLumpedPorts() const;
+  void MeasureLumpedPorts(const std::map<int, std::complex<double>> &port_voltages) const;
   void MeasureWavePorts() const;
   void MeasureFloquetPorts() const;
   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts

@@ -139,6 +139,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the error estimate no longer stores the full-size solutions. GMRES with `"CGS"` or
     `"CGS2"` no longer allocates a workspace vector for the orthogonalization.
     [PR 1187](https://github.com/awslabs/palace/pull/1187).
+  - The lumped and wave port outputs of adaptive driven sweeps are evaluated without
+    expanding the reduced-order solution at each frequency.
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
@@ -162,6 +164,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the domain magnetic energies of adaptive driven sweeps evaluated from the
+    reduced-order model, which lost up to 10⁻² relative accuracy at low frequency, where
+    the curls of the basis vectors nearly cancel, and were only checked against the full
+    evaluation for the first excitation. All reduced outputs are now checked against the
+    full evaluation at the first frequency of every excitation, reverting to the full
+    postprocessing with a warning if they differ by more than a tenth of `"AdaptiveTol"`.
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled
