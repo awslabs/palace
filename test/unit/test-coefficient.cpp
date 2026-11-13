@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
@@ -334,4 +335,263 @@ TEST_CASE("SurfaceCurrentOperator owns element apertures and current weights",
                    {"Direction", "+X"},
                    {"Aperture", {{"Attributes", {99}}, {"Direction", "+Z"}}}});
   CHECK_THROWS(SurfaceCurrentOperator({{2, invalid}}, mesh));
+}
+
+namespace
+{
+
+// Two unit squares sharing the interior face x = 1 (boundary attribute sheet_attr, NOT
+// cracked: the face is shared by both elements, as on an uncracked sheet of the new default
+// crack policy), with the element attributes given (1 = substrate eps_r 4, 2 = vacuum, 3 =
+// substrate eps_r 4), the electric field E = (3, 4) left and (5, 4) right (a jump of its
+// normal component), and the continuous H(div) flux D = (7, 8) left and (7, 9) right (its
+// normal component single-valued across the face, as for any D on the continuous RT space).
+constexpr int sheet_attr = 99;
+
+struct TwoSidedSheet
+{
+  std::unique_ptr<Mesh> mesh;
+  std::unique_ptr<MaterialOperator> mat_op;
+  mfem::ND_FECollection nd_fec;
+  mfem::RT_FECollection rt_fec;
+  std::unique_ptr<FiniteElementSpace> nd_fespace, rt_fespace;
+  std::unique_ptr<GridFunction> E, D;
+  mfem::Array<int> sum_sides_marker;
+  mfem::ElementTransformation *T = nullptr;
+  mfem::IntegrationPoint ip;
+
+  TwoSidedSheet(int attr_left, int attr_right) : nd_fec(1, 2), rt_fec(0, 2)
+  {
+    mfem::Mesh serial_mesh =
+        mfem::Mesh::MakeCartesian2D(2, 1, mfem::Element::QUADRILATERAL, false, 2.0, 1.0);
+    mfem::Vector c(2);
+    for (int e = 0; e < serial_mesh.GetNE(); e++)
+    {
+      serial_mesh.GetElementCenter(e, c);
+      serial_mesh.SetAttribute(e, (c(0) < 1.0) ? attr_left : attr_right);
+    }
+    for (int f = 0; f < serial_mesh.GetNumFaces(); f++)
+    {
+      int e1, e2;
+      serial_mesh.GetFaceElements(f, &e1, &e2);
+      if (e1 >= 0 && e2 >= 0)
+      {
+        serial_mesh.AddBdrElement(serial_mesh.GetFace(f)->Duplicate(&serial_mesh));
+        serial_mesh.SetBdrAttribute(serial_mesh.GetNBE() - 1, sheet_attr);
+      }
+    }
+    serial_mesh.FinalizeTopology();
+    serial_mesh.Finalize();
+    serial_mesh.SetAttributes();
+    mesh =
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh));
+    std::vector<config::MaterialData> materials;
+    for (const int attr : {attr_left, attr_right})
+    {
+      if (std::any_of(materials.begin(), materials.end(),
+                      [&](const auto &m) { return m.attributes.front() == attr; }))
+      {
+        continue;
+      }
+      config::MaterialData material;
+      material.attributes = {attr};
+      if (attr != 2)
+      {
+        material.epsilon_r.s = {4.0, 4.0, 4.0};
+      }
+      materials.push_back(material);
+    }
+    mat_op = std::make_unique<MaterialOperator>(materials, config::PeriodicBoundaryData(),
+                                                ProblemType::ELECTROSTATIC, *mesh);
+    nd_fespace = std::make_unique<FiniteElementSpace>(*mesh, &nd_fec);
+    rt_fespace = std::make_unique<FiniteElementSpace>(*mesh, &rt_fec);
+    E = std::make_unique<GridFunction>(*nd_fespace);
+    D = std::make_unique<GridFunction>(*rt_fespace);
+    mfem::VectorFunctionCoefficient E_coeff(2,
+                                            [](const mfem::Vector &x, mfem::Vector &v)
+                                            {
+                                              v(0) = (x(0) < 1.0) ? 3.0 : 5.0;
+                                              v(1) = 4.0;
+                                            });
+    mfem::VectorFunctionCoefficient D_coeff(2,
+                                            [](const mfem::Vector &x, mfem::Vector &v)
+                                            {
+                                              v(0) = 7.0;
+                                              v(1) = (x(0) < 1.0) ? 8.0 : 9.0;
+                                            });
+    E->Real().ProjectCoefficient(E_coeff);
+    D->Real().ProjectCoefficient(D_coeff);
+    E->Real().ExchangeFaceNbrData();
+    D->Real().ExchangeFaceNbrData();
+    sum_sides_marker.SetSize(sheet_attr);
+    sum_sides_marker = 0;
+    sum_sides_marker[sheet_attr - 1] = 1;
+    for (int be = 0; be < mesh->GetNBE(); be++)
+    {
+      if (mesh->Get().GetBdrAttribute(be) == sheet_attr)
+      {
+        T = mesh->Get().GetBdrElementTransformation(be);
+        break;
+      }
+    }
+    REQUIRE(T);
+    ip.Set1w(0.5, 1.0);
+    T->SetIntPoint(&ip);
+  }
+
+  template <InterfaceDielectric Type>
+  auto
+  Coefficient(bool summed, bool with_flux,
+              InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL)
+  {
+    return InterfaceDielectricCoefficient<Type>(*E, *mat_op, thickness, interface_epsilon,
+                                                summed ? &sum_sides_marker : nullptr,
+                                                with_flux ? D.get() : nullptr, component);
+  }
+
+  static constexpr double thickness = 2.0, interface_epsilon = 5.0;
+};
+
+constexpr const char *summed_flux_refusal =
+    "A recovered electric flux on a two-sided interface sheet is not supported yet";
+constexpr const char *summed_batched_refusal =
+    "Batched interface response fields cannot represent the summed energies of both sides";
+
+}  // namespace
+
+// On an interior sheet face whose two sides both qualify (upstream's SumSides rule: a
+// marked sheet with vacuum on both sides for MA, substrate on both sides for MS, any marked
+// sheet for DEFAULT), the energies of the two sides are summed, which is the sum over the
+// two copies of a cracked mesh (R4 C8). A recovered flux D on the continuous H(div) space
+// has a single-valued normal trace there, so that the per-side reads would count one D_n
+// twice: the coefficient refuses such a D (P3-13; our method rule keeps FluxRecovery off
+// interior sheets, R4 C9: fail closed, never average). Where only one side qualifies, D is
+// read on that side, and SA is never summed.
+TEST_CASE("InterfaceDielectricCoefficient summed sheet with recovered flux",
+          "[coefficient][Serial]")
+{
+  constexpr double t = TwoSidedSheet::thickness, eps = TwoSidedSheet::interface_epsilon;
+  constexpr double tol = 1.0e-12;
+  SECTION("Metal-air, vacuum on both sides")
+  {
+    TwoSidedSheet sheet(2, 2);
+    auto &T = *sheet.T;
+    auto summed = sheet.Coefficient<InterfaceDielectric::MA>(true, false);
+    auto averaged = sheet.Coefficient<InterfaceDielectric::MA>(false, false);
+    auto normal = sheet.Coefficient<InterfaceDielectric::MA>(
+        true, false, InterfaceDielectricComponent::NORMAL);
+    auto tangential = sheet.Coefficient<InterfaceDielectric::MA>(
+        true, false, InterfaceDielectricComponent::TANGENTIAL);
+    CHECK_THAT(summed.Eval(T, sheet.ip),
+               Catch::Matchers::WithinAbs(0.5 * t / eps * (3.0 * 3.0 + 5.0 * 5.0), tol));
+    CHECK_THAT(averaged.Eval(T, sheet.ip),
+               Catch::Matchers::WithinAbs(0.5 * t / eps * 4.0 * 4.0, tol));
+    CHECK_THAT(normal.Eval(T, sheet.ip),
+               Catch::Matchers::WithinAbs(summed.Eval(T, sheet.ip), tol));
+    CHECK_THAT(tangential.Eval(T, sheet.ip), Catch::Matchers::WithinAbs(0.0, tol));
+    for (auto component :
+         {InterfaceDielectricComponent::TOTAL, InterfaceDielectricComponent::NORMAL,
+          InterfaceDielectricComponent::TANGENTIAL})
+    {
+      auto with_flux = sheet.Coefficient<InterfaceDielectric::MA>(true, true, component);
+      CHECK_THROWS_WITH(with_flux.Eval(T, sheet.ip),
+                        Catch::Matchers::ContainsSubstring(summed_flux_refusal));
+    }
+    // Without the marker (no sheet sum), D is averaged as for any two-sided interface.
+    auto averaged_flux = sheet.Coefficient<InterfaceDielectric::MA>(false, true);
+    CHECK_THAT(averaged_flux.Eval(T, sheet.ip),
+               Catch::Matchers::WithinAbs(0.5 * t / eps * 7.0 * 7.0, tol));
+  }
+  SECTION("Metal-substrate, substrate on both sides")
+  {
+    TwoSidedSheet sheet(1, 3);
+    auto &T = *sheet.T;
+    auto summed = sheet.Coefficient<InterfaceDielectric::MS>(true, false);
+    CHECK_THAT(
+        summed.Eval(T, sheet.ip),
+        Catch::Matchers::WithinAbs(0.5 * t / eps * (12.0 * 12.0 + 20.0 * 20.0), tol));
+    auto with_flux = sheet.Coefficient<InterfaceDielectric::MS>(true, true);
+    CHECK_THROWS_WITH(with_flux.Eval(T, sheet.ip),
+                      Catch::Matchers::ContainsSubstring(summed_flux_refusal));
+    // Metal-air: no vacuum side, no energy.
+    auto ma = sheet.Coefficient<InterfaceDielectric::MA>(true, true);
+    CHECK_THAT(ma.Eval(T, sheet.ip), Catch::Matchers::WithinAbs(0.0, tol));
+  }
+  SECTION("One qualifying side")
+  {
+    // Substrate left, vacuum right: MA reads the vacuum side, MS the substrate side, with
+    // or without the marker, and D replaces the field's normal part there.
+    TwoSidedSheet sheet(1, 2);
+    auto &T = *sheet.T;
+    for (bool summed : {false, true})
+    {
+      INFO("sum-sides marker " << summed);
+      CHECK_THAT(
+          sheet.Coefficient<InterfaceDielectric::MA>(summed, false).Eval(T, sheet.ip),
+          Catch::Matchers::WithinAbs(0.5 * t / eps * 5.0 * 5.0, tol));
+      CHECK_THAT(sheet.Coefficient<InterfaceDielectric::MA>(summed, true).Eval(T, sheet.ip),
+                 Catch::Matchers::WithinAbs(0.5 * t / eps * 7.0 * 7.0, tol));
+      CHECK_THAT(
+          sheet.Coefficient<InterfaceDielectric::MS>(summed, false).Eval(T, sheet.ip),
+          Catch::Matchers::WithinAbs(0.5 * t / eps * 12.0 * 12.0, tol));
+      CHECK_THAT(sheet.Coefficient<InterfaceDielectric::MS>(summed, true).Eval(T, sheet.ip),
+                 Catch::Matchers::WithinAbs(0.5 * t / eps * 7.0 * 7.0, tol));
+    }
+  }
+  SECTION("Generic and substrate-air")
+  {
+    TwoSidedSheet sheet(2, 2);
+    auto &T = *sheet.T;
+    // DEFAULT sums |E|^2 of both sides on a marked sheet; SA is never summed.
+    CHECK_THAT(
+        sheet.Coefficient<InterfaceDielectric::DEFAULT>(true, false).Eval(T, sheet.ip),
+        Catch::Matchers::WithinAbs(0.5 * t * eps * (25.0 + 41.0), tol));
+    CHECK_THAT(
+        sheet.Coefficient<InterfaceDielectric::DEFAULT>(false, false).Eval(T, sheet.ip),
+        Catch::Matchers::WithinAbs(0.5 * t * eps * 32.0, tol));
+    for (bool with_flux : {false, true})
+    {
+      CHECK_THAT(
+          sheet.Coefficient<InterfaceDielectric::SA>(true, with_flux).Eval(T, sheet.ip),
+          Catch::Matchers::WithinAbs(
+              sheet.Coefficient<InterfaceDielectric::SA>(false, with_flux)
+                  .Eval(T, sheet.ip),
+              0.0));
+    }
+  }
+}
+
+// The batched amplitudes (EvalEnergyField: one normal and sdim tangential amplitudes per
+// sample, for the response-matrix Gram and the streamed rows) cannot represent the summed
+// energies of two sides: a sample on a summed sheet face is refused (fail closed, S-5), for
+// DEFAULT on any marked sheet face and for MA / MS where both sides qualify; elsewhere the
+// amplitudes reproduce the quadratic coefficient.
+TEST_CASE("InterfaceDielectricCoefficient batched amplitudes refuse a summed sheet",
+          "[coefficient][Serial]")
+{
+  mfem::Vector field;
+  auto Refused = [&](auto &&coefficient, TwoSidedSheet &sheet)
+  {
+    CHECK_THROWS_WITH(coefficient.EvalEnergyField(*sheet.T, sheet.ip, field),
+                      Catch::Matchers::ContainsSubstring(summed_batched_refusal));
+  };
+  auto Reproduces = [&](auto &&coefficient, TwoSidedSheet &sheet)
+  {
+    coefficient.EvalEnergyField(*sheet.T, sheet.ip, field);
+    CHECK_THAT(0.5 * (field * field),
+               Catch::Matchers::WithinAbs(coefficient.Eval(*sheet.T, sheet.ip), 1.0e-12));
+    CHECK(field * field > 0.0);
+  };
+  TwoSidedSheet vacuum(2, 2), substrate(1, 3), mixed(1, 2);
+  Refused(vacuum.Coefficient<InterfaceDielectric::DEFAULT>(true, false), vacuum);
+  Refused(mixed.Coefficient<InterfaceDielectric::DEFAULT>(true, false), mixed);
+  Refused(vacuum.Coefficient<InterfaceDielectric::MA>(true, false), vacuum);
+  Refused(vacuum.Coefficient<InterfaceDielectric::MA>(true, true), vacuum);
+  Refused(substrate.Coefficient<InterfaceDielectric::MS>(true, false), substrate);
+  Refused(substrate.Coefficient<InterfaceDielectric::MS>(true, true), substrate);
+  Reproduces(vacuum.Coefficient<InterfaceDielectric::DEFAULT>(false, false), vacuum);
+  Reproduces(mixed.Coefficient<InterfaceDielectric::MA>(true, true), mixed);
+  Reproduces(mixed.Coefficient<InterfaceDielectric::MS>(true, true), mixed);
+  Reproduces(vacuum.Coefficient<InterfaceDielectric::SA>(true, true), vacuum);
+  Reproduces(vacuum.Coefficient<InterfaceDielectric::SA>(true, false), vacuum);
 }
