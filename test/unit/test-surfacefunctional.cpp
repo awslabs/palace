@@ -3837,8 +3837,10 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
   {
     Vector buffer(none.bundle->BufferSize(PointFieldKind::ENERGY_E));
     buffer.UseDevice(true);
-    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, E.Real(), buffer));
-    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, E.Real(), B.Real(), buffer));
+    // Constant sources: a Vector source also converts to the flag of the other overload.
+    const Vector &Er = E.Real(), &Br = B.Real();
+    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, Er, buffer));
+    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, Er, Br, buffer));
     CHECK_THROWS(none.bundle->RegisteredSlice(PointFieldKind::ENERGY_E));
     // The fallback U_e evaluator requires the stored energy at the frequency, and has no
     // value without it.
