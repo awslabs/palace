@@ -13,11 +13,18 @@
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
+#include "drivers/fluxerrorestimator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fixtures.hpp"
+#include "models/boundarymodeoperator.hpp"
+#include "models/laplaceoperator.hpp"
+#include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
@@ -1264,4 +1271,394 @@ TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",
 
   GridFunction gf_complex(nd_fespace, true);
   CheckScaling(gf_complex, scale);
+}
+
+namespace
+{
+
+// The FluxRecovery cases below (decision 1578; SD-605 / SD-606 / SD-508 / SD-504): the unit
+// cube with substrate (element attribute 1, z < 0.5) under vacuum (2, z > 0.5), the
+// exterior boundary attributes 1-6 of mfem::Mesh::MakeCartesian3D (1 = the face z = 0),
+// optionally a sheet of attribute 7 on the interior plane x = 0.5 (not cracked: its faces
+// are shared by the elements on both sides), and the interior substrate-air interface of
+// attribute 8 on the plane z = 0.5 (no boundary condition there: never a sheet).
+constexpr int flux_sheet_attr = 7, flux_interface_attr = 8;
+
+std::unique_ptr<mfem::Mesh> MakeFluxRecoveryCubeMesh(bool interior_sheet)
+{
+  auto base =
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  std::vector<std::pair<int, int>> interior_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    if (e2 < 0)
+    {
+      continue;
+    }
+    base.GetFaceVertices(f, fv);
+    auto OnPlane = [&](int d)
+    {
+      return std::all_of(fv.begin(), fv.end(), [&](int v)
+                         { return std::abs(base.GetVertex(v)[d] - 0.5) < 1.0e-12; });
+    };
+    if (interior_sheet && OnPlane(0))
+    {
+      interior_faces.emplace_back(f, flux_sheet_attr);
+    }
+    else if (OnPlane(2))
+    {
+      interior_faces.emplace_back(f, flux_interface_attr);
+    }
+  }
+  auto mesh =
+      std::make_unique<mfem::Mesh>(3, base.GetNV(), base.GetNE(),
+                                   base.GetNBE() + static_cast<int>(interior_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh->AddVertex(base.GetVertex(v));
+  }
+  mfem::Vector center(3);
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    base.GetElementCenter(e, center);
+    auto *el = base.GetElement(e)->Duplicate(mesh.get());
+    el->SetAttribute((center(2) < 0.5) ? 1 : 2);
+    mesh->AddElement(el);
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh->AddBdrElement(base.GetBdrElement(be)->Duplicate(mesh.get()));
+  }
+  for (const auto &[f, attr] : interior_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(mesh.get());
+    el->SetAttribute(attr);
+    mesh->AddBdrElement(el);
+  }
+  mesh->FinalizeTopology();
+  mesh->Finalize();
+  mesh->SetAttributes();
+  return mesh;
+}
+
+// The two-dimensional counterpart for boundary mode: the unit square with substrate
+// (y < 0.5) under vacuum, the exterior boundary attributes 1-4 of MakeCartesian2D, an
+// optional sheet of attribute 5 on the interior line x = 0.5 and the substrate-air
+// interface of attribute 6 on the line y = 0.5.
+std::unique_ptr<mfem::Mesh> MakeFluxRecoverySquareMesh(bool interior_sheet)
+{
+  auto mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::TRIANGLE, false, 1.0, 1.0));
+  mfem::Vector center(2);
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    mesh->GetElementCenter(e, center);
+    mesh->SetAttribute(e, (center(1) < 0.5) ? 1 : 2);
+  }
+  mfem::Array<int> fv;
+  for (int f = 0; f < mesh->GetNumFaces(); f++)
+  {
+    int e1, e2;
+    mesh->GetFaceElements(f, &e1, &e2);
+    if (e2 < 0)
+    {
+      continue;
+    }
+    mesh->GetFaceVertices(f, fv);
+    auto OnLine = [&](int d)
+    {
+      return std::all_of(fv.begin(), fv.end(), [&](int v)
+                         { return std::abs(mesh->GetVertex(v)[d] - 0.5) < 1.0e-12; });
+    };
+    const int attr = (interior_sheet && OnLine(0)) ? 5 : (OnLine(1) ? 6 : 0);
+    if (attr > 0)
+    {
+      auto *el = mesh->GetFace(f)->Duplicate(mesh.get());
+      el->SetAttribute(attr);
+      mesh->AddBdrElement(el);
+    }
+  }
+  mesh->FinalizeTopology();
+  mesh->Finalize();
+  mesh->SetAttributes();
+  return mesh;
+}
+
+// A configuration of the cube or square above with ONE interface dielectric entry (index 1)
+// and the PEC boundaries given (+ the interior sheet's attribute when present).
+IoData MakeFluxRecoveryIoData(ProblemType type, const std::vector<int> &pec,
+                              InterfaceDielectric dielectric_type, int attr,
+                              bool flux_recovery, const std::string &output)
+{
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = type;
+  iodata.problem.verbose = 0;
+  iodata.problem.output = output;
+  iodata.problem.output_formats.paraview = false;
+  iodata.problem.output_formats.gridfunction = false;
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.solver.order = 1;
+  iodata.solver.linear.tol = 1.0e-8;
+  iodata.solver.linear.max_it = 100;
+  iodata.solver.linear.estimator_tol = 1.0e-12;
+  iodata.solver.linear.estimator_max_it = 1000;
+  iodata.solver.boundary_mode.freq = 1.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.n_post = 1;
+  iodata.solver.transient.delta_post = 1;
+  config::MaterialData substrate, vacuum;
+  substrate.attributes = {1};
+  substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+  vacuum.attributes = {2};
+  iodata.domains.materials = {substrate, vacuum};
+  iodata.boundaries.pec.attributes = pec;
+  config::InterfaceDielectricData interface;
+  interface.type = dielectric_type;
+  interface.t = 2.0e-3;
+  interface.epsilon_r = 10.0;
+  interface.tandelta = 1.0e-3;
+  interface.attributes = {attr};
+  interface.flux_recovery = flux_recovery;
+  iodata.boundaries.postpro.dielectric.emplace(1, interface);
+  fem::DefaultIntegrationOrder::p_trial = 1;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  return iodata;
+}
+
+std::vector<std::unique_ptr<Mesh>>
+MakeFluxRecoveryParMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> smesh)
+{
+  if (Mpi::Size(comm) > smesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
+  smesh->EnsureNodes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+  return mesh;
+}
+
+// Measurement access for the FluxRecovery cases.
+template <ProblemType solver_t>
+class FluxRecoveryPostOperator : public PostOperator<solver_t>
+{
+public:
+  using PostOperator<solver_t>::PostOperator;
+  const Measurement &Cache() const { return this->measurement_cache; }
+};
+
+}  // namespace
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "FluxRecovery refused before the solve on an interior sheet face",
+                 "[postoperator][Serial][Parallel]")
+{
+  // An interface dielectric "FluxRecovery" is refused at the construction of the
+  // postprocessing, before any solve: (i) on an interior sheet face, cracked or not, by the
+  // SurfacePostOperator (our method rule: no controlled normal trace of the volume
+  // projection on a zero-thickness PEC sheet; SD-606 (1)), and (ii) anywhere on a mesh with
+  // interior sheet faces, by the PostOperator, since the recovered flux lives on a recovery
+  // space broken across them (decision 1578,
+  // OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE). An exterior sheet boundary
+  // keeps FluxRecovery, and without FluxRecovery nothing is refused. The sheet faces cross
+  // the process boundaries in parallel (collective checks).
+  auto comm = Mpi::World();
+  const std::string sheet_refusal = "is not supported on internal boundary sheets";
+  const std::string broken_space_refusal =
+      "OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE";
+  auto Electrostatic =
+      [&](bool interior_sheet, InterfaceDielectric type, int attr, bool flux_recovery)
+  {
+    std::vector<int> pec = {1};
+    if (interior_sheet)
+    {
+      pec.push_back(flux_sheet_attr);
+    }
+    IoData iodata = MakeFluxRecoveryIoData(ProblemType::ELECTROSTATIC, pec, type, attr,
+                                           flux_recovery, temp_dir.string());
+    auto mesh = MakeFluxRecoveryParMesh(comm, MakeFluxRecoveryCubeMesh(interior_sheet));
+    LaplaceOperator laplace_op(iodata, mesh);
+    PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+    return post_op.NeedsRecoveredElectricFlux();
+  };
+  auto BoundaryMode = [&](bool interior_sheet, InterfaceDielectric type, int attr)
+  {
+    std::vector<int> pec = {1, 2, 3, 4};
+    if (interior_sheet)
+    {
+      pec.push_back(5);
+    }
+    IoData iodata = MakeFluxRecoveryIoData(ProblemType::BOUNDARYMODE, pec, type, attr, true,
+                                           temp_dir.string());
+    auto mesh = MakeFluxRecoveryParMesh(comm, MakeFluxRecoverySquareMesh(interior_sheet));
+    MaterialOperator mat_op(iodata, *mesh.front());
+    BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+    PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
+    return post_op.NeedsRecoveredElectricFlux();
+  };
+
+  SECTION("On the interior sheet")
+  {
+    CHECK_THROWS_WITH(Electrostatic(true, InterfaceDielectric::MA, flux_sheet_attr, true),
+                      ContainsSubstring(sheet_refusal));
+  }
+  SECTION("Elsewhere on a mesh with an interior sheet")
+  {
+    CHECK_THROWS_WITH(
+        Electrostatic(true, InterfaceDielectric::SA, flux_interface_attr, true),
+        ContainsSubstring(broken_space_refusal));
+  }
+  SECTION("Exterior sheet boundary")
+  {
+    bool needs_flux = false;
+    CHECK_NOTHROW(needs_flux = Electrostatic(false, InterfaceDielectric::MS, 1, true));
+    CHECK(needs_flux);
+  }
+  SECTION("Without FluxRecovery")
+  {
+    bool needs_flux = true;
+    CHECK_NOTHROW(needs_flux =
+                      Electrostatic(true, InterfaceDielectric::MA, flux_sheet_attr, false));
+    CHECK(!needs_flux);
+  }
+  SECTION("Boundary mode")
+  {
+    CHECK_THROWS_WITH(BoundaryMode(true, InterfaceDielectric::MA, 5),
+                      ContainsSubstring(sheet_refusal));
+    CHECK_THROWS_WITH(BoundaryMode(true, InterfaceDielectric::SA, 6),
+                      ContainsSubstring(broken_space_refusal));
+    bool needs_flux = false;
+    CHECK_NOTHROW(needs_flux = BoundaryMode(false, InterfaceDielectric::SA, 6));
+    CHECK(needs_flux);
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Recovered flux size mismatch aborts",
+                 "[postoperator][Serial][Parallel]")
+{
+  // The recovered electric flux D handed to the postprocessing must live on the space of
+  // the estimators' flux recovery; a vector of another size is refused before it is read
+  // (SD-502 / SD-605 backstop), for FluxRecovery and for the self-consistent corrected
+  // flux.
+  auto comm = Mpi::World();
+  const std::string size_refusal =
+      "OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE";
+  SECTION("Electrostatic FluxRecovery")
+  {
+    IoData iodata =
+        MakeFluxRecoveryIoData(ProblemType::ELECTROSTATIC, {1}, InterfaceDielectric::MS, 1,
+                               true, temp_dir.string());
+    auto mesh = MakeFluxRecoveryParMesh(comm, MakeFluxRecoveryCubeMesh(false));
+    LaplaceOperator laplace_op(iodata, mesh);
+    PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+    REQUIRE(post_op.NeedsRecoveredElectricFlux());
+    GradFluxErrorEstimator<Vector> estimator(
+        laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0, false,
+        iodata.boundaries.GetSheetAttributes());
+    const int size = estimator.GetFluxSpace().GetTrueVSize();
+    Vector d(size), d_wrong(size + 1);
+    d = 1.0;
+    d_wrong = 1.0;
+    CHECK_THROWS_WITH(post_op.SetRecoveredElectricFlux(d_wrong),
+                      ContainsSubstring(size_refusal));
+    CHECK_NOTHROW(post_op.SetRecoveredElectricFlux(d));
+  }
+  SECTION("Driven corrected flux")
+  {
+    IoData iodata = MakeFluxRecoveryIoData(
+        ProblemType::DRIVEN, {1}, InterfaceDielectric::MS, 1, false, temp_dir.string());
+    iodata.solver.driven.sample_f = {1.0};
+    config::BoundaryData port(json{{"LumpedPort",
+                                    {{{"Attributes", {2}},
+                                      {"Index", 1},
+                                      {"R", 50.0},
+                                      {"Direction", "+X"},
+                                      {"Excitation", true}}}}});
+    iodata.boundaries.lumpedport = port.lumpedport;
+    auto mesh = MakeFluxRecoveryParMesh(comm, MakeFluxRecoveryCubeMesh(false));
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+    FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+    const int size = estimator.GetElectricFluxSpace().GetTrueVSize();
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize()), d(size), d_wrong(size + 1);
+    e = 1.0;
+    d = 2.0;
+    d_wrong = 2.0;
+    CHECK_THROWS_WITH(post_op.SetSurfaceResponseCorrectedField(e, &d_wrong),
+                      ContainsSubstring(size_refusal));
+    CHECK_NOTHROW(post_op.SetSurfaceResponseCorrectedField(e, &d));
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Transient FluxRecovery sets the recovered D",
+                 "[postoperator][Serial][Parallel]")
+{
+  // The transient driver recovers D with the estimator and sets it before each measurement
+  // when FluxRecovery is requested (ruling 1574; SD-504): the measured interface energy is
+  // then the one of that D (the substrate-air normal part reads D, the tangential part E).
+  auto comm = Mpi::World();
+  IoData iodata =
+      MakeFluxRecoveryIoData(ProblemType::TRANSIENT, {1}, InterfaceDielectric::SA,
+                             flux_interface_attr, true, temp_dir.string());
+  config::BoundaryData port(json{{"LumpedPort",
+                                  {{{"Attributes", {2}},
+                                    {"Index", 1},
+                                    {"R", 50.0},
+                                    {"Direction", "+X"},
+                                    {"Excitation", true}}}}});
+  iodata.boundaries.lumpedport = port.lumpedport;
+  auto mesh = MakeFluxRecoveryParMesh(comm, MakeFluxRecoveryCubeMesh(false));
+  SpaceOperator space_op(iodata, mesh);
+  FluxRecoveryPostOperator<ProblemType::TRANSIENT> post_op(iodata, space_op);
+  REQUIRE(post_op.NeedsRecoveredElectricFlux());
+
+  // A smooth electric field with normal and tangential parts on the interface z = 0.5.
+  GridFunction E(space_op.GetNDSpace());
+  mfem::VectorFunctionCoefficient f(3,
+                                    [](const mfem::Vector &x, mfem::Vector &v)
+                                    {
+                                      v(0) = 1.0 + 0.5 * x(1);
+                                      v(1) = 0.3 * x(0) * x(2);
+                                      v(2) = 2.0 - x(0) + 0.2 * x(1);
+                                    });
+  E.Real().ProjectCoefficient(f);
+  Vector e(space_op.GetNDSpace().GetTrueVSize()), b(space_op.GetRTSpace().GetTrueVSize());
+  E.Real().GetTrueDofs(e);
+  E.Real().ExchangeFaceNbrData();
+  b = 0.0;
+  FluxErrorEstimator<Vector> estimator(space_op, iodata);
+  Vector d(estimator.GetElectricFluxSpace().GetTrueVSize());
+  estimator.RecoverElectricFlux(e, d);
+
+  auto Measured = [&](const Vector &flux, int step)
+  {
+    post_op.SetRecoveredElectricFlux(flux);
+    post_op.MeasureAndPrintAll(step, e, b, 0.1 * step, 0.0);
+    REQUIRE(post_op.Cache().interface_eps_i.size() == 1);
+    return post_op.Cache().interface_eps_i.front().energy;
+  };
+  auto Expected = [&](const Vector &flux)
+  {
+    GridFunction D(space_op.GetRTSpace());
+    D.Real().SetFromTrueDofs(flux);
+    D.Real().ExchangeFaceNbrData();
+    return post_op.GetSurfacePostOp().GetInterfaceElectricFieldEnergy(1, E, &D);
+  };
+  const double energy = Measured(d, 0);
+  CHECK(energy > 0.0);
+  CHECK_THAT(energy, WithinRel(Expected(d), 1.0e-12));
+
+  // A different D changes the measured energy (the normal part reads D, not E).
+  Vector d2(d);
+  d2 *= 2.0;
+  const double energy2 = Measured(d2, 1);
+  CHECK_THAT(energy2, WithinRel(Expected(d2), 1.0e-12));
+  CHECK(std::abs(energy2 - energy) > 1.0e-6 * energy);
 }
