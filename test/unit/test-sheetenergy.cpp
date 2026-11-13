@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
@@ -233,10 +234,24 @@ void SheetField(const mfem::Vector &x, mfem::Vector &E)
   E(2) = -0.4 + 0.1 * x(0) + 0.3 * x(1);
 }
 
-std::unique_ptr<GridFunction> ProjectSheetField(FiniteElementSpace &nd_fespace)
+// A field that is constant on each side of the plane, with the same tangential and a
+// different normal component: the lowest-order Nedelec space holds it exactly on any
+// tetrahedral or hexahedral mesh whose faces include the plane, cracked or not.
+void PiecewiseConstantSheetField(const mfem::Vector &x, mfem::Vector &E)
+{
+  E.SetSize(3);
+  E(0) = 0.6;
+  E(1) = (x(1) > plane_y) ? 1.0 : -0.5;
+  E(2) = -0.3;
+}
+
+using VectorFieldFunction = void (*)(const mfem::Vector &, mfem::Vector &);
+
+std::unique_ptr<GridFunction> ProjectSheetField(FiniteElementSpace &nd_fespace,
+                                                VectorFieldFunction field = SheetField)
 {
   auto E = std::make_unique<GridFunction>(nd_fespace, false);
-  mfem::VectorFunctionCoefficient f(3, SheetField);
+  mfem::VectorFunctionCoefficient f(3, field);
   E->Real().ProjectCoefficient(f);
   Vector e(nd_fespace.GetTrueVSize());
   E->Real().GetTrueDofs(e);
@@ -412,6 +427,178 @@ TEST_CASE("SurfacePostOperator raw interface energy equals the sum of its parts"
         CHECK_THAT(matrix.energy_inside(0, 0),
                    WithinRel(raw - edges[i].energy_outside, 1.0e-9));
       }
+    }
+  }
+}
+
+TEST_CASE("SurfacePostOperator two-qualifying-side sheet energies cracked and uncracked",
+          "[surfacepostoperator][sheetenergy][Serial][Parallel]")
+{
+  // P3-29 (R4 T3 #8, R2 A2): a metal sheet whose two sides both qualify for the interface
+  // type (vacuum on both sides for MA, substrate on both sides for MS; any side for a
+  // Default entry). Cracked (legacy key), each copy of the sheet has one side; uncracked
+  // (default), upstream's sum-sides rule adds the energies of both sides on each face, and
+  // that total is the two-sided sum, not the energy of the averaged field. On the
+  // hexahedral mesh the two forms have the same elements (the island needs no bisection):
+  // the raw totals, the coefficient path and our parts (outside, annulus, partitioned,
+  // uncovered) agree for a smooth field. On the tetrahedral mesh the legacy crack bisects
+  // two island corners (see the raw = parts case), so the totals are compared there for a
+  // field that is constant on each side (exact on both meshes).
+  const bool vacuum = GENERATE(true, false);
+  const auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+  const bool hexahedra = (type == mfem::Element::HEXAHEDRON);
+  const std::string metal_type = vacuum ? "MA" : "MS";
+  CAPTURE(metal_type, static_cast<int>(type));
+  test::SharedTempDir temp;
+  const auto mesh_path =
+      WriteSheetMesh(temp.temp_dir, MakeSerialSheetMesh(type), "sheet.mesh");
+  const json materials =
+      vacuum ? json::array({{{"Attributes", {1, 2}}}})
+             : json::array({{{"Attributes", {1, 2}}, {"Permittivity", 4.0}}});
+  const json dielectric = json::array({DielectricEntry(1, island_attr, metal_type, false),
+                                       DielectricEntry(2, island_attr, "Default", false),
+                                       DielectricEntry(3, island_attr, metal_type, true),
+                                       DielectricEntry(4, island_attr, "Default", true)});
+  SheetProblem legacy(SheetConfig(mesh_path, temp.temp_dir, CrackPolicy::Legacy, materials,
+                                  PecBoundaries(), dielectric));
+  SheetProblem uncracked(SheetConfig(mesh_path, temp.temp_dir, CrackPolicy::Default,
+                                     materials, PecBoundaries(), dielectric));
+  REQUIRE(legacy.Cracked(island_attr));
+  REQUIRE(!uncracked.Cracked(island_attr));
+  if (hexahedra)
+  {
+    REQUIRE(legacy.mesh->Get().GetGlobalNE() == uncracked.mesh->Get().GetGlobalNE());
+    REQUIRE(legacy.GlobalBdrElements(island_attr) ==
+            2 * uncracked.GlobalBdrElements(island_attr));
+  }
+  else
+  {
+    REQUIRE(legacy.mesh->Get().GetGlobalNE() > uncracked.mesh->Get().GetGlobalNE());
+  }
+
+  SurfacePostOperator legacy_op(legacy.iodata, *legacy.mat_op, *legacy.h1_fespace,
+                                *legacy.nd_fespace);
+  SurfacePostOperator uncracked_op(uncracked.iodata, *uncracked.mat_op,
+                                   *uncracked.h1_fespace, *uncracked.nd_fespace);
+  // The same uncracked entries without the sheet list: the energy of the averaged field.
+  SurfacePostOperator averaged_op(
+      uncracked.iodata.boundaries.postpro, uncracked.iodata.problem.type, *uncracked.mat_op,
+      *uncracked.h1_fespace, *uncracked.nd_fespace, {}, &uncracked.iodata.boundaries);
+  const auto field = hexahedra ? SheetField : PiecewiseConstantSheetField;
+  const auto E_legacy = ProjectSheetField(*legacy.nd_fespace, field);
+  const auto E_uncracked = ProjectSheetField(*uncracked.nd_fespace, field);
+  for (const int idx : {1, 2})
+  {
+    INFO("interface " << idx);
+    const double raw_legacy = legacy_op.GetInterfaceElectricFieldEnergy(idx, *E_legacy);
+    const double raw_uncracked =
+        uncracked_op.GetInterfaceElectricFieldEnergy(idx, *E_uncracked);
+    REQUIRE(raw_legacy > 0.0);
+    CHECK_THAT(raw_uncracked, WithinRel(raw_legacy, 1.0e-10));
+    CHECK_THAT(uncracked_op.GetInterfaceElectricFieldEnergy(idx + 2, *E_uncracked),
+               WithinRel(raw_legacy, 1.0e-10));
+    CHECK_THAT(legacy_op.GetInterfaceElectricFieldEnergy(idx + 2, *E_legacy),
+               WithinRel(raw_legacy, 1.0e-10));
+    const double averaged = averaged_op.GetInterfaceElectricFieldEnergy(idx, *E_uncracked);
+    CAPTURE(raw_legacy, raw_uncracked, averaged);
+    CHECK(std::abs(averaged - raw_uncracked) > 0.1 * raw_uncracked);
+  }
+
+  // Our parts of the MA / MS entry, side by side (where the two meshes have the same
+  // elements).
+  if (!hexahedra)
+  {
+    return;
+  }
+  const auto edges_legacy = legacy_op.GetInterfaceEdgeElectricFieldEnergies(1, *E_legacy);
+  const auto edges_uncracked =
+      uncracked_op.GetInterfaceEdgeElectricFieldEnergies(1, *E_uncracked);
+  REQUIRE(edges_legacy.size() == 2);
+  REQUIRE(edges_uncracked.size() == 2);
+  for (std::size_t i = 0; i < 2; i++)
+  {
+    INFO("radius " << i);
+    CHECK(edges_legacy[i].energy_annulus > 0.0);
+    CHECK_THAT(edges_uncracked[i].energy_outside,
+               WithinRel(edges_legacy[i].energy_outside, 1.0e-10));
+    CHECK_THAT(edges_uncracked[i].energy_annulus,
+               WithinRel(edges_legacy[i].energy_annulus, 1.0e-10));
+  }
+  const auto portions = IslandPortions();
+  const auto partitioned_legacy =
+      legacy_op.GetInterfacePartitionedEdgeEnergies({1}, *E_legacy, nullptr, portions)
+          .at(1);
+  const auto partitioned_uncracked =
+      uncracked_op.GetInterfacePartitionedEdgeEnergies({1}, *E_uncracked, nullptr, portions)
+          .at(1);
+  REQUIRE(partitioned_legacy.size() == 4);
+  REQUIRE(partitioned_uncracked.size() == partitioned_legacy.size());
+  for (const auto &[label, energy] : partitioned_legacy)
+  {
+    INFO(label);
+    CHECK(energy > 0.0);
+    REQUIRE(partitioned_uncracked.count(label) == 1);
+    CHECK_THAT(partitioned_uncracked.at(label), WithinRel(energy, 1.0e-10));
+  }
+  const std::vector<Portion> uncovered_portions = {portions[2]};
+  CHECK_THAT(
+      uncracked_op
+          .GetInterfaceUncoveredEdgeEnergies({1}, *E_uncracked, nullptr, uncovered_portions)
+          .at(1)
+          .energy,
+      WithinRel(legacy_op
+                    .GetInterfaceUncoveredEdgeEnergies({1}, *E_legacy, nullptr,
+                                                       uncovered_portions)
+                    .at(1)
+                    .energy,
+                1.0e-10));
+}
+
+TEST_CASE("Batched interface response refuses a two-qualifying-side sheet",
+          "[surfacepostoperator][sheetenergy][Serial]")
+{
+  // SD-401 (d): one amplitude vector per sample cannot hold the energies of two sides, so
+  // the batched Gram and the streamed rows FAIL CLOSED on an uncracked sheet whose two
+  // sides both qualify (MA with vacuum on both sides), while on the cracked mesh (legacy
+  // key; one side per copy) they run and equal the raw energy. Serial: the refusal is
+  // rank-local.
+  test::SharedTempDir temp;
+  const auto mesh_path = WriteSheetMesh(
+      temp.temp_dir, MakeSerialSheetMesh(mfem::Element::HEXAHEDRON), "sheet.mesh");
+  const json materials = json::array({{{"Attributes", {1, 2}}}});
+  const json dielectric = json::array({DielectricEntry(1, island_attr, "MA", false, true)});
+  for (const auto policy : {CrackPolicy::Legacy, CrackPolicy::Default})
+  {
+    INFO(CrackPolicyName(policy));
+    SheetProblem problem(SheetConfig(mesh_path, temp.temp_dir, policy, materials,
+                                     PecBoundaries(), dielectric));
+    SurfacePostOperator surf_post_op(problem.iodata, *problem.mat_op, *problem.h1_fespace,
+                                     *problem.nd_fespace);
+    const auto E = ProjectSheetField(*problem.nd_fespace);
+    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(1, *E);
+    REQUIRE(raw > 0.0);
+    const auto samples = surf_post_op.CacheInterfaceResponseSamples();
+    REQUIRE(samples.size() == 1);
+    std::vector<double> row(samples[0].RowSize());
+    if (policy == CrackPolicy::Legacy)
+    {
+      const auto batched = surf_post_op.GetInterfaceElectricFieldEnergyMatrices({E.get()});
+      CHECK_THAT(batched.at(1).at(0).energy_total(0, 0), WithinRel(raw, 1.0e-10));
+      surf_post_op.EvaluateInterfaceResponseRow(samples[0], *E, nullptr, row.data());
+      const auto streamed = surf_post_op.AssembleInterfaceResponseMatrices(
+          samples[0], row.data(), 1, problem.mesh->GetComm());
+      CHECK_THAT(streamed.at(0).energy_total(0, 0), WithinRel(raw, 1.0e-10));
+    }
+    else
+    {
+      constexpr const char *refusal =
+          "Batched interface response fields cannot represent the summed energies of both "
+          "sides of an interior sheet";
+      CHECK_THROWS_WITH(surf_post_op.GetInterfaceElectricFieldEnergyMatrices({E.get()}),
+                        ContainsSubstring(refusal));
+      CHECK_THROWS_WITH(
+          surf_post_op.EvaluateInterfaceResponseRow(samples[0], *E, nullptr, row.data()),
+          ContainsSubstring(refusal));
     }
   }
 }
