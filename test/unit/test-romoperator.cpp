@@ -1241,7 +1241,7 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
     for (int excitation_idx : excitations)
     {
       CAPTURE(omega, excitation_idx);
-      rom_op.SolvePROM(excitation_idx, omega);
+      rom_op.SolvePROM(omega);
 
       // The port modes are cached at this frequency, so the comparison is not affected by
       // the sign ambiguity of a re-solved eigenvector.
@@ -1272,7 +1272,7 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
 
       const double error_A = (rom_op.GetAr() - Ar).cwiseAbs().maxCoeff();
       const Eigen::VectorXcd y = Ar.partialPivLu().solve(br.col(0));
-      const double error_y = (rom_op.GetReducedSolution() - y).norm();
+      const double error_y = (rom_op.GetReducedSolution(excitation_idx) - y).norm();
       CAPTURE(error_A, Ar.cwiseAbs().maxCoeff(), error_y, y.norm());
       REQUIRE(br.norm() > 0.0);
       CHECK(error_A <= 1.0e-10 * Ar.cwiseAbs().maxCoeff());
@@ -1280,7 +1280,7 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
 
       // The wave port S-parameters from the pairings, sᵀV y / R, are those of the expanded
       // solution.
-      rom_op.ExpandPROMSolution(v);
+      rom_op.ExpandPROMSolution(excitation_idx, v);
       GridFunction E(space_op.GetNDSpace(), true);
       E.Real().SetFromTrueDofs(v.Real());
       E.Imag().SetFromTrueDofs(v.Imag());
@@ -1288,8 +1288,8 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
       {
         const auto *sV = rom_op.GetWavePortModePairing(idx);
         REQUIRE(sV);
-        const auto S =
-            sV->cwiseProduct(rom_op.GetReducedSolution()).sum() / data.modal_reaction;
+        const auto S = sV->cwiseProduct(rom_op.GetReducedSolution(excitation_idx)).sum() /
+                       data.modal_reaction;
         const auto S_ref = data.GetSParameter(E);
         CAPTURE(idx, S, S_ref);
         CHECK(std::abs(S - S_ref) <= 1.0e-12 * std::max(std::abs(S_ref), 1.0));

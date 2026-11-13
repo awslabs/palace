@@ -161,18 +161,16 @@ protected:
   // Reference to HDM discretization (not owned).
   SpaceOperator &space_op;
 
-  // Used for constructing & reuse of RHS1.
-  int excitation_idx_cache = 0;
-
   // HDM system matrices and excitation:
   // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω) + F(ω).
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
-  // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
-  //   are cached before frequency-major online evaluation.
+  // - RHS1 is assembled once per excitation (empty if zero), in the order of the port
+  //   excitations, and projected onto the basis as it grows.
   std::unique_ptr<ComplexOperator> K, M, C;
-  ComplexVector RHS1, r;
+  std::vector<ComplexVector> RHS1;
+  ComplexVector r;
 
   // The sparse frequency-dependent boundary terms of A(ω), each a scalar f(ω) times an
   // ω-independent operator i·M stored with the boundary form M on the imaginary slot, so
@@ -217,7 +215,7 @@ protected:
   // restricted to the port submesh (V_wp, kept on the host and extended as the basis
   // grows) and the port-space mode forms refreshed by WavePortData::Initialize, without
   // any per-frequency assembly and projection of HDM-size vectors. sV_wp_full caches
-  // Vᵀs_full of every port at Ar_omega.
+  // Vᵀs_full of every port at the frequency of the last SolvePROM.
   std::map<int, std::vector<Vector>> V_wp;
   std::size_t V_wp_dim = 0;
   std::unique_ptr<mfem::ParGridFunction> V_wp_gf;
@@ -235,18 +233,13 @@ protected:
   std::size_t waveport_synthesis_order_max = 12;
   double waveport_synthesis_rank_tol = 1.0e-6;
 
-  // System properties: will be set when calling SetExcitationIndex & SolveHDM.
-  bool has_RHS1 = true;
-  bool has_RHS2 = true;
-
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
-  Eigen::VectorXcd RHS1r;       // Active excitation's projected frequency-linear source.
-  std::map<int, Eigen::VectorXcd> RHS1r_online;  // Final-basis cache for online switching.
+  Eigen::MatrixXcd RHS1r;       // Vᴴ RHS1, one column per excitation
 
   // Projections onto the basis of the Floquet port modes, for the DtN correction
   // F(ω) = Σ_k g_k(ω) v_k v_kᴴ and the excitation of the (0,0) modes (see FloquetPortData).
@@ -259,12 +252,12 @@ protected:
   // Return Vᵀv of the TE or TM mode of order k at the current frequency.
   Eigen::VectorXcd GetFloquetModeProjection(std::size_t k, bool is_te) const;
 
-  // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
-  // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.
-  Eigen::MatrixXcd Ar;
-  Eigen::FullPivHouseholderQR<Eigen::MatrixXcd> Ar_solver;
-  double Ar_omega = std::numeric_limits<double>::quiet_NaN();
-  Eigen::VectorXcd RHSr;
+  // PROM matrix Ar at the frequency of the last SolvePROM, and the reduced solutions of all
+  // excitations, one column per excitation.
+  Eigen::MatrixXcd Ar, Y;
+
+  // Column of an excitation in RHS1, RHS1r, and Y.
+  Eigen::Index GetExcitationColumn(int excitation_idx) const;
 
   // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
@@ -475,10 +468,14 @@ public:
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
-  // Return PROM dimension and the current online reduced solution.
+  // Return PROM dimension and the reduced solution of an excitation at the frequency of the
+  // last SolvePROM.
   auto GetReducedDimension() const { return V.size(); }
   const auto &GetBasis() const { return V; }
-  const Eigen::VectorXcd &GetReducedSolution() const { return RHSr; }
+  Eigen::VectorXcd GetReducedSolution(int excitation_idx) const
+  {
+    return Y.col(GetExcitationColumn(excitation_idx));
+  }
 
   // Return the pairing Vᵀs_full of the basis with the mode of a wave port at the frequency
   // of the last PROM assembly, or nullptr before the first one.
@@ -494,20 +491,12 @@ public:
     return mri.at(excitation_idx).GetSamplePoints();
   }
 
-  // Set excitation index to build corresponding RHS vector (linear in frequency part).
-  void SetExcitationIndex(int excitation_idx);
-
   // Extend the port-restricted basis V_wp to the current basis size.
   void UpdateWavePortBasisRestriction();
 
   // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the pairings of the basis
   // with the mode of every wave port at ω.
   void AddWavePortModalCorrection(double omega);
-
-  // Project and cache every frequency-linear excitation vector once after the adaptive
-  // basis is complete. Frequency-major online traversal can then switch excitations without
-  // repeating HDM-scale projections.
-  void PrepareOnlineExcitations();
 
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
@@ -540,18 +529,12 @@ public:
   // basis dimension).
   double BasisNorm(const Eigen::VectorXcd &c) const;
 
-  // Assemble and solve the PROM at the specified frequency. The reduced solution is
-  // available from GetReducedSolution().
-  void SolvePROM(int excitation_idx, double omega);
+  // Assemble and solve the PROM at the specified frequency, for every excitation. The
+  // reduced solutions are available from GetReducedSolution().
+  void SolvePROM(double omega);
 
-  // Expand the reduced solution back into the high-dimensional space.
-  void ExpandPROMSolution(ComplexVector &u) const;
-
-  void SolvePROM(int excitation_idx, double omega, ComplexVector &u)
-  {
-    SolvePROM(excitation_idx, omega);
-    ExpandPROMSolution(u);
-  }
+  // Expand the reduced solution of an excitation into the high-dimensional space.
+  void ExpandPROMSolution(int excitation_idx, ComplexVector &u) const;
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
