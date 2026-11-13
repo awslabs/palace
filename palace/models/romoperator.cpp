@@ -407,12 +407,16 @@ std::vector<Eigen::MatrixXd> ProjectSymmetricOperators(MPI_Comm comm,
 bool SolveReducedSystem(MPI_Comm comm, const Eigen::MatrixXcd &A, Eigen::MatrixXcd &B)
 {
   Eigen::MatrixXcd X = A.partialPivLu().solve(B);
-  const double tol = A.rows() * std::numeric_limits<double>::epsilon();
+  // The tolerance has headroom over the round-off of the residual itself at small n.
+  const double tol =
+      std::max<Eigen::Index>(A.rows(), 16) * std::numeric_limits<double>::epsilon();
   const double norm_A = A.cwiseAbs().rowwise().sum().maxCoeff();
-  const Eigen::RowVectorXd error = (B - A * X).cwiseAbs().colwise().maxCoeff();
+  const Eigen::MatrixXd error = (B - A * X).cwiseAbs();
   const Eigen::RowVectorXd bound =
       norm_A * X.cwiseAbs().colwise().maxCoeff() + B.cwiseAbs().colwise().maxCoeff();
-  bool use_qr = !X.allFinite() || (error.array() > tol * bound.array()).any();
+  // Not finite, also if the residual overflows, or inaccurate (a NaN residual fails).
+  bool use_qr = !X.allFinite() || !bound.allFinite() ||
+                !(error.array() <= (tol * bound).replicate(error.rows(), 1).array()).all();
   Mpi::GlobalOr(1, &use_qr, comm);
   if (use_qr)
   {
