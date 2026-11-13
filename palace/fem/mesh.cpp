@@ -226,41 +226,6 @@ auto GetElementAttributes(const std::vector<int> &indices,
   return std::make_pair(std::move(active_indices), std::move(elem_attr));
 }
 
-// Element restriction for the elements at the given positions of strided geometry factor
-// data, reading the data of the full restriction without copying any of it. Each offset
-// addresses the first component at one quadrature point of an element of the subset in
-// the full vector; the component stride then selects the remaining components at that
-// point. The vector layout is the backend's, queried from the strided restriction (as
-// [nodes, components, elements] strides) rather than assumed.
-CeedElemRestriction CreateGeomDataSubsetRestriction(Ceed ceed,
-                                                    CeedElemRestriction geom_data_restr,
-                                                    const std::vector<int> &positions)
-{
-  CeedInt num_qpts, geom_data_size, layout[3];
-  CeedSize geom_data_length;
-  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(geom_data_restr, &num_qpts));
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionGetLVectorSize(geom_data_restr, &geom_data_length));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(geom_data_restr, layout));
-  std::vector<CeedInt> offsets(positions.size() * num_qpts);
-  for (std::size_t k = 0; k < positions.size(); k++)
-  {
-    const CeedInt elem_offset = positions[k] * layout[2];
-    for (CeedInt q = 0; q < num_qpts; q++)
-    {
-      offsets[k * num_qpts + q] = elem_offset + q * layout[0];
-    }
-  }
-  CeedElemRestriction restr;
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionCreate(ceed, positions.size(), num_qpts, geom_data_size,
-                                           layout[1], geom_data_length, CEED_MEM_HOST,
-                                           CEED_COPY_VALUES, offsets.data(), &restr));
-  return restr;
-}
-
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
                           std::vector<int> &active_indices,
                           const mfem::GridFunction &mesh_nodes, const Vector &elem_attr,
@@ -313,9 +278,26 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
                            CEED_STRIDES_BACKEND, &data.geom_data_restr));
   if (!data.active_indices.empty() && data.active_indices.size() < num_elem)
   {
-    // Reuse the full geometry vector without copying any factors.
-    data.active_geom_data_restr =
-        CreateGeomDataSubsetRestriction(ceed, data.geom_data_restr, data.active_indices);
+    // Reuse the full geometry vector without copying any factors. Each offset addresses the
+    // first component at one quadrature point of an active element in the full vector; the
+    // component stride then selects the remaining components at that point. The vector
+    // layout is the backend's, queried from the strided restriction (as [nodes, components,
+    // elements] strides) rather than assumed.
+    CeedInt layout[3];
+    PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(data.geom_data_restr, layout));
+    std::vector<CeedInt> active_offsets(data.active_indices.size() * num_qpts);
+    for (std::size_t k = 0; k < data.active_indices.size(); k++)
+    {
+      const CeedInt elem_offset = data.active_indices[k] * layout[2];
+      for (CeedInt q = 0; q < num_qpts; q++)
+      {
+        active_offsets[k * num_qpts + q] = elem_offset + q * layout[0];
+      }
+    }
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                             ceed, data.active_indices.size(), num_qpts, geom_data_size,
+                             layout[1], geom_data_length, CEED_MEM_HOST, CEED_COPY_VALUES,
+                             active_offsets.data(), &data.active_geom_data_restr));
   }
 
   // Compute the required geometry factors at quadrature points.
@@ -351,7 +333,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
-    const std::vector<int> &lossy_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
+    const std::vector<int> &active_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
     bool ceed_from_self, const std::vector<int> *attr_list = nullptr,
     const mfem::GridFunction *field = nullptr)
 {
@@ -395,10 +377,10 @@ auto BuildCeedGeomFactorData(
           continue;
         }
       }
-      // The shared lossy-domain subset does not apply to the geometry factor data
+      // The shared active-domain subset does not apply to the geometry factor data
       // restricted to given attributes.
       auto [active_indices, elem_attr] = GetElementAttributes(
-          indices, GetCeedAttribute, attr_list ? no_active_attr : lossy_attr);
+          indices, GetCeedAttribute, attr_list ? no_active_attr : active_attr);
       geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
                                                        *mesh.GetNodes(), elem_attr, coords,
                                                        field));
@@ -439,13 +421,13 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   auto &geom_data_map = it->second;
   if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, lossy_attr,
+    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, active_attr,
                                             active_bdr_attr, ceed, ceed_from_self);
   }
   return geom_data_map;
 }
 
-void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
+void Mesh::SetCeedActiveAttributes(std::vector<int> active_attr_,
                                    std::vector<int> active_bdr_attr_)
 {
   auto Normalize = [](std::vector<int> &attr, std::size_t max_attr)
@@ -455,9 +437,9 @@ void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
     MFEM_VERIFY(attr.empty() || (attr.front() > 0 && attr.back() <= max_attr),
                 "Invalid process-local libCEED element-set attribute!");
   };
-  Normalize(lossy_attr_, MaxCeedAttribute());
+  Normalize(active_attr_, MaxCeedAttribute());
   Normalize(active_bdr_attr_, MaxCeedBdrAttribute());
-  if (lossy_attr_ == lossy_attr && active_bdr_attr_ == active_bdr_attr)
+  if (active_attr_ == active_attr && active_bdr_attr_ == active_bdr_attr)
   {
     // Reconfiguring with the same sets is a no-op. This happens for the mesh levels
     // retained across adaptive refinement iterations, whose geometry data stays valid.
@@ -471,7 +453,7 @@ void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
     MFEM_VERIFY(geom_data_map.empty(),
                 "Cannot change the libCEED element sets after geometry data is built!");
   }
-  lossy_attr = std::move(lossy_attr_);
+  active_attr = std::move(active_attr_);
   active_bdr_attr = std::move(active_bdr_attr_);
 }
 
@@ -489,99 +471,10 @@ Mesh::GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const
   if (!geom_data_map->has_value())
   {
     *geom_data_map =
-        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, lossy_attr, active_bdr_attr,
+        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, active_attr, active_bdr_attr,
                                 ceed, ceed_from_self, &attr_list, geom_field.get());
-    CheckSameElements(ceed, attr_list);
   }
   return **geom_data_map;
-}
-
-const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
-Mesh::GetCeedGeomFactorDataSubset(Ceed ceed, const std::vector<int> &attr_list) const
-{
-  MFEM_ASSERT(std::ranges::is_sorted(attr_list),
-              "Attribute list for the geometry factor data must be sorted!");
-  std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>> *geom_data_map;
-  PalacePragmaOmp(critical(GetCeedGeomFactorData))
-  {
-    geom_data_map = &geom_data_subset[attr_list][ceed];
-  }
-  if (!geom_data_map->has_value())
-  {
-    // The elements of the full data are those of each thread and geometry in mesh order, so
-    // that the subset is in the order of the data restricted to the same attributes.
-    ceed::GeometryObjectMap<ceed::CeedGeomFactorData> subset_map;
-    for (const auto &[geom, data] : GetCeedGeomFactorData(ceed))
-    {
-      if (mfem::Geometry::Dimension[geom] != Dimension())
-      {
-        continue;
-      }
-      std::vector<int> positions;
-      for (std::size_t k = 0; k < data.indices.size(); k++)
-      {
-        if (std::ranges::binary_search(attr_list, mesh->GetAttribute(data.indices[k])))
-        {
-          positions.push_back(static_cast<int>(k));
-        }
-      }
-      if (positions.empty())
-      {
-        continue;
-      }
-      ceed::CeedGeomFactorData subset;
-      subset.dim = data.dim;
-      subset.space_dim = data.space_dim;
-      subset.indices.reserve(positions.size());
-      for (auto k : positions)
-      {
-        subset.indices.push_back(data.indices[k]);
-      }
-      subset.geom_data = nullptr;
-      PalaceCeedCall(ceed, CeedVectorReferenceCopy(data.geom_data, &subset.geom_data));
-      subset.geom_data_restr =
-          CreateGeomDataSubsetRestriction(ceed, data.geom_data_restr, positions);
-      subset_map.emplace(geom, std::move(subset));
-    }
-    *geom_data_map = std::move(subset_map);
-    CheckSameElements(ceed, attr_list);
-  }
-  return **geom_data_map;
-}
-
-void Mesh::CheckSameElements(Ceed ceed, const std::vector<int> &attr_list) const
-{
-  // The element restrictions of the spaces for given attributes are shared by the geometry
-  // factor data with coordinates and by the subset view of all elements, so both must have
-  // the same elements in the same order. The map entries of this Ceed context are only
-  // written by its own thread.
-  using GeomDataMap = std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>>;
-  const GeomDataMap *data = nullptr, *data_subset = nullptr;
-  PalacePragmaOmp(critical(GetCeedGeomFactorData))
-  {
-    auto Find = [&](const auto &map) -> const GeomDataMap *
-    {
-      const auto it = map.find(attr_list);
-      if (it == map.end())
-      {
-        return nullptr;
-      }
-      const auto it_ceed = it->second.find(ceed);
-      return (it_ceed == it->second.end()) ? nullptr : &it_ceed->second;
-    };
-    data = Find(geom_data_attr);
-    data_subset = Find(geom_data_subset);
-  }
-  if (!data || !data_subset || !data->has_value() || !data_subset->has_value())
-  {
-    return;
-  }
-  for (const auto &[geom, geom_data] : **data)
-  {
-    const auto it = (*data_subset)->find(geom);
-    MFEM_VERIFY(it != (*data_subset)->end() && it->second.indices == geom_data.indices,
-                "Geometry factor data with different elements for the same attributes!");
-  }
 }
 
 void Mesh::SetGeomFactorField(std::unique_ptr<mfem::ParGridFunction> &&field)
@@ -619,21 +512,6 @@ void Mesh::ResetCeedObjects()
     }
   }
   geom_data_attr.clear();
-  for (auto &[attr_list, ceed_map] : geom_data_subset)
-  {
-    for (auto &[ceed, geom_data_map] : ceed_map)
-    {
-      if (geom_data_map)
-      {
-        for (auto &[key, val] : *geom_data_map)
-        {
-          PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
-          PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
-        }
-      }
-    }
-  }
-  geom_data_subset.clear();
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
@@ -652,7 +530,7 @@ void Mesh::Update()
   loc_bdr_attr.clear();
   loc_attr = BuildCeedAttributes(parent_mesh);
   loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
-  lossy_attr.clear();
+  active_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
   geom_field.reset();
@@ -753,7 +631,7 @@ void Mesh::RebuildCeedAttributes()
     loc_bdr_attr = BuildCeedBdrAttributes(*mesh);
   }
   ceed_from_self = true;
-  lossy_attr.clear();
+  active_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
 }

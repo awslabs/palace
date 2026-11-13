@@ -33,7 +33,7 @@ private:
   Mesh &mesh;
 
   // Members for constructing libCEED operators. active_restr caches the single shared
-  // lossy-domain or active-boundary subset for each geometry type.
+  // active-domain or active-boundary subset for each geometry type.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, interp_restr,
       interp_range_restr;

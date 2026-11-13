@@ -990,8 +990,10 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   // Unit cube with a PML layer on the +x and +z faces (including the edge region), on
   // tetrahedral and hexahedral meshes. The PML curl-curl and mass operators are compared
   // to MFEM integrators with the PML tensors evaluated at the quadrature points by an
-  // independent implementation of the stretch.
+  // independent implementation of the stretch. Without loss, the bulk terms are assembled
+  // on the elements outside of the PML regions only (the active domain set).
   const auto element = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const bool lossy = GENERATE(true, false);
   MPI_Comm comm = Mpi::World();
   auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, element);
   for (int i = 0; i < serial_mesh.GetNE(); i++)
@@ -1016,6 +1018,10 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   layer.mu_r.s = {1.0, 2.0, 1.5};
   layer.epsilon_r.s = {2.0, 3.0, 4.0};
   layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+  if (!lossy)
+  {
+    layer.tandelta.s = {0.0, 0.0, 0.0};
+  }
   config::PMLData layer_pml;
   layer_pml.autodetect_geometry = false;
   layer_pml.directions = {false, true, false, false, false, true};
@@ -1033,6 +1039,18 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
   REQUIRE(space_op.GetMaterialOp().HasPML());
+  {
+    // The lossy layer (attribute 2), or the physical region (attribute 1).
+    std::vector<int> active_attr;
+    for (const auto &[attr, ceed_attr] : mesh[0]->GetCeedAttributes())
+    {
+      if (attr == (lossy ? 2 : 1))
+      {
+        active_attr.push_back(ceed_attr);
+      }
+    }
+    CHECK(mesh[0]->GetCeedActiveAttributes(false) == active_attr);
+  }
   const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
 
   // Diagonal background material of the layer.
@@ -1151,7 +1169,8 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
     y_ref.Imag().Add(1.0, t);
     const double norm = linalg::Norml2(comm, y_ref);
     y.Add(-1.0, y_ref);
-    INFO("muinv = " << muinv << ", element = " << static_cast<int>(element));
+    INFO("muinv = " << muinv << ", element = " << static_cast<int>(element)
+                    << ", lossy = " << lossy);
     CHECK_THAT(linalg::Norml2(comm, y) / norm, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
   }
 }
@@ -1450,94 +1469,6 @@ TEST_CASE("SpaceOperator PML quadrature data matches an MFEM reference",
     CheckPMLIntegrator<FloquetCrossPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
     CheckPMLIntegrator<DiffusionPMLIntegrator>(h1, layer, header, *mesh[0], q_order);
     CheckPMLIntegrator<FloquetDiffusionPMLIntegrator>(h1, layer, header, *mesh[0], q_order);
-  }
-}
-
-TEST_CASE("SpaceOperator bulk terms on the support of their coefficients",
-          "[spaceoperator][pml][Serial][Parallel][GPU]")
-{
-  // With BilinearForm::SetCoefficientSupport (all but the PML attributes), the bulk terms
-  // whose coefficients vanish on the PML are assembled on the other elements only. The
-  // levels of a p-multigrid hierarchy coarsened from them, with the stored PML terms, and
-  // the complex operators with the lossy imaginary terms on the shared lossy subset, must
-  // give the action and the diagonal of the same terms over all elements. A term with a
-  // coefficient on the PML too keeps every element.
-  const bool on_pml = GENERATE(false, true);
-  IntegrationSettingsGuard settings_guard;
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  auto space_op = MakePMLSpaceOperator(mesh, false, 3, 3);
-  const auto &mat_op = space_op->GetMaterialOp();
-  const auto &layer = mat_op.GetPMLLayers()[0];
-  const auto &spaces = space_op->GetNDSpaces();
-  REQUIRE(spaces.GetNumLevels() == 3);
-  std::vector<int> support;
-  for (auto attr : mesh[0]->Get().attributes)
-  {
-    if (std::ranges::find(layer.GetAttributes(), attr) == layer.GetAttributes().end())
-    {
-      support.push_back(attr);
-    }
-  }
-  MaterialPropertyCoefficient muinv(mat_op.GetBulkAttributeToMaterial(),
-                                    mat_op.GetCurlCurlInvPermeability()),
-      eps(on_pml ? mat_op.GetAttributeToMaterial() : mat_op.GetBulkAttributeToMaterial(),
-          mat_op.GetPermittivityReal()),
-      loss(mat_op.GetBulkAttributeToMaterial(), mat_op.GetPermittivityImag());
-  pml::ContextHeader header;
-  header.c_muinv = 1.0;
-  header.c_eps = -4.0;
-  const auto ctx = layer.PackContext(header);
-  auto Assemble = [&](bool real, bool restrict)
-  {
-    BilinearForm a(spaces.GetFinestFESpace());
-    a.SkipZeroCoefficientElements();
-    if (restrict)
-    {
-      a.SetCoefficientSupport(support);
-    }
-    if (real)
-    {
-      a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv, eps);
-      if (!ctx.empty())
-      {
-        a.AddDomainIntegratorOnAttributes<CurlCurlMassPMLIntegrator>(
-            layer.GetAttributes(), ctx.data(), ctx.size() * sizeof(CeedIntScalar));
-      }
-    }
-    else
-    {
-      a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
-    }
-    a.AssembleQuadratureData();
-    return a.Assemble(spaces, false, 1);
-  };
-  auto ar = Assemble(true, true), ai = Assemble(false, true);
-  const auto ar_ref = Assemble(true, false), ai_ref = Assemble(false, false);
-  MPI_Comm comm = space_op->GetComm();
-  for (std::size_t l = 0; l < ar.size(); l++)
-  {
-    INFO("level " << l + 1);
-    Vector d(ar[l]->Height()), d_ref(ar[l]->Height());
-    d.UseDevice(true);
-    d_ref.UseDevice(true);
-    ar[l]->AssembleDiagonal(d);
-    ar_ref[l]->AssembleDiagonal(d_ref);
-    CHECK_THAT(RelativeError(comm, d, d_ref), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
-    const ComplexWrapperOperator A_ref(ar_ref[l].get(), ai_ref[l].get());
-    const auto A = ceed::CreateComplexOperator(std::move(ar[l]), std::move(ai[l]),
-                                               spaces.GetFESpaceAtLevel(l + 1));
-    ComplexVector x(A->Width()), y(A->Height()), y_ref(A->Height());
-    x.UseDevice(true);
-    y.UseDevice(true);
-    y_ref.UseDevice(true);
-    x.Real().Randomize(42);
-    x.Imag().Randomize(43);
-    A->Mult(x, y);
-    A_ref.Mult(x, y_ref);
-    CHECK_THAT(RelativeError(comm, y.Real(), y_ref.Real()),
-               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
-    CHECK_THAT(RelativeError(comm, y.Imag(), y_ref.Imag()),
-               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
   }
 }
 
