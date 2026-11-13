@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include <Eigen/Dense>
+#include <metis.h>
 #include <mfem.hpp>
 #include "utils/iodata.hpp"
 
@@ -33,6 +34,24 @@ struct BoundingBall
   double radius;
   bool planar;
 };
+
+// Partition a graph with METIS, first into the nodes, in proportion to their numbers of
+// ranks, and then the subgraph of each node into its ranks. The graph (xadj, adjncy) is in
+// CSR format, without self loops, and rank_node is the node of each rank, numbered below
+// the number of ranks. Returns the rank of each vertex, or an empty vector if METIS fails
+// or a rank gets no vertex.
+std::vector<int> PartitionGraphOnNodes(const std::vector<idx_t> &xadj,
+                                       const std::vector<idx_t> &adjncy,
+                                       const std::vector<int> &rank_node);
+
+// Gather on the root the graph of the elements of a parallel mesh through their faces,
+// conforming and nonconforming, in the global element numbering (CSR, without self loops or
+// duplicate edges), with the number of elements and the node of each rank, the node labeled
+// by its lowest rank. Returns false on all ranks if the graph is too large for the int
+// counts and displacements of MPI.
+bool GatherElementGraph(mfem::ParMesh &mesh, std::vector<idx_t> &xadj,
+                        std::vector<idx_t> &adjncy, std::vector<int> &rank_ne,
+                        std::vector<int> &rank_node);
 
 // Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
 // bounding balls. Returns the dominant rank, for which the vertices argument will be
