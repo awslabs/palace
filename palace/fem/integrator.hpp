@@ -175,10 +175,9 @@ public:
 // The tensors cost far more to evaluate than a material coefficient (complex stretch
 // factors and, for an extruded PML, the complex Jacobian of the stretch, its adjugate, and
 // for α > 0 a Gauss-Legendre rule for the stretched depth), so unlike the other integrators
-// the PML integrators store them at the quadrature points by default, in every operator and
-// on every device: after assembly, a PML point costs what an anisotropic material point
-// with stored quadrature data costs. With assemble_q_data = false, they are evaluated at
-// every application instead, which is kept to check the stored data.
+// the PML integrators always store them at the quadrature points, in every operator and on
+// every device: after assembly, a PML point costs what an anisotropic material point with
+// stored quadrature data costs.
 class PMLIntegratorBase : public BilinearFormIntegrator
 {
 protected:
@@ -186,10 +185,9 @@ protected:
   std::size_t ctx_size;
 
 public:
-  PMLIntegratorBase(const void *ctx, std::size_t ctx_size, bool assemble_q_data = true)
+  PMLIntegratorBase(const void *ctx, std::size_t ctx_size)
     : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size)
   {
-    this->assemble_q_data = assemble_q_data;
   }
 };
 
