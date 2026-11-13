@@ -13629,122 +13629,212 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // perimeter refined on one crack side or the other) and the identification is compared
   // at the requirements level (the dry run writes the manifest and the patch table without
   // reading response matrices) on the initial mesh and on the saved mesh.
+  // Rulings 1611 / 1615 (P3-26; MEASURED, P3C-REPORT STEP 14): under the legacy form the
+  // crack perturbation (Model.CrackDisplacementFactor, default 1e-12 x h_min) moves the two
+  // copies of a sheet off its plane in opposite directions, so each copy's faces tilt by
+  // +-2.05293e-12 rad here; the frame's process normal is the normalised sum of the
+  // supporting faces' sign-aligned normals (BuildMetalEdgeProcessNormals), so the tilts
+  // cancel with 2 + 2 faces on the initial mesh and do not with 2 + 8 on the saved mesh
+  // (one copy refined): AxisUY = AxisVX = 6 / 10 x 2.05293e-12 = 1.2317579561726798e-12
+  // (OI-UNIT-SAVED-MESH-PATCH-AXIS-CRACK-DISPLACEMENT-LEGACY; the new default has no crack
+  // and no displacement: exact frames). So the legacy comparison runs (b1) with the factor
+  // 0 (coincident copies) at the strict 1e-12 bound, and (b2) with the production default
+  // factor, its Axis columns bounded by the largest tilt between the two copies of a face,
+  // measured on the initial mesh's own face normals, every other column at 1e-12; (b1) and
+  // (b2) have the same identification and patch table outside the Axis columns.
   {
     const fs::path mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
-    const fs::path producer_dir = temp.temp_dir / "adaptid-cpw-producer";
-    const fs::path saved_mesh_path = producer_dir / SavedAdaptMeshName("cpw3d-surface-nc");
-    json dielectric = {{"Thickness", 2.0e-3},
-                       {"AutomaticEdges", true},
-                       {"EdgeDistances", {2.0}},
-                       {"LocalizeEdgeEnergy", false}};
-    json sa = dielectric, ms = dielectric, ma = dielectric;
-    sa.update({{"Index", 1},
-               {"Attributes", {3}},
-               {"Type", "SA"},
-               {"Permittivity", 4.0},
-               {"LossTan", 2.0e-3}});
-    ms.update({{"Index", 2},
-               {"Attributes", {1, 2}},
-               {"Type", "MS"},
-               {"Permittivity", 11.47},
-               {"LossTan", 3.0e-4}});
-    ma.update({{"Index", 3},
-               {"Attributes", {1, 2}},
-               {"Type", "MA"},
-               {"Permittivity", 10.0},
-               {"LossTan", 3.0e-2}});
-    json config = {
-        {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
-        {"Model",
-         {{"Mesh", mesh_path.string()},
-          {"L0", 1.0e-6},
-          {"Refinement",
-           {{"MaxIts", 3},
-            {"Tol", 1.0e-12},
-            {"UpdateFraction", 0.7},
-            {"Nonconformal", true},
-            {"SaveAdaptMesh", true},
-            {"MaxNCLevels", 8}}}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permittivity", 11.47}},
-            {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
-        {"Boundaries",
-         {{"Ground", {{"Attributes", {2, 4}}}},
-          {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
-          {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
-        {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
-    test::ApplyCrackPolicy(config, crack_policy);  // explicit crack policy (P3-23)
-    test::RunElectrostatic(config);
-    Mpi::Barrier(comm);
-    REQUIRE(fs::is_regular_file(saved_mesh_path));
-
-    json identify = config;
-    identify["Model"]["Refinement"] = {{"MaxIts", 0}};
-    identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
-                                            {{"Library", library_3d_path.string()},
-                                             {"TargetInterfaces", {1, 2, 3}},
-                                             {"UnmatchedPolicy", "Warn"},
-                                             {"TraceCoupling", "Collocated"}}}};
-    // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
-    // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
-    // mesh's when the AMR refined the perimeter, the premise of the comparison below (the
-    // identification then merges the refinement vertices out; without them the comparison
-    // would hold vacuously).
-    auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
+    struct CpwComparison
     {
-      json run = identify;
-      run["Model"]["Mesh"] = mesh_file.string();
-      const fs::path out_dir = temp.temp_dir / stem;
-      run["Problem"]["Output"] = out_dir.string();
-      if (Mpi::Root(comm))
-      {
-        fs::create_directories(out_dir);
-      }
-      Mpi::Barrier(comm);
-      IoData iodata(run, false);
-      auto mesh = mesh::ReadMesh(iodata, comm);
-      const fs::path requirements_path = out_dir / "surface-response-requirements.json";
-      WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
-      Mpi::Barrier(comm);
-      const auto leaf_perimeter = ExtractMetalEdgeGeometry(
-          *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
-      return std::make_tuple(requirements_path, out_dir / "surface-response-patches.csv",
-                             leaf_perimeter.segments.size());
+      json initial_identification, adapted_identification;
+      std::vector<std::string> header;
+      std::vector<std::vector<std::string>> initial_rows, adapted_rows;
+      int copy_pairs = 0;  // the face pairs of the two crack copies (initial mesh)
+      double largest_copy_tilt = 0.0;  // max |n_a + n_b| over those pairs (unit normals)
     };
-    const auto [initial_requirements, initial_patches, initial_leaf_segments] =
-        Identify(mesh_path, "adaptid-cpw-initial");
-    const auto [adapted_requirements, adapted_patches, adapted_leaf_segments] =
-        Identify(saved_mesh_path, "adaptid-cpw-adapted");
-    if (!Mpi::Root(comm))
+    // The faces of the two crack copies of a sheet coincide up to the crack perturbation:
+    // pairs of boundary elements with the same centre (1e-9 x the mesh extent) and opposite
+    // normals; the angle between a pair's sign-aligned normals is |n_a + n_b|.
+    auto CrackCopyTilt = [](mfem::ParMesh &serial)
     {
-      return;
-    }
-    // The saved mesh's perimeter carries refinement-generated vertices.
-    CHECK(adapted_leaf_segments > initial_leaf_segments);
-    const json initial = ReadJson(initial_requirements);
-    const json adapted = ReadJson(adapted_requirements);
-    const auto &initial_identification = initial["Identification"];
-    const auto &adapted_identification = adapted["Identification"];
-    CHECK(adapted_identification["GeometryDigest"] ==
-          initial_identification["GeometryDigest"]);
-    REQUIRE(adapted_identification["Features"].size() ==
-            initial_identification["Features"].size());
-    REQUIRE(initial_identification["Features"].size() >= 4);
-    for (std::size_t f = 0; f < initial_identification["Features"].size(); f++)
+      struct Face
+      {
+        std::array<double, 3> centre, normal;
+      };
+      std::vector<Face> faces;
+      mfem::Vector centre(3), normal(3);
+      for (int be = 0; be < serial.GetNBE(); be++)
+      {
+        auto *T = serial.GetBdrElementTransformation(be);
+        const auto &ip = mfem::Geometries.GetCenter(T->GetGeometryType());
+        T->SetIntPoint(&ip);
+        T->Transform(ip, centre);
+        mfem::CalcOrtho(T->Jacobian(), normal);
+        normal /= normal.Norml2();
+        faces.push_back(
+            {{centre(0), centre(1), centre(2)}, {normal(0), normal(1), normal(2)}});
+      }
+      std::sort(faces.begin(), faces.end(),
+                [](const Face &a, const Face &b) { return a.centre[0] < b.centre[0]; });
+      mfem::Vector bbmin, bbmax;
+      mesh::GetAxisAlignedBoundingBox(serial, bbmin, bbmax);
+      double extent = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        extent = std::max(extent, bbmax[d] - bbmin[d]);
+      }
+      const double tolerance = 1.0e-9 * extent;
+      int pairs = 0;
+      double tilt = 0.0;
+      for (std::size_t i = 0; i < faces.size(); i++)
+      {
+        for (std::size_t j = i + 1;
+             j < faces.size() && faces[j].centre[0] - faces[i].centre[0] <= tolerance; j++)
+        {
+          double distance = 0.0, dot = 0.0, sum_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            distance =
+                std::max(distance, std::abs(faces[j].centre[d] - faces[i].centre[d]));
+            dot += faces[i].normal[d] * faces[j].normal[d];
+            sum_squared += (faces[i].normal[d] + faces[j].normal[d]) *
+                           (faces[i].normal[d] + faces[j].normal[d]);
+          }
+          if (distance <= tolerance && dot < 0.0)
+          {
+            pairs++;
+            tilt = std::max(tilt, std::sqrt(sum_squared));
+          }
+        }
+      }
+      return std::make_pair(pairs, tilt);
+    };
+    // The producer (plain electrostatic AMR, 3 cycles, the metal perimeter refined on one
+    // crack side or the other), then the identification dry runs on the initial mesh and on
+    // the saved mesh (the requirements and the patch table without response matrices). An
+    // unset factor = the production default. Root only returns the tables.
+    auto RunCpw = [&](std::optional<double> crack_displacement_factor,
+                      const std::string &tag) -> std::optional<CpwComparison>
     {
-      const auto &a = initial_identification["Features"][f];
-      const auto &b = adapted_identification["Features"][f];
-      CHECK(a["Type"] == b["Type"]);
-      CHECK(a["Hash"] == b["Hash"]);
-      CHECK(a["Match"]["Status"] == b["Match"]["Status"]);
-      CHECK_THAT(b["Length"].get<double>(), WithinRel(a["Length"].get<double>(), 1.0e-9));
-    }
-    CHECK(adapted_identification["Exclusions"] == initial_identification["Exclusions"]);
-    const auto initial_rows = ReadPatchRows(initial_patches);
-    const auto adapted_rows = ReadPatchRows(adapted_patches);
-    REQUIRE(initial_rows.size() == adapted_rows.size());
-    REQUIRE(!initial_rows.empty());
+      const fs::path producer_dir = temp.temp_dir / ("adaptid-cpw-producer" + tag);
+      const fs::path saved_mesh_path =
+          producer_dir / SavedAdaptMeshName("cpw3d-surface-nc");
+      json dielectric = {{"Thickness", 2.0e-3},
+                         {"AutomaticEdges", true},
+                         {"EdgeDistances", {2.0}},
+                         {"LocalizeEdgeEnergy", false}};
+      json sa = dielectric, ms = dielectric, ma = dielectric;
+      sa.update({{"Index", 1},
+                 {"Attributes", {3}},
+                 {"Type", "SA"},
+                 {"Permittivity", 4.0},
+                 {"LossTan", 2.0e-3}});
+      ms.update({{"Index", 2},
+                 {"Attributes", {1, 2}},
+                 {"Type", "MS"},
+                 {"Permittivity", 11.47},
+                 {"LossTan", 3.0e-4}});
+      ma.update({{"Index", 3},
+                 {"Attributes", {1, 2}},
+                 {"Type", "MA"},
+                 {"Permittivity", 10.0},
+                 {"LossTan", 3.0e-2}});
+      json config = {
+          {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
+          {"Model",
+           {{"Mesh", mesh_path.string()},
+            {"L0", 1.0e-6},
+            {"Refinement",
+             {{"MaxIts", 3},
+              {"Tol", 1.0e-12},
+              {"UpdateFraction", 0.7},
+              {"Nonconformal", true},
+              {"SaveAdaptMesh", true},
+              {"MaxNCLevels", 8}}}}},
+          {"Domains",
+           {{"Materials",
+             {{{"Attributes", {1}}, {"Permittivity", 11.47}},
+              {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
+          {"Boundaries",
+           {{"Ground", {{"Attributes", {2, 4}}}},
+            {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+            {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
+          {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
+      test::ApplyCrackPolicy(config, crack_policy);  // explicit crack policy (P3-23)
+      if (crack_displacement_factor)
+      {
+        config["Model"]["CrackDisplacementFactor"] = *crack_displacement_factor;
+      }
+      test::RunElectrostatic(config);
+      Mpi::Barrier(comm);
+      REQUIRE(fs::is_regular_file(saved_mesh_path));
+
+      json identify = config;
+      identify["Model"]["Refinement"] = {{"MaxIts", 0}};
+      identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
+                                              {{"Library", library_3d_path.string()},
+                                               {"TargetInterfaces", {1, 2, 3}},
+                                               {"UnmatchedPolicy", "Warn"},
+                                               {"TraceCoupling", "Collocated"}}}};
+      // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
+      // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
+      // mesh's when the AMR refined the perimeter, the premise of the comparison below (the
+      // identification then merges the refinement vertices out; without them the comparison
+      // would hold vacuously).
+      auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
+      {
+        json run = identify;
+        run["Model"]["Mesh"] = mesh_file.string();
+        const fs::path out_dir = temp.temp_dir / (stem + tag);
+        run["Problem"]["Output"] = out_dir.string();
+        if (Mpi::Root(comm))
+        {
+          fs::create_directories(out_dir);
+        }
+        Mpi::Barrier(comm);
+        IoData iodata(run, false);
+        auto mesh = mesh::ReadMesh(iodata, comm);
+        const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+        WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+        Mpi::Barrier(comm);
+        const auto leaf_perimeter = ExtractMetalEdgeGeometry(
+            *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+        return std::make_tuple(requirements_path, out_dir / "surface-response-patches.csv",
+                               leaf_perimeter.segments.size());
+      };
+      const auto [initial_requirements, initial_patches, initial_leaf_segments] =
+          Identify(mesh_path, "adaptid-cpw-initial");
+      const auto [adapted_requirements, adapted_patches, adapted_leaf_segments] =
+          Identify(saved_mesh_path, "adaptid-cpw-adapted");
+      if (!Mpi::Root(comm))
+      {
+        return std::nullopt;
+      }
+      // The saved mesh's perimeter carries refinement-generated vertices.
+      CHECK(adapted_leaf_segments > initial_leaf_segments);
+      CpwComparison result;
+      result.initial_identification = ReadJson(initial_requirements)["Identification"];
+      result.adapted_identification = ReadJson(adapted_requirements)["Identification"];
+      result.initial_rows = ReadPatchRows(initial_patches);
+      result.adapted_rows = ReadPatchRows(adapted_patches);
+      {
+        std::ifstream input(initial_patches);
+        std::string line, field;
+        std::getline(input, line);
+        std::stringstream stream(line);
+        while (std::getline(stream, field, ','))
+        {
+          result.header.push_back(field);
+        }
+      }
+      // The initial mesh as the identification loads it, read serially on the root.
+      json initial_run = identify;
+      initial_run["Model"]["Mesh"] = mesh_path.string();
+      IoData iodata(initial_run, false);
+      auto serial_mesh = mesh::ReadMesh(iodata, MPI_COMM_SELF);
+      std::tie(result.copy_pairs, result.largest_copy_tilt) = CrackCopyTilt(*serial_mesh);
+      return result;
+    };
     // The dry-run table carries text columns (Topology, Model) beside the numbers.
     auto Number = [](const std::string &field) -> std::optional<double>
     {
@@ -13759,22 +13849,113 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         return std::nullopt;
       }
     };
-    for (std::size_t r = 0; r < initial_rows.size(); r++)
+    auto RowText = [](const std::vector<std::string> &row)
     {
-      REQUIRE(initial_rows[r].size() == adapted_rows[r].size());
-      for (std::size_t c = 0; c < initial_rows[r].size(); c++)
+      std::string text;
+      for (const auto &field : row)
       {
-        const auto initial_value = Number(initial_rows[r][c]);
-        const auto adapted_value = Number(adapted_rows[r][c]);
-        if (initial_value && adapted_value)
+        text += (text.empty() ? "" : ",") + field;
+      }
+      return text;
+    };
+    // Two identifications agree: features, exclusions and the patch table (the Axis columns
+    // within axis_bound, every other number within 1e-12, the text columns equal).
+    auto CheckSameIdentification =
+        [&](const json &a_identification, const json &b_identification,
+            const std::vector<std::string> &header,
+            const std::vector<std::vector<std::string>> &a_rows,
+            const std::vector<std::vector<std::string>> &b_rows, double axis_bound)
+    {
+      CHECK(b_identification["GeometryDigest"] == a_identification["GeometryDigest"]);
+      REQUIRE(b_identification["Features"].size() == a_identification["Features"].size());
+      REQUIRE(a_identification["Features"].size() >= 4);
+      for (std::size_t f = 0; f < a_identification["Features"].size(); f++)
+      {
+        const auto &a = a_identification["Features"][f];
+        const auto &b = b_identification["Features"][f];
+        CHECK(a["Type"] == b["Type"]);
+        CHECK(a["Hash"] == b["Hash"]);
+        CHECK(a["Match"]["Status"] == b["Match"]["Status"]);
+        CHECK_THAT(b["Length"].get<double>(), WithinRel(a["Length"].get<double>(), 1.0e-9));
+      }
+      CHECK(b_identification["Exclusions"] == a_identification["Exclusions"]);
+      REQUIRE(a_rows.size() == b_rows.size());
+      REQUIRE(!a_rows.empty());
+      for (std::size_t r = 0; r < a_rows.size(); r++)
+      {
+        REQUIRE(a_rows[r].size() == b_rows[r].size());
+        INFO("first patch row " << r << ": " << RowText(a_rows[r]));
+        INFO("second patch row " << r << ": " << RowText(b_rows[r]));
+        for (std::size_t c = 0; c < a_rows[r].size(); c++)
         {
-          CHECK_THAT(*adapted_value, WithinAbs(*initial_value, 1.0e-12));
-        }
-        else
-        {
-          CHECK(initial_rows[r][c] == adapted_rows[r][c]);
+          const auto a_value = Number(a_rows[r][c]);
+          const auto b_value = Number(b_rows[r][c]);
+          const std::string name = c < header.size() ? header[c] : "?";
+          if (a_value && b_value)
+          {
+            const bool axis = name.rfind("Axis", 0) == 0;
+            INFO("patch row " << r << " column " << c << " " << name << " first "
+                              << a_rows[r][c] << " second " << b_rows[r][c] << " bound "
+                              << (axis ? axis_bound : 1.0e-12));
+            CHECK_THAT(*b_value, WithinAbs(*a_value, axis ? axis_bound : 1.0e-12));
+          }
+          else
+          {
+            CHECK(a_rows[r][c] == b_rows[r][c]);
+          }
         }
       }
+    };
+    if (crack_policy == test::CrackPolicy::Legacy)
+    {
+      const auto coincident = RunCpw(0.0, "");                    // (b1)
+      const auto displaced = RunCpw(std::nullopt, "-displaced");  // (b2)
+      if (!Mpi::Root(comm))
+      {
+        return;
+      }
+      REQUIRE(coincident);
+      REQUIRE(displaced);
+      INFO("crack copy pairs " << coincident->copy_pairs << " / " << displaced->copy_pairs
+                               << ", largest copy tilt " << coincident->largest_copy_tilt
+                               << " / " << displaced->largest_copy_tilt);
+      // The premise of (b2): the production displacement tilts the crack copies.
+      REQUIRE(displaced->copy_pairs > 0);
+      CHECK(displaced->copy_pairs == coincident->copy_pairs);
+      CHECK(displaced->largest_copy_tilt > 1.0e-13);
+      // (b1) the saved mesh reproduces the producing run's identification, strictly.
+      CheckSameIdentification(coincident->initial_identification,
+                              coincident->adapted_identification, coincident->header,
+                              coincident->initial_rows, coincident->adapted_rows, 1.0e-12);
+      // (b2) the production displacement: the frames move within the copies' tilt only.
+      CheckSameIdentification(displaced->initial_identification,
+                              displaced->adapted_identification, displaced->header,
+                              displaced->initial_rows, displaced->adapted_rows,
+                              displaced->largest_copy_tilt);
+      // The factor changes nothing else: (b1) and (b2) on the same mesh.
+      CHECK(displaced->header == coincident->header);
+      CheckSameIdentification(coincident->initial_identification,
+                              displaced->initial_identification, coincident->header,
+                              coincident->initial_rows, displaced->initial_rows,
+                              displaced->largest_copy_tilt);
+      CheckSameIdentification(coincident->adapted_identification,
+                              displaced->adapted_identification, coincident->header,
+                              coincident->adapted_rows, displaced->adapted_rows,
+                              displaced->largest_copy_tilt);
+    }
+    else
+    {
+      // Upstream's default: the sheets are not cracked (no copies, no displacement).
+      const auto uncracked = RunCpw(std::nullopt, "");
+      if (!Mpi::Root(comm))
+      {
+        return;
+      }
+      REQUIRE(uncracked);
+      CHECK(uncracked->copy_pairs == 0);
+      CheckSameIdentification(uncracked->initial_identification,
+                              uncracked->adapted_identification, uncracked->header,
+                              uncracked->initial_rows, uncracked->adapted_rows, 1.0e-12);
     }
   }
 #endif
