@@ -309,12 +309,14 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Exact reduced-coordinate domain-energy forms and lumped-port voltages of the basis
-  // vectors (one row per port) for adaptive online postprocessing.
+  // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
+  // form, the factor R of the curls of the basis vectors (the magnetic energy is
+  // 1/2 |R y|² / ω²), the domain energy forms (electric in the basis, magnetic in the
+  // coordinates R y), and the lumped-port voltages of the basis vectors (one row per port).
   bool reduced_postprocessing_ready = false;
   std::set<int> reduced_postprocessing_checked;  // Excitations checked
   double reduced_postprocessing_tol = 0.0;
-  Eigen::MatrixXd reduced_energy_E, reduced_energy_H, reduced_port_V;
+  Eigen::MatrixXd reduced_energy_E, reduced_curl_R, reduced_port_V;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
