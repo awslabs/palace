@@ -29,13 +29,6 @@ class IoData;
 class SpaceOperator;
 struct FloquetOrder;
 
-namespace config
-{
-
-struct LinearSolverData;
-
-}  // namespace config
-
 // Helper classs to define inner product used in the PROM when doing circuit synthesis. The
 // weight matrix is the simple domain mass matrix of the space with the tdof of the port
 // zeroed out (using the diag policy materials) and replaced by the boundary port matrix.
@@ -476,8 +469,6 @@ protected:
                        std::vector<std::string> &aux_labels);
 
 public:
-  RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
-              std::size_t max_size_per_excitation);
   RomOperator(const IoData &iodata, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
 

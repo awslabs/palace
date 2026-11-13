@@ -1310,9 +1310,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega)
   SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
-  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
-  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
-  // only nonzero on boundaries, will be empty if not needed.
+  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ (A2(ω) + F(ω)) V and source vector
+  // RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2(ω), all from reduced quantities (no HDM-size work).
 
   // No basis states ill-defined: return zero vector to match current behaviour.
   if (V.empty())
