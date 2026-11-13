@@ -52,6 +52,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (without
+    `"SuperLU3DCommunicator"`), STRUMPACK (without compression), and MUMPS now factor the
+    complex-valued coarse-level matrix in complex arithmetic instead of the equivalent
+    real-valued system of twice the size, which reduces the memory of the factors by about
+    40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
+    factorization differs, so results change at the level of the linear solver tolerance.
+    `"PCMatReal"` or `"DropSmallEntries"` keep the real-valued system of twice the size.
+    SchemaVer 4-3-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
@@ -278,6 +286,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - The superbuild patches the BLACS of ScaLAPACK to receive messages with derived
+    datatypes packed and unpack them locally. This works around an MPICH bug for processes
+    on the same node, which corrupts or aborts the complex-valued distributed
+    factorizations of STRUMPACK and MUMPS: packed messages received in several shared
+    memory segments cannot be unpacked into complex-valued elements split across segments.
+    [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
+    *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
+    (`mumps@5.3:+double+complex`). [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
