@@ -57,7 +57,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169), which allows
     setting the block size, also uses the narrow triangular solves of
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165) only for the
-    block sizes they handle. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    block sizes they handle. [PR 1197](https://github.com/awslabs/palace/pull/1197).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
