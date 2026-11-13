@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
@@ -718,6 +719,57 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     const auto meta = nlohmann::json::parse(ReadFile(temp_dir / "palace.json"));
     CHECK_FALSE(meta.contains("SavedAdaptedMesh"));
   }
+}
+
+// P3-24 (SL5-RESOLUTION s10; the P3 stub of
+// resolutions/SL5/palace__drivers__basesolver.cpp.md): WriteMetadata = upstream's
+// palace.json.tmp + rename (#906) with ours' checked streamed write BEFORE the rename. A
+// short write (here: palace.json.tmp is a symbolic link to /dev/full, so the flush fails
+// with ENOSPC) aborts and leaves the previous palace.json byte-identical; the partial
+// temporary file is left behind, never renamed into place.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "WriteMetadata short write keeps palace.json",
+                 "[basesolver][Serial]")
+{
+#if !defined(MFEM_USE_EXCEPTIONS)
+  SKIP("The short-write abort is observed as an exception (MFEM_USE_EXCEPTIONS)");
+#else
+  if (!fs::exists("/dev/full"))
+  {
+    SKIP("No /dev/full on this host");
+  }
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  auto serial_mesh = SingleTetMesh();
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+  REQUIRE(counts.valid);
+
+  // The BaseSolver constructor writes the initial palace.json; SaveMetadata rewrites it.
+  TestSolver solver(iodata, Mpi::Root(comm));
+  const fs::path path = temp_dir / "palace.json";
+  const fs::path tmp_path = temp_dir / "palace.json.tmp";
+  REQUIRE(fs::is_regular_file(path));
+  const std::string before = ReadFile(path);
+  REQUIRE_FALSE(before.empty());
+  fs::create_symlink("/dev/full", tmp_path);
+  CHECK_THROWS_WITH(solver.SaveMetadata(counts),
+                    Catch::Matchers::ContainsSubstring("a short write"));
+  CHECK(ReadFile(path) == before);
+  CHECK(fs::is_symlink(tmp_path));
+  fs::remove(tmp_path);
+
+  // The control: the same call without the failing stream writes the block.
+  solver.SaveMetadata(counts);
+  CHECK(nlohmann::json::parse(ReadFile(path)).contains("SavedAdaptedMesh"));
+  CHECK_FALSE(fs::exists(tmp_path));
+#endif
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
