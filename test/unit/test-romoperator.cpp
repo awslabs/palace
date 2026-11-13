@@ -26,6 +26,7 @@
 using namespace palace;
 using namespace nlohmann;
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 // Assemble operators as Eigen matrices for simpler testing.
 template <typename T>
@@ -70,6 +71,8 @@ public:
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
+  // Replace the basis only (not the projections), for the reduced postprocessing.
+  void SetBasis(std::vector<Vector> &&basis) { V = std::move(basis); }
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
@@ -1061,11 +1064,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THAT(std::imag((*resistance_R_inv)(0, 0)), WithinAbs(0.0, 1e-15));
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "RomOperator reduced postprocessing matches full evaluation",
-                 "[postoperator][romoperator][Serial][Parallel]")
+// Two lumped ports, one with L and C, and a domain energy postprocessing region, on the
+// 3x2x1 tetrahedral cube mesh, for the reduced postprocessing.
+json ReducedPostprocessingSetup(const fs::path &temp_dir)
 {
-  MPI_Comm comm = Mpi::World();
   const auto mesh_path =
       fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
 
@@ -1113,6 +1115,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       {"Linear",
        {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
 
+  return setup_json;
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced postprocessing matches full evaluation",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  json setup_json = ReducedPostprocessingSetup(temp_dir);
   IoData iodata(setup_json, false);
   auto mesh = LoadScaleParMesh2(iodata, comm);
   SpaceOperator space_op(iodata, mesh);
@@ -1197,21 +1208,28 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                 full.domain_H_field_energy_i[i].participation_ratio));
   }
 
-  const auto &full_port = full.lumped_port_vi.at(1);
-  const auto &reduced_port = reduced.lumped_port_vi.at(1);
-  REQUIRE(std::abs(full_port.V) > 0.0);
-  REQUIRE(std::abs(full_port.I) > 0.0);
-  REQUIRE(full_port.inductor_energy > 0.0);
-  REQUIRE(full_port.capacitor_energy > 0.0);
-  check_complex(reduced_port.V, full_port.V);
-  check_complex(reduced_port.I, full_port.I);
-  for (std::size_t i = 0; i < full_port.I_RLC.size(); i++)
+  REQUIRE(full.lumped_port_vi.size() == 2);
+  REQUIRE(reduced.lumped_port_vi.size() == full.lumped_port_vi.size());
+  REQUIRE(full.lumped_port_vi.at(1).inductor_energy > 0.0);
+  REQUIRE(full.lumped_port_vi.at(1).capacitor_energy > 0.0);
+  for (const auto &[idx, full_port] : full.lumped_port_vi)
   {
-    check_complex(reduced_port.I_RLC[i], full_port.I_RLC[i]);
+    CAPTURE(idx);
+    const auto &reduced_port = reduced.lumped_port_vi.at(idx);
+    REQUIRE(std::abs(full_port.V) > 0.0);
+    REQUIRE(std::abs(full_port.I) > 0.0);
+    REQUIRE(std::abs(full_port.S) > 0.0);
+    check_complex(reduced_port.V, full_port.V);
+    check_complex(reduced_port.I, full_port.I);
+    REQUIRE(reduced_port.I_RLC.size() == full_port.I_RLC.size());
+    for (std::size_t i = 0; i < full_port.I_RLC.size(); i++)
+    {
+      check_complex(reduced_port.I_RLC[i], full_port.I_RLC[i]);
+    }
+    check_complex(reduced_port.S, full_port.S);
+    CHECK(close(reduced_port.inductor_energy, full_port.inductor_energy));
+    CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
   }
-  check_complex(reduced_port.S, full_port.S);
-  CHECK(close(reduced_port.inductor_energy, full_port.inductor_energy));
-  CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
   CHECK(close(reduced.lumped_port_inductor_energy, full.lumped_port_inductor_energy));
   CHECK(close(reduced.lumped_port_capacitor_energy, full.lumped_port_capacitor_energy));
 
@@ -1232,6 +1250,117 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   E *= 1.001;
   post_op.MeasureAndPrintReduced(2, 0, &E, omega_front, y, rom_op);
   CHECK_FALSE(post_op.HasReducedPostprocessing());
+}
+
+// The reduced magnetic energy of a field V y with large, nearly cancelling coefficients y
+// (V y = b for the basis {a, a + δ b}), which loses all accuracy in the quadratic form of
+// VᵀCᵀMCV, and with a basis vector of zero curl, which is dropped from the factorization of
+// C V. The basis is set directly, since the PROM basis is orthonormal.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced magnetic energy with cancelling coefficients",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  json setup_json = ReducedPostprocessingSetup(temp_dir);
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperatorTest rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+  const double omega = iodata.solver.driven.sample_f.front();
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+
+  // A discrete gradient of integer nodal values has exactly zero curl.
+  Vector phi(space_op.GetH1Space().GetTrueVSize()), a(size), b(size), g(size);
+  for (auto *x : {&phi, &a, &b, &g})
+  {
+    x->UseDevice(true);
+  }
+  linalg::SetRandom(comm, phi, 41);
+  {
+    auto *p = phi.HostReadWrite();
+    for (int i = 0; i < phi.Size(); i++)
+    {
+      p[i] = std::floor(4.0 * p[i]) - 2.0;
+    }
+  }
+  space_op.GetGradMatrix().Mult(phi, g);
+  REQUIRE(linalg::Norml2(comm, g) > 0.0);
+  linalg::SetRandom(comm, a, 42);
+  linalg::SetRandom(comm, b, 43);
+
+  // Measure the field V y with the reduced postprocessing, after the check against the full
+  // evaluation at the first point, and with the full evaluation. The check is not part of
+  // the test: the reduced electric energy is the quadratic form of VᵀMV, which cancels
+  // like the magnetic one did with VᵀCᵀMCV.
+  auto measure = [&](std::vector<Vector> basis, const Eigen::VectorXcd &y)
+  {
+    ComplexVector E(size);
+    E.UseDevice(true);
+    E = 0.0;
+    for (std::size_t i = 0; i < basis.size(); i++)
+    {
+      linalg::AXPY(y(i).real(), basis[i], E.Real());
+      linalg::AXPY(y(i).imag(), basis[i], E.Imag());
+    }
+    rom_op.SetBasis(std::move(basis));
+    post_op.ConfigureReducedPostprocessing(rom_op, 1.0);
+    REQUIRE(post_op.HasReducedPostprocessing());
+    post_op.MeasureAndPrintReduced(1, 0, &E, omega, y, rom_op);
+    REQUIRE(post_op.HasReducedPostprocessing());
+    post_op.MeasureAndPrintReduced(1, 1, nullptr, omega, y, rom_op);
+    const Measurement reduced = post_op.GetMeasurement();
+    ComplexVector B(space_op.GetCurlMatrix().Height());
+    B.UseDevice(true);
+    space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+    space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    post_op.MeasureAndPrintAll(1, 1, E, B, omega);
+    return std::make_pair(reduced, post_op.GetMeasurement());
+  };
+
+  SECTION("Cancelling coefficients")
+  {
+    // δ = 2⁻²⁰ and coefficients ±s/δ with s a sum of powers of two, so that V y = s b + t g
+    // up to the round-off in a + δ b, and the full evaluation is accurate.
+    const double delta = std::ldexp(1.0, -20);
+    const std::complex<double> s(1.0, -0.5), t(0.75, 0.5);
+    Vector a_db(a);
+    a_db.UseDevice(true);
+    a_db.Add(delta, b);
+    Eigen::VectorXcd y(3);
+    y << s / delta, t, -s / delta;
+    const auto [reduced, full] = measure({a, g, a_db}, y);
+
+    // The round-off of R y is about ε/δ ≈ 2e-10 relative (that of the quadratic form of
+    // VᵀCᵀMCV, ε/δ² ≈ 1e-4, as for the electric energy here).
+    CAPTURE(reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+    REQUIRE(full.domain_H_field_energy_all > 0.0);
+    CHECK_THAT(reduced.domain_H_field_energy_all,
+               WithinRel(full.domain_H_field_energy_all, 1.0e-9));
+    REQUIRE(reduced.domain_H_field_energy_i.size() == 1);
+    REQUIRE(full.domain_H_field_energy_i.size() == 1);
+    CHECK_THAT(reduced.domain_H_field_energy_i[0].energy,
+               WithinRel(full.domain_H_field_energy_i[0].energy, 1.0e-9));
+  }
+
+  SECTION("Zero curl")
+  {
+    // Only the vector of zero curl: the factorization of C V has no columns.
+    Eigen::VectorXcd y(1);
+    y << std::complex<double>(0.75, 0.5);
+    const auto [reduced, full] = measure({g}, y);
+
+    CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
+            reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+    REQUIRE(full.domain_E_field_energy_all > 0.0);
+    CHECK_THAT(reduced.domain_E_field_energy_all,
+               WithinRel(full.domain_E_field_energy_all, 1.0e-10));
+    CHECK(reduced.domain_H_field_energy_all == 0.0);
+    CHECK(full.domain_H_field_energy_all <= 1.0e-20 * full.domain_E_field_energy_all);
+    REQUIRE(reduced.domain_H_field_energy_i.size() == 1);
+    CHECK(reduced.domain_H_field_energy_i[0].energy == 0.0);
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

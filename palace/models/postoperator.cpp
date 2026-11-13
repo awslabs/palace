@@ -2180,7 +2180,9 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   BlockTimer bt0(Timer::POSTPRO);
   reduced_postprocessing_ready = false;
   reduced_postprocessing_checked.clear();
-  reduced_postprocessing_tol = 0.1 * tol;
+  // A tenth of the PROM tolerance, but not below the round-off of the reduced outputs.
+  reduced_postprocessing_tol =
+      std::max(0.1 * tol, 1.0e7 * std::numeric_limits<double>::epsilon());
   // The reduced magnetic form contains curl(E) only, while a Floquet wave vector adds a
   // frequency-dependent k × E correction to the full magnetic flux density.
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
@@ -2388,8 +2390,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   // At the first point of each excitation, output the full evaluation and compare it with
   // the reduced one. Each kind of output is compared relative to its scale: the total
   // electric or magnetic energy for the energies, the largest value for the port values.
-  // The reduced outputs need to match to a tenth of the PROM tolerance only, while
-  // implementation errors give O(1) differences. A NaN error fails the check.
+  // The reduced outputs need to match to a tenth of the PROM tolerance only (or to
+  // round-off, about 1e-9, for tighter tolerances), while implementation errors give O(1)
+  // differences. A NaN error fails the check.
   reduced_postprocessing_checked.insert(ex_idx);
   const Measurement reduced = std::move(measurement_cache);
   ComplexVector b(fem_op->GetCurlMatrix().Height());
