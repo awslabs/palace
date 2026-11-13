@@ -357,7 +357,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
       const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
       const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
 
-      // Compute the center as halfway along the main diagonal.
+      // Start from the center of the main diagonal; the box is recentered on the extents of
+      // the point cloud below.
       Eigen::Vector3d eig_center = 0.5 * (v_000 + v_111);
 
       if constexpr (false)
@@ -424,23 +425,36 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
           fmt::print("e_0 {}, e_1 {}!\n", e_0, e_1);
         }
 
+        // Orthonormalize the axes: e_0 and e_1 are only the closest to perpendicular of the
+        // candidate edges.
+        Eigen::Vector3d e_1_perp = e_1 - e_1.dot(e_0) * e_0;
+        MFEM_VERIFY(e_1_perp.norm() > rel_tol, "Bounding box axes are degenerate!");
+        e_1_perp.normalize();
         eig_axes[0] = e_0;
-        eig_axes[1] = e_1;
-        eig_axes[2] = box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1);
+        eig_axes[1] = e_1_perp;
+        eig_axes[2] = box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1_perp);
       }
 
-      // Scale axes by length of the box in each direction.
-      std::array<double, 3> l = {0.0};
-      for (const auto &v : {v_000, v_001, v_011, v_111})
+      // Size and center the box from the extent of all points along each axis, so that it
+      // contains the point cloud even when it is not exactly a cuboid.
+      std::array<double, 3> l_min, l_max;
+      l_min.fill(mfem::infinity());
+      l_max.fill(-mfem::infinity());
+      for (const auto &v : vertices)
       {
         const auto v_0 = v - eig_center;
-        l[0] = std::max(l[0], std::abs(v_0.dot(eig_axes[0])));
-        l[1] = std::max(l[1], std::abs(v_0.dot(eig_axes[1])));
-        l[2] = std::max(l[2], std::abs(v_0.dot(eig_axes[2])));
+        for (int i = 0; i < 3; i++)
+        {
+          const double d = v_0.dot(eig_axes[i]);
+          l_min[i] = std::min(l_min[i], d);
+          l_max[i] = std::max(l_max[i], d);
+        }
       }
-      eig_axes[0] *= l[0];
-      eig_axes[1] *= l[1];
-      eig_axes[2] *= l[2];
+      for (int i = 0; i < 3; i++)
+      {
+        eig_center += 0.5 * (l_min[i] + l_max[i]) * eig_axes[i];
+        eig_axes[i] *= 0.5 * (l_max[i] - l_min[i]);
+      }
 
       // Make sure the longest dimension comes first.
       std::sort(std::begin(eig_axes), std::end(eig_axes),
