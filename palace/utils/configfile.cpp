@@ -1452,6 +1452,20 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     f = *it;
   }
   save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+
+  // Snap save and PROM frequencies to the sample frequencies, which they can differ from by
+  // rounding: the index scans below compare exactly.
+  auto match_samples = [&](std::vector<double> &f)
+  {
+    for (auto &x : f)
+    {
+      auto it = FindNearestValue(sample_f, x, delta_eps);
+      MFEM_VERIFY(it != sample_f.end(), "Frequency " << x << " is not a sample frequency!");
+      x = *it;
+    }
+  };
+  match_samples(save_f);
+  match_samples(prom_f);
   deduplicate(save_f);
   deduplicate(prom_f);
 
