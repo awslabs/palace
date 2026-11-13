@@ -310,6 +310,9 @@ protected:
   // fields added by `UpdatePROM`.
   Eigen::MatrixXd orth_R;
 
+  // Workspace for the operator applies in the projections onto the basis.
+  std::vector<Vector> proj_ws;
+
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
 

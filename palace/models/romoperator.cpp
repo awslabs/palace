@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -211,82 +212,145 @@ inline std::complex<double> EvaluatePolyPlusPoles(std::complex<double> a0,
   return val;
 }
 
-inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexOperator &A, Eigen::MatrixXcd &Ar,
-                               ComplexVector &r, int n0, bool symmetric)
+// Projections onto the real basis V for the new basis dimension n0 -> n: rows [i0, n) of
+// Vᵀ x for real vectors x, given or an operator applied to a basis vector, stored in the
+// real or imaginary parts of complex columns, replicated on every process. The operators
+// are applied in groups, the inner products of a group with the basis are computed in one
+// pass over it, and all are summed over the processes in one reduction.
+class BasisProjection
 {
-  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real. Ar is replicated
-  // across all processes as a sequential n x n matrix.
-  const auto n = Ar.rows();
-  MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM matrix projection!");
-
-  // Compute the right block: columns [n0, n), all rows [0, n).
-  for (int j = n0; j < n; j++)
+private:
+  struct Column
   {
-    MFEM_VERIFY(A.Real() || A.Imag(),
-                "Invalid zero ComplexOperator for PROM matrix projection!");
-    if (A.Real())
-    {
-      A.Real()->Mult(V[j], r.Real());
-    }
-    if (A.Imag())
-    {
-      A.Imag()->Mult(V[j], r.Imag());
-    }
-    for (int i = 0; i < n; i++)
-    {
-      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);  // Local inner product
-      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
-    }
+    const Operator *A;  // Applied to x if not null
+    const Vector *x;
+    int i0;
+    std::complex<double> *out;  // Row i0
+    bool imag;
+  };
+  const std::vector<Vector> &V;
+  const int n0, n;
+  std::vector<Column> columns;
+  std::vector<Eigen::MatrixXcd *> symmetric;
+
+public:
+  BasisProjection(const std::vector<Vector> &V, int n0)
+    : V(V), n0(n0), n(static_cast<int>(V.size()))
+  {
+    MFEM_VERIFY(0 <= n0 && n0 <= n, "Invalid dimensions in PROM projection!");
   }
-  Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);
 
-  if (symmetric)
+  void Add(const Operator *A, const Vector &x, int i0, std::complex<double> *out, bool imag)
   {
-    for (int j = 0; j < n0; j++)
+    columns.push_back({A, &x, i0, out, imag});
+  }
+
+  // Update Ar = Vᴴ A V. Without symmetry the lower-left block (rows [n0, n), columns
+  // [0, n0)) is computed directly, so this works for Hermitian, anti-symmetric, or general
+  // operators.
+  void AddOperator(const ComplexOperator &A, Eigen::MatrixXcd &Ar, bool sym)
+  {
+    MFEM_VERIFY(A.Real() || A.Imag(), "Invalid zero ComplexOperator for PROM projection!");
+    MFEM_VERIFY(Ar.rows() == n && Ar.cols() == n, "Invalid dimensions in PROM projection!");
+    Ar.rightCols(n - n0).setZero();
+    if (sym)
     {
-      for (int i = n0; i < n; i++)
+      symmetric.push_back(&Ar);
+    }
+    else
+    {
+      Ar.bottomLeftCorner(n - n0, n0).setZero();
+    }
+    for (bool imag : {false, true})
+    {
+      if (const auto *Ap = imag ? A.Imag() : A.Real())
       {
-        Ar(i, j) = Ar(j, i);
+        for (int j = sym ? n0 : 0; j < n; j++)
+        {
+          const int i0 = (j < n0) ? n0 : 0;
+          Add(Ap, V[j], i0, &Ar(i0, j), imag);
+        }
       }
     }
-    return;
   }
 
-  // Compute the lower-left block directly: rows [n0, n), columns [0, n0).
-  // No symmetry assumption — works for Hermitian, anti-symmetric, or general operators.
-  for (int j = 0; j < n0; j++)
+  // Update rows [n0, n) of Vᴴ b, starting at out.
+  void AddVector(const ComplexVector &b, std::complex<double> *out)
   {
-    if (A.Real())
-    {
-      A.Real()->Mult(V[j], r.Real());
-    }
-    if (A.Imag())
-    {
-      A.Imag()->Mult(V[j], r.Imag());
-    }
-    for (int i = n0; i < n; i++)
-    {
-      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);
-      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
-    }
-    Mpi::GlobalSum(n - n0, Ar.data() + j * n + n0, comm);
+    Add(nullptr, b.Real(), n0, out, false);
+    Add(nullptr, b.Imag(), n0, out, true);
   }
-}
 
-inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexVector &b, Eigen::VectorXcd &br, int n0)
+  void Compute(MPI_Comm comm, std::vector<Vector> &Z) const
+  {
+    constexpr std::size_t max_group = 8;
+    std::vector<double> H;
+    std::vector<std::size_t> offset;
+    for (std::size_t c0 = 0; c0 < columns.size(); c0 += max_group)
+    {
+      const std::size_t c1 = std::min(columns.size(), c0 + max_group);
+      Z.resize(std::max(Z.size(), c1 - c0));
+      std::vector<const Vector *> Y;
+      int i0 = n;
+      for (std::size_t c = c0; c < c1; c++)
+      {
+        const auto &col = columns[c];
+        Y.push_back(col.x);
+        if (col.A)
+        {
+          auto &z = Z[c - c0];
+          z.SetSize(col.x->Size());
+          z.UseDevice(true);
+          col.A->Mult(*col.x, z);
+          Y.back() = &z;
+        }
+        i0 = std::min(i0, col.i0);
+      }
+      const auto m = static_cast<std::size_t>(n - i0), k = H.size();
+      H.resize(k + m * Y.size());
+      linalg::LocalDots(std::span<const Vector>(V.data() + i0, m), Y, H.data() + k);
+      for (std::size_t c = c0; c < c1; c++)
+      {
+        offset.push_back(k + (c - c0) * m + (columns[c].i0 - i0));
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(H.size()), H.data(), comm);
+    for (std::size_t c = 0; c < columns.size(); c++)
+    {
+      const auto &col = columns[c];
+      for (int i = 0; i < n - col.i0; i++)
+      {
+        const double h = H[offset[c] + i];
+        if (col.imag)
+        {
+          col.out[i].imag(h);
+        }
+        else
+        {
+          col.out[i].real(h);
+        }
+      }
+    }
+    for (auto *Ar : symmetric)
+    {
+      Ar->bottomLeftCorner(n - n0, n0) = Ar->topRightCorner(n0, n - n0).transpose();
+    }
+  }
+};
+
+// Vᴴ b of complex vectors b, one column each.
+Eigen::MatrixXcd ProjectVectors(MPI_Comm comm, const std::vector<Vector> &V,
+                                std::initializer_list<const ComplexVector *> b)
 {
-  // Update br = Vᴴ b for the new basis dimension n0 -> n. br is replicated across all
-  // processes as a sequential n-dimensional vector.
-  const auto n = br.size();
-  MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM vector projection!");
-  for (int i = n0; i < n; i++)
+  Eigen::MatrixXcd B(V.size(), b.size());
+  BasisProjection proj(V, 0);
+  for (Eigen::Index l = 0; const auto *x : b)
   {
-    br(i).real(V[i] * b.Real());  // Local inner product
-    br(i).imag(V[i] * b.Imag());
+    proj.AddVector(*x, B.col(l++).data());
   }
-  Mpi::GlobalSum(n - n0, br.data() + n0, comm);
+  std::vector<Vector> Z;
+  proj.Compute(comm, Z);
+  return B;
 }
 
 inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
@@ -716,9 +780,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
     auto dim_V = V.size();
     if (dim_V > 0)
     {
-      MPI_Comm comm = space_op.GetComm();
-      RHS1r.conservativeResize(dim_V);
-      ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
+      RHS1r = ProjectVectors(space_op.GetComm(), V, {&RHS1}).col(0);
     }
   }
 }
@@ -735,9 +797,7 @@ void RomOperator::PrepareOnlineExcitations()
       RHS1r_online.emplace(excitation_idx, Eigen::VectorXcd{});
       continue;
     }
-    Eigen::VectorXcd projected(V.size());
-    ProjectVecInternal(comm, V, rhs, projected, 0);
-    RHS1r_online.emplace(excitation_idx, std::move(projected));
+    RHS1r_online.emplace(excitation_idx, ProjectVectors(comm, V, {&rhs}).col(0));
   }
   excitation_idx_cache = 0;
   // The wave-port state feeding Aᵣ(ω) (kₙ, modal correction) may have been re-solved since
@@ -795,7 +855,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
     Eigen::VectorXcd sV(n);
     for (auto &term : wp_terms)
     {
-      ProjectVecInternal(comm, V, *term.s, sV, 0);
+      sV = ProjectVectors(comm, V, {term.s.get()}).col(0);
       Wr.noalias() += term.g * sV * sV.transpose();
     }
     if (sV_full)
@@ -808,9 +868,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
           continue;
         }
         auto s = space_op.GetWavePortModeVector(port_idx, omega);
-        Eigen::VectorXcd sV_p(n);
-        ProjectVecInternal(comm, V, *s, sV_p, 0);
-        sV_full->emplace(port_idx, std::move(sV_p));
+        sV_full->emplace(port_idx, ProjectVectors(comm, V, {s.get()}).col(0));
       }
     }
   };
@@ -1157,29 +1215,29 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return;
   }
 
-  // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
-  // matrix and first dim0 entries of each vector and the projection uses the values
-  // computed for the unchanged basis vectors.
-  // With a Floquet wave vector, the stiffness matrix can be nonsymmetric: Hermitian (domain
-  // Floquet terms) or with an antisymmetric real part (Floquet terms of second-order
-  // farfield boundaries, with a frequency dependent wave vector).
-  Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old, space_op.HasSymmetricStiffnessMatrix());
+  // Update the projections for the new basis vectors (the resized matrices keep those for
+  // the previous ones): the operators and the excitation, together. With a Floquet wave
+  // vector, the stiffness matrix can be nonsymmetric: Hermitian (domain Floquet terms) or
+  // with an antisymmetric real part (Floquet terms of second-order farfield boundaries,
+  // with a frequency dependent wave vector).
+  const auto n0 = static_cast<int>(dim_V_old), n = static_cast<int>(dim_V_new);
+  BasisProjection proj(V, n0);
+  Kr.conservativeResize(n, n);
+  proj.AddOperator(*K, Kr, space_op.HasSymmetricStiffnessMatrix());
   if (C)
   {
-    Cr.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old,
-                       !space_op.GetMaterialOp().HasFloquetFrequencyScaling());
+    Cr.conservativeResize(n, n);
+    proj.AddOperator(*C, Cr, !space_op.GetMaterialOp().HasFloquetFrequencyScaling());
   }
-  Mr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old, true);
+  Mr.conservativeResize(n, n);
+  proj.AddOperator(*M, Mr, true);
   // Per-port wave-port masses. M_{r,p} is initialized lazily so the map only contains
   // entries when the per-port HDM operator was non-null on this rank.
   for (auto &[port_idx, Mp_hdm] : Mwp_p)
   {
     auto &Mp_r = Mwp_p_r[port_idx];
-    Mp_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *Mp_hdm, Mp_r, r, dim_V_old, true);
+    Mp_r.conservativeResize(n, n);
+    proj.AddOperator(*Mp_hdm, Mp_r, true);
   }
   // Other frequency-dependent BC boundary masses folded into circuit synthesis: the
   // 2nd-order farfield ABC (M_ff_) and each surface-conductivity group (Asig_g_). Projected
@@ -1189,46 +1247,49 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     // Hermitian (not symmetric) with a Floquet wave vector which does not depend on
     // frequency.
     const auto &mat_op = space_op.GetMaterialOp();
-    M_ff_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *M_ff_, M_ff_r, r, dim_V_old,
-                       !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
+    M_ff_r.conservativeResize(n, n);
+    proj.AddOperator(*M_ff_, M_ff_r,
+                     !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
   }
   for (std::size_t g = 0; g < Asig_g_.size(); g++)
   {
     if (Asig_g_[g])
     {
-      Asig_g_r[g].conservativeResize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Asig_g_[g], Asig_g_r[g], r, dim_V_old, true);
+      Asig_g_r[g].conservativeResize(n, n);
+      proj.AddOperator(*Asig_g_[g], Asig_g_r[g], true);
     }
   }
   for (std::size_t b = 0; b < Arz_b_.size(); b++)
   {
     if (Arz_b_[b])
     {
-      Arz_b_r[b].conservativeResize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Arz_b_[b], Arz_b_r[b], r, dim_V_old, true);
+      Arz_b_r[b].conservativeResize(n, n);
+      proj.AddOperator(*Arz_b_[b], Arz_b_r[b], true);
     }
   }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
   for (auto &[port_idx, Mp_r] : M_floquet_p_r)
   {
-    Mp_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *M_floquet_p_.at(port_idx), Mp_r, r, dim_V_old, true);
+    Mp_r.conservativeResize(n, n);
+    proj.AddOperator(*M_floquet_p_.at(port_idx), Mp_r, true);
   }
+  if (RHS1.Size())
+  {
+    RHS1r.conservativeResize(n);
+    proj.AddVector(RHS1, &RHS1r(n0));
+  }
+  proj.Compute(comm, proj_ws);
   // Initialize map entries for new ports that haven't been projected yet (first call).
   for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
   {
     if (!M_floquet_p_r.contains(port_idx))
     {
       auto &Mp_r = M_floquet_p_r[port_idx];
-      Mp_r.resize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Mp_hdm, Mp_r, r, 0, true);
+      Mp_r.resize(n, n);
+      BasisProjection proj_p(V, 0);
+      proj_p.AddOperator(*Mp_hdm, Mp_r, true);
+      proj_p.Compute(comm, proj_ws);
     }
-  }
-  if (RHS1.Size())
-  {
-    RHS1r.conservativeResize(dim_V_new);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
 
   // Update reduced Floquet port projection vectors. For F = Σ g_k v_k v_k^H,
@@ -1433,7 +1494,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
                                                             /*include_wave_ports=*/false);
         if (A2)
         {
-          ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0, true);
+          BasisProjection proj(V, 0);
+          proj.AddOperator(*A2, Ar_hdm, true);
+          proj.Compute(space_op.GetComm(), proj_ws);
         }
         const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
         const double ref =
@@ -1470,7 +1533,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
                                                           /*include_wave_ports=*/false);
       if (A2)
       {
-        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
+        BasisProjection proj(V, 0);
+        proj.AddOperator(*A2, Ar, true);
+        proj.Compute(space_op.GetComm(), proj_ws);
       }
     }
     Ar += Kr;
@@ -1565,7 +1630,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         // Excited but inactive port: no port-space pairing is cached, so use the assembled
         // excitation vector for this excitation instead (overwrites RHSᵣ).
         space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-        ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+        RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
         break;
       }
       RHSr += std::complex<double>(0.0, -2.0 * omega) * it->second;
@@ -1576,7 +1641,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // RHS2 depends on the wave-port modal fields, refreshed at this ω by the cross-section
     // EVP triggered above, so it is reassembled and projected per ω (no interpolation).
     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-    ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+    RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
   }
   if (has_RHS1)
   {
@@ -2232,8 +2297,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       ss = Eigen::VectorXcd::Zero(nr);
       if (smp.active)
       {
-        ProjectVecInternal(space_op.GetComm(), V, *smp.s_full, sf, 0);
-        ProjectVecInternal(space_op.GetComm(), V, *smp.s_scalar, ss, 0);
+        const auto P =
+            ProjectVectors(space_op.GetComm(), V, {smp.s_full.get(), smp.s_scalar.get()});
+        sf = P.col(0);
+        ss = P.col(1);
       }
       return smp;
     };
@@ -3043,7 +3110,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
         if (coupled_ports[p].is_wave)
         {
           auto s = space_op.GetWavePortModeVector(coupled_ports[p].idx, omega);
-          ProjectVecInternal(space_op.GetComm(), V, *s, cvec, 0);
+          cvec = ProjectVectors(space_op.GetComm(), V, {s.get()}).col(0);
           // kn0 is current (GetWavePortModeVector just Initialized at omega).
           const auto &pd = space_op.GetWavePortOp().GetPort(coupled_ports[p].idx);
           coupled_deembed[fi][p] = std::exp(1i * pd.kn0 * pd.d_offset);

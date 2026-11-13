@@ -946,6 +946,75 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
   }
 }
 
+void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H)
+{
+  const int m = static_cast<int>(X.size()), k = static_cast<int>(Y.size()), mk = m * k;
+  if (mk == 0)
+  {
+    return;
+  }
+  const int N = X[0].Size();
+  mfem::Array<const double *> P(m + k);
+  for (int i = 0; i < m + k; i++)
+  {
+    const Vector &x = (i < m) ? X[i] : *Y[i - m];
+    MFEM_VERIFY(x.Size() == N, "Size mismatch for local inner products!");
+    P[i] = x.Read();
+  }
+
+  // Partial sums over blocks of entries, with all pairs of a block next to each other and
+  // the Y index varying fastest, so that on the host each X is read once from memory while
+  // a block of every Y stays in cache. The partial sums are then added in block order, so
+  // the result does not depend on the backend or the number of threads.
+  constexpr int B = 1024;
+  const int nb = (N + B - 1) / B;
+  Vector partial(nb * mk), h(mk);
+  partial.UseDevice(true);
+  h.UseDevice(true);
+  const auto *XY = P.Read();
+  auto *S = partial.Write();
+  mfem::forall(nb * mk,
+               [=] MFEM_HOST_DEVICE(int t)
+               {
+                 const int b = t / mk, i = t % mk / k, j = t % k;
+                 const double *x = XY[i], *y = XY[m + j];
+                 const int end = (b + 1) * B < N ? (b + 1) * B : N;
+                 constexpr int K = 8;
+                 double s[K] = {};
+                 int l = b * B;
+                 for (; l + K <= end; l += K)
+                 {
+                   for (int r = 0; r < K; r++)
+                   {
+                     s[r] += x[l + r] * y[l + r];
+                   }
+                 }
+                 for (int r = 0; l < end; l++, r++)
+                 {
+                   s[r] += x[l] * y[l];
+                 }
+                 double sum = 0.0;
+                 for (int r = 0; r < K; r++)
+                 {
+                   sum += s[r];
+                 }
+                 S[b * mk + i + j * m] = sum;
+               });
+  const auto *PS = partial.Read();
+  auto *D = h.Write();
+  mfem::forall(mk,
+               [=] MFEM_HOST_DEVICE(int p)
+               {
+                 double sum = 0.0;
+                 for (int b = 0; b < nb; b++)
+                 {
+                   sum += PS[p + b * mk];
+                 }
+                 D[p] = sum;
+               });
+  std::copy_n(h.HostRead(), mk, H);
+}
+
 void Sqrt(Vector &x, double s)
 {
   const bool use_dev = x.UseDevice();
