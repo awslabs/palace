@@ -16,6 +16,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/materialoperator.hpp"
 #include "models/planewaveoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -296,6 +297,66 @@ TEST_CASE("PlaneWaveOperator boundary touching the total field",
 
   // The whole cube touches every face.
   CHECK(op.TouchesTotalField(3, nd_fespace, Marker({attr_x[1]})));
+}
+
+TEST_CASE("PlaneWaveOperator background around the total field",
+          "[planewaveoperator][Serial][Parallel]")
+{
+  // Attribute 1 is the inner cube, attribute 2 the slab x < 1/3 which touches it on one
+  // face, and attribute 3 the rest, which touches it on the other faces.
+  Mesh mesh(MakeMesh(3));
+  mfem::ND_FECollection nd_fec(GENERATE(1, 2), 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  config::PeriodicBoundaryData periodic;
+  // Returns the speed of light of the background of a plane wave with the given
+  // total-field region, with the given materials for some of the attributes (vacuum for
+  // the others).
+  auto Background = [&](const std::vector<int> &tf_attributes,
+                        const std::map<int, config::MaterialData> &material)
+  {
+    std::vector<config::MaterialData> materials;
+    for (int a = 1; a <= 3; a++)
+    {
+      auto it = material.find(a);
+      config::MaterialData data =
+          (it != material.end()) ? it->second : config::MaterialData();
+      data.attributes = {a};
+      materials.push_back(data);
+    }
+    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave(tf_attributes, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get());
+    op.SetUpBackground(mat_op, nd_fespace);
+    return op.GetSource(1).c;
+  };
+  config::MaterialData dielectric, magnetic, lossy, conductor, anisotropic;
+  dielectric.epsilon_r = 4.0;
+  magnetic.mu_r = 4.0;
+  lossy.epsilon_r = 4.0;
+  lossy.tandelta = 1.0e-2;
+  conductor.sigma = 1.0;
+  anisotropic.epsilon_r.s[0] = 2.0;
+
+  // Vacuum, any material inside the total-field region, or one homogeneous isotropic
+  // material around it, whose speed of light is used.
+  CHECK(Background({1}, {}) == Catch::Approx(1.0));
+  CHECK(Background({1}, {{1, conductor}}) == Catch::Approx(1.0));
+  CHECK(Background({1}, {{2, dielectric}, {3, dielectric}}) == Catch::Approx(0.5));
+  CHECK(Background({1}, {{2, magnetic}, {3, magnetic}}) == Catch::Approx(0.5));
+  CHECK(Background({1, 2}, {{1, anisotropic}, {2, lossy}, {3, dielectric}}) ==
+        Catch::Approx(0.5));
+
+  // A lossy or anisotropic material, two materials, even with the same speed of light, or
+  // no scattered-field region around the total-field region.
+  for (const auto &material : {lossy, conductor, anisotropic})
+  {
+    CHECK_THROWS(Background({1}, {{2, material}, {3, material}}));
+  }
+  CHECK_THROWS(Background({1}, {{2, dielectric}}));
+  CHECK_THROWS(Background({1}, {{2, dielectric}, {3, magnetic}}));
+  CHECK_THROWS(Background({1, 2, 3}, {}));
 }
 
 }  // namespace palace
