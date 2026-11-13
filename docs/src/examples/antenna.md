@@ -122,7 +122,9 @@ poles).
     approach accelerates convergence by several factors, though at the cost of increased
     memory usage. SuperLU_DIST, STRUMPACK, and MUMPS factor the complex-valued matrix
     `Ar + i Ai` in complex arithmetic, which needs less memory than the equivalent
-    real-valued system.
+    real-valued system. When the option is omitted, these solvers measure the error of
+    the real-valued approximation at setup and switch to the complex-valued matrix where
+    it grows (see [the problem guide](../guide/problem.md#Driven-problems-in-the-frequency-domain)).
 
 ## Analysis and Results
 

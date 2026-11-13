@@ -24,6 +24,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - When `config["Solver"]["Linear"]["ComplexCoarseSolve"]` is omitted, SuperLU_DIST
+    (without `"SuperLU3DCommunicator"`), STRUMPACK (without compression), and MUMPS now
+    choose between the real-valued approximation and the complex-valued coarse-level
+    matrix at setup: they factor the real-valued approximation, measure its error over up
+    to three successive solves of a pseudo-random vector fixed on the mesh, and factor the
+    complex-valued matrix instead if the error grows, for the rest of the simulation. This
+    reduces the number of linear solver iterations with second-order absorbing or Floquet
+    periodic boundaries, or with many lossy boundaries. An explicit `true` or `false` is used as given, and the other
+    solvers keep the real-valued approximation. SchemaVer 5-0-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with

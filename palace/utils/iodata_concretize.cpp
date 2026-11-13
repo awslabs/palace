@@ -80,7 +80,6 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"MGAuxiliarySmoother", static_cast<bool>(linear.mg_smooth_aux)},
                 {"PCMatReal", linear.pc_mat_real},
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},
-                {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
                 {"ReorderingReuse", linear.reorder_reuse},
                 {"PCSide", ToString(linear.pc_side)},
@@ -101,6 +100,11 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});
+  if (!linear.complex_coarse_auto)
+  {
+    // Otherwise, the coarse solve chooses at run time and the key stays omitted.
+    ApplyEntries(j_linear, {{"ComplexCoarseSolve", linear.complex_coarse_solve}});
+  }
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)
