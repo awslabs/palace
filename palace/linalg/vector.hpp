@@ -93,10 +93,6 @@ public:
     return *this;
   }
 
-  // Set the vector from an array of blocks and coefficients, without resizing.
-  void SetBlocks(const std::vector<const ComplexVector *> &y,
-                 const std::vector<std::complex<double>> &s);
-
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);
 
