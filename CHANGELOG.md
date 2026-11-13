@@ -281,15 +281,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
-  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
-    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
-    the only sparse direct solver failed.
+  - The superbuild now builds ParMETIS, which *Palace* links directly, whenever it is
+    enabled. Previously it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so
+    configuring with cuDSS as the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
   - The superbuild's sub-makes (the unit tests, GSLIB, LIBXSMM, libCEED, SLEPc, and MFEM's
     test step) now inherit the make jobserver, so GNU make 4.3 and later build them in
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,
     which *Palace* does not use, and clones PETSc and SLEPc shallowly.
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - ParMETIS is now optional and disabled by default: enable it with
+    `-DPALACE_WITH_PARMETIS=ON` (Spack variant `+parmetis`). Otherwise, `"ParMETIS"` for
+    `config["Solver"]["Linear"]["ColumnOrdering"]` falls back to METIS with a warning, and
+    SuperLU_DIST is patched with
+    [xiaoyeli/superlu_dist#258](https://github.com/xiaoyeli/superlu_dist/pull/258) to keep
+    its default METIS ordering. SchemaVer 4-2-4.
+    [PR 1195](https://github.com/awslabs/palace/pull/1195).
 
 ## [0.19.0] - 2026-11-02
 

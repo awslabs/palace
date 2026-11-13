@@ -37,6 +37,7 @@ set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct sol
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_CUDSS OFF CACHE BOOL "Build with cuDSS sparse direct solver")
+set(PALACE_WITH_PARMETIS OFF CACHE BOOL "Build with ParMETIS column ordering for sparse direct solvers")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
@@ -81,7 +82,7 @@ set(METIS_DIR "" CACHE STRING
   "Path to METIS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
 set(PARMETIS_DIR "" CACHE STRING
-  "Path to ParMETIS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+  "Path to ParMETIS build or installation directory, used with PALACE_WITH_PARMETIS (not required if already on CMAKE_PREFIX_PATH)"
 )
 set(SUNDIALS_DIR "" CACHE STRING
   "Path to SUNDIALS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
@@ -555,18 +556,20 @@ else()
   message(STATUS "Found METIS: ${METIS_VERSION}")
 endif()
 
-find_package(ParMETIS QUIET)
-if(NOT TARGET ParMETIS::ParMETIS)
-  find_library(PARMETIS_LIBRARY NAMES parmetis HINTS ${ParMETIS_ROOT}/lib REQUIRED)
-  find_path(PARMETIS_INCLUDE_DIR NAMES parmetis.h HINTS ${ParMETIS_ROOT}/include REQUIRED)
-  add_library(ParMETIS::ParMETIS UNKNOWN IMPORTED)
-  set_target_properties(ParMETIS::ParMETIS PROPERTIES
-    IMPORTED_LOCATION "${PARMETIS_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${PARMETIS_INCLUDE_DIR}"
-    INTERFACE_LINK_LIBRARIES "METIS::METIS")
-  message(STATUS "Found ParMETIS: ${PARMETIS_LIBRARY}")
-else()
-  message(STATUS "Found ParMETIS: ${ParMETIS_VERSION}")
+if(PALACE_WITH_PARMETIS)
+  find_package(ParMETIS QUIET)
+  if(NOT TARGET ParMETIS::ParMETIS)
+    find_library(PARMETIS_LIBRARY NAMES parmetis HINTS ${ParMETIS_ROOT}/lib REQUIRED)
+    find_path(PARMETIS_INCLUDE_DIR NAMES parmetis.h HINTS ${ParMETIS_ROOT}/include REQUIRED)
+    add_library(ParMETIS::ParMETIS UNKNOWN IMPORTED)
+    set_target_properties(ParMETIS::ParMETIS PROPERTIES
+      IMPORTED_LOCATION "${PARMETIS_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${PARMETIS_INCLUDE_DIR}"
+      INTERFACE_LINK_LIBRARIES "METIS::METIS")
+    message(STATUS "Found ParMETIS: ${PARMETIS_LIBRARY}")
+  else()
+    message(STATUS "Found ParMETIS: ${ParMETIS_VERSION}")
+  endif()
 endif()
 
 # Find ScaLAPACK early (needed for MUMPS/STRUMPACK CMake configs)
@@ -696,7 +699,11 @@ if(PALACE_WITH_CUDSS)
 endif()
 
 # Link METIS and ParMETIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
-target_link_libraries(${LIB_TARGET_NAME} PUBLIC ParMETIS::ParMETIS METIS::METIS)
+if(PALACE_WITH_PARMETIS)
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC ParMETIS::ParMETIS)
+  target_compile_definitions(${LIB_TARGET_NAME} PUBLIC PALACE_WITH_PARMETIS)
+endif()
+target_link_libraries(${LIB_TARGET_NAME} PUBLIC METIS::METIS)
 
 # Link SUNDIALS
 if(PALACE_WITH_SUNDIALS)
