@@ -1049,7 +1049,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     linalg::AXPY(y(i).real(), rom_op.GetBasis()[i], E.Real());
     linalg::AXPY(y(i).imag(), rom_op.GetBasis()[i], E.Imag());
   }
-  post_op.MeasureAndPrintReduced(1, 0, E, omega_front, y);
+  post_op.MeasureAndPrintReduced(1, 0, &E, omega_front, y, rom_op);
   REQUIRE(post_op.HasReducedPostprocessing());
 
   ComplexVector B(space_op.GetCurlMatrix().Height());
@@ -1059,7 +1059,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega_back);
   post_op.MeasureAndPrintAll(1, 1, E, B, omega_back);
   const Measurement full = post_op.GetMeasurement();
-  post_op.MeasureAndPrintReduced(1, 1, E, omega_back, y);
+  REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(rom_op));
+  post_op.MeasureAndPrintReduced(1, 1, nullptr, omega_back, y, rom_op);
   const Measurement reduced = post_op.GetMeasurement();
   REQUIRE(post_op.HasReducedPostprocessing());
 

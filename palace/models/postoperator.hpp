@@ -308,10 +308,11 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Exact reduced-coordinate domain-energy forms for adaptive online postprocessing.
+  // Exact reduced-coordinate domain-energy forms and lumped-port voltages of the basis
+  // vectors (one row per port) for adaptive online postprocessing.
   bool reduced_postprocessing_ready = false;
   bool reduced_postprocessing_checked = false;
-  Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
+  Eigen::MatrixXd reduced_energy_E, reduced_energy_H, reduced_port_V;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
@@ -473,11 +474,15 @@ public:
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain
   // energies plus port S-parameters). Unsupported configured measurements leave the path
-  // disabled and use full postprocessing.
+  // disabled and use full postprocessing. The expanded solution e is needed only when
+  // ReducedPostprocessingNeedsField is true, otherwise e may be nullptr.
   void ConfigureReducedPostprocessing(const RomOperator &rom_op)
     requires(solver_t == ProblemType::DRIVEN);
-  void MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector &e,
-                              std::complex<double> omega, const Eigen::VectorXcd &y)
+  bool ReducedPostprocessingNeedsField(const RomOperator &rom_op) const
+    requires(solver_t == ProblemType::DRIVEN);
+  void MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector *e,
+                              std::complex<double> omega, const Eigen::VectorXcd &y,
+                              const RomOperator &rom_op)
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
