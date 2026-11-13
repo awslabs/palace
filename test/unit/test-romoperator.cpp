@@ -1360,6 +1360,160 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+// The reduced S-parameters of wave ports, from the mode pairings of the PROM, with the
+// incident wave of the driven port removed and the de-embedding of the offsets as in the
+// full evaluation, also at the first point of each excitation, where the reduced outputs
+// are checked against the full evaluation and a mismatch reverts to full postprocessing.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced wave port postprocessing matches full evaluation",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  // The box of the wave port pairing test: an excited wave port on attribute 14, a passive
+  // one on attribute 18, and an excited lumped port on attribute 1, with PEC on every other
+  // face (TE10 above cutoff over the 20-30 GHz band).
+  json pec_attributes = json::array();
+  for (int attr = 2; attr <= 22; attr++)
+  {
+    if (attr != 14 && attr != 18)
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object({})},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})},
+      {"Postprocessing",
+       {{"Energy",
+         json::array({json::object(
+             {{"Index", 1}, {"Attributes", json::array({1, 2, 3, 4, 5, 6})}})})}}}};
+  setup_json["Boundaries"] = {
+      {"PEC", {{"Attributes", pec_attributes}}},
+      {"WavePort", json::array({json::object({{"Index", 1},
+                                              {"Attributes", json::array({14})},
+                                              {"Mode", 1},
+                                              {"Offset", 0.5},
+                                              {"Excitation", uint(1)}}),
+                                json::object({{"Index", 3},
+                                              {"Attributes", json::array({18})},
+                                              {"Mode", 1},
+                                              {"Offset", 0.25}})})},
+      {"LumpedPort", json::array({json::object({{"Index", 2},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(2)},
+                                                {"Attributes", json::array({1})},
+                                                {"Direction", "+Y"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 20.0}, {"MaxFreq", 30.0}, {"FreqStep", 5.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+
+  // The PROM from HDM solutions of both excitations at the ends of the band.
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  REQUIRE(sample_f.size() == 3);
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector E(size);
+  E.UseDevice(true);
+  for (int excitation_idx : {1, 2})
+  {
+    for (double omega : {sample_f.front(), sample_f.back()})
+    {
+      rom_op.SolveHDM(excitation_idx, omega, E);
+      rom_op.UpdatePROM(E, fmt::format("sample_e{:d}_{:.3e}", excitation_idx, omega));
+    }
+  }
+  REQUIRE(rom_op.GetReducedDimension() > 0);
+  post_op.ConfigureReducedPostprocessing(rom_op, iodata.solver.driven.adaptive_tol);
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  auto check_complex = [](std::complex<double> x, std::complex<double> y)
+  {
+    CAPTURE(x, y);
+    REQUIRE(std::abs(y) > 0.0);
+    CHECK(std::abs(x - y) <= 1.0e-8 * std::abs(y));
+  };
+  ComplexVector B(space_op.GetCurlMatrix().Height());
+  B.UseDevice(true);
+  // At the middle of the band, the first point of each excitation, and away from the
+  // samples.
+  const std::array<double, 2> omegas = {sample_f[1],
+                                        0.3 * sample_f.front() + 0.7 * sample_f.back()};
+  for (int step = 0; step < 2; step++)
+  {
+    const double omega = omegas[step];
+    rom_op.SolvePROM(omega);
+    for (int excitation_idx : {1, 2})
+    {
+      CAPTURE(omega, excitation_idx);
+      const Eigen::VectorXcd y = rom_op.GetReducedSolution(excitation_idx);
+      rom_op.ExpandPROMSolution(excitation_idx, E);
+      if (post_op.ReducedPostprocessingNeedsField(excitation_idx, rom_op))
+      {
+        // The check of the reduced outputs against the full evaluation passes, and the
+        // field is not needed at later points.
+        REQUIRE(step == 0);
+        post_op.MeasureAndPrintReduced(excitation_idx, step, &E, omega, y, rom_op);
+        REQUIRE(post_op.HasReducedPostprocessing());
+      }
+      REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(excitation_idx, rom_op));
+      post_op.MeasureAndPrintReduced(excitation_idx, step, nullptr, omega, y, rom_op);
+      REQUIRE(post_op.HasReducedPostprocessing());
+      const Measurement reduced = post_op.GetMeasurement();
+
+      space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+      space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+      B *= -1.0 / (1i * omega);
+      post_op.MeasureAndPrintAll(excitation_idx, step, E, B, omega);
+      const Measurement &full = post_op.GetMeasurement();
+
+      CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
+              reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+      REQUIRE(full.domain_E_field_energy_all > 0.0);
+      REQUIRE(full.domain_H_field_energy_all > 0.0);
+      CHECK_THAT(reduced.domain_E_field_energy_all,
+                 WithinRel(full.domain_E_field_energy_all, 1.0e-8));
+      CHECK_THAT(reduced.domain_H_field_energy_all,
+                 WithinRel(full.domain_H_field_energy_all, 1.0e-8));
+      REQUIRE(full.wave_port_vi.size() == 2);
+      REQUIRE(reduced.wave_port_vi.size() == full.wave_port_vi.size());
+      for (const auto &[idx, full_port] : full.wave_port_vi)
+      {
+        CAPTURE(idx);
+        check_complex(reduced.wave_port_vi.at(idx).S, full_port.S);
+      }
+      REQUIRE(full.lumped_port_vi.size() == 1);
+      REQUIRE(reduced.lumped_port_vi.size() == full.lumped_port_vi.size());
+      for (const auto &[idx, full_port] : full.lumped_port_vi)
+      {
+        CAPTURE(idx);
+        const auto &reduced_port = reduced.lumped_port_vi.at(idx);
+        check_complex(reduced_port.V, full_port.V);
+        check_complex(reduced_port.I, full_port.I);
+        check_complex(reduced_port.S, full_port.S);
+      }
+    }
+  }
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator reduced postprocessing rejects Floquet wave vector",
                  "[postoperator][romoperator][Serial][Parallel]")

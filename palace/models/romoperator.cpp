@@ -690,40 +690,46 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   }
   {
     // The terms other than the wave ports reproduce the assembled A2(ω): check on a random
-    // vector, so that a frequency-dependent boundary condition without a term here cannot
-    // be dropped from the PROM.
-    const double omega =
-        iodata.solver.driven.sample_f.empty() ? 1.0 : iodata.solver.driven.sample_f.back();
-    auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
-                                                             /*include_wave_ports=*/false);
+    // vector at the ends of the sweep, so that a frequency-dependent boundary condition
+    // without a term here (one added to SpaceOperator::GetExtraSystemMatrix but not here)
+    // stops the simulation instead of being dropped from the PROM. The tolerance leaves
+    // room for the round-off of partial assembly on devices.
+    const auto &sample_f = iodata.solver.driven.sample_f;
     ComplexVector x(K->Height()), y(K->Height()), z(K->Height());
     x.UseDevice(true);
     y.UseDevice(true);
     z.UseDevice(true);
     linalg::SetRandom(space_op.GetComm(), x);
-    y = 0.0;
-    double scale = 0.0;
-    if (A2)
+    for (double omega : sample_f.empty() ? std::vector<double>{1.0}
+                                         : std::vector<double>{sample_f.front(),
+                                                               sample_f.back()})
     {
-      A2->Mult(x, y);
-      scale = linalg::Norml2(space_op.GetComm(), y);
-    }
-    for (const auto &term : bdr_terms)
-    {
-      if (term.kind != BoundaryTermKind::WavePort)
+      auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(
+          omega, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
+      y = 0.0;
+      double scale = 0.0;
+      if (A2)
       {
-        const auto f = GetBoundaryTermCoefficient(term, omega);
-        term.op->Mult(x, z);
-        y.Add(-f, z);
-        scale += std::abs(f) * linalg::Norml2(space_op.GetComm(), z);
+        A2->Mult(x, y);
+        scale = linalg::Norml2(space_op.GetComm(), y);
       }
+      for (const auto &term : bdr_terms)
+      {
+        if (term.kind != BoundaryTermKind::WavePort)
+        {
+          const auto f = GetBoundaryTermCoefficient(term, omega);
+          term.op->Mult(x, z);
+          y.Add(-f, z);
+          scale += std::abs(f) * linalg::Norml2(space_op.GetComm(), z);
+        }
+      }
+      const double error = linalg::Norml2(space_op.GetComm(), y);
+      MFEM_VERIFY(
+          error <= 1.0e-10 * scale,
+          "PROM boundary terms do not reproduce the frequency-dependent system matrix "
+          "(relative error "
+              << error / scale << ")!");
     }
-    const double error = linalg::Norml2(space_op.GetComm(), y);
-    MFEM_VERIFY(
-        error <= 1.0e-12 * scale,
-        "PROM boundary terms do not reproduce the frequency-dependent system matrix "
-        "(relative error "
-            << error / scale << ")!");
   }
 
   // Capture sweep band and synthesis controls for later use in
@@ -752,9 +758,13 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   r.UseDevice(true);
   for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
   {
-    if (!space_op.GetExcitationVector1(excitation_idx, RHS1.emplace_back()))
+    ComplexVector rhs1;
+    has_RHS1.push_back(space_op.GetExcitationVector1(excitation_idx, rhs1));
+    auto &v = RHS1.emplace_back();
+    if (has_RHS1.back())
     {
-      RHS1.back() = ComplexVector();
+      v = rhs1.Real();
+      v.UseDevice(true);
     }
   }
 
@@ -899,13 +909,12 @@ void RomOperator::AddWavePortModalCorrection(double omega)
     if (!(std::abs(port_data.modal_reaction) > 0.0) ||
         !(std::abs(port_data.modal_reaction_scalar) > 0.0))
     {
-      if (!warned_modal_reaction)
+      if (warned_modal_reaction.insert(port_idx).second)
       {
         Mpi::Warning(space_op.GetComm(),
                      "Wave port {:d} has zero modal reaction; skipping its modal "
                      "correction (further occurrences are not reported)!\n",
                      port_idx);
-        warned_modal_reaction = true;
       }
       continue;
     }
@@ -938,9 +947,9 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
   space_op.GetExcitationVector2(excitation_idx, omega, r);
-  if (const auto &rhs1 = RHS1[GetExcitationColumn(excitation_idx)]; rhs1.Size())
+  if (const auto k = GetExcitationColumn(excitation_idx); has_RHS1[k])
   {
-    r.Add(1i * omega, rhs1);
+    r.Imag().Add(omega, RHS1[k]);  // iω RHS1, RHS1 real
   }
 
   // Solve the linear system.
@@ -1170,9 +1179,9 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   RHS1r.conservativeResizeLike(Eigen::MatrixXcd::Zero(n, RHS1.size()));
   for (std::size_t k = 0; k < RHS1.size(); k++)
   {
-    if (RHS1[k].Size())
+    if (has_RHS1[k])
     {
-      proj.AddVector(RHS1[k], &RHS1r(n0, k));
+      proj.Add(nullptr, RHS1[k], n0, &RHS1r(n0, k), false);
     }
   }
   floquet_comp_V.conservativeResize(n, 3 * floquet_orders.size());
@@ -1269,8 +1278,11 @@ void RomOperator::SolvePROM(double omega)
     return;
   }
 
-  // Refresh the Floquet port state (propagation constants, and mode vectors when k_F
-  // scales with frequency) for the Robin term, the DtN correction, and the excitation.
+  // Refresh the wave and Floquet port states (propagation constants, modes, and the
+  // Floquet mode vectors when k_F scales with frequency) for the boundary terms, the
+  // corrections, the excitations, and the postprocessing. The wave port modes are solved
+  // here (timed and reported as for the HDM), not on first use.
+  space_op.GetWavePortOp().PrepareFrequency(omega);
   space_op.GetFloquetPortOp().Initialize(omega);
 
   // The frequency-dependent boundary terms are added in factored form, as a scalar times

@@ -145,7 +145,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The wave and Floquet port terms of the reduced-order model of adaptive driven sweeps
     are evaluated from the projections of the port modes, without assembling and projecting
     full-size vectors at each frequency, and the reduced system is assembled and solved once
-    per frequency for all excitations.
+    per frequency for all excitations (once per frequency and excitation with field output).
+    A frequency-dependent boundary condition without a reduced-order term now stops the
+    simulation instead of falling back to assembling it at each frequency.
+    [PR 1189](https://github.com/awslabs/palace/pull/1189).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
