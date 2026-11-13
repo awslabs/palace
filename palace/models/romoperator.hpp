@@ -511,6 +511,14 @@ public:
   const auto &GetBasis() const { return V; }
   const Eigen::VectorXcd &GetReducedSolution() const { return RHSr; }
 
+  // Return the pairing Vᵀs_full of the basis with the mode of a wave port at the frequency
+  // of the last PROM assembly, or nullptr if it is not cached.
+  const Eigen::VectorXcd *GetWavePortModePairing(int port_idx) const
+  {
+    const auto it = sV_wp_full.find(port_idx);
+    return (it != sV_wp_full.end()) ? &it->second : nullptr;
+  }
+
   // Return set of sampled parameter points for basis construction.
   const auto &GetSamplePoints(int excitation_idx) const
   {

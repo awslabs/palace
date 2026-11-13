@@ -2194,13 +2194,26 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   basis_B.reserve(n);
   const auto &curl = fem_op->GetCurlMatrix();
   Vector b_true(curl.Height());
-  for (const auto &v : basis)
+  // Lumped-port voltages are linear in E and the basis is real, so the voltages at any
+  // frequency are the reduced solution applied to the voltages of the basis vectors.
+  const auto &lumped_port_op = fem_op->GetLumpedPortOp();
+  reduced_port_V.resize(lumped_port_op.Size(), n);
+  for (std::size_t j = 0; j < n; j++)
   {
-    E->Real().SetFromTrueDofs(v);
+    E->Real().SetFromTrueDofs(basis[j]);
     basis_E.emplace_back(E->Real());
-    curl.Mult(v, b_true);
+    curl.Mult(basis[j], b_true);
     B->Real().SetFromTrueDofs(b_true);
     basis_B.emplace_back(B->Real());
+    if (lumped_port_op.Size() > 0)
+    {
+      E->Real().ExchangeFaceNbrData();
+      Eigen::Index i = 0;
+      for (const auto &[idx, voltage] : lumped_port_op.GetVoltages(*E))
+      {
+        reduced_port_V(i++, j) = voltage.real();
+      }
+    }
   }
 
   auto project = [&](const Operator *op,
@@ -2236,16 +2249,43 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
 }
 
 template <ProblemType solver_t>
+bool PostOperator<solver_t>::ReducedPostprocessingNeedsField(
+    const RomOperator &rom_op) const
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  // The full solution is needed for the one-time check against the full evaluation, and
+  // for the S-parameters of wave ports without a cached mode pairing at this frequency.
+  if (!reduced_postprocessing_checked)
+  {
+    return true;
+  }
+  for (const auto &[idx, data] : fem_op->GetWavePortOp())
+  {
+    if (!rom_op.GetWavePortModePairing(idx))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
-                                                    const ComplexVector &e,
+                                                    const ComplexVector *e,
                                                     std::complex<double> omega,
-                                                    const Eigen::VectorXcd &y)
+                                                    const Eigen::VectorXcd &y,
+                                                    const RomOperator &rom_op)
   requires(solver_t == ProblemType::DRIVEN)
 {
   BlockTimer bt0(Timer::POSTPRO);
   MFEM_VERIFY(reduced_postprocessing_ready && y.size() == reduced_energy_E.rows(),
               "Invalid reduced postprocessing state!");
-  SetEGridFunction(e);
+  MFEM_VERIFY(e || !ReducedPostprocessingNeedsField(rom_op),
+              "Reduced postprocessing requires the expanded solution!");
+  if (e)
+  {
+    SetEGridFunction(*e);
+  }
 
   auto quadratic = [&y](const Eigen::MatrixXd &Q)
   { return 0.5 * std::real(y.dot(Q.cast<std::complex<double>>() * y)); };
@@ -2270,12 +2310,29 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
              ? energy_H / measurement_cache.domain_H_field_energy_all
              : 0.0});
   }
+
+  // Lumped-port voltages and wave-port S-parameters are linear in the solution. The wave
+  // port S-parameter is sᵀe / R for the port mode s and its reaction R
+  // (WavePortData::GetSParameter), and the PROM caches the pairings sᵀv of the basis
+  // vectors for its wave-port terms.
+  std::map<int, std::complex<double>> port_voltages, port_S;
+  const Eigen::VectorXcd reduced_V = reduced_port_V.cast<std::complex<double>>() * y;
+  for (Eigen::Index i = 0; const auto &[idx, data] : fem_op->GetLumpedPortOp())
+  {
+    port_voltages[idx] = reduced_V(i++);
+  }
+  for (const auto &[idx, data] : fem_op->GetWavePortOp())
+  {
+    const auto *sV = rom_op.GetWavePortModePairing(idx);
+    port_S[idx] =
+        sV ? sV->cwiseProduct(y).sum() / data.modal_reaction : data.GetSParameter(*E);
+  }
   if (!reduced_postprocessing_checked)
   {
     ComplexVector b(fem_op->GetCurlMatrix().Height());
     b.UseDevice(true);
-    fem_op->GetCurlMatrix().Mult(e.Real(), b.Real());
-    fem_op->GetCurlMatrix().Mult(e.Imag(), b.Imag());
+    fem_op->GetCurlMatrix().Mult(e->Real(), b.Real());
+    fem_op->GetCurlMatrix().Mult(e->Imag(), b.Imag());
     b *= -1.0 / (1i * omega);
     SetBGridFunction(b);
 
@@ -2303,20 +2360,42 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
       exact_domain_H.push_back(
           {idx, energy_H, (exact_H != 0.0) ? energy_H / exact_H : 0.0});
     }
+    // The reduced and full values differ by round-off only (order of summation), so
+    // compare each kind of output relative to its largest value.
+    auto port_error = [](const auto &reduced, const auto &exact)
+    {
+      double error = 0.0, reference = 0.0;
+      for (const auto &[idx, value] : exact)
+      {
+        error = std::max(error, std::abs(reduced.at(idx) - value));
+        reference = std::max(reference, std::abs(value));
+      }
+      return error / std::max(reference, 1.0e-300);
+    };
+    auto exact_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+    std::map<int, std::complex<double>> exact_S;
+    for (const auto &[idx, data] : fem_op->GetWavePortOp())
+    {
+      exact_S[idx] = data.GetSParameter(*E);
+    }
+    const double rel_error =
+        std::max({max_error / std::max(max_reference, 1.0e-300),
+                  port_error(port_voltages, exact_voltages), port_error(port_S, exact_S)});
     reduced_postprocessing_checked = true;
-    if (max_error > 1.0e-9 * std::max(max_reference, 1.0e-300))
+    if (rel_error > 1.0e-9)
     {
       reduced_postprocessing_ready = false;
       measurement_cache.domain_E_field_energy_all = exact_E;
       measurement_cache.domain_H_field_energy_all = exact_H;
       measurement_cache.domain_E_field_energy_i = std::move(exact_domain_E);
       measurement_cache.domain_H_field_energy_i = std::move(exact_domain_H);
-      Mpi::Warning("Reduced domain-energy postprocessing disagrees with full evaluation "
-                   "(relative error {:.3e}); reverting to full postprocessing.\n",
-                   max_error / std::max(max_reference, 1.0e-300));
+      port_voltages = std::move(exact_voltages);
+      port_S = std::move(exact_S);
+      Mpi::Warning("Reduced postprocessing disagrees with full evaluation (relative error "
+                   "{:.3e}); reverting to full postprocessing.\n",
+                   rel_error);
     }
   }
-  const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
   for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
   {
     auto &vi = measurement_cache.lumped_port_vi[idx];
@@ -2347,9 +2426,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
       measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
     }
   }
-  for (const auto &[idx, data] : fem_op->GetWavePortOp())
+  for (const auto &[idx, S] : port_S)
   {
-    measurement_cache.wave_port_vi[idx].S = data.GetSParameter(*E);
+    measurement_cache.wave_port_vi[idx].S = S;
   }
   MeasureSParameter();
 
