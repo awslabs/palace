@@ -140,10 +140,7 @@ file. These include:
     recovered flux; the SA tangential term continues to use the native electric field.
     This option is rejected on interior boundary sheets, whether or not the mesh is
     cracked along them, and on cracked internal boundaries, because a volume L2
-    projection does not provide a controlled normal trace on the singular PEC surface. In
-    this version, it is also rejected on any mesh with uncracked interior boundary sheet
-    faces (see
-    [Bulk and interface dielectric loss](../reference.md#Bulk-and-interface-dielectric-loss)).
+    projection does not provide a controlled normal trace on the singular PEC surface.
     Electrostatic fabrication-coupon simulations can combine `LocalizeEdgeEnergy` with
     prescribed-potential basis excitations and
     [`ResponseMatrix`](../config/reference.md#config-solver-electrostatic-responsematrix).
@@ -163,14 +160,6 @@ file. These include:
     boundary-law metadata. See
     [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
-
-```@raw html
-<!-- UPSYNC-P3 TODO (P3-38, upstream integration P3, decision 1593; waits for P3-14): the
-'In this version' sentence of the Dielectric item above states
-OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE (SHARED-DECISIONS SD-605). P3-14's
-design is ruled (decision 1600, SD-3202 (d)): when P3-14 is committed, delete that sentence
-together with the one in reference.md; the interior-sheet refusal before it stays. -->
-```
 
 ## Visualization
 

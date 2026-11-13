@@ -975,21 +975,7 @@ not the mesh is cracked along them (the sheets of
 [Interior boundaries](guide/boundaries.md#Interior-boundaries), including
 prescribed-potential sheets), nor on cracked internal boundaries; an interface over an
 exterior metal or terminal boundary keeps it. The recovery is a volume L2 projection and
-its boundary trace is not controlled for the singular thin-sheet field. In this version,
-`FluxRecovery` is also refused before the solve on any mesh with uncracked interior
-boundary sheet faces, because the error estimator's flux recovery space is broken across
-them: with the default treatment of interior boundaries, this is every thin-metal model,
-and with `CrackInternalBoundaryElements` set to `true`, a mesh with interior lumped ports.
-
-```@raw html
-<!-- UPSYNC-P3 TODO (P3-38, upstream integration P3, decision 1593; waits for P3-14): the
-'In this version' sentence above states OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE
-(SHARED-DECISIONS SD-605, ruling 1578); the per-entry rule before it is SD-606 (1). P3-14's
-design is ruled (decision 1600, SD-3202 (d)): the broken-space refusal is lifted and the
-interior-sheet refusal is kept in both forms. When P3-14 is committed, delete the 'In this
-version' sentence (FluxRecovery then works on every non-sheet interface, cracked or
-uncracked); the OI closes when T2 passes. The same note is in guide/postprocessing.md. -->
-```
+its boundary trace is not controlled for the singular thin-sheet field.
 
 ### Mesh cracking and the thin-metal postprocessing
 
