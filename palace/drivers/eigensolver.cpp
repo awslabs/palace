@@ -108,15 +108,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
 
-  // Frequency-dependent permittivity pole terms as the only frequency-dependent terms:
-  // A2(λ) = Σₘ gₘ(λ) Bₘ with gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ) is rational with known poles, and
-  // the linearized eigensolvers represent it exactly, with one auxiliary block per pole
-  // (EigenvalueSolver::AddRationalTerm). The problem is then a linear eigenvalue problem:
-  // there is no polynomial seed and no nonlinear refinement. Djordjevic-Sarkar terms and
-  // the frequency-dependent boundary terms are not of this form, and keep the Hybrid seed
-  // and the Quasi-Newton refinement. RefineNonlinear has no effect here: the solution is
-  // exact and there is nothing to refine. With PEPLinear = false, SLEPc's polynomial
-  // eigensolver linearizes the problem itself, without the auxiliary blocks.
+  // Every term of A2(λ) is a scalar function of λ times a fixed matrix, f(λ) B. When f is
+  // rational, the linearized eigensolvers represent the term exactly, with one auxiliary
+  // block per pole (EigenvalueSolver::AddRationalTerm). Problems whose terms are all
+  // rational are then linear eigenvalue problems: there is no polynomial seed and no
+  // nonlinear refinement. The rational terms are:
+  //  - frequency-dependent permittivity pole terms gₘ(λ) Bₘ, gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ),
+  //  - second-order absorbing boundaries next to constant materials, -0.5 / λ M_ff,
+  //  - rational impedance boundaries g(λ) M_b, g(λ) = λ D(λ) / N(λ).
+  // Djordjevic-Sarkar terms, wave ports, surface conductivity, and absorbing boundaries
+  // next to frequency-dependent materials are not rational, and keep the Hybrid seed and
+  // the Quasi-Newton refinement. RefineNonlinear has no effect here: the solution is exact
+  // and there is nothing to refine. With PEPLinear = false, SLEPc's polynomial eigensolver
+  // linearizes the problem itself, without the auxiliary blocks.
   struct RationalA2Term
   {
     std::unique_ptr<ComplexOperator> B;
@@ -139,21 +143,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     const auto &mat_op = space_op.GetMaterialOp();
     const auto &farfield_op = space_op.GetFarfieldOp();
-    bool poles_only = space_op.GetWavePortOp().Size() == 0 &&
-                      space_op.GetSurfaceConductivityOp().Size() == 0 &&
-                      space_op.GetRationalImpedanceOp().GetNumBoundaries() == 0 &&
-                      farfield_op.NumDispersiveMaterials() == 0 &&
-                      (farfield_op.GetAttrList().Size() == 0 || farfield_op.GetOrder() < 2);
+    const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
+    bool rational = space_op.GetWavePortOp().Size() == 0 &&
+                    space_op.GetSurfaceConductivityOp().Size() == 0 &&
+                    farfield_op.NumDispersiveMaterials() == 0;
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
       if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
           mat_op.HasDjordjevicSarkarPermittivity(m))
       {
-        poles_only = false;
+        rational = false;
       }
     }
     for (std::size_t m = 0;
-         poles_only && m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+         rational && m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
       if (!mat_op.HasFrequencyDependentPermittivitySupport(m))
       {
@@ -177,6 +180,36 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       term.B = std::move(B);
     }
+    if (rational && farfield_op.GetOrder() >= 2)
+    {
+      if (auto M_ff = space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(
+              Operator::DIAG_ZERO))
+      {
+        auto &term = a2_terms.emplace_back();
+        term.B = std::move(M_ff);
+        term.poles = {0.0};
+        term.residues = {-0.5};
+      }
+    }
+    for (int idx = 0; rational && idx < surf_rz_op.GetNumBoundaries(); idx++)
+    {
+      RationalA2Term term;
+      if (!surf_rz_op.GetRobinPoleResidue(idx, term.poly, term.poles, term.residues))
+      {
+        rational = false;
+        break;
+      }
+      term.B = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
+          idx, Operator::DIAG_ZERO);
+      if (term.B)
+      {
+        a2_terms.push_back(std::move(term));
+      }
+    }
+    if (!rational)
+    {
+      a2_terms.clear();
+    }
     if (!a2_terms.empty())
     {
       // The terms must be the complete A2(λ): any other contribution is an error here, not
@@ -198,8 +231,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       r_terms.AXPY(-1.0, r);
       const double err = linalg::Norml2(space_op.GetComm(), r_terms);
       MFEM_VERIFY(err <= 1.0e-10 * norm,
-                  "The permittivity pole terms do not reproduce the frequency-dependent "
-                  "operator (relative difference "
+                  "The rational terms do not reproduce the frequency-dependent operator "
+                  "(relative difference "
                       << err / norm << ")!");
     }
   }
@@ -370,9 +403,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->AddRationalTerm(*term.B, term.poly, term.poles, term.residues);
       num_poles += term.poles.size();
     }
-    Mpi::Print(" Frequency-dependent permittivity linearized exactly ({:d} pole{}), "
+    Mpi::Print(" Frequency-dependent terms linearized exactly ({:d} term{}, {:d} pole{}), "
                "without nonlinear refinement\n",
-               num_poles, (num_poles > 1) ? "s" : "");
+               a2_terms.size(), (a2_terms.size() > 1) ? "s" : "", num_poles,
+               (num_poles > 1) ? "s" : "");
   }
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2

@@ -276,6 +276,235 @@ struct DenseLorentzCavity
   }
 };
 
+// The eigensolver backends of the build.
+std::vector<std::string> Backends()
+{
+  std::vector<std::string> backends;
+#if defined(PALACE_WITH_SLEPC)
+  backends.push_back("SLEPc");
+#endif
+#if defined(PALACE_WITH_ARPACK)
+  backends.push_back("ARPACK");
+#endif
+  return backends;
+}
+
+// Boxes with a fixed spectrum: second-order absorbing boundaries on the faces x = 0 and
+// x = 1 next to a constant medium (ε = ε∞), the others PEC, with the target 8 GHz.
+enum class FixedBox
+{
+  Constant
+};
+
+json FixedBoxBoundaries(FixedBox)
+{
+  return {{"PEC", {{"Attributes", {1, 2, 4, 6}}}},
+          {"Absorbing", {{"Attributes", {3, 5}}, {"Order", 2}}}};
+}
+
+json FixedBoxPermittivity(FixedBox)
+{
+  return eps_inf;
+}
+
+double FixedBoxTarget(FixedBox)
+{
+  return 8.0;
+}
+
+// The n lowest eigenfrequencies (GHz) above the target of a fixed box, from the complete
+// spectrum of a dense companion problem on one process, independent of the eigensolvers.
+// Each is checked on the complete operator T(λ) of SpaceOperator.
+std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
+                                                   FixedBox fixture, int n)
+{
+  using namespace std::complex_literals;
+  const auto comm = Mpi::World();
+  REQUIRE(Mpi::Size(comm) == 1);
+  test::IntegrationSettingsGuard settings_guard;
+  const auto mesh_path = WriteBoxMesh(temp_dir);
+  // The configuration names a backend of the build, which this function does not use.
+  IoData iodata(BoxConfig(mesh_path, FixedBoxPermittivity(fixture),
+                          FixedBoxBoundaries(fixture), n, FixedBoxTarget(fixture), "",
+                          Backends().front()),
+                false);
+  auto serial_mesh = mesh::Load(iodata, comm);
+  if (iodata.model.Lc <= 0.0)
+  {
+    iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
+  }
+  iodata.NondimensionalizeInputs(serial_mesh);
+  std::vector<std::unique_ptr<mfem::ParMesh>> par_mesh;
+  par_mesh.push_back(mesh::Partition(iodata, std::move(serial_mesh), comm));
+  mesh::RefineMesh(iodata, par_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  for (auto &m : par_mesh)
+  {
+    mesh.push_back(std::make_unique<Mesh>(std::move(m)));
+  }
+
+  SpaceOperator space_op(iodata, mesh);
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(K);
+  REQUIRE(C);  // The first-order part of the absorbing boundary
+  REQUIRE(M);
+  auto curlcurl =
+      space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(curlcurl);
+  const int total = space_op.GetNDSpace().GetTrueVSize();
+  REQUIRE(total == 300);
+  const auto &essential = space_op.GetNDDbcTDofLists().back();
+  REQUIRE(essential.Size() == 144);
+  std::vector<bool> constrained(total, false);
+  for (int dof : essential)
+  {
+    REQUIRE(dof >= 0);
+    REQUIRE(dof < total);
+    constrained[dof] = true;
+  }
+  std::vector<int> free;
+  for (int dof = 0; dof < total; dof++)
+  {
+    if (!constrained[dof])
+    {
+      free.push_back(dof);
+    }
+  }
+  const int dim = static_cast<int>(free.size());
+  REQUIRE(dim == 156);
+  ComplexVector x(total), y(total);
+  x.UseDevice(true);
+  y.UseDevice(true);
+  std::vector<std::complex<double>> column(total);
+  // Full free Euclidean basis, including gradients; remove both PEC rows and columns.
+  auto Extract = [&](const ComplexOperator &op) -> Eigen::MatrixXcd
+  {
+    REQUIRE(op.Height() == total);
+    REQUIRE(op.Width() == total);
+    Eigen::MatrixXcd dense(dim, dim);
+    for (int j = 0; j < dim; j++)
+    {
+      x = 0.0;
+      x.Real().HostReadWrite()[free[j]] = 1.0;
+      op.Mult(x, y);
+      y.Get(column.data(), total, false);
+      for (int i = 0; i < dim; i++)
+      {
+        dense(i, j) = column[free[i]];
+      }
+    }
+    REQUIRE(dense.allFinite());
+    return dense;
+  };
+  const Eigen::MatrixXcd Kd = Extract(*K), Cd = Extract(*C), Md = Extract(*M);
+  const Eigen::LLT<Eigen::MatrixXcd> mass(Md);
+  REQUIRE(mass.info() == Eigen::Success);
+  // T(λ) = K + λ C + λ² M - 0.5 / λ M_ff. Clear its pole, then use the strong cubic
+  // companion with state (u, λ u, λ² u). No inverse or subspace.
+  const Eigen::MatrixXcd Mff = Extract(*curlcurl);
+  Eigen::MatrixXcd companion = Eigen::MatrixXcd::Zero(3 * dim, 3 * dim);
+  companion.block(0, dim, dim, dim).setIdentity();
+  companion.block(dim, 2 * dim, dim, dim).setIdentity();
+  companion.block(2 * dim, 0, dim, dim) = 0.5 * mass.solve(Mff);
+  companion.block(2 * dim, dim, dim, dim) = -mass.solve(Kd);
+  companion.block(2 * dim, 2 * dim, dim, dim) = -mass.solve(Cd);
+  REQUIRE(companion.allFinite());
+  const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> spectrum(companion);
+  REQUIRE(spectrum.info() == Eigen::Success);
+  REQUIRE(spectrum.eigenvalues().allFinite());
+  REQUIRE(spectrum.eigenvectors().allFinite());
+
+  // The eigenvalues above the target, lowest Im λ (Re f) first. Every companion copy is
+  // retained: no field or frequency deduplication. Below the target there is none, other
+  // than the gradients at λ = 0 (a multiple root, which round-off scatters to |λ| of about
+  // 1e-5 times the target here).
+  std::vector<int> candidates;
+  int below = 0;
+  for (int mode = 0; mode < spectrum.eigenvalues().size(); mode++)
+  {
+    const auto lambda = spectrum.eigenvalues()(mode);
+    if (lambda.imag() > iodata.solver.eigenmode.target)
+    {
+      candidates.push_back(mode);
+    }
+    else if (lambda.imag() > 1.0e-2 * iodata.solver.eigenmode.target)
+    {
+      below++;
+    }
+  }
+  CHECK(below == 0);
+  std::ranges::stable_sort(
+      candidates, [&](int a, int b)
+      { return spectrum.eigenvalues()(a).imag() < spectrum.eigenvalues()(b).imag(); });
+  REQUIRE(candidates.size() >= static_cast<std::size_t>(n));
+
+  // Native backward normalization: ||T(λ) x|| / (||x|| (||K|| + |λ| ||C|| + |λ|² ||M||)).
+  // The eliminated K block is identity, hence max(1, ||K_free||).
+  auto Norm = [](const Eigen::MatrixXcd &A)
+  {
+    const Eigen::JacobiSVD<Eigen::MatrixXcd> svd(A);
+    REQUIRE(svd.info() == Eigen::Success);
+    return svd.singularValues().maxCoeff();
+  };
+  const double normK = std::max(1.0, Norm(Kd)), normC = Norm(Cd), normM = Norm(Md);
+  std::vector<std::complex<double>> expected;
+  for (int k = 0; k < n; k++)
+  {
+    // The lowest n are selected before the validation: a failed candidate stops the case,
+    // no higher candidate substitutes.
+    const int mode = candidates[k];
+    const auto lambda = spectrum.eigenvalues()(mode);
+    CAPTURE(k, mode, lambda);
+    Eigen::VectorXcd field = spectrum.eigenvectors().col(mode).head(dim);
+    const double field_norm = field.norm();
+    REQUIRE(std::isfinite(field_norm));
+    REQUIRE(field_norm > 0.0);
+    field /= field_norm;
+    x = 0.0;
+    auto *xr = x.Real().HostReadWrite();
+    auto *xi = x.Imag().HostReadWrite();
+    for (int i = 0; i < dim; i++)
+    {
+      xr[free[i]] = field(i).real();
+      xi[free[i]] = field(i).imag();
+    }
+    auto A2 = space_op.GetExtraSystemOperator(lambda / 1i, Operator::DIAG_ZERO);
+    REQUIRE(A2);
+    auto T = space_op.GetSystemMatrix(1.0 + 0.0i, lambda, lambda * lambda, K.get(), C.get(),
+                                      M.get(), A2.get());
+    REQUIRE(T);
+    T->Mult(x, y);
+    const double action = linalg::Norml2(comm, y) / linalg::Norml2(comm, x);
+    const double backward =
+        action / (normK + std::abs(lambda) * normC + std::norm(lambda) * normM);
+    const auto frequency =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(lambda / 1i) /
+        (2.0 * M_PI);
+    Mpi::Print(
+        "Fixed-box spectrum mode {:d}: f = {:.12e}{:+.12e}i GHz, backward = {:.3e}\n",
+        k + 1, frequency.real(), frequency.imag(), backward);
+    REQUIRE(backward <= 1.0e-10);
+    expected.push_back(frequency);
+  }
+  return expected;
+}
+
+// The lowest modes above 8 GHz of the box with second-order absorbing boundaries next to
+// the constant medium (GHz), from FixedBoxSpectrum.
+const std::vector<std::complex<double>> constant_abc2_modes = {
+    {13.33373469207, 2.199734381129}, {14.22474477916, 9.077464578857},
+    {17.19541109405, 11.72289377094}, {18.36358844556, 1.956428758461},
+    {20.36005578510, 8.643387453640}, {20.84330195020, 11.46050049783},
+    {23.07797431387, 1.617380220753}, {24.05954758472, 10.13988796594},
+    {24.08380007773, 1.199616515463}, {24.94974214409, 11.40373997771},
+    {25.66438125839, 9.413930030888}, {26.59336710685, 10.64146610520},
+    {27.25680784376, 6.628162295503}, {27.69726264615, 1.315861288834},
+    {29.12393495954, 5.066430628881}, {29.34965173756, 11.44100635637},
+    {30.41173891639, 11.78279664698}, {31.55163281795, 4.876212150301},
+    {33.07768200068, 1.037107381349}, {33.55149993009, 0.6518134200846}};
+
 }  // namespace
 
 TEST_CASE_METHOD(test::SharedTempDir,
@@ -733,6 +962,76 @@ TEST_CASE_METHOD(
     CAPTURE(found_all.f[k], found_all.backward_error[k]);
     CHECK(found_all.backward_error[k] <= 1.0e-8);
     CHECK(found_all.f[k].imag() > 0.0);  // Lossy
+  }
+}
+
+// Frequency-dependent boundary terms which are rational in the frequency.
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: second-order absorbing boundaries next to a constant "
+                 "medium",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // The term -0.5 / λ M_ff of the second-order absorbing boundary is rational, and each
+  // eigensolver backend of the build linearizes it exactly: it must return the requested
+  // modes without gaps, for each number of modes. The Hybrid seed and Quasi-Newton
+  // refinement skipped some of these, differently for each N. The requested modes are
+  // those above the target which SLEPc and ARPACK select for TARGET_IMAGINARY: for SLEPc
+  // the N lowest in Re f, and for ARPACK those with the largest -Im θ of the
+  // shift-and-invert eigenvalue θ = 1 / (λ - σ), which prefers modes with less damping.
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  const int n = GENERATE(4, 6, 8);
+  CAPTURE(backend, n);
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const auto fixture = FixedBox::Constant;
+  const double target = FixedBoxTarget(fixture);
+  const auto found_all =
+      RunEigenmode(BoxConfig(mesh, FixedBoxPermittivity(fixture),
+                             FixedBoxBoundaries(fixture), n, target, "", backend),
+                   temp_dir, "constant-abc2");
+  REQUIRE(found_all.f.size() >= static_cast<std::size_t>(n));
+  auto expected = constant_abc2_modes;
+  if (backend == "ARPACK")
+  {
+    // -Im θ = b / (a² + b²) for λ - σ ∝ a + i b, a = -Im f, b = Re f - target. No mode
+    // beyond the list (with a larger b) can be among the requested: -Im θ ≤ 1 / b.
+    auto key = [target](std::complex<double> f)
+    { return -std::imag(1.0 / std::complex<double>(-f.imag(), f.real() - target)); };
+    std::ranges::stable_sort(expected, [&](auto a, auto b) { return key(a) > key(b); });
+    REQUIRE(1.0 / (constant_abc2_modes.back().real() - target) < key(expected[n - 1]));
+  }
+  expected.resize(n);
+  auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
+  std::ranges::sort(expected, by_frequency);
+  auto found = found_all.f;
+  std::ranges::sort(found, by_frequency);
+  for (int k = 0; k < n; k++)
+  {
+    CAPTURE(k, found[k], expected[k]);
+    CHECK(std::abs(found[k] - expected[k]) <= 1.0e-7 * std::abs(expected[k]));
+  }
+  for (std::size_t k = 0; k < found_all.f.size(); k++)
+  {
+    CAPTURE(found_all.f[k], found_all.backward_error[k]);
+    CHECK(found_all.backward_error[k] <= 1.0e-8);
+    CHECK(found_all.f[k].imag() > 0.0);  // Radiating through the absorbing faces
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: spectrum of the constant medium box with second-order "
+                 "absorbing boundaries",
+                 "[eigenmodedriver][Serial]")
+{
+  // The reference modes of the driver test above, from the complete spectrum of the dense
+  // cubic companion problem (independent of the eigensolvers).
+  const auto expected = FixedBoxSpectrum(temp_dir, FixedBox::Constant, 20);
+  REQUIRE(constant_abc2_modes.size() <= expected.size());
+  for (std::size_t k = 0; k < constant_abc2_modes.size(); k++)
+  {
+    CAPTURE(k, expected[k], constant_abc2_modes[k]);
+    CHECK(std::abs(expected[k] - constant_abc2_modes[k]) <=
+          1.0e-10 * std::abs(expected[k]));
   }
 }
 

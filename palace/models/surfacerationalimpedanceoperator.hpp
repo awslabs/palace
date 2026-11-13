@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_SURFACE_RATIONAL_IMPEDANCE_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_RATIONAL_IMPEDANCE_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <unordered_map>
 #include <unordered_set>
@@ -102,6 +103,14 @@ public:
   // Effective degree of the polynomial part P of the Robin coefficient of boundary idx
   // (-1 for the zero polynomial).
   int GetRobinQuotientDegree(int idx) const;
+
+  // The Robin coefficient of boundary idx in pole-residue form, g(λ) = poly[0] + poly[1] λ
+  // + poly[2] λ² + Σⱼ residues[j] / (λ - poles[j]), with the zeros of Zs as poles. Returns
+  // false if the polynomial part has a degree above 2 or the poles are not simple (the
+  // form does not reproduce g).
+  bool GetRobinPoleResidue(int idx, std::array<std::complex<double>, 3> &poly,
+                           std::vector<std::complex<double>> &poles,
+                           std::vector<std::complex<double>> &residues) const;
 
   // Coefficients of the polynomial part P of the Robin coefficient of boundary idx
   // (highest-degree-first, nondimensionalized; empty is the zero polynomial).

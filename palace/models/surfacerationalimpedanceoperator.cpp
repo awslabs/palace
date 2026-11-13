@@ -3,9 +3,11 @@
 
 #include "surfacerationalimpedanceoperator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <numbers>
+#include <Eigen/Dense>
 #include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -238,6 +240,96 @@ SurfaceRationalImpedanceOperator::EvalRobinRemainder(int idx, std::complex<doubl
               "Rational impedance boundary has a transmission zero (Zs = 0) at the "
               "evaluation frequency; the admittance iω/Zs is singular!");
   return EvalPoly(bdr.robin_remainder, s) / N;
+}
+
+bool SurfaceRationalImpedanceOperator::GetRobinPoleResidue(
+    int idx, std::array<std::complex<double>, 3> &poly,
+    std::vector<std::complex<double>> &poles,
+    std::vector<std::complex<double>> &residues) const
+{
+  const auto &bdr = boundaries[idx];
+  const int dq = EffectiveDegree(bdr.robin_quotient);
+  if (dq > 2)
+  {
+    return false;
+  }
+  poly = {0.0, 0.0, 0.0};
+  for (int k = 0; k <= dq; k++)
+  {
+    poly[k] = bdr.robin_quotient[bdr.robin_quotient.size() - 1 - k];
+  }
+
+  // The poles are the roots of N, from its companion matrix, with the residues R(p) /
+  // N'(p) of the remainder R/N. A root with a zero residue (N(0) = 0, where s cancels it)
+  // is not a pole.
+  poles.clear();
+  residues.clear();
+  const int dn = EffectiveDegree(bdr.num);
+  if (dn < 0)
+  {
+    return false;
+  }
+  const std::vector<double> num(bdr.num.end() - (dn + 1), bdr.num.end());
+  std::vector<double> dnum(num.begin(), num.end() - 1);
+  for (int i = 0; i < dn; i++)
+  {
+    dnum[i] *= dn - i;
+  }
+  if (dn > 0)
+  {
+    Eigen::MatrixXcd companion = Eigen::MatrixXcd::Zero(dn, dn);
+    for (int j = 0; j < dn; j++)
+    {
+      companion(0, j) = -num[j + 1] / num[0];
+    }
+    for (int i = 1; i < dn; i++)
+    {
+      companion(i, i - 1) = 1.0;
+    }
+    const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> roots(companion, false);
+    if (roots.info() != Eigen::Success)
+    {
+      return false;
+    }
+    std::vector<std::complex<double>> r(dn);
+    double r_max = 0.0;
+    for (int j = 0; j < dn; j++)
+    {
+      r[j] = EvalPoly(bdr.robin_remainder, roots.eigenvalues()(j)) /
+             EvalPoly(dnum, roots.eigenvalues()(j));
+      r_max = std::max(r_max, std::abs(r[j]));
+    }
+    for (int j = 0; j < dn; j++)
+    {
+      if (std::abs(r[j]) > 1.0e-12 * r_max)
+      {
+        poles.push_back(roots.eigenvalues()(j));
+        residues.push_back(r[j]);
+      }
+    }
+  }
+
+  // The form must reproduce g, away from its poles: not so for repeated roots of N.
+  double radius = 1.0;
+  for (const auto p : poles)
+  {
+    radius = std::max(radius, 2.0 * std::abs(p));
+  }
+  for (int k = 0; k < 4; k++)
+  {
+    const auto s = std::polar(radius, 0.5 + 0.25 * std::numbers::pi * k);
+    std::complex<double> g = poly[0] + s * (poly[1] + s * poly[2]);
+    for (std::size_t j = 0; j < poles.size(); j++)
+    {
+      g += residues[j] / (s - poles[j]);
+    }
+    const auto g_ref = EvalRobinCoefficient(idx, s);
+    if (!(std::abs(g - g_ref) <= 1.0e-10 * std::abs(g_ref)))
+    {
+      return false;
+    }
+  }
+  return true;
 }
 
 int SurfaceRationalImpedanceOperator::GetRobinQuotientDegree(int idx) const

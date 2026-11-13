@@ -2458,10 +2458,14 @@ TEST_CASE("floquet_absorbing_scatterer_adaptive", "[Serial][Parallel][GPU][Regre
 
 TEST_CASE("floquet_absorbing_eigen", "[Serial][Parallel][GPU][Regression]")
 {
+  // The eigensolver can return more converged modes than the three requested; the
+  // reference has those three.
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
+  opts.skip_rowcount = true;
+  opts.min_rows = 3;
   opts.paraview_fields = false;
   opts.custom_checks["eig.csv"] = TestFloquetAbsorbingEigen(1.0e-4);
   palace::test::RunRegressionCase("floquet_absorbing", "floquet_absorbing_eigen.json",

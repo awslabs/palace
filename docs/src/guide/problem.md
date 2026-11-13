@@ -19,13 +19,16 @@ this file are the mode quality factors and errors (absolute and backward) comput
 eigenpair.
 
 With a [frequency-dependent permittivity](model.md#Frequency-dependent-permittivity), the
-eigenvalue problem is nonlinear in the frequency. When the `Drude`, `Debye`, `Lorentz`, and
-`PoleResidue` terms of the materials are its only frequency-dependent terms, the default
-`"Hybrid"` setting of
+eigenvalue problem is nonlinear in the frequency. When its only frequency-dependent terms
+are the `Drude`, `Debye`, `Lorentz`, and `PoleResidue` terms of the materials,
+second-order absorbing boundaries next to constant materials, and rational impedance
+boundaries, the default `"Hybrid"` setting of
 [`config["Solver"]["Eigenmode"]["NonlinearType"]`](../config/reference.md#config-solver-eigenmode)
-solves it as a linear eigenvalue problem, with SLEPc or ARPACK. The linearization that is
-used for problems with losses gets one more unknown for each pole of a material, on the
-region of that material [[13]](../reference.md#References). The modes are then those nearest above `Target`, as
+solves it as a linear eigenvalue problem, with SLEPc or ARPACK: each of these terms is a
+rational function of the frequency times a fixed matrix. The linearization that is used for
+problems with losses gets one more unknown for each pole of a term, on the region or the
+boundary of that term [[13]](../reference.md#References). A second-order absorbing boundary
+has one pole, at zero frequency. The modes are then those nearest above `Target`, as
 for constant materials, on both sides of a material resonance and where they accumulate at
 it. Each step of the eigenvalue solver solves one linear system at the target, so the
 errors in `eig.csv` cannot be smaller than the accuracy of these solves: with a small
@@ -34,9 +37,10 @@ reduce [`config["Solver"]["Linear"]["Tol"]`](../config/reference.md#config-solve
 too. With `"NonlinearType": "SLP"`, or with SLEPc and `"PEPLinear": false`, the nonlinear
 eigensolver described next is used instead.
 
-Other frequency-dependent terms are not solved in this way: wave ports, second-order
-absorbing boundaries, finite conductivity and rational impedance boundaries, absorbing
-boundaries next to a frequency-dependent material, and `DjordjevicSarkar` terms.
+Other frequency-dependent terms are not solved in this way: wave ports, finite
+conductivity boundaries, absorbing boundaries next to a frequency-dependent material,
+`DjordjevicSarkar` terms, and rational impedances with repeated zeros or a Robin
+coefficient ``i\omega / Z_s`` which grows faster than ``\omega^2``.
 With any of them, for constant and frequency-dependent materials alike, the nonlinear
 eigensolver of `"NonlinearType"` is used. It returns converged modes, but not always the
 ones nearest the target: a small error for a returned mode does not show that no lower mode

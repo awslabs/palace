@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <complex>
 #include <optional>
 #include <unordered_set>
 #include <vector>
@@ -219,6 +221,56 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
       CHECK_THAT(*v2, WithinRel(re / 2.0, 1e-12));
     }
     require_global_coverage(v1.has_value(), v2.has_value());
+  }
+
+  SECTION("Pole-residue form of the Robin coefficient")
+  {
+    std::unordered_set<int> cracked = {};
+    std::array<std::complex<double>, 3> poly;
+    std::vector<std::complex<double>> poles, residues;
+
+    // Parallel RLC: g(s) = 1/Ls + s/Rs + Cs s², a polynomial (N has a zero at s = 0 which
+    // s cancels, and no pole).
+    SurfaceRationalImpedanceOperator op_par(
+        {make_data(num, den)}, cracked, ProblemType::EIGENMODE, units, mat_op, palace_mesh);
+    REQUIRE(op_par.GetRobinPoleResidue(0, poly, poles, residues));
+    CHECK(poles.empty());
+    CHECK(std::abs(poly[0] - 1.0 / Ls) <= 1.0e-12 / Ls);
+    CHECK(std::abs(poly[1] - 1.0 / Rs) <= 1.0e-12 / Rs);
+    CHECK(std::abs(poly[2] - Cs) <= 1.0e-12 * Cs);
+
+    // Series RLC: Zs = Rs + s Ls + 1/(s Cs), g(s) = Cs s² / N(s), N(s) = Ls Cs s² + Rs Cs s
+    // + 1: g = 1/Ls + Σ Cs p² / N'(p) / (s - p) at the two roots p of N.
+    SurfaceRationalImpedanceOperator op_ser({make_data({Ls * Cs, Rs * Cs, 1.0}, {Cs, 0.0})},
+                                            cracked, ProblemType::EIGENMODE, units, mat_op,
+                                            palace_mesh);
+    REQUIRE(op_ser.GetRobinPoleResidue(0, poly, poles, residues));
+    CHECK(std::abs(poly[0] - 1.0 / Ls) <= 1.0e-12 / Ls);
+    CHECK(poly[1] == 0.0);
+    CHECK(poly[2] == 0.0);
+    REQUIRE(poles.size() == 2);
+    const std::complex<double> disc =
+        std::sqrt(std::complex<double>(Rs * Rs * Cs * Cs - 4.0 * Ls * Cs));
+    for (const auto p :
+         {(-Rs * Cs + disc) / (2.0 * Ls * Cs), (-Rs * Cs - disc) / (2.0 * Ls * Cs)})
+    {
+      const auto j = (std::abs(poles[0] - p) < std::abs(poles[1] - p)) ? 0 : 1;
+      CAPTURE(p, poles[j], residues[j]);
+      CHECK(std::abs(poles[j] - p) <= 1.0e-12 * std::abs(p));
+      const auto c = Cs * p * p / (2.0 * Ls * Cs * p + Rs * Cs);
+      CHECK(std::abs(residues[j] - c) <= 1.0e-12 * std::abs(c));
+    }
+
+    // A repeated zero of Zs, N(s) = (s + 1)², and a Robin coefficient s⁴ of degree above
+    // two have no such form.
+    SurfaceRationalImpedanceOperator op_double({make_data({1.0, 2.0, 1.0}, {1.0})}, cracked,
+                                               ProblemType::EIGENMODE, units, mat_op,
+                                               palace_mesh);
+    CHECK_FALSE(op_double.GetRobinPoleResidue(0, poly, poles, residues));
+    SurfaceRationalImpedanceOperator op_quartic({make_data({1.0}, {1.0, 0.0, 0.0, 0.0})},
+                                                cracked, ProblemType::EIGENMODE, units,
+                                                mat_op, palace_mesh);
+    CHECK_FALSE(op_quartic.GetRobinPoleResidue(0, poly, poles, residues));
   }
 
   SECTION("Invalid inputs are rejected")

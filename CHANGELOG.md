@@ -40,6 +40,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     pole specifies no stored electric energy, so the electric energy outputs of a material
     with one are omitted. Existing constant-permittivity inputs are unchanged.
     SchemaVer 4-4-0 [PR 877](https://github.com/awslabs/palace/pull/877).
+  - With the default solver settings, eigenmode problems with second-order absorbing
+    boundaries next to constant materials or rational impedance boundaries, alone or with
+    the pole terms of the materials, are solved exactly as linear eigenvalue problems, with
+    SLEPc and ARPACK, as those with only the pole terms. Rational impedances with repeated
+    zeros or a Robin coefficient which grows faster than ω² keep the nonlinear
+    eigensolver. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
 
 #### Interface Changes
 
