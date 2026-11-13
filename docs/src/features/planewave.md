@@ -37,9 +37,9 @@ in that layer of elements: this is the discrete counterpart of the equivalent (L
 electric and magnetic currents ``\mathbf{J} = \mathbf{n} \times \mathbf{H}_\text{inc}``
 and ``\mathbf{M} = -\mathbf{n} \times \mathbf{E}_\text{inc}`` on ``S``, which radiate the
 incident field inside ``S`` and nothing outside. The incident field is known in closed
-form only in a homogeneous medium, so these elements must be vacuum; inside ``S``, the
-materials and boundary conditions are arbitrary (conductors, lossy, magnetic or
-anisotropic materials).
+form only in a homogeneous medium, so these elements must have one isotropic, lossless
+material, the background, which *Palace* checks at setup; inside ``S``, the materials and
+boundary conditions are arbitrary (conductors, lossy, magnetic or anisotropic materials).
 
 The incident field is
 
@@ -50,7 +50,8 @@ e^{-i k \hat{\mathbf{k}} \cdot (\mathbf{x} - \mathbf{x}_0)}
 
 with the propagation direction ``\hat{\mathbf{k}}``, the polarization ``\hat{\mathbf{p}}``
 (its component along ``\hat{\mathbf{k}}`` is removed), the amplitude ``E_0``, the
-wavenumber ``k`` of vacuum and the point ``\mathbf{x}_0`` of zero phase.
+wavenumber ``k = \omega \sqrt{\varepsilon_r \mu_r} / c_0`` of the background and the point
+``\mathbf{x}_0`` of zero phase.
 
 ## Setup
 
@@ -76,7 +77,7 @@ several directions of incidence) are solved one after the other, as port excitat
 The mesh needs:
 
   - a total-field region ``T`` containing the scatterer, separated from the truncation of
-    the domain by at least one layer of vacuum elements;
+    the domain by at least one layer of elements of the background;
   - for the far field and the radar cross section, an interior closed surface
     ([`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries))
     in the scattered-field region, outside of the elements which touch ``S``. *Palace* stops with an error if the far-field surface touches the total-field

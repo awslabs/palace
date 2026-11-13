@@ -13,6 +13,7 @@ namespace palace
 {
 
 class FiniteElementSpace;
+class MaterialOperator;
 class Units;
 
 namespace config
@@ -35,8 +36,9 @@ struct PlaneWaveData;
 // where g is the interpolant of the incident field and g_T, g_O its restrictions to T and
 // O. Only the elements outside of T which touch S couple T and O dofs, so b is the
 // discrete counterpart of the equivalent (Love) currents on S, and the incident field is
-// only evaluated in that layer of elements, which must be vacuum. The spaces, the mesh, and
-// the operator are unchanged.
+// only evaluated in that layer of elements. These must be one homogeneous, isotropic and
+// lossless material (the background), whose speed of light sets the wavenumber of the
+// incident field. The spaces, the mesh, and the operator are unchanged.
 //
 class PlaneWaveOperator
 {
@@ -45,6 +47,7 @@ public:
   {
     mfem::Vector direction, polarization, origin;  // Nondimensional
     double amplitude;                              // Nondimensional
+    double c = 1.0;  // Speed of light of the background (nondimensional), vacuum by default
     mfem::Array<int> attr_marker;
   };
 
@@ -80,6 +83,12 @@ public:
   // process. There the solution is the total field, not the scattered field.
   bool TouchesTotalField(int idx, const FiniteElementSpace &nd_fespace,
                          const mfem::Array<int> &bdr_attr_marker) const;
+
+  // Set the background material of each plane wave from the elements outside of its
+  // total-field region which touch its boundary, where the incident field is evaluated.
+  // Aborts if these are not one homogeneous, isotropic and lossless material.
+  void SetUpBackground(const MaterialOperator &mat_op,
+                       const FiniteElementSpace &nd_fespace);
 
   const PlaneWaveSource &GetSource(int idx) const { return sources.at(idx); }
 
