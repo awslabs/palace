@@ -448,6 +448,7 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
   PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
                                                    CEED_COPY_VALUES, ctx_size, ctx));
   PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionSetContextWritable(apply_qf, false));
   PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
 
   // Inputs/outputs.
@@ -574,6 +575,7 @@ void AssembleCeedElementErrorIntegrator(
   PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
                                                    CEED_COPY_VALUES, ctx_size, ctx));
   PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionSetContextWritable(apply_qf, false));
   PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
 
   // Inputs/outputs. "Test" operations are the operations for the second input vector.

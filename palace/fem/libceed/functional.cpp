@@ -144,6 +144,7 @@ void AssembleCeedSurfaceFunctional(const CeedQFunctionInfo &info, void *ctx,
     PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
                                                      CEED_COPY_VALUES, ctx_size, ctx));
     PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+    PalaceCeedCall(ceed, CeedQFunctionSetContextWritable(apply_qf, false));
     if (ctx_out)
     {
       // Transfer ownership of the context handle to the caller (for in-place runtime
@@ -205,6 +206,7 @@ void CreatePointEvaluatorQFunction(const CeedQFunctionInfo &info, void *ctx,
     PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
                                                      CEED_COPY_VALUES, ctx_size, ctx));
     PalaceCeedCall(ceed, CeedQFunctionSetContext(*apply_qf, apply_ctx));
+    PalaceCeedCall(ceed, CeedQFunctionSetContextWritable(*apply_qf, false));
     if (ctx_out)
     {
       *ctx_out = apply_ctx;
