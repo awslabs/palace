@@ -2091,6 +2091,8 @@ void Nondimensionalize(const Units &units, PMLData &data)
       c /= units.GetMeshLengthRelativeScale();
     }
   }
+  data.extrusion.distance /= units.GetMeshLengthRelativeScale();
+  data.extrusion.plane[3] /= units.GetMeshLengthRelativeScale();
   // ω₀ [Hz] → angular nondimensional frequency. Palace's solver uses ω = 2πf
   // (angular) when passing "omega" into GetExtraSystemMatrix and the stretch
   // formulas, so reference_frequency must match that convention — multiply by 2π

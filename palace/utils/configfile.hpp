@@ -264,10 +264,11 @@ public:
     double thickness = 0.0;
     int layers = 4;
 
-    // The rays of the extrusion start from the closest point of each surface point on the
-    // core, the segment from center[0] to center[1] (a point if they are equal), in mesh
-    // length units (nondimensionalized at load time). Unless configured (has_center), this
-    // is the centre of the bounding box of the surface, set by the extrusion.
+    // A flat surface is extruded along its normal, unless the center is configured. Any
+    // other surface is extruded along the rays from the closest point of each surface point
+    // on the core, the segment from center[0] to center[1] (a point if they are equal), in
+    // mesh length units (nondimensionalized at load time). Unless configured (has_center),
+    // this is the centre of the bounding box of the surface, set by the extrusion.
     bool has_center = false;
     std::array<std::array<double, 3>, 2> center{};
 
@@ -279,6 +280,18 @@ public:
     // Domain attribute of the elements below the extruded elements of each attribute of
     // the block, whose material they share. Set by the extrusion.
     std::vector<int> base_attributes = {};
+
+    // Form of the depth into the layer, set by the extrusion (see
+    // fem/qfunctions/coeff/pml_qf.h): a flat surface extruded along its normal, on the
+    // plane n · x = h of plane = (n, h), or a surface extruded along the rays from the core
+    // at the distance r₀ (distance) from it.
+    enum class Depth : int
+    {
+      NORMAL = 1,
+      DISTANCE = 2
+    } depth = Depth::NORMAL;
+    std::array<double, 4> plane{};
+    double distance = 0.0;
   } extrusion;
 
   bool IsExtruded() const { return !extrusion.attributes.empty(); }

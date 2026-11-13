@@ -76,16 +76,6 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
     {
       mesh.push_back(std::make_unique<Mesh>(std::move(m)));
     }
-
-    // The PML terms of an extruded PML are evaluated at the depth of the mesh nodes into
-    // the layer, which the extruded layer cannot be refined beyond.
-    for (const auto &pml : iodata.domains.pml)
-    {
-      if (pml.IsExtruded())
-      {
-        mesh.back()->SetGeomFactorField(mesh::GetExtrudedPMLDepth(mesh.back()->Get(), pml));
-      }
-    }
   }
 
   solver->SolveEstimateMarkRefine(mesh);

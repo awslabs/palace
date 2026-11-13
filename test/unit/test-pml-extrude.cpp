@@ -74,17 +74,20 @@ struct NodalVerticesMesh : public mfem::Mesh
 };
 
 // Unit ball meshed from the cube [-1, 1]³, with the nodes of its boundary on the unit
-// sphere (x ↦ x |x|_∞ / |x|).
+// sphere (by the smooth map x_i ↦ x_i (1 - x_j² / 2 - x_k² / 2 + x_j² x_k² / 3)^½, which
+// maps the faces of the cube onto the sphere).
 mfem::Mesh MakeBall(mfem::Element::Type type, int n, int order)
 {
   auto mesh = MakeBox(type, n, order);
   mesh.Transform(
       [](const mfem::Vector &x, mfem::Vector &y)
       {
-        y = x;
-        if (x.Norml2() > 0.0)
+        y.SetSize(3);
+        for (int i = 0; i < 3; i++)
         {
-          y *= x.Normlinf() / x.Norml2();
+          const double a = x((i + 1) % 3) * x((i + 1) % 3),
+                       b = x((i + 2) % 3) * x((i + 2) % 3);
+          y(i) = x(i) * std::sqrt(1.0 - 0.5 * a - 0.5 * b + a * b / 3.0);
         }
       });
   return NodalVerticesMesh(std::move(mesh));
@@ -138,9 +141,10 @@ double MinExtrudedJacobian(mfem::Mesh &mesh, int ne, int order)
 TEST_CASE("ExtrudePML on a sphere", "[pml][geodata][Serial]")
 {
   // The layer extruded from a curved sphere is the spherical shell: every node, of every
-  // order, is at the radius 1 + ξ for its depth ξ = (k + z) t / N into the layer.
+  // order, is at the radius 1 + ξ for its depth ξ = (k + z) t / N into the layer. (The
+  // flat faces of order 1 are too far from the sphere for this layer.)
   const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
-  const int order = GENERATE(1, 2, 3);
+  const int order = GENERATE(2, 3);
   auto mesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, order));
   const int ne = mesh->GetNE(), nbe = mesh->GetNBE();
   auto pml = MakePML();
@@ -196,88 +200,6 @@ TEST_CASE("ExtrudePML on a sphere", "[pml][geodata][Serial]")
     }
   }
   CHECK(n_back == nbe);
-}
-
-TEST_CASE("ExtrudePML on a box", "[pml][geodata][Serial]")
-{
-  // Columns of elements at the edges and corners of a box are valid and conforming: the
-  // extruded elements have positive Jacobians, and the only exterior faces of the mesh are
-  // those of the back of the layer, whose nodes are on the rays from the centre.
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
-  const int order = GENERATE(1, 2);
-  auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, order));
-  const int ne = mesh->GetNE(), nbe = mesh->GetNBE();
-  auto pml = MakePML();
-  mesh::ExtrudePML(mesh, pml, {});
-  REQUIRE(mesh->GetNE() == ne + 2 * nbe);
-  CHECK(MinExtrudedJacobian(*mesh, ne, order) > 0.0);
-  int n_exterior = 0;
-  for (int f = 0; f < mesh->GetNumFaces(); f++)
-  {
-    int e1, e2;
-    mesh->GetFaceElements(f, &e1, &e2);
-    n_exterior += (e2 < 0);
-  }
-  CHECK(n_exterior == nbe);
-  for (int be = 0; be < mesh->GetNBE(); be++)
-  {
-    if (mesh->GetBdrAttribute(be) != pml.extrusion.back_attribute)
-    {
-      continue;
-    }
-    for (int j = 0; j < mesh->GetNodes()->FESpace()->GetBE(be)->GetDof(); j++)
-    {
-      // x = x⁰ (1 + t / |x⁰|) for the point x⁰ on the box.
-      auto x = NodePosition(*mesh, be, j, true);
-      x *= (x.Norml2() - 0.5) / x.Norml2();
-      CHECK_THAT(x.Normlinf(), Matchers::WithinAbs(1.0, 1.0e-12));
-    }
-  }
-}
-
-TEST_CASE("ExtrudePML with a segment core", "[pml][geodata][Serial]")
-{
-  // With a segment core through the interface z = -0.5 between two materials of the box,
-  // the rays of the faces beside the segment are normal to it, and the interface stays
-  // planar through
-  // the layer.
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
-  auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 4, 2, true));
-  const int ne = mesh->GetNE();
-  auto pml = MakePML({{"Center", {{0.0, 0.0, -0.75}, {0.0, 0.0, 0.75}}}});
-  mesh::ExtrudePML(mesh, pml, {});
-  CHECK(pml.attributes == std::vector<int>{3, 4});
-  CHECK(pml.extrusion.base_attributes == std::vector<int>{1, 2});
-  CHECK(MinExtrudedJacobian(*mesh, ne, 2) > 0.0);
-  double z_below = -mfem::infinity(), z_above = mfem::infinity();
-  for (int e = ne; e < mesh->GetNE(); e++)
-  {
-    for (int j = 0; j < mesh->GetNodes()->FESpace()->GetFE(e)->GetDof(); j++)
-    {
-      const double z = NodePosition(*mesh, e, j)(2);
-      (mesh->GetAttribute(e) == 3) ? (z_below = std::max(z_below, z))
-                                   : (z_above = std::min(z_above, z));
-    }
-  }
-  CHECK_THAT(z_below, Matchers::WithinAbs(-0.5, 1.0e-12));
-  CHECK_THAT(z_above, Matchers::WithinAbs(-0.5, 1.0e-12));
-
-  // With the default point core, the rays from the centre tilt the interface into a cone.
-  mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 4, 2, true));
-  pml = MakePML();
-  mesh::ExtrudePML(mesh, pml, {});
-  z_above = mfem::infinity();
-  for (int e = ne; e < mesh->GetNE(); e++)
-  {
-    for (int j = 0; j < mesh->GetNodes()->FESpace()->GetFE(e)->GetDof(); j++)
-    {
-      if (mesh->GetAttribute(e) == 4)
-      {
-        z_above = std::min(z_above, NodePosition(*mesh, e, j)(2));
-      }
-    }
-  }
-  CHECK(z_above < -0.5 - 1.0e-2);
 }
 
 TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
@@ -340,8 +262,7 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
   CHECK_THROWS_WITH(Extrude(json::object(), {}, true),
                     ContainsSubstring("is not on the exterior boundary"));
 
-  // A flat face of the box with the default core, the center of the face, and the same
-  // face with a core behind it.
+  // A flat face of the box, along its normal, or along the rays from a core behind it.
   auto ExtrudeFace = [&](json extra)
   {
     auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, 1));
@@ -356,18 +277,32 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     mesh->SetAttributes();
     auto pml = MakePML(extra);
     mesh::ExtrudePML(mesh, pml, {});
+    return pml.extrusion.depth;
   };
-  CHECK_THROWS_WITH(ExtrudeFace(json::object()),
-                    ContainsSubstring("lies on the boundary, which is flat"));
-  CHECK_NOTHROW(ExtrudeFace({{"Center", {0.0, 0.0, -10.0}}}));
+  CHECK(ExtrudeFace(json::object()) == config::PMLData::Extrusion::Depth::NORMAL);
+  CHECK_THROWS_WITH(ExtrudeFace({{"Center", {0.0, 0.0, -10.0}}}),
+                    ContainsSubstring("The extruded PML does not fit"));
+  // A sphere of flat faces, whose distance from its centre varies by more than the
+  // tolerance for a thin layer.
+  {
+    auto mesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, 1));
+    auto pml = MakePML({{"Thickness", 0.01}});
+    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, pml, {}),
+                      ContainsSubstring("The extruded PML does not fit") &&
+                          ContainsSubstring("a sphere around its centre"));
+    mesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, 1));
+    pml = MakePML({{"Thickness", 10.0}});
+    CHECK_NOTHROW(mesh::ExtrudePML(mesh, pml, {}));
+    CHECK(pml.extrusion.depth == config::PMLData::Extrusion::Depth::DISTANCE);
+  }
   // No boundary elements, and a back attribute of the mesh.
   CHECK_THROWS_WITH(Extrude({{"Attributes", {7}}}),
                     ContainsSubstring("No boundary elements"));
-  CHECK_THROWS_WITH(Extrude({{"BackAttribute", 1}}),
+  CHECK_THROWS_WITH(ExtrudeFace({{"BackAttribute", 2}}),
                     ContainsSubstring("is already a boundary attribute"));
 
-  // Ports, periodic, and Floquet boundaries which touch the surface: the surface is the box
-  // except its face x = -1 (attribute 2).
+  // Ports, periodic, and Floquet boundaries which touch the surface: the surface is the face
+  // z = 1 of the box, along its normal (attribute 1), and the rest of the box is attribute 2.
   auto ExtrudeWithPort = [&](const config::BoundaryData &boundaries)
   {
     auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, 1));
@@ -377,7 +312,7 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
       mfem::IsoparametricTransformation T;
       mesh->GetBdrElementTransformation(be, &T);
       T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
-      mesh->SetBdrAttribute(be, (c(0) < -1.0 + 1.0e-12) ? 2 : 1);
+      mesh->SetBdrAttribute(be, (c(2) > 1.0 - 1.0e-12) ? 1 : 2);
     }
     mesh->SetAttributes();
     auto pml = MakePML();
@@ -400,8 +335,8 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
 
 TEST_CASE("ExtrudePML extends other boundaries through the layer", "[pml][geodata][Serial]")
 {
-  // Half of the box above a ground plane z = -1 (attribute 2), which the extrusion extends
-  // into the quadrilaterals below the layer of its edges with the box.
+  // The face z = 1 of the box, along its normal, whose edges with the sides of the box
+  // (attribute 2) the extrusion extends into the quadrilaterals beside the layer.
   auto mesh = std::make_unique<mfem::Mesh>(MakeBox(mfem::Element::TETRAHEDRON, 2, 2));
   for (int be = 0; be < mesh->GetNBE(); be++)
   {
@@ -409,28 +344,30 @@ TEST_CASE("ExtrudePML extends other boundaries through the layer", "[pml][geodat
     mfem::IsoparametricTransformation T;
     mesh->GetBdrElementTransformation(be, &T);
     T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
-    mesh->SetBdrAttribute(be, (c(2) < -1.0 + 1.0e-12) ? 2 : 1);
+    mesh->SetBdrAttribute(be, (c(2) > 1.0 - 1.0e-12) ? 1 : 2);
   }
   mesh->SetAttributes();
   const int nbe = mesh->GetNBE();
-  auto pml = MakePML({{"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 0.5}}}});
+  auto pml = MakePML();
   mesh::ExtrudePML(mesh, pml, {});
-  // The ground plane has 8 boundary edges with the box, each extended into 2 quadrilaterals
-  // in the plane z = -1, and the mesh has no exterior face without a boundary element.
-  int n_ground = 0;
+  // The sides have 8 boundary edges with the face, each extended into 2 quadrilaterals in
+  // the plane of its side, and the mesh has no exterior face without a boundary element.
+  int n_side = 0;
   for (int be = nbe; be < mesh->GetNBE(); be++)
   {
     if (mesh->GetBdrAttribute(be) == 2)
     {
-      n_ground++;
+      n_side++;
       CHECK(mesh->GetBdrElementGeometry(be) == mfem::Geometry::SQUARE);
       for (int j = 0; j < mesh->GetNodes()->FESpace()->GetBE(be)->GetDof(); j++)
       {
-        CHECK_THAT(NodePosition(*mesh, be, j, true)(2), Matchers::WithinAbs(-1.0, 1.0e-12));
+        const auto x = NodePosition(*mesh, be, j, true);
+        CHECK_THAT(std::max(std::abs(x(0)), std::abs(x(1))),
+                   Matchers::WithinAbs(1.0, 1.0e-12));
       }
     }
   }
-  CHECK(n_ground == 16);
+  CHECK(n_side == 16);
   std::vector<bool> has_bdr(mesh->GetNumFaces(), false);
   for (int be = 0; be < mesh->GetNBE(); be++)
   {
@@ -444,61 +381,154 @@ TEST_CASE("ExtrudePML extends other boundaries through the layer", "[pml][geodat
   }
 }
 
-TEST_CASE("Extruded PML depth", "[pml][geodata][Serial][Parallel]")
+namespace
 {
-  // The depth of the nodes of the layer, identified by their rays from the surface on all
-  // processes, is the depth of the extrusion: on the sphere, the radius less one.
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
-  auto smesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, 2));
-  const int ne = smesh->GetNE();
-  auto pml = MakePML();
-  mesh::ExtrudePML(smesh, pml, {});
-  // The outer layer is on the last process, without the surface.
-  const int size = Mpi::Size(Mpi::World());
-  std::vector<int> partitioning(smesh->GetNE());
-  for (int e = 0; e < smesh->GetNE(); e++)
-  {
-    partitioning[e] = (e >= ne && (e - ne) % 2 == 1) ? size - 1 : e % std::max(size - 1, 1);
-  }
-  mfem::ParMesh pmesh(Mpi::World(), *smesh, partitioning.data());
-  const auto depth = mesh::GetExtrudedPMLDepth(pmesh, pml);
-  double err = 0.0, depth_max = 0.0;
-  mfem::Array<int> dofs;
-  for (int e = 0; e < pmesh.GetNE(); e++)
-  {
-    const bool in_layer = (pmesh.GetAttribute(e) == 2);
-    depth->FESpace()->GetElementDofs(e, dofs);
-    for (int j = 0; j < dofs.Size(); j++)
-    {
-      const double r = NodePosition(pmesh, e, j).Norml2();
-      err = std::max(err, std::abs((*depth)(dofs[j]) - (in_layer ? r - 1.0 : 0.0)));
-      depth_max = std::max(depth_max, (*depth)(dofs[j]));
-    }
-  }
-  Mpi::GlobalMax(1, &err, pmesh.GetComm());
-  Mpi::GlobalMax(1, &depth_max, pmesh.GetComm());
-  CHECK(err < 1.0e-12);
-  CHECK_THAT(depth_max, Matchers::WithinAbs(0.5, 1.0e-12));
 
-  // On a refined box, the nodes of the layer are not on the rays of the surface.
-  smesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, 1));
-  pml = MakePML();
+// Box [-1, 1]³ (see MakeBox) with the boundary attribute 2 on its face z = 1.
+mfem::Mesh MakeBoxTop(mfem::Element::Type type, int n, int order)
+{
+  auto mesh = MakeBox(type, n, order);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    mfem::Vector c(3);
+    mfem::IsoparametricTransformation T;
+    mesh.GetBdrElementTransformation(be, &T);
+    T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+    mesh.SetBdrAttribute(be, (c(2) > 1.0 - 1.0e-12) ? 2 : 1);
+  }
+  mesh.SetAttributes();
+  return mesh;
+}
+
+// Cylinder of radius 1 around the z-axis, z ∈ [-1, 1], meshed from the box [-1, 1]³, with
+// the nodes of its wall (boundary attribute 1) on the cylinder, and its caps of boundary
+// attribute 2.
+mfem::Mesh MakeCylinder(mfem::Element::Type type, int n, int order)
+{
+  auto mesh = MakeBox(type, n, order);
+  mesh.Transform(
+      [](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        const double r = std::hypot(x(0), x(1)),
+                     r_inf = std::max(std::abs(x(0)), std::abs(x(1)));
+        if (r > 0.0)
+        {
+          y(0) *= r_inf / r;
+          y(1) *= r_inf / r;
+        }
+      });
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    mfem::Vector c(3);
+    mfem::IsoparametricTransformation T;
+    mesh.GetBdrElementTransformation(be, &T);
+    T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+    mesh.SetBdrAttribute(be, (std::abs(c(2)) > 1.0 - 1.0e-12) ? 2 : 1);
+  }
+  mesh.SetAttributes();
+  return NodalVerticesMesh(std::move(mesh));
+}
+
+// Stretch of the PML block of an extruded layer.
+pml::Stretch ExtrudedStretch(const config::PMLData &pml)
+{
+  pml::Stretch p;
+  p.extruded = true;
+  p.geometry.thickness[0] = pml.extrusion.thickness;
+  p.depth = pml.extrusion.depth;
+  p.center = pml.extrusion.center;
+  p.distance = pml.extrusion.distance;
+  p.plane = pml.extrusion.plane;
+  return p;
+}
+
+// Largest difference over the nodes of the extruded elements of a block of the closed form
+// depth and of the given depth of the node positions from the depth (k + z) t / N at which
+// the extrusion placed the node, for its layer k and reference coordinate z, or only of the
+// closed form from the given depth (on a refined mesh).
+template <typename Depth>
+double DepthError(const mfem::Mesh &mesh, const config::PMLData &pml, Depth &&depth,
+                  bool layers = true)
+{
+  const auto p = ExtrudedStretch(pml);
+  const int N = pml.extrusion.layers;
+  double err = 0.0;
+  for (int e = 0, i = 0; e < mesh.GetNE(); e++)
+  {
+    if (!std::ranges::binary_search(pml.attributes, mesh.GetAttribute(e)))
+    {
+      continue;
+    }
+    // The extruded elements of a block are in the order of their faces, with the N layers
+    // of each face in order.
+    const auto &ir = mesh.GetNodes()->FESpace()->GetFE(e)->GetNodes();
+    for (int j = 0; j < ir.GetNPoints(); j++)
+    {
+      const auto x = NodePosition(mesh, e, j);
+      const double xi = pml::EvaluateDepth(p, {x(0), x(1), x(2)}).xi, xi_x = depth(x),
+                   xi_k = (i % N + ir.IntPoint(j).z) * pml.extrusion.thickness / N;
+      err = std::max(err, std::abs(xi - xi_x));
+      if (layers)
+      {
+        err = std::max({err, std::abs(xi - xi_k), std::abs(xi_x - xi_k)});
+      }
+    }
+    i++;
+  }
+  return err;
+}
+
+}  // namespace
+
+TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
+{
+  // Each form of the depth gives the depth of the nodes of the layer, from the position of
+  // the surface on their direction.
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE(1, 2);
+  using Depth = config::PMLData::Extrusion::Depth;
+
+  // The face z = 1 of a box, along its normal.
+  auto smesh = std::make_unique<mfem::Mesh>(MakeBoxTop(type, 2, order));
+  auto pml = MakePML({{"Attributes", {2}}});
   mesh::ExtrudePML(smesh, pml, {});
-  mfem::ParMesh pmesh_ref(Mpi::World(), *smesh);
-  pmesh_ref.UniformRefinement();
-  CHECK_THROWS_WITH(mesh::GetExtrudedPMLDepth(pmesh_ref, pml),
-                    Matchers::ContainsSubstring("cannot be refined"));
+  REQUIRE(pml.extrusion.depth == Depth::NORMAL);
+  CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x) { return x(2) - 1.0; }) <
+        1.0e-12);
+
+  // A sphere, at the distance 1 from its centre.
+  if (order == 2)
+  {
+    smesh = std::make_unique<mfem::Mesh>(MakeBall(type, 2, order));
+    pml = MakePML();
+    mesh::ExtrudePML(smesh, pml, {});
+    REQUIRE(pml.extrusion.depth == Depth::DISTANCE);
+    CHECK_THAT(pml.extrusion.distance, Matchers::WithinAbs(1.0, 1.0e-12));
+    CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x) { return x.Norml2() - 1.0; }) <
+          1.0e-12);
+
+    // The wall of a cylinder, at the distance 1 from its axis.
+    smesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, 2, order));
+    pml = MakePML({{"Attributes", {1}}, {"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}});
+    mesh::ExtrudePML(smesh, pml, {});
+    REQUIRE(pml.extrusion.depth == Depth::DISTANCE);
+    CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x)
+                     { return std::hypot(x(0), x(1)) - 1.0; }) < 1.0e-12);
+  }
 }
 
 namespace
 {
 
-// Extruded stretch around a point core at the origin, with the profile of a layer of
-// thickness 0.5.
+// Extruded stretch at the distance 1 from a point core at the origin, with the profile of a
+// layer of thickness 0.5.
 pml::Stretch MakeExtrudedStretch(bool frequency_dependent)
 {
   pml::Stretch p;
   p.extruded = true;
+  p.depth = config::PMLData::Extrusion::Depth::DISTANCE;
+  p.distance = 1.0;
   p.geometry.thickness[0] = 0.5;
   p.sigma_max[0] = 3.0;
   p.kappa_max = {2.0, 2.0, 2.0};
@@ -517,17 +547,20 @@ ReferenceProfile(const pml::Stretch &p, double xi, std::complex<double> omega)
   {
     omega = p.reference_frequency;
   }
+  // Beyond the layer, the stretch of its outer edge.
+  const double t = p.geometry.thickness[0];
   auto s = [&](double x)
   {
-    const double shape = std::pow(x / p.geometry.thickness[0], p.order);
+    const double shape = std::pow(std::min(x, t) / t, p.order);
     return 1.0 + (p.kappa_max[0] - 1.0) * shape +
            p.sigma_max[0] * shape / (p.alpha_max[0] * shape + 1i * omega);
   };
   constexpr int n = 2000;
-  std::complex<double> integral = 0.0;
+  const double xi_t = std::min(xi, t);
+  std::complex<double> integral = (xi - xi_t) * s(t);
   for (int i = 0; i < n; i++)
   {
-    const double a = xi * i / n, b = xi * (i + 1) / n;
+    const double a = xi_t * i / n, b = xi_t * (i + 1) / n;
     integral += (b - a) / 6.0 * (s(a) + 4.0 * s(0.5 * (a + b)) + s(b));
   }
   return {s(xi), integral};
@@ -538,8 +571,7 @@ ReferenceProfile(const pml::Stretch &p, double xi, std::complex<double> omega)
 std::array<double, 9> EvalCoeffAt(const pml::Stretch &p, const pml::Background &b,
                                   pml::TensorPart part, std::complex<double> c,
                                   std::complex<double> omega, bool muinv,
-                                  const std::array<double, 3> &x, double xi,
-                                  const std::array<double, 3> &grad_xi)
+                                  const std::array<double, 3> &x)
 {
   pml::ContextHeader header;
   header.part = part;
@@ -547,8 +579,8 @@ std::array<double, 9> EvalCoeffAt(const pml::Stretch &p, const pml::Background &
   header.omega = omega;
   const auto ctx = pml::PackContext(header, p, {0}, {b});
   std::array<double, 9> coeff;
-  REQUIRE(PMLCoeffAt(ctx.data(), 1, x.data(), xi, grad_xi.data(),
-                     muinv ? coeff.data() : nullptr, muinv ? nullptr : coeff.data()));
+  REQUIRE(PMLCoeffAt(ctx.data(), 1, x.data(), muinv ? coeff.data() : nullptr,
+                     muinv ? nullptr : coeff.data()));
   return coeff;
 }
 
@@ -583,13 +615,19 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
 
   SECTION("Identity at the interface")
   {
-    const std::array<double, 3> x = {0.3, -0.5, 1.1}, grad_xi = {0.2, 0.7, -0.1};
-    for (bool magnitude : {false, true})
+    // On the surface, and inside of it (a negative depth, of a point of a sampled curved
+    // surface, is zero).
+    for (double r : {1.0, 0.98})
     {
-      const auto J = pml::EvaluateJacobian(p, x, 0.0, grad_xi, omega, magnitude);
-      for (int k = 0; k < 9; k++)
+      const std::array<double, 3> x = {0.48 * r, -0.6 * r, 0.64 * r};
+      for (bool magnitude : {false, true})
       {
-        CHECK(J[k] == std::complex<double>((k % 4 == 0) ? 1.0 : 0.0, 0.0));
+        const auto J = pml::EvaluateJacobian(p, x, omega, magnitude);
+        for (int k = 0; k < 9; k++)
+        {
+          CHECK_THAT(J[k].real(), Matchers::WithinAbs((k % 4 == 0) ? 1.0 : 0.0, 1.0e-15));
+          CHECK(J[k].imag() == 0.0);
+        }
       }
     }
   }
@@ -617,11 +655,15 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
       const auto [s, xi_t] = ReferenceProfile(p, xi, omega);
       const auto q = (1.0 + xi_t) / r;
       const double s_mag = std::abs(s), q_mag = std::abs(q);
+      const auto s_x = pml::EvaluateStretch(p, x, omega);
+      CHECK(std::abs(s_x[0] - s) < 1.0e-12);
+      CHECK(std::abs(s_x[1] - q) < 1.0e-9);
+      CHECK(std::abs(s_x[2] - q) < 1.0e-9);
       for (bool muinv : {true, false})
       {
         for (auto part : all_parts)
         {
-          const auto coeff = EvalCoeffAt(p, b, part, c, omega, muinv, x, xi, dir);
+          const auto coeff = EvalCoeffAt(p, b, part, c, omega, muinv, x);
           for (int j = 0; j < 3; j++)
           {
             for (int i = 0; i < 3; i++)
@@ -645,9 +687,12 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
 
   SECTION("Cartesian PML on a face of a box")
   {
-    // For rays normal to a face (d ∇ξᵀ = n nᵀ, ∇d = 0), J̃ = I + (s - 1) n nᵀ is the
+    // For normal extrusion of a face (d ∇ξᵀ = n nᵀ, ∇d = 0), J̃ = I + (s - 1) n nᵀ is the
     // diagonal stretch S of the Cartesian PML of the face, and the tensors are the same for
     // an anisotropic, lossy background.
+    auto p_n = p;
+    p_n.depth = config::PMLData::Extrusion::Depth::NORMAL;
+    p_n.plane = {0.0, 0.0, 1.0, 1.0};
     pml::Stretch cartesian;
     cartesian.geometry.inner = {-1.0, 1.0, -1.0, 1.0, -1.0, 1.0};
     cartesian.geometry.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, p.geometry.thickness[0]};
@@ -665,6 +710,10 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
     {
       const std::array<double, 3> x = {0.2, -0.4, 1.0 + xi};
       const auto s = pml::EvaluateStretch(cartesian, x, omega)[2];
+      const auto s_n = pml::EvaluateStretch(p_n, x, omega);
+      CHECK(std::abs(s_n[0] - s) < 1.0e-12);
+      CHECK(s_n[1] == 1.0);
+      CHECK(s_n[2] == 1.0);
       for (bool muinv : {true, false})
       {
         for (auto part : all_parts)
@@ -674,19 +723,13 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
           (muinv ? header.c_muinv : header.c_eps) = c;
           header.omega = omega;
           const auto ctx_s = pml::PackContext(header, cartesian, {0}, {b});
-          const auto ctx_j = pml::PackContext(header, p, {0}, {b});
+          const auto ctx_n = pml::PackContext(header, p_n, {0}, {b});
           std::array<double, 9> coeff_s, coeff_j;
-          const CeedScalar zero[3] = {0.0, 0.0, 0.0};
-          PMLCoeffAt(ctx_s.data(), 1, x.data(), 0.0, zero, muinv ? coeff_s.data() : nullptr,
+          PMLCoeffAt(ctx_s.data(), 1, x.data(), muinv ? coeff_s.data() : nullptr,
                      muinv ? nullptr : coeff_s.data());
-          const bool magnitude = (part == pml::TensorPart::STRETCH_MAGNITUDE_REAL ||
-                                  part == pml::TensorPart::STRETCH_MAGNITUDE_IMAG);
-          const auto s_part = magnitude ? std::complex<double>(std::abs(s)) : s;
-          CeedScalar J_re[9] = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, s_part.real()},
-                     J_im[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, s_part.imag()};
-          const CeedIntScalar *bg = PMLBackgroundData(ctx_j.data(), 1);
-          muinv ? PMLMuInvCoeffJacobian(ctx_j.data(), bg, J_re, J_im, coeff_j.data())
-                : PMLEpsCoeffJacobian(ctx_j.data(), bg, J_re, J_im, coeff_j.data());
+          PMLCoeffAt(ctx_n.data(), 1, x.data(), muinv ? coeff_j.data() : nullptr,
+                     muinv ? nullptr : coeff_j.data());
+          REQUIRE(std::abs(s - 1.0) > 0.01);
           for (int k = 0; k < 9; k++)
           {
             CHECK_THAT(coeff_j[k], Matchers::WithinAbs(coeff_s[k], 1.0e-12));
@@ -697,25 +740,92 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
   }
 }
 
+TEST_CASE("Extruded PML depth gradients", "[pml][Serial]")
+{
+  // ∇ξ, ∇d, and J̃ of each form of the depth against central differences, at points of the
+  // layer away from the kinks of the depth (the ends of the core), for the static and the
+  // frequency-dependent stretch (with α > 0, whose ξ̃ is by quadrature). The points deeper
+  // in the layer (ξ = 0.35) are where ξ̃ - ξ, and its α term, weigh in J̃.
+  using Depth = config::PMLData::Extrusion::Depth;
+  struct Case
+  {
+    Depth depth;
+    std::array<std::array<double, 3>, 2> center;
+    std::array<double, 3> x;
+  };
+  // Plain variables, since Clang 18 cannot capture a structured binding with OpenMP.
+  const auto test = GENERATE_COPY(
+      Case{Depth::NORMAL, {}, {0.3, -0.2, 1.2}},
+      Case{Depth::DISTANCE, {{{0.1, 0.0, 0.0}, {0.1, 0.0, 0.0}}}, {0.5, -0.9, 0.4}},
+      Case{Depth::DISTANCE, {{{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}, {0.6, -0.9, 0.4}},
+      Case{Depth::DISTANCE, {{{0.1, 0.0, 0.0}, {0.1, 0.0, 0.0}}}, {0.748, -0.81, 0.864}},
+      Case{Depth::DISTANCE, {{{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}, {0.749, -1.123, 0.4}});
+  const auto &x = test.x;
+  const bool frequency_dependent = GENERATE(false, true);
+  const std::complex<double> omega = 1.3 + 0.05i;
+  auto p = MakeExtrudedStretch(frequency_dependent);
+  p.depth = test.depth;
+  p.center = test.center;
+  p.distance = 1.0;
+  p.plane = {0.0, 0.0, 1.0, 1.0};
+  auto X = [&](int c, double h)
+  {
+    auto y = x;
+    y[c] += h;
+    return y;
+  };
+  // x̃ = x + (ξ̃(ξ) - ξ) d.
+  auto Stretched = [&](const std::array<double, 3> &y)
+  {
+    const auto dy = pml::EvaluateDepth(p, y);
+    const auto xi_t = ReferenceProfile(p, dy.xi, omega).second;
+    std::array<std::complex<double>, 3> y_t;
+    for (int c = 0; c < 3; c++)
+    {
+      y_t[c] = y[c] + (xi_t - dy.xi) * dy.d[c];
+    }
+    return y_t;
+  };
+  const auto d0 = pml::EvaluateDepth(p, x);
+  REQUIRE(d0.xi > 0.05);
+  REQUIRE(d0.xi < 0.45);
+  const auto J = pml::EvaluateJacobian(p, x, omega);
+  constexpr double h = 1.0e-5;
+  for (int j = 0; j < 3; j++)
+  {
+    const auto dp = pml::EvaluateDepth(p, X(j, h)), dm = pml::EvaluateDepth(p, X(j, -h));
+    CHECK_THAT(d0.grad_xi[j], Matchers::WithinAbs((dp.xi - dm.xi) / (2.0 * h), 1.0e-8));
+    const auto yp = Stretched(X(j, h)), ym = Stretched(X(j, -h));
+    for (int i = 0; i < 3; i++)
+    {
+      CHECK_THAT(d0.grad_d[i + 3 * j],
+                 Matchers::WithinAbs((dp.d[i] - dm.d[i]) / (2.0 * h), 1.0e-8));
+      const auto J_fd = (yp[i] - ym[i]) / (2.0 * h);
+      CHECK_THAT(J[i + 3 * j].real(), Matchers::WithinAbs(J_fd.real(), 1.0e-6));
+      CHECK_THAT(J[i + 3 * j].imag(), Matchers::WithinAbs(J_fd.imag(), 1.0e-6));
+    }
+  }
+}
+
 namespace
 {
 
 // The tensors of the extruded stretch at a quadrature point, evaluated independently of the
-// device helpers from the depth of the mesh nodes, for a point core at the origin and an
-// isotropic background.
+// device helpers, for a layer at the distance r₀ from a point core at the origin (the depth
+// ξ = r - r₀, ∇ξ = x / r) and an isotropic background, with the frequency-dependent stretch
+// evaluated at omega (ignored for a static stretch).
 class ReferenceExtrudedTensor : public mfem::MatrixCoefficient
 {
 private:
   const pml::Stretch &p;
-  const mfem::GridFunction &depth;
   double mu_inv;
-  std::complex<double> eps;
+  std::complex<double> eps, omega;
   bool muinv, imag;
 
 public:
-  ReferenceExtrudedTensor(const pml::Stretch &p, const mfem::GridFunction &depth,
-                          double mu_inv, std::complex<double> eps, bool muinv, bool imag)
-    : mfem::MatrixCoefficient(3), p(p), depth(depth), mu_inv(mu_inv), eps(eps),
+  ReferenceExtrudedTensor(const pml::Stretch &p, double mu_inv, std::complex<double> eps,
+                          std::complex<double> omega, bool muinv, bool imag)
+    : mfem::MatrixCoefficient(3), p(p), mu_inv(mu_inv), eps(eps), omega(omega),
       muinv(muinv), imag(imag)
   {
   }
@@ -724,12 +834,12 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     T.SetIntPoint(&ip);
-    mfem::Vector x(3), grad_xi(3);
+    mfem::Vector x(3), grad_xi(x);
     T.Transform(ip, x);
-    const double xi = depth.GetValue(T, ip);
-    depth.GetGradient(T, grad_xi);
-    const auto [s, xi_t] = ReferenceProfile(p, xi, 0.0);
-    const double r = x.Norml2();
+    const double r = x.Norml2(), xi = std::max(r - p.distance, 0.0);
+    grad_xi = x;
+    grad_xi /= r;
+    const auto [s, xi_t] = ReferenceProfile(p, xi, omega);
     std::array<std::complex<double>, 9> J, adj;
     for (int j = 0; j < 3; j++)
     {
@@ -771,20 +881,30 @@ public:
 TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
           "[spaceoperator][pml][Serial][Parallel]")
 {
-  // Ball of hexahedra with an extruded spherical layer: the libCEED operators of the PML
-  // terms, from the depth and its gradient in the geometry factor data, match MFEM
-  // integrators with the tensors evaluated from the depth of the mesh nodes.
+  // Ball of hexahedra with an extruded spherical layer, also uniformly refined: the
+  // libCEED operators of the PML terms match MFEM integrators with the tensors of the
+  // spherical layer, for the static stretch and the frequency-dependent one with α > 0 at a
+  // complex frequency.
   MPI_Comm comm = Mpi::World();
+  const int refine = GENERATE(0, 1);
+  const bool frequency_dependent = GENERATE(false, true);
+  const std::complex<double> omega = 1.3 + 0.05i;
   auto serial_mesh =
       std::make_unique<mfem::Mesh>(MakeBall(mfem::Element::HEXAHEDRON, 2, 2));
   config::DomainData domains;
   domains.pml = {MakePML()};
   domains.pml[0].reference_frequency = 1.5;
   domains.pml[0].kappa_max.fill(1.5);
+  domains.pml[0].frequency_dependent = frequency_dependent;
+  domains.pml[0].alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
   mesh::ExtrudePML(serial_mesh, domains.pml[0], {});
   std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(comm, *serial_mesh));
-  mesh[0]->SetGeomFactorField(mesh::GetExtrudedPMLDepth(mesh[0]->Get(), domains.pml[0]));
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  for (int l = 0; l < refine; l++)
+  {
+    pmesh->UniformRefinement();
+  }
+  mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
 
   const int pa_order_threshold = BilinearForm::pa_order_threshold;
   const int p_trial = fem::DefaultIntegrationOrder::p_trial;
@@ -804,8 +924,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   REQUIRE(space_op.GetMaterialOp().HasPML());
   const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
   REQUIRE(p.extruded);
-  const auto *depth = mesh[0]->GetGeomFactorField();
-  REQUIRE(depth);
+  REQUIRE(p.frequency_dependent == frequency_dependent);
 
   const auto &pfes = space_op.GetNDSpace().Get();
   const auto &ir = mfem::IntRules.Get(
@@ -816,7 +935,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   {
     mfem::ParBilinearForm a(const_cast<mfem::ParFiniteElementSpace *>(&pfes));
     mfem::Array<int> pml_marker({0, 1}), bulk_marker({1, 0});
-    ReferenceExtrudedTensor pml_coef(p, *depth, 1.0 / 1.5, eps, muinv, imag);
+    ReferenceExtrudedTensor pml_coef(p, 1.0 / 1.5, eps, omega, muinv, imag);
     mfem::ConstantCoefficient bulk_coef(muinv ? 1.0 / 1.5 : 2.5);
     auto *integ_pml = muinv ? static_cast<mfem::BilinearFormIntegrator *>(
                                   new mfem::CurlCurlIntegrator(pml_coef))
@@ -836,27 +955,60 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
   };
 
-  for (bool muinv : {true, false})
+  // (Ar + i Ai) x for the reference of the μ̃⁻¹ or ε̃ terms.
+  auto ApplyReference = [&](bool muinv, const ComplexVector &x, ComplexVector &y)
   {
     auto Ar = AssembleReference(muinv, false), Ai = AssembleReference(muinv, true);
-    auto A = muinv ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
-                   : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    REQUIRE(A);
-    ComplexVector x(A->Width()), y(A->Height()), y_ref(A->Height());
-    x.Real().Randomize(42 + Mpi::Rank(comm));
-    x.Imag().Randomize(4242 + Mpi::Rank(comm));
-    A->Mult(x, y);
-    Vector t(A->Height());
-    Ar->Mult(x.Real(), y_ref.Real());
+    Vector t(y.Size());
+    Ar->Mult(x.Real(), y.Real());
     Ai->Mult(x.Imag(), t);
-    y_ref.Real().Add(-1.0, t);
-    Ar->Mult(x.Imag(), y_ref.Imag());
+    y.Real().Add(-1.0, t);
+    Ar->Mult(x.Imag(), y.Imag());
     Ai->Mult(x.Real(), t);
-    y_ref.Imag().Add(1.0, t);
+    y.Imag().Add(1.0, t);
+  };
+  ComplexVector x(space_op.GetNDSpace().GetTrueVSize()), y(x.Size()), y_ref(x.Size()),
+      t(x.Size());
+  x.Real().Randomize(42 + Mpi::Rank(comm));
+  x.Imag().Randomize(4242 + Mpi::Rank(comm));
+  auto RelErr = [&]()
+  {
     const double norm = linalg::Norml2(comm, y_ref);
     y.Add(-1.0, y_ref);
-    INFO("muinv = " << muinv);
-    CHECK_THAT(linalg::Norml2(comm, y) / norm, Matchers::WithinAbs(0.0, 1.0e-12));
+    return linalg::Norml2(comm, y) / norm;
+  };
+  if (!frequency_dependent)
+  {
+    for (bool muinv : {true, false})
+    {
+      auto A = muinv ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+                     : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      REQUIRE(A);
+      A->Mult(x, y);
+      ApplyReference(muinv, x, y_ref);
+      INFO("muinv = " << muinv);
+      CHECK_THAT(RelErr(), Matchers::WithinAbs(0.0, 1.0e-12));
+    }
+  }
+  else
+  {
+    // K - ω² M + A2(ω), with the bulk terms in K and M, and the PML terms in A2(ω).
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op.GetExtraSystemPMLMatrix(omega, Operator::DIAG_ZERO);
+    REQUIRE(K);
+    REQUIRE(M);
+    REQUIRE(A2);
+    K->Mult(x, y);
+    M->Mult(x, t);
+    y.Add(-omega * omega, t);
+    A2->AddMult(x, y);
+    ApplyReference(true, x, y_ref);
+    ApplyReference(false, x, t);
+    y_ref.Add(-omega * omega, t);
+    // With α > 0, ξ̃ is by 8-point Gauss-Legendre quadrature, here accurate to about 1e-10
+    // at the outer edge of the layer.
+    CHECK_THAT(RelErr(), Matchers::WithinAbs(0.0, 1.0e-10));
   }
   BilinearForm::pa_order_threshold = pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = p_trial;
@@ -912,14 +1064,19 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
     CHECK(iodata.domains.pml[0].sigma_max == std::array<double, 3>{2.0, 2.0, 2.0});
   }
 
-  // The surface cannot have another boundary condition, the layer cannot be refined, and
-  // the stretch parameters are scalars.
+  // The surface cannot have another boundary condition, the layer is refined uniformly or
+  // by nonconformal adaptive refinement, and the stretch parameters are scalars.
   CHECK_THROWS_WITH(IoData(MakeConfig(pml, {{"Absorbing", {{"Attributes", {4}}}}}), false),
                     ContainsSubstring("cannot have another boundary condition"));
   {
     auto config = MakeConfig(pml);
     config["Model"]["Refinement"] = {{"UniformLevels", 1}};
-    CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("refinement"));
+    CHECK_NOTHROW(IoData(config, false));
+    config["Model"]["Refinement"] = {{"MaxIts", 2}};
+    CHECK_NOTHROW(IoData(config, false));
+    config["Model"]["Refinement"]["Nonconformal"] = false;
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("require nonconformal adaptive mesh refinement"));
     config["Problem"]["Type"] = "Transient";
     config["Model"].erase("Refinement");
     CHECK_THROWS(IoData(config, false));

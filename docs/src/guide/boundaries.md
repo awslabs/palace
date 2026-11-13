@@ -92,15 +92,13 @@ can be:
     [Meshed perfectly matched layer](#Meshed-perfectly-matched-layer)).
   - Extruded by *Palace* from farfield boundaries of the mesh when it is loaded, with
     [`config["Boundaries"]["PML"]`](../config/reference.md#config-boundaries-pml): the
-    coordinates are stretched along rays from a core point or segment, for example as a
-    spherical PML on the outer sphere of the domain (see
+    coordinates are stretched along the normal of a flat boundary or along rays from a core
+    point or segment, for example as a spherical PML on the outer sphere of the domain (see
     [Extruded perfectly matched layer](#Extruded-perfectly-matched-layer)).
 
-The meshed PML is the more general one: it terminates flat faces, periodic boundaries may
-cross it, and it supports parallel uniform and adaptive mesh refinement. The extruded PML
-does not require meshing the layer and terminates curved boundaries, but a simulation with
-an extruded PML cannot use parallel uniform or adaptive mesh refinement, anywhere in the
-mesh. Both use the same stretch parameters, and the guidelines on the
+The meshed PML is the more general one: periodic boundaries may cross it. The extruded PML
+does not require meshing the layer, and terminates flat and curved boundaries. Both use the
+same stretch parameters, and the guidelines on the
 [absorption of the layer](#Absorption-and-discretization-of-the-layer),
 [eigenmode simulations and postprocessing](#Eigenmode-simulations-and-postprocessing-with-PML-regions),
 and [linear solvers](#Linear-solvers-with-PML-regions) apply to both.
@@ -169,15 +167,18 @@ example in place of the `"Absorbing"` boundary on the outer sphere of the
 }
 ```
 
-Each geometry node of the boundary moves along its ray from its closest point on a core, by
-default the center of the bounding box of the boundary, or the point or the segment
-`"Center"`, so that each face becomes a column of `"Layers"` prisms (triangles) or hexahedra
-(quadrilaterals), curved on curved meshes. The coordinates are stretched along the rays,
-with the same parameters as `config["Domains"]["PML"]` at the depth into the layer: on a
-sphere, this is the spherical PML. Every face of the boundary must face its closest point on
-the core. Flat boundaries are best terminated by the Cartesian PML of
-`config["Domains"]["PML"]`, since the rays from a point or a segment are not normal to a
-flat face.
+Each geometry node of a flat boundary moves along its normal, and otherwise along its ray
+from its closest point on a core, by default the center of the bounding box of the
+boundary, or the point or the segment `"Center"`, so that each face becomes a column of
+`"Layers"` prisms (triangles) or hexahedra (quadrilaterals), curved on curved meshes. The
+coordinates are stretched along the normal or the rays, with the same parameters as
+`config["Domains"]["PML"]` at the depth into the layer: on a flat boundary, this is the
+Cartesian PML of a face, and on a sphere, the spherical PML. Every face of the boundary must
+face its closest point on the core. The depth is a function of the position: the distance
+from the plane of a flat boundary, or the distance from the core less that of the boundary
+when the boundary is at a constant distance from the core (a sphere around a point or the
+wall of a cylinder around a segment, within 5% of the thickness). Other boundaries are
+rejected.
 
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
@@ -190,14 +191,13 @@ the second-order absorbing boundary to 0.06 dB. For a layered medium which reach
 substrate, a segment `"Center"` normal to the layers and spanning all of the layers which
 reach the boundary keeps each layer in its plane through the PML.
 
-The extruded layer cannot be refined, so that `config["Boundaries"]["PML"]` cannot be
-combined with parallel uniform refinement
-([`"UniformLevels"`](../config/reference.md#config-model-refinement-uniformlevels)) or
+The extruded layer is refined with the rest of the mesh by parallel uniform refinement
+([`"UniformLevels"`](../config/reference.md#config-model-refinement-uniformlevels)) and by
 adaptive mesh refinement
-([`"MaxIts"`](../config/reference.md#config-model-refinement-maxits)) anywhere in the mesh.
-`"SerialUniformLevels"` and the refinement `"Boxes"` and `"Spheres"` are applied before the
-extrusion, and can be used. Ports, periodic, or Floquet boundaries which touch the extruded
-boundary are not supported either.
+([`"MaxIts"`](../config/reference.md#config-model-refinement-maxits)), which must be
+nonconformal for its prisms and hexahedra. `"SerialUniformLevels"` and the refinement
+`"Boxes"` and `"Spheres"` are applied before the extrusion. Ports, periodic, or Floquet
+boundaries which touch the extruded boundary are not supported.
 
 ### Absorption and discretization of the layer
 

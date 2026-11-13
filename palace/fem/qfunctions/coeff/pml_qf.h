@@ -58,24 +58,33 @@
 // magnitudes.
 //
 // For a PML extruded from a boundary of the mesh, the stretch maps the point x at the depth
-// ξ into the layer, along the unit vector d from its closest point p on a core segment, to
+// ξ into the layer, along the unit direction d of the extrusion, to
 //                 x̃ = x + (ξ̃(ξ) - ξ) d ,     ξ̃(ξ) = ∫₀^ξ s(ξ') dξ' ,
 // with the profile s(ξ) above for the depth ξ into the layer. Its Jacobian is
-//                 J̃ = ∂x̃/∂x = I + (s - 1) d ∇ξᵀ + (ξ̃ - ξ) ∇d ,
-// with ∇d = (I - d dᵀ) / |x - p| for p at an end of the core segment and (I - d dᵀ - e eᵀ)
-// / |x - p| inside of it, for its unit direction e. The material tensors are those above
-// for J = J̃, and J̃ = I at the interface with the physical region (ξ = 0). The depth ξ and
-// its gradient are interpolated from the depth of the mesh nodes. On a sphere around a
-// point core, J̃ = s d dᵀ + (r̃ / r) (I - d dᵀ): the spherical PML. With d ∇ξᵀ = n nᵀ and ∇d
-// = 0, it is the Cartesian stretch of a face with normal n. For the tensors T̂, s and |x -
-// p| + ξ̃ - ξ in J̃ are replaced by their magnitudes. The extruded stretch section of the
-// context is:
-//     [25]      1 for an extruded stretch (the Cartesian entries above are then zero)
+//                 J̃ = ∂x̃/∂x = I + (s - 1) d ∇ξᵀ + (ξ̃ - ξ) ∇d .
+// The material tensors are those above for J = J̃, and J̃ = I at the interface with the
+// physical region (ξ = 0). The depth is a closed form of x, for one of two shapes of the
+// surface the layer is extruded from:
+//   - Normal extrusion of a flat surface on the plane n · x = h: d = n, ξ = n · x - h, and
+//     J̃ = I + (s - 1) n nᵀ, the Cartesian stretch along n.
+//   - Radial extrusion of a surface at the distance r₀ from its core (a sphere around a
+//     point, the wall of a cylinder around a segment): d = (x - p) / |x - p| for the
+//     closest point p of x on the core, ξ = |x - p| - r₀, and ∇ξ = d. With
+//     P = ∂(x - p)/∂x, ∇d = (P - d dᵀ) / |x - p|.
+// Negative depths, of points of a sampled curved surface inside of r₀, are zero. On a
+// sphere around a point core, J̃ = s d dᵀ + (r̃ / r) (I - d dᵀ): the spherical PML. For the
+// tensors T̂, s and |x - p| + ξ̃ - ξ in J̃ are replaced by their magnitudes. The extruded
+// stretch section of the context is:
+//     [25]      form of the depth: PALACE_PML_CARTESIAN (then the entries below are zero,
+//               and otherwise the Cartesian entries [1..24] above), PALACE_PML_NORMAL, or
+//               PALACE_PML_DISTANCE
 //     [26..31]  end points of the core segment (a point if they are equal)
 //     [32..35]  layer thickness t, σ_max, κ_max, and α_max
+//     [36]      r₀ for PALACE_PML_DISTANCE
+//     [37..40]  the plane (n, h) of the surface for PALACE_PML_NORMAL
 
 #define PALACE_PML_HEADER_SIZE 17
-#define PALACE_PML_STRETCH_SIZE 36
+#define PALACE_PML_STRETCH_SIZE 41
 #define PALACE_PML_BACKGROUND_SIZE 27
 
 enum
@@ -84,6 +93,13 @@ enum
   PALACE_PML_PART_IM = 1,
   PALACE_PML_PART_MAG_RE = 2,
   PALACE_PML_PART_MAG_IM = 3
+};
+
+enum
+{
+  PALACE_PML_CARTESIAN = 0,
+  PALACE_PML_NORMAL = 1,
+  PALACE_PML_DISTANCE = 2
 };
 
 CEED_QFUNCTION_HELPER CeedInt PMLNumAttr(const CeedIntScalar *ctx)
@@ -352,7 +368,7 @@ CEED_QFUNCTION_HELPER void PMLCartesianJacobian(const CeedIntScalar *ctx,
 // Whether the stretch of the context is that of an extruded PML.
 CEED_QFUNCTION_HELPER bool PMLIsExtruded(const CeedIntScalar *ctx)
 {
-  return ctx[PALACE_PML_HEADER_SIZE + 25].first == 1;
+  return ctx[PALACE_PML_HEADER_SIZE + 25].first != PALACE_PML_CARTESIAN;
 }
 
 // ξ̃ - ξ = ∫₀^ξ (s - 1) dξ' for the extruded stretch: in closed form without the complex
@@ -403,8 +419,9 @@ CEED_QFUNCTION_HELPER void PMLStretchIntegral(const CeedIntScalar *ctx, CeedScal
   *im += q_im;
 }
 
-// Unit vector d from the closest point p of x on the core segment of the extruded stretch,
-// the distance |x - p|, and ∇d (3 x 3, column-major, (∇d)_ij = ∂d_i / ∂x_j).
+// Unit vector d from the closest point p of x on the core segment of the extruded stretch to
+// x, the distance |x - p|, and ∇d (3 x 3, column-major, (∇d)_ij = ∂d_i / ∂x_j), with the
+// Jacobian dp = ∂p/∂x.
 CEED_QFUNCTION_HELPER void PMLRay(const CeedIntScalar *ctx, const CeedScalar x[3],
                                   CeedScalar d[3], CeedScalar *dist, CeedScalar grad_d[9])
 {
@@ -432,26 +449,60 @@ CEED_QFUNCTION_HELPER void PMLRay(const CeedIntScalar *ctx, const CeedScalar x[3
   {
     for (CeedInt i = 0; i < 3; i++)
     {
-      grad_d[i + 3 * j] =
-          ((i == j) - d[i] * d[j] - (inside ? e[i] * e[j] / ee : 0.0)) / *dist;
+      const CeedScalar dp = inside ? e[i] * e[j] / ee : 0.0;
+      grad_d[i + 3 * j] = ((i == j) - dp - d[i] * d[j]) / *dist;
     }
   }
 }
 
-// Jacobian J̃ (complex 3 x 3, column-major) of the extruded stretch at x, for the depth ξ
-// and its gradient, or the one with the magnitudes of the stretch factors.
+// Depth ξ of x into the extruded layer and its gradient, the unit direction d of the
+// extrusion at x and ∇d (3 x 3, column-major), and the distance |x - p| of x from the core
+// (1 for normal extrusion, where ∇d = 0).
+CEED_QFUNCTION_HELPER CeedScalar PMLDepth(const CeedIntScalar *ctx, const CeedScalar x[3],
+                                          CeedScalar grad_xi[3], CeedScalar d[3],
+                                          CeedScalar *dist, CeedScalar grad_d[9])
+{
+  const CeedIntScalar *q = ctx + PALACE_PML_HEADER_SIZE, *plane = q + 37;
+  const CeedInt form = q[25].first;
+  CeedScalar xi;
+  if (form == PALACE_PML_NORMAL)
+  {
+    xi = -plane[3].second;
+    for (CeedInt c = 0; c < 3; c++)
+    {
+      d[c] = grad_xi[c] = plane[c].second;
+      xi += d[c] * x[c];
+    }
+    for (CeedInt k = 0; k < 9; k++)
+    {
+      grad_d[k] = 0.0;
+    }
+    *dist = 1.0;
+  }
+  else
+  {
+    PMLRay(ctx, x, d, dist, grad_d);
+    for (CeedInt c = 0; c < 3; c++)
+    {
+      grad_xi[c] = d[c];
+    }
+    xi = *dist - q[36].second;
+  }
+  return (xi > 0.0) ? xi : 0.0;
+}
+
+// Jacobian J̃ (complex 3 x 3, column-major) of the extruded stretch at x, or the one with
+// the magnitudes of the stretch factors.
 CEED_QFUNCTION_HELPER void PMLExtrudedJacobian(const CeedIntScalar *ctx,
-                                               const CeedScalar x[3], CeedScalar xi,
-                                               const CeedScalar grad_xi[3], bool magnitude,
+                                               const CeedScalar x[3], bool magnitude,
                                                CeedScalar J_re[9], CeedScalar J_im[9])
 {
   const CeedIntScalar *p = ctx + PALACE_PML_HEADER_SIZE;
   const CeedScalar t = p[32].second;
-  CeedScalar s_re, s_im, D_re, D_im, d[3], dist, grad_d[9];
-  PMLStretchFactor(ctx, (xi > 0.0) ? xi / t : 0.0, p[33].second, p[34].second, p[35].second,
-                   &s_re, &s_im);
+  CeedScalar s_re, s_im, D_re, D_im, grad_xi[3], d[3], dist, grad_d[9];
+  const CeedScalar xi = PMLDepth(ctx, x, grad_xi, d, &dist, grad_d);
+  PMLStretchFactor(ctx, xi / t, p[33].second, p[34].second, p[35].second, &s_re, &s_im);
   PMLStretchIntegral(ctx, xi, &D_re, &D_im);
-  PMLRay(ctx, x, d, &dist, grad_d);
   if (magnitude)
   {
     s_re = sqrt(s_re * s_re + s_im * s_im);
@@ -471,12 +522,10 @@ CEED_QFUNCTION_HELPER void PMLExtrudedJacobian(const CeedIntScalar *ctx,
 }
 
 // Requested parts of c μ̃⁻¹ and/or c ε̃ (either may be null) at a quadrature point with the
-// coordinates x, from the Jacobian of the Cartesian stretch, or of the extruded one at the
-// depth ξ with the gradient grad_xi. Returns false (and leaves the coefficients unset) for
-// attributes outside of the PML regions.
+// coordinates x, from the Jacobian of the Cartesian or the extruded stretch. Returns false
+// (and leaves the coefficients unset) for attributes outside of the PML regions.
 CEED_QFUNCTION_HELPER bool PMLCoeffAt(const CeedIntScalar *ctx, CeedInt attr,
-                                      const CeedScalar x[3], CeedScalar xi,
-                                      const CeedScalar grad_xi[3], CeedScalar mu_coeff[9],
+                                      const CeedScalar x[3], CeedScalar mu_coeff[9],
                                       CeedScalar eps_coeff[9])
 {
   const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
@@ -489,7 +538,7 @@ CEED_QFUNCTION_HELPER bool PMLCoeffAt(const CeedIntScalar *ctx, CeedInt attr,
   CeedScalar J_re[9], J_im[9];
   if (PMLIsExtruded(ctx))
   {
-    PMLExtrudedJacobian(ctx, x, xi, grad_xi, magnitude, J_re, J_im);
+    PMLExtrudedJacobian(ctx, x, magnitude, J_re, J_im);
   }
   else
   {

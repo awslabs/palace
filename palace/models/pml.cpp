@@ -185,18 +185,19 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
   }
 
   // The extrusion built the layer of an extruded PML, of known thickness and element size:
-  // the stretch is along its rays, at the depth of the mesh nodes into the layer (the field
-  // of the geometry factor data, see mesh::GetExtrudedPMLDepth).
+  // the stretch is along the direction of the extrusion, at the depth of the form the
+  // extrusion found for the surface.
   if (data.IsExtruded())
   {
-    MFEM_VERIFY(mesh.GetGeomFactorField(),
-                "The extruded PML requires the depth of the mesh nodes into the layer!");
     const auto &ex = data.extrusion;
     LayerGeometry geometry;
     geometry.thickness[0] = ex.thickness;
     stretch = BuildStretch(data, geometry, n_r, {ex.thickness / ex.layers}, fe_order);
     stretch.extruded = true;
+    stretch.depth = ex.depth;
     stretch.center = ex.center;
+    stretch.distance = ex.distance;
+    stretch.plane = ex.plane;
     return;
   }
 
@@ -360,7 +361,7 @@ void PackStretch(const Stretch &stretch, std::complex<double> omega, CeedIntScal
   p[0].first = stretch.order;
   if (stretch.extruded)
   {
-    p[25].first = 1;
+    p[25].first = static_cast<int>(stretch.depth);
     for (int c = 0; c < 3; c++)
     {
       p[26 + c].second = stretch.center[0][c];
@@ -370,6 +371,11 @@ void PackStretch(const Stretch &stretch, std::complex<double> omega, CeedIntScal
     p[33].second = stretch.sigma_max[0];
     p[34].second = stretch.kappa_max[0];
     p[35].second = stretch.alpha_max[0];
+    p[36].second = stretch.distance;
+    for (int c = 0; c < 4; c++)
+    {
+      p[37 + c].second = stretch.plane[c];
+    }
     return;
   }
   for (int f = 0; f < 6; f++)
@@ -393,21 +399,47 @@ std::array<std::complex<double>, 3> EvaluateStretch(const Stretch &stretch,
 {
   std::array<CeedIntScalar, PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE> ctx{};
   PackStretch(stretch, omega, ctx.data());
+  if (stretch.extruded)
+  {
+    const CeedIntScalar *p = ctx.data() + PALACE_PML_HEADER_SIZE;
+    CeedScalar grad_xi[3], d[3], dist, grad_d[9], s_re, s_im, D_re, D_im;
+    const CeedScalar xi = PMLDepth(ctx.data(), x.data(), grad_xi, d, &dist, grad_d);
+    PMLStretchFactor(ctx.data(), xi / p[32].second, p[33].second, p[34].second,
+                     p[35].second, &s_re, &s_im);
+    PMLStretchIntegral(ctx.data(), xi, &D_re, &D_im);
+    const std::complex<double> q =
+        (stretch.depth == config::PMLData::Extrusion::Depth::NORMAL)
+            ? 1.0
+            : 1.0 + std::complex<double>(D_re, D_im) / dist;
+    return {{{s_re, s_im}, q, q}};
+  }
   CeedScalar s_re[3], s_im[3];
   PMLStretch(ctx.data(), x.data(), s_re, s_im);
   return {{{s_re[0], s_im[0]}, {s_re[1], s_im[1]}, {s_re[2], s_im[2]}}};
 }
 
-std::array<std::complex<double>, 9>
-EvaluateJacobian(const Stretch &stretch, const std::array<double, 3> &x, double xi,
-                 const std::array<double, 3> &grad_xi, std::complex<double> omega,
-                 bool magnitude)
+Depth EvaluateDepth(const Stretch &stretch, const std::array<double, 3> &x)
+{
+  MFEM_VERIFY(stretch.extruded, "The depth is only evaluated for an extruded stretch!");
+  std::array<CeedIntScalar, PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE> ctx{};
+  PackStretch(stretch, 0.0, ctx.data());
+  Depth depth;
+  double dist;
+  depth.xi = PMLDepth(ctx.data(), x.data(), depth.grad_xi.data(), depth.d.data(), &dist,
+                      depth.grad_d.data());
+  return depth;
+}
+
+std::array<std::complex<double>, 9> EvaluateJacobian(const Stretch &stretch,
+                                                     const std::array<double, 3> &x,
+                                                     std::complex<double> omega,
+                                                     bool magnitude)
 {
   MFEM_VERIFY(stretch.extruded, "The Jacobian is only evaluated for an extruded stretch!");
   std::array<CeedIntScalar, PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE> ctx{};
   PackStretch(stretch, omega, ctx.data());
   CeedScalar J_re[9], J_im[9];
-  PMLExtrudedJacobian(ctx.data(), x.data(), xi, grad_xi.data(), magnitude, J_re, J_im);
+  PMLExtrudedJacobian(ctx.data(), x.data(), magnitude, J_re, J_im);
   std::array<std::complex<double>, 9> J;
   for (int k = 0; k < 9; k++)
   {

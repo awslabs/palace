@@ -51,13 +51,11 @@ struct CeedQFunctionInfo
 };
 
 // Number of components of the geometry factor quadrature data {attr, w |J|, adj(J)ᵀ / |J|},
-// followed with coords by the physical coordinates of the quadrature points, and then with
-// field by the value and gradient of a scalar field of the mesh nodes (see
+// followed with coords by the physical coordinates of the quadrature points (see
 // Mesh::GetCeedGeomFactorData).
-constexpr CeedInt CeedGeometryDataSize(CeedInt space_dim, CeedInt dim, bool coords = false,
-                                       bool field = false)
+constexpr CeedInt CeedGeometryDataSize(CeedInt space_dim, CeedInt dim, bool coords = false)
 {
-  return 2 + space_dim * dim + (coords ? space_dim : 0) + (field ? 1 + space_dim : 0);
+  return 2 + space_dim * dim + (coords ? space_dim : 0);
 }
 
 // Helper function to get the geometry space dimension, for geometry factor quadrature data
@@ -66,15 +64,13 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
                                       CeedInt *space_dim);
 
 // Assemble libCEED mesh geometry factor quadrature data for use in a partially assembled
-// libCEED operator, with the quadrature point coordinates if coords, and with the value and
-// gradient of the scalar field of the mesh nodes if it is given (see CeedGeometryDataSize).
+// libCEED operator, with the quadrature point coordinates if coords (see
+// CeedGeometryDataSize).
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,
                               CeedVector elem_attr, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr, bool coords = false,
-                              CeedElemRestriction field_restr = nullptr,
-                              CeedBasis field_basis = nullptr, CeedVector field = nullptr);
+                              CeedElemRestriction geom_data_restr, bool coords = false);
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
 // basis objects.

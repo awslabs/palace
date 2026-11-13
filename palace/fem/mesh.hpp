@@ -118,17 +118,13 @@ private:
   mutable std::map<std::vector<int>, CrackSidesEntry> crack_sides;
 
   // Geometry factor data of the domain elements with given (global) domain attributes,
-  // with the physical coordinates of the quadrature points for 3D elements, and the value
-  // and gradient of geom_field if set. Built on demand for each Ceed context.
+  // with the physical coordinates of the quadrature points for 3D elements. Built on demand
+  // for each Ceed context.
   mutable std::map<
       std::vector<int>,
       std::unordered_map<Ceed,
                          std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>>>>
       geom_data_attr;
-
-  // Optional scalar field of the mesh nodes for the geometry factor data of given
-  // attributes.
-  std::unique_ptr<mfem::ParGridFunction> geom_field;
 
 public:
   template <typename... T>
@@ -238,18 +234,10 @@ public:
   // attributes only, for integrators restricted to these elements (see
   // BilinearForm::AddDomainIntegratorOnAttributes). For 3D elements, it also stores the
   // physical coordinates of the quadrature points, for QFunctions with spatially varying
-  // coefficients (such as the PML material tensors), followed by the value and gradient of
-  // the field set with SetGeomFactorField, if any (see ceed::CeedGeometryDataSize). The
-  // shared element subsets do not apply to this data (its active subset is empty).
+  // coefficients (such as the PML material tensors). The shared element subsets do not
+  // apply to this data (its active subset is empty).
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const;
-
-  // Set a scalar field of the mesh nodes (such as the depth into an extruded PML, see
-  // mesh::GetExtrudedPMLDepth) whose value and gradient are stored in the geometry factor
-  // data of given attributes (see GetCeedGeomFactorData), before that data is built. Like
-  // the geometry factor data, it is reset by Update.
-  void SetGeomFactorField(std::unique_ptr<mfem::ParGridFunction> &&field);
-  const mfem::ParGridFunction *GetGeomFactorField() const { return geom_field.get(); }
 
   // Configure the process-local libCEED attributes in the shared active-domain and
   // active-boundary element sets. The sets must be configured before geometry data is

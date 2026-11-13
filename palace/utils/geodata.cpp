@@ -3180,6 +3180,11 @@ void ApplyPMLExtrusion(IoData &iodata, MPI_Comm comm)
       Mpi::Broadcast(n, ex.base_attributes.data(), 0, comm);
       Mpi::Broadcast(1, &ex.back_attribute, 0, comm);
       Mpi::Broadcast(6, ex.center[0].data(), 0, comm);
+      int depth = static_cast<int>(ex.depth);
+      Mpi::Broadcast(1, &depth, 0, comm);
+      ex.depth = static_cast<config::PMLData::Extrusion::Depth>(depth);
+      Mpi::Broadcast(1, &ex.distance, 0, comm);
+      Mpi::Broadcast(4, ex.plane.data(), 0, comm);
     }
     for (std::size_t i = 0; i < pml.attributes.size(); i++)
     {
@@ -3228,18 +3233,41 @@ std::array<double, 3> ClosestPointOnCore(const std::array<std::array<double, 3>,
   return p;
 }
 
+// Largest deviation of the distance of a surface from the core of its radial extrusion from
+// its mean, relative to the thickness of the layer, for the depth of the layer at a
+// constant distance from the core. On the antenna example (a sphere of radius 6 with a
+// layer of thickness 1 in 4 elements), a core 0.05 off the centre changes S11 by 2e-4 dB
+// and 0.007°, a tenth of the change from 4 to 8 layers, 0.1 by 4e-4 dB and 0.02°, and 0.3
+// by 0.013 dB and 0.5°.
+constexpr double PML_DISTANCE_TOL = 0.05;
+
 // Distance of x from the core of an extruded PML, and the unit direction r of the ray of x
-// from its closest point on the core.
+// from its closest point on the core (if r is given).
 double GetRay(const std::array<std::array<double, 3>, 2> &core, const double *x, double *r)
 {
   const auto p = ClosestPointOnCore(core, x);
   const double d = std::sqrt((x[0] - p[0]) * (x[0] - p[0]) + (x[1] - p[1]) * (x[1] - p[1]) +
                              (x[2] - p[2]) * (x[2] - p[2]));
-  for (int c = 0; c < 3; c++)
+  for (int c = 0; r && c < 3; c++)
   {
     r[c] = (d > 0.0) ? (x[c] - p[c]) / d : 0.0;
   }
   return d;
+}
+
+// Whether the point x with the unit normal n is on the plane (n_p, h), n_p · x = h, with
+// the same normal, and whether two planes are the same.
+bool SamePlane(const std::array<double, 4> &plane, const mfem::Vector &n,
+               const mfem::Vector &x, double tol)
+{
+  return plane[0] * n(0) + plane[1] * n(1) + plane[2] * n(2) > 1.0 - 1.0e-10 &&
+         std::abs(plane[0] * x(0) + plane[1] * x(1) + plane[2] * x(2) - plane[3]) <= tol;
+}
+
+bool SamePlane(const std::array<double, 4> &a, const std::array<double, 4> &b, double tol)
+{
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 1.0 - 1.0e-10 &&
+         std::abs(a[3] - b[3]) <= tol;
 }
 
 }  // namespace
@@ -3251,13 +3279,14 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
                 const config::BoundaryData &boundaries)
 {
   // The extruded layer is built on the faces of the boundary with the given attributes.
-  // Each geometry node of a face moves along its ray from its closest point on the core, to
-  // the depths ξ_k = k t / N, k = 1, ..., N: each triangle becomes N prisms and each
-  // quadrilateral N hexahedra. With the face vertices ordered so that their normal points
-  // out of the element below (as for the faces of MFEM meshes on the exterior boundary),
-  // the bottom face of each new element is its face 0, with its outward normal pointing
-  // along the rays (the reference coordinate z of the prism or hexahedron is the depth into
-  // its layer).
+  // Each geometry node of a face moves along its direction d to the depths ξ_k = k t / N,
+  // k = 1, ..., N: each triangle becomes N prisms and each quadrilateral N hexahedra. A
+  // flat surface is extruded along its outward normal, unless a core is configured; any
+  // other surface along the ray of each node from its closest point on the core. With the
+  // face vertices ordered so that their normal points out of the element below (as for the
+  // faces of MFEM meshes on the exterior boundary), the bottom face of each new element is
+  // its face 0, with its outward normal pointing along d (the reference coordinate z of the
+  // prism or hexahedron is the depth into its layer).
   auto &ex = pml.extrusion;
   const mfem::Mesh &mesh = *orig_mesh;
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
@@ -3295,15 +3324,53 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
   MFEM_VERIFY(!faces.empty(), "No boundary elements found for " << surface << "!");
 
   // Sample points of the faces: the uniform points of the geometry order, which include the
-  // vertices.
+  // vertices, with the outward unit normal at each.
   const mfem::GridFunction *nodes = mesh.GetNodes();
   const int order = nodes ? nodes->FESpace()->GetMaxElementOrder() : 1;
-  auto SamplePoints = [order](mfem::Geometry::Type geom) -> const mfem::IntegrationRule &
-  { return mfem::GlobGeometryRefiner.Refine(geom, std::max(order, 2))->RefPts; };
-
-  // The core is, by default, the centre of the bounding box of the surface.
   mfem::IsoparametricTransformation T;
   mfem::Vector x(3), normal(3);
+  auto ForEachSample = [&](int f, auto &&func)
+  {
+    mesh.GetFaceTransformation(f, &T);
+    const auto &ir =
+        mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), std::max(order, 2))->RefPts;
+    for (int j = 0; j < ir.GetNPoints(); j++)
+    {
+      T.SetIntPoint(&ir.IntPoint(j));
+      T.Transform(ir.IntPoint(j), x);
+      mfem::CalcOrtho(T.Jacobian(), normal);
+      normal /= normal.Norml2();
+      func(x, normal);
+    }
+  };
+  mfem::Vector bbmin, bbmax;
+  orig_mesh->GetBoundingBox(bbmin, bbmax);
+  bbmax -= bbmin;
+  const double tol = 1.0e-10 * bbmax.Normlinf();
+
+  // The plane (n, h), n · x = h, of each face, or a zero normal for a curved face, and
+  // whether the surface is flat.
+  std::vector<std::array<double, 4>> face_planes;
+  for (const int f : faces)
+  {
+    std::array<double, 4> plane{};
+    bool flat = true;
+    ForEachSample(f,
+                  [&](const mfem::Vector &x, const mfem::Vector &normal)
+                  {
+                    if (plane == std::array<double, 4>{})
+                    {
+                      plane = {normal(0), normal(1), normal(2), normal * x};
+                    }
+                    flat = flat && SamePlane(plane, normal, x, tol);
+                  });
+    face_planes.push_back(flat ? plane : std::array<double, 4>{});
+  }
+  const bool flat = std::ranges::all_of(face_planes, [&](const auto &plane)
+                                        { return SamePlane(face_planes[0], plane, tol); });
+
+  // The core is, by default, the centre of the bounding box of the surface.
+  const bool normal_extrusion = flat && !ex.has_center;
   if (!ex.has_center)
   {
     std::array<double, 3> lo, hi;
@@ -3311,17 +3378,15 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
     hi.fill(-std::numeric_limits<double>::infinity());
     for (const int f : faces)
     {
-      mesh.GetFaceTransformation(f, &T);
-      const auto &ir = SamplePoints(T.GetGeometryType());
-      for (int j = 0; j < ir.GetNPoints(); j++)
-      {
-        T.Transform(ir.IntPoint(j), x);
-        for (int c = 0; c < 3; c++)
-        {
-          lo[c] = std::min(lo[c], x(c));
-          hi[c] = std::max(hi[c], x(c));
-        }
-      }
+      ForEachSample(f,
+                    [&](const mfem::Vector &x, const mfem::Vector &)
+                    {
+                      for (int c = 0; c < 3; c++)
+                      {
+                        lo[c] = std::min(lo[c], x(c));
+                        hi[c] = std::max(hi[c], x(c));
+                      }
+                    });
     }
     for (int c = 0; c < 3; c++)
     {
@@ -3336,86 +3401,86 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
           : fmt::format("segment [[{}, {}, {}], [{}, {}, {}]]", ex.center[0][0],
                         ex.center[0][1], ex.center[0][2], ex.center[1][0], ex.center[1][1],
                         ex.center[1][2]);
-
-  // Every face must face its closest point on the core (the outward normal makes an acute
-  // angle with the ray): rays from the closest points on a convex set never cross, so the
-  // layer is then valid for any thickness.
+  auto Direction = [&](const double *x, double *d)
   {
-    mfem::Vector bbmin, bbmax;
-    orig_mesh->GetBoundingBox(bbmin, bbmax);
-    bbmax -= bbmin;
-    const double tol = 1.0e-12 * bbmax.Normlinf();
-
-    // The default core of a flat surface, the center of its bounding box, lies in its plane
-    // for an axis-aligned surface, where no face faces it.
-    if (!ex.has_center)
+    if (normal_extrusion)
     {
-      bool flat = true, in_plane = false;
-      mfem::Vector n0(3), x0(3);
-      for (std::size_t i = 0; i < faces.size() && flat; i++)
-      {
-        mesh.GetFaceTransformation(faces[i], &T);
-        const auto &ir = SamplePoints(T.GetGeometryType());
-        for (int j = 0; j < ir.GetNPoints() && flat; j++)
-        {
-          T.SetIntPoint(&ir.IntPoint(j));
-          T.Transform(ir.IntPoint(j), x);
-          mfem::CalcOrtho(T.Jacobian(), normal);
-          normal /= normal.Norml2();
-          if (i == 0 && j == 0)
-          {
-            n0 = normal;
-            x0 = x;
-          }
-          // The surface is flat if all of its normals are the same and all of its points
-          // are in the plane of the first one.
-          x -= x0;
-          flat = (normal * n0 > 1.0 - 1.0e-10) && std::abs(x * n0) <= tol;
-        }
-      }
-      if (flat)
-      {
-        double dist = 0.0;
-        for (int c = 0; c < 3; c++)
-        {
-          dist += (ex.center[0][c] - x0(c)) * n0(c);
-        }
-        in_plane = std::abs(dist) <= tol;
-      }
-      MFEM_VERIFY(
-          !flat || !in_plane,
-          "The default core of the rays of the extrusion from "
-              << surface << ", the center of its bounding box at the " << core
-              << ", lies on the boundary, which is flat: no face of the boundary "
-                 "faces the core! Flat boundaries are best terminated by the meshed "
-                 "PML of config[\"Domains\"][\"PML\"]; otherwise, set "
-                 "\"PML.Center\" behind the boundary.");
+      std::copy_n(face_planes[0].begin(), 3, d);
     }
+    else
+    {
+      GetRay(ex.center, x, d);
+    }
+  };
+
+  // The depth into the layer is n · x - h for normal extrusion. For radial extrusion, every
+  // face must face its closest point on the core (the outward normal makes an acute angle
+  // with the ray): rays from the closest points on a convex set never cross, so the layer
+  // is then valid for any thickness. The depth is |x - p| - r₀, if the distance from the
+  // core is r₀ within the tolerance.
+  std::string depth;
+  if (normal_extrusion)
+  {
+    ex.depth = config::PMLData::Extrusion::Depth::NORMAL;
+    ex.plane = face_planes[0];
+    depth = fmt::format("along its normal ({:.6g}, {:.6g}, {:.6g})", face_planes[0][0],
+                        face_planes[0][1], face_planes[0][2]);
+  }
+  else
+  {
     for (const int f : faces)
     {
-      mesh.GetFaceTransformation(f, &T);
-      const auto &ir = SamplePoints(T.GetGeometryType());
-      for (int j = 0; j < ir.GetNPoints(); j++)
-      {
-        T.SetIntPoint(&ir.IntPoint(j));
-        T.Transform(ir.IntPoint(j), x);
-        mfem::CalcOrtho(T.Jacobian(), normal);
-        double r[3];
-        const double d = GetRay(ex.center, x.GetData(), r);
-        MFEM_VERIFY(
-            d > tol && normal(0) * r[0] + normal(1) * r[1] + normal(2) * r[2] > 0.0,
-            "The face of "
-                << surface << " at (" << x(0) << ", " << x(1) << ", " << x(2)
-                << ") does not face its closest point on the " << core
-                << ", from which the rays of the extrusion start! Every face of the "
-                   "surface must face the core, or the rays would cross (set "
-                   "\"PML.Center\").");
-      }
+      ForEachSample(f,
+                    [&](const mfem::Vector &x, const mfem::Vector &normal)
+                    {
+                      double d[3];
+                      const double dist = GetRay(ex.center, x.GetData(), d);
+                      MFEM_VERIFY(
+                          dist > tol &&
+                              normal(0) * d[0] + normal(1) * d[1] + normal(2) * d[2] > 0.0,
+                          "The face of "
+                              << surface << " at (" << x(0) << ", " << x(1) << ", " << x(2)
+                              << ") does not face its closest point on the " << core
+                              << ", from which the rays of the extrusion start! Every face "
+                                 "of the surface must face the core, or the rays would "
+                                 "cross (set \"PML.Center\").");
+                    });
     }
+    double sum = 0.0, lo = mfem::infinity(), hi = -mfem::infinity();
+    int count = 0;
+    for (const int f : faces)
+    {
+      ForEachSample(f,
+                    [&](const mfem::Vector &x, const mfem::Vector &)
+                    {
+                      const double dist = GetRay(ex.center, x.GetData(), nullptr);
+                      sum += dist;
+                      lo = std::min(lo, dist);
+                      hi = std::max(hi, dist);
+                      count++;
+                    });
+    }
+    ex.distance = sum / count;
+    const double deviation = std::max(hi - ex.distance, ex.distance - lo);
+    MFEM_VERIFY(
+        deviation <= PML_DISTANCE_TOL * ex.thickness,
+        "The extruded PML does not fit "
+            << surface << ", whose distance from the " << core << " is " << lo << " to "
+            << hi << " (the deviation from the mean " << ex.distance << " is "
+            << 100.0 * deviation / ex.thickness << "% of the thickness, above "
+            << 100.0 * PML_DISTANCE_TOL
+            << "%)! The surface must be flat (extruded along its normal) or at a constant "
+               "distance from the core (a sphere around its centre, or the wall of a "
+               "cylinder around its axis). Set \"PML.Center\" to the centre of a sphere "
+               "or the axis of a cylinder.");
+    ex.depth = config::PMLData::Extrusion::Depth::DISTANCE;
+    depth = fmt::format("along the rays from the {}, at the distance {:.6g} (within "
+                        "{:.2g}% of the thickness)",
+                        core, ex.distance, 100.0 * deviation / ex.thickness);
   }
 
-  // Columns of vertices along the rays of the vertices of the surface, and edges of the
-  // surface.
+  // Columns of vertices along the directions of the vertices of the surface, and edges of
+  // the surface.
   const int nv = mesh.GetNV(), ne = mesh.GetNE(), nbe = mesh.GetNBE();
   const int nf = static_cast<int>(faces.size()), N = ex.layers;
   const double h = ex.thickness / N;
@@ -3537,7 +3602,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
   for (const auto &x0 : column_base)
   {
     double r[3];
-    GetRay(ex.center, x0.GetData(), r);
+    Direction(x0.GetData(), r);
     for (int k = 1; k <= N; k++)
     {
       new_mesh->AddVertex(x0(0) + k * h * r[0], x0(1) + k * h * r[1], x0(2) + k * h * r[2]);
@@ -3592,7 +3657,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
 
   // High-order nodes: the original elements keep their geometry, and each node of an
   // extruded element is the point of the face below at its reference coordinates (x, y),
-  // moved along its own ray to its depth.
+  // moved along its own direction to its depth.
   if (nodes)
   {
     const auto *fespace = nodes->FESpace();
@@ -3629,7 +3694,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
           ip_face.Set2(ip.x, ip.y);
           T.Transform(ip_face, x);
           double r[3];
-          GetRay(ex.center, x.GetData(), r);
+          Direction(x.GetData(), r);
           for (int c = 0; c < 3; c++)
           {
             x(c) += (k + ip.z) * h * r[c];
@@ -3661,122 +3726,18 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
           MFEM_ABORT("The element of layer "
                      << (e - ne) % N + 1 << " extruded from " << surface
                      << " has a non-positive Jacobian at (" << x(0) << ", " << x(1) << ", "
-                     << x(2) << "): the faces of the surface must face the " << core
-                     << ", from which the rays of the extrusion start!");
+                     << x(2) << "): the faces of the surface must face their direction ("
+                     << depth << ")!");
         }
       }
     }
   }
 
-  Mpi::Print("Extruded {:d} layer{} of {:d} element{} from {} (thickness {:.3e}, rays "
-             "from the {}), with attributes {} and back boundary attribute {:d}\n",
-             N, (N > 1) ? "s" : "", nf, (nf > 1) ? "s" : "", surface, ex.thickness, core,
+  Mpi::Print("Extruded {:d} layer{} of {:d} element{} from {} (thickness {:.3e}, {}), "
+             "with attributes {} and back boundary attribute {:d}\n",
+             N, (N > 1) ? "s" : "", nf, (nf > 1) ? "s" : "", surface, ex.thickness, depth,
              fmt::join(pml.attributes, ", "), ex.back_attribute);
   orig_mesh = std::move(new_mesh);
-}
-
-std::unique_ptr<mfem::ParGridFunction> GetExtrudedPMLDepth(const mfem::ParMesh &mesh,
-                                                           const config::PMLData &pml)
-{
-  // The nodes of the extruded layer lie on the rays of the nodes of the surface, and the
-  // depth of a node is its distance from the core less that of the node of the surface on
-  // its ray. The rays are identified by the point at unit distance along the ray from its
-  // start on the core.
-  const auto &ex = pml.extrusion;
-  MFEM_VERIFY(mesh.GetNodes(), "The extruded PML requires the mesh nodes!");
-  const mfem::FiniteElementSpace &nodes_fespace = *mesh.GetNodes()->FESpace();
-  auto IsSurface = [&ex](int attr)
-  { return std::ranges::binary_search(ex.attributes, attr); };
-  auto Key = [&ex](const double *x, double *key)
-  {
-    double r[3];
-    const double d = GetRay(ex.center, x, r);
-    for (int c = 0; c < 3; c++)
-    {
-      key[c] = x[c] - (d - 1.0) * r[c];
-    }
-    return d;
-  };
-
-  // Keys and distances of the nodes of the surface (at the nodes of its faces in the space
-  // of the mesh nodes), gathered from all processes.
-  std::vector<double> surface;
-  {
-    const auto *fec = nodes_fespace.FEColl();
-    mfem::IsoparametricTransformation T;
-    mfem::Vector x(3);
-    for (int be = 0; be < mesh.GetNBE(); be++)
-    {
-      if (!IsSurface(mesh.GetBdrAttribute(be)))
-      {
-        continue;
-      }
-      mesh.GetBdrElementTransformation(be, &T);
-      const auto geom = mesh.GetBdrElementGeometry(be);
-      const auto *fe = fec->FiniteElementForGeometry(geom);
-      const mfem::IntegrationRule &ir =
-          fe ? fe->GetNodes() : mfem::GlobGeometryRefiner.Refine(geom, 1)->RefPts;
-      for (int j = 0; j < ir.GetNPoints(); j++)
-      {
-        T.Transform(ir.IntPoint(j), x);
-        double key[3];
-        const double d = Key(x.GetData(), key);
-        surface.insert(surface.end(), {key[0], key[1], key[2], d});
-      }
-    }
-  }
-  {
-    const MPI_Comm comm = mesh.GetComm();
-    int count = static_cast<int>(surface.size());
-    std::vector<int> counts(Mpi::Size(comm)), displs(Mpi::Size(comm));
-    MPI_Allgather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
-    std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
-    std::vector<double> all(displs.back() + counts.back());
-    MPI_Allgatherv(surface.data(), count, MPI_DOUBLE, all.data(), counts.data(),
-                   displs.data(), MPI_DOUBLE, comm);
-    surface = std::move(all);
-  }
-  mfem::KDTree3D tree;
-  for (std::size_t i = 0; i < surface.size() / 4; i++)
-  {
-    tree.AddPoint(&surface[4 * i], static_cast<int>(i));
-  }
-  tree.Sort();
-
-  // Depth of the nodes of the elements of the layer, zero elsewhere.
-  auto *fespace = new mfem::ParFiniteElementSpace(
-      const_cast<mfem::ParMesh *>(&mesh),
-      mfem::FiniteElementCollection::New(nodes_fespace.FEColl()->Name()));
-  auto depth = std::make_unique<mfem::ParGridFunction>(fespace);
-  depth->MakeOwner(const_cast<mfem::FiniteElementCollection *>(fespace->FEColl()));
-  *depth = 0.0;
-  const mfem::GridFunction &nodes = *mesh.GetNodes();
-  mfem::Array<int> dofs, vdofs;
-  double miss = 0.0;
-  for (int e = 0; e < mesh.GetNE(); e++)
-  {
-    if (!std::ranges::binary_search(pml.attributes, mesh.GetAttribute(e)))
-    {
-      continue;
-    }
-    fespace->GetElementDofs(e, dofs);
-    nodes_fespace.GetElementVDofs(e, vdofs);
-    for (int j = 0; j < dofs.Size(); j++)
-    {
-      const double x[3] = {nodes(vdofs[j]), nodes(vdofs[j + dofs.Size()]),
-                           nodes(vdofs[j + 2 * dofs.Size()])};
-      double key[3];
-      const double d = Key(x, key);
-      const int i = tree.FindClosestPoint(key);
-      miss = std::max(miss, std::hypot(key[0] - surface[4 * i], key[1] - surface[4 * i + 1],
-                                       key[2] - surface[4 * i + 2]));
-      (*depth)(dofs[j]) = std::clamp(d - surface[4 * i + 3], 0.0, ex.thickness);
-    }
-  }
-  Mpi::GlobalMax(1, &miss, mesh.GetComm());
-  MFEM_VERIFY(miss < 1.0e-6, "The mesh of the extruded PML is not the extrusion of its "
-                             "surface (it cannot be refined)!");
-  return depth;
 }
 
 // Conformally bisect a set of mesh edges by inserting a midpoint on each and splitting

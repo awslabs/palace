@@ -8,17 +8,14 @@
 
 // Geometry factor quadrature data {attr, w |J|, adj(J)ᵀ / |J|}, optionally followed by the
 // physical coordinates x of the quadrature points (used by QFunctions with spatially
-// varying coefficients, such as the PML material tensors), and then by the value u of a
-// scalar field of the mesh nodes and its gradient ∇u = adj(J)ᵀ / |J| ∇_X u (such as the
-// depth into an extruded PML).
-template <bool COORDS, bool FIELD = false>
+// varying coefficients, such as the PML material tensors).
+template <bool COORDS>
 CEED_QFUNCTION_HELPER int
 f_build_geom_factor_33_impl(CeedInt Q, const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *qw = in[1], *J = in[2], *x = in[COORDS ? 3 : 2],
-                   *u = in[FIELD ? 4 : 2], *grad_u = in[FIELD ? 5 : 2];
+  const CeedScalar *attr = in[0], *qw = in[1], *J = in[2], *x = in[COORDS ? 3 : 2];
   CeedScalar *qd_attr = out[0], *qd_wdetJ = out[0] + Q, *qd_adjJt = out[0] + 2 * Q,
-             *qd_x = out[0] + 11 * Q, *qd_u = out[0] + 14 * Q;
+             *qd_x = out[0] + 11 * Q;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -43,19 +40,6 @@ f_build_geom_factor_33_impl(CeedInt Q, const CeedScalar *const *in, CeedScalar *
       qd_x[i + Q * 1] = x[i + Q * 1];
       qd_x[i + Q * 2] = x[i + Q * 2];
     }
-    if (FIELD)
-    {
-      const CeedScalar grad_u_loc[3] = {grad_u[i + Q * 0], grad_u[i + Q * 1],
-                                        grad_u[i + Q * 2]};
-      qd_u[i] = u[i];
-      for (CeedInt d = 0; d < 3; d++)
-      {
-        qd_u[i + Q * (1 + d)] =
-            (adjJt_loc[d + 0] * grad_u_loc[0] + adjJt_loc[d + 3] * grad_u_loc[1] +
-             adjJt_loc[d + 6] * grad_u_loc[2]) /
-            detJ;
-      }
-    }
   }
   return 0;
 }
@@ -71,12 +55,6 @@ CEED_QFUNCTION(f_build_geom_factor_coords_33)(void *, CeedInt Q,
                                               CeedScalar *const *out)
 {
   return f_build_geom_factor_33_impl<true>(Q, in, out);
-}
-
-CEED_QFUNCTION(f_build_geom_factor_field_33)(void *, CeedInt Q, const CeedScalar *const *in,
-                                             CeedScalar *const *out)
-{
-  return f_build_geom_factor_33_impl<true, true>(Q, in, out);
 }
 
 #endif  // PALACE_LIBCEED_GEOM_33_QF_H
