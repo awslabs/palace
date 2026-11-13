@@ -5,8 +5,10 @@
 #include <cmath>
 #include <complex>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <numbers>
+#include <vector>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -1444,6 +1446,98 @@ MakeFluxRecoveryParMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> smesh)
   return mesh;
 }
 
+// The FluxRecovery entries of an electrostatic postprocessing on the cube of
+// MakeFluxRecoveryCubeMesh without its sheet (no interior sheet face, so the recovery space
+// is not broken, as on the cracked device meshes of the legacy key): 1 = SA on the
+// substrate-air interface z = 0.5 with FluxRecovery, 2 = the same without (the raw field),
+// 3 = MS on the exterior PEC face z = 0, 4 = MA on the exterior face z = 1 (vacuum side).
+IoData FluxRecoveryNoSheetIoData(const std::string &output)
+{
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::ELECTROSTATIC;
+  iodata.problem.verbose = 0;
+  iodata.problem.output = output;
+  iodata.problem.output_formats.paraview = false;
+  iodata.problem.output_formats.gridfunction = false;
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.solver.order = 2;
+  iodata.solver.linear.estimator_tol = 1.0e-14;
+  iodata.solver.linear.estimator_max_it = 10000;
+  config::MaterialData substrate, vacuum;
+  substrate.attributes = {1};
+  substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+  vacuum.attributes = {2};
+  iodata.domains.materials = {substrate, vacuum};
+  iodata.boundaries.pec.attributes = {1};
+  auto AddEntry = [&](int idx, InterfaceDielectric type, int attr, bool flux_recovery)
+  {
+    config::InterfaceDielectricData data;
+    data.type = type;
+    data.t = 2.0e-3;
+    data.epsilon_r = 10.0;
+    data.tandelta = 1.0e-3;
+    data.attributes = {attr};
+    data.flux_recovery = flux_recovery;
+    iodata.boundaries.postpro.dielectric.emplace(idx, data);
+  };
+  AddEntry(1, InterfaceDielectric::SA, 8, true);
+  AddEntry(2, InterfaceDielectric::SA, 8, false);
+  AddEntry(3, InterfaceDielectric::MS, 1, true);
+  AddEntry(4, InterfaceDielectric::MA, 6, true);
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  return iodata;
+}
+
+// The domain energy and the energies of the entries 1-4 for V = 1 - z + 0.2 x y and
+// E = -grad V, with D recovered from E by the electrostatic error estimator as the
+// electrostatic driver builds it.
+std::vector<double> FluxRecoveryNoSheetEnergies(MPI_Comm comm, const std::string &output)
+{
+  IoData iodata = FluxRecoveryNoSheetIoData(output);
+  auto smesh = MakeFluxRecoveryCubeMesh(false);
+  smesh->EnsureNodes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+  LaplaceOperator laplace_op(iodata, mesh);
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+  REQUIRE(post_op.NeedsRecoveredElectricFlux());
+  mfem::FunctionCoefficient V_coeff([](const mfem::Vector &x)
+                                    { return 1.0 - x(2) + 0.2 * x(0) * x(1); });
+  mfem::VectorFunctionCoefficient E_coeff(3,
+                                          [](const mfem::Vector &x, mfem::Vector &v)
+                                          {
+                                            v(0) = -0.2 * x(1);
+                                            v(1) = -0.2 * x(0);
+                                            v(2) = 1.0;
+                                          });
+  GridFunction V(laplace_op.GetH1Space()), E(laplace_op.GetNDSpace());
+  V.Real().ProjectCoefficient(V_coeff);
+  E.Real().ProjectCoefficient(E_coeff);
+  Vector v(laplace_op.GetH1Space().GetTrueVSize()),
+      e(laplace_op.GetNDSpace().GetTrueVSize());
+  V.Real().GetTrueDofs(v);
+  E.Real().GetTrueDofs(e);
+  const auto &linear = iodata.solver.linear;
+  GradFluxErrorEstimator<Vector> estimator(
+      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+      linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg,
+      iodata.boundaries.GetSheetAttributes());
+  REQUIRE(!estimator.GetFluxSpace().IsBroken());
+  Vector d(estimator.GetFluxSpace().GetTrueVSize());
+  estimator.RecoverFlux(e, d);
+  const auto energies = post_op.GetElectrostaticEnergies(v, e, &d);
+  std::vector<double> values = {energies.domain};
+  for (int idx : {1, 2, 3, 4})
+  {
+    values.push_back(energies.interfaces.at(idx).energy);
+  }
+  return values;
+}
+
 // Measurement access for the FluxRecovery cases.
 template <ProblemType solver_t>
 class FluxRecoveryPostOperator : public PostOperator<solver_t>
@@ -1595,6 +1689,33 @@ TEST_CASE_METHOD(test::SharedTempDir, "Recovered flux size mismatch aborts",
                       ContainsSubstring(size_refusal));
     CHECK_NOTHROW(post_op.SetSurfaceResponseCorrectedField(e, &d));
   }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "PostOperator FluxRecovery on a mesh without interior sheet faces matches "
+                 "the pre-integration binary",
+                 "[postoperator][Serial]")
+{
+  // Where the recovery space is not broken (no interior sheet face: a mesh without sheets,
+  // or the cracked device meshes of the legacy key) FluxRecovery keeps its pre-integration
+  // values. The reference values are the pre-integration tree's (9269317f46, the tree of
+  // palace-5c6ca28) for the same computation (P3-17; the probe commit 8534f9063f of branch
+  // upsync/P3B/probe-preinteg, built as the dev build p3b-probe-9269317, np 1), within the
+  // flux recovery's tolerance (EstimatorTol 1e-14; MEASURED: every value within 2e-15
+  // relative, the raw entry 2 included, which takes upstream's surface functional).
+  const auto values = FluxRecoveryNoSheetEnergies(Mpi::World(), temp_dir.string());
+  REQUIRE(values.size() == 5);
+  const std::vector<double> reference = {1.28333333333333122e+00, 8.92520238653244898e-04,
+                                         3.66666666666666833e-04, 1.59993232981066910e-03,
+                                         1.00016919572039689e-04};
+  for (std::size_t i = 0; i < values.size(); i++)
+  {
+    INFO("value " << i << " = " << std::setprecision(17) << values[i] << ", reference "
+                  << reference[i]);
+    CHECK_THAT(values[i], WithinRel(reference[i], 1.0e-12));
+  }
+  // The FluxRecovery entry reads D, not the raw field.
+  CHECK(std::abs(values[1] - values[2]) > 1.0e-3 * values[2]);
 }
 
 TEST_CASE_METHOD(test::SharedTempDir, "Transient FluxRecovery sets the recovered D",
