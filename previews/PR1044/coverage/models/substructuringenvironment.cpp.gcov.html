@@ -1,0 +1,1123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/substructuringenvironment.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - substructuringenvironment.cpp<span style="font-size: 80%;"> (source / <a href="substructuringenvironment.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">95.3&nbsp;%</td>
+            <td class="headerCovTableEntry">569</td>
+            <td class="headerCovTableEntry">542</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-11-12 22:07:22</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">92.9&nbsp;%</td>
+            <td class="headerCovTableEntry">28</td>
+            <td class="headerCovTableEntry">26</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;substructuringsolverimpl.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;cmath&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;limits&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;numeric&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;utility&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;fem/bilinearform.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;fem/coefficient.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;fem/integrator.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;fem/multigrid.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;linalg/amg.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;linalg/iterative.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;linalg/rap.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;utils/timer.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : </span>
+<span id="L20"><span class="lineNum">      20</span>              : namespace palace</span>
+<span id="L21"><span class="lineNum">      21</span>              : {</span>
+<span id="L22"><span class="lineNum">      22</span>              : </span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC tlaBgGNC">          57 : void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector&lt;int&gt; &amp;ids,</span></span>
+<span id="L24"><span class="lineNum">      24</span>              :                                                     const std::vector&lt;Source&gt; &amp;src)</span>
+<span id="L25"><span class="lineNum">      25</span>              : {</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">          57 :   EnsureEnv();</span></span>
+<span id="L27"><span class="lineNum">      27</span> <span class="tlaGNC">          57 :   MPI_Comm comm = parent_fes.GetComm();</span></span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">          57 :   const int K = static_cast&lt;int&gt;(ids.size());</span></span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">          57 :   src_ids = ids;</span></span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">          57 :   src_fp.assign(2 * K, 0.0);</span></span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC">         228 :   std::vector&lt;mfem::Vector&gt; b(K), W(K, mfem::Vector(nt)), q(K, mfem::Vector(nt)),</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">         114 :       z(K, mfem::Vector(nt));</span></span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaGNC">          57 :   std::vector&lt;const mfem::Vector *&gt; X(K);</span></span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">          57 :   std::vector&lt;mfem::Vector *&gt; Y(K);</span></span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">         144 :   for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L36"><span class="lineNum">      36</span>              :   {</span>
+<span id="L37"><span class="lineNum">      37</span>              :     std::array&lt;double, 3&gt; fp;</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">          87 :     b[k] = EnvSource(src[k], fp);</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">          87 :     src_fp[2 * k] = fp[1];</span></span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaGNC">          87 :     src_fp[2 * k + 1] = fp[2];</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">          87 :     W[k] = 0.0;</span></span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaGNC">          87 :     X[k] = &amp;b[k];</span></span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">          87 :     Y[k] = &amp;W[k];</span></span>
+<span id="L44"><span class="lineNum">      44</span>              :   }</span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">          57 :   if (K &gt; 0)</span></span>
+<span id="L46"><span class="lineNum">      46</span>              :   {</span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">          57 :     ApplyAeeInvMulti(X, Y);</span></span>
+<span id="L48"><span class="lineNum">      48</span>              :   }</span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">          57 :   mfem::Vector t(nt);</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">         174 :   auto rows = [&amp;](std::vector&lt;double&gt; &amp;out, int k, const mfem::Vector &amp;v)</span></span>
+<span id="L51"><span class="lineNum">      51</span>              :   {</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">         174 :     const double *vv = v.HostRead();</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">      486786 :     for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L54"><span class="lineNum">      54</span>              :     {</span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">      486612 :       if (is_gamma[i])</span></span>
+<span id="L56"><span class="lineNum">      56</span>              :       {</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">       18480 :         out[static_cast&lt;std::size_t&gt;(gamma_global[i] - gamma_off) * K + k] = vv[i];</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :       }</span>
+<span id="L59"><span class="lineNum">      59</span>              :     }</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">         231 :   };</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">          57 :   SG_rows.assign(static_cast&lt;std::size_t&gt;(gamma_nloc) * K, 0.0);</span></span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">         144 :   for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L63"><span class="lineNum">      63</span>              :   {</span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC">          87 :     Aenv().Mult(W[k], t);</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">          87 :     t.Neg();</span></span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">          87 :     t += b[k];  // g_k = b^E_k|_Gamma - (A_env W_k)|_Gamma</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">          87 :     rows(SG_rows, k, t);</span></span>
+<span id="L68"><span class="lineNum">      68</span>              :     // q_k = (A_env - D_env) W_k - b^E_k, then z_k = A_EE^-1 q_k|_E.</span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">          87 :     Aenv().Mult(W[k], q[k]);</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">          87 :     Denv().Mult(W[k], t);</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">          87 :     q[k] -= t;</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">          87 :     q[k] -= b[k];</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">          87 :     z[k] = 0.0;</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">          87 :     X[k] = &amp;q[k];</span></span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">          87 :     Y[k] = &amp;z[k];</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :   }</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">          57 :   if (K &gt; 0)</span></span>
+<span id="L78"><span class="lineNum">      78</span>              :   {</span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">          57 :     ApplyAeeInvMulti(X, Y);</span></span>
+<span id="L80"><span class="lineNum">      80</span>              :   }</span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">          57 :   SH_rows.assign(static_cast&lt;std::size_t&gt;(gamma_nloc) * K, 0.0);</span></span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">         144 :   for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L83"><span class="lineNum">      83</span>              :   {</span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">          87 :     Aenv().Mult(z[k], t);</span></span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">          87 :     t.Neg();</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">          87 :     t += q[k];  // h_k = q_k|_Gamma - (A_env z_k)|_Gamma</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">          87 :     rows(SH_rows, k, t);</span></span>
+<span id="L88"><span class="lineNum">      88</span>              :   }</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">          57 :   SC.assign(static_cast&lt;std::size_t&gt;(K) * K, 0.0);</span></span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaGNC">         228 :   std::vector&lt;mfem::Vector&gt; KW(K, mfem::Vector(nt)), MD(K, mfem::Vector(nt)),</span></span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC">         114 :       D(K, mfem::Vector(nt));</span></span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">         114 :   std::vector&lt;mfem::Vector&gt; JE(K, mfem::Vector(nt));</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">         144 :   for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L94"><span class="lineNum">      94</span>              :   {</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">          87 :     Kenv().Mult(W[k], KW[k]);</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">          87 :     D[k] = W[k];</span></span>
+<span id="L97"><span class="lineNum">      97</span>              :     if (src[k].HasA())</span>
+<span id="L98"><span class="lineNum">      98</span>              :     {</span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">          18 :       D[k] -= *src[k].a;</span></span>
+<span id="L100"><span class="lineNum">     100</span>              :     }</span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">          87 :     MD[k] = 0.0;</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">          87 :     if (has_sheets)</span></span>
+<span id="L103"><span class="lineNum">     103</span>              :     {</span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">          48 :       MsheetEnv().Mult(D[k], MD[k]);</span></span>
+<span id="L105"><span class="lineNum">     105</span>              :     }</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">          87 :     JE[k] = 0.0;</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :     if (src[k].HasJ())</span>
+<span id="L108"><span class="lineNum">     108</span>              :     {</span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">          69 :       const double *J = src[k].J-&gt;HostRead();</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">          69 :       double *je = JE[k].HostWrite();</span></span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">      181869 :       for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L112"><span class="lineNum">     112</span>              :       {</span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC">      181800 :         je[i] = is_env_int[i] ? J[i] : 0.0;</span></span>
+<span id="L114"><span class="lineNum">     114</span>              :       }</span>
+<span id="L115"><span class="lineNum">     115</span>              :     }</span>
+<span id="L116"><span class="lineNum">     116</span>              :   }</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">          57 :   SB.assign(static_cast&lt;std::size_t&gt;(K) * K, 0.0);</span></span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">         144 :   for (int i = 0; i &lt; K; i++)</span></span>
+<span id="L119"><span class="lineNum">     119</span>              :   {</span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">         246 :     for (int j = 0; j &lt; K; j++)</span></span>
+<span id="L121"><span class="lineNum">     121</span>              :     {</span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">         159 :       const std::size_t ij = static_cast&lt;std::size_t&gt;(i) * K + j;</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">         159 :       SC[ij] = (W[i] * KW[j]) + (D[i] * MD[j]) - (JE[i] * W[j]) - (JE[j] * W[i]);</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">         159 :       SB[ij] = b[i] * W[j];</span></span>
+<span id="L125"><span class="lineNum">     125</span>              :     }</span>
+<span id="L126"><span class="lineNum">     126</span>              :   }</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">          57 :   if (K &gt; 0)</span></span>
+<span id="L128"><span class="lineNum">     128</span>              :   {</span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">          57 :     MPI_Allreduce(MPI_IN_PLACE, SC.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);</span></span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaGNC">          57 :     MPI_Allreduce(MPI_IN_PLACE, SB.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);</span></span>
+<span id="L131"><span class="lineNum">     131</span>              :   }</span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">          57 :   src_ready = true;</span></span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">          57 :   src_saved = false;</span></span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">         114 : }</span></span>
+<span id="L135"><span class="lineNum">     135</span>              : </span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">         159 : bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector&lt;int&gt; &amp;ids,</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :                                                   const std::vector&lt;Source&gt; &amp;src,</span>
+<span id="L138"><span class="lineNum">     138</span>              :                                                   std::vector&lt;int&gt; &amp;col,</span>
+<span id="L139"><span class="lineNum">     139</span>              :                                                   std::vector&lt;char&gt; &amp;need)</span>
+<span id="L140"><span class="lineNum">     140</span>              : {</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">         159 :   col.assign(ids.size(), -1);</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">         159 :   need.assign(ids.size(), 0);</span></span>
+<span id="L143"><span class="lineNum">     143</span>              :   bool ok = true;</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">         462 :   for (std::size_t j = 0; j &lt; ids.size(); j++)</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :   {</span>
+<span id="L146"><span class="lineNum">     146</span>              :     std::array&lt;double, 3&gt; fp;</span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">         303 :     (void)EnvSource(src[j], fp);  // collective: always evaluated</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">         303 :     if (fp[0] == 0.0)</span></span>
+<span id="L149"><span class="lineNum">     149</span>              :     {</span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">         171 :       continue;</span></span>
+<span id="L151"><span class="lineNum">     151</span>              :     }</span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">         255 :     need[j] = 1;</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">         615 :     for (std::size_t k = 0; src_ready &amp;&amp; k &lt; src_ids.size(); k++)</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :     {</span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">         360 :       if (src_ids[k] == ids[j])</span></span>
+<span id="L156"><span class="lineNum">     156</span>              :       {</span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">         180 :         col[j] = static_cast&lt;int&gt;(k);</span></span>
+<span id="L158"><span class="lineNum">     158</span>              :       }</span>
+<span id="L159"><span class="lineNum">     159</span>              :     }</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">         255 :     if (col[j] &lt; 0)</span></span>
+<span id="L161"><span class="lineNum">     161</span>              :     {</span>
+<span id="L162"><span class="lineNum">     162</span>              :       ok = false;</span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">          75 :       continue;</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :     }</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">         180 :     if (region_only)</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :     {</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaUNC tlaBgUNC">           0 :       continue;  // the environment, and so its sources, are those of the model</span></span>
+<span id="L168"><span class="lineNum">     168</span>              :     }</span>
+<span id="L169"><span class="lineNum">     169</span>              :     // Relative to the larger pairing (either may vanish, up to rounding).</span>
+<span id="L170"><span class="lineNum">     170</span>              :     const double scale =</span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC tlaBgGNC">         180 :         std::max({std::abs(fp[1]), std::abs(fp[2]), std::abs(src_fp[2 * col[j]]),</span></span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">         180 :                   std::abs(src_fp[2 * col[j] + 1])});</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">         540 :     for (int q = 0; q &lt; 2; q++)</span></span>
+<span id="L174"><span class="lineNum">     174</span>              :     {</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">         360 :       if (std::abs(fp[1 + q] - src_fp[2 * col[j] + q]) &gt; kFingerprintTol * scale + 1e-300)</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :       {</span>
+<span id="L177"><span class="lineNum">     177</span>              :         ok = false;</span>
+<span id="L178"><span class="lineNum">     178</span>              :       }</span>
+<span id="L179"><span class="lineNum">     179</span>              :     }</span>
+<span id="L180"><span class="lineNum">     180</span>              :   }</span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">         159 :   return ok;</span></span>
+<span id="L182"><span class="lineNum">     182</span>              : }</span>
+<span id="L183"><span class="lineNum">     183</span>              : </span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">         382 : long long SubstructuringSolver::Impl::EnvDirectSize() const</span></span>
+<span id="L185"><span class="lineNum">     185</span>              : {</span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">         382 :   long long env_loc = 0;</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">      749045 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L188"><span class="lineNum">     188</span>              :   {</span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC">      748663 :     if (is_env_int[i] || is_gamma[i])</span></span>
+<span id="L190"><span class="lineNum">     190</span>              :     {</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">      343173 :       env_loc++;</span></span>
+<span id="L192"><span class="lineNum">     192</span>              :     }</span>
+<span id="L193"><span class="lineNum">     193</span>              :   }</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">         382 :   long long env_glob = 0;</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">         382 :   MPI_Allreduce(&amp;env_loc, &amp;env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">         382 :   return env_glob;</span></span>
+<span id="L197"><span class="lineNum">     197</span>              : }</span>
+<span id="L198"><span class="lineNum">     198</span>              : </span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">         163 : void SubstructuringSolver::Impl::MaterializePartial()</span></span>
+<span id="L200"><span class="lineNum">     200</span>              : {</span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">         163 :   BlockTimer bt(Timer::KSP_SETUP);</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :   mfem::Array&lt;int&gt; other;</span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC">      215616 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L204"><span class="lineNum">     204</span>              :   {</span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">      215453 :     if (!is_env_int[i] &amp;&amp; !is_gamma[i])</span></span>
+<span id="L206"><span class="lineNum">     206</span>              :     {</span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">      116662 :       other.Append(i);</span></span>
+<span id="L208"><span class="lineNum">     208</span>              :     }</span>
+<span id="L209"><span class="lineNum">     209</span>              :   }</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">         163 :   env_schur = substructuring::MakePartialFactorization(</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">         489 :       iodata, *EliminateToIdentity(Aenv(), other), InterfaceTrueDofs(), env_partial);</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">         163 :   env_built = (env_schur != nullptr);</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">         163 : }</span></span>
+<span id="L214"><span class="lineNum">     214</span>              : </span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">        1281 : void SubstructuringSolver::Impl::EnsureEnv()</span></span>
+<span id="L216"><span class="lineNum">     216</span>              : {</span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">        1281 :   MFEM_VERIFY(!region_only,</span></span>
+<span id="L218"><span class="lineNum">     218</span>              :               &quot;Substructuring on the mesh of the region cannot solve the environment (an &quot;</span>
+<span id="L219"><span class="lineNum">     219</span>              :               &quot;excitation not in the saved model, or general Dirichlet data): run on the &quot;</span>
+<span id="L220"><span class="lineNum">     220</span>              :               &quot;full mesh!&quot;);</span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaGNC">        1281 :   if (!env_built)</span></span>
+<span id="L222"><span class="lineNum">     222</span>              :   {</span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">         207 :     BlockTimer bt(Timer::KSP_SETUP);</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">         207 :     BuildEnvSubmeshSolver();</span></span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaGNC">         207 :     env_schur = std::make_unique&lt;BackSolveSchurSolver&gt;(</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">         414 :         Aenv(), InterfaceTrueDofs(),</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaGNC">         207 :         [this](const std::vector&lt;const mfem::Vector *&gt; &amp;X,</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :                const std::vector&lt;mfem::Vector *&gt; &amp;Y)</span>
+<span id="L229"><span class="lineNum">     229</span>              :         {</span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaGNC">        1551 :           if (!env_parent_direct)</span></span>
+<span id="L231"><span class="lineNum">     231</span>              :           {</span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC">         522 :             for (std::size_t k = 0; k &lt; X.size(); k++)</span></span>
+<span id="L233"><span class="lineNum">     233</span>              :             {</span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">         471 :               ApplyAeeInvIterative(*X[k], *Y[k]);</span></span>
+<span id="L235"><span class="lineNum">     235</span>              :             }</span>
+<span id="L236"><span class="lineNum">     236</span>              :             return;</span>
+<span id="L237"><span class="lineNum">     237</span>              :           }</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">        1500 :           env_lu_parent-&gt;Mult(X, Y);  // the factor of [A_EE, 0; 0, I]</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">        1500 :           MaskToEnvInterior(Y);</span></span>
+<span id="L240"><span class="lineNum">     240</span>              :         },</span>
+<span id="L241"><span class="lineNum">     241</span>              :         kMaterializeBlock);</span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">         207 :     env_built = true;</span></span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">         207 :   }</span></span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">        1281 : }</span></span>
+<span id="L245"><span class="lineNum">     245</span>              : </span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaGNC">         421 : void SubstructuringSolver::Impl::RecoverEnvInterior(std::vector&lt;mfem::Vector&gt; &amp;u,</span></span>
+<span id="L247"><span class="lineNum">     247</span>              :                                                     const std::vector&lt;mfem::Vector&gt; *f)</span>
+<span id="L248"><span class="lineNum">     248</span>              : {</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">         421 :   if (region_only)</span></span>
+<span id="L250"><span class="lineNum">     250</span>              :   {</span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaUNC tlaBgUNC">           0 :     Mpi::Warning(parent_fes.GetComm(),</span></span>
+<span id="L252"><span class="lineNum">     252</span>              :                  &quot;Substructuring on the mesh of the region writes the fields in the &quot;</span>
+<span id="L253"><span class="lineNum">     253</span>              :                  &quot;region and on the interface only!\n&quot;);</span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaUNC">           0 :     return;</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :   }</span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC tlaBgGNC">         421 :   EnsureEnv();</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">         421 :   const int n = static_cast&lt;int&gt;(u.size());</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">         842 :   std::vector&lt;mfem::Vector&gt; rhs(n, mfem::Vector(nt));</span></span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">         421 :   std::vector&lt;const mfem::Vector *&gt; X(n);</span></span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">         421 :   std::vector&lt;mfem::Vector *&gt; Y(n);</span></span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">         896 :   for (int k = 0; k &lt; n; k++)</span></span>
+<span id="L262"><span class="lineNum">     262</span>              :   {</span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">         475 :     Aenv().Mult(u[k], rhs[k]);</span></span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">         475 :     rhs[k].Neg();</span></span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">         475 :     if (f)</span></span>
+<span id="L266"><span class="lineNum">     266</span>              :     {</span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">          87 :       rhs[k] += (*f)[k];</span></span>
+<span id="L268"><span class="lineNum">     268</span>              :     }</span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">         475 :     X[k] = &amp;rhs[k];</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">         475 :     Y[k] = &amp;rhs[k];  // solve in place</span></span>
+<span id="L271"><span class="lineNum">     271</span>              :   }</span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">         421 :   if (n &gt; 0)</span></span>
+<span id="L273"><span class="lineNum">     273</span>              :   {</span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">         421 :     ApplyAeeInvMulti(X, Y);</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   }</span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">         896 :   for (int k = 0; k &lt; n; k++)</span></span>
+<span id="L277"><span class="lineNum">     277</span>              :   {</span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">         475 :     const double *r = rhs[k].HostRead();</span></span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">         475 :     double *uu = u[k].HostReadWrite();</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">      975356 :     for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L281"><span class="lineNum">     281</span>              :     {</span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">      974881 :       if (is_env_int[i])</span></span>
+<span id="L283"><span class="lineNum">     283</span>              :       {</span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">      400088 :         uu[i] = r[i];</span></span>
+<span id="L285"><span class="lineNum">     285</span>              :       }</span>
+<span id="L286"><span class="lineNum">     286</span>              :     }</span>
+<span id="L287"><span class="lineNum">     287</span>              :   }</span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaGNC">         421 : }</span></span>
+<span id="L289"><span class="lineNum">     289</span>              : </span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaUNC tlaBgUNC">           0 : mfem::DenseMatrix SubstructuringSolver::Impl::EnergyGram(const std::vector&lt;mfem::Vector&gt; &amp;u)</span></span>
+<span id="L291"><span class="lineNum">     291</span>              : {</span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaUNC">           0 :   const int n = static_cast&lt;int&gt;(u.size());</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :   mfem::DenseMatrix E(n);</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaUNC">           0 :   mfem::Vector Ku(nt), t(nt);</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaUNC">           0 :   for (int j = 0; j &lt; n; j++)</span></span>
+<span id="L296"><span class="lineNum">     296</span>              :   {</span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaUNC">           0 :     K_region_e-&gt;Mult(u[j], Ku);</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaUNC">           0 :     Kenv().Mult(u[j], t);</span></span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 :     Ku += t;</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaUNC">           0 :     for (int i = 0; i &lt; n; i++)</span></span>
+<span id="L301"><span class="lineNum">     301</span>              :     {</span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 :       E(i, j) = u[i] * Ku;</span></span>
+<span id="L303"><span class="lineNum">     303</span>              :     }</span>
+<span id="L304"><span class="lineNum">     304</span>              :   }</span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaUNC">           0 :   if (n &gt; 0)</span></span>
+<span id="L306"><span class="lineNum">     306</span>              :   {</span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaUNC">           0 :     MPI_Allreduce(MPI_IN_PLACE, E.GetData(), n * n, MPI_DOUBLE, MPI_SUM,</span></span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaUNC">           0 :                   parent_fes.GetComm());</span></span>
+<span id="L309"><span class="lineNum">     309</span>              :   }</span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaUNC">           0 :   return E;</span></span>
+<span id="L311"><span class="lineNum">     311</span>              : }</span>
+<span id="L312"><span class="lineNum">     312</span>              : </span>
+<span id="L313"><span class="lineNum">     313</span>              : std::array&lt;double, 2&gt;</span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC tlaBgGNC">         648 : SubstructuringSolver::Impl::LiftFingerprint(const mfem::Vector &amp;x,</span></span>
+<span id="L315"><span class="lineNum">     315</span>              :                                             const mfem::Vector &amp;t) const</span>
+<span id="L316"><span class="lineNum">     316</span>              : {</span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">         648 :   const mfem::Vector &amp;r = CachedFingerprintField(0);</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">         648 :   const double rAr = EnvironmentFingerprint()[2];  // r^T A_env r</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">         648 :   double loc[2] = {x * t, r * t}, glob[2];</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">         648 :   MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">         648 :   return {glob[0], glob[0] + 2.0 * glob[1] + rAr};</span></span>
+<span id="L322"><span class="lineNum">     322</span>              : }</span>
+<span id="L323"><span class="lineNum">     323</span>              : </span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">         168 : void SubstructuringSolver::Impl::ComputeModes(const std::vector&lt;int&gt; &amp;ids,</span></span>
+<span id="L325"><span class="lineNum">     325</span>              :                                               const std::vector&lt;mfem::Vector&gt; &amp;x)</span>
+<span id="L326"><span class="lineNum">     326</span>              : {</span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">         168 :   EnsureEnv();</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">         168 :   MPI_Comm comm = parent_fes.GetComm();</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaGNC">         168 :   const int K = static_cast&lt;int&gt;(ids.size());</span></span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">         168 :   mode_ids = ids;</span></span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">         672 :   std::vector&lt;mfem::Vector&gt; t(K, mfem::Vector(nt)), w(K, mfem::Vector(nt));</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC">         168 :   std::vector&lt;int&gt; touches(K, 0);</span></span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">         168 :   mode_fp.assign(2 * K, 0.0);</span></span>
+<span id="L334"><span class="lineNum">     334</span>              :   {</span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">         168 :     std::vector&lt;const mfem::Vector *&gt; X(K);</span></span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaGNC">         492 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L337"><span class="lineNum">     337</span>              :     {</span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC">         324 :       X[k] = &amp;x[k];</span></span>
+<span id="L339"><span class="lineNum">     339</span>              :     }</span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">         168 :     t = EnvApply(X);</span></span>
+<span id="L341"><span class="lineNum">     341</span>              :   }</span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">         492 :   for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L343"><span class="lineNum">     343</span>              :   {</span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">         324 :     const auto fp = LiftFingerprint(x[k], t[k]);</span></span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">         324 :     mode_fp[2 * k] = fp[0];</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">         324 :     mode_fp[2 * k + 1] = fp[1];</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">         324 :     const double *tt = t[k].HostRead();</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">      236546 :     for (int i = 0; i &lt; nt &amp;&amp; !touches[k]; i++)</span></span>
+<span id="L349"><span class="lineNum">     349</span>              :     {</span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">      472311 :       touches[k] = (is_env_int[i] &amp;&amp; tt[i] != 0.0);</span></span>
+<span id="L351"><span class="lineNum">     351</span>              :     }</span>
+<span id="L352"><span class="lineNum">     352</span>              :   }</span>
+<span id="L353"><span class="lineNum">     353</span> <span class="tlaGNC">         168 :   if (K &gt; 0)</span></span>
+<span id="L354"><span class="lineNum">     354</span>              :   {</span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaGNC">         168 :     MPI_Allreduce(MPI_IN_PLACE, touches.data(), K, MPI_INT, MPI_MAX, comm);</span></span>
+<span id="L356"><span class="lineNum">     356</span>              :   }</span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC">         192 :   auto solve_touching = [&amp;](std::vector&lt;mfem::Vector&gt; &amp;in, std::vector&lt;mfem::Vector&gt; &amp;out)</span></span>
+<span id="L358"><span class="lineNum">     358</span>              :   {</span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaGNC">         192 :     std::vector&lt;const mfem::Vector *&gt; X;</span></span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaGNC">         192 :     std::vector&lt;mfem::Vector *&gt; Y;</span></span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">         564 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L362"><span class="lineNum">     362</span>              :     {</span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">         372 :       out[k] = 0.0;</span></span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">         372 :       if (touches[k])</span></span>
+<span id="L365"><span class="lineNum">     365</span>              :       {</span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">         210 :         X.push_back(&amp;in[k]);</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">         210 :         Y.push_back(&amp;out[k]);</span></span>
+<span id="L368"><span class="lineNum">     368</span>              :       }</span>
+<span id="L369"><span class="lineNum">     369</span>              :     }</span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">         192 :     if (!X.empty())</span></span>
+<span id="L371"><span class="lineNum">     371</span>              :     {</span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">         180 :       ApplyAeeInvMulti(X, Y);</span></span>
+<span id="L373"><span class="lineNum">     373</span>              :     }</span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">         192 :   };</span></span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaGNC">         168 :   solve_touching(t, w);</span></span>
+<span id="L376"><span class="lineNum">     376</span>              :   // g = (a - A_env b)|_Gamma, C_kl = x_k . a_l - t_k . b_l  for (a, b) = (t, w) [solve]</span>
+<span id="L377"><span class="lineNum">     377</span>              :   // or (v, z) [energy correction].</span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">         168 :   mfem::Vector tmp(nt);</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">         192 :   auto couplings = [&amp;](const std::vector&lt;mfem::Vector&gt; &amp;a,</span></span>
+<span id="L380"><span class="lineNum">     380</span>              :                        const std::vector&lt;mfem::Vector&gt; &amp;b, std::vector&lt;double&gt; &amp;Grows,</span>
+<span id="L381"><span class="lineNum">     381</span>              :                        std::vector&lt;double&gt; &amp;C)</span>
+<span id="L382"><span class="lineNum">     382</span>              :   {</span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">         192 :     Grows.assign(static_cast&lt;std::size_t&gt;(gamma_nloc) * K, 0.0);</span></span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC">         564 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L385"><span class="lineNum">     385</span>              :     {</span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaGNC">         372 :       Aenv().Mult(b[k], tmp);</span></span>
+<span id="L387"><span class="lineNum">     387</span> <span class="tlaGNC">         372 :       const double *ak = a[k].HostRead(), *tt = tmp.HostRead();</span></span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaGNC">      428588 :       for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L389"><span class="lineNum">     389</span>              :       {</span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaGNC">      428216 :         if (is_gamma[i])</span></span>
+<span id="L391"><span class="lineNum">     391</span>              :         {</span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaGNC">       28122 :           Grows[static_cast&lt;std::size_t&gt;(gamma_global[i] - gamma_off) * K + k] =</span></span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaGNC">       28122 :               ak[i] - tt[i];</span></span>
+<span id="L394"><span class="lineNum">     394</span>              :         }</span>
+<span id="L395"><span class="lineNum">     395</span>              :       }</span>
+<span id="L396"><span class="lineNum">     396</span>              :     }</span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaGNC">         192 :     C.assign(static_cast&lt;std::size_t&gt;(K) * K, 0.0);</span></span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaGNC">         564 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L399"><span class="lineNum">     399</span>              :     {</span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaGNC">        1104 :       for (int l = 0; l &lt; K; l++)</span></span>
+<span id="L401"><span class="lineNum">     401</span>              :       {</span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaGNC">         732 :         C[static_cast&lt;std::size_t&gt;(k) * K + l] = (x[k] * a[l]) - (t[k] * b[l]);</span></span>
+<span id="L403"><span class="lineNum">     403</span>              :       }</span>
+<span id="L404"><span class="lineNum">     404</span>              :     }</span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaGNC">         192 :     if (K &gt; 0)</span></span>
+<span id="L406"><span class="lineNum">     406</span>              :     {</span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaGNC">         192 :       MPI_Allreduce(MPI_IN_PLACE, C.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);</span></span>
+<span id="L408"><span class="lineNum">     408</span>              :     }</span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaGNC">         360 :   };</span></span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaGNC">         168 :   couplings(t, w, G_rows, Cmode);</span></span>
+<span id="L411"><span class="lineNum">     411</span>              :   GK_rows.clear();</span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">         168 :   have_gk = EnergyDiffers();</span></span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaGNC">         168 :   if (have_gk)</span></span>
+<span id="L414"><span class="lineNum">     414</span>              :   {</span>
+<span id="L415"><span class="lineNum">     415</span>              :     // P^T D P blocks: p_k = x_k - w_k (the A-harmonic lift), v_k = D p_k,</span>
+<span id="L416"><span class="lineNum">     416</span>              :     // z_k = A_EE^-1 v_k|_E; subtract them from the A-blocks.</span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">          96 :     std::vector&lt;mfem::Vector&gt; v(K, mfem::Vector(nt)), z(K, mfem::Vector(nt));</span></span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">          72 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L419"><span class="lineNum">     419</span>              :     {</span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaGNC">          48 :       tmp = x[k];</span></span>
+<span id="L421"><span class="lineNum">     421</span> <span class="tlaGNC">          48 :       tmp -= w[k];</span></span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaGNC">          48 :       Denv().Mult(tmp, v[k]);</span></span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">          48 :       touches[k] = 1;  // v_k is generally nonzero in E</span></span>
+<span id="L424"><span class="lineNum">     424</span>              :     }</span>
+<span id="L425"><span class="lineNum">     425</span> <span class="tlaGNC">          24 :     solve_touching(v, z);</span></span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">          24 :     std::vector&lt;double&gt; GD, CD;</span></span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaGNC">          24 :     couplings(v, z, GD, CD);</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">          24 :     GK_rows = G_rows;</span></span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaGNC">        4184 :     for (std::size_t q = 0; q &lt; GK_rows.size(); q++)</span></span>
+<span id="L430"><span class="lineNum">     430</span>              :     {</span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaGNC">        4160 :       GK_rows[q] -= GD[q];</span></span>
+<span id="L432"><span class="lineNum">     432</span>              :     }</span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaGNC">         120 :     for (std::size_t q = 0; q &lt; Cmode.size(); q++)</span></span>
+<span id="L434"><span class="lineNum">     434</span>              :     {</span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaGNC">          96 :       Cmode[q] -= CD[q];</span></span>
+<span id="L436"><span class="lineNum">     436</span>              :     }</span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaGNC">          24 :   }</span></span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaGNC">         168 :   modes_ready = true;</span></span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">         168 :   modes_saved = false;</span></span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaGNC">         168 : }</span></span>
+<span id="L441"><span class="lineNum">     441</span>              : </span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">         168 : bool SubstructuringSolver::Impl::ModesMatch(const std::vector&lt;int&gt; &amp;ids,</span></span>
+<span id="L443"><span class="lineNum">     443</span>              :                                             const std::vector&lt;mfem::Vector&gt; &amp;xd,</span>
+<span id="L444"><span class="lineNum">     444</span>              :                                             std::vector&lt;int&gt; &amp;col) const</span>
+<span id="L445"><span class="lineNum">     445</span>              : {</span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">         168 :   col.assign(ids.size(), -1);</span></span>
+<span id="L447"><span class="lineNum">     447</span> <span class="tlaGNC">         168 :   bool ok = modes_ready;</span></span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaGNC">         168 :   if (region_only)</span></span>
+<span id="L449"><span class="lineNum">     449</span>              :   {</span>
+<span id="L450"><span class="lineNum">     450</span>              :     // The environment is that of the model: the modes are matched by id.</span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaUNC tlaBgUNC">           0 :     for (std::size_t j = 0; j &lt; ids.size(); j++)</span></span>
+<span id="L452"><span class="lineNum">     452</span>              :     {</span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaUNC">           0 :       for (std::size_t k = 0; k &lt; mode_ids.size(); k++)</span></span>
+<span id="L454"><span class="lineNum">     454</span>              :       {</span>
+<span id="L455"><span class="lineNum">     455</span> <span class="tlaUNC">           0 :         col[j] = (mode_ids[k] == ids[j]) ? static_cast&lt;int&gt;(k) : col[j];</span></span>
+<span id="L456"><span class="lineNum">     456</span>              :       }</span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaUNC">           0 :       ok = ok &amp;&amp; col[j] &gt;= 0;</span></span>
+<span id="L458"><span class="lineNum">     458</span>              :     }</span>
+<span id="L459"><span class="lineNum">     459</span>              :     return ok;</span>
+<span id="L460"><span class="lineNum">     460</span>              :   }</span>
+<span id="L461"><span class="lineNum">     461</span>              :   constexpr std::size_t kBlock = 4;  // bounds the memory of the full vectors</span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC tlaBgGNC">         168 :   std::vector&lt;std::array&lt;double, 2&gt;&gt; fps(xd.size());</span></span>
+<span id="L463"><span class="lineNum">     463</span> <span class="tlaGNC">         336 :   for (std::size_t j0 = 0; j0 &lt; xd.size(); j0 += kBlock)</span></span>
+<span id="L464"><span class="lineNum">     464</span>              :   {</span>
+<span id="L465"><span class="lineNum">     465</span> <span class="tlaGNC">         168 :     std::vector&lt;mfem::Vector&gt; x;</span></span>
+<span id="L466"><span class="lineNum">     466</span> <span class="tlaGNC">         168 :     std::vector&lt;const mfem::Vector *&gt; X;</span></span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaGNC">         492 :     for (std::size_t j = j0; j &lt; std::min(xd.size(), j0 + kBlock); j++)</span></span>
+<span id="L468"><span class="lineNum">     468</span>              :     {</span>
+<span id="L469"><span class="lineNum">     469</span> <span class="tlaGNC">         648 :       x.push_back(DirichletField(xd[j]));</span></span>
+<span id="L470"><span class="lineNum">     470</span>              :     }</span>
+<span id="L471"><span class="lineNum">     471</span> <span class="tlaGNC">         492 :     for (const auto &amp;v : x)</span></span>
+<span id="L472"><span class="lineNum">     472</span>              :     {</span>
+<span id="L473"><span class="lineNum">     473</span> <span class="tlaGNC">         324 :       X.push_back(&amp;v);</span></span>
+<span id="L474"><span class="lineNum">     474</span>              :     }</span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaGNC">         168 :     const std::vector&lt;mfem::Vector&gt; t = EnvApply(X);</span></span>
+<span id="L476"><span class="lineNum">     476</span> <span class="tlaGNC">         492 :     for (std::size_t j = j0; j &lt; j0 + x.size(); j++)</span></span>
+<span id="L477"><span class="lineNum">     477</span>              :     {</span>
+<span id="L478"><span class="lineNum">     478</span> <span class="tlaGNC">         324 :       fps[j] = LiftFingerprint(x[j - j0], t[j - j0]);</span></span>
+<span id="L479"><span class="lineNum">     479</span>              :     }</span>
+<span id="L480"><span class="lineNum">     480</span> <span class="tlaGNC">         336 :   }</span></span>
+<span id="L481"><span class="lineNum">     481</span> <span class="tlaGNC">         492 :   for (std::size_t j = 0; j &lt; ids.size(); j++)</span></span>
+<span id="L482"><span class="lineNum">     482</span>              :   {</span>
+<span id="L483"><span class="lineNum">     483</span> <span class="tlaGNC">         852 :     for (std::size_t k = 0; k &lt; mode_ids.size(); k++)</span></span>
+<span id="L484"><span class="lineNum">     484</span>              :     {</span>
+<span id="L485"><span class="lineNum">     485</span> <span class="tlaGNC">         528 :       if (mode_ids[k] == ids[j])</span></span>
+<span id="L486"><span class="lineNum">     486</span>              :       {</span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">         270 :         col[j] = static_cast&lt;int&gt;(k);</span></span>
+<span id="L488"><span class="lineNum">     488</span>              :       }</span>
+<span id="L489"><span class="lineNum">     489</span>              :     }</span>
+<span id="L490"><span class="lineNum">     490</span>              :     const auto &amp;fp = fps[j];</span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaGNC">         324 :     if (col[j] &lt; 0)</span></span>
+<span id="L492"><span class="lineNum">     492</span>              :     {</span>
+<span id="L493"><span class="lineNum">     493</span>              :       ok = false;</span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaGNC">          54 :       continue;</span></span>
+<span id="L495"><span class="lineNum">     495</span>              :     }</span>
+<span id="L496"><span class="lineNum">     496</span> <span class="tlaGNC">         810 :     for (int q = 0; q &lt; 2; q++)</span></span>
+<span id="L497"><span class="lineNum">     497</span>              :     {</span>
+<span id="L498"><span class="lineNum">     498</span> <span class="tlaGNC">         540 :       const double ref = mode_fp[2 * col[j] + q];</span></span>
+<span id="L499"><span class="lineNum">     499</span> <span class="tlaGNC">         540 :       if (std::abs(fp[q] - ref) &gt;</span></span>
+<span id="L500"><span class="lineNum">     500</span> <span class="tlaGNC">         540 :           kFingerprintTol * std::max(std::abs(ref), std::abs(fp[q])) + 1e-300)</span></span>
+<span id="L501"><span class="lineNum">     501</span>              :       {</span>
+<span id="L502"><span class="lineNum">     502</span>              :         ok = false;</span>
+<span id="L503"><span class="lineNum">     503</span>              :       }</span>
+<span id="L504"><span class="lineNum">     504</span>              :     }</span>
+<span id="L505"><span class="lineNum">     505</span>              :   }</span>
+<span id="L506"><span class="lineNum">     506</span>              :   return ok;</span>
+<span id="L507"><span class="lineNum">     507</span>              : }</span>
+<span id="L508"><span class="lineNum">     508</span>              : </span>
+<span id="L509"><span class="lineNum">     509</span> <span class="tlaGNC">        1881 : void SubstructuringSolver::Impl::RowLayout(int w, std::vector&lt;int&gt; &amp;cnt,</span></span>
+<span id="L510"><span class="lineNum">     510</span>              :                                            std::vector&lt;int&gt; &amp;disp) const</span>
+<span id="L511"><span class="lineNum">     511</span>              : {</span>
+<span id="L512"><span class="lineNum">     512</span> <span class="tlaGNC">        1881 :   MPI_Comm comm = parent_fes.GetComm();</span></span>
+<span id="L513"><span class="lineNum">     513</span>              :   const int nranks = Mpi::Size(comm);</span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">        1881 :   cnt.assign(nranks, 0);</span></span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">        1881 :   disp.assign(nranks, 0);</span></span>
+<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">        1881 :   const int mine = gamma_nloc * w;</span></span>
+<span id="L517"><span class="lineNum">     517</span> <span class="tlaGNC">        1881 :   MPI_Allgather(&amp;mine, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);</span></span>
+<span id="L518"><span class="lineNum">     518</span> <span class="tlaGNC">        3133 :   for (int r = 1; r &lt; nranks; r++)</span></span>
+<span id="L519"><span class="lineNum">     519</span>              :   {</span>
+<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">        1252 :     disp[r] = disp[r - 1] + cnt[r - 1];</span></span>
+<span id="L521"><span class="lineNum">     521</span>              :   }</span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">        1881 : }</span></span>
+<span id="L523"><span class="lineNum">     523</span>              : </span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">         491 : std::vector&lt;double&gt; SubstructuringSolver::Impl::GatherRows(const std::vector&lt;double&gt; &amp;rows,</span></span>
+<span id="L525"><span class="lineNum">     525</span>              :                                                            int w) const</span>
+<span id="L526"><span class="lineNum">     526</span>              : {</span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaGNC">         491 :   std::vector&lt;int&gt; cnt, disp;</span></span>
+<span id="L528"><span class="lineNum">     528</span> <span class="tlaGNC">         491 :   RowLayout(w, cnt, disp);</span></span>
+<span id="L529"><span class="lineNum">     529</span> <span class="tlaGNC">         491 :   MPI_Comm comm = parent_fes.GetComm();</span></span>
+<span id="L530"><span class="lineNum">     530</span>              :   const bool root = (Mpi::Rank(comm) == 0);</span>
+<span id="L531"><span class="lineNum">     531</span> <span class="tlaGNC">         491 :   std::vector&lt;double&gt; full;</span></span>
+<span id="L532"><span class="lineNum">     532</span> <span class="tlaGNC">         491 :   if (root)</span></span>
+<span id="L533"><span class="lineNum">     533</span>              :   {</span>
+<span id="L534"><span class="lineNum">     534</span> <span class="tlaGNC">         328 :     full.assign(static_cast&lt;std::size_t&gt;(nG_global) * w, 0.0);</span></span>
+<span id="L535"><span class="lineNum">     535</span>              :   }</span>
+<span id="L536"><span class="lineNum">     536</span> <span class="tlaGNC">         819 :   MPI_Gatherv(rows.data(), gamma_nloc * w, MPI_DOUBLE, root ? full.data() : nullptr,</span></span>
+<span id="L537"><span class="lineNum">     537</span>              :               cnt.data(), disp.data(), MPI_DOUBLE, 0, comm);</span>
+<span id="L538"><span class="lineNum">     538</span> <span class="tlaGNC">         491 :   return full;</span></span>
+<span id="L539"><span class="lineNum">     539</span>              : }</span>
+<span id="L540"><span class="lineNum">     540</span>              : </span>
+<span id="L541"><span class="lineNum">     541</span> <span class="tlaGNC">         631 : void SubstructuringSolver::Impl::ScatterRows(const std::vector&lt;double&gt; &amp;full, int w,</span></span>
+<span id="L542"><span class="lineNum">     542</span>              :                                              std::vector&lt;double&gt; &amp;rows) const</span>
+<span id="L543"><span class="lineNum">     543</span>              : {</span>
+<span id="L544"><span class="lineNum">     544</span> <span class="tlaGNC">         631 :   std::vector&lt;int&gt; cnt, disp;</span></span>
+<span id="L545"><span class="lineNum">     545</span> <span class="tlaGNC">         631 :   RowLayout(w, cnt, disp);</span></span>
+<span id="L546"><span class="lineNum">     546</span> <span class="tlaGNC">         631 :   MPI_Comm comm = parent_fes.GetComm();</span></span>
+<span id="L547"><span class="lineNum">     547</span> <span class="tlaGNC">         631 :   rows.assign(static_cast&lt;std::size_t&gt;(gamma_nloc) * w, 0.0);</span></span>
+<span id="L548"><span class="lineNum">     548</span> <span class="tlaGNC">        1052 :   MPI_Scatterv(Mpi::Rank(comm) == 0 ? full.data() : nullptr, cnt.data(), disp.data(),</span></span>
+<span id="L549"><span class="lineNum">     549</span> <span class="tlaGNC">         631 :                MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);</span></span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaGNC">         631 : }</span></span>
+<span id="L551"><span class="lineNum">     551</span>              : </span>
+<span id="L552"><span class="lineNum">     552</span> <span class="tlaGNC">         207 : void SubstructuringSolver::Impl::BuildEnvSubmeshSolver()</span></span>
+<span id="L553"><span class="lineNum">     553</span>              : {</span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">         207 :   const int mg_levels = iodata.solver.linear.mg_max_levels;</span></span>
+<span id="L555"><span class="lineNum">     555</span>              :   // Direct A_EE (when the environment fits): factor A_env with the</span>
+<span id="L556"><span class="lineNum">     556</span>              :   // non-environment-interior true DOFs eliminated, in the parent space (no submesh</span>
+<span id="L557"><span class="lineNum">     557</span>              :   // transfer per solve). Higher-order H(curl) always takes this path (the iterative</span>
+<span id="L558"><span class="lineNum">     558</span>              :   // submesh solve is validated at order 1 only).</span>
+<span id="L559"><span class="lineNum">     559</span> <span class="tlaGNC">         207 :   const bool hcurl_high_order = magnetostatic &amp;&amp; iodata.solver.order &gt; 1;</span></span>
+<span id="L560"><span class="lineNum">     560</span>              :   MFEM_VERIFY(substructuring::kHasDirectSolver || !hcurl_high_order,</span>
+<span id="L561"><span class="lineNum">     561</span>              :               &quot;Magnetostatic substructuring at order &gt; 1 needs a sparse direct solver!&quot;);</span>
+<span id="L562"><span class="lineNum">     562</span>              :   if (substructuring::kHasDirectSolver &amp;&amp;</span>
+<span id="L563"><span class="lineNum">     563</span> <span class="tlaGNC">         207 :       (EnvDirectSize() &lt;= iodata.solver.substructuring-&gt;direct_max_size ||</span></span>
+<span id="L564"><span class="lineNum">     564</span>              :        hcurl_high_order))</span>
+<span id="L565"><span class="lineNum">     565</span>              :   {</span>
+<span id="L566"><span class="lineNum">     566</span> <span class="tlaGNC">         198 :     non_env_int.SetSize(0);</span></span>
+<span id="L567"><span class="lineNum">     567</span> <span class="tlaGNC">      524904 :     for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L568"><span class="lineNum">     568</span>              :     {</span>
+<span id="L569"><span class="lineNum">     569</span> <span class="tlaGNC">      524706 :       if (!is_env_int[i])</span></span>
+<span id="L570"><span class="lineNum">     570</span>              :       {</span>
+<span id="L571"><span class="lineNum">     571</span> <span class="tlaGNC">      303712 :         non_env_int.Append(i);</span></span>
+<span id="L572"><span class="lineNum">     572</span>              :       }</span>
+<span id="L573"><span class="lineNum">     573</span>              :     }</span>
+<span id="L574"><span class="lineNum">     574</span> <span class="tlaGNC">         198 :     env_A_ee_parent = EliminateToIdentity(Aenv(), non_env_int);</span></span>
+<span id="L575"><span class="lineNum">     575</span> <span class="tlaGNC">         396 :     env_lu_parent = std::make_unique&lt;substructuring::BlockedDirectSolver&gt;(</span></span>
+<span id="L576"><span class="lineNum">     576</span> <span class="tlaGNC">         396 :         substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()));</span></span>
+<span id="L577"><span class="lineNum">     577</span> <span class="tlaGNC">         198 :     env_lu_parent-&gt;SetOperator(*env_A_ee_parent);</span></span>
+<span id="L578"><span class="lineNum">     578</span> <span class="tlaGNC">         198 :     env_parent_direct = true;</span></span>
+<span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">         198 :     return;</span></span>
+<span id="L580"><span class="lineNum">     580</span>              :   }</span>
+<span id="L581"><span class="lineNum">     581</span>              :   // Iterative solve on the environment submesh (very large environment).</span>
+<span id="L582"><span class="lineNum">     582</span> <span class="tlaGNC">           9 :   const bool use_gmg = !magnetostatic &amp;&amp; iodata.solver.order &gt; 1 &amp;&amp; mg_levels &gt; 1;</span></span>
+<span id="L583"><span class="lineNum">     583</span>              : </span>
+<span id="L584"><span class="lineNum">     584</span>              :   // The GMG path needs the submesh owned by a Palace Mesh (CEED attribute maps, FE space</span>
+<span id="L585"><span class="lineNum">     585</span>              :   // hierarchy); otherwise a standalone ParSubMesh suffices.</span>
+<span id="L586"><span class="lineNum">     586</span>              :   if (use_gmg)</span>
+<span id="L587"><span class="lineNum">     587</span>              :   {</span>
+<span id="L588"><span class="lineNum">     588</span>              :     env_mesh_vec.clear();</span>
+<span id="L589"><span class="lineNum">     589</span> <span class="tlaGNC">           6 :     env_mesh_vec.push_back(std::make_unique&lt;Mesh&gt;(std::make_unique&lt;mfem::ParSubMesh&gt;(</span></span>
+<span id="L590"><span class="lineNum">     590</span> <span class="tlaGNC">           6 :         mfem::ParSubMesh::CreateFromDomain(parent, ea_arr))));</span></span>
+<span id="L591"><span class="lineNum">     591</span> <span class="tlaGNC">           3 :     env_submesh = dynamic_cast&lt;mfem::ParSubMesh *&gt;(&amp;env_mesh_vec[0]-&gt;Get());</span></span>
+<span id="L592"><span class="lineNum">     592</span> <span class="tlaGNC">           3 :     env_mesh_vec[0]-&gt;RebuildCeedAttributes();</span></span>
+<span id="L593"><span class="lineNum">     593</span>              :   }</span>
+<span id="L594"><span class="lineNum">     594</span>              :   else</span>
+<span id="L595"><span class="lineNum">     595</span>              :   {</span>
+<span id="L596"><span class="lineNum">     596</span> <span class="tlaGNC">           6 :     env_submesh_owned = std::make_unique&lt;mfem::ParSubMesh&gt;(</span></span>
+<span id="L597"><span class="lineNum">     597</span> <span class="tlaGNC">          12 :         mfem::ParSubMesh::CreateFromDomain(parent, ea_arr));</span></span>
+<span id="L598"><span class="lineNum">     598</span> <span class="tlaGNC">           6 :     env_submesh = env_submesh_owned.get();</span></span>
+<span id="L599"><span class="lineNum">     599</span>              :   }</span>
+<span id="L600"><span class="lineNum">     600</span> <span class="tlaGNC">           9 :   env_pgf.SetSpace(&amp;parent_fes);</span></span>
+<span id="L601"><span class="lineNum">     601</span>              : </span>
+<span id="L602"><span class="lineNum">     602</span> <span class="tlaGNC">           9 :   if (!(use_gmg &amp;&amp; BuildEnvGmg()))</span></span>
+<span id="L603"><span class="lineNum">     603</span>              :   {</span>
+<span id="L604"><span class="lineNum">     604</span>              :     // Single-level submesh Dirichlet solve with wrapped AMG / AMS.</span>
+<span id="L605"><span class="lineNum">     605</span> <span class="tlaGNC">          12 :     env_sfes = std::make_unique&lt;mfem::ParFiniteElementSpace&gt;(env_submesh, fec.get());</span></span>
+<span id="L606"><span class="lineNum">     606</span> <span class="tlaGNC">           6 :     env_solve_fes = env_sfes.get();</span></span>
+<span id="L607"><span class="lineNum">     607</span> <span class="tlaGNC">           6 :     env_sgf.SetSpace(env_solve_fes);</span></span>
+<span id="L608"><span class="lineNum">     608</span> <span class="tlaGNC">           6 :     ComputeEnvEss();</span></span>
+<span id="L609"><span class="lineNum">     609</span> <span class="tlaGNC">          12 :     env_A_ee = AssembleEnvSubmesh();</span></span>
+<span id="L610"><span class="lineNum">     610</span>              :     {</span>
+<span id="L611"><span class="lineNum">     611</span> <span class="tlaGNC">           6 :       std::unique_ptr&lt;mfem::HypreParMatrix&gt; e(env_A_ee-&gt;EliminateRowsCols(env_ess));</span></span>
+<span id="L612"><span class="lineNum">     612</span>              :     }</span>
+<span id="L613"><span class="lineNum">     613</span> <span class="tlaGNC">           6 :     MPI_Comm comm = env_solve_fes-&gt;GetComm();</span></span>
+<span id="L614"><span class="lineNum">     614</span>              :     {</span>
+<span id="L615"><span class="lineNum">     615</span> <span class="tlaGNC">           6 :       std::unique_ptr&lt;Solver&lt;Operator&gt;&gt; pc;</span></span>
+<span id="L616"><span class="lineNum">     616</span> <span class="tlaGNC">           6 :       if (magnetostatic)</span></span>
+<span id="L617"><span class="lineNum">     617</span>              :       {</span>
+<span id="L618"><span class="lineNum">     618</span> <span class="tlaGNC">           3 :         auto ams = std::make_unique&lt;mfem::HypreAMS&gt;(env_solve_fes);</span></span>
+<span id="L619"><span class="lineNum">     619</span> <span class="tlaGNC">           3 :         ams-&gt;SetPrintLevel(0);</span></span>
+<span id="L620"><span class="lineNum">     620</span> <span class="tlaGNC">           6 :         pc = std::make_unique&lt;MfemWrapperSolver&lt;Operator&gt;&gt;(std::move(ams), true, false,</span></span>
+<span id="L621"><span class="lineNum">     621</span> <span class="tlaGNC">           6 :                                                            false);</span></span>
+<span id="L622"><span class="lineNum">     622</span>              :       }</span>
+<span id="L623"><span class="lineNum">     623</span>              :       else</span>
+<span id="L624"><span class="lineNum">     624</span>              :       {</span>
+<span id="L625"><span class="lineNum">     625</span> <span class="tlaGNC">           3 :         pc = std::make_unique&lt;MfemWrapperSolver&lt;Operator&gt;&gt;(</span></span>
+<span id="L626"><span class="lineNum">     626</span> <span class="tlaGNC">           6 :             std::make_unique&lt;BoomerAmgSolver&gt;(1, 1, true, 0), true, false, false);</span></span>
+<span id="L627"><span class="lineNum">     627</span>              :       }</span>
+<span id="L628"><span class="lineNum">     628</span> <span class="tlaGNC">           6 :       auto pcg = std::make_unique&lt;CgSolver&lt;Operator&gt;&gt;(comm, 0);</span></span>
+<span id="L629"><span class="lineNum">     629</span> <span class="tlaGNC">           6 :       pcg-&gt;SetInitialGuess(false);</span></span>
+<span id="L630"><span class="lineNum">     630</span>              :       pcg-&gt;SetRelTol(kEnvCgTol);</span>
+<span id="L631"><span class="lineNum">     631</span>              :       pcg-&gt;SetAbsTol(std::numeric_limits&lt;double&gt;::epsilon());</span>
+<span id="L632"><span class="lineNum">     632</span>              :       pcg-&gt;SetMaxIter(kEnvCgMaxIts);</span>
+<span id="L633"><span class="lineNum">     633</span> <span class="tlaGNC">          12 :       env_ksp = std::make_unique&lt;KspSolver&gt;(std::move(pcg), std::move(pc));</span></span>
+<span id="L634"><span class="lineNum">     634</span> <span class="tlaGNC">           6 :       env_ksp-&gt;SetOperators(*env_A_ee, *env_A_ee);</span></span>
+<span id="L635"><span class="lineNum">     635</span>              :     }</span>
+<span id="L636"><span class="lineNum">     636</span>              :   }</span>
+<span id="L637"><span class="lineNum">     637</span>              : </span>
+<span id="L638"><span class="lineNum">     638</span> <span class="tlaGNC">           9 :   env_srhs.SetSize(env_solve_fes-&gt;GetTrueVSize());</span></span>
+<span id="L639"><span class="lineNum">     639</span> <span class="tlaGNC">           9 :   env_ssol.SetSize(env_solve_fes-&gt;GetTrueVSize());</span></span>
+<span id="L640"><span class="lineNum">     640</span>              :   env_srhs.UseDevice(true);</span>
+<span id="L641"><span class="lineNum">     641</span>              :   env_ssol.UseDevice(true);</span>
+<span id="L642"><span class="lineNum">     642</span>              : }</span>
+<span id="L643"><span class="lineNum">     643</span>              : </span>
+<span id="L644"><span class="lineNum">     644</span> <span class="tlaGNC">           6 : void SubstructuringSolver::Impl::ComputeEnvEss()</span></span>
+<span id="L645"><span class="lineNum">     645</span>              : {</span>
+<span id="L646"><span class="lineNum">     646</span> <span class="tlaGNC">           6 :   mfem::Vector t(nt);</span></span>
+<span id="L647"><span class="lineNum">     647</span> <span class="tlaGNC">         856 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L648"><span class="lineNum">     648</span>              :   {</span>
+<span id="L649"><span class="lineNum">     649</span> <span class="tlaGNC">        1470 :     t(i) = is_env_int[i] ? 0.0 : 1.0;</span></span>
+<span id="L650"><span class="lineNum">     650</span>              :   }</span>
+<span id="L651"><span class="lineNum">     651</span> <span class="tlaGNC">           6 :   mfem::ParGridFunction pg(&amp;parent_fes), sg(env_solve_fes);</span></span>
+<span id="L652"><span class="lineNum">     652</span>              :   pg.SetFromTrueDofs(t);</span>
+<span id="L653"><span class="lineNum">     653</span>              :   sg = 0.0;</span>
+<span id="L654"><span class="lineNum">     654</span> <span class="tlaGNC">           6 :   env_submesh-&gt;Transfer(pg, sg);</span></span>
+<span id="L655"><span class="lineNum">     655</span> <span class="tlaGNC">           6 :   mfem::Vector st(env_solve_fes-&gt;GetTrueVSize());</span></span>
+<span id="L656"><span class="lineNum">     656</span> <span class="tlaGNC">           6 :   sg.GetTrueDofs(st);</span></span>
+<span id="L657"><span class="lineNum">     657</span>              :   const double *sv = st.HostRead();</span>
+<span id="L658"><span class="lineNum">     658</span> <span class="tlaGNC">           6 :   env_ess.SetSize(0);</span></span>
+<span id="L659"><span class="lineNum">     659</span> <span class="tlaGNC">         496 :   for (int i = 0; i &lt; st.Size(); i++)</span></span>
+<span id="L660"><span class="lineNum">     660</span>              :   {</span>
+<span id="L661"><span class="lineNum">     661</span> <span class="tlaGNC">         490 :     if (std::abs(sv[i]) &gt; 0.5)  // fabs: ND transfer may flip the marker's sign</span></span>
+<span id="L662"><span class="lineNum">     662</span>              :     {</span>
+<span id="L663"><span class="lineNum">     663</span> <span class="tlaGNC">         260 :       env_ess.Append(i);</span></span>
+<span id="L664"><span class="lineNum">     664</span>              :     }</span>
+<span id="L665"><span class="lineNum">     665</span>              :   }</span>
+<span id="L666"><span class="lineNum">     666</span> <span class="tlaGNC">          12 : }</span></span>
+<span id="L667"><span class="lineNum">     667</span>              : </span>
+<span id="L668"><span class="lineNum">     668</span>              : mfem::Array&lt;int&gt;</span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">           6 : SubstructuringSolver::Impl::EssentialSubmeshAttributes(mfem::ParSubMesh &amp;submesh,</span></span>
+<span id="L670"><span class="lineNum">     670</span>              :                                                        const mfem::Vector &amp;marker)</span>
+<span id="L671"><span class="lineNum">     671</span>              : {</span>
+<span id="L672"><span class="lineNum">     672</span> <span class="tlaGNC">           6 :   mfem::ParFiniteElementSpace scratch(&amp;submesh, fec.get());</span></span>
+<span id="L673"><span class="lineNum">     673</span>              :   std::set&lt;int&gt; ess_set;</span>
+<span id="L674"><span class="lineNum">     674</span>              :   {</span>
+<span id="L675"><span class="lineNum">     675</span> <span class="tlaGNC">           6 :     mfem::ParGridFunction pg(&amp;parent_fes), sg(&amp;scratch);</span></span>
+<span id="L676"><span class="lineNum">     676</span>              :     pg.SetFromTrueDofs(marker);</span>
+<span id="L677"><span class="lineNum">     677</span>              :     sg = 0.0;</span>
+<span id="L678"><span class="lineNum">     678</span> <span class="tlaGNC">           6 :     submesh.Transfer(pg, sg);</span></span>
+<span id="L679"><span class="lineNum">     679</span>              :     mfem::Vector st(scratch.GetTrueVSize());</span>
+<span id="L680"><span class="lineNum">     680</span> <span class="tlaGNC">           6 :     sg.GetTrueDofs(st);</span></span>
+<span id="L681"><span class="lineNum">     681</span>              :     const double *sv = st.HostRead();</span>
+<span id="L682"><span class="lineNum">     682</span> <span class="tlaGNC">        1626 :     for (int i = 0; i &lt; st.Size(); i++)</span></span>
+<span id="L683"><span class="lineNum">     683</span>              :     {</span>
+<span id="L684"><span class="lineNum">     684</span> <span class="tlaGNC">        1620 :       if (std::abs(sv[i]) &gt; 0.5)</span></span>
+<span id="L685"><span class="lineNum">     685</span>              :       {</span>
+<span id="L686"><span class="lineNum">     686</span>              :         ess_set.insert(i);</span>
+<span id="L687"><span class="lineNum">     687</span>              :       }</span>
+<span id="L688"><span class="lineNum">     688</span>              :     }</span>
+<span id="L689"><span class="lineNum">     689</span> <span class="tlaGNC">           6 :   }</span></span>
+<span id="L690"><span class="lineNum">     690</span>              :   MPI_Comm comm = submesh.GetComm();</span>
+<span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC">           6 :   const int lbmax = submesh.bdr_attributes.Size() ? submesh.bdr_attributes.Max() : 0;</span></span>
+<span id="L692"><span class="lineNum">     692</span> <span class="tlaGNC">           6 :   int bmax = 0;</span></span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaGNC">           6 :   MPI_Allreduce(&amp;lbmax, &amp;bmax, 1, MPI_INT, MPI_MAX, comm);</span></span>
+<span id="L694"><span class="lineNum">     694</span> <span class="tlaGNC">           6 :   std::vector&lt;int&gt; all_in(bmax, 1), has_dofs(bmax, 0);</span></span>
+<span id="L695"><span class="lineNum">     695</span> <span class="tlaGNC">          30 :   for (int a = 1; a &lt;= bmax; a++)</span></span>
+<span id="L696"><span class="lineNum">     696</span>              :   {</span>
+<span id="L697"><span class="lineNum">     697</span>              :     mfem::Array&lt;int&gt; m(bmax);</span>
+<span id="L698"><span class="lineNum">     698</span>              :     m = 0;</span>
+<span id="L699"><span class="lineNum">     699</span> <span class="tlaGNC">          24 :     m[a - 1] = 1;</span></span>
+<span id="L700"><span class="lineNum">     700</span>              :     mfem::Array&lt;int&gt; adofs;</span>
+<span id="L701"><span class="lineNum">     701</span> <span class="tlaGNC">          24 :     scratch.GetEssentialTrueDofs(m, adofs);</span></span>
+<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC">          24 :     has_dofs[a - 1] = (adofs.Size() &gt; 0);</span></span>
+<span id="L703"><span class="lineNum">     703</span> <span class="tlaGNC">         515 :     for (int d : adofs)</span></span>
+<span id="L704"><span class="lineNum">     704</span>              :     {</span>
+<span id="L705"><span class="lineNum">     705</span> <span class="tlaGNC">         500 :       if (!ess_set.contains(d))</span></span>
+<span id="L706"><span class="lineNum">     706</span>              :       {</span>
+<span id="L707"><span class="lineNum">     707</span> <span class="tlaGNC">           9 :         all_in[a - 1] = 0;</span></span>
+<span id="L708"><span class="lineNum">     708</span> <span class="tlaGNC">           9 :         break;</span></span>
+<span id="L709"><span class="lineNum">     709</span>              :       }</span>
+<span id="L710"><span class="lineNum">     710</span>              :     }</span>
+<span id="L711"><span class="lineNum">     711</span>              :   }</span>
+<span id="L712"><span class="lineNum">     712</span> <span class="tlaGNC">           6 :   std::vector&lt;int&gt; g_all_in(bmax), g_has(bmax);</span></span>
+<span id="L713"><span class="lineNum">     713</span> <span class="tlaGNC">           6 :   MPI_Allreduce(all_in.data(), g_all_in.data(), bmax, MPI_INT, MPI_LAND, comm);</span></span>
+<span id="L714"><span class="lineNum">     714</span> <span class="tlaGNC">           6 :   MPI_Allreduce(has_dofs.data(), g_has.data(), bmax, MPI_INT, MPI_LOR, comm);</span></span>
+<span id="L715"><span class="lineNum">     715</span>              :   mfem::Array&lt;int&gt; ess_attr;</span>
+<span id="L716"><span class="lineNum">     716</span> <span class="tlaGNC">          30 :   for (int a = 1; a &lt;= bmax; a++)</span></span>
+<span id="L717"><span class="lineNum">     717</span>              :   {</span>
+<span id="L718"><span class="lineNum">     718</span> <span class="tlaGNC">          24 :     if (g_all_in[a - 1] &amp;&amp; g_has[a - 1])</span></span>
+<span id="L719"><span class="lineNum">     719</span>              :     {</span>
+<span id="L720"><span class="lineNum">     720</span> <span class="tlaGNC">           9 :       ess_attr.Append(a);</span></span>
+<span id="L721"><span class="lineNum">     721</span>              :     }</span>
+<span id="L722"><span class="lineNum">     722</span>              :   }</span>
+<span id="L723"><span class="lineNum">     723</span> <span class="tlaGNC">           6 :   return ess_attr;</span></span>
+<span id="L724"><span class="lineNum">     724</span> <span class="tlaGNC">           6 : }</span></span>
+<span id="L725"><span class="lineNum">     725</span>              : </span>
+<span id="L726"><span class="lineNum">     726</span> <span class="tlaGNC">           3 : bool SubstructuringSolver::Impl::BuildEnvGmg()</span></span>
+<span id="L727"><span class="lineNum">     727</span>              : {</span>
+<span id="L728"><span class="lineNum">     728</span> <span class="tlaGNC">           3 :   const int order = iodata.solver.order;</span></span>
+<span id="L729"><span class="lineNum">     729</span> <span class="tlaGNC">           3 :   const int dim = parent.Dimension();</span></span>
+<span id="L730"><span class="lineNum">     730</span> <span class="tlaGNC">           3 :   const int mg_levels = iodata.solver.linear.mg_max_levels;</span></span>
+<span id="L731"><span class="lineNum">     731</span>              : </span>
+<span id="L732"><span class="lineNum">     732</span>              :   // Essential submesh boundary attributes: Gamma and the environment Dirichlet ones.</span>
+<span id="L733"><span class="lineNum">     733</span> <span class="tlaGNC">           3 :   mfem::Vector marker(nt);</span></span>
+<span id="L734"><span class="lineNum">     734</span> <span class="tlaGNC">        1461 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L735"><span class="lineNum">     735</span>              :   {</span>
+<span id="L736"><span class="lineNum">     736</span> <span class="tlaGNC">        2430 :     marker(i) = is_env_int[i] ? 0.0 : 1.0;</span></span>
+<span id="L737"><span class="lineNum">     737</span>              :   }</span>
+<span id="L738"><span class="lineNum">     738</span> <span class="tlaGNC">           3 :   mfem::Array&lt;int&gt; ess_attr = EssentialSubmeshAttributes(*env_submesh, marker);</span></span>
+<span id="L739"><span class="lineNum">     739</span> <span class="tlaGNC">           3 :   if (ess_attr.Size() == 0)</span></span>
+<span id="L740"><span class="lineNum">     740</span>              :   {</span>
+<span id="L741"><span class="lineNum">     741</span>              :     return false;</span>
+<span id="L742"><span class="lineNum">     742</span>              :   }</span>
+<span id="L743"><span class="lineNum">     743</span>              : </span>
+<span id="L744"><span class="lineNum">     744</span>              :   // p-multigrid hierarchy on the submesh, with ess_attr as the Dirichlet boundary.</span>
+<span id="L745"><span class="lineNum">     745</span> <span class="tlaGNC">           3 :   env_fecs = fem::ConstructFECollections&lt;mfem::H1_FECollection&gt;(</span></span>
+<span id="L746"><span class="lineNum">     746</span> <span class="tlaGNC">           3 :       order, dim, mg_levels, iodata.solver.linear.mg_coarsening, false);</span></span>
+<span id="L747"><span class="lineNum">     747</span> <span class="tlaGNC">           3 :   std::vector&lt;mfem::Array&lt;int&gt;&gt; &amp;dbc_lists = env_dbc_lists;</span></span>
+<span id="L748"><span class="lineNum">     748</span>              :   dbc_lists.clear();</span>
+<span id="L749"><span class="lineNum">     749</span> <span class="tlaGNC">           3 :   env_hierarchy = std::make_unique&lt;FiniteElementSpaceHierarchy&gt;(</span></span>
+<span id="L750"><span class="lineNum">     750</span> <span class="tlaGNC">           3 :       fem::ConstructFiniteElementSpaceHierarchy&lt;mfem::H1_FECollection&gt;(</span></span>
+<span id="L751"><span class="lineNum">     751</span> <span class="tlaGNC">           3 :           mg_levels, env_mesh_vec, env_fecs, &amp;ess_attr, &amp;dbc_lists));</span></span>
+<span id="L752"><span class="lineNum">     752</span> <span class="tlaGNC">           3 :   if (env_hierarchy-&gt;GetNumLevels() &lt; 2)</span></span>
+<span id="L753"><span class="lineNum">     753</span>              :   {</span>
+<span id="L754"><span class="lineNum">     754</span>              :     env_hierarchy.reset();</span>
+<span id="L755"><span class="lineNum">     755</span>              :     env_fecs.clear();</span>
+<span id="L756"><span class="lineNum">     756</span> <span class="tlaUNC tlaBgUNC">           0 :     return false;</span></span>
+<span id="L757"><span class="lineNum">     757</span>              :   }</span>
+<span id="L758"><span class="lineNum">     758</span> <span class="tlaGNC tlaBgGNC">           3 :   env_solve_fes = &amp;env_hierarchy-&gt;GetFinestFESpace().Get();</span></span>
+<span id="L759"><span class="lineNum">     759</span>              : </span>
+<span id="L760"><span class="lineNum">     760</span>              :   // Material coefficient from a MaterialOperator on the submesh, so the attribute map</span>
+<span id="L761"><span class="lineNum">     761</span>              :   // matches Palace's local CEED numbering.</span>
+<span id="L762"><span class="lineNum">     762</span> <span class="tlaGNC">           3 :   MaterialOperator env_mat_op(iodata, *env_mesh_vec[0]);</span></span>
+<span id="L763"><span class="lineNum">     763</span>              :   MaterialPropertyCoefficient coef(env_mat_op.GetAttributeToMaterial(),</span>
+<span id="L764"><span class="lineNum">     764</span> <span class="tlaGNC">           3 :                                    env_mat_op.GetPermittivityReal());</span></span>
+<span id="L765"><span class="lineNum">     765</span>              :   BilinearForm a(env_hierarchy-&gt;GetFinestFESpace());</span>
+<span id="L766"><span class="lineNum">     766</span> <span class="tlaGNC">           3 :   a.AddDomainIntegrator&lt;DiffusionIntegrator&gt;(coef);</span></span>
+<span id="L767"><span class="lineNum">     767</span> <span class="tlaGNC">           3 :   auto a_vec = a.Assemble(*env_hierarchy, false);</span></span>
+<span id="L768"><span class="lineNum">     768</span>              : </span>
+<span id="L769"><span class="lineNum">     769</span> <span class="tlaGNC">           3 :   const std::size_t nl = env_hierarchy-&gt;GetNumLevels();</span></span>
+<span id="L770"><span class="lineNum">     770</span> <span class="tlaGNC">           3 :   env_mg_op = std::make_unique&lt;MultigridOperator&gt;(nl);</span></span>
+<span id="L771"><span class="lineNum">     771</span> <span class="tlaGNC">           9 :   for (std::size_t l = 0; l &lt; nl; l++)</span></span>
+<span id="L772"><span class="lineNum">     772</span>              :   {</span>
+<span id="L773"><span class="lineNum">     773</span>              :     auto &amp;fes_l = env_hierarchy-&gt;GetFESpaceAtLevel(l);</span>
+<span id="L774"><span class="lineNum">     774</span> <span class="tlaGNC">           6 :     auto A_l = std::make_unique&lt;ParOperator&gt;(std::move(a_vec[l]), fes_l);</span></span>
+<span id="L775"><span class="lineNum">     775</span> <span class="tlaGNC">           6 :     A_l-&gt;SetEssentialTrueDofs(dbc_lists[l], Operator::DiagonalPolicy::DIAG_ONE);</span></span>
+<span id="L776"><span class="lineNum">     776</span> <span class="tlaGNC">           6 :     env_mg_op-&gt;AddOperator(std::move(A_l));</span></span>
+<span id="L777"><span class="lineNum">     777</span>              :   }</span>
+<span id="L778"><span class="lineNum">     778</span> <span class="tlaGNC">           3 :   env_ess = dbc_lists.back();  // finest essential, consistent with the operators</span></span>
+<span id="L779"><span class="lineNum">     779</span>              : </span>
+<span id="L780"><span class="lineNum">     780</span>              :   auto amg = std::make_unique&lt;MfemWrapperSolver&lt;Operator&gt;&gt;(</span>
+<span id="L781"><span class="lineNum">     781</span> <span class="tlaGNC">           6 :       std::make_unique&lt;BoomerAmgSolver&gt;(1, 1, true, 0));</span></span>
+<span id="L782"><span class="lineNum">     782</span>              :   amg-&gt;SetDropSmallEntries(false);</span>
+<span id="L783"><span class="lineNum">     783</span> <span class="tlaGNC">           3 :   MPI_Comm comm = env_submesh-&gt;GetComm();</span></span>
+<span id="L784"><span class="lineNum">     784</span>              :   auto gmg = std::make_unique&lt;GeometricMultigridSolver&lt;Operator&gt;&gt;(</span>
+<span id="L785"><span class="lineNum">     785</span> <span class="tlaGNC">           3 :       iodata, comm, std::move(amg), env_hierarchy-&gt;GetProlongationOperators());</span></span>
+<span id="L786"><span class="lineNum">     786</span> <span class="tlaGNC">           3 :   auto pcg = std::make_unique&lt;CgSolver&lt;Operator&gt;&gt;(comm, 0);</span></span>
+<span id="L787"><span class="lineNum">     787</span> <span class="tlaGNC">           3 :   pcg-&gt;SetInitialGuess(false);</span></span>
+<span id="L788"><span class="lineNum">     788</span>              :   pcg-&gt;SetRelTol(kEnvCgTol);</span>
+<span id="L789"><span class="lineNum">     789</span>              :   pcg-&gt;SetAbsTol(std::numeric_limits&lt;double&gt;::epsilon());</span>
+<span id="L790"><span class="lineNum">     790</span>              :   pcg-&gt;SetMaxIter(kEnvCgMaxIts);</span>
+<span id="L791"><span class="lineNum">     791</span> <span class="tlaGNC">           6 :   env_ksp = std::make_unique&lt;KspSolver&gt;(std::move(pcg), std::move(gmg));</span></span>
+<span id="L792"><span class="lineNum">     792</span> <span class="tlaGNC">           3 :   env_ksp-&gt;SetOperators(*env_mg_op, *env_mg_op);</span></span>
+<span id="L793"><span class="lineNum">     793</span>              : </span>
+<span id="L794"><span class="lineNum">     794</span> <span class="tlaGNC">           3 :   env_sgf.SetSpace(env_solve_fes);</span></span>
+<span id="L795"><span class="lineNum">     795</span>              :   return true;</span>
+<span id="L796"><span class="lineNum">     796</span> <span class="tlaGNC">           6 : }</span></span>
+<span id="L797"><span class="lineNum">     797</span>              : </span>
+<span id="L798"><span class="lineNum">     798</span> <span class="tlaGNC">        1897 : void SubstructuringSolver::Impl::ApplyAeeInvMulti(</span></span>
+<span id="L799"><span class="lineNum">     799</span>              :     const std::vector&lt;const mfem::Vector *&gt; &amp;X, const std::vector&lt;mfem::Vector *&gt; &amp;Y) const</span>
+<span id="L800"><span class="lineNum">     800</span>              : {</span>
+<span id="L801"><span class="lineNum">     801</span>              :   MFEM_ASSERT(X.size() == Y.size(), &quot;ApplyAeeInvMulti size mismatch!&quot;);</span>
+<span id="L802"><span class="lineNum">     802</span> <span class="tlaGNC">        1897 :   BlockTimer bt(Timer::KSP);</span></span>
+<span id="L803"><span class="lineNum">     803</span> <span class="tlaGNC">        1897 :   MFEM_VERIFY(env_built, &quot;Environment solver used before EnsureEnv()!&quot;);</span></span>
+<span id="L804"><span class="lineNum">     804</span>              :   // The internal solve (Gamma held at 0), masked to E.</span>
+<span id="L805"><span class="lineNum">     805</span> <span class="tlaGNC">        1897 :   env_schur-&gt;SolveInternal(X, Y);</span></span>
+<span id="L806"><span class="lineNum">     806</span> <span class="tlaGNC">        1897 :   MaskToEnvInterior(Y);</span></span>
+<span id="L807"><span class="lineNum">     807</span> <span class="tlaGNC">        1897 : }</span></span>
+<span id="L808"><span class="lineNum">     808</span>              : </span>
+<span id="L809"><span class="lineNum">     809</span> <span class="tlaGNC">        3397 : void SubstructuringSolver::Impl::MaskToEnvInterior(</span></span>
+<span id="L810"><span class="lineNum">     810</span>              :     const std::vector&lt;mfem::Vector *&gt; &amp;Y) const</span>
+<span id="L811"><span class="lineNum">     811</span>              : {</span>
+<span id="L812"><span class="lineNum">     812</span> <span class="tlaGNC">       68963 :   for (auto *y : Y)</span></span>
+<span id="L813"><span class="lineNum">     813</span>              :   {</span>
+<span id="L814"><span class="lineNum">     814</span> <span class="tlaGNC">       65566 :     double *yy = y-&gt;HostReadWrite();</span></span>
+<span id="L815"><span class="lineNum">     815</span> <span class="tlaGNC">   290077340 :     for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L816"><span class="lineNum">     816</span>              :     {</span>
+<span id="L817"><span class="lineNum">     817</span> <span class="tlaGNC">   290011774 :       if (!is_env_int[i])</span></span>
+<span id="L818"><span class="lineNum">     818</span>              :       {</span>
+<span id="L819"><span class="lineNum">     819</span> <span class="tlaGNC">   164134322 :         yy[i] = 0.0;</span></span>
+<span id="L820"><span class="lineNum">     820</span>              :       }</span>
+<span id="L821"><span class="lineNum">     821</span>              :     }</span>
+<span id="L822"><span class="lineNum">     822</span>              :   }</span>
+<span id="L823"><span class="lineNum">     823</span> <span class="tlaGNC">        3397 : }</span></span>
+<span id="L824"><span class="lineNum">     824</span>              : </span>
+<span id="L825"><span class="lineNum">     825</span> <span class="tlaUNC tlaBgUNC">           0 : void SubstructuringSolver::Impl::ApplyAeeInv(const mfem::Vector &amp;x, mfem::Vector &amp;y) const</span></span>
+<span id="L826"><span class="lineNum">     826</span>              : {</span>
+<span id="L827"><span class="lineNum">     827</span> <span class="tlaUNC">           0 :   ApplyAeeInvMulti({&amp;x}, {&amp;y});</span></span>
+<span id="L828"><span class="lineNum">     828</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L829"><span class="lineNum">     829</span>              : </span>
+<span id="L830"><span class="lineNum">     830</span> <span class="tlaGNC tlaBgGNC">         471 : void SubstructuringSolver::Impl::ApplyAeeInvIterative(const mfem::Vector &amp;x_parent,</span></span>
+<span id="L831"><span class="lineNum">     831</span>              :                                                       mfem::Vector &amp;y_parent) const</span>
+<span id="L832"><span class="lineNum">     832</span>              : {</span>
+<span id="L833"><span class="lineNum">     833</span> <span class="tlaGNC">         471 :   env_pgf.SetFromTrueDofs(x_parent);</span></span>
+<span id="L834"><span class="lineNum">     834</span>              :   env_sgf = 0.0;</span>
+<span id="L835"><span class="lineNum">     835</span> <span class="tlaGNC">         471 :   env_submesh-&gt;Transfer(env_pgf, env_sgf);</span></span>
+<span id="L836"><span class="lineNum">     836</span> <span class="tlaGNC">         471 :   env_sgf.GetTrueDofs(env_srhs);</span></span>
+<span id="L837"><span class="lineNum">     837</span> <span class="tlaGNC">         471 :   linalg::SetSubVector(env_srhs, env_ess, 0.0);</span></span>
+<span id="L838"><span class="lineNum">     838</span> <span class="tlaGNC">         471 :   env_ssol = 0.0;</span></span>
+<span id="L839"><span class="lineNum">     839</span> <span class="tlaGNC">         471 :   env_ksp-&gt;Mult(env_srhs, env_ssol);</span></span>
+<span id="L840"><span class="lineNum">     840</span>              :   env_sgf.SetFromTrueDofs(env_ssol);</span>
+<span id="L841"><span class="lineNum">     841</span>              :   env_pgf = 0.0;</span>
+<span id="L842"><span class="lineNum">     842</span> <span class="tlaGNC">         471 :   env_submesh-&gt;Transfer(env_sgf, env_pgf);</span></span>
+<span id="L843"><span class="lineNum">     843</span> <span class="tlaGNC">         471 :   y_parent.SetSize(nt);</span></span>
+<span id="L844"><span class="lineNum">     844</span> <span class="tlaGNC">         471 :   env_pgf.GetTrueDofs(y_parent);</span></span>
+<span id="L845"><span class="lineNum">     845</span> <span class="tlaGNC">         471 :   double *yy = y_parent.HostReadWrite();</span></span>
+<span id="L846"><span class="lineNum">     846</span> <span class="tlaGNC">      157451 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L847"><span class="lineNum">     847</span>              :   {</span>
+<span id="L848"><span class="lineNum">     848</span> <span class="tlaGNC">      156980 :     if (!is_env_int[i])</span></span>
+<span id="L849"><span class="lineNum">     849</span>              :     {</span>
+<span id="L850"><span class="lineNum">     850</span> <span class="tlaGNC">      106480 :       yy[i] = 0.0;</span></span>
+<span id="L851"><span class="lineNum">     851</span>              :     }</span>
+<span id="L852"><span class="lineNum">     852</span>              :   }</span>
+<span id="L853"><span class="lineNum">     853</span> <span class="tlaGNC">         471 : }</span></span>
+<span id="L854"><span class="lineNum">     854</span>              : </span>
+<span id="L855"><span class="lineNum">     855</span> <span class="tlaGNC">          99 : void SubstructuringSolver::Impl::MaterializeWithEnergy()</span></span>
+<span id="L856"><span class="lineNum">     856</span>              : {</span>
+<span id="L857"><span class="lineNum">     857</span> <span class="tlaGNC">          99 :   const int nG = nG_global, nloc = gamma_nloc, off = gamma_off;</span></span>
+<span id="L858"><span class="lineNum">     858</span>              :   // Owned interface column -&gt; local true DOF.</span>
+<span id="L859"><span class="lineNum">     859</span> <span class="tlaGNC">          99 :   std::vector&lt;int&gt; col_to_dof(nloc, -1);</span></span>
+<span id="L860"><span class="lineNum">     860</span> <span class="tlaGNC">      276543 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L861"><span class="lineNum">     861</span>              :   {</span>
+<span id="L862"><span class="lineNum">     862</span> <span class="tlaGNC">      276444 :     if (is_gamma[i])</span></span>
+<span id="L863"><span class="lineNum">     863</span>              :     {</span>
+<span id="L864"><span class="lineNum">     864</span> <span class="tlaGNC">       10600 :       col_to_dof[gamma_global[i] - off] = i;</span></span>
+<span id="L865"><span class="lineNum">     865</span>              :     }</span>
+<span id="L866"><span class="lineNum">     866</span>              :   }</span>
+<span id="L867"><span class="lineNum">     867</span>              :   // The first solve of a direct factor fixes its block size at kMaterializeBlock; the</span>
+<span id="L868"><span class="lineNum">     868</span>              :   // thin couplings are G = A_env E_Gamma and R = E_Gamma^T A_env. Each rank stores its</span>
+<span id="L869"><span class="lineNum">     869</span>              :   // own rows.</span>
+<span id="L870"><span class="lineNum">     870</span> <span class="tlaGNC">          99 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; E = AssembleSelection(is_gamma);</span></span>
+<span id="L871"><span class="lineNum">     871</span> <span class="tlaGNC">          99 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; G(mfem::ParMult(&amp;Aenv(), E.get()));</span></span>
+<span id="L872"><span class="lineNum">     872</span> <span class="tlaGNC">          99 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; Et(E-&gt;Transpose());</span></span>
+<span id="L873"><span class="lineNum">     873</span> <span class="tlaGNC">          99 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; R(mfem::ParMult(Et.get(), &amp;Aenv()));</span></span>
+<span id="L874"><span class="lineNum">     874</span>              :   E.reset();</span>
+<span id="L875"><span class="lineNum">     875</span>              :   Et.reset();</span>
+<span id="L876"><span class="lineNum">     876</span> <span class="tlaGNC">          99 :   const int B = kMaterializeBlock;</span></span>
+<span id="L877"><span class="lineNum">     877</span> <span class="tlaGNC">         198 :   std::vector&lt;Vector&gt; t(B, Vector(nt));</span></span>
+<span id="L878"><span class="lineNum">     878</span> <span class="tlaGNC">          99 :   std::vector&lt;const mfem::Vector *&gt; X(B);</span></span>
+<span id="L879"><span class="lineNum">     879</span> <span class="tlaGNC">          99 :   std::vector&lt;mfem::Vector *&gt; Y(B);</span></span>
+<span id="L880"><span class="lineNum">     880</span>              :   Vector ec(nloc), z(nloc);</span>
+<span id="L881"><span class="lineNum">     881</span> <span class="tlaGNC">         198 :   std::vector&lt;Vector&gt; v(B, Vector(nt));</span></span>
+<span id="L882"><span class="lineNum">     882</span> <span class="tlaGNC">          99 :   SK_rows.assign(static_cast&lt;std::size_t&gt;(nloc) * nG, 0.0);</span></span>
+<span id="L883"><span class="lineNum">     883</span> <span class="tlaGNC">          99 :   have_sk = true;</span></span>
+<span id="L884"><span class="lineNum">     884</span> <span class="tlaGNC">          99 :   const mfem::HypreParMatrix &amp;Dm = Denv();</span></span>
+<span id="L885"><span class="lineNum">     885</span> <span class="tlaGNC">          99 :   std::vector&lt;double&gt; agg(static_cast&lt;std::size_t&gt;(B) * nloc);  // A_GG e_c, own rows</span></span>
+<span id="L886"><span class="lineNum">     886</span> <span class="tlaGNC">         633 :   for (int c0 = 0; c0 &lt; nG; c0 += B)</span></span>
+<span id="L887"><span class="lineNum">     887</span>              :   {</span>
+<span id="L888"><span class="lineNum">     888</span> <span class="tlaGNC">         534 :     const int nb = std::min(B, nG - c0);</span></span>
+<span id="L889"><span class="lineNum">     889</span> <span class="tlaGNC">         534 :     X.resize(nb);</span></span>
+<span id="L890"><span class="lineNum">     890</span> <span class="tlaGNC">         534 :     Y.resize(nb);</span></span>
+<span id="L891"><span class="lineNum">     891</span> <span class="tlaGNC">       16434 :     for (int k = 0; k &lt; nb; k++)</span></span>
+<span id="L892"><span class="lineNum">     892</span>              :     {</span>
+<span id="L893"><span class="lineNum">     893</span> <span class="tlaGNC">       15900 :       const int c = c0 + k;</span></span>
+<span id="L894"><span class="lineNum">     894</span> <span class="tlaGNC">       15900 :       ec = 0.0;</span></span>
+<span id="L895"><span class="lineNum">     895</span> <span class="tlaGNC">       15900 :       if (c &gt;= off &amp;&amp; c &lt; off + nloc)</span></span>
+<span id="L896"><span class="lineNum">     896</span>              :       {</span>
+<span id="L897"><span class="lineNum">     897</span> <span class="tlaGNC">       10600 :         ec(c - off) = 1.0;</span></span>
+<span id="L898"><span class="lineNum">     898</span>              :       }</span>
+<span id="L899"><span class="lineNum">     899</span>              :       // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.</span>
+<span id="L900"><span class="lineNum">     900</span> <span class="tlaGNC">       15900 :       G-&gt;Mult(ec, t[k]);</span></span>
+<span id="L901"><span class="lineNum">     901</span> <span class="tlaGNC">       15900 :       const double *tk = t[k].HostRead();</span></span>
+<span id="L902"><span class="lineNum">     902</span> <span class="tlaGNC">     2411708 :       for (int r = 0; r &lt; nloc; r++)</span></span>
+<span id="L903"><span class="lineNum">     903</span>              :       {</span>
+<span id="L904"><span class="lineNum">     904</span> <span class="tlaGNC">     2395808 :         agg[static_cast&lt;std::size_t&gt;(k) * nloc + r] = tk[col_to_dof[r]];</span></span>
+<span id="L905"><span class="lineNum">     905</span>              :       }</span>
+<span id="L906"><span class="lineNum">     906</span> <span class="tlaGNC">       15900 :       X[k] = &amp;t[k];</span></span>
+<span id="L907"><span class="lineNum">     907</span> <span class="tlaGNC">       15900 :       Y[k] = &amp;t[k];  // solve in place</span></span>
+<span id="L908"><span class="lineNum">     908</span>              :     }</span>
+<span id="L909"><span class="lineNum">     909</span> <span class="tlaGNC">         534 :     ApplyAeeInvMulti(X, Y);</span></span>
+<span id="L910"><span class="lineNum">     910</span> <span class="tlaGNC">       16434 :     for (int k = 0; k &lt; nb; k++)</span></span>
+<span id="L911"><span class="lineNum">     911</span>              :     {</span>
+<span id="L912"><span class="lineNum">     912</span> <span class="tlaGNC">       15900 :       R-&gt;Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows</span></span>
+<span id="L913"><span class="lineNum">     913</span>              :       const double *zz = z.HostRead();</span>
+<span id="L914"><span class="lineNum">     914</span> <span class="tlaGNC">       15900 :       const int c = c0 + k;</span></span>
+<span id="L915"><span class="lineNum">     915</span> <span class="tlaGNC">     2411708 :       for (int r = 0; r &lt; nloc; r++)</span></span>
+<span id="L916"><span class="lineNum">     916</span>              :       {</span>
+<span id="L917"><span class="lineNum">     917</span> <span class="tlaGNC">     2395808 :         S_rows[static_cast&lt;std::size_t&gt;(r) * nG + c] =</span></span>
+<span id="L918"><span class="lineNum">     918</span> <span class="tlaGNC">     2395808 :             agg[static_cast&lt;std::size_t&gt;(k) * nloc + r] - zz[r];</span></span>
+<span id="L919"><span class="lineNum">     919</span>              :       }</span>
+<span id="L920"><span class="lineNum">     920</span>              :     }</span>
+<span id="L921"><span class="lineNum">     921</span>              :     // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]</span>
+<span id="L922"><span class="lineNum">     922</span>              :     // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).</span>
+<span id="L923"><span class="lineNum">     923</span> <span class="tlaGNC">       16434 :     for (int k = 0; k &lt; nb; k++)</span></span>
+<span id="L924"><span class="lineNum">     924</span>              :     {</span>
+<span id="L925"><span class="lineNum">     925</span> <span class="tlaGNC">       15900 :       const int c = c0 + k;</span></span>
+<span id="L926"><span class="lineNum">     926</span> <span class="tlaGNC">       15900 :       t[k].Neg();</span></span>
+<span id="L927"><span class="lineNum">     927</span> <span class="tlaGNC">       15900 :       if (c &gt;= off &amp;&amp; c &lt; off + nloc)</span></span>
+<span id="L928"><span class="lineNum">     928</span>              :       {</span>
+<span id="L929"><span class="lineNum">     929</span> <span class="tlaGNC">       10600 :         t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;</span></span>
+<span id="L930"><span class="lineNum">     930</span>              :       }</span>
+<span id="L931"><span class="lineNum">     931</span> <span class="tlaGNC">       15900 :       Dm.Mult(t[k], v[k]);</span></span>
+<span id="L932"><span class="lineNum">     932</span> <span class="tlaGNC">       15900 :       const double *vk = v[k].HostRead();</span></span>
+<span id="L933"><span class="lineNum">     933</span> <span class="tlaGNC">     2411708 :       for (int r = 0; r &lt; nloc; r++)</span></span>
+<span id="L934"><span class="lineNum">     934</span>              :       {</span>
+<span id="L935"><span class="lineNum">     935</span> <span class="tlaGNC">     2395808 :         agg[static_cast&lt;std::size_t&gt;(k) * nloc + r] = vk[col_to_dof[r]];</span></span>
+<span id="L936"><span class="lineNum">     936</span>              :       }</span>
+<span id="L937"><span class="lineNum">     937</span> <span class="tlaGNC">       15900 :       X[k] = &amp;v[k];</span></span>
+<span id="L938"><span class="lineNum">     938</span> <span class="tlaGNC">       15900 :       Y[k] = &amp;v[k];</span></span>
+<span id="L939"><span class="lineNum">     939</span>              :     }</span>
+<span id="L940"><span class="lineNum">     940</span> <span class="tlaGNC">         534 :     ApplyAeeInvMulti(X, Y);</span></span>
+<span id="L941"><span class="lineNum">     941</span> <span class="tlaGNC">       16434 :     for (int k = 0; k &lt; nb; k++)</span></span>
+<span id="L942"><span class="lineNum">     942</span>              :     {</span>
+<span id="L943"><span class="lineNum">     943</span> <span class="tlaGNC">       15900 :       R-&gt;Mult(v[k], z);</span></span>
+<span id="L944"><span class="lineNum">     944</span>              :       const double *zz = z.HostRead();</span>
+<span id="L945"><span class="lineNum">     945</span> <span class="tlaGNC">       15900 :       const int c = c0 + k;</span></span>
+<span id="L946"><span class="lineNum">     946</span> <span class="tlaGNC">     2411708 :       for (int r = 0; r &lt; nloc; r++)</span></span>
+<span id="L947"><span class="lineNum">     947</span>              :       {</span>
+<span id="L948"><span class="lineNum">     948</span> <span class="tlaGNC">     2395808 :         const std::size_t q = static_cast&lt;std::size_t&gt;(r) * nG + c;</span></span>
+<span id="L949"><span class="lineNum">     949</span> <span class="tlaGNC">     2395808 :         SK_rows[q] = S_rows[q] - (agg[static_cast&lt;std::size_t&gt;(k) * nloc + r] - zz[r]);</span></span>
+<span id="L950"><span class="lineNum">     950</span>              :       }</span>
+<span id="L951"><span class="lineNum">     951</span>              :     }</span>
+<span id="L952"><span class="lineNum">     952</span>              :   }</span>
+<span id="L953"><span class="lineNum">     953</span> <span class="tlaGNC">         297 : }</span></span>
+<span id="L954"><span class="lineNum">     954</span>              : </span>
+<span id="L955"><span class="lineNum">     955</span> <span class="tlaGNC">           8 : void SubstructuringSolver::Impl::CompressInterface(double hodlr_tol)</span></span>
+<span id="L956"><span class="lineNum">     956</span>              : {</span>
+<span id="L957"><span class="lineNum">     957</span> <span class="tlaGNC">           8 :   const int nG = nG_global;</span></span>
+<span id="L958"><span class="lineNum">     958</span> <span class="tlaGNC">           8 :   MPI_Comm comm = parent_fes.GetComm();</span></span>
+<span id="L959"><span class="lineNum">     959</span> <span class="tlaGNC">           8 :   const int rank = Mpi::Rank(comm);</span></span>
+<span id="L960"><span class="lineNum">     960</span>              :   // Interface DOF coordinates (replicated) for the clustering: the DOF interpolation</span>
+<span id="L961"><span class="lineNum">     961</span>              :   // points (H1 nodes, Nedelec edge midpoints) of the parent DOFs.</span>
+<span id="L962"><span class="lineNum">     962</span> <span class="tlaGNC">           8 :   std::vector&lt;double&gt; coords_loc(static_cast&lt;std::size_t&gt;(nG) * 3, 0.0),</span></span>
+<span id="L963"><span class="lineNum">     963</span> <span class="tlaGNC">           8 :       coords(static_cast&lt;std::size_t&gt;(nG) * 3, 0.0);</span></span>
+<span id="L964"><span class="lineNum">     964</span> <span class="tlaGNC">           8 :   const int nt0 = parent_fes.GetTrueVSize();</span></span>
+<span id="L965"><span class="lineNum">     965</span> <span class="tlaGNC">           8 :   std::vector&lt;double&gt; tdof_xyz(static_cast&lt;std::size_t&gt;(nt0) * 3, 0.0);</span></span>
+<span id="L966"><span class="lineNum">     966</span> <span class="tlaGNC">           8 :   std::vector&lt;char&gt; have(nt0, 0);</span></span>
+<span id="L967"><span class="lineNum">     967</span>              :   mfem::Array&lt;int&gt; edofs;</span>
+<span id="L968"><span class="lineNum">     968</span>              :   mfem::Vector phys;</span>
+<span id="L969"><span class="lineNum">     969</span> <span class="tlaGNC">        4736 :   for (int e = 0; e &lt; parent_fes.GetNE(); e++)</span></span>
+<span id="L970"><span class="lineNum">     970</span>              :   {</span>
+<span id="L971"><span class="lineNum">     971</span> <span class="tlaGNC">        4728 :     const mfem::FiniteElement *fe = parent_fes.GetFE(e);</span></span>
+<span id="L972"><span class="lineNum">     972</span> <span class="tlaGNC">        4728 :     mfem::ElementTransformation *T = parent.GetElementTransformation(e);</span></span>
+<span id="L973"><span class="lineNum">     973</span>              :     const mfem::IntegrationRule &amp;nodes = fe-&gt;GetNodes();</span>
+<span id="L974"><span class="lineNum">     974</span> <span class="tlaGNC">        4728 :     parent_fes.GetElementDofs(e, edofs);</span></span>
+<span id="L975"><span class="lineNum">     975</span> <span class="tlaGNC">       43416 :     for (int j = 0; j &lt; edofs.Size(); j++)</span></span>
+<span id="L976"><span class="lineNum">     976</span>              :     {</span>
+<span id="L977"><span class="lineNum">     977</span> <span class="tlaGNC">       38688 :       const int ldof = edofs[j] &gt;= 0 ? edofs[j] : -1 - edofs[j];</span></span>
+<span id="L978"><span class="lineNum">     978</span> <span class="tlaGNC">       38688 :       const int t = parent_fes.GetLocalTDofNumber(ldof);</span></span>
+<span id="L979"><span class="lineNum">     979</span> <span class="tlaGNC">       38688 :       if (t &lt; 0 || have[t])</span></span>
+<span id="L980"><span class="lineNum">     980</span>              :       {</span>
+<span id="L981"><span class="lineNum">     981</span> <span class="tlaGNC">       31753 :         continue;</span></span>
+<span id="L982"><span class="lineNum">     982</span>              :       }</span>
+<span id="L983"><span class="lineNum">     983</span> <span class="tlaGNC">        6935 :       T-&gt;Transform(nodes.IntPoint(j), phys);</span></span>
+<span id="L984"><span class="lineNum">     984</span> <span class="tlaGNC">       27740 :       for (int d = 0; d &lt; phys.Size() &amp;&amp; d &lt; 3; d++)</span></span>
+<span id="L985"><span class="lineNum">     985</span>              :       {</span>
+<span id="L986"><span class="lineNum">     986</span> <span class="tlaGNC">       20805 :         tdof_xyz[static_cast&lt;std::size_t&gt;(t) * 3 + d] = phys(d);</span></span>
+<span id="L987"><span class="lineNum">     987</span>              :       }</span>
+<span id="L988"><span class="lineNum">     988</span> <span class="tlaGNC">        6935 :       have[t] = 1;</span></span>
+<span id="L989"><span class="lineNum">     989</span>              :     }</span>
+<span id="L990"><span class="lineNum">     990</span>              :   }</span>
+<span id="L991"><span class="lineNum">     991</span> <span class="tlaGNC">        6943 :   for (int i = 0; i &lt; nt; i++)</span></span>
+<span id="L992"><span class="lineNum">     992</span>              :   {</span>
+<span id="L993"><span class="lineNum">     993</span> <span class="tlaGNC">        6935 :     if (is_gamma[i])</span></span>
+<span id="L994"><span class="lineNum">     994</span>              :     {</span>
+<span id="L995"><span class="lineNum">     995</span> <span class="tlaGNC">        2596 :       for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L996"><span class="lineNum">     996</span>              :       {</span>
+<span id="L997"><span class="lineNum">     997</span> <span class="tlaGNC">        1947 :         coords_loc[static_cast&lt;std::size_t&gt;(gamma_global[i]) * 3 + d] =</span></span>
+<span id="L998"><span class="lineNum">     998</span> <span class="tlaGNC">        1947 :             tdof_xyz[static_cast&lt;std::size_t&gt;(ParentTrueDof(i)) * 3 + d];</span></span>
+<span id="L999"><span class="lineNum">     999</span>              :       }</span>
+<span id="L1000"><span class="lineNum">    1000</span>              :     }</span>
+<span id="L1001"><span class="lineNum">    1001</span>              :   }</span>
+<span id="L1002"><span class="lineNum">    1002</span> <span class="tlaGNC">           8 :   MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);</span></span>
+<span id="L1003"><span class="lineNum">    1003</span>              :   // Compress a dense interface operator, replacing its row blocks.</span>
+<span id="L1004"><span class="lineNum">    1004</span> <span class="tlaGNC">           8 :   auto compress = [&amp;](std::vector&lt;double&gt; &amp;rows, const char *name)</span></span>
+<span id="L1005"><span class="lineNum">    1005</span>              :   {</span>
+<span id="L1006"><span class="lineNum">    1006</span> <span class="tlaGNC">           8 :     const std::vector&lt;double&gt; S_full = GatherRows(rows, nG);</span></span>
+<span id="L1007"><span class="lineNum">    1007</span> <span class="tlaGNC">           8 :     std::vector&lt;double&gt; buf;</span></span>
+<span id="L1008"><span class="lineNum">    1008</span> <span class="tlaGNC">           8 :     int buflen = 0;</span></span>
+<span id="L1009"><span class="lineNum">    1009</span> <span class="tlaGNC">           8 :     if (rank == 0)</span></span>
+<span id="L1010"><span class="lineNum">    1010</span>              :     {</span>
+<span id="L1011"><span class="lineNum">    1011</span> <span class="tlaGNC">           6 :       Hodlr h;</span></span>
+<span id="L1012"><span class="lineNum">    1012</span> <span class="tlaGNC">           6 :       h.n = nG;</span></span>
+<span id="L1013"><span class="lineNum">    1013</span> <span class="tlaGNC">           6 :       h.perm.assign(nG, 0);</span></span>
+<span id="L1014"><span class="lineNum">    1014</span> <span class="tlaGNC">           6 :       std::vector&lt;int&gt; idx(nG);</span></span>
+<span id="L1015"><span class="lineNum">    1015</span>              :       std::iota(idx.begin(), idx.end(), 0);</span>
+<span id="L1016"><span class="lineNum">    1016</span> <span class="tlaGNC">           6 :       BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);</span></span>
+<span id="L1017"><span class="lineNum">    1017</span> <span class="tlaGNC">          12 :       buf = h.Serialize();</span></span>
+<span id="L1018"><span class="lineNum">    1018</span> <span class="tlaGNC">           6 :       buflen = static_cast&lt;int&gt;(buf.size());</span></span>
+<span id="L1019"><span class="lineNum">    1019</span> <span class="tlaGNC">           6 :     }</span></span>
+<span id="L1020"><span class="lineNum">    1020</span> <span class="tlaGNC">           8 :     MPI_Bcast(&amp;buflen, 1, MPI_INT, 0, comm);</span></span>
+<span id="L1021"><span class="lineNum">    1021</span> <span class="tlaGNC">           8 :     buf.resize(buflen);</span></span>
+<span id="L1022"><span class="lineNum">    1022</span> <span class="tlaGNC">           8 :     MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);</span></span>
+<span id="L1023"><span class="lineNum">    1023</span> <span class="tlaGNC">           8 :     auto h = std::make_unique&lt;Hodlr&gt;(Hodlr::Deserialize(buf));</span></span>
+<span id="L1024"><span class="lineNum">    1024</span> <span class="tlaGNC">           8 :     const long long ret = h-&gt;Storage();</span></span>
+<span id="L1025"><span class="lineNum">    1025</span>              :     rows.clear();</span>
+<span id="L1026"><span class="lineNum">    1026</span>              :     rows.shrink_to_fit();</span>
+<span id="L1027"><span class="lineNum">    1027</span> <span class="tlaGNC">           8 :     Mpi::Print(comm, &quot; HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n&quot;,</span></span>
+<span id="L1028"><span class="lineNum">    1028</span>              :                name, hodlr_tol,</span>
+<span id="L1029"><span class="lineNum">    1029</span> <span class="tlaGNC">           8 :                100.0 * static_cast&lt;double&gt;(ret) / (static_cast&lt;double&gt;(nG) * nG));</span></span>
+<span id="L1030"><span class="lineNum">    1030</span> <span class="tlaGNC">           8 :     return h;</span></span>
+<span id="L1031"><span class="lineNum">    1031</span> <span class="tlaUNC tlaBgUNC">           0 :   };</span></span>
+<span id="L1032"><span class="lineNum">    1032</span> <span class="tlaGNC tlaBgGNC">          16 :   hodlr = compress(S_rows, &quot;S_E&quot;);</span></span>
+<span id="L1033"><span class="lineNum">    1033</span> <span class="tlaGNC">           8 :   if (have_sk)</span></span>
+<span id="L1034"><span class="lineNum">    1034</span>              :   {</span>
+<span id="L1035"><span class="lineNum">    1035</span> <span class="tlaUNC tlaBgUNC">           0 :     hodlr_K = compress(SK_rows, &quot;S^K&quot;);</span></span>
+<span id="L1036"><span class="lineNum">    1036</span>              :   }</span>
+<span id="L1037"><span class="lineNum">    1037</span> <span class="tlaGNC tlaBgGNC">           8 : }</span></span>
+<span id="L1038"><span class="lineNum">    1038</span>              : </span>
+<span id="L1039"><span class="lineNum">    1039</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

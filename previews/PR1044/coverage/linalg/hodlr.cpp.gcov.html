@@ -1,0 +1,390 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - linalg/hodlr.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">linalg</a> - hodlr.cpp<span style="font-size: 80%;"> (source / <a href="hodlr.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">99.4&nbsp;%</td>
+            <td class="headerCovTableEntry">162</td>
+            <td class="headerCovTableEntry">161</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-11-12 22:07:22</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntry">6</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;hodlr.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;algorithm&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;cmath&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;cstddef&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;limits&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;numbers&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;random&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;Eigen/Dense&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : </span>
+<span id="L14"><span class="lineNum">      14</span>              : namespace palace</span>
+<span id="L15"><span class="lineNum">      15</span>              : {</span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span>              : namespace</span>
+<span id="L18"><span class="lineNum">      18</span>              : {</span>
+<span id="L19"><span class="lineNum">      19</span>              : </span>
+<span id="L20"><span class="lineNum">      20</span>              : // The low-rank factors B ~= U V^T of a block with the singular values of B above</span>
+<span id="L21"><span class="lineNum">      21</span>              : // tol * sigma_1(B) (U holding them, V orthonormal): an orthonormal basis Q of the range of</span>
+<span id="L22"><span class="lineNum">      22</span>              : // B, grown by blocks of Gaussian probes until the residual of the probes bounds that of B</span>
+<span id="L23"><span class="lineNum">      23</span>              : // below the truncation (with probability 1 - 10^-kProbes; Halko, Martinsson and Tropp,</span>
+<span id="L24"><span class="lineNum">      24</span>              : // SIAM Review 53, 2011) or reaches the rounding of the probes, past which they add nothing</span>
+<span id="L25"><span class="lineNum">      25</span>              : // to the range, and the truncated SVD of Q^T B.</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC tlaBgGNC">         111 : void LowRankFactors(const Eigen::MatrixXd &amp;B, double tol, Eigen::MatrixXd &amp;U,</span></span>
+<span id="L27"><span class="lineNum">      27</span>              :                     Eigen::MatrixXd &amp;V)</span>
+<span id="L28"><span class="lineNum">      28</span>              : {</span>
+<span id="L29"><span class="lineNum">      29</span>              :   constexpr int kProbes = 16;</span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">         111 :   const Eigen::Index m1 = B.rows(), m2 = B.cols(), rmax = std::min(m1, m2);</span></span>
+<span id="L31"><span class="lineNum">      31</span>              :   std::mt19937 gen(1);  // the factors are computed once, on one process</span>
+<span id="L32"><span class="lineNum">      32</span>              :   std::normal_distribution&lt;double&gt; normal;</span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaGNC">         111 :   Eigen::MatrixXd Q(m1, 0);</span></span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">         111 :   double floor = -1.0;  // the residual of a probe below which Q is complete</span></span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">         440 :   while (Q.cols() &lt; rmax)</span></span>
+<span id="L36"><span class="lineNum">      36</span>              :   {</span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">         371 :     const Eigen::Index k = std::min&lt;Eigen::Index&gt;(kProbes, rmax - Q.cols());</span></span>
+<span id="L38"><span class="lineNum">      38</span>              :     // The probes are drawn once each (an expression could be evaluated more than once).</span>
+<span id="L39"><span class="lineNum">      39</span>              :     const Eigen::MatrixXd W =</span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaGNC">      710769 :         Eigen::MatrixXd::NullaryExpr(m2, k, [&amp;normal, &amp;gen]() { return normal(gen); });</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">         371 :     Eigen::MatrixXd Y = B * W;</span></span>
+<span id="L42"><span class="lineNum">      42</span>              :     const double rounding =</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">         371 :         100.0 * std::numeric_limits&lt;double&gt;::epsilon() * Y.colwise().norm().maxCoeff();</span></span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">        1113 :     for (int pass = 0; pass &lt; 2; pass++)  // twice is enough</span></span>
+<span id="L45"><span class="lineNum">      45</span>              :     {</span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">         742 :       Y -= Q * (Q.transpose() * Y);</span></span>
+<span id="L47"><span class="lineNum">      47</span>              :     }</span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">         371 :     if (Y.colwise().norm().maxCoeff() &lt;= std::max(floor, rounding))</span></span>
+<span id="L49"><span class="lineNum">      49</span>              :     {</span>
+<span id="L50"><span class="lineNum">      50</span>              :       break;</span>
+<span id="L51"><span class="lineNum">      51</span>              :     }</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">         329 :     Eigen::HouseholderQR&lt;Eigen::MatrixXd&gt; qr(Y);</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">         329 :     Q.conservativeResize(Eigen::NoChange, Q.cols() + k);</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">         658 :     Q.rightCols(k) = qr.householderQ() * Eigen::MatrixXd::Identity(m1, k);</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">         329 :     if (floor &lt; 0.0)</span></span>
+<span id="L56"><span class="lineNum">      56</span>              :     {</span>
+<span id="L57"><span class="lineNum">      57</span>              :       // ||(I - Q Q^T) B|| &lt;= 10 sqrt(2/pi) max_i ||(I - Q Q^T) B w_i||, and</span>
+<span id="L58"><span class="lineNum">      58</span>              :       // sigma_1(Q^T B) &lt;= sigma_1(B).</span>
+<span id="L59"><span class="lineNum">      59</span>              :       const double s1 =</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">         111 :           Eigen::JacobiSVD&lt;Eigen::MatrixXd&gt;(Q.transpose() * B).singularValues()(0);</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">         111 :       floor = tol * s1 / (10.0 * std::sqrt(2.0 / std::numbers::pi));</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :     }</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">         329 :   }</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :   // Q spans the range found, but its last columns may have lost orthogonality.</span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">         222 :   Q = Eigen::HouseholderQR&lt;Eigen::MatrixXd&gt;(Q).householderQ() *</span></span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">         111 :       Eigen::MatrixXd::Identity(m1, Q.cols());</span></span>
+<span id="L67"><span class="lineNum">      67</span>              :   // The Jacobi SVD (of the small Q^T B, preconditioned by a QR decomposition): the</span>
+<span id="L68"><span class="lineNum">      68</span>              :   // divide-and-conquer one loses its accuracy with unsafe floating-point optimizations,</span>
+<span id="L69"><span class="lineNum">      69</span>              :   // which some compilers make by default.</span>
+<span id="L70"><span class="lineNum">      70</span>              :   Eigen::JacobiSVD&lt;Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV&gt; svd(</span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">         111 :       Q.transpose() * B);</span></span>
+<span id="L72"><span class="lineNum">      72</span>              :   const Eigen::VectorXd &amp;s = svd.singularValues();</span>
+<span id="L73"><span class="lineNum">      73</span>              :   Eigen::Index r = 0;</span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">        3766 :   while (r &lt; s.size() &amp;&amp; s(r) &gt; tol * s(0))</span></span>
+<span id="L75"><span class="lineNum">      75</span>              :   {</span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">        3655 :     r++;</span></span>
+<span id="L77"><span class="lineNum">      77</span>              :   }</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">         111 :   U = Q * (svd.matrixU().leftCols(r) * s.head(r).asDiagonal());</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">         111 :   V = svd.matrixV().leftCols(r);</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         222 : }</span></span>
+<span id="L81"><span class="lineNum">      81</span>              : </span>
+<span id="L82"><span class="lineNum">      82</span>              : }  // namespace</span>
+<span id="L83"><span class="lineNum">      83</span>              : </span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">          17 : long long Hodlr::Storage() const</span></span>
+<span id="L85"><span class="lineNum">      85</span>              : {</span>
+<span id="L86"><span class="lineNum">      86</span>              :   long long s = 0;</span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">         337 :   for (const auto &amp;lf : leaves)</span></span>
+<span id="L88"><span class="lineNum">      88</span>              :   {</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">         320 :     s += static_cast&lt;long long&gt;(lf.m) * lf.m;</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :   }</span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC">         320 :   for (const auto &amp;b : blocks)</span></span>
+<span id="L92"><span class="lineNum">      92</span>              :   {</span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">         303 :     s += static_cast&lt;long long&gt;(b.r) * (b.m1 + b.m2);</span></span>
+<span id="L94"><span class="lineNum">      94</span>              :   }</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">          17 :   return s;</span></span>
+<span id="L96"><span class="lineNum">      96</span>              : }</span>
+<span id="L97"><span class="lineNum">      97</span>              : </span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">          30 : void Hodlr::Mult(const double *xp, double *yp) const</span></span>
+<span id="L99"><span class="lineNum">      99</span>              : {</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">          30 :   std::fill(yp, yp + n, 0.0);</span></span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">         234 :   for (const auto &amp;lf : leaves)</span></span>
+<span id="L102"><span class="lineNum">     102</span>              :   {</span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">        6009 :     for (int i = 0; i &lt; lf.m; i++)</span></span>
+<span id="L104"><span class="lineNum">     104</span>              :     {</span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">        5805 :       const double *row = &amp;lf.D[static_cast&lt;std::size_t&gt;(i) * lf.m];</span></span>
+<span id="L106"><span class="lineNum">     106</span>              :       double acc = 0.0;</span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">      174918 :       for (int j = 0; j &lt; lf.m; j++)</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :       {</span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">      169113 :         acc += row[j] * xp[lf.s + j];</span></span>
+<span id="L110"><span class="lineNum">     110</span>              :       }</span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">        5805 :       yp[lf.s + i] += acc;</span></span>
+<span id="L112"><span class="lineNum">     112</span>              :     }</span>
+<span id="L113"><span class="lineNum">     113</span>              :   }</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">          30 :   std::vector&lt;double&gt; t;</span></span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaGNC">         204 :   for (const auto &amp;b : blocks)</span></span>
+<span id="L116"><span class="lineNum">     116</span>              :   {</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">         174 :     t.assign(b.r, 0.0);  // t = V^T x2</span></span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">       10524 :     for (int j = 0; j &lt; b.m2; j++)</span></span>
+<span id="L119"><span class="lineNum">     119</span>              :     {</span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">       10350 :       const double *vj = &amp;b.V[static_cast&lt;std::size_t&gt;(j) * b.r];</span></span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">       10350 :       const double xj = xp[b.s2 + j];</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">      499796 :       for (int k = 0; k &lt; b.r; k++)</span></span>
+<span id="L123"><span class="lineNum">     123</span>              :       {</span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">      489446 :         t[k] += vj[k] * xj;</span></span>
+<span id="L125"><span class="lineNum">     125</span>              :       }</span>
+<span id="L126"><span class="lineNum">     126</span>              :     }</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">       10434 :     for (int i = 0; i &lt; b.m1; i++)  // y1 += U t</span></span>
+<span id="L128"><span class="lineNum">     128</span>              :     {</span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">       10260 :       const double *ui = &amp;b.U[static_cast&lt;std::size_t&gt;(i) * b.r];</span></span>
+<span id="L130"><span class="lineNum">     130</span>              :       double acc = 0.0;</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">      497428 :       for (int k = 0; k &lt; b.r; k++)</span></span>
+<span id="L132"><span class="lineNum">     132</span>              :       {</span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">      487168 :         acc += ui[k] * t[k];</span></span>
+<span id="L134"><span class="lineNum">     134</span>              :       }</span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">       10260 :       yp[b.s1 + i] += acc;</span></span>
+<span id="L136"><span class="lineNum">     136</span>              :     }</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">         174 :     t.assign(b.r, 0.0);  // t = U^T x1</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">       10434 :     for (int i = 0; i &lt; b.m1; i++)</span></span>
+<span id="L139"><span class="lineNum">     139</span>              :     {</span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">       10260 :       const double *ui = &amp;b.U[static_cast&lt;std::size_t&gt;(i) * b.r];</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">       10260 :       const double xi = xp[b.s1 + i];</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">      497428 :       for (int k = 0; k &lt; b.r; k++)</span></span>
+<span id="L143"><span class="lineNum">     143</span>              :       {</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">      487168 :         t[k] += ui[k] * xi;</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :       }</span>
+<span id="L146"><span class="lineNum">     146</span>              :     }</span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">       10524 :     for (int j = 0; j &lt; b.m2; j++)  // y2 += V t</span></span>
+<span id="L148"><span class="lineNum">     148</span>              :     {</span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">       10350 :       const double *vj = &amp;b.V[static_cast&lt;std::size_t&gt;(j) * b.r];</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :       double acc = 0.0;</span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">      499796 :       for (int k = 0; k &lt; b.r; k++)</span></span>
+<span id="L152"><span class="lineNum">     152</span>              :       {</span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">      489446 :         acc += vj[k] * t[k];</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :       }</span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">       10350 :       yp[b.s2 + j] += acc;</span></span>
+<span id="L156"><span class="lineNum">     156</span>              :     }</span>
+<span id="L157"><span class="lineNum">     157</span>              :   }</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">          30 : }</span></span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">           6 : std::vector&lt;double&gt; Hodlr::Serialize() const</span></span>
+<span id="L161"><span class="lineNum">     161</span>              : {</span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">           6 :   std::vector&lt;double&gt; b;</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">           6 :   b.push_back(n);</span></span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">           6 :   b.push_back(static_cast&lt;double&gt;(leaves.size()));</span></span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">           6 :   b.push_back(static_cast&lt;double&gt;(blocks.size()));</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">         655 :   for (int p : perm)</span></span>
+<span id="L167"><span class="lineNum">     167</span>              :   {</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">         649 :     b.push_back(p);</span></span>
+<span id="L169"><span class="lineNum">     169</span>              :   }</span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">          30 :   for (const auto &amp;lf : leaves)</span></span>
+<span id="L171"><span class="lineNum">     171</span>              :   {</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">          24 :     b.push_back(lf.s);</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">          24 :     b.push_back(lf.m);</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">          24 :     b.insert(b.end(), lf.D.begin(), lf.D.end());</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :   }</span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">          24 :   for (const auto &amp;bl : blocks)</span></span>
+<span id="L177"><span class="lineNum">     177</span>              :   {</span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">          18 :     b.push_back(bl.s1);</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">          18 :     b.push_back(bl.m1);</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">          18 :     b.push_back(bl.s2);</span></span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">          18 :     b.push_back(bl.m2);</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">          18 :     b.push_back(bl.r);</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">          18 :     b.insert(b.end(), bl.U.begin(), bl.U.end());</span></span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">          18 :     b.insert(b.end(), bl.V.begin(), bl.V.end());</span></span>
+<span id="L185"><span class="lineNum">     185</span>              :   }</span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">           6 :   return b;</span></span>
+<span id="L187"><span class="lineNum">     187</span>              : }</span>
+<span id="L188"><span class="lineNum">     188</span>              : </span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC">           8 : Hodlr Hodlr::Deserialize(const std::vector&lt;double&gt; &amp;b)</span></span>
+<span id="L190"><span class="lineNum">     190</span>              : {</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">           8 :   Hodlr h;</span></span>
+<span id="L192"><span class="lineNum">     192</span>              :   std::size_t p = 0;</span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">           8 :   h.n = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">           8 :   const int nleaf = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">           8 :   const int nblk = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">           8 :   h.perm.resize(h.n);</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">         822 :   for (int i = 0; i &lt; h.n; i++)</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :   {</span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">         814 :     h.perm[i] = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L200"><span class="lineNum">     200</span>              :   }</span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">          40 :   for (int i = 0; i &lt; nleaf; i++)</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :   {</span>
+<span id="L203"><span class="lineNum">     203</span>              :     Leaf lf;</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">          32 :     lf.s = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">          32 :     lf.m = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">          32 :     lf.D.assign(b.begin() + p, b.begin() + p + static_cast&lt;std::size_t&gt;(lf.m) * lf.m);</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">          32 :     p += static_cast&lt;std::size_t&gt;(lf.m) * lf.m;</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">          32 :     h.leaves.push_back(std::move(lf));</span></span>
+<span id="L209"><span class="lineNum">     209</span>              :   }</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">          32 :   for (int i = 0; i &lt; nblk; i++)</span></span>
+<span id="L211"><span class="lineNum">     211</span>              :   {</span>
+<span id="L212"><span class="lineNum">     212</span>              :     Block bl;</span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">          24 :     bl.s1 = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">          24 :     bl.m1 = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">          24 :     bl.s2 = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">          24 :     bl.m2 = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">          24 :     bl.r = static_cast&lt;int&gt;(b[p++]);</span></span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">          24 :     bl.U.assign(b.begin() + p, b.begin() + p + static_cast&lt;std::size_t&gt;(bl.m1) * bl.r);</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">          24 :     p += static_cast&lt;std::size_t&gt;(bl.m1) * bl.r;</span></span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">          24 :     bl.V.assign(b.begin() + p, b.begin() + p + static_cast&lt;std::size_t&gt;(bl.m2) * bl.r);</span></span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaGNC">          24 :     p += static_cast&lt;std::size_t&gt;(bl.m2) * bl.r;</span></span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">          24 :     h.blocks.push_back(std::move(bl));</span></span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">          24 :   }</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">           8 :   return h;</span></span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaUNC tlaBgUNC">           0 : }</span></span>
+<span id="L226"><span class="lineNum">     226</span>              : </span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaGNC tlaBgGNC">         231 : void BuildHodlr(const std::vector&lt;double&gt; &amp;S, int n, const std::vector&lt;int&gt; &amp;idx, int base,</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :                 const std::vector&lt;double&gt; &amp;coords, double tol, int leaf, Hodlr &amp;h)</span>
+<span id="L229"><span class="lineNum">     229</span>              : {</span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaGNC">         231 :   const int m = static_cast&lt;int&gt;(idx.size());</span></span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaGNC">         231 :   if (m &lt;= leaf)</span></span>
+<span id="L232"><span class="lineNum">     232</span>              :   {</span>
+<span id="L233"><span class="lineNum">     233</span>              :     Hodlr::Leaf lf;</span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">         120 :     lf.s = base;</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">         120 :     lf.m = m;</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">         120 :     lf.D.assign(static_cast&lt;std::size_t&gt;(m) * m, 0.0);</span></span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaGNC">        3769 :     for (int i = 0; i &lt; m; i++)</span></span>
+<span id="L238"><span class="lineNum">     238</span>              :     {</span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">      115466 :       for (int j = 0; j &lt; m; j++)</span></span>
+<span id="L240"><span class="lineNum">     240</span>              :       {</span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">      111817 :         lf.D[static_cast&lt;std::size_t&gt;(i) * m + j] =</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">      111817 :             S[static_cast&lt;std::size_t&gt;(idx[i]) * n + idx[j]];</span></span>
+<span id="L243"><span class="lineNum">     243</span>              :       }</span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">        3649 :       h.perm[base + i] = idx[i];</span></span>
+<span id="L245"><span class="lineNum">     245</span>              :     }</span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaGNC">         120 :     h.leaves.push_back(std::move(lf));</span></span>
+<span id="L247"><span class="lineNum">     247</span>              :     return;</span>
+<span id="L248"><span class="lineNum">     248</span>              :   }</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">         111 :   int axis = 0;</span></span>
+<span id="L250"><span class="lineNum">     250</span>              :   double best = -1.0;</span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">         444 :   for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L252"><span class="lineNum">     252</span>              :   {</span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">         333 :     double lo = 1e300, hi = -1e300;</span></span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">       49227 :     for (int i : idx)</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :     {</span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">       48894 :       const double x = coords[static_cast&lt;std::size_t&gt;(i) * 3 + d];</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">       48894 :       lo = std::min(lo, x);</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">       48894 :       hi = std::max(hi, x);</span></span>
+<span id="L259"><span class="lineNum">     259</span>              :     }</span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">         333 :     if (hi - lo &gt; best)</span></span>
+<span id="L261"><span class="lineNum">     261</span>              :     {</span>
+<span id="L262"><span class="lineNum">     262</span>              :       best = hi - lo;</span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">         180 :       axis = d;</span></span>
+<span id="L264"><span class="lineNum">     264</span>              :     }</span>
+<span id="L265"><span class="lineNum">     265</span>              :   }</span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaGNC">         111 :   std::vector&lt;int&gt; s(idx);</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">         111 :   std::sort(s.begin(), s.end(),</span></span>
+<span id="L268"><span class="lineNum">     268</span>              :             [&amp;](int i, int j)</span>
+<span id="L269"><span class="lineNum">     269</span>              :             {</span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">      144270 :               return coords[static_cast&lt;std::size_t&gt;(i) * 3 + axis] &lt;</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">      144270 :                      coords[static_cast&lt;std::size_t&gt;(j) * 3 + axis];</span></span>
+<span id="L272"><span class="lineNum">     272</span>              :             });</span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">         111 :   std::vector&lt;int&gt; I1(s.begin(), s.begin() + m / 2), I2(s.begin() + m / 2, s.end());</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">         111 :   const int m1 = static_cast&lt;int&gt;(I1.size()), m2 = static_cast&lt;int&gt;(I2.size());</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   // Recurse first so the final permuted order within each child range is fixed; the</span>
+<span id="L276"><span class="lineNum">     276</span>              :   // off-diagonal factors below are then indexed consistently with `perm` (the recursion</span>
+<span id="L277"><span class="lineNum">     277</span>              :   // reorders I1/I2 internally).</span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">         111 :   BuildHodlr(S, n, I1, base, coords, tol, leaf, h);</span></span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">         111 :   BuildHodlr(S, n, I2, base + m1, coords, tol, leaf, h);</span></span>
+<span id="L280"><span class="lineNum">     280</span>              :   // Off-diagonal block B = S[rows, cols] with rows/cols the final permuted indices.</span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">         111 :   const int *rows = &amp;h.perm[base], *cols = &amp;h.perm[base + m1];</span></span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">         111 :   Eigen::MatrixXd B(m1, m2), U, V;</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaGNC">        8231 :   for (int i = 0; i &lt; m1; i++)</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :   {</span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaGNC">     1488302 :     for (int j = 0; j &lt; m2; j++)</span></span>
+<span id="L286"><span class="lineNum">     286</span>              :     {</span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">     1480182 :       B(i, j) = S[static_cast&lt;std::size_t&gt;(rows[i]) * n + cols[j]];</span></span>
+<span id="L288"><span class="lineNum">     288</span>              :     }</span>
+<span id="L289"><span class="lineNum">     289</span>              :   }</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">         111 :   LowRankFactors(B, tol, U, V);</span></span>
+<span id="L291"><span class="lineNum">     291</span>              :   Hodlr::Block bl;</span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">         111 :   bl.s1 = base;</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">         111 :   bl.m1 = m1;</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">         111 :   bl.s2 = base + m1;</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">         111 :   bl.m2 = m2;</span></span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">         111 :   bl.r = static_cast&lt;int&gt;(U.cols());</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">         111 :   bl.U.resize(static_cast&lt;std::size_t&gt;(m1) * bl.r);</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">         111 :   bl.V.resize(static_cast&lt;std::size_t&gt;(m2) * bl.r);</span></span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">         111 :   Eigen::Map&lt;Eigen::Matrix&lt;double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor&gt;&gt;(</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">         111 :       bl.U.data(), m1, bl.r) = U;</span></span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaGNC">         111 :   Eigen::Map&lt;Eigen::Matrix&lt;double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor&gt;&gt;(</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">         111 :       bl.V.data(), m2, bl.r) = V;</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">         111 :   h.blocks.push_back(std::move(bl));</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">         111 : }</span></span>
+<span id="L305"><span class="lineNum">     305</span>              : </span>
+<span id="L306"><span class="lineNum">     306</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

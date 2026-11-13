@@ -1,0 +1,581 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/superconductorsheetoperator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - superconductorsheetoperator.cpp<span style="font-size: 80%;"> (source / <a href="superconductorsheetoperator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">11.5&nbsp;%</td>
+            <td class="headerCovTableEntry">208</td>
+            <td class="headerCovTableEntry">24</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-10-29 19:23:16</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">54.5&nbsp;%</td>
+            <td class="headerCovTableEntry">11</td>
+            <td class="headerCovTableEntry">6</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;superconductorsheetoperator.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;cmath&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;map&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;set&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;fem/bilinearform.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;fem/brokenspace.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;fem/coefficient.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;fem/integrator.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;linalg/rap.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;models/boundaryattributes.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;utils/geodata.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;utils/prettyprint.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : namespace palace</span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC tlaBgGNC">           4 : SuperconductorSheetOperator::SuperconductorSheetOperator(</span></span>
+<span id="L26"><span class="lineNum">      26</span>              :     const std::vector&lt;config::SuperconductorData&gt; &amp;superconductor,</span>
+<span id="L27"><span class="lineNum">      27</span>              :     const std::unordered_set&lt;int&gt; &amp;cracked_attributes, const Units &amp;units,</span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">           4 :     const MaterialOperator &amp;mat_op, const mfem::ParMesh &amp;mesh)</span></span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">           4 :   : mat_op(mat_op)</span></span>
+<span id="L30"><span class="lineNum">      30</span>              : {</span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC">           4 :   SetUpBoundaryProperties(superconductor, cracked_attributes, mesh);</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">           4 :   PrintBoundaryInfo(units, mesh);</span></span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaGNC">           4 : }</span></span>
+<span id="L34"><span class="lineNum">      34</span>              : </span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaUNC tlaBgUNC">           0 : SuperconductorSheetOperator::SuperconductorSheetOperator(const IoData &amp;iodata,</span></span>
+<span id="L36"><span class="lineNum">      36</span>              :                                                          const MaterialOperator &amp;mat_op,</span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaUNC">           0 :                                                          const mfem::ParMesh &amp;mesh)</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaUNC">           0 :   : SuperconductorSheetOperator(iodata.boundaries.superconductor,</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaUNC">           0 :                                 iodata.boundaries.cracked_attributes, iodata.units, mat_op,</span></span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC">           0 :                                 mesh)</span></span>
+<span id="L41"><span class="lineNum">      41</span>              : {</span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC tlaBgGNC">           4 : void SuperconductorSheetOperator::SetUpBoundaryProperties(</span></span>
+<span id="L45"><span class="lineNum">      45</span>              :     const std::vector&lt;config::SuperconductorData&gt; &amp;superconductor,</span>
+<span id="L46"><span class="lineNum">      46</span>              :     const std::unordered_set&lt;int&gt; &amp;cracked_attributes, const mfem::ParMesh &amp;mesh)</span>
+<span id="L47"><span class="lineNum">      47</span>              : {</span>
+<span id="L48"><span class="lineNum">      48</span>              :   // Check that superconductor sheet boundary attributes have been specified correctly.</span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">           4 :   MeshBoundaryAttributes mesh_attrs(mesh);</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">           4 :   if (!superconductor.empty())</span></span>
+<span id="L51"><span class="lineNum">      51</span>              :   {</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaUNC tlaBgUNC">           0 :     CheckBoundaryAttributes(mesh_attrs, superconductor, &quot;superconductor sheet&quot;);</span></span>
+<span id="L53"><span class="lineNum">      53</span>              :   }</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span>              :   // Kinetic sheet inductance L_ksq [H/sq]: supplied directly, or from (lambda, d) via the</span>
+<span id="L56"><span class="lineNum">      56</span>              :   // finite-thickness London sheet L_ksq = lambda*coth(d/lambda) (nondimensional, mu0</span>
+<span id="L57"><span class="lineNum">      57</span>              :   // absorbed). Reduces to the thin-film Pearl limit lambda^2/d for d &lt;&lt; lambda and</span>
+<span id="L58"><span class="lineNum">      58</span>              :   // saturates at lambda for d &gt;&gt; lambda, capturing the through-thickness current profile</span>
+<span id="L59"><span class="lineNum">      59</span>              :   // without resolving the film thickness.</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC tlaBgGNC">           4 :   boundaries.reserve(superconductor.size());</span></span>
+<span id="L61"><span class="lineNum">      61</span>              :   bool two_sided = false;</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">           4 :   for (const auto &amp;data : superconductor)</span></span>
+<span id="L63"><span class="lineNum">      63</span>              :   {</span>
+<span id="L64"><span class="lineNum">      64</span>              :     // Two-sided sheet: the diagonal self-term inductance of each side is λ·tanh(d/λ), so</span>
+<span id="L65"><span class="lineNum">      65</span>              :     // 1/Ls = coth(d/λ)/λ, and the cross term is assembled with it in</span>
+<span id="L66"><span class="lineNum">      66</span>              :     // AssembleBrokenSheetMatrix. Otherwise the single-sheet L_ksq applies.</span>
+<span id="L67"><span class="lineNum">      67</span>              :     const double Ls =</span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaUNC tlaBgUNC">           0 :         data.two_sided</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaUNC">           0 :             ? data.lambda_L * std::tanh(data.thickness / data.lambda_L)</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaUNC">           0 :             : ((data.Ls &gt; 0.0) ? data.Ls</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaUNC">           0 :                                : KineticSheetInductance(data.lambda_L, data.thickness));</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(Ls &gt; 0.0,</span></span>
+<span id="L73"><span class="lineNum">      73</span>              :                 &quot;Superconductor sheet has non-positive kinetic sheet inductance!&quot;);</span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaUNC">           0 :     auto &amp;bdr = boundaries.emplace_back();</span></span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaUNC">           0 :     bdr.Ls = Ls;</span></span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaUNC">           0 :     bdr.lambda_L = data.lambda_L;</span></span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaUNC">           0 :     bdr.thickness = data.thickness;</span></span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaUNC">           0 :     bdr.two_sided = data.two_sided;</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaUNC">           0 :     two_sided = two_sided || data.two_sided;</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaUNC">           0 :     bdr.attr_list.Reserve(static_cast&lt;int&gt;(data.attributes.size()));</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaUNC">           0 :     for (auto attr : data.attributes)</span></span>
+<span id="L82"><span class="lineNum">      82</span>              :     {</span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaUNC">           0 :       if (!mesh_attrs.Contains(attr))</span></span>
+<span id="L84"><span class="lineNum">      84</span>              :       {</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaUNC">           0 :         continue;  // Can just ignore if wrong</span></span>
+<span id="L86"><span class="lineNum">      86</span>              :       }</span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaUNC">           0 :       bdr.attr_list.Append(attr);</span></span>
+<span id="L88"><span class="lineNum">      88</span>              :       // Per-attribute scaling to account for increased area when using mesh cracking.</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC">           0 :       bdr.attr_scaling[attr] = cracked_attributes.contains(attr) ? 2.0 : 1.0;</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :     }</span>
+<span id="L91"><span class="lineNum">      91</span>              :   }</span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC tlaBgGNC">           4 :   if (!two_sided)</span></span>
+<span id="L93"><span class="lineNum">      93</span>              :   {</span>
+<span id="L94"><span class="lineNum">      94</span>              :     return;</span>
+<span id="L95"><span class="lineNum">      95</span>              :   }</span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaUNC tlaBgUNC">           0 :   MFEM_VERIFY(mesh.Dimension() == 3,</span></span>
+<span id="L97"><span class="lineNum">      97</span>              :               &quot;Superconductor boundary \&quot;TwoSided\&quot; requires a 3D mesh!&quot;);</span>
+<span id="L98"><span class="lineNum">      98</span>              : </span>
+<span id="L99"><span class="lineNum">      99</span>              :   // The two sides of a two-sided film are the elements on either side of its faces, so</span>
+<span id="L100"><span class="lineNum">     100</span>              :   // the film must be interior to the mesh.</span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaUNC">           0 :   int num_exterior = 0;</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaUNC">           0 :   for (int be = 0; be &lt; mesh.GetNBE(); be++)</span></span>
+<span id="L103"><span class="lineNum">     103</span>              :   {</span>
+<span id="L104"><span class="lineNum">     104</span>              :     const int attr = mesh.GetBdrAttribute(be);</span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaUNC">           0 :     for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L106"><span class="lineNum">     106</span>              :     {</span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaUNC">           0 :       if (bdr.two_sided &amp;&amp; bdr.attr_list.Find(attr) &gt;= 0)</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :       {</span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaUNC">           0 :         num_exterior +=</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaUNC">           0 :             mesh.GetFaceInformation(mesh.GetBdrElementFaceIndex(be)).IsBoundary();</span></span>
+<span id="L111"><span class="lineNum">     111</span>              :       }</span>
+<span id="L112"><span class="lineNum">     112</span>              :     }</span>
+<span id="L113"><span class="lineNum">     113</span>              :   }</span>
+<span id="L114"><span class="lineNum">     114</span>              :   Mpi::GlobalSum(1, &amp;num_exterior, mesh.GetComm());</span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(num_exterior == 0, &quot;Superconductor boundary \&quot;TwoSided\&quot; has &quot;</span></span>
+<span id="L116"><span class="lineNum">     116</span>              :                                      &lt;&lt; num_exterior</span>
+<span id="L117"><span class="lineNum">     117</span>              :                                      &lt;&lt; &quot; face(s) on the exterior boundary of the mesh; &quot;</span>
+<span id="L118"><span class="lineNum">     118</span>              :                                         &quot;the film must be interior!&quot;);</span>
+<span id="L119"><span class="lineNum">     119</span>              : }</span>
+<span id="L120"><span class="lineNum">     120</span>              : </span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC tlaBgGNC">           4 : void SuperconductorSheetOperator::PrintBoundaryInfo(const Units &amp;units,</span></span>
+<span id="L122"><span class="lineNum">     122</span>              :                                                     const mfem::ParMesh &amp;mesh)</span>
+<span id="L123"><span class="lineNum">     123</span>              : {</span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">           4 :   if (boundaries.empty())</span></span>
+<span id="L125"><span class="lineNum">     125</span>              :   {</span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaGNC">           4 :     return;</span></span>
+<span id="L127"><span class="lineNum">     127</span>              :   }</span>
+<span id="L128"><span class="lineNum">     128</span>              : </span>
+<span id="L129"><span class="lineNum">     129</span>              :   fmt::memory_buffer buffer{};</span>
+<span id="L130"><span class="lineNum">     130</span>              :   auto out = fmt::appender{buffer};</span>
+<span id="L131"><span class="lineNum">     131</span>              :   using VT = Units::ValueType;</span>
+<span id="L132"><span class="lineNum">     132</span>              : </span>
+<span id="L133"><span class="lineNum">     133</span>              :   fmt::format_to(out, &quot;\nConfiguring superconductor sheet BC at attributes:\n&quot;);</span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaUNC tlaBgUNC">           0 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L135"><span class="lineNum">     135</span>              :   {</span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaUNC">           0 :     for (auto attr : bdr.attr_list)</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :     {</span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaUNC">           0 :       if (bdr.two_sided)</span></span>
+<span id="L139"><span class="lineNum">     139</span>              :       {</span>
+<span id="L140"><span class="lineNum">     140</span>              :         // Each side's self-term, and the single sheet ½λ·coth(d/2λ) the pair reduces to</span>
+<span id="L141"><span class="lineNum">     141</span>              :         // when both sides carry the same field.</span>
+<span id="L142"><span class="lineNum">     142</span>              :         fmt::format_to(</span>
+<span id="L143"><span class="lineNum">     143</span>              :             out,</span>
+<span id="L144"><span class="lineNum">     144</span>              :             &quot; {:d}: L_ksq = {:.3e} H/sq per side, {:.3e} H/sq common mode, n = ({:+.1f})\n&quot;,</span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaUNC">           0 :             attr, units.Dimensionalize&lt;VT::INDUCTANCE&gt;(bdr.Ls),</span></span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaUNC">           0 :             units.Dimensionalize&lt;VT::INDUCTANCE&gt;(</span></span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaUNC">           0 :                 0.5 * KineticSheetInductance(bdr.lambda_L, 0.5 * bdr.thickness)),</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :             fmt::join(mesh::GetSurfaceNormal(mesh, attr), &quot;,&quot;));</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :       }</span>
+<span id="L151"><span class="lineNum">     151</span>              :       fmt::format_to(out, &quot; {:d}: L_ksq = {:.3e} H/sq, n = ({:+.1f})\n&quot;, attr,</span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaUNC">           0 :                      units.Dimensionalize&lt;VT::INDUCTANCE&gt;(bdr.Ls),</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaUNC">           0 :                      fmt::join(mesh::GetSurfaceNormal(mesh, attr), &quot;,&quot;));</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :     }</span>
+<span id="L155"><span class="lineNum">     155</span>              :   }</span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;{}&quot;, fmt::to_string(buffer));</span></span>
+<span id="L157"><span class="lineNum">     157</span>              : }</span>
+<span id="L158"><span class="lineNum">     158</span>              : </span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC tlaBgGNC">          23 : double SuperconductorSheetOperator::KineticSheetInductance(double lambda_L,</span></span>
+<span id="L160"><span class="lineNum">     160</span>              :                                                            double thickness)</span>
+<span id="L161"><span class="lineNum">     161</span>              : {</span>
+<span id="L162"><span class="lineNum">     162</span>              :   // Finite-thickness London sheet inductance L_ksq = lambda * coth(d/lambda), with</span>
+<span id="L163"><span class="lineNum">     163</span>              :   // coth(x) = 1/tanh(x). Reduces to lambda^2/d for d &lt;&lt; lambda; saturates at lambda for</span>
+<span id="L164"><span class="lineNum">     164</span>              :   // d &gt;&gt; lambda.</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">          23 :   return lambda_L / std::tanh(thickness / lambda_L);</span></span>
+<span id="L166"><span class="lineNum">     166</span>              : }</span>
+<span id="L167"><span class="lineNum">     167</span>              : </span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">           4 : mfem::Array&lt;int&gt; SuperconductorSheetOperator::GetAttrList() const</span></span>
+<span id="L169"><span class="lineNum">     169</span>              : {</span>
+<span id="L170"><span class="lineNum">     170</span>              :   mfem::Array&lt;int&gt; attr_list;</span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">           4 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L172"><span class="lineNum">     172</span>              :   {</span>
+<span id="L173"><span class="lineNum">     173</span>              :     attr_list.Append(bdr.attr_list);</span>
+<span id="L174"><span class="lineNum">     174</span>              :   }</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">           4 :   return attr_list;</span></span>
+<span id="L176"><span class="lineNum">     176</span>              : }</span>
+<span id="L177"><span class="lineNum">     177</span>              : </span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC tlaBgUNC">           0 : void SuperconductorSheetOperator::AddStiffnessBdrCoefficients(</span></span>
+<span id="L179"><span class="lineNum">     179</span>              :     double coeff, MaterialPropertyCoefficient &amp;fb) const</span>
+<span id="L180"><span class="lineNum">     180</span>              : {</span>
+<span id="L181"><span class="lineNum">     181</span>              :   // Kinetic sheet inductance boundaries: add (coeff / L_ksq) as a tangential surface mass.</span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaUNC">           0 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L183"><span class="lineNum">     183</span>              :   {</span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaUNC">           0 :     if (bdr.two_sided)</span></span>
+<span id="L185"><span class="lineNum">     185</span>              :     {</span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaUNC">           0 :       continue;</span></span>
+<span id="L187"><span class="lineNum">     187</span>              :     }</span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaUNC">           0 :     for (auto attr : bdr.attr_list)</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :     {</span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaUNC">           0 :       const double s = bdr.attr_scaling.at(attr);</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaUNC">           0 :       fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff / (bdr.Ls * s));</span></span>
+<span id="L192"><span class="lineNum">     192</span>              :     }</span>
+<span id="L193"><span class="lineNum">     193</span>              :   }</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L195"><span class="lineNum">     195</span>              : </span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC tlaBgGNC">           4 : std::vector&lt;int&gt; SuperconductorSheetOperator::GetTwoSidedAttributes() const</span></span>
+<span id="L197"><span class="lineNum">     197</span>              : {</span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">           4 :   std::vector&lt;int&gt; attr_list;</span></span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">           4 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L200"><span class="lineNum">     200</span>              :   {</span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC tlaBgUNC">           0 :     if (bdr.two_sided)</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :     {</span>
+<span id="L203"><span class="lineNum">     203</span>              :       attr_list.insert(attr_list.end(), bdr.attr_list.begin(), bdr.attr_list.end());</span>
+<span id="L204"><span class="lineNum">     204</span>              :     }</span>
+<span id="L205"><span class="lineNum">     205</span>              :   }</span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC tlaBgGNC">           4 :   return attr_list;</span></span>
+<span id="L207"><span class="lineNum">     207</span>              : }</span>
+<span id="L208"><span class="lineNum">     208</span>              : </span>
+<span id="L209"><span class="lineNum">     209</span>              : namespace</span>
+<span id="L210"><span class="lineNum">     210</span>              : {</span>
+<span id="L211"><span class="lineNum">     211</span>              : </span>
+<span id="L212"><span class="lineNum">     212</span>              : // Boundary attribute of each mesh face carrying one of attrs (0 otherwise), also for faces</span>
+<span id="L213"><span class="lineNum">     213</span>              : // whose boundary element is on another process or is a slave of a nonconforming master,</span>
+<span id="L214"><span class="lineNum">     214</span>              : // propagated through the true DOFs of the lowest-order H(div) space.</span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaUNC tlaBgUNC">           0 : std::vector&lt;int&gt; GetFaceAttributes(const mfem::ParMesh &amp;cmesh, const std::set&lt;int&gt; &amp;attrs)</span></span>
+<span id="L216"><span class="lineNum">     216</span>              : {</span>
+<span id="L217"><span class="lineNum">     217</span>              :   auto &amp;mesh = const_cast&lt;mfem::ParMesh &amp;&gt;(cmesh);</span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 :   mfem::RT_FECollection fec(0, mesh.Dimension());</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaUNC">           0 :   mfem::ParFiniteElementSpace fespace(&amp;mesh, &amp;fec);</span></span>
+<span id="L220"><span class="lineNum">     220</span>              :   mfem::Vector num(fespace.GetVSize()), den(fespace.GetVSize());</span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaUNC">           0 :   num = 0.0;</span></span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaUNC">           0 :   den = 0.0;</span></span>
+<span id="L223"><span class="lineNum">     223</span>              :   mfem::Array&lt;int&gt; dofs;</span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaUNC">           0 :   for (int be = 0; be &lt; mesh.GetNBE(); be++)</span></span>
+<span id="L225"><span class="lineNum">     225</span>              :   {</span>
+<span id="L226"><span class="lineNum">     226</span>              :     const int attr = mesh.GetBdrAttribute(be);</span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :     if (attrs.contains(attr))</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :     {</span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaUNC">           0 :       fespace.GetFaceDofs(mesh.GetBdrElementFaceIndex(be), dofs);</span></span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaUNC">           0 :       const int d = (dofs[0] &gt;= 0) ? dofs[0] : -1 - dofs[0];</span></span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaUNC">           0 :       num(d) = attr;</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaUNC">           0 :       den(d) = 1.0;</span></span>
+<span id="L233"><span class="lineNum">     233</span>              :     }</span>
+<span id="L234"><span class="lineNum">     234</span>              :   }</span>
+<span id="L235"><span class="lineNum">     235</span>              :   // |P| on the host, which keeps P in hypre's memory space and the results on the host.</span>
+<span id="L236"><span class="lineNum">     236</span>              :   const auto &amp;P = *fespace.Dof_TrueDof_Matrix();</span>
+<span id="L237"><span class="lineNum">     237</span>              :   mfem::Vector t(P.Width());</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :   P.AbsMultTranspose(1.0, num, 0.0, t);</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaUNC">           0 :   P.AbsMult(1.0, t, 0.0, num);</span></span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaUNC">           0 :   P.AbsMultTranspose(1.0, den, 0.0, t);</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :   P.AbsMult(1.0, t, 0.0, den);</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaUNC">           0 :   std::vector&lt;int&gt; face_attr(mesh.GetNumFaces(), 0);</span></span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :   for (int f = 0; f &lt; mesh.GetNumFaces(); f++)</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :   {</span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaUNC">           0 :     fespace.GetFaceDofs(f, dofs);</span></span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaUNC">           0 :     const int d = (dofs[0] &gt;= 0) ? dofs[0] : -1 - dofs[0];</span></span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :     face_attr[f] = (den(d) &gt; 0.0) ? static_cast&lt;int&gt;(std::lround(num(d) / den(d))) : 0;</span></span>
+<span id="L248"><span class="lineNum">     248</span>              :   }</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaUNC">           0 :   return face_attr;</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L251"><span class="lineNum">     251</span>              : </span>
+<span id="L252"><span class="lineNum">     252</span>              : // Add the tangential surface mass ∫ coeff u_t·v_t over the local face i of element e, with</span>
+<span id="L253"><span class="lineNum">     253</span>              : // the shape functions of the element, to elmat (in the reference element DOFs).</span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaUNC">           0 : void AddElementFaceMass(const mfem::ParMesh &amp;mesh, int e, int i, double coeff,</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :                         const mfem::FiniteElement &amp;fe, mfem::IsoparametricTransformation &amp;T,</span>
+<span id="L256"><span class="lineNum">     256</span>              :                         mfem::DenseMatrix &amp;elmat)</span>
+<span id="L257"><span class="lineNum">     257</span>              : {</span>
+<span id="L258"><span class="lineNum">     258</span>              :   const mfem::Element &amp;el = *mesh.GetElement(e);</span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaUNC">           0 :   const int nfv = el.GetNFaceVertices(i);</span></span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaUNC">           0 :   const int *fv = el.GetFaceVertices(i);</span></span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaUNC">           0 :   const auto face_geom = (nfv == 3) ? mfem::Geometry::TRIANGLE : mfem::Geometry::SQUARE;</span></span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaUNC">           0 :   const mfem::IntegrationRule &amp;verts = *mfem::Geometries.GetVertices(el.GetGeometryType());</span></span>
+<span id="L263"><span class="lineNum">     263</span>              :   const mfem::IntegrationRule &amp;ir =</span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaUNC">           0 :       mfem::IntRules.Get(face_geom, fem::DefaultIntegrationOrder::Get(mesh, face_geom));</span></span>
+<span id="L265"><span class="lineNum">     265</span>              :   double V[4][3];</span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaUNC">           0 :   for (int k = 0; k &lt; nfv; k++)</span></span>
+<span id="L267"><span class="lineNum">     267</span>              :   {</span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaUNC">           0 :     const auto &amp;v = verts.IntPoint(fv[k]);</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaUNC">           0 :     V[k][0] = v.x;</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaUNC">           0 :     V[k][1] = v.y;</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaUNC">           0 :     V[k][2] = v.z;</span></span>
+<span id="L272"><span class="lineNum">     272</span>              :   }</span>
+<span id="L273"><span class="lineNum">     273</span>              :   const int ndof = fe.GetDof();</span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaUNC">           0 :   mfem::DenseMatrix vshape(ndof, 3);</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   mfem::Vector un(ndof);</span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaUNC">           0 :   for (int q = 0; q &lt; ir.GetNPoints(); q++)</span></span>
+<span id="L277"><span class="lineNum">     277</span>              :   {</span>
+<span id="L278"><span class="lineNum">     278</span>              :     // Point on the face in the reference element, and the tangent vectors of the face</span>
+<span id="L279"><span class="lineNum">     279</span>              :     // parametrization.</span>
+<span id="L280"><span class="lineNum">     280</span>              :     const mfem::IntegrationPoint &amp;ipf = ir.IntPoint(q);</span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaUNC">           0 :     const double x = ipf.x, y = ipf.y;</span></span>
+<span id="L282"><span class="lineNum">     282</span>              :     double X[3], dx[3], dy[3];</span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaUNC">           0 :     for (int c = 0; c &lt; 3; c++)</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :     {</span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaUNC">           0 :       if (nfv == 3)</span></span>
+<span id="L286"><span class="lineNum">     286</span>              :       {</span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaUNC">           0 :         X[c] = V[0][c] + x * (V[1][c] - V[0][c]) + y * (V[2][c] - V[0][c]);</span></span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaUNC">           0 :         dx[c] = V[1][c] - V[0][c];</span></span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaUNC">           0 :         dy[c] = V[2][c] - V[0][c];</span></span>
+<span id="L290"><span class="lineNum">     290</span>              :       }</span>
+<span id="L291"><span class="lineNum">     291</span>              :       else</span>
+<span id="L292"><span class="lineNum">     292</span>              :       {</span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :         X[c] = (1.0 - x) * (1.0 - y) * V[0][c] + x * (1.0 - y) * V[1][c] + x * y * V[2][c] +</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaUNC">           0 :                (1.0 - x) * y * V[3][c];</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaUNC">           0 :         dx[c] = (1.0 - y) * (V[1][c] - V[0][c]) + y * (V[2][c] - V[3][c]);</span></span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaUNC">           0 :         dy[c] = (1.0 - x) * (V[3][c] - V[0][c]) + x * (V[2][c] - V[1][c]);</span></span>
+<span id="L297"><span class="lineNum">     297</span>              :       }</span>
+<span id="L298"><span class="lineNum">     298</span>              :     }</span>
+<span id="L299"><span class="lineNum">     299</span>              :     mfem::IntegrationPoint ip;</span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaUNC">           0 :     ip.Set3(X[0], X[1], X[2]);</span></span>
+<span id="L301"><span class="lineNum">     301</span>              :     T.SetIntPoint(&amp;ip);</span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 :     const mfem::DenseMatrix &amp;J = T.Jacobian();</span></span>
+<span id="L303"><span class="lineNum">     303</span>              :     double t1[3], t2[3], n[3];</span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaUNC">           0 :     for (int r = 0; r &lt; 3; r++)</span></span>
+<span id="L305"><span class="lineNum">     305</span>              :     {</span>
+<span id="L306"><span class="lineNum">     306</span> <span class="tlaUNC">           0 :       t1[r] = J(r, 0) * dx[0] + J(r, 1) * dx[1] + J(r, 2) * dx[2];</span></span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaUNC">           0 :       t2[r] = J(r, 0) * dy[0] + J(r, 1) * dy[1] + J(r, 2) * dy[2];</span></span>
+<span id="L308"><span class="lineNum">     308</span>              :     }</span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaUNC">           0 :     n[0] = t1[1] * t2[2] - t1[2] * t2[1];</span></span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaUNC">           0 :     n[1] = t1[2] * t2[0] - t1[0] * t2[2];</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaUNC">           0 :     n[2] = t1[0] * t2[1] - t1[1] * t2[0];</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaUNC">           0 :     const double dA = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaUNC">           0 :     for (auto &amp;c : n)</span></span>
+<span id="L314"><span class="lineNum">     314</span>              :     {</span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaUNC">           0 :       c /= dA;</span></span>
+<span id="L316"><span class="lineNum">     316</span>              :     }</span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaUNC">           0 :     fe.CalcVShape(T, vshape);</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaUNC">           0 :     for (int a = 0; a &lt; ndof; a++)</span></span>
+<span id="L319"><span class="lineNum">     319</span>              :     {</span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaUNC">           0 :       un(a) = vshape(a, 0) * n[0] + vshape(a, 1) * n[1] + vshape(a, 2) * n[2];</span></span>
+<span id="L321"><span class="lineNum">     321</span>              :     }</span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaUNC">           0 :     const double w = coeff * ipf.weight * dA;</span></span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaUNC">           0 :     for (int b = 0; b &lt; ndof; b++)</span></span>
+<span id="L324"><span class="lineNum">     324</span>              :     {</span>
+<span id="L325"><span class="lineNum">     325</span> <span class="tlaUNC">           0 :       for (int a = 0; a &lt; ndof; a++)</span></span>
+<span id="L326"><span class="lineNum">     326</span>              :       {</span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaUNC">           0 :         elmat(a, b) += w * (vshape(a, 0) * vshape(b, 0) + vshape(a, 1) * vshape(b, 1) +</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaUNC">           0 :                             vshape(a, 2) * vshape(b, 2) - un(a) * un(b));</span></span>
+<span id="L329"><span class="lineNum">     329</span>              :       }</span>
+<span id="L330"><span class="lineNum">     330</span>              :     }</span>
+<span id="L331"><span class="lineNum">     331</span>              :   }</span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L333"><span class="lineNum">     333</span>              : </span>
+<span id="L334"><span class="lineNum">     334</span>              : }  // namespace</span>
+<span id="L335"><span class="lineNum">     335</span>              : </span>
+<span id="L336"><span class="lineNum">     336</span>              : std::unique_ptr&lt;mfem::HypreParMatrix&gt;</span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaUNC">           0 : SuperconductorSheetOperator::AssembleBrokenSheetMatrix(</span></span>
+<span id="L338"><span class="lineNum">     338</span>              :     const FiniteElementSpace &amp;nd_fespace, const FiniteElementSpace &amp;broken_nd_fespace,</span>
+<span id="L339"><span class="lineNum">     339</span>              :     const CrackSides &amp;sides) const</span>
+<span id="L340"><span class="lineNum">     340</span>              : {</span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(broken_nd_fespace.IsBroken() &amp;&amp; &amp;broken_nd_fespace.Get() == &amp;nd_fespace.Get(),</span></span>
+<span id="L342"><span class="lineNum">     342</span>              :               &quot;Two-sided superconductor sheets need a view of the ND space broken across &quot;</span>
+<span id="L343"><span class="lineNum">     343</span>              :               &quot;the films!&quot;);</span>
+<span id="L344"><span class="lineNum">     344</span>              :   const auto &amp;mesh = nd_fespace.GetParMesh();</span>
+<span id="L345"><span class="lineNum">     345</span>              :   MPI_Comm comm = nd_fespace.GetComm();</span>
+<span id="L346"><span class="lineNum">     346</span>              : </span>
+<span id="L347"><span class="lineNum">     347</span>              :   // Coefficients a + b (each side) and b (sum of the sides) per film attribute.</span>
+<span id="L348"><span class="lineNum">     348</span>              :   std::map&lt;int, std::pair&lt;double, double&gt;&gt; coeffs;</span>
+<span id="L349"><span class="lineNum">     349</span>              :   std::set&lt;int&gt; attrs;</span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaUNC">           0 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L351"><span class="lineNum">     351</span>              :   {</span>
+<span id="L352"><span class="lineNum">     352</span> <span class="tlaUNC">           0 :     if (!bdr.two_sided)</span></span>
+<span id="L353"><span class="lineNum">     353</span>              :     {</span>
+<span id="L354"><span class="lineNum">     354</span>              :       continue;</span>
+<span id="L355"><span class="lineNum">     355</span>              :     }</span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaUNC">           0 :     const double D = bdr.thickness / bdr.lambda_L;</span></span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaUNC">           0 :     const double a = 1.0 / (bdr.lambda_L * std::tanh(D)),</span></span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 :                  b = 1.0 / (bdr.lambda_L * std::sinh(D));</span></span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaUNC">           0 :     for (auto attr : bdr.attr_list)</span></span>
+<span id="L360"><span class="lineNum">     360</span>              :     {</span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaUNC">           0 :       coeffs[attr] = {a + b, b};</span></span>
+<span id="L362"><span class="lineNum">     362</span>              :       attrs.insert(attr);</span>
+<span id="L363"><span class="lineNum">     363</span>              :     }</span>
+<span id="L364"><span class="lineNum">     364</span>              :   }</span>
+<span id="L365"><span class="lineNum">     365</span>              : </span>
+<span id="L366"><span class="lineNum">     366</span>              :   // The DOFs of the two sides of a film face are versions of one another: an entity at a</span>
+<span id="L367"><span class="lineNum">     367</span>              :   // junction of films would have more than two.</span>
+<span id="L368"><span class="lineNum">     368</span>              :   {</span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaUNC">           0 :     int num_junction = 0;</span></span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaUNC">           0 :     for (int t = 0; t &lt; nd_fespace.GetTrueVSize(); t++)</span></span>
+<span id="L371"><span class="lineNum">     371</span>              :     {</span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaUNC">           0 :       num_junction += (broken_nd_fespace.GetNumVersions(t) &gt; 2);</span></span>
+<span id="L373"><span class="lineNum">     373</span>              :     }</span>
+<span id="L374"><span class="lineNum">     374</span>              :     Mpi::GlobalSum(1, &amp;num_junction, comm);</span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(num_junction == 0,</span></span>
+<span id="L376"><span class="lineNum">     376</span>              :                 &quot;Superconductor boundaries \&quot;TwoSided\&quot; cannot meet each other (&quot;</span>
+<span id="L377"><span class="lineNum">     377</span>              :                     &lt;&lt; num_junction &lt;&lt; &quot; DOF(s) with more than two sides)!&quot;);</span>
+<span id="L378"><span class="lineNum">     378</span>              :   }</span>
+<span id="L379"><span class="lineNum">     379</span>              : </span>
+<span id="L380"><span class="lineNum">     380</span>              :   // Each side: (a + b) ∫ u·v over the film faces of each element, on the L-vector of the</span>
+<span id="L381"><span class="lineNum">     381</span>              :   // broken space, lifted with its prolongation, together with the one-sided sheets.</span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; C;</span></span>
+<span id="L383"><span class="lineNum">     383</span>              :   {</span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaUNC">           0 :     const auto face_attr = GetFaceAttributes(mesh, attrs);</span></span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :     auto C_l = std::make_unique&lt;mfem::SparseMatrix&gt;(broken_nd_fespace.GetVSize());</span></span>
+<span id="L386"><span class="lineNum">     386</span>              :     mfem::Array&lt;int&gt; faces, orient, dofs;</span>
+<span id="L387"><span class="lineNum">     387</span>              :     mfem::DofTransformation dof_trans;</span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaUNC">           0 :     mfem::IsoparametricTransformation T;</span></span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaUNC">           0 :     mfem::DenseMatrix elmat;</span></span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaUNC">           0 :     int num_unknown = 0;</span></span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaUNC">           0 :     for (int e = 0; e &lt; mesh.GetNE(); e++)</span></span>
+<span id="L392"><span class="lineNum">     392</span>              :     {</span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaUNC">           0 :       if (!sides.split[e])</span></span>
+<span id="L394"><span class="lineNum">     394</span>              :       {</span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L396"><span class="lineNum">     396</span>              :       }</span>
+<span id="L397"><span class="lineNum">     397</span>              :       const auto geom = mesh.GetElementGeometry(e);</span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaUNC">           0 :       const int face_bit0 = mfem::Geometry::NumVerts[geom] + mfem::Geometry::NumEdges[geom];</span></span>
+<span id="L399"><span class="lineNum">     399</span> <span class="tlaUNC">           0 :       mesh.GetElementFaces(e, faces, orient);</span></span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaUNC">           0 :       const mfem::FiniteElement &amp;fe = *nd_fespace.Get().GetFE(e);</span></span>
+<span id="L401"><span class="lineNum">     401</span>              :       elmat.SetSize(fe.GetDof());</span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaUNC">           0 :       elmat = 0.0;</span></span>
+<span id="L403"><span class="lineNum">     403</span>              :       bool any = false;</span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaUNC">           0 :       for (int i = 0; i &lt; faces.Size(); i++)</span></span>
+<span id="L405"><span class="lineNum">     405</span>              :       {</span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaUNC">           0 :         if (!((sides.split[e] &gt;&gt; (face_bit0 + i)) &amp; 1u))</span></span>
+<span id="L407"><span class="lineNum">     407</span>              :         {</span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaUNC">           0 :           continue;</span></span>
+<span id="L409"><span class="lineNum">     409</span>              :         }</span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaUNC">           0 :         auto it = coeffs.find(face_attr[faces[i]]);</span></span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaUNC">           0 :         if (it == coeffs.end())</span></span>
+<span id="L412"><span class="lineNum">     412</span>              :         {</span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaUNC">           0 :           num_unknown++;</span></span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaUNC">           0 :           continue;</span></span>
+<span id="L415"><span class="lineNum">     415</span>              :         }</span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaUNC">           0 :         mesh.GetElementTransformation(e, &amp;T);</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaUNC">           0 :         AddElementFaceMass(mesh, e, i, it-&gt;second.first, fe, T, elmat);</span></span>
+<span id="L418"><span class="lineNum">     418</span>              :         any = true;</span>
+<span id="L419"><span class="lineNum">     419</span>              :       }</span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaUNC">           0 :       if (any)</span></span>
+<span id="L421"><span class="lineNum">     421</span>              :       {</span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaUNC">           0 :         broken_nd_fespace.GetElementDofs(e, dofs, dof_trans);</span></span>
+<span id="L423"><span class="lineNum">     423</span>              :         if (!dof_trans.IsIdentity())</span>
+<span id="L424"><span class="lineNum">     424</span>              :         {</span>
+<span id="L425"><span class="lineNum">     425</span>              :           dof_trans.TransformDual(elmat);</span>
+<span id="L426"><span class="lineNum">     426</span>              :         }</span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaUNC">           0 :         C_l-&gt;AddSubMatrix(dofs, dofs, elmat, 0);</span></span>
+<span id="L428"><span class="lineNum">     428</span>              :       }</span>
+<span id="L429"><span class="lineNum">     429</span>              :     }</span>
+<span id="L430"><span class="lineNum">     430</span>              :     Mpi::GlobalSum(1, &amp;num_unknown, comm);</span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(num_unknown == 0, num_unknown &lt;&lt; &quot; split face(s) of a broken space with no &quot;</span></span>
+<span id="L432"><span class="lineNum">     432</span>              :                                                  &quot;two-sided superconductor attribute!&quot;);</span>
+<span id="L433"><span class="lineNum">     433</span>              : </span>
+<span id="L434"><span class="lineNum">     434</span>              :     // One-sided sheets: each boundary element is integrated by its adjacent element with</span>
+<span id="L435"><span class="lineNum">     435</span>              :     // the DOFs of its side, so that a sheet standing on one side of a two-sided film reads</span>
+<span id="L436"><span class="lineNum">     436</span>              :     // the versions of that side (both sides read a sheet away from the films).</span>
+<span id="L437"><span class="lineNum">     437</span>              :     std::map&lt;int, double&gt; one_sided;</span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaUNC">           0 :     for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L439"><span class="lineNum">     439</span>              :     {</span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaUNC">           0 :       if (!bdr.two_sided)</span></span>
+<span id="L441"><span class="lineNum">     441</span>              :       {</span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaUNC">           0 :         for (auto attr : bdr.attr_list)</span></span>
+<span id="L443"><span class="lineNum">     443</span>              :         {</span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaUNC">           0 :           one_sided[attr] = 1.0 / (bdr.Ls * bdr.attr_scaling.at(attr));</span></span>
+<span id="L445"><span class="lineNum">     445</span>              :         }</span>
+<span id="L446"><span class="lineNum">     446</span>              :       }</span>
+<span id="L447"><span class="lineNum">     447</span>              :     }</span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaUNC">           0 :     for (int be = 0; be &lt; mesh.GetNBE() &amp;&amp; !one_sided.empty(); be++)</span></span>
+<span id="L449"><span class="lineNum">     449</span>              :     {</span>
+<span id="L450"><span class="lineNum">     450</span>              :       auto it = one_sided.find(mesh.GetBdrAttribute(be));</span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaUNC">           0 :       if (it == one_sided.end())</span></span>
+<span id="L452"><span class="lineNum">     452</span>              :       {</span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L454"><span class="lineNum">     454</span>              :       }</span>
+<span id="L455"><span class="lineNum">     455</span>              :       int e, info;</span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaUNC">           0 :       mesh.GetBdrElementAdjacentElement(be, e, info);</span></span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaUNC">           0 :       const mfem::FiniteElement &amp;fe = *nd_fespace.Get().GetFE(e);</span></span>
+<span id="L458"><span class="lineNum">     458</span>              :       elmat.SetSize(fe.GetDof());</span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaUNC">           0 :       elmat = 0.0;</span></span>
+<span id="L460"><span class="lineNum">     460</span> <span class="tlaUNC">           0 :       mesh.GetElementTransformation(e, &amp;T);</span></span>
+<span id="L461"><span class="lineNum">     461</span> <span class="tlaUNC">           0 :       AddElementFaceMass(mesh, e, info / 64, it-&gt;second, fe, T, elmat);</span></span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaUNC">           0 :       broken_nd_fespace.GetElementDofs(e, dofs, dof_trans);</span></span>
+<span id="L463"><span class="lineNum">     463</span>              :       if (!dof_trans.IsIdentity())</span>
+<span id="L464"><span class="lineNum">     464</span>              :       {</span>
+<span id="L465"><span class="lineNum">     465</span>              :         dof_trans.TransformDual(elmat);</span>
+<span id="L466"><span class="lineNum">     466</span>              :       }</span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaUNC">           0 :       C_l-&gt;AddSubMatrix(dofs, dofs, elmat, 0);</span></span>
+<span id="L468"><span class="lineNum">     468</span>              :     }</span>
+<span id="L469"><span class="lineNum">     469</span>              :     auto C_h = linalg::BlockDiagonalParMatrix(</span>
+<span id="L470"><span class="lineNum">     470</span>              :         comm, broken_nd_fespace.GlobalVSize(), broken_nd_fespace.GlobalVSize(),</span>
+<span id="L471"><span class="lineNum">     471</span>              :         broken_nd_fespace.GetDofOffsets(), broken_nd_fespace.GetDofOffsets(),</span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaUNC">           0 :         std::move(C_l));</span></span>
+<span id="L473"><span class="lineNum">     473</span> <span class="tlaUNC">           0 :     C = linalg::RAP(*C_h, *broken_nd_fespace.Dof_TrueDof_Matrix());</span></span>
+<span id="L474"><span class="lineNum">     474</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L475"><span class="lineNum">     475</span>              : </span>
+<span id="L476"><span class="lineNum">     476</span>              :   // Sum of the sides: −b ∫ (u⁺ + u⁻)·(v⁺ + v⁻) = −b Sᵀ M S, with M the film boundary mass</span>
+<span id="L477"><span class="lineNum">     477</span>              :   // of the unbroken space.</span>
+<span id="L478"><span class="lineNum">     478</span>              :   {</span>
+<span id="L479"><span class="lineNum">     479</span> <span class="tlaUNC">           0 :     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());</span></span>
+<span id="L480"><span class="lineNum">     480</span> <span class="tlaUNC">           0 :     for (const auto &amp;[attr, ab] : coeffs)</span></span>
+<span id="L481"><span class="lineNum">     481</span>              :     {</span>
+<span id="L482"><span class="lineNum">     482</span> <span class="tlaUNC">           0 :       fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), ab.second);</span></span>
+<span id="L483"><span class="lineNum">     483</span>              :     }</span>
+<span id="L484"><span class="lineNum">     484</span>              :     BilinearForm m(nd_fespace);</span>
+<span id="L485"><span class="lineNum">     485</span> <span class="tlaUNC">           0 :     if (!fb.empty())  // A process may have no film boundary elements.</span></span>
+<span id="L486"><span class="lineNum">     486</span>              :     {</span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaUNC">           0 :       m.AddBoundaryIntegrator&lt;VectorFEMassIntegrator&gt;(fb);</span></span>
+<span id="L488"><span class="lineNum">     488</span>              :     }</span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaUNC">           0 :     auto M = ParOperator(m.FullAssemble(false), nd_fespace).StealParallelAssemble();</span></span>
+<span id="L490"><span class="lineNum">     490</span> <span class="tlaUNC">           0 :     auto S = broken_nd_fespace.BuildVersionMap(FiniteElementSpace::VersionMap::SIDES);</span></span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaUNC">           0 :     auto X = linalg::RAP(*M, *S);</span></span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaUNC">           0 :     C.reset(mfem::Add(1.0, *C, -1.0, *X));</span></span>
+<span id="L493"><span class="lineNum">     493</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :   return C;</span></span>
+<span id="L495"><span class="lineNum">     495</span>              : }</span>
+<span id="L496"><span class="lineNum">     496</span>              : </span>
+<span id="L497"><span class="lineNum">     497</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

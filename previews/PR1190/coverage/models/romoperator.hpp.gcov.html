@@ -1,0 +1,670 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/romoperator.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - romoperator.hpp<span style="font-size: 80%;"> (source / <a href="romoperator.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryMed">88.2&nbsp;%</td>
+            <td class="headerCovTableEntry">34</td>
+            <td class="headerCovTableEntry">30</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-11-13 14:22:31</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntry">5</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_ROM_OPERATOR_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_ROM_OPERATOR_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;complex&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;limits&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;map&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;memory&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;optional&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;span&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;string&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &lt;utility&gt;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &lt;vector&gt;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &lt;Eigen/Dense&gt;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;linalg/ksp.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;linalg/rap.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : #include &quot;utils/filesystem.hpp&quot;</span>
+<span id="L23"><span class="lineNum">      23</span>              : #include &quot;utils/units.hpp&quot;</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span>              : namespace palace</span>
+<span id="L26"><span class="lineNum">      26</span>              : {</span>
+<span id="L27"><span class="lineNum">      27</span>              : </span>
+<span id="L28"><span class="lineNum">      28</span>              : class IoData;</span>
+<span id="L29"><span class="lineNum">      29</span>              : class SpaceOperator;</span>
+<span id="L30"><span class="lineNum">      30</span>              : struct FloquetOrder;</span>
+<span id="L31"><span class="lineNum">      31</span>              : </span>
+<span id="L32"><span class="lineNum">      32</span>              : // Helper classs to define inner product used in the PROM when doing circuit synthesis. The</span>
+<span id="L33"><span class="lineNum">      33</span>              : // weight matrix is the simple domain mass matrix of the space with the tdof of the port</span>
+<span id="L34"><span class="lineNum">      34</span>              : // zeroed out (using the diag policy materials) and replaced by the boundary port matrix.</span>
+<span id="L35"><span class="lineNum">      35</span>              : //</span>
+<span id="L36"><span class="lineNum">      36</span>              : // This 'hybrid' approach is different from the conventional mass matrix $M_{ab} = (v,</span>
+<span id="L37"><span class="lineNum">      37</span>              : // w)_{\Omega} + \sum_i (v, w)_{\Gamma_i}$ where the tdof of the port contributed both to</span>
+<span id="L38"><span class="lineNum">      38</span>              : // the domain $\Omega$ overlap and the port overlap $\Gamma_i$. Our method basically the</span>
+<span id="L39"><span class="lineNum">      39</span>              : // tdof on the ports fully with $\Gamma_i$. This ensures correct orthogonality of PROM basis</span>
+<span id="L40"><span class="lineNum">      40</span>              : // with the boundary form used when calculating the system response matrix (S-Matrix).</span>
+<span id="L41"><span class="lineNum">      41</span>              : //</span>
+<span id="L42"><span class="lineNum">      42</span>              : // The ParSumOperator defined in linalg/rap.hpp can only have a single diag policy so we</span>
+<span id="L43"><span class="lineNum">      43</span>              : // can't use that approach here.</span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC tlaBgGNC">          55 : struct HybridBulkBoundaryOperator</span></span>
+<span id="L45"><span class="lineNum">      45</span>              : {</span>
+<span id="L46"><span class="lineNum">      46</span>              :   // Need this since SetEssentialTrueDofs makes pointer to these values, even though it</span>
+<span id="L47"><span class="lineNum">      47</span>              :   // looks like it is passing by references.</span>
+<span id="L48"><span class="lineNum">      48</span>              :   mfem::Array&lt;int&gt; port_tdof_list;</span>
+<span id="L49"><span class="lineNum">      49</span>              : </span>
+<span id="L50"><span class="lineNum">      50</span>              :   std::unique_ptr&lt;ParOperator&gt; W_inner_product_weight_bulk = {};</span>
+<span id="L51"><span class="lineNum">      51</span>              :   std::unique_ptr&lt;ParOperator&gt; W_inner_product_weight_port = {};</span>
+<span id="L52"><span class="lineNum">      52</span>              : </span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">          55 :   void validate_operators_zero_bulk_tdof()</span></span>
+<span id="L54"><span class="lineNum">      54</span>              :   {</span>
+<span id="L55"><span class="lineNum">      55</span>              :     // We don't need to zero of PEC in the actual model, since vectors entering inner</span>
+<span id="L56"><span class="lineNum">      56</span>              :     // product should already have the PEC contribution removed.</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">          55 :     MFEM_VERIFY(W_inner_product_weight_port,</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :                 &quot;Port weight operator must be constructed before validation!&quot;);</span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">          55 :     if (W_inner_product_weight_bulk)</span></span>
+<span id="L60"><span class="lineNum">      60</span>              :     {</span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">          49 :       W_inner_product_weight_bulk-&gt;SetEssentialTrueDofs(port_tdof_list,</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :                                                         Operator::DIAG_ZERO);</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">          49 :       MFEM_VERIFY((W_inner_product_weight_bulk-&gt;NumCols() ==</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :                    W_inner_product_weight_port-&gt;NumCols()) &amp;&amp;</span>
+<span id="L65"><span class="lineNum">      65</span>              :                       (W_inner_product_weight_bulk-&gt;NumRows() ==</span>
+<span id="L66"><span class="lineNum">      66</span>              :                        W_inner_product_weight_port-&gt;NumRows()),</span>
+<span id="L67"><span class="lineNum">      67</span>              :                   &quot;Mismatch sizes of inner product matrices!&quot;);</span>
+<span id="L68"><span class="lineNum">      68</span>              :     }</span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">          55 :   }</span></span>
+<span id="L70"><span class="lineNum">      70</span>              : </span>
+<span id="L71"><span class="lineNum">      71</span>              :   HybridBulkBoundaryOperator(const SpaceOperator &amp;space_op,</span>
+<span id="L72"><span class="lineNum">      72</span>              :                              DomainOrthogonalizationWeight domain_orthog_type);</span>
+<span id="L73"><span class="lineNum">      73</span>              : </span>
+<span id="L74"><span class="lineNum">      74</span>              :   HybridBulkBoundaryOperator(mfem::Array&lt;int&gt; &amp;&amp;port_tdof_list_,</span>
+<span id="L75"><span class="lineNum">      75</span>              :                              std::unique_ptr&lt;ParOperator&gt; &amp;&amp;W_inner_product_weight_bulk_,</span>
+<span id="L76"><span class="lineNum">      76</span>              :                              std::unique_ptr&lt;ParOperator&gt; &amp;&amp;W_inner_product_weight_port_)</span>
+<span id="L77"><span class="lineNum">      77</span>              :     : port_tdof_list{std::move(port_tdof_list_)},</span>
+<span id="L78"><span class="lineNum">      78</span>              :       W_inner_product_weight_bulk{std::move(W_inner_product_weight_bulk_)},</span>
+<span id="L79"><span class="lineNum">      79</span>              :       W_inner_product_weight_port{std::move(W_inner_product_weight_port_)}</span>
+<span id="L80"><span class="lineNum">      80</span>              :   {</span>
+<span id="L81"><span class="lineNum">      81</span>              :     validate_operators_zero_bulk_tdof();</span>
+<span id="L82"><span class="lineNum">      82</span>              :   }</span>
+<span id="L83"><span class="lineNum">      83</span>              : </span>
+<span id="L84"><span class="lineNum">      84</span>              :   auto NumCols() const { return W_inner_product_weight_port-&gt;NumCols(); }</span>
+<span id="L85"><span class="lineNum">      85</span>              : </span>
+<span id="L86"><span class="lineNum">      86</span>              :   auto NumRows() const { return W_inner_product_weight_port-&gt;NumRows(); }</span>
+<span id="L87"><span class="lineNum">      87</span>              : </span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">        1826 :   void Mult(const Vector &amp;x, Vector &amp;y) const</span></span>
+<span id="L89"><span class="lineNum">      89</span>              :   {</span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaGNC">        1826 :     if (W_inner_product_weight_bulk)</span></span>
+<span id="L91"><span class="lineNum">      91</span>              :     {</span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">        1808 :       W_inner_product_weight_bulk-&gt;Mult(x, y);</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">        1808 :       W_inner_product_weight_port-&gt;AddMult(x, y);</span></span>
+<span id="L94"><span class="lineNum">      94</span>              :     }</span>
+<span id="L95"><span class="lineNum">      95</span>              :     else</span>
+<span id="L96"><span class="lineNum">      96</span>              :     {</span>
+<span id="L97"><span class="lineNum">      97</span>              :       // Identify bulk matrix with port tdof removed</span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">          18 :       y.Set(1.0, x);</span></span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">          18 :       linalg::SetSubVector(y, port_tdof_list, 0.0);</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">          18 :       W_inner_product_weight_port-&gt;AddMult(x, y);</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :     }</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">        1826 :   }</span></span>
+<span id="L103"><span class="lineNum">     103</span>              : </span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">         102 :   double InnerProduct(const Vector &amp;x, const Vector &amp;y, Vector &amp;v_workspace) const</span></span>
+<span id="L105"><span class="lineNum">     105</span>              :   {</span>
+<span id="L106"><span class="lineNum">     106</span>              :     // TODO(future): Optimize to not use mult if InnerProduct is wrapped using our ceed</span>
+<span id="L107"><span class="lineNum">     107</span>              :     // operator machinery.</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">         102 :     v_workspace.SetSize(x.Size());</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">         102 :     v_workspace.UseDevice(x.UseDevice());</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">         102 :     Mult(x, v_workspace);</span></span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">         102 :     return linalg::LocalDot(y, v_workspace);</span></span>
+<span id="L112"><span class="lineNum">     112</span>              :   }</span>
+<span id="L113"><span class="lineNum">     113</span>              : </span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">          96 :   double InnerProduct(MPI_Comm comm, const Vector &amp;x, const Vector &amp;y,</span></span>
+<span id="L115"><span class="lineNum">     115</span>              :                       Vector &amp;v_workspace) const</span>
+<span id="L116"><span class="lineNum">     116</span>              :   {</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">          96 :     auto dot = InnerProduct(x, y, v_workspace);</span></span>
+<span id="L118"><span class="lineNum">     118</span>              :     Mpi::GlobalSum(1, &amp;dot, comm);</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">          96 :     return dot;</span></span>
+<span id="L120"><span class="lineNum">     120</span>              :   }</span>
+<span id="L121"><span class="lineNum">     121</span>              : };</span>
+<span id="L122"><span class="lineNum">     122</span>              : </span>
+<span id="L123"><span class="lineNum">     123</span>              : // Class for handling minimal-rational interpolation of solutions in frequency space. Used</span>
+<span id="L124"><span class="lineNum">     124</span>              : // as an error indicator and for selecting the next frequency sample points in PROM</span>
+<span id="L125"><span class="lineNum">     125</span>              : // construction. Each excitation gets a separate MRI, so sample frequencies are not shared.</span>
+<span id="L126"><span class="lineNum">     126</span>              : // The samples are given by their coefficients in an orthonormal basis, which may grow</span>
+<span id="L127"><span class="lineNum">     127</span>              : // between samples (the coefficients of the later basis vectors are zero for the earlier</span>
+<span id="L128"><span class="lineNum">     128</span>              : // samples), and are replicated on every process.</span>
+<span id="L129"><span class="lineNum">     129</span>              : class MinimalRationalInterpolation</span>
+<span id="L130"><span class="lineNum">     130</span>              : {</span>
+<span id="L131"><span class="lineNum">     131</span>              : private:</span>
+<span id="L132"><span class="lineNum">     132</span>              :   // QR decomposition of the snapshot matrix with columns [c; iω c] for the coefficients c</span>
+<span id="L133"><span class="lineNum">     133</span>              :   // of each sample, with rows interleaved so that a new basis vector only adds rows.</span>
+<span id="L134"><span class="lineNum">     134</span>              :   // Minimal rational interpolant (MRI) defined by the vector q of interpolation weights and</span>
+<span id="L135"><span class="lineNum">     135</span>              :   // support points z is used as an error indicator.</span>
+<span id="L136"><span class="lineNum">     136</span>              :   Eigen::MatrixXcd Q, R;</span>
+<span id="L137"><span class="lineNum">     137</span>              :   Eigen::VectorXcd q;</span>
+<span id="L138"><span class="lineNum">     138</span>              :   std::vector&lt;double&gt; z;</span>
+<span id="L139"><span class="lineNum">     139</span>              : </span>
+<span id="L140"><span class="lineNum">     140</span>              : public:</span>
+<span id="L141"><span class="lineNum">     141</span>              :   void AddSolutionSample(double omega, const Eigen::VectorXcd &amp;c);</span>
+<span id="L142"><span class="lineNum">     142</span>              :   // With a communicator, the search for N = 1 is split over its processes (same result).</span>
+<span id="L143"><span class="lineNum">     143</span>              :   std::vector&lt;double&gt; FindMaxError(std::size_t N, MPI_Comm comm = MPI_COMM_NULL) const;</span>
+<span id="L144"><span class="lineNum">     144</span>              : </span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaUNC tlaBgUNC">           0 :   const auto &amp;GetSamplePoints() const { return z; }</span></span>
+<span id="L146"><span class="lineNum">     146</span>              : };</span>
+<span id="L147"><span class="lineNum">     147</span>              : </span>
+<span id="L148"><span class="lineNum">     148</span>              : // Dense solver for the PROM system A X = B, which is solved redundantly on every process,</span>
+<span id="L149"><span class="lineNum">     149</span>              : // overwriting B with X. LU with partial pivoting is blocked, so it stays cheap at large n</span>
+<span id="L150"><span class="lineNum">     150</span>              : // when all processes factor concurrently, and backward stable unless the pivots grow. It is</span>
+<span id="L151"><span class="lineNum">     151</span>              : // also more accurate than full-pivoting QR near a lossless resonance, where the QR</span>
+<span id="L152"><span class="lineNum">     152</span>              : // truncates the numerical rank and drops the resonant mode. The QR is used, on all</span>
+<span id="L153"><span class="lineNum">     153</span>              : // processes together, when an LU solution is not finite (an exactly singular matrix) or a</span>
+<span id="L154"><span class="lineNum">     154</span>              : // column has a normwise backward error above n ε (pivot growth). The componentwise backward</span>
+<span id="L155"><span class="lineNum">     155</span>              : // error, while invariant to scaling, exceeds n ε for LU solutions of badly scaled systems</span>
+<span id="L156"><span class="lineNum">     156</span>              : // without pivot growth. Returns true if the QR was used.</span>
+<span id="L157"><span class="lineNum">     157</span>              : bool SolveReducedSystem(MPI_Comm comm, const Eigen::MatrixXcd &amp;A, Eigen::MatrixXcd &amp;B);</span>
+<span id="L158"><span class="lineNum">     158</span>              : </span>
+<span id="L159"><span class="lineNum">     159</span>              : // Projections Vᵀ A V of symmetric operators A onto the real vectors V, replicated on every</span>
+<span id="L160"><span class="lineNum">     160</span>              : // process.</span>
+<span id="L161"><span class="lineNum">     161</span>              : std::vector&lt;Eigen::MatrixXd&gt; ProjectSymmetricOperators(MPI_Comm comm,</span>
+<span id="L162"><span class="lineNum">     162</span>              :                                                        const std::vector&lt;Vector&gt; &amp;V,</span>
+<span id="L163"><span class="lineNum">     163</span>              :                                                        std::span&lt;const Operator *const&gt; A);</span>
+<span id="L164"><span class="lineNum">     164</span>              : </span>
+<span id="L165"><span class="lineNum">     165</span>              : //</span>
+<span id="L166"><span class="lineNum">     166</span>              : // A class handling projection-based reduced order model (PROM) construction and use for</span>
+<span id="L167"><span class="lineNum">     167</span>              : // adaptive fast frequency sweeps.</span>
+<span id="L168"><span class="lineNum">     168</span>              : //</span>
+<span id="L169"><span class="lineNum">     169</span>              : class RomOperator</span>
+<span id="L170"><span class="lineNum">     170</span>              : {</span>
+<span id="L171"><span class="lineNum">     171</span>              : protected:</span>
+<span id="L172"><span class="lineNum">     172</span>              :   // Reference to HDM discretization (not owned).</span>
+<span id="L173"><span class="lineNum">     173</span>              :   SpaceOperator &amp;space_op;</span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span>              :   // HDM system matrices and excitation:</span>
+<span id="L176"><span class="lineNum">     176</span>              :   // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω) + F(ω).</span>
+<span id="L177"><span class="lineNum">     177</span>              :   // - Excitation / drive: = iω RHS1 + RHS2(ω).</span>
+<span id="L178"><span class="lineNum">     178</span>              :   // - Vector r is internal vector workspace of size RHS</span>
+<span id="L179"><span class="lineNum">     179</span>              :   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.</span>
+<span id="L180"><span class="lineNum">     180</span>              :   // - RHS1 is assembled once per excitation (empty if zero), in the order of the port</span>
+<span id="L181"><span class="lineNum">     181</span>              :   //   excitations, and projected onto the basis as it grows.</span>
+<span id="L182"><span class="lineNum">     182</span>              :   std::unique_ptr&lt;ComplexOperator&gt; K, M, C;</span>
+<span id="L183"><span class="lineNum">     183</span>              :   std::vector&lt;ComplexVector&gt; RHS1;</span>
+<span id="L184"><span class="lineNum">     184</span>              :   ComplexVector r;</span>
+<span id="L185"><span class="lineNum">     185</span>              : </span>
+<span id="L186"><span class="lineNum">     186</span>              :   // The sparse frequency-dependent boundary terms of A(ω), each a scalar f(ω) times an</span>
+<span id="L187"><span class="lineNum">     187</span>              :   // ω-independent operator i·M stored with the boundary form M on the imaginary slot, so</span>
+<span id="L188"><span class="lineNum">     188</span>              :   // that the PROM gets f(ω)·Vᵀ(i·M)V without any HDM-size work online and circuit</span>
+<span id="L189"><span class="lineNum">     189</span>              :   // synthesis can fit f(ω) on the sweep band:</span>
+<span id="L190"><span class="lineNum">     190</span>              :   //   - Wave port p: f = kₙ,ₚ(ω) and the µ⁻¹ boundary mass. Inactive ports included in</span>
+<span id="L191"><span class="lineNum">     191</span>              :   //     synthesis are unloaded nodes: kept for their node scaling and reference data, they</span>
+<span id="L192"><span class="lineNum">     192</span>              :   //     do not contribute to A(ω).</span>
+<span id="L193"><span class="lineNum">     193</span>              :   //   - Second-order farfield ABC: f = 0.5/ω, with the negative sign of β inside M (see</span>
+<span id="L194"><span class="lineNum">     194</span>              :   //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).</span>
+<span id="L195"><span class="lineNum">     195</span>              :   //   - Surface conductivity, per attribute group: f = ω/Z(ω).</span>
+<span id="L196"><span class="lineNum">     196</span>              :   //   - Rational surface impedance, per boundary: f = g(iω)/i for the Robin coefficient</span>
+<span id="L197"><span class="lineNum">     197</span>              :   //     g(s) = s·D(s)/N(s).</span>
+<span id="L198"><span class="lineNum">     198</span>              :   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation</span>
+<span id="L199"><span class="lineNum">     199</span>              :   //     constant.</span>
+<span id="L200"><span class="lineNum">     200</span>              :   enum class BoundaryTermKind</span>
+<span id="L201"><span class="lineNum">     201</span>              :   {</span>
+<span id="L202"><span class="lineNum">     202</span>              :     WavePort,</span>
+<span id="L203"><span class="lineNum">     203</span>              :     Farfield,</span>
+<span id="L204"><span class="lineNum">     204</span>              :     SurfaceConductivity,</span>
+<span id="L205"><span class="lineNum">     205</span>              :     RationalImpedance,</span>
+<span id="L206"><span class="lineNum">     206</span>              :     FloquetPort</span>
+<span id="L207"><span class="lineNum">     207</span>              :   };</span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC tlaBgGNC">         174 :   struct BoundaryTerm</span></span>
+<span id="L209"><span class="lineNum">     209</span>              :   {</span>
+<span id="L210"><span class="lineNum">     210</span>              :     BoundaryTermKind kind;</span>
+<span id="L211"><span class="lineNum">     211</span>              :     int idx;  // Port, group, or boundary index</span>
+<span id="L212"><span class="lineNum">     212</span>              :     std::unique_ptr&lt;ComplexOperator&gt; op;</span>
+<span id="L213"><span class="lineNum">     213</span>              :     bool symmetric;</span>
+<span id="L214"><span class="lineNum">     214</span>              :     Eigen::MatrixXcd Ar;  // Vᵀ op V</span>
+<span id="L215"><span class="lineNum">     215</span>              :   };</span>
+<span id="L216"><span class="lineNum">     216</span>              :   std::vector&lt;BoundaryTerm&gt; bdr_terms;</span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              :   // Return f(ω) of a boundary term, zero if it does not contribute to A(ω).</span>
+<span id="L219"><span class="lineNum">     219</span>              :   std::complex&lt;double&gt; GetBoundaryTermCoefficient(const BoundaryTerm &amp;term,</span>
+<span id="L220"><span class="lineNum">     220</span>              :                                                   double omega) const;</span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span>              :   // Port-space evaluation of the wave-port terms of the PROM. The modal correction</span>
+<span id="L223"><span class="lineNum">     223</span>              :   // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full, and the</span>
+<span id="L224"><span class="lineNum">     224</span>              :   // S-parameters only need the pairings Vᵀs of the basis with the per-port modal n×H shape</span>
+<span id="L225"><span class="lineNum">     225</span>              :   // vectors. Since s is supported on the port only, Vᵀs is computed from the basis</span>
+<span id="L226"><span class="lineNum">     226</span>              :   // restricted to the port submesh (V_wp, kept on the host and extended as the basis</span>
+<span id="L227"><span class="lineNum">     227</span>              :   // grows) and the port-space mode forms refreshed by WavePortData::Initialize, without</span>
+<span id="L228"><span class="lineNum">     228</span>              :   // any per-frequency assembly and projection of HDM-size vectors. sV_wp_full caches</span>
+<span id="L229"><span class="lineNum">     229</span>              :   // Vᵀs_full of every port at the frequency of the last SolvePROM.</span>
+<span id="L230"><span class="lineNum">     230</span>              :   std::map&lt;int, std::vector&lt;Vector&gt;&gt; V_wp;</span>
+<span id="L231"><span class="lineNum">     231</span>              :   std::size_t V_wp_dim = 0;</span>
+<span id="L232"><span class="lineNum">     232</span>              :   std::map&lt;int, Eigen::VectorXcd&gt; sV_wp_full;</span>
+<span id="L233"><span class="lineNum">     233</span>              : </span>
+<span id="L234"><span class="lineNum">     234</span>              :   // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the pairings of the basis</span>
+<span id="L235"><span class="lineNum">     235</span>              :   // with the mode of every wave port at ω.</span>
+<span id="L236"><span class="lineNum">     236</span>              :   void AddWavePortModalCorrection(double omega);</span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span>              :   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction</span>
+<span id="L239"><span class="lineNum">     239</span>              :   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the</span>
+<span id="L240"><span class="lineNum">     240</span>              :   // dense grid over which the fit residual is evaluated.</span>
+<span id="L241"><span class="lineNum">     241</span>              :   std::vector&lt;double&gt; sweep_omega_samples;</span>
+<span id="L242"><span class="lineNum">     242</span>              :   double sweep_omega_min = 0.0;</span>
+<span id="L243"><span class="lineNum">     243</span>              :   double sweep_omega_max = 0.0;</span>
+<span id="L244"><span class="lineNum">     244</span>              :   // Synthesis-side fit configuration derived from AdaptiveTol. The AAA order and SVD rank</span>
+<span id="L245"><span class="lineNum">     245</span>              :   // cutoff are internal guards so users only configure the adaptive sweep tolerance.</span>
+<span id="L246"><span class="lineNum">     246</span>              :   double waveport_synthesis_tol = 0.0;</span>
+<span id="L247"><span class="lineNum">     247</span>              :   std::size_t waveport_synthesis_order_max = 12;</span>
+<span id="L248"><span class="lineNum">     248</span>              :   double waveport_synthesis_rank_tol = 1.0e-6;</span>
+<span id="L249"><span class="lineNum">     249</span>              : </span>
+<span id="L250"><span class="lineNum">     250</span>              :   // HDM linear system solver and preconditioner.</span>
+<span id="L251"><span class="lineNum">     251</span>              :   std::unique_ptr&lt;ComplexKspSolver&gt; ksp;</span>
+<span id="L252"><span class="lineNum">     252</span>              : </span>
+<span id="L253"><span class="lineNum">     253</span>              :   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced</span>
+<span id="L254"><span class="lineNum">     254</span>              :   // order basis defined below.</span>
+<span id="L255"><span class="lineNum">     255</span>              :   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added</span>
+<span id="L256"><span class="lineNum">     256</span>              :   Eigen::MatrixXcd RHS1r;       // Vᴴ RHS1, one column per excitation</span>
+<span id="L257"><span class="lineNum">     257</span>              : </span>
+<span id="L258"><span class="lineNum">     258</span>              :   // Projections onto the basis of the Floquet port modes, for the DtN correction</span>
+<span id="L259"><span class="lineNum">     259</span>              :   // F(ω) = Σ_k g_k(ω) v_k v_kᴴ and the excitation of the (0,0) modes (see FloquetPortData).</span>
+<span id="L260"><span class="lineNum">     260</span>              :   // A mode v = Σ_d e_d v_d combines the Cartesian component projections v_d with the</span>
+<span id="L261"><span class="lineNum">     261</span>              :   // polarization e, which rotates with frequency when k_F scales with it, so Vᵀv_d is</span>
+<span id="L262"><span class="lineNum">     262</span>              :   // projected once as the basis grows: three columns per order.</span>
+<span id="L263"><span class="lineNum">     263</span>              :   std::vector&lt;std::pair&lt;int, const FloquetOrder *&gt;&gt; floquet_orders;  // Port, order</span>
+<span id="L264"><span class="lineNum">     264</span>              :   Eigen::MatrixXcd floquet_comp_V;</span>
+<span id="L265"><span class="lineNum">     265</span>              : </span>
+<span id="L266"><span class="lineNum">     266</span>              :   // Return Vᵀv of the TE or TM mode of order k at the current frequency.</span>
+<span id="L267"><span class="lineNum">     267</span>              :   Eigen::VectorXcd GetFloquetModeProjection(std::size_t k, bool is_te) const;</span>
+<span id="L268"><span class="lineNum">     268</span>              : </span>
+<span id="L269"><span class="lineNum">     269</span>              :   // PROM matrix Ar at the frequency of the last SolvePROM, and the reduced solutions of all</span>
+<span id="L270"><span class="lineNum">     270</span>              :   // excitations, one column per excitation.</span>
+<span id="L271"><span class="lineNum">     271</span>              :   Eigen::MatrixXcd Ar, Y;</span>
+<span id="L272"><span class="lineNum">     272</span>              :   bool warned_qr = false, warned_modal_reaction = false;</span>
+<span id="L273"><span class="lineNum">     273</span>              : </span>
+<span id="L274"><span class="lineNum">     274</span>              :   // Column of an excitation in RHS1, RHS1r, and Y.</span>
+<span id="L275"><span class="lineNum">     275</span>              :   Eigen::Index GetExcitationColumn(int excitation_idx) const;</span>
+<span id="L276"><span class="lineNum">     276</span>              : </span>
+<span id="L277"><span class="lineNum">     277</span>              :   // PROM reduced-order basis (real-valued).</span>
+<span id="L278"><span class="lineNum">     278</span>              :   std::vector&lt;Vector&gt; V;</span>
+<span id="L279"><span class="lineNum">     279</span>              :   Orthogonalization orthog_type;</span>
+<span id="L280"><span class="lineNum">     280</span>              : </span>
+<span id="L281"><span class="lineNum">     281</span>              :   // Weight operator for PROM basis if doing synthesis, in order to have correct</span>
+<span id="L282"><span class="lineNum">     282</span>              :   // orthogonality to port vectors and converge with mesh / order. Default empty, which</span>
+<span id="L283"><span class="lineNum">     283</span>              :   // means the identity weight in the finite element basis.</span>
+<span id="L284"><span class="lineNum">     284</span>              :   std::optional&lt;HybridBulkBoundaryOperator&gt; weight_op_W = {};</span>
+<span id="L285"><span class="lineNum">     285</span>              : </span>
+<span id="L286"><span class="lineNum">     286</span>              :   // Label to distinguish port modes from solution projection and to print PROM matrices.</span>
+<span id="L287"><span class="lineNum">     287</span>              :   std::vector&lt;std::string&gt; v_node_label;</span>
+<span id="L288"><span class="lineNum">     288</span>              : </span>
+<span id="L289"><span class="lineNum">     289</span>              :   // Upper-triangular matrix R from orthogonalization procedure U = VR. Here U the HDM</span>
+<span id="L290"><span class="lineNum">     290</span>              :   // fields added by `UpdatePROM`.</span>
+<span id="L291"><span class="lineNum">     291</span>              :   Eigen::MatrixXd orth_R;</span>
+<span id="L292"><span class="lineNum">     292</span>              : </span>
+<span id="L293"><span class="lineNum">     293</span>              :   // With a weight operator, the Cholesky factor L of the Euclidean Gram matrix of the</span>
+<span id="L294"><span class="lineNum">     294</span>              :   // basis, VᵀV = L Lᵀ, so that ||V c|| = ||Lᵀ c|| for the error estimates. Empty otherwise</span>
+<span id="L295"><span class="lineNum">     295</span>              :   // (V is orthonormal).</span>
+<span id="L296"><span class="lineNum">     296</span>              :   Eigen::MatrixXd gram_L;</span>
+<span id="L297"><span class="lineNum">     297</span>              : </span>
+<span id="L298"><span class="lineNum">     298</span>              :   // Workspace for the operator applies in the projections onto the basis.</span>
+<span id="L299"><span class="lineNum">     299</span>              :   std::vector&lt;Vector&gt; proj_ws;</span>
+<span id="L300"><span class="lineNum">     300</span>              : </span>
+<span id="L301"><span class="lineNum">     301</span>              :   // MRIs: one for each excitation index. Only used to pick new frequency sample point.</span>
+<span id="L302"><span class="lineNum">     302</span>              :   std::map&lt;int, MinimalRationalInterpolation&gt; mri;</span>
+<span id="L303"><span class="lineNum">     303</span>              : </span>
+<span id="L304"><span class="lineNum">     304</span>              :   // Number of leading PROM basis rows occupied by lumped port modes. Each lumped port</span>
+<span id="L305"><span class="lineNum">     305</span>              :   // flagged with IncludeInSynthesis contributes exactly one real basis vector, added</span>
+<span id="L306"><span class="lineNum">     306</span>              :   // port-first and in order by AddLumpedPortModesForSynthesis. Ports excluded via</span>
+<span id="L307"><span class="lineNum">     307</span>              :   // IncludeInSynthesis = false contribute nothing. This count is the invariant that the</span>
+<span id="L308"><span class="lineNum">     308</span>              :   // port-port block scaling in CalculateNormalizedPROMMatrices and the basis reservation</span>
+<span id="L309"><span class="lineNum">     309</span>              :   // in the constructor both rely on; iterating to the total port count instead would</span>
+<span id="L310"><span class="lineNum">     310</span>              :   // over-run the per-port scaling vector whenever a port is excluded.</span>
+<span id="L311"><span class="lineNum">     311</span>              :   std::size_t NumSynthesisPortModes() const;</span>
+<span id="L312"><span class="lineNum">     312</span>              : </span>
+<span id="L313"><span class="lineNum">     313</span>              :   // Number of wave ports included in synthesis (IncludeInSynthesis = true). Each</span>
+<span id="L314"><span class="lineNum">     314</span>              :   // contributes one port mode at the reference frequency; that mode is generally complex,</span>
+<span id="L315"><span class="lineNum">     315</span>              :   // so AddWavePortModesForSynthesis adds up to two real basis vectors (real + imaginary</span>
+<span id="L316"><span class="lineNum">     316</span>              :   // parts) per included port. Excluded ports add nothing. Used to size the basis</span>
+<span id="L317"><span class="lineNum">     317</span>              :   // reservation so it never exceeds the count actually added.</span>
+<span id="L318"><span class="lineNum">     318</span>              :   std::size_t NumSynthesisWavePortModes() const;</span>
+<span id="L319"><span class="lineNum">     319</span>              : </span>
+<span id="L320"><span class="lineNum">     320</span>              :   // Wave-port dispersion synthesis helpers used by CalculateNormalizedPROMMatrices.</span>
+<span id="L321"><span class="lineNum">     321</span>              :   //</span>
+<span id="L322"><span class="lineNum">     322</span>              :   // The chosen regime determines whether k_n,p(omega) is approximated by an order-2</span>
+<span id="L323"><span class="lineNum">     323</span>              :   // polynomial (clean absorption into Kr/Cr/Mr), or by that polynomial plus AAA-fit</span>
+<span id="L324"><span class="lineNum">     324</span>              :   // residual poles.</span>
+<span id="L325"><span class="lineNum">     325</span>              :   enum class WavePortRegime</span>
+<span id="L326"><span class="lineNum">     326</span>              :   {</span>
+<span id="L327"><span class="lineNum">     327</span>              :     Polynomial,</span>
+<span id="L328"><span class="lineNum">     328</span>              :     Augmented</span>
+<span id="L329"><span class="lineNum">     329</span>              :   };</span>
+<span id="L330"><span class="lineNum">     330</span>              : </span>
+<span id="L331"><span class="lineNum">     331</span>              :   // Per-pole singular-vector aux block for a single wave port in regime 2. One aux</span>
+<span id="L332"><span class="lineNum">     332</span>              :   // state per (pole, kept singular direction); the augmented pencil stores them as</span>
+<span id="L333"><span class="lineNum">     333</span>              :   // appended rows/columns to Kr/Cr/Mr.</span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">           2 :   struct WavePortAuxBlock</span></span>
+<span id="L335"><span class="lineNum">     335</span>              :   {</span>
+<span id="L336"><span class="lineNum">     336</span>              :     int port_idx = 0;</span>
+<span id="L337"><span class="lineNum">     337</span>              :     // Aux-state label prefix. Empty -&gt; &quot;waveport_&lt;port_idx&gt;&quot; (the wave-port default). Set</span>
+<span id="L338"><span class="lineNum">     338</span>              :     // to e.g. &quot;farfield&quot; or &quot;surfsigma_&lt;g&gt;&quot; for the other frequency-dependent BCs so their</span>
+<span id="L339"><span class="lineNum">     339</span>              :     // aux rows are distinguishable in the emitted matrices.</span>
+<span id="L340"><span class="lineNum">     340</span>              :     std::string label;</span>
+<span id="L341"><span class="lineNum">     341</span>              :     // Signed weights and matching real directions in the symmetric factorization</span>
+<span id="L342"><span class="lineNum">     342</span>              :     // M_proj = Σ_j weights[j] u_j u_jᵀ. The weights are eigenvalues, not unsigned</span>
+<span id="L343"><span class="lineNum">     343</span>              :     // singular values: modal-correction residue matrices are generally indefinite.</span>
+<span id="L344"><span class="lineNum">     344</span>              :     std::vector&lt;double&gt; weights;</span>
+<span id="L345"><span class="lineNum">     345</span>              :     std::vector&lt;Eigen::VectorXd&gt; u_dirs;</span>
+<span id="L346"><span class="lineNum">     346</span>              :     std::vector&lt;std::complex&lt;double&gt;&gt; poles;</span>
+<span id="L347"><span class="lineNum">     347</span>              :     std::vector&lt;std::complex&lt;double&gt;&gt; residues;</span>
+<span id="L348"><span class="lineNum">     348</span>              :   };</span>
+<span id="L349"><span class="lineNum">     349</span>              : </span>
+<span id="L350"><span class="lineNum">     350</span>              :   // Result of fitting k_n,p(omega) (or the scalar dispersion f(ω) of another frequency-</span>
+<span id="L351"><span class="lineNum">     351</span>              :   // dependent BC) on the sweep band. Polynomial regime populates {alpha0c, alpha1c,</span>
+<span id="L352"><span class="lineNum">     352</span>              :   // alpha2c}; Augmented regime additionally populates `aux` and folds the AAA constant `d`</span>
+<span id="L353"><span class="lineNum">     353</span>              :   // into `alpha0c`.</span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaUNC tlaBgUNC">           0 :   struct WavePortDispersionFit</span></span>
+<span id="L355"><span class="lineNum">     355</span>              :   {</span>
+<span id="L356"><span class="lineNum">     356</span>              :     int port_idx = 0;</span>
+<span id="L357"><span class="lineNum">     357</span>              :     WavePortRegime regime = WavePortRegime::Polynomial;</span>
+<span id="L358"><span class="lineNum">     358</span>              :     // Complex polynomial coefficients. For a wave port, k_n,p(ω) is complex for a lossy</span>
+<span id="L359"><span class="lineNum">     359</span>              :     // port mode (its imaginary part is the attenuation of the mode), and real up to</span>
+<span id="L360"><span class="lineNum">     360</span>              :     // roundoff for a lossless one.</span>
+<span id="L361"><span class="lineNum">     361</span>              :     std::complex&lt;double&gt; alpha0c = 0.0;</span>
+<span id="L362"><span class="lineNum">     362</span>              :     std::complex&lt;double&gt; alpha1c = 0.0;</span>
+<span id="L363"><span class="lineNum">     363</span>              :     std::complex&lt;double&gt; alpha2c = 0.0;</span>
+<span id="L364"><span class="lineNum">     364</span>              :     std::optional&lt;WavePortAuxBlock&gt; aux;</span>
+<span id="L365"><span class="lineNum">     365</span>              :     double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid</span>
+<span id="L366"><span class="lineNum">     366</span>              :     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)</span>
+<span id="L367"><span class="lineNum">     367</span>              :   };</span>
+<span id="L368"><span class="lineNum">     368</span>              : </span>
+<span id="L369"><span class="lineNum">     369</span>              :   // Helper function that normalizes PROM matrices so that they correspond to proper</span>
+<span id="L370"><span class="lineNum">     370</span>              :   // admittance matrices on the ports. Also does unit conversion to physical (input) units.</span>
+<span id="L371"><span class="lineNum">     371</span>              :   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can</span>
+<span id="L372"><span class="lineNum">     372</span>              :   // use Linv, Rinv, C directly.</span>
+<span id="L373"><span class="lineNum">     373</span>              :   //</span>
+<span id="L374"><span class="lineNum">     374</span>              :   // For wave ports whose order-2 polynomial fit residual exceeds AdaptiveTol, the</span>
+<span id="L375"><span class="lineNum">     375</span>              :   // synthesised matrices are enlarged by auxiliary rows/columns for the AAA residual</span>
+<span id="L376"><span class="lineNum">     376</span>              :   // realization. The returned `aux_labels` is the (possibly empty) list of those</span>
+<span id="L377"><span class="lineNum">     377</span>              :   // new labels in the same order as the rows/columns appended to the matrices (i.e. each</span>
+<span id="L378"><span class="lineNum">     378</span>              :   // matrix has size (V.size() + aux_labels.size())). `wave_port_fits` captures the exact</span>
+<span id="L379"><span class="lineNum">     379</span>              :   // per-port fit used in the emitted matrices so the port-reference table can be evaluated</span>
+<span id="L380"><span class="lineNum">     380</span>              :   // consistently with the L/R/C realization.</span>
+<span id="L381"><span class="lineNum">     381</span>              :   struct NormalizedMatrices</span>
+<span id="L382"><span class="lineNum">     382</span>              :   {</span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC tlaBgGNC">          63 :     struct PortLoad</span></span>
+<span id="L384"><span class="lineNum">     384</span>              :     {</span>
+<span id="L385"><span class="lineNum">     385</span>              :       std::string label;</span>
+<span id="L386"><span class="lineNum">     386</span>              :       std::unique_ptr&lt;Eigen::MatrixXcd&gt; L_inv;</span>
+<span id="L387"><span class="lineNum">     387</span>              :       std::unique_ptr&lt;Eigen::MatrixXcd&gt; R_inv;  // null if no dissipative contribution</span>
+<span id="L388"><span class="lineNum">     388</span>              :       std::unique_ptr&lt;Eigen::MatrixXcd&gt; C;</span>
+<span id="L389"><span class="lineNum">     389</span>              :     };</span>
+<span id="L390"><span class="lineNum">     390</span>              : </span>
+<span id="L391"><span class="lineNum">     391</span>              :     std::unique_ptr&lt;Eigen::MatrixXcd&gt; L_inv;</span>
+<span id="L392"><span class="lineNum">     392</span>              :     std::unique_ptr&lt;Eigen::MatrixXcd&gt; R_inv;  // null if no dissipative contribution</span>
+<span id="L393"><span class="lineNum">     393</span>              :     std::unique_ptr&lt;Eigen::MatrixXcd&gt; C;</span>
+<span id="L394"><span class="lineNum">     394</span>              :     std::vector&lt;std::string&gt; aux_labels;</span>
+<span id="L395"><span class="lineNum">     395</span>              :     std::vector&lt;PortLoad&gt; port_loads;</span>
+<span id="L396"><span class="lineNum">     396</span>              :     std::vector&lt;WavePortDispersionFit&gt; wave_port_fits;</span>
+<span id="L397"><span class="lineNum">     397</span>              :   };</span>
+<span id="L398"><span class="lineNum">     398</span>              :   NormalizedMatrices CalculateNormalizedPROMMatrices(const Units &amp;units) const;</span>
+<span id="L399"><span class="lineNum">     399</span>              : </span>
+<span id="L400"><span class="lineNum">     400</span>              :   // Print the matched reference admittance used to convert synthesized port admittances to</span>
+<span id="L401"><span class="lineNum">     401</span>              :   // Palace/Kurokawa S-parameters. The L/R/C matrices remain loaded; downstream cascade</span>
+<span id="L402"><span class="lineNum">     402</span>              :   // tools should use the per-port rom-portload-* matrices for matrix-level port-load</span>
+<span id="L403"><span class="lineNum">     403</span>              :   // removal and this table for frequency-domain S-parameter normalization.</span>
+<span id="L404"><span class="lineNum">     404</span>              :   void PrintPortReferenceData(const Units &amp;units, const fs::path &amp;post_dir,</span>
+<span id="L405"><span class="lineNum">     405</span>              :                               const NormalizedMatrices &amp;matrices) const;</span>
+<span id="L406"><span class="lineNum">     406</span>              : </span>
+<span id="L407"><span class="lineNum">     407</span>              :   // Sample kₙ,ₚ(ω) on the sweep band, fit a quadratic, run AAA on the residual when</span>
+<span id="L408"><span class="lineNum">     408</span>              :   // augmenting, and pack the result. The dense-grid residual is captured for both</span>
+<span id="L409"><span class="lineNum">     409</span>              :   // regimes for diagnostic logging.</span>
+<span id="L410"><span class="lineNum">     410</span>              :   WavePortDispersionFit FitWavePortDispersion(int port_idx,</span>
+<span id="L411"><span class="lineNum">     411</span>              :                                               const Eigen::MatrixXcd &amp;Mp_r) const;</span>
+<span id="L412"><span class="lineNum">     412</span>              : </span>
+<span id="L413"><span class="lineNum">     413</span>              :   // Evaluate the fitted wave-port dispersion model at frequency ω:</span>
+<span id="L414"><span class="lineNum">     414</span>              :   //   kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ rₖ / (ω − pₖ)</span>
+<span id="L415"><span class="lineNum">     415</span>              :   // (the AAA pole–residue residual term is present only in the Augmented regime), the same</span>
+<span id="L416"><span class="lineNum">     416</span>              :   // expression the synthesized pencil realizes. This is the single source of truth for</span>
+<span id="L417"><span class="lineNum">     417</span>              :   // evaluating a wave-port WavePortDispersionFit.</span>
+<span id="L418"><span class="lineNum">     418</span>              :   static std::complex&lt;double&gt; EvaluateWavePortKnFit(const WavePortDispersionFit &amp;fit,</span>
+<span id="L419"><span class="lineNum">     419</span>              :                                                     std::complex&lt;double&gt; omega);</span>
+<span id="L420"><span class="lineNum">     420</span>              : </span>
+<span id="L421"><span class="lineNum">     421</span>              :   // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface</span>
+<span id="L422"><span class="lineNum">     422</span>              :   // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function</span>
+<span id="L423"><span class="lineNum">     423</span>              :   // f(ω) (here ω/Z_g(ω), generally COMPLEX) instead of the wave-port kₙ(ω). The projected</span>
+<span id="L424"><span class="lineNum">     424</span>              :   // boundary mass `Mp_r` is purely imaginary (= i·M_proj) so the assembled contribution is</span>
+<span id="L425"><span class="lineNum">     425</span>              :   // i·f(ω)·M_proj·v. Produces complex α₀/α₁/α₂ and, when augmenting, an aux block with</span>
+<span id="L426"><span class="lineNum">     426</span>              :   // complex residues. `label` is used in the diagnostic print and aux-state labels.</span>
+<span id="L427"><span class="lineNum">     427</span>              :   WavePortDispersionFit</span>
+<span id="L428"><span class="lineNum">     428</span>              :   FitScalarDispersion(const std::string &amp;label, const Eigen::MatrixXcd &amp;Mp_r,</span>
+<span id="L429"><span class="lineNum">     429</span>              :                       const std::function&lt;std::complex&lt;double&gt;(std::complex&lt;double&gt;)&gt; &amp;f,</span>
+<span id="L430"><span class="lineNum">     430</span>              :                       bool allow_augment) const;</span>
+<span id="L431"><span class="lineNum">     431</span>              : </span>
+<span id="L432"><span class="lineNum">     432</span>              :   // Exact-split fit for a rational surface impedance boundary: the Robin coefficient</span>
+<span id="L433"><span class="lineNum">     433</span>              :   // g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s) (long division) has a polynomial part P that is</span>
+<span id="L434"><span class="lineNum">     434</span>              :   // exactly representable in the pencil (deg(P) &lt;= 2 for any passive input), so only the</span>
+<span id="L435"><span class="lineNum">     435</span>              :   // strictly proper remainder R/N is AAA-fit — directly.</span>
+<span id="L436"><span class="lineNum">     436</span>              :   WavePortDispersionFit FitRationalImpedanceDispersion(const std::string &amp;label,</span>
+<span id="L437"><span class="lineNum">     437</span>              :                                                        const Eigen::MatrixXcd &amp;Mp_r,</span>
+<span id="L438"><span class="lineNum">     438</span>              :                                                        int idx) const;</span>
+<span id="L439"><span class="lineNum">     439</span>              : </span>
+<span id="L440"><span class="lineNum">     440</span>              :   // Accumulate the polynomial-fit corrections of one frequency-dependent BC (a wave port,</span>
+<span id="L441"><span class="lineNum">     441</span>              :   // or another BC) into the running Kr_corr, Cr_corr, Mr_corr buffers: folds α₀·Mp_r into</span>
+<span id="L442"><span class="lineNum">     442</span>              :   // Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with complex α. With Mp_r = i·M_proj this</span>
+<span id="L443"><span class="lineNum">     443</span>              :   // reproduces i·(α₀+α₁ω+α₂ω²)·M_proj·v in K + iωC - ω²M. Real α (a lossless wave port)</span>
+<span id="L444"><span class="lineNum">     444</span>              :   // fold into Im(Kr), Re(Cr), and Im(Mr).</span>
+<span id="L445"><span class="lineNum">     445</span>              :   static void ApplyComplexPolynomialFitCorrections(</span>
+<span id="L446"><span class="lineNum">     446</span>              :       std::complex&lt;double&gt; alpha0, std::complex&lt;double&gt; alpha1, std::complex&lt;double&gt; alpha2,</span>
+<span id="L447"><span class="lineNum">     447</span>              :       const Eigen::MatrixXcd &amp;Mp_r, Eigen::MatrixXcd &amp;Kr_corr, Eigen::MatrixXcd &amp;Cr_corr,</span>
+<span id="L448"><span class="lineNum">     448</span>              :       Eigen::MatrixXcd &amp;Mr_corr);</span>
+<span id="L449"><span class="lineNum">     449</span>              : </span>
+<span id="L450"><span class="lineNum">     450</span>              :   // Build an aux block for one (matrix, pole-residue list) contribution, used by the ABC</span>
+<span id="L451"><span class="lineNum">     451</span>              :   // (analytic single pole at ω=0, residue 0.5), surf-σ, and rational impedance (fitted</span>
+<span id="L452"><span class="lineNum">     452</span>              :   // poles). `label` (required, nonempty) prefixes the aux-state row names in the</span>
+<span id="L453"><span class="lineNum">     453</span>              :   // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; a signed</span>
+<span id="L454"><span class="lineNum">     454</span>              :   // symmetric eigendecomposition of its imaginary part gives the coupling directions</span>
+<span id="L455"><span class="lineNum">     455</span>              :   // exactly, including indefinite modal-correction residue matrices.</span>
+<span id="L456"><span class="lineNum">     456</span>              :   static std::optional&lt;WavePortAuxBlock&gt;</span>
+<span id="L457"><span class="lineNum">     457</span>              :   MakeAuxBlock(std::string label, const Eigen::MatrixXcd &amp;Mp_r,</span>
+<span id="L458"><span class="lineNum">     458</span>              :                const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;poles,</span>
+<span id="L459"><span class="lineNum">     459</span>              :                const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;residues, double rank_tol);</span>
+<span id="L460"><span class="lineNum">     460</span>              :   static bool AddAuxBlockDirections(WavePortAuxBlock &amp;blk, const Eigen::MatrixXcd &amp;Mp_r,</span>
+<span id="L461"><span class="lineNum">     461</span>              :                                     double rank_tol);</span>
+<span id="L462"><span class="lineNum">     462</span>              : </span>
+<span id="L463"><span class="lineNum">     463</span>              :   // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil</span>
+<span id="L464"><span class="lineNum">     464</span>              :   // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and</span>
+<span id="L465"><span class="lineNum">     465</span>              :   // appends labels to `aux_labels`. The base matrices are left at size n×n if no aux</span>
+<span id="L466"><span class="lineNum">     466</span>              :   // states are present (no copy).</span>
+<span id="L467"><span class="lineNum">     467</span>              :   struct AugmentedPencil</span>
+<span id="L468"><span class="lineNum">     468</span>              :   {</span>
+<span id="L469"><span class="lineNum">     469</span>              :     Eigen::MatrixXcd Kr;</span>
+<span id="L470"><span class="lineNum">     470</span>              :     Eigen::MatrixXcd Cr;</span>
+<span id="L471"><span class="lineNum">     471</span>              :     Eigen::MatrixXcd Mr;</span>
+<span id="L472"><span class="lineNum">     472</span>              :   };</span>
+<span id="L473"><span class="lineNum">     473</span>              :   static AugmentedPencil</span>
+<span id="L474"><span class="lineNum">     474</span>              :   BuildAugmentedPencil(const Eigen::MatrixXcd &amp;Kr_total, const Eigen::MatrixXcd &amp;Cr_total,</span>
+<span id="L475"><span class="lineNum">     475</span>              :                        const Eigen::MatrixXcd &amp;Mr_total,</span>
+<span id="L476"><span class="lineNum">     476</span>              :                        const std::vector&lt;WavePortAuxBlock&gt; &amp;aux_blocks,</span>
+<span id="L477"><span class="lineNum">     477</span>              :                        std::vector&lt;std::string&gt; &amp;aux_labels);</span>
+<span id="L478"><span class="lineNum">     478</span>              : </span>
+<span id="L479"><span class="lineNum">     479</span>              : public:</span>
+<span id="L480"><span class="lineNum">     480</span>              :   RomOperator(const IoData &amp;iodata, SpaceOperator &amp;space_op,</span>
+<span id="L481"><span class="lineNum">     481</span>              :               std::size_t max_size_per_excitation);</span>
+<span id="L482"><span class="lineNum">     482</span>              : </span>
+<span id="L483"><span class="lineNum">     483</span>              :   // Return the HDM linear solver.</span>
+<span id="L484"><span class="lineNum">     484</span>              :   const ComplexKspSolver &amp;GetLinearSolver() const { return *ksp; }</span>
+<span id="L485"><span class="lineNum">     485</span>              : </span>
+<span id="L486"><span class="lineNum">     486</span>              :   // Return PROM dimension and the reduced solution of an excitation at the frequency of the</span>
+<span id="L487"><span class="lineNum">     487</span>              :   // last SolvePROM.</span>
+<span id="L488"><span class="lineNum">     488</span>              :   auto GetReducedDimension() const { return V.size(); }</span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">           9 :   const auto &amp;GetBasis() const { return V; }</span></span>
+<span id="L490"><span class="lineNum">     490</span> <span class="tlaGNC">         150 :   Eigen::VectorXcd GetReducedSolution(int excitation_idx) const</span></span>
+<span id="L491"><span class="lineNum">     491</span>              :   {</span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaGNC">         150 :     return Y.col(GetExcitationColumn(excitation_idx));</span></span>
+<span id="L493"><span class="lineNum">     493</span>              :   }</span>
+<span id="L494"><span class="lineNum">     494</span>              : </span>
+<span id="L495"><span class="lineNum">     495</span>              :   // Return the pairing Vᵀs_full of the basis with the mode of a wave port at the frequency</span>
+<span id="L496"><span class="lineNum">     496</span>              :   // of the last PROM assembly, or nullptr before the first one.</span>
+<span id="L497"><span class="lineNum">     497</span>              :   const Eigen::VectorXcd *GetWavePortModePairing(int port_idx) const</span>
+<span id="L498"><span class="lineNum">     498</span>              :   {</span>
+<span id="L499"><span class="lineNum">     499</span>              :     const auto it = sV_wp_full.find(port_idx);</span>
+<span id="L500"><span class="lineNum">     500</span> <span class="tlaGNC">          84 :     return (it != sV_wp_full.end()) ? &amp;it-&gt;second : nullptr;</span></span>
+<span id="L501"><span class="lineNum">     501</span>              :   }</span>
+<span id="L502"><span class="lineNum">     502</span>              : </span>
+<span id="L503"><span class="lineNum">     503</span>              :   // Return set of sampled parameter points for basis construction.</span>
+<span id="L504"><span class="lineNum">     504</span>              :   const auto &amp;GetSamplePoints(int excitation_idx) const</span>
+<span id="L505"><span class="lineNum">     505</span>              :   {</span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaUNC tlaBgUNC">           0 :     return mri.at(excitation_idx).GetSamplePoints();</span></span>
+<span id="L507"><span class="lineNum">     507</span>              :   }</span>
+<span id="L508"><span class="lineNum">     508</span>              : </span>
+<span id="L509"><span class="lineNum">     509</span>              :   // Assemble and solve the HDM at the specified frequency.</span>
+<span id="L510"><span class="lineNum">     510</span>              :   void SolveHDM(int excitation_idx, double omega, ComplexVector &amp;u);</span>
+<span id="L511"><span class="lineNum">     511</span>              : </span>
+<span id="L512"><span class="lineNum">     512</span>              :   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires</span>
+<span id="L513"><span class="lineNum">     513</span>              :   // fields that are orthogonal to boundary overlap and primary fields, which requires</span>
+<span id="L514"><span class="lineNum">     514</span>              :   // custom weight matrix in orthogonality — see weight_op_W.</span>
+<span id="L515"><span class="lineNum">     515</span>              :   void AddLumpedPortModesForSynthesis();</span>
+<span id="L516"><span class="lineNum">     516</span>              : </span>
+<span id="L517"><span class="lineNum">     517</span>              :   // As above for wave ports. Adds one basis vector per (port, mode) seeded from the</span>
+<span id="L518"><span class="lineNum">     518</span>              :   // cross-section EVP at `omega_ref`. The reference frequency should be inside the</span>
+<span id="L519"><span class="lineNum">     519</span>              :   // sweep band (typically the band centre); the choice rescales the basis vector but</span>
+<span id="L520"><span class="lineNum">     520</span>              :   // does not change correctness. Mode field is generally complex, so up to two basis</span>
+<span id="L521"><span class="lineNum">     521</span>              :   // vectors are added per wave port (real + imaginary parts that survive the</span>
+<span id="L522"><span class="lineNum">     522</span>              :   // orthogonalisation tolerance).</span>
+<span id="L523"><span class="lineNum">     523</span>              :   void AddWavePortModesForSynthesis(double omega_ref);</span>
+<span id="L524"><span class="lineNum">     524</span>              : </span>
+<span id="L525"><span class="lineNum">     525</span>              :   // Add field configuration to the reduced-order basis and update the PROM. Requires a name</span>
+<span id="L526"><span class="lineNum">     526</span>              :   // &quot;node_label&quot;. This will be printed in the header of the csv files when printing PROM</span>
+<span id="L527"><span class="lineNum">     527</span>              :   // matrices. It is needed to distinguish port and solution field configuration as well as</span>
+<span id="L528"><span class="lineNum">     528</span>              :   // to reconstruct if field configuration are pure real, imaginary or complex. Returns the</span>
+<span id="L529"><span class="lineNum">     529</span>              :   // coefficients c of u in the updated basis, u = V c.</span>
+<span id="L530"><span class="lineNum">     530</span>              :   Eigen::VectorXcd UpdatePROM(const ComplexVector &amp;u, std::string_view node_label);</span>
+<span id="L531"><span class="lineNum">     531</span>              : </span>
+<span id="L532"><span class="lineNum">     532</span>              :   // Add the solution with basis coefficients c to the minimal-rational interpolation for</span>
+<span id="L533"><span class="lineNum">     533</span>              :   // error estimation. MRI are separated by excitation index.</span>
+<span id="L534"><span class="lineNum">     534</span>              :   void UpdateMRI(int excitation_idx, double omega, const Eigen::VectorXcd &amp;c);</span>
+<span id="L535"><span class="lineNum">     535</span>              : </span>
+<span id="L536"><span class="lineNum">     536</span>              :   // Return ||V c|| for the coefficients c of a vector in the basis (zero-padded to the</span>
+<span id="L537"><span class="lineNum">     537</span>              :   // basis dimension).</span>
+<span id="L538"><span class="lineNum">     538</span>              :   double BasisNorm(const Eigen::VectorXcd &amp;c) const;</span>
+<span id="L539"><span class="lineNum">     539</span>              : </span>
+<span id="L540"><span class="lineNum">     540</span>              :   // Assemble and solve the PROM at the specified frequency, for every excitation. The</span>
+<span id="L541"><span class="lineNum">     541</span>              :   // reduced solutions are available from GetReducedSolution().</span>
+<span id="L542"><span class="lineNum">     542</span>              :   void SolvePROM(double omega);</span>
+<span id="L543"><span class="lineNum">     543</span>              : </span>
+<span id="L544"><span class="lineNum">     544</span>              :   // Expand the reduced solution of an excitation into the high-dimensional space.</span>
+<span id="L545"><span class="lineNum">     545</span>              :   void ExpandPROMSolution(int excitation_idx, ComplexVector &amp;u) const;</span>
+<span id="L546"><span class="lineNum">     546</span>              : </span>
+<span id="L547"><span class="lineNum">     547</span>              :   // Compute the location(s) of the maximum error in the range of the previously sampled</span>
+<span id="L548"><span class="lineNum">     548</span>              :   // parameter points.</span>
+<span id="L549"><span class="lineNum">     549</span>              :   std::vector&lt;double&gt; FindMaxError(int excitation_idx, std::size_t N = 1) const;</span>
+<span id="L550"><span class="lineNum">     550</span>              : </span>
+<span id="L551"><span class="lineNum">     551</span>              :   // Print PROM matrices to file include in input (SI) units.</span>
+<span id="L552"><span class="lineNum">     552</span>              :   void PrintPROMMatrices(const Units &amp;units, const fs::path &amp;post_dir) const;</span>
+<span id="L553"><span class="lineNum">     553</span>              : </span>
+<span id="L554"><span class="lineNum">     554</span>              :   // Compute eigenvalue estimates of the synthesized L⁻¹/R⁻¹/C system via the companion</span>
+<span id="L555"><span class="lineNum">     555</span>              :   // linearization (in s = iω) of the quadratic pencil (L⁻¹ + iωR⁻¹ − ω²C)v = 0. Returns</span>
+<span id="L556"><span class="lineNum">     556</span>              :   // every finite root whose Re(f) lies inside [fmin_GHz, fmax_GHz]; spurious roots are left</span>
+<span id="L557"><span class="lineNum">     557</span>              :   // in and flagged by their reported HDM residuals rather than a fixed cutoff. The</span>
+<span id="L558"><span class="lineNum">     558</span>              :   // complex-symmetric pencil yields decaying modes with positive Im{f}, the same sign</span>
+<span id="L559"><span class="lineNum">     559</span>              :   // convention as the eigenmode solver's eig.csv.</span>
+<span id="L560"><span class="lineNum">     560</span> <span class="tlaUNC">           0 :   struct EigenvalueEstimate</span></span>
+<span id="L561"><span class="lineNum">     561</span>              :   {</span>
+<span id="L562"><span class="lineNum">     562</span>              :     double freq_re_GHz;  // Re(f): resonant frequency</span>
+<span id="L563"><span class="lineNum">     563</span>              :     double freq_im_GHz;  // Im(f): half-linewidth (positive = decaying)</span>
+<span id="L564"><span class="lineNum">     564</span>              :     double Q;            // quality factor = |Re(ω)| / (2|Im(ω)|)</span>
+<span id="L565"><span class="lineNum">     565</span>              :     // Eigenvector of the synthesized pencil (basis + aux rows), used to evaluate the</span>
+<span id="L566"><span class="lineNum">     566</span>              :     // eigenpair residual on the HDM below.</span>
+<span id="L567"><span class="lineNum">     567</span>              :     Eigen::VectorXcd eigvec;</span>
+<span id="L568"><span class="lineNum">     568</span>              :     // HDM eigenpair errors, following the eigenmode solver conventions: prolongate the</span>
+<span id="L569"><span class="lineNum">     569</span>              :     // eigenvector to the finite element space and evaluate the full frequency-dependent</span>
+<span id="L570"><span class="lineNum">     570</span>              :     // operator at the complex eigenfrequency.</span>
+<span id="L571"><span class="lineNum">     571</span>              :     double error_abs = -1.0;   // ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂</span>
+<span id="L572"><span class="lineNum">     572</span>              :     double error_bkwd = -1.0;  // error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂)</span>
+<span id="L573"><span class="lineNum">     573</span>              :   };</span>
+<span id="L574"><span class="lineNum">     574</span>              :   static std::vector&lt;EigenvalueEstimate&gt;</span>
+<span id="L575"><span class="lineNum">     575</span>              :   ComputeEigenvalueEstimates(const Eigen::MatrixXcd &amp;L_inv, const Eigen::MatrixXcd *R_inv,</span>
+<span id="L576"><span class="lineNum">     576</span>              :                              const Eigen::MatrixXcd &amp;C, double fmin_GHz, double fmax_GHz);</span>
+<span id="L577"><span class="lineNum">     577</span>              : </span>
+<span id="L578"><span class="lineNum">     578</span>              :   // Fill error_abs / error_bkwd for each estimate by prolongating the eigenvector's</span>
+<span id="L579"><span class="lineNum">     579</span>              :   // basis block to the HDM space.</span>
+<span id="L580"><span class="lineNum">     580</span>              :   void ComputeEigenvalueEstimateErrors(const Units &amp;units,</span>
+<span id="L581"><span class="lineNum">     581</span>              :                                        std::vector&lt;EigenvalueEstimate&gt; &amp;estimates) const;</span>
+<span id="L582"><span class="lineNum">     582</span>              : };</span>
+<span id="L583"><span class="lineNum">     583</span>              : </span>
+<span id="L584"><span class="lineNum">     584</span>              : }  // namespace palace</span>
+<span id="L585"><span class="lineNum">     585</span>              : </span>
+<span id="L586"><span class="lineNum">     586</span>              : #endif  // PALACE_MODELS_ROM_OPERATOR_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

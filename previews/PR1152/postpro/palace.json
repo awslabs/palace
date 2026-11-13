@@ -1,0 +1,1762 @@
+{
+  "Communication": {
+    "ReduceBytes": {
+      "Avg": 4067,
+      "Max": 4067,
+      "MaxRank": 0,
+      "Min": 4067
+    }
+  },
+  "Cumulative": {
+    "Communication": {
+      "ReduceBytes": {
+        "Avg": 4067,
+        "Max": 4067,
+        "MaxRank": 0,
+        "Min": 4067
+      }
+    },
+    "ElapsedTime": {
+      "Counts": {
+        "ADAPTATION": 0,
+        "ADAPT_MESH_OUTPUT": 0,
+        "CONSTRUCT": 1,
+        "CONSTRUCT_ESTIMATOR": 1,
+        "CONSTRUCT_PROM": 0,
+        "DIV_FREE": 0,
+        "EPS": 0,
+        "ESTIMATION": 2,
+        "INIT": 2,
+        "IO": 9,
+        "KSP": 2,
+        "KSP_COARSE_SETUP": 1,
+        "KSP_COARSE_SOLVE": 20,
+        "KSP_PRECONDITIONER": 21,
+        "KSP_SETUP": 1,
+        "MESH_PREPROCESS": 2,
+        "POSTPRO": 6,
+        "POSTPRO_FARFIELD": 0,
+        "POSTPRO_GRIDFUNCTION": 3,
+        "POSTPRO_PARAVIEW": 3,
+        "REBALANCE": 0,
+        "SOLVE_ESTIMATOR": 2,
+        "SOLVE_PROM": 0,
+        "STARTUP": 1,
+        "TOTAL": 1,
+        "TS": 0,
+        "WAVE_PORT": 0,
+        "WAVE_PORT_FIELD": 0,
+        "WAVE_PORT_POSTPRO": 0,
+        "WAVE_PORT_SOLVE": 0
+      },
+      "Durations": {
+        "ADAPTATION": 0.0,
+        "ADAPT_MESH_OUTPUT": 0.0,
+        "CONSTRUCT": 2.8571296569999998,
+        "CONSTRUCT_ESTIMATOR": 0.125922259,
+        "CONSTRUCT_PROM": 0.0,
+        "DIV_FREE": 0.0,
+        "EPS": 0.0,
+        "ESTIMATION": 0.038352908,
+        "INIT": 0.167323458,
+        "IO": 0.19386628400000003,
+        "KSP": 0.087547597,
+        "KSP_COARSE_SETUP": 0.00262209,
+        "KSP_COARSE_SOLVE": 0.0038941859999999996,
+        "KSP_PRECONDITIONER": 2.146386924,
+        "KSP_SETUP": 1.387310607,
+        "MESH_PREPROCESS": 0.268288392,
+        "POSTPRO": 0.07788248900000001,
+        "POSTPRO_FARFIELD": 0.0,
+        "POSTPRO_GRIDFUNCTION": 0.25505904,
+        "POSTPRO_PARAVIEW": 0.614285851,
+        "REBALANCE": 0.0,
+        "SOLVE_ESTIMATOR": 1.160205288,
+        "SOLVE_PROM": 0.0,
+        "STARTUP": 0.013400708,
+        "TOTAL": 9.400281438,
+        "TS": 0.0,
+        "WAVE_PORT": 0.0,
+        "WAVE_PORT_FIELD": 0.0,
+        "WAVE_PORT_POSTPRO": 0.0,
+        "WAVE_PORT_SOLVE": 0.0
+      },
+      "Max": {
+        "ADAPTATION": 0.0,
+        "ADAPT_MESH_OUTPUT": 0.0,
+        "CONSTRUCT": 2.8571296569999998,
+        "CONSTRUCT_ESTIMATOR": 0.125922259,
+        "CONSTRUCT_PROM": 0.0,
+        "DIV_FREE": 0.0,
+        "EPS": 0.0,
+        "ESTIMATION": 0.038352908,
+        "INIT": 0.167323458,
+        "IO": 0.19386628400000003,
+        "KSP": 0.087547597,
+        "KSP_COARSE_SETUP": 0.00262209,
+        "KSP_COARSE_SOLVE": 0.0038941859999999996,
+        "KSP_PRECONDITIONER": 2.146386924,
+        "KSP_SETUP": 1.387310607,
+        "MESH_PREPROCESS": 0.268288392,
+        "POSTPRO": 0.07788248900000001,
+        "POSTPRO_FARFIELD": 0.0,
+        "POSTPRO_GRIDFUNCTION": 0.25505904,
+        "POSTPRO_PARAVIEW": 0.614285851,
+        "REBALANCE": 0.0,
+        "SOLVE_ESTIMATOR": 1.160205288,
+        "SOLVE_PROM": 0.0,
+        "STARTUP": 0.013400708,
+        "TOTAL": 9.400281438,
+        "TS": 0.0,
+        "WAVE_PORT": 0.0,
+        "WAVE_PORT_FIELD": 0.0,
+        "WAVE_PORT_POSTPRO": 0.0,
+        "WAVE_PORT_SOLVE": 0.0
+      },
+      "MaxRank": {
+        "ADAPTATION": 0,
+        "ADAPT_MESH_OUTPUT": 0,
+        "CONSTRUCT": 0,
+        "CONSTRUCT_ESTIMATOR": 0,
+        "CONSTRUCT_PROM": 0,
+        "DIV_FREE": 0,
+        "EPS": 0,
+        "ESTIMATION": 0,
+        "INIT": 0,
+        "IO": 0,
+        "KSP": 0,
+        "KSP_COARSE_SETUP": 0,
+        "KSP_COARSE_SOLVE": 0,
+        "KSP_PRECONDITIONER": 0,
+        "KSP_SETUP": 0,
+        "MESH_PREPROCESS": 0,
+        "POSTPRO": 0,
+        "POSTPRO_FARFIELD": 0,
+        "POSTPRO_GRIDFUNCTION": 0,
+        "POSTPRO_PARAVIEW": 0,
+        "REBALANCE": 0,
+        "SOLVE_ESTIMATOR": 0,
+        "SOLVE_PROM": 0,
+        "STARTUP": 0,
+        "TOTAL": 0,
+        "TS": 0,
+        "WAVE_PORT": 0,
+        "WAVE_PORT_FIELD": 0,
+        "WAVE_PORT_POSTPRO": 0,
+        "WAVE_PORT_SOLVE": 0
+      },
+      "Min": {
+        "ADAPTATION": 0.0,
+        "ADAPT_MESH_OUTPUT": 0.0,
+        "CONSTRUCT": 2.8571296569999998,
+        "CONSTRUCT_ESTIMATOR": 0.125922259,
+        "CONSTRUCT_PROM": 0.0,
+        "DIV_FREE": 0.0,
+        "EPS": 0.0,
+        "ESTIMATION": 0.038352908,
+        "INIT": 0.167323458,
+        "IO": 0.19386628400000003,
+        "KSP": 0.087547597,
+        "KSP_COARSE_SETUP": 0.00262209,
+        "KSP_COARSE_SOLVE": 0.0038941859999999996,
+        "KSP_PRECONDITIONER": 2.146386924,
+        "KSP_SETUP": 1.387310607,
+        "MESH_PREPROCESS": 0.268288392,
+        "POSTPRO": 0.07788248900000001,
+        "POSTPRO_FARFIELD": 0.0,
+        "POSTPRO_GRIDFUNCTION": 0.25505904,
+        "POSTPRO_PARAVIEW": 0.614285851,
+        "REBALANCE": 0.0,
+        "SOLVE_ESTIMATOR": 1.160205288,
+        "SOLVE_PROM": 0.0,
+        "STARTUP": 0.013400708,
+        "TOTAL": 9.400281438,
+        "TS": 0.0,
+        "WAVE_PORT": 0.0,
+        "WAVE_PORT_FIELD": 0.0,
+        "WAVE_PORT_POSTPRO": 0.0,
+        "WAVE_PORT_SOLVE": 0.0
+      },
+      "Tallies": {
+        "Assembly/Full/KSP_SETUP": {
+          "Avg": 0.055402232,
+          "Count": 1,
+          "Max": 0.055402232,
+          "MaxRank": 0,
+          "Min": 0.055402232,
+          "Parent": "KSP_SETUP"
+        },
+        "Assembly/Parallel/KSP_SETUP": {
+          "Avg": 0.055802625,
+          "Count": 1,
+          "Max": 0.055802625,
+          "MaxRank": 0,
+          "Min": 0.055802625,
+          "Parent": "KSP_SETUP"
+        },
+        "Assembly/Partial/CONSTRUCT": {
+          "Avg": 0.106608273,
+          "Count": 6,
+          "Max": 0.106608273,
+          "MaxRank": 0,
+          "Min": 0.106608273,
+          "Parent": "CONSTRUCT"
+        },
+        "Assembly/Partial/CONSTRUCT_ESTIMATOR": {
+          "Avg": 0.07958990199999999,
+          "Count": 2,
+          "Max": 0.07958990199999999,
+          "MaxRank": 0,
+          "Min": 0.07958990199999999,
+          "Parent": "CONSTRUCT_ESTIMATOR"
+        },
+        "Estimator/Krylov/ApplyBA": {
+          "Avg": 1.022257218,
+          "Count": 398,
+          "Max": 1.022257218,
+          "MaxRank": 0,
+          "Min": 1.022257218,
+          "Parent": "SOLVE_ESTIMATOR"
+        },
+        "Estimator/LinearSolve": {
+          "Avg": 1.1267120099999999,
+          "Count": 2,
+          "Max": 1.1267120099999999,
+          "MaxRank": 0,
+          "Min": 1.1267120099999999,
+          "Parent": "KSP"
+        },
+        "Estimator/LinearSolverSetup": {
+          "Avg": 0.046118147,
+          "Count": 1,
+          "Max": 0.046118147,
+          "MaxRank": 0,
+          "Min": 0.046118147,
+          "Parent": "KSP_SETUP"
+        },
+        "Estimator/Preconditioner": {
+          "Avg": 0.019729987000000004,
+          "Count": 201,
+          "Max": 0.019729987000000004,
+          "MaxRank": 0,
+          "Min": 0.019729987000000004,
+          "Parent": "ESTIMATION"
+        },
+        "Halo/P": {
+          "Avg": 0.017786600000000014,
+          "Count": 1024,
+          "Max": 0.017786600000000014,
+          "MaxRank": 0,
+          "Min": 0.017786600000000014,
+          "Parent": "TOTAL"
+        },
+        "Halo/P/KSP": {
+          "Avg": 0.000306544,
+          "Count": 19,
+          "Max": 0.000306544,
+          "MaxRank": 0,
+          "Min": 0.000306544,
+          "Parent": "KSP"
+        },
+        "Halo/P/KSP_PRECONDITIONER": {
+          "Avg": 0.0048596,
+          "Count": 546,
+          "Max": 0.0048596,
+          "MaxRank": 0,
+          "Min": 0.0048596,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Halo/P/KSP_SETUP": {
+          "Avg": 0.0026489519999999996,
+          "Count": 256,
+          "Max": 0.0026489519999999996,
+          "MaxRank": 0,
+          "Min": 0.0026489519999999996,
+          "Parent": "KSP_SETUP"
+        },
+        "Halo/P/POSTPRO": {
+          "Avg": 2.1212e-05,
+          "Count": 2,
+          "Max": 2.1212e-05,
+          "MaxRank": 0,
+          "Min": 2.1212e-05,
+          "Parent": "POSTPRO"
+        },
+        "Halo/P/SOLVE_ESTIMATOR": {
+          "Avg": 0.009950292000000005,
+          "Count": 201,
+          "Max": 0.009950292000000005,
+          "MaxRank": 0,
+          "Min": 0.009950292000000005,
+          "Parent": "SOLVE_ESTIMATOR"
+        },
+        "Halo/PT": {
+          "Avg": 0.017190484000000016,
+          "Count": 1024,
+          "Max": 0.017190484000000016,
+          "MaxRank": 0,
+          "Min": 0.017190484000000016,
+          "Parent": "TOTAL"
+        },
+        "Halo/PT/KSP": {
+          "Avg": 0.00015393200000000002,
+          "Count": 19,
+          "Max": 0.00015393200000000002,
+          "MaxRank": 0,
+          "Min": 0.00015393200000000002,
+          "Parent": "KSP"
+        },
+        "Halo/PT/KSP_PRECONDITIONER": {
+          "Avg": 0.004653079999999999,
+          "Count": 546,
+          "Max": 0.004653079999999999,
+          "MaxRank": 0,
+          "Min": 0.004653079999999999,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Halo/PT/KSP_SETUP": {
+          "Avg": 0.001383744,
+          "Count": 256,
+          "Max": 0.001383744,
+          "MaxRank": 0,
+          "Min": 0.001383744,
+          "Parent": "KSP_SETUP"
+        },
+        "Halo/PT/POSTPRO": {
+          "Avg": 0.000656879,
+          "Count": 2,
+          "Max": 0.000656879,
+          "MaxRank": 0,
+          "Min": 0.000656879,
+          "Parent": "POSTPRO"
+        },
+        "Halo/PT/SOLVE_ESTIMATOR": {
+          "Avg": 0.010342849000000003,
+          "Count": 201,
+          "Max": 0.010342849000000003,
+          "MaxRank": 0,
+          "Min": 0.010342849000000003,
+          "Parent": "SOLVE_ESTIMATOR"
+        },
+        "Main/Krylov/ApplyBA": {
+          "Avg": 1.801086009,
+          "Count": 34,
+          "Max": 1.801086009,
+          "MaxRank": 0,
+          "Min": 1.801086009,
+          "Parent": "KSP"
+        },
+        "Main/LambdaMax": {
+          "Avg": 1.2519231579999999,
+          "Count": 2,
+          "Max": 1.2519231579999999,
+          "MaxRank": 0,
+          "Min": 1.2519231579999999,
+          "Parent": "KSP_SETUP"
+        },
+        "Main/LinearSolve": {
+          "Avg": 2.2404372280000002,
+          "Count": 2,
+          "Max": 2.2404372280000002,
+          "MaxRank": 0,
+          "Min": 2.2404372280000002,
+          "Parent": "KSP"
+        },
+        "Main/LinearSolverSetup": {
+          "Avg": 1.387308133,
+          "Count": 1,
+          "Max": 1.387308133,
+          "MaxRank": 0,
+          "Min": 1.387308133,
+          "Parent": "KSP_SETUP"
+        },
+        "Main/MG/Coarse": {
+          "Avg": 0.006553834999999999,
+          "Count": 21,
+          "Max": 0.006553834999999999,
+          "MaxRank": 0,
+          "Min": 0.006553834999999999,
+          "Parent": "KSP_COARSE_SOLVE"
+        },
+        "Main/MG/L1/PostSmooth": {
+          "Avg": 0.459910607,
+          "Count": 21,
+          "Max": 0.459910607,
+          "MaxRank": 0,
+          "Min": 0.459910607,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L1/PreSmooth": {
+          "Avg": 0.42033324099999997,
+          "Count": 21,
+          "Max": 0.42033324099999997,
+          "MaxRank": 0,
+          "Min": 0.42033324099999997,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L1/Prolongation": {
+          "Avg": 0.010513538999999997,
+          "Count": 21,
+          "Max": 0.010513538999999997,
+          "MaxRank": 0,
+          "Min": 0.010513538999999997,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L1/Residual": {
+          "Avg": 0.07856833399999999,
+          "Count": 21,
+          "Max": 0.07856833399999999,
+          "MaxRank": 0,
+          "Min": 0.07856833399999999,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L1/Restriction": {
+          "Avg": 0.010885831999999998,
+          "Count": 21,
+          "Max": 0.010885831999999998,
+          "MaxRank": 0,
+          "Min": 0.010885831999999998,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L1/Smoother/OpApply": {
+          "Avg": 0.8769804400000001,
+          "Count": 231,
+          "Max": 0.8769804400000001,
+          "MaxRank": 0,
+          "Min": 0.8769804400000001,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L2/PostSmooth": {
+          "Avg": 0.576574116,
+          "Count": 21,
+          "Max": 0.576574116,
+          "MaxRank": 0,
+          "Min": 0.576574116,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L2/PreSmooth": {
+          "Avg": 0.46453718600000005,
+          "Count": 21,
+          "Max": 0.46453718600000005,
+          "MaxRank": 0,
+          "Min": 0.46453718600000005,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L2/Prolongation": {
+          "Avg": 0.017212589,
+          "Count": 21,
+          "Max": 0.017212589,
+          "MaxRank": 0,
+          "Min": 0.017212589,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L2/Residual": {
+          "Avg": 0.090762404,
+          "Count": 21,
+          "Max": 0.090762404,
+          "MaxRank": 0,
+          "Min": 0.090762404,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L2/Restriction": {
+          "Avg": 0.016250972,
+          "Count": 21,
+          "Max": 0.016250972,
+          "MaxRank": 0,
+          "Min": 0.016250972,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Main/MG/L2/Smoother/OpApply": {
+          "Avg": 1.0313698259999997,
+          "Count": 231,
+          "Max": 1.0313698259999997,
+          "MaxRank": 0,
+          "Min": 1.0313698259999997,
+          "Parent": "KSP_PRECONDITIONER"
+        },
+        "Reduce": {
+          "Avg": 0.00013624200000000001,
+          "Count": 510,
+          "Max": 0.00013624200000000001,
+          "MaxRank": 0,
+          "Min": 0.00013624200000000001,
+          "Parent": "TOTAL"
+        },
+        "Reduce/CONSTRUCT": {
+          "Avg": 4.665999999999998e-06,
+          "Count": 13,
+          "Max": 4.665999999999998e-06,
+          "MaxRank": 0,
+          "Min": 4.665999999999998e-06,
+          "Parent": "CONSTRUCT"
+        },
+        "Reduce/INIT": {
+          "Avg": 4.905e-06,
+          "Count": 9,
+          "Max": 4.905e-06,
+          "MaxRank": 0,
+          "Min": 4.905e-06,
+          "Parent": "INIT"
+        },
+        "Reduce/IO": {
+          "Avg": 2.483e-06,
+          "Count": 7,
+          "Max": 2.483e-06,
+          "MaxRank": 0,
+          "Min": 2.483e-06,
+          "Parent": "IO"
+        },
+        "Reduce/KSP": {
+          "Avg": 2.9683000000000004e-05,
+          "Count": 38,
+          "Max": 2.9683000000000004e-05,
+          "MaxRank": 0,
+          "Min": 2.9683000000000004e-05,
+          "Parent": "KSP"
+        },
+        "Reduce/KSP_SETUP": {
+          "Avg": 2.424e-06,
+          "Count": 2,
+          "Max": 2.424e-06,
+          "MaxRank": 0,
+          "Min": 2.424e-06,
+          "Parent": "KSP_SETUP"
+        },
+        "Reduce/POSTPRO": {
+          "Avg": 9.072e-06,
+          "Count": 23,
+          "Max": 9.072e-06,
+          "MaxRank": 0,
+          "Min": 9.072e-06,
+          "Parent": "POSTPRO"
+        },
+        "Reduce/POSTPRO_PARAVIEW": {
+          "Avg": 4.627000000000001e-06,
+          "Count": 17,
+          "Max": 4.627000000000001e-06,
+          "MaxRank": 0,
+          "Min": 4.627000000000001e-06,
+          "Parent": "POSTPRO_PARAVIEW"
+        },
+        "Reduce/SOLVE_ESTIMATOR": {
+          "Avg": 7.752099999999998e-05,
+          "Count": 400,
+          "Max": 7.752099999999998e-05,
+          "MaxRank": 0,
+          "Min": 7.752099999999998e-05,
+          "Parent": "SOLVE_ESTIMATOR"
+        },
+        "Reduce/TOTAL": {
+          "Avg": 8.61e-07,
+          "Count": 1,
+          "Max": 8.61e-07,
+          "MaxRank": 0,
+          "Min": 8.61e-07,
+          "Parent": "TOTAL"
+        },
+        "Startup/Config": {
+          "Avg": 0.004598328,
+          "Count": 1,
+          "Max": 0.004598328,
+          "MaxRank": 0,
+          "Min": 0.004598328,
+          "Parent": "STARTUP"
+        },
+        "Startup/MPIInit": {
+          "Avg": 0.009070054,
+          "Count": 1,
+          "Max": 0.009070054,
+          "MaxRank": 0,
+          "Min": 0.009070054,
+          "Parent": "STARTUP"
+        },
+        "Startup/MeshLoad/Root": {
+          "Avg": 0.193235585,
+          "Count": 1,
+          "Max": 0.193235585,
+          "MaxRank": 0,
+          "Min": 0.193235585,
+          "Parent": "IO"
+        },
+        "Startup/Partition": {
+          "Avg": 0.222264756,
+          "Count": 1,
+          "Max": 0.222264756,
+          "MaxRank": 0,
+          "Min": 0.222264756,
+          "Parent": "MESH_PREPROCESS"
+        },
+        "Wait/IO/MeshLoad": {
+          "Avg": 2.7139999999999998e-06,
+          "Count": 2,
+          "Max": 2.7139999999999998e-06,
+          "MaxRank": 0,
+          "Min": 2.7139999999999998e-06,
+          "Parent": "IO"
+        },
+        "Wait/IO/NodeFilesystem": {
+          "Avg": 4.3099999999999993e-07,
+          "Count": 7,
+          "Max": 4.3099999999999993e-07,
+          "MaxRank": 0,
+          "Min": 4.3099999999999993e-07,
+          "Parent": "TOTAL"
+        },
+        "Wait/IO/NodeFilesystem/IO": {
+          "Avg": 4.3099999999999993e-07,
+          "Count": 7,
+          "Max": 4.3099999999999993e-07,
+          "MaxRank": 0,
+          "Min": 4.3099999999999993e-07,
+          "Parent": "IO"
+        }
+      }
+    },
+    "LinearSolver": {
+      "Estimator": {
+        "Its": 199,
+        "ItsHistogram": {
+          "64-127": 2
+        },
+        "MaxFinalRelRes": 9.374045490735782e-07,
+        "MaxIts": 100,
+        "Solves": 2
+      },
+      "Main": {
+        "Coarse": {
+          "Applies": 21,
+          "Refactorizations": 0,
+          "Setups": 1
+        },
+        "ItsHistogram": {
+          "8-15": 2
+        },
+        "MaxFinalRelRes": 7.994252091160933e-09,
+        "MaxIts": 9
+      },
+      "TotalIts": 17,
+      "TotalSolves": 2
+    },
+    "Memory": {
+      "Estimator": {
+        "Construction": {
+          "Events": 1,
+          "PeakGrowthMegabytes": {
+            "Avg": 56.625,
+            "Max": 56.625,
+            "MaxRank": 0,
+            "Min": 56.625
+          },
+          "PersistentMegabytes": {
+            "Avg": 56.73046875,
+            "Max": 56.73046875,
+            "MaxRank": 0,
+            "Min": 56.73046875
+          },
+          "TransientMegabytes": {
+            "Avg": 0,
+            "Max": 0,
+            "MaxRank": 0,
+            "Min": 0
+          }
+        },
+        "Estimation": {
+          "Events": 2,
+          "PeakGrowthMegabytes": {
+            "Avg": 79.375,
+            "Max": 79.375,
+            "MaxRank": 0,
+            "Min": 79.375
+          },
+          "PersistentMegabytes": {
+            "Avg": 79.359375,
+            "Max": 79.359375,
+            "MaxRank": 0,
+            "Min": 79.359375
+          },
+          "TransientMegabytes": {
+            "Avg": 0,
+            "Max": 0,
+            "MaxRank": 0,
+            "Min": 0
+          }
+        }
+      }
+    },
+    "PeakMemoryMegabytes": {
+      "Average": 783.29296875,
+      "Max": 783.29296875,
+      "MaxRank": 0,
+      "Min": 783.29296875,
+      "Total": 783.29296875
+    },
+    "PeakNodeMemoryMegabytes": {
+      "Average": 783.29296875,
+      "Max": 783.29296875,
+      "MaxNode": 0,
+      "Min": 783.29296875,
+      "Total": 783.29296875
+    }
+  },
+  "ElapsedTime": {
+    "Counts": {
+      "ADAPTATION": 0,
+      "ADAPT_MESH_OUTPUT": 0,
+      "CONSTRUCT": 1,
+      "CONSTRUCT_ESTIMATOR": 1,
+      "CONSTRUCT_PROM": 0,
+      "DIV_FREE": 0,
+      "EPS": 0,
+      "ESTIMATION": 2,
+      "INIT": 2,
+      "IO": 9,
+      "KSP": 2,
+      "KSP_COARSE_SETUP": 1,
+      "KSP_COARSE_SOLVE": 20,
+      "KSP_PRECONDITIONER": 21,
+      "KSP_SETUP": 1,
+      "MESH_PREPROCESS": 2,
+      "POSTPRO": 6,
+      "POSTPRO_FARFIELD": 0,
+      "POSTPRO_GRIDFUNCTION": 3,
+      "POSTPRO_PARAVIEW": 3,
+      "REBALANCE": 0,
+      "SOLVE_ESTIMATOR": 2,
+      "SOLVE_PROM": 0,
+      "STARTUP": 1,
+      "TOTAL": 1,
+      "TS": 0,
+      "WAVE_PORT": 0,
+      "WAVE_PORT_FIELD": 0,
+      "WAVE_PORT_POSTPRO": 0,
+      "WAVE_PORT_SOLVE": 0
+    },
+    "Durations": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "CONSTRUCT": 2.8571296569999998,
+      "CONSTRUCT_ESTIMATOR": 0.125922259,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 0.038352908,
+      "INIT": 0.167323458,
+      "IO": 0.19386628400000003,
+      "KSP": 0.087547597,
+      "KSP_COARSE_SETUP": 0.00262209,
+      "KSP_COARSE_SOLVE": 0.0038941859999999996,
+      "KSP_PRECONDITIONER": 2.146386924,
+      "KSP_SETUP": 1.387310607,
+      "MESH_PREPROCESS": 0.268288392,
+      "POSTPRO": 0.07788248900000001,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 0.25505904,
+      "POSTPRO_PARAVIEW": 0.614285851,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 1.160205288,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 0.013400708,
+      "TOTAL": 9.400281438,
+      "TS": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "Max": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "CONSTRUCT": 2.8571296569999998,
+      "CONSTRUCT_ESTIMATOR": 0.125922259,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 0.038352908,
+      "INIT": 0.167323458,
+      "IO": 0.19386628400000003,
+      "KSP": 0.087547597,
+      "KSP_COARSE_SETUP": 0.00262209,
+      "KSP_COARSE_SOLVE": 0.0038941859999999996,
+      "KSP_PRECONDITIONER": 2.146386924,
+      "KSP_SETUP": 1.387310607,
+      "MESH_PREPROCESS": 0.268288392,
+      "POSTPRO": 0.07788248900000001,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 0.25505904,
+      "POSTPRO_PARAVIEW": 0.614285851,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 1.160205288,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 0.013400708,
+      "TOTAL": 9.400281438,
+      "TS": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "MaxRank": {
+      "ADAPTATION": 0,
+      "ADAPT_MESH_OUTPUT": 0,
+      "CONSTRUCT": 0,
+      "CONSTRUCT_ESTIMATOR": 0,
+      "CONSTRUCT_PROM": 0,
+      "DIV_FREE": 0,
+      "EPS": 0,
+      "ESTIMATION": 0,
+      "INIT": 0,
+      "IO": 0,
+      "KSP": 0,
+      "KSP_COARSE_SETUP": 0,
+      "KSP_COARSE_SOLVE": 0,
+      "KSP_PRECONDITIONER": 0,
+      "KSP_SETUP": 0,
+      "MESH_PREPROCESS": 0,
+      "POSTPRO": 0,
+      "POSTPRO_FARFIELD": 0,
+      "POSTPRO_GRIDFUNCTION": 0,
+      "POSTPRO_PARAVIEW": 0,
+      "REBALANCE": 0,
+      "SOLVE_ESTIMATOR": 0,
+      "SOLVE_PROM": 0,
+      "STARTUP": 0,
+      "TOTAL": 0,
+      "TS": 0,
+      "WAVE_PORT": 0,
+      "WAVE_PORT_FIELD": 0,
+      "WAVE_PORT_POSTPRO": 0,
+      "WAVE_PORT_SOLVE": 0
+    },
+    "Min": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "CONSTRUCT": 2.8571296569999998,
+      "CONSTRUCT_ESTIMATOR": 0.125922259,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 0.038352908,
+      "INIT": 0.167323458,
+      "IO": 0.19386628400000003,
+      "KSP": 0.087547597,
+      "KSP_COARSE_SETUP": 0.00262209,
+      "KSP_COARSE_SOLVE": 0.0038941859999999996,
+      "KSP_PRECONDITIONER": 2.146386924,
+      "KSP_SETUP": 1.387310607,
+      "MESH_PREPROCESS": 0.268288392,
+      "POSTPRO": 0.07788248900000001,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 0.25505904,
+      "POSTPRO_PARAVIEW": 0.614285851,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 1.160205288,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 0.013400708,
+      "TOTAL": 9.400281438,
+      "TS": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "Tallies": {
+      "Assembly/Full/KSP_SETUP": {
+        "Avg": 0.055402232,
+        "Count": 1,
+        "Max": 0.055402232,
+        "MaxRank": 0,
+        "Min": 0.055402232,
+        "Parent": "KSP_SETUP"
+      },
+      "Assembly/Parallel/KSP_SETUP": {
+        "Avg": 0.055802625,
+        "Count": 1,
+        "Max": 0.055802625,
+        "MaxRank": 0,
+        "Min": 0.055802625,
+        "Parent": "KSP_SETUP"
+      },
+      "Assembly/Partial/CONSTRUCT": {
+        "Avg": 0.106608273,
+        "Count": 6,
+        "Max": 0.106608273,
+        "MaxRank": 0,
+        "Min": 0.106608273,
+        "Parent": "CONSTRUCT"
+      },
+      "Assembly/Partial/CONSTRUCT_ESTIMATOR": {
+        "Avg": 0.07958990199999999,
+        "Count": 2,
+        "Max": 0.07958990199999999,
+        "MaxRank": 0,
+        "Min": 0.07958990199999999,
+        "Parent": "CONSTRUCT_ESTIMATOR"
+      },
+      "Estimator/Krylov/ApplyBA": {
+        "Avg": 1.022257218,
+        "Count": 398,
+        "Max": 1.022257218,
+        "MaxRank": 0,
+        "Min": 1.022257218,
+        "Parent": "SOLVE_ESTIMATOR"
+      },
+      "Estimator/LinearSolve": {
+        "Avg": 1.1267120099999999,
+        "Count": 2,
+        "Max": 1.1267120099999999,
+        "MaxRank": 0,
+        "Min": 1.1267120099999999,
+        "Parent": "KSP"
+      },
+      "Estimator/LinearSolverSetup": {
+        "Avg": 0.046118147,
+        "Count": 1,
+        "Max": 0.046118147,
+        "MaxRank": 0,
+        "Min": 0.046118147,
+        "Parent": "KSP_SETUP"
+      },
+      "Estimator/Preconditioner": {
+        "Avg": 0.019729987000000004,
+        "Count": 201,
+        "Max": 0.019729987000000004,
+        "MaxRank": 0,
+        "Min": 0.019729987000000004,
+        "Parent": "ESTIMATION"
+      },
+      "Halo/P": {
+        "Avg": 0.017786600000000014,
+        "Count": 1024,
+        "Max": 0.017786600000000014,
+        "MaxRank": 0,
+        "Min": 0.017786600000000014,
+        "Parent": "TOTAL"
+      },
+      "Halo/P/KSP": {
+        "Avg": 0.000306544,
+        "Count": 19,
+        "Max": 0.000306544,
+        "MaxRank": 0,
+        "Min": 0.000306544,
+        "Parent": "KSP"
+      },
+      "Halo/P/KSP_PRECONDITIONER": {
+        "Avg": 0.0048596,
+        "Count": 546,
+        "Max": 0.0048596,
+        "MaxRank": 0,
+        "Min": 0.0048596,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Halo/P/KSP_SETUP": {
+        "Avg": 0.0026489519999999996,
+        "Count": 256,
+        "Max": 0.0026489519999999996,
+        "MaxRank": 0,
+        "Min": 0.0026489519999999996,
+        "Parent": "KSP_SETUP"
+      },
+      "Halo/P/POSTPRO": {
+        "Avg": 2.1212e-05,
+        "Count": 2,
+        "Max": 2.1212e-05,
+        "MaxRank": 0,
+        "Min": 2.1212e-05,
+        "Parent": "POSTPRO"
+      },
+      "Halo/P/SOLVE_ESTIMATOR": {
+        "Avg": 0.009950292000000005,
+        "Count": 201,
+        "Max": 0.009950292000000005,
+        "MaxRank": 0,
+        "Min": 0.009950292000000005,
+        "Parent": "SOLVE_ESTIMATOR"
+      },
+      "Halo/PT": {
+        "Avg": 0.017190484000000016,
+        "Count": 1024,
+        "Max": 0.017190484000000016,
+        "MaxRank": 0,
+        "Min": 0.017190484000000016,
+        "Parent": "TOTAL"
+      },
+      "Halo/PT/KSP": {
+        "Avg": 0.00015393200000000002,
+        "Count": 19,
+        "Max": 0.00015393200000000002,
+        "MaxRank": 0,
+        "Min": 0.00015393200000000002,
+        "Parent": "KSP"
+      },
+      "Halo/PT/KSP_PRECONDITIONER": {
+        "Avg": 0.004653079999999999,
+        "Count": 546,
+        "Max": 0.004653079999999999,
+        "MaxRank": 0,
+        "Min": 0.004653079999999999,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Halo/PT/KSP_SETUP": {
+        "Avg": 0.001383744,
+        "Count": 256,
+        "Max": 0.001383744,
+        "MaxRank": 0,
+        "Min": 0.001383744,
+        "Parent": "KSP_SETUP"
+      },
+      "Halo/PT/POSTPRO": {
+        "Avg": 0.000656879,
+        "Count": 2,
+        "Max": 0.000656879,
+        "MaxRank": 0,
+        "Min": 0.000656879,
+        "Parent": "POSTPRO"
+      },
+      "Halo/PT/SOLVE_ESTIMATOR": {
+        "Avg": 0.010342849000000003,
+        "Count": 201,
+        "Max": 0.010342849000000003,
+        "MaxRank": 0,
+        "Min": 0.010342849000000003,
+        "Parent": "SOLVE_ESTIMATOR"
+      },
+      "Main/Krylov/ApplyBA": {
+        "Avg": 1.801086009,
+        "Count": 34,
+        "Max": 1.801086009,
+        "MaxRank": 0,
+        "Min": 1.801086009,
+        "Parent": "KSP"
+      },
+      "Main/LambdaMax": {
+        "Avg": 1.2519231579999999,
+        "Count": 2,
+        "Max": 1.2519231579999999,
+        "MaxRank": 0,
+        "Min": 1.2519231579999999,
+        "Parent": "KSP_SETUP"
+      },
+      "Main/LinearSolve": {
+        "Avg": 2.2404372280000002,
+        "Count": 2,
+        "Max": 2.2404372280000002,
+        "MaxRank": 0,
+        "Min": 2.2404372280000002,
+        "Parent": "KSP"
+      },
+      "Main/LinearSolverSetup": {
+        "Avg": 1.387308133,
+        "Count": 1,
+        "Max": 1.387308133,
+        "MaxRank": 0,
+        "Min": 1.387308133,
+        "Parent": "KSP_SETUP"
+      },
+      "Main/MG/Coarse": {
+        "Avg": 0.006553834999999999,
+        "Count": 21,
+        "Max": 0.006553834999999999,
+        "MaxRank": 0,
+        "Min": 0.006553834999999999,
+        "Parent": "KSP_COARSE_SOLVE"
+      },
+      "Main/MG/L1/PostSmooth": {
+        "Avg": 0.459910607,
+        "Count": 21,
+        "Max": 0.459910607,
+        "MaxRank": 0,
+        "Min": 0.459910607,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L1/PreSmooth": {
+        "Avg": 0.42033324099999997,
+        "Count": 21,
+        "Max": 0.42033324099999997,
+        "MaxRank": 0,
+        "Min": 0.42033324099999997,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L1/Prolongation": {
+        "Avg": 0.010513538999999997,
+        "Count": 21,
+        "Max": 0.010513538999999997,
+        "MaxRank": 0,
+        "Min": 0.010513538999999997,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L1/Residual": {
+        "Avg": 0.07856833399999999,
+        "Count": 21,
+        "Max": 0.07856833399999999,
+        "MaxRank": 0,
+        "Min": 0.07856833399999999,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L1/Restriction": {
+        "Avg": 0.010885831999999998,
+        "Count": 21,
+        "Max": 0.010885831999999998,
+        "MaxRank": 0,
+        "Min": 0.010885831999999998,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L1/Smoother/OpApply": {
+        "Avg": 0.8769804400000001,
+        "Count": 231,
+        "Max": 0.8769804400000001,
+        "MaxRank": 0,
+        "Min": 0.8769804400000001,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L2/PostSmooth": {
+        "Avg": 0.576574116,
+        "Count": 21,
+        "Max": 0.576574116,
+        "MaxRank": 0,
+        "Min": 0.576574116,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L2/PreSmooth": {
+        "Avg": 0.46453718600000005,
+        "Count": 21,
+        "Max": 0.46453718600000005,
+        "MaxRank": 0,
+        "Min": 0.46453718600000005,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L2/Prolongation": {
+        "Avg": 0.017212589,
+        "Count": 21,
+        "Max": 0.017212589,
+        "MaxRank": 0,
+        "Min": 0.017212589,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L2/Residual": {
+        "Avg": 0.090762404,
+        "Count": 21,
+        "Max": 0.090762404,
+        "MaxRank": 0,
+        "Min": 0.090762404,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L2/Restriction": {
+        "Avg": 0.016250972,
+        "Count": 21,
+        "Max": 0.016250972,
+        "MaxRank": 0,
+        "Min": 0.016250972,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Main/MG/L2/Smoother/OpApply": {
+        "Avg": 1.0313698259999997,
+        "Count": 231,
+        "Max": 1.0313698259999997,
+        "MaxRank": 0,
+        "Min": 1.0313698259999997,
+        "Parent": "KSP_PRECONDITIONER"
+      },
+      "Reduce": {
+        "Avg": 0.00013624200000000001,
+        "Count": 510,
+        "Max": 0.00013624200000000001,
+        "MaxRank": 0,
+        "Min": 0.00013624200000000001,
+        "Parent": "TOTAL"
+      },
+      "Reduce/CONSTRUCT": {
+        "Avg": 4.665999999999998e-06,
+        "Count": 13,
+        "Max": 4.665999999999998e-06,
+        "MaxRank": 0,
+        "Min": 4.665999999999998e-06,
+        "Parent": "CONSTRUCT"
+      },
+      "Reduce/INIT": {
+        "Avg": 4.905e-06,
+        "Count": 9,
+        "Max": 4.905e-06,
+        "MaxRank": 0,
+        "Min": 4.905e-06,
+        "Parent": "INIT"
+      },
+      "Reduce/IO": {
+        "Avg": 2.483e-06,
+        "Count": 7,
+        "Max": 2.483e-06,
+        "MaxRank": 0,
+        "Min": 2.483e-06,
+        "Parent": "IO"
+      },
+      "Reduce/KSP": {
+        "Avg": 2.9683000000000004e-05,
+        "Count": 38,
+        "Max": 2.9683000000000004e-05,
+        "MaxRank": 0,
+        "Min": 2.9683000000000004e-05,
+        "Parent": "KSP"
+      },
+      "Reduce/KSP_SETUP": {
+        "Avg": 2.424e-06,
+        "Count": 2,
+        "Max": 2.424e-06,
+        "MaxRank": 0,
+        "Min": 2.424e-06,
+        "Parent": "KSP_SETUP"
+      },
+      "Reduce/POSTPRO": {
+        "Avg": 9.072e-06,
+        "Count": 23,
+        "Max": 9.072e-06,
+        "MaxRank": 0,
+        "Min": 9.072e-06,
+        "Parent": "POSTPRO"
+      },
+      "Reduce/POSTPRO_PARAVIEW": {
+        "Avg": 4.627000000000001e-06,
+        "Count": 17,
+        "Max": 4.627000000000001e-06,
+        "MaxRank": 0,
+        "Min": 4.627000000000001e-06,
+        "Parent": "POSTPRO_PARAVIEW"
+      },
+      "Reduce/SOLVE_ESTIMATOR": {
+        "Avg": 7.752099999999998e-05,
+        "Count": 400,
+        "Max": 7.752099999999998e-05,
+        "MaxRank": 0,
+        "Min": 7.752099999999998e-05,
+        "Parent": "SOLVE_ESTIMATOR"
+      },
+      "Reduce/TOTAL": {
+        "Avg": 8.61e-07,
+        "Count": 1,
+        "Max": 8.61e-07,
+        "MaxRank": 0,
+        "Min": 8.61e-07,
+        "Parent": "TOTAL"
+      },
+      "Startup/Config": {
+        "Avg": 0.004598328,
+        "Count": 1,
+        "Max": 0.004598328,
+        "MaxRank": 0,
+        "Min": 0.004598328,
+        "Parent": "STARTUP"
+      },
+      "Startup/MPIInit": {
+        "Avg": 0.009070054,
+        "Count": 1,
+        "Max": 0.009070054,
+        "MaxRank": 0,
+        "Min": 0.009070054,
+        "Parent": "STARTUP"
+      },
+      "Startup/MeshLoad/Root": {
+        "Avg": 0.193235585,
+        "Count": 1,
+        "Max": 0.193235585,
+        "MaxRank": 0,
+        "Min": 0.193235585,
+        "Parent": "IO"
+      },
+      "Startup/Partition": {
+        "Avg": 0.222264756,
+        "Count": 1,
+        "Max": 0.222264756,
+        "MaxRank": 0,
+        "Min": 0.222264756,
+        "Parent": "MESH_PREPROCESS"
+      },
+      "Wait/IO/MeshLoad": {
+        "Avg": 2.7139999999999998e-06,
+        "Count": 2,
+        "Max": 2.7139999999999998e-06,
+        "MaxRank": 0,
+        "Min": 2.7139999999999998e-06,
+        "Parent": "IO"
+      },
+      "Wait/IO/NodeFilesystem": {
+        "Avg": 4.3099999999999993e-07,
+        "Count": 7,
+        "Max": 4.3099999999999993e-07,
+        "MaxRank": 0,
+        "Min": 4.3099999999999993e-07,
+        "Parent": "TOTAL"
+      },
+      "Wait/IO/NodeFilesystem/IO": {
+        "Avg": 4.3099999999999993e-07,
+        "Count": 7,
+        "Max": 4.3099999999999993e-07,
+        "MaxRank": 0,
+        "Min": 4.3099999999999993e-07,
+        "Parent": "IO"
+      }
+    }
+  },
+  "GitTag": "0610eeb",
+  "LinearSolver": {
+    "Estimator": {
+      "Its": 199,
+      "ItsHistogram": {
+        "64-127": 2
+      },
+      "MaxFinalRelRes": 9.374045490735782e-07,
+      "MaxIts": 100,
+      "MeanReductionFactor": 0.8696069400448281,
+      "Preconditioner": "Jacobi",
+      "Solves": 2
+    },
+    "Main": {
+      "AMG": {
+        "CoarseRowsPerRank": {
+          "Avg": 2,
+          "Max": 2,
+          "MaxRank": 0,
+          "Min": 2
+        },
+        "Levels": 5,
+        "Neighbours": {
+          "L0": {
+            "Avg": 0,
+            "Max": 0,
+            "MaxRank": 0,
+            "Min": 0
+          },
+          "L1": {
+            "Avg": 0,
+            "Max": 0,
+            "MaxRank": 0,
+            "Min": 0
+          },
+          "L2": {
+            "Avg": 0,
+            "Max": 0,
+            "MaxRank": 0,
+            "Min": 0
+          },
+          "L3": {
+            "Avg": 0,
+            "Max": 0,
+            "MaxRank": 0,
+            "Min": 0
+          }
+        },
+        "RowsPerRank": {
+          "L0": {
+            "Avg": 2536,
+            "Max": 2536,
+            "MaxRank": 0,
+            "Min": 2536
+          },
+          "L1": {
+            "Avg": 177,
+            "Max": 177,
+            "MaxRank": 0,
+            "Min": 177
+          },
+          "L2": {
+            "Avg": 58,
+            "Max": 58,
+            "MaxRank": 0,
+            "Min": 58
+          },
+          "L3": {
+            "Avg": 14,
+            "Max": 14,
+            "MaxRank": 0,
+            "Min": 14
+          },
+          "L4": {
+            "Avg": 2,
+            "Max": 2,
+            "MaxRank": 0,
+            "Min": 2
+          }
+        }
+      },
+      "Chebyshev": [
+        {
+          "LambdaMax": 2.2566395881258785,
+          "Order": 6
+        },
+        {
+          "LambdaMax": 3.1771162800136716,
+          "Order": 6
+        }
+      ],
+      "Coarse": {
+        "Applies": 21,
+        "Refactorizations": 0,
+        "Rows": 2536,
+        "RowsPerRank": {
+          "Avg": 2536,
+          "Max": 2536,
+          "MaxRank": 0,
+          "Min": 2536
+        },
+        "Setups": 1
+      },
+      "ItsHistogram": {
+        "8-15": 2
+      },
+      "MaxFinalRelRes": 7.994252091160933e-09,
+      "MaxIts": 9,
+      "MeanReductionFactor": 0.10285101770624568
+    },
+    "TotalIts": 17,
+    "TotalSolves": 2
+  },
+  "Memory": {
+    "Estimator": {
+      "Construction": {
+        "Events": 1,
+        "PeakGrowthMegabytes": {
+          "Avg": 56.625,
+          "Max": 56.625,
+          "MaxRank": 0,
+          "Min": 56.625
+        },
+        "PersistentMegabytes": {
+          "Avg": 56.73046875,
+          "Max": 56.73046875,
+          "MaxRank": 0,
+          "Min": 56.73046875
+        },
+        "TransientMegabytes": {
+          "Avg": 0,
+          "Max": 0,
+          "MaxRank": 0,
+          "Min": 0
+        }
+      },
+      "Estimation": {
+        "Events": 2,
+        "PeakGrowthMegabytes": {
+          "Avg": 79.375,
+          "Max": 79.375,
+          "MaxRank": 0,
+          "Min": 79.375
+        },
+        "PersistentMegabytes": {
+          "Avg": 79.359375,
+          "Max": 79.359375,
+          "MaxRank": 0,
+          "Min": 79.359375
+        },
+        "TransientMegabytes": {
+          "Avg": 0,
+          "Max": 0,
+          "MaxRank": 0,
+          "Min": 0
+        }
+      }
+    }
+  },
+  "PeakMemoryGrowthMegabytes": {
+    "Max": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "Baseline": 24.84765625,
+      "CONSTRUCT": 254.6875,
+      "CONSTRUCT_ESTIMATOR": 56.625,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 38.0,
+      "INIT": 2.2109375,
+      "IO": 21.98046875,
+      "KSP": 0.0,
+      "KSP_COARSE_SETUP": 1.0546875,
+      "KSP_COARSE_SOLVE": 0.0,
+      "KSP_PRECONDITIONER": 0.0,
+      "KSP_SETUP": 120.2890625,
+      "MESH_PREPROCESS": 11.25,
+      "POSTPRO": 58.625,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 20.25,
+      "POSTPRO_PARAVIEW": 121.375,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 41.5,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 10.59765625,
+      "TOTAL": 758.4453125,
+      "TS": 0.0,
+      "Unattributed": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "MaxRank": {
+      "ADAPTATION": 0,
+      "ADAPT_MESH_OUTPUT": 0,
+      "Baseline": 0,
+      "CONSTRUCT": 0,
+      "CONSTRUCT_ESTIMATOR": 0,
+      "CONSTRUCT_PROM": 0,
+      "DIV_FREE": 0,
+      "EPS": 0,
+      "ESTIMATION": 0,
+      "INIT": 0,
+      "IO": 0,
+      "KSP": 0,
+      "KSP_COARSE_SETUP": 0,
+      "KSP_COARSE_SOLVE": 0,
+      "KSP_PRECONDITIONER": 0,
+      "KSP_SETUP": 0,
+      "MESH_PREPROCESS": 0,
+      "POSTPRO": 0,
+      "POSTPRO_FARFIELD": 0,
+      "POSTPRO_GRIDFUNCTION": 0,
+      "POSTPRO_PARAVIEW": 0,
+      "REBALANCE": 0,
+      "SOLVE_ESTIMATOR": 0,
+      "SOLVE_PROM": 0,
+      "STARTUP": 0,
+      "TOTAL": 0,
+      "TS": 0,
+      "Unattributed": 0,
+      "WAVE_PORT": 0,
+      "WAVE_PORT_FIELD": 0,
+      "WAVE_PORT_POSTPRO": 0,
+      "WAVE_PORT_SOLVE": 0
+    },
+    "Min": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "Baseline": 24.84765625,
+      "CONSTRUCT": 254.6875,
+      "CONSTRUCT_ESTIMATOR": 56.625,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 38.0,
+      "INIT": 2.2109375,
+      "IO": 21.98046875,
+      "KSP": 0.0,
+      "KSP_COARSE_SETUP": 1.0546875,
+      "KSP_COARSE_SOLVE": 0.0,
+      "KSP_PRECONDITIONER": 0.0,
+      "KSP_SETUP": 120.2890625,
+      "MESH_PREPROCESS": 11.25,
+      "POSTPRO": 58.625,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 20.25,
+      "POSTPRO_PARAVIEW": 121.375,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 41.5,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 10.59765625,
+      "TOTAL": 758.4453125,
+      "TS": 0.0,
+      "Unattributed": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "Sum": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "Baseline": 24.84765625,
+      "CONSTRUCT": 254.6875,
+      "CONSTRUCT_ESTIMATOR": 56.625,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 38.0,
+      "INIT": 2.2109375,
+      "IO": 21.98046875,
+      "KSP": 0.0,
+      "KSP_COARSE_SETUP": 1.0546875,
+      "KSP_COARSE_SOLVE": 0.0,
+      "KSP_PRECONDITIONER": 0.0,
+      "KSP_SETUP": 120.2890625,
+      "MESH_PREPROCESS": 11.25,
+      "POSTPRO": 58.625,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 20.25,
+      "POSTPRO_PARAVIEW": 121.375,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 41.5,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 10.59765625,
+      "TOTAL": 758.4453125,
+      "TS": 0.0,
+      "Unattributed": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    }
+  },
+  "PeakMemoryMegabytes": {
+    "Average": 783.29296875,
+    "Max": 783.29296875,
+    "MaxRank": 0,
+    "Min": 783.29296875,
+    "Total": 783.29296875
+  },
+  "PeakNodeMemoryGrowthMegabytes": {
+    "Max": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "Baseline": 24.84765625,
+      "CONSTRUCT": 254.6875,
+      "CONSTRUCT_ESTIMATOR": 56.625,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 38.0,
+      "INIT": 2.2109375,
+      "IO": 21.98046875,
+      "KSP": 0.0,
+      "KSP_COARSE_SETUP": 1.0546875,
+      "KSP_COARSE_SOLVE": 0.0,
+      "KSP_PRECONDITIONER": 0.0,
+      "KSP_SETUP": 120.2890625,
+      "MESH_PREPROCESS": 11.25,
+      "POSTPRO": 58.625,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 20.25,
+      "POSTPRO_PARAVIEW": 121.375,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 41.5,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 10.59765625,
+      "TOTAL": 758.4453125,
+      "TS": 0.0,
+      "Unattributed": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "MaxNode": {
+      "ADAPTATION": 0,
+      "ADAPT_MESH_OUTPUT": 0,
+      "Baseline": 0,
+      "CONSTRUCT": 0,
+      "CONSTRUCT_ESTIMATOR": 0,
+      "CONSTRUCT_PROM": 0,
+      "DIV_FREE": 0,
+      "EPS": 0,
+      "ESTIMATION": 0,
+      "INIT": 0,
+      "IO": 0,
+      "KSP": 0,
+      "KSP_COARSE_SETUP": 0,
+      "KSP_COARSE_SOLVE": 0,
+      "KSP_PRECONDITIONER": 0,
+      "KSP_SETUP": 0,
+      "MESH_PREPROCESS": 0,
+      "POSTPRO": 0,
+      "POSTPRO_FARFIELD": 0,
+      "POSTPRO_GRIDFUNCTION": 0,
+      "POSTPRO_PARAVIEW": 0,
+      "REBALANCE": 0,
+      "SOLVE_ESTIMATOR": 0,
+      "SOLVE_PROM": 0,
+      "STARTUP": 0,
+      "TOTAL": 0,
+      "TS": 0,
+      "Unattributed": 0,
+      "WAVE_PORT": 0,
+      "WAVE_PORT_FIELD": 0,
+      "WAVE_PORT_POSTPRO": 0,
+      "WAVE_PORT_SOLVE": 0
+    },
+    "Min": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "Baseline": 24.84765625,
+      "CONSTRUCT": 254.6875,
+      "CONSTRUCT_ESTIMATOR": 56.625,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 38.0,
+      "INIT": 2.2109375,
+      "IO": 21.98046875,
+      "KSP": 0.0,
+      "KSP_COARSE_SETUP": 1.0546875,
+      "KSP_COARSE_SOLVE": 0.0,
+      "KSP_PRECONDITIONER": 0.0,
+      "KSP_SETUP": 120.2890625,
+      "MESH_PREPROCESS": 11.25,
+      "POSTPRO": 58.625,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 20.25,
+      "POSTPRO_PARAVIEW": 121.375,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 41.5,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 10.59765625,
+      "TOTAL": 758.4453125,
+      "TS": 0.0,
+      "Unattributed": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    },
+    "Sum": {
+      "ADAPTATION": 0.0,
+      "ADAPT_MESH_OUTPUT": 0.0,
+      "Baseline": 24.84765625,
+      "CONSTRUCT": 254.6875,
+      "CONSTRUCT_ESTIMATOR": 56.625,
+      "CONSTRUCT_PROM": 0.0,
+      "DIV_FREE": 0.0,
+      "EPS": 0.0,
+      "ESTIMATION": 38.0,
+      "INIT": 2.2109375,
+      "IO": 21.98046875,
+      "KSP": 0.0,
+      "KSP_COARSE_SETUP": 1.0546875,
+      "KSP_COARSE_SOLVE": 0.0,
+      "KSP_PRECONDITIONER": 0.0,
+      "KSP_SETUP": 120.2890625,
+      "MESH_PREPROCESS": 11.25,
+      "POSTPRO": 58.625,
+      "POSTPRO_FARFIELD": 0.0,
+      "POSTPRO_GRIDFUNCTION": 20.25,
+      "POSTPRO_PARAVIEW": 121.375,
+      "REBALANCE": 0.0,
+      "SOLVE_ESTIMATOR": 41.5,
+      "SOLVE_PROM": 0.0,
+      "STARTUP": 10.59765625,
+      "TOTAL": 758.4453125,
+      "TS": 0.0,
+      "Unattributed": 0.0,
+      "WAVE_PORT": 0.0,
+      "WAVE_PORT_FIELD": 0.0,
+      "WAVE_PORT_POSTPRO": 0.0,
+      "WAVE_PORT_SOLVE": 0.0
+    }
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Average": 783.29296875,
+    "Max": 783.29296875,
+    "MaxNode": 0,
+    "Min": 783.29296875,
+    "Total": 783.29296875
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "Iteration": 1,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  },
+  "SchemaVersion": 2,
+  "Verification": {
+    "DofHash": "d483f9325740780c",
+    "PartitionHash": "ace7cfab8b739bd8"
+  }
+}
