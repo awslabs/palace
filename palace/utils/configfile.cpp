@@ -1665,7 +1665,6 @@ SubstructuringData::SubstructuringData(const json &substructuring)
   mode = substructuring.value("Mode", mode);
   save_model = substructuring.value("SaveModel", save_model);
   factorization_tol = substructuring.value("FactorizationTol", factorization_tol);
-  direct_max_size = substructuring.value("DirectMaxSize", direct_max_size);
 }
 
 SolverData::SolverData(const json &solver)

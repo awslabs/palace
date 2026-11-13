@@ -20,7 +20,6 @@
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
-#include "linalg/gmg.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
@@ -39,13 +38,6 @@ namespace palace
 
 namespace substructuring
 {
-
-constexpr bool kHasDirectSolver =
-#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU)
-    true;
-#else
-    false;
-#endif
 
 // Sparse direct solver for the environment and region factorizations: the one
 // config["Solver"]["Linear"]["Type"] names, else STRUMPACK, MUMPS or SuperLU_DIST, in this
@@ -365,19 +357,6 @@ struct SubstructuringSolver::Impl
 
   std::unique_ptr<mfem::HypreParMatrix> A_region, A_region_free;
   mfem::Array<int> ra_arr, ea_arr;
-  // Iterative environment interior solve on the environment submesh (Gamma essential),
-  // with geometric multigrid for higher-order H1.
-  std::unique_ptr<mfem::ParSubMesh> env_submesh_owned;    // single-level ownership
-  std::vector<std::unique_ptr<Mesh>> env_mesh_vec;        // GMG: [0] owns the ParSubMesh
-  mfem::ParSubMesh *env_submesh = nullptr;                // raw ptr to the owned submesh
-  std::unique_ptr<mfem::ParFiniteElementSpace> env_sfes;  // single-level solve space
-  mfem::ParFiniteElementSpace *env_solve_fes = nullptr;   // fespace the solver acts on
-  std::vector<std::unique_ptr<mfem::H1_FECollection>> env_fecs;
-  std::unique_ptr<FiniteElementSpaceHierarchy> env_hierarchy;
-  std::unique_ptr<MultigridOperator> env_mg_op;
-  std::vector<mfem::Array<int>> env_dbc_lists;     // per-level essential DOFs
-  std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
-  std::unique_ptr<KspSolver> env_ksp;
   // Direct factorization of the region-free block (the region pc, or the exact region solve
   // when region_exact) and its (local) region-free true DOFs.
   std::unique_ptr<substructuring::BlockedDirectSolver> reg_lu;
@@ -405,34 +384,16 @@ struct SubstructuringSolver::Impl
   // Region-free size up to which the region is factored on one rank (MUMPS's per-rank
   // workspace dominates a small factorization spread over many ranks).
   static constexpr long long kSerialRegionFactorDofs = 100000;
-  // Conjugate gradients without a direct factorization: the environment interior solves
-  // condense S_E column by column, so their error enters S_E itself, while the energies
-  // are stationary in the error of the region solves.
-  static constexpr double kEnvCgTol = 1.0e-12, kRegionCgTol = 1.0e-10;
-  static constexpr int kEnvCgMaxIts = 1000, kRegionCgMaxIts = 2000;
+  // Conjugate gradients on the region when its exact factor does not pay off (see
+  // EnsureRegionFactor), preconditioned by the factor of A_region_free: the energies are
+  // stationary in the error of the region solves.
+  static constexpr double kRegionCgTol = 1.0e-10;
+  static constexpr int kRegionCgMaxIts = 2000;
   // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
   // sums over elements, which the partition changes by rounding only.
   static constexpr double kFingerprintTol = 1.0e-9;
-  bool region_direct = false;          // region pc is a direct factor (created lazily)
-  bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
+  bool region_dense_eligible = false;  // a dense S_E fits the exact region factor
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
-  bool env_parent_direct = false;
-  mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
-  mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
-  mutable mfem::Vector env_srhs, env_ssol;
-  // Region preconditioner by geometric multigrid on the region submesh (higher-order H1;
-  // region Dirichlet terminals essential, Gamma free).
-  std::vector<std::unique_ptr<Mesh>> reg_mesh_vec;
-  mfem::ParSubMesh *reg_submesh = nullptr;
-  mfem::ParFiniteElementSpace *reg_solve_fes = nullptr;
-  std::vector<std::unique_ptr<mfem::H1_FECollection>> reg_fecs;
-  std::unique_ptr<FiniteElementSpaceHierarchy> reg_hierarchy;
-  std::unique_ptr<MultigridOperator> reg_mg_op;
-  std::vector<mfem::Array<int>> reg_dbc_lists;
-  std::unique_ptr<GeometricMultigridSolver<Operator>> reg_gmg;  // one cycle per apply
-  mfem::Array<int> reg_ess;
-  mutable mfem::ParGridFunction reg_pgf, reg_sgf;
-  mutable mfem::Vector reg_srhs, reg_ssol;
   // Region energy operator: the solve operator (electrostatics), the pure curl-curl
   // (magnetostatics).
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy;
@@ -609,9 +570,6 @@ struct SubstructuringSolver::Impl
 
   std::map<int, mfem::DenseMatrix> region_eps, env_eps;
 
-  // Global number of environment closure DOFs that a direct factorization would carry.
-  long long EnvDirectSize() const;
-
   // The partial factorization (Schur complement on Gamma) of A_env with the DOFs outside
   // E + Gamma eliminated, when one is built: it is then the environment solver. Collective.
   void MaterializePartial();
@@ -778,23 +736,9 @@ struct SubstructuringSolver::Impl
   // an earlier one, and modes absent here are recomputed on demand.
   void LoadSections(const std::string &path, std::streamoff pos, const SignatureMap &map);
 
-  void BuildEnvSubmeshSolver();
-
-  // Essential submesh DOFs (Gamma and the environment Dirichlet DOFs), from a transfer of
-  // the parent marker onto the solve space.
-  void ComputeEnvEss();
-
-  // Boundary attributes of a submesh whose true DOFs all carry the parent true-DOF marker
-  // (1 or 0), from a transfer of the marker. Decided globally, so identical on every rank
-  // (the GMG and single-level paths use different collectives).
-  mfem::Array<int> EssentialSubmeshAttributes(mfem::ParSubMesh &submesh,
-                                              const mfem::Vector &marker);
-
-  // Higher-order H1 environment Dirichlet solve via geometric p-multigrid on the submesh.
-  // Returns false (falling back to the single-level solve) if a hierarchy cannot be built.
-  bool BuildEnvGmg();
-
-  std::unique_ptr<mfem::HypreParMatrix> AssembleEnvSubmesh();
+  // Factor A_EE: A_env with the true DOFs outside the environment interior eliminated, on
+  // the parent space. Collective.
+  void FactorEnvironmentInterior();
 
   // Selection matrix E (parent true DOFs x marked DOFs): E(i, k) = 1 for the k-th marked
   // DOF, numbered globally rank by rank in local order (for the interface, as
@@ -839,18 +783,6 @@ struct SubstructuringSolver::Impl
   // Zero the entries outside the environment interior.
   void MaskToEnvInterior(const std::vector<mfem::Vector *> &Y) const;
 
-  // Environment interior solve on the environment submesh (the transfer to and from the
-  // parent space around an iterative solve).
-  void ApplyAeeInvIterative(const mfem::Vector &x_parent, mfem::Vector &y_parent) const;
-
-  // Region preconditioner by geometric multigrid on the region submesh (order >= 2 H1).
-  // Returns false to fall back to the single-level preconditioner.
-  bool BuildRegionGmg();
-
-  // Region preconditioner apply (~ A_region_free^-1): identity off the region-free DOFs,
-  // the region-submesh GMG solve on them.
-  void ApplyRegionGmgPc(const mfem::Vector &r, mfem::Vector &z) const;
-
   // Number the interface true DOFs globally, in rank order, and size the rows of S_E.
   // Collective.
   void EnumerateInterface();
@@ -867,9 +799,9 @@ struct SubstructuringSolver::Impl
   // Save S_E, the region mesh and the sections to the model file. Collective.
   void SaveModel(const std::string &model_path, int sig_w);
 
-  // The region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct
-  // factor, region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact
-  // factor, SolveRegion bypasses CG). Returns its description. Collective.
+  // The region-condensed solver: CG on A_region_free + S_E, preconditioned by the direct
+  // factor of A_region_free (with the exact factor, SolveRegion bypasses CG). Returns its
+  // description. Collective.
   std::string SetUpRegionSolver();
 };
 

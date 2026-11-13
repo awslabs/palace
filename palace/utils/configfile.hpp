@@ -1261,10 +1261,6 @@ public:
   // exact factorization).
   double factorization_tol = 0.0;
 
-  // Global number of true DOFs up to which the environment and the region are factored with
-  // a sparse direct solver; larger ones are solved iteratively.
-  int direct_max_size = 2000000;
-
   // The sparse direct solver of the factorizations: config["Solver"]["Linear"]["Type"] as
   // given (set by IoData before it resolves the default), DEFAULT for Palace's preference.
   LinearSolver direct_solver = LinearSolver::DEFAULT;

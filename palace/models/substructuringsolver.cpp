@@ -7,14 +7,9 @@
 #include <limits>
 #include <numeric>
 #include <utility>
-#include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
-#include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
-#include "linalg/amg.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/iterative.hpp"
-#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/timer.hpp"
 
@@ -24,8 +19,8 @@ namespace palace
 namespace
 {
 
-// Preconditioner forwarding to a callable (the region factor or region-submesh multigrid,
-// both built up front, so SetOperator is a no-op).
+// Preconditioner forwarding to a callable (the region factor, built on the first solve
+// batch, so SetOperator is a no-op).
 class CallableSolver : public Solver<Operator>
 {
 public:
@@ -303,7 +298,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
 
 void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
 {
-  if (!region_direct || reg_lu)
+  if (reg_lu)
   {
     return;
   }
@@ -402,178 +397,16 @@ mfem::Vector SubstructuringSolver::Impl::RegionField(const mfem::Vector &x_rf,
   return u;
 }
 
-bool SubstructuringSolver::Impl::BuildRegionGmg()
-{
-  const int order = iodata.solver.order;
-  const int dim = parent.Dimension();
-  const int mg_levels = iodata.solver.linear.mg_max_levels;
-  if (magnetostatic || order <= 1 || mg_levels <= 1)
-  {
-    return false;
-  }
-
-  reg_mesh_vec.clear();
-  reg_mesh_vec.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromDomain(parent, ra_arr))));
-  reg_submesh = dynamic_cast<mfem::ParSubMesh *>(&reg_mesh_vec[0]->Get());
-  reg_mesh_vec[0]->RebuildCeedAttributes();
-  reg_pgf.SetSpace(&parent_fes);
-
-  // Essential submesh boundary attributes: the region Dirichlet ones (Gamma free).
-  mfem::Vector marker(nt);
-  marker = 0.0;
-  for (int i = 0; i < dbc_tdofs.Size(); i++)
-  {
-    marker(dbc_tdofs[i]) = 1.0;
-  }
-  mfem::Array<int> ess_attr = EssentialSubmeshAttributes(*reg_submesh, marker);
-  if (ess_attr.Size() == 0)
-  {
-    return false;  // pure-Neumann region block: keep the single-level preconditioner
-  }
-
-  reg_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
-      order, dim, mg_levels, iodata.solver.linear.mg_coarsening, false);
-  reg_dbc_lists.clear();
-  reg_hierarchy = std::make_unique<FiniteElementSpaceHierarchy>(
-      fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-          mg_levels, reg_mesh_vec, reg_fecs, &ess_attr, &reg_dbc_lists));
-  if (reg_hierarchy->GetNumLevels() < 2)
-  {
-    reg_hierarchy.reset();
-    reg_fecs.clear();
-    return false;
-  }
-  reg_solve_fes = &reg_hierarchy->GetFinestFESpace().Get();
-
-  MaterialOperator reg_mat_op(iodata, *reg_mesh_vec[0]);
-  MaterialPropertyCoefficient coef(reg_mat_op.GetAttributeToMaterial(),
-                                   reg_mat_op.GetPermittivityReal());
-  BilinearForm a(reg_hierarchy->GetFinestFESpace());
-  a.AddDomainIntegrator<DiffusionIntegrator>(coef);
-  auto a_vec = a.Assemble(*reg_hierarchy, false);
-
-  const std::size_t nl = reg_hierarchy->GetNumLevels();
-  reg_mg_op = std::make_unique<MultigridOperator>(nl);
-  for (std::size_t l = 0; l < nl; l++)
-  {
-    auto &fes_l = reg_hierarchy->GetFESpaceAtLevel(l);
-    auto A_l = std::make_unique<ParOperator>(std::move(a_vec[l]), fes_l);
-    A_l->SetEssentialTrueDofs(reg_dbc_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-    reg_mg_op->AddOperator(std::move(A_l));
-  }
-  reg_ess = reg_dbc_lists.back();
-
-  auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
-  amg->SetDropSmallEntries(false);
-  reg_gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      iodata, reg_submesh->GetComm(), std::move(amg),
-      reg_hierarchy->GetProlongationOperators());
-  reg_gmg->SetOperator(*reg_mg_op);
-
-  reg_sgf.SetSpace(reg_solve_fes);
-  reg_srhs.SetSize(reg_solve_fes->GetTrueVSize());
-  reg_ssol.SetSize(reg_solve_fes->GetTrueVSize());
-  reg_srhs.UseDevice(true);
-  reg_ssol.UseDevice(true);
-  return true;
-}
-
-void SubstructuringSolver::Impl::ApplyRegionGmgPc(const mfem::Vector &r,
-                                                  mfem::Vector &z) const
-{
-  z.SetSize(nt);
-  {
-    const double *rr = r.HostRead();
-    double *zz = z.HostWrite();
-    for (int i = 0; i < nt; i++)
-    {
-      zz[i] = is_region_free[i] ? 0.0 : rr[i];
-    }
-  }
-  reg_pgf.SetFromTrueDofs(r);
-  reg_sgf = 0.0;
-  reg_submesh->Transfer(reg_pgf, reg_sgf);
-  reg_sgf.GetTrueDofs(reg_srhs);
-  linalg::SetSubVector(reg_srhs, reg_ess, 0.0);
-  reg_ssol = 0.0;
-  reg_gmg->Mult(reg_srhs, reg_ssol);
-  reg_sgf.SetFromTrueDofs(reg_ssol);
-  reg_pgf = 0.0;
-  reg_submesh->Transfer(reg_sgf, reg_pgf);
-  mfem::Vector zr(nt);
-  reg_pgf.GetTrueDofs(zr);
-  const double *zrr = zr.HostRead();
-  double *zz = z.HostReadWrite();
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_region_free[i])
-    {
-      zz[i] = zrr[i];
-    }
-  }
-}
-
 std::string SubstructuringSolver::Impl::SetUpRegionSolver()
 {
-  const int nG = nG_global;
   MPI_Comm comm = parent_fes.GetComm();
-  const auto &subcfg = *iodata.solver.substructuring;
-  std::string region_solver;
-  std::unique_ptr<Solver<Operator>> pc;
-  // Direct factorization when the region fits.
-  long long reg_glob = 0;
-  if (substructuring::kHasDirectSolver)
-  {
-    long long reg_loc = 0;
-    for (int i = 0; i < nt; i++)
-    {
-      reg_loc += is_region_free[i];
-    }
-    MPI_Allreduce(&reg_loc, &reg_glob, 1, MPI_LONG_LONG, MPI_SUM, comm);
-  }
-  MFEM_VERIFY(!broken ||
-                  (substructuring::kHasDirectSolver && reg_glob <= subcfg.direct_max_size),
-              "\"TwoSided\" superconductor films in substructuring need a direct region "
-              "factorization: a sparse direct solver and a region within "
-              "\"Solver.Substructuring.DirectMaxSize\"!");
-  if (substructuring::kHasDirectSolver && reg_glob <= subcfg.direct_max_size)
-  {
-    // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
-    // S_E is a worse preconditioner than none) or A_region_free, chosen at the first
-    // solve batch (EnsureRegionFactor).
-    region_direct = true;
-    region_dense_eligible = nG > 0 && nG <= kDirectCondensedMaxInterface;
-    pc = std::make_unique<CallableSolver>(A_region_free->Height(),
-                                          [this](const mfem::Vector &r, mfem::Vector &z)
-                                          { ApplyRegionFactor(r, z); });
-    region_solver =
-        fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
-  }
-  else if (BuildRegionGmg())
-  {
-    pc = std::make_unique<CallableSolver>(A_region_free->Height(),
-                                          [this](const mfem::Vector &r, mfem::Vector &z)
-                                          { ApplyRegionGmgPc(r, z); });
-    region_solver = "conjugate gradients with geometric multigrid";
-  }
-  else if (magnetostatic)
-  {
-    region_solver = "conjugate gradients with AMS";
-    auto ams = std::make_unique<mfem::HypreAMS>(&parent_fes);
-    ams->SetPrintLevel(0);
-    pc = std::make_unique<MfemWrapperSolver<Operator>>(
-        std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
-        /*drop_small_entries=*/false);
-  }
-  else
-  {
-    region_solver = "conjugate gradients with BoomerAMG";
-    pc = std::make_unique<MfemWrapperSolver<Operator>>(
-        std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
-        /*complex_matrix=*/false, /*drop_small_entries=*/false);
-  }
+  // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified S_E
+  // is a worse preconditioner than none) or A_region_free, chosen at the first solve batch
+  // (EnsureRegionFactor).
+  region_dense_eligible = nG_global > 0 && nG_global <= kDirectCondensedMaxInterface;
+  auto pc = std::make_unique<CallableSolver>(A_region_free->Height(),
+                                             [this](const mfem::Vector &r, mfem::Vector &z)
+                                             { ApplyRegionFactor(r, z); });
   auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(kRegionCgTol);
@@ -583,7 +416,7 @@ std::string SubstructuringSolver::Impl::SetUpRegionSolver()
       *A_region_free, *mat_dtn, is_region_free);
   region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
   region_ksp->SetOperators(*region_op, *A_region_free);
-  return region_solver;
+  return fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
 }
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
@@ -629,11 +462,11 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->LoadModel(model_path, sig_w);
     loaded = true;
   }
-  // S_E from a partial factorization when one is built and the environment fits a direct
-  // factorization, else from solves with A_EE: always when S^K is also materialized (its
-  // correction needs the lifted columns, which the solves give).
+  // S_E from a partial factorization when one is built, else from solves with A_EE: always
+  // when S^K is also materialized (its correction needs the lifted columns, which the
+  // solves give).
   const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
-  if (!loaded && nG > 0 && !with_sk && impl->EnvDirectSize() <= subcfg.direct_max_size)
+  if (!loaded && nG > 0 && !with_sk)
   {
     impl->MaterializePartial();
   }
@@ -698,17 +531,10 @@ void SubstructuringSolver::CondenseEnvironment()
             fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
       }
     }
-    else if (impl->env_parent_direct)
+    else
     {
       env_solver =
           fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
-    }
-    else
-    {
-      env_solver = fmt::format("conjugate gradients with {}",
-                               impl->env_hierarchy   ? "geometric multigrid"
-                               : impl->magnetostatic ? "AMS"
-                                                     : "BoomerAMG");
     }
     if (!model_path.empty())
     {

@@ -833,6 +833,10 @@ void IoData::CheckConfiguration()
                     problem.type == ProblemType::MAGNETOSTATIC,
                 "Substructuring is only supported for electrostatic and magnetostatic "
                 "problem types!");
+#if !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU)
+    MFEM_ABORT("Substructuring factors the environment and the region with a sparse direct "
+               "solver: build Palace with STRUMPACK, MUMPS or SuperLU_DIST!");
+#endif
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),

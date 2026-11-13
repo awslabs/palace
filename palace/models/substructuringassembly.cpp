@@ -708,34 +708,6 @@ mfem::Vector SubstructuringSolver::Impl::TerminalMode(int idx) const
   return x;
 }
 
-std::unique_ptr<mfem::HypreParMatrix> SubstructuringSolver::Impl::AssembleEnvSubmesh()
-{
-  MFEM_VERIFY(!has_sheets, "Superconductor sheets in substructuring need a direct "
-                           "environment factorization: a sparse direct solver and an "
-                           "environment within \"Solver.Substructuring.DirectMaxSize\"!");
-  PWMatrixCoefficient coef(parent.Dimension(), env_eps);
-  mfem::Vector mass(env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1);
-  mass = 0.0;
-  for (const auto &[attr, t] : env_eps)
-  {
-    mass(attr - 1) = mag_eps;
-  }
-  mfem::PWConstCoefficient mcoef(mass);
-  mfem::ParBilinearForm a(env_sfes.get());
-  if (magnetostatic)
-  {
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
-  }
-  else
-  {
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
-  }
-  a.Assemble();
-  a.Finalize();
-  return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
-}
-
 std::unique_ptr<mfem::HypreParMatrix>
 SubstructuringSolver::Impl::AssembleSelection(const std::vector<char> &mark) const
 {

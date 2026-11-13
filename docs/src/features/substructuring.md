@@ -136,15 +136,15 @@ Substructuring also runs with a GPU device (`config["Solver"]["Device"]` `"GPU"`
 interface operator and the sparse direct factorizations on the CPU. The environment and the region
 are factored with a sparse direct solver (the one
 [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names, or
-else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with)
-when they have at most `config["Solver"]["Substructuring"]["DirectMaxSize"]` unknowns (2,000,000 by
-default), and otherwise solved by conjugate gradients preconditioned by geometric multigrid
-(electrostatics at order 2 and higher), BoomerAMG or AMS. Magnetostatic environments at order 2 and
-higher are always factored, and an environment with London sheets must be. The Schur complement of
-the environment comes instead from a single partial factorization, by MUMPS or, without it, by
-STRUMPACK (with the Schur complement interface that the superbuild and the Spack package patch in),
-unless `"Type"` names another solver, and except when a magnetostatic model is saved: its energy
-operator takes two environment solves per interface unknown. The MUMPS factorizations follow the
+else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with), so
+*Palace* must be built with one of them. The region operator is factored together with the dense
+``\bm{S}_E`` when the interface has at most 10,000 unknowns and the excitations solved together
+amortize it; otherwise the region is solved by conjugate gradients, preconditioned by the
+factorization of the region operator alone. The Schur complement of the environment comes instead
+from a single partial factorization, by MUMPS or, without it, by STRUMPACK (with the Schur
+complement interface that the superbuild and the Spack package patch in), unless `"Type"` names
+another solver, and except when a magnetostatic model is saved: its energy operator takes two
+environment solves per interface unknown. The MUMPS factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
 `config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
 are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
@@ -165,10 +165,9 @@ of each film face is condensed with the part of the domain the face bounds, so f
 region, in the environment, or cross the interface; so may the surface-current ports and their
 apertures. A [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) film,
 across which the solution space is broken as in a regular simulation, may also cross the interface
-(the interface DOFs on it then have a version on each side of the film), but not lie on it. The
-region and the environment must then be factored (both within `"DirectMaxSize"`), and the region of
-an adaptive refinement cannot hold one. A saved model includes the condensed excitations of the
-environment, so an online run needs no environment solve as long as the excitations in the
+(the interface DOFs on it then have a version on each side of the film), but not lie on it, and the
+region of an adaptive refinement cannot hold one. A saved model includes the condensed excitations
+of the environment, so an online run needs no environment solve as long as the excitations in the
 environment are unchanged; excitations inside the region, such as a port added or moved in a
 redesign, need none at all. A small mass regularization keeps the curl-curl operator definite; the
 extracted energies use the unregularized operator, in a form whose error is quadratic in the

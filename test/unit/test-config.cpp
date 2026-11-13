@@ -208,21 +208,6 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Substructuring direct factorization size limit")
-  {
-    json config = {
-        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
-        {"Boundaries", json::object()},
-        {"Solver",
-         {{"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-    CHECK(IoData(config, false).solver.substructuring->direct_max_size == 2000000);
-    config["Solver"]["Substructuring"]["DirectMaxSize"] = 0;
-    CHECK(IoData(config, false).solver.substructuring->direct_max_size == 0);
-  }
-
   SECTION("Static substructuring runs on any device")
   {
     json config = {
@@ -2127,8 +2112,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(err.empty());
 
     IoData iodata2(config, false);
-    CHECK(iodata2.solver.substructuring->direct_max_size ==
-          iodata1.solver.substructuring->direct_max_size);
+    CHECK(iodata2.solver.substructuring->factorization_tol ==
+          iodata1.solver.substructuring->factorization_tol);
 
     auto sub_gaps = SchemaCoverageGaps("/properties/Solver/properties/Substructuring",
                                        config["Solver"]["Substructuring"]);

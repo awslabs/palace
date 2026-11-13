@@ -4,16 +4,6 @@
 #include "substructuringsolverimpl.hpp"
 
 #include <cmath>
-#include <limits>
-#include <utility>
-#include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
-#include "fem/integrator.hpp"
-#include "fem/multigrid.hpp"
-#include "linalg/amg.hpp"
-#include "linalg/iterative.hpp"
-#include "linalg/rap.hpp"
-#include "models/materialoperator.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -180,21 +170,6 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
   return ok;
 }
 
-long long SubstructuringSolver::Impl::EnvDirectSize() const
-{
-  long long env_loc = 0;
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_env_int[i] || is_gamma[i])
-    {
-      env_loc++;
-    }
-  }
-  long long env_glob = 0;
-  MPI_Allreduce(&env_loc, &env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-  return env_glob;
-}
-
 void SubstructuringSolver::Impl::MaterializePartial()
 {
   BlockTimer bt(Timer::KSP_SETUP);
@@ -220,20 +195,12 @@ void SubstructuringSolver::Impl::EnsureEnv()
   if (!env_built)
   {
     BlockTimer bt(Timer::KSP_SETUP);
-    BuildEnvSubmeshSolver();
+    FactorEnvironmentInterior();
     env_schur = std::make_unique<BackSolveSchurSolver>(
         Aenv(), InterfaceTrueDofs(),
         [this](const std::vector<const mfem::Vector *> &X,
                const std::vector<mfem::Vector *> &Y)
         {
-          if (!env_parent_direct)
-          {
-            for (std::size_t k = 0; k < X.size(); k++)
-            {
-              ApplyAeeInvIterative(*X[k], *Y[k]);
-            }
-            return;
-          }
           env_lu_parent->Mult(X, Y);  // the factor of [A_EE, 0; 0, I]
           MaskToEnvInterior(Y);
         },
@@ -548,250 +515,20 @@ void SubstructuringSolver::Impl::ScatterRows(const std::vector<double> &full, in
                MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
 }
 
-void SubstructuringSolver::Impl::BuildEnvSubmeshSolver()
+void SubstructuringSolver::Impl::FactorEnvironmentInterior()
 {
-  const int mg_levels = iodata.solver.linear.mg_max_levels;
-  // Direct A_EE (when the environment fits): factor A_env with the
-  // non-environment-interior true DOFs eliminated, in the parent space (no submesh
-  // transfer per solve). Higher-order H(curl) always takes this path (the iterative
-  // submesh solve is validated at order 1 only).
-  const bool hcurl_high_order = magnetostatic && iodata.solver.order > 1;
-  MFEM_VERIFY(substructuring::kHasDirectSolver || !hcurl_high_order,
-              "Magnetostatic substructuring at order > 1 needs a sparse direct solver!");
-  if (substructuring::kHasDirectSolver &&
-      (EnvDirectSize() <= iodata.solver.substructuring->direct_max_size ||
-       hcurl_high_order))
-  {
-    non_env_int.SetSize(0);
-    for (int i = 0; i < nt; i++)
-    {
-      if (!is_env_int[i])
-      {
-        non_env_int.Append(i);
-      }
-    }
-    env_A_ee_parent = EliminateToIdentity(Aenv(), non_env_int);
-    env_lu_parent = std::make_unique<substructuring::BlockedDirectSolver>(
-        substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()));
-    env_lu_parent->SetOperator(*env_A_ee_parent);
-    env_parent_direct = true;
-    return;
-  }
-  // Iterative solve on the environment submesh (very large environment).
-  const bool use_gmg = !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
-
-  // The GMG path needs the submesh owned by a Palace Mesh (CEED attribute maps, FE space
-  // hierarchy); otherwise a standalone ParSubMesh suffices.
-  if (use_gmg)
-  {
-    env_mesh_vec.clear();
-    env_mesh_vec.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-        mfem::ParSubMesh::CreateFromDomain(parent, ea_arr))));
-    env_submesh = dynamic_cast<mfem::ParSubMesh *>(&env_mesh_vec[0]->Get());
-    env_mesh_vec[0]->RebuildCeedAttributes();
-  }
-  else
-  {
-    env_submesh_owned = std::make_unique<mfem::ParSubMesh>(
-        mfem::ParSubMesh::CreateFromDomain(parent, ea_arr));
-    env_submesh = env_submesh_owned.get();
-  }
-  env_pgf.SetSpace(&parent_fes);
-
-  if (!(use_gmg && BuildEnvGmg()))
-  {
-    // Single-level submesh Dirichlet solve with wrapped AMG / AMS.
-    env_sfes = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh, fec.get());
-    env_solve_fes = env_sfes.get();
-    env_sgf.SetSpace(env_solve_fes);
-    ComputeEnvEss();
-    env_A_ee = AssembleEnvSubmesh();
-    {
-      std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
-    }
-    MPI_Comm comm = env_solve_fes->GetComm();
-    {
-      std::unique_ptr<Solver<Operator>> pc;
-      if (magnetostatic)
-      {
-        auto ams = std::make_unique<mfem::HypreAMS>(env_solve_fes);
-        ams->SetPrintLevel(0);
-        pc = std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false,
-                                                           false);
-      }
-      else
-      {
-        pc = std::make_unique<MfemWrapperSolver<Operator>>(
-            std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
-      }
-      auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-      pcg->SetInitialGuess(false);
-      pcg->SetRelTol(kEnvCgTol);
-      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-      pcg->SetMaxIter(kEnvCgMaxIts);
-      env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-      env_ksp->SetOperators(*env_A_ee, *env_A_ee);
-    }
-  }
-
-  env_srhs.SetSize(env_solve_fes->GetTrueVSize());
-  env_ssol.SetSize(env_solve_fes->GetTrueVSize());
-  env_srhs.UseDevice(true);
-  env_ssol.UseDevice(true);
-}
-
-void SubstructuringSolver::Impl::ComputeEnvEss()
-{
-  mfem::Vector t(nt);
+  non_env_int.SetSize(0);
   for (int i = 0; i < nt; i++)
   {
-    t(i) = is_env_int[i] ? 0.0 : 1.0;
-  }
-  mfem::ParGridFunction pg(&parent_fes), sg(env_solve_fes);
-  pg.SetFromTrueDofs(t);
-  sg = 0.0;
-  env_submesh->Transfer(pg, sg);
-  mfem::Vector st(env_solve_fes->GetTrueVSize());
-  sg.GetTrueDofs(st);
-  const double *sv = st.HostRead();
-  env_ess.SetSize(0);
-  for (int i = 0; i < st.Size(); i++)
-  {
-    if (std::abs(sv[i]) > 0.5)  // fabs: ND transfer may flip the marker's sign
+    if (!is_env_int[i])
     {
-      env_ess.Append(i);
+      non_env_int.Append(i);
     }
   }
-}
-
-mfem::Array<int>
-SubstructuringSolver::Impl::EssentialSubmeshAttributes(mfem::ParSubMesh &submesh,
-                                                       const mfem::Vector &marker)
-{
-  mfem::ParFiniteElementSpace scratch(&submesh, fec.get());
-  std::set<int> ess_set;
-  {
-    mfem::ParGridFunction pg(&parent_fes), sg(&scratch);
-    pg.SetFromTrueDofs(marker);
-    sg = 0.0;
-    submesh.Transfer(pg, sg);
-    mfem::Vector st(scratch.GetTrueVSize());
-    sg.GetTrueDofs(st);
-    const double *sv = st.HostRead();
-    for (int i = 0; i < st.Size(); i++)
-    {
-      if (std::abs(sv[i]) > 0.5)
-      {
-        ess_set.insert(i);
-      }
-    }
-  }
-  MPI_Comm comm = submesh.GetComm();
-  const int lbmax = submesh.bdr_attributes.Size() ? submesh.bdr_attributes.Max() : 0;
-  int bmax = 0;
-  MPI_Allreduce(&lbmax, &bmax, 1, MPI_INT, MPI_MAX, comm);
-  std::vector<int> all_in(bmax, 1), has_dofs(bmax, 0);
-  for (int a = 1; a <= bmax; a++)
-  {
-    mfem::Array<int> m(bmax);
-    m = 0;
-    m[a - 1] = 1;
-    mfem::Array<int> adofs;
-    scratch.GetEssentialTrueDofs(m, adofs);
-    has_dofs[a - 1] = (adofs.Size() > 0);
-    for (int d : adofs)
-    {
-      if (!ess_set.contains(d))
-      {
-        all_in[a - 1] = 0;
-        break;
-      }
-    }
-  }
-  std::vector<int> g_all_in(bmax), g_has(bmax);
-  MPI_Allreduce(all_in.data(), g_all_in.data(), bmax, MPI_INT, MPI_LAND, comm);
-  MPI_Allreduce(has_dofs.data(), g_has.data(), bmax, MPI_INT, MPI_LOR, comm);
-  mfem::Array<int> ess_attr;
-  for (int a = 1; a <= bmax; a++)
-  {
-    if (g_all_in[a - 1] && g_has[a - 1])
-    {
-      ess_attr.Append(a);
-    }
-  }
-  return ess_attr;
-}
-
-bool SubstructuringSolver::Impl::BuildEnvGmg()
-{
-  const int order = iodata.solver.order;
-  const int dim = parent.Dimension();
-  const int mg_levels = iodata.solver.linear.mg_max_levels;
-
-  // Essential submesh boundary attributes: Gamma and the environment Dirichlet ones.
-  mfem::Vector marker(nt);
-  for (int i = 0; i < nt; i++)
-  {
-    marker(i) = is_env_int[i] ? 0.0 : 1.0;
-  }
-  mfem::Array<int> ess_attr = EssentialSubmeshAttributes(*env_submesh, marker);
-  if (ess_attr.Size() == 0)
-  {
-    return false;
-  }
-
-  // p-multigrid hierarchy on the submesh, with ess_attr as the Dirichlet boundary.
-  env_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
-      order, dim, mg_levels, iodata.solver.linear.mg_coarsening, false);
-  std::vector<mfem::Array<int>> &dbc_lists = env_dbc_lists;
-  dbc_lists.clear();
-  env_hierarchy = std::make_unique<FiniteElementSpaceHierarchy>(
-      fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-          mg_levels, env_mesh_vec, env_fecs, &ess_attr, &dbc_lists));
-  if (env_hierarchy->GetNumLevels() < 2)
-  {
-    env_hierarchy.reset();
-    env_fecs.clear();
-    return false;
-  }
-  env_solve_fes = &env_hierarchy->GetFinestFESpace().Get();
-
-  // Material coefficient from a MaterialOperator on the submesh, so the attribute map
-  // matches Palace's local CEED numbering.
-  MaterialOperator env_mat_op(iodata, *env_mesh_vec[0]);
-  MaterialPropertyCoefficient coef(env_mat_op.GetAttributeToMaterial(),
-                                   env_mat_op.GetPermittivityReal());
-  BilinearForm a(env_hierarchy->GetFinestFESpace());
-  a.AddDomainIntegrator<DiffusionIntegrator>(coef);
-  auto a_vec = a.Assemble(*env_hierarchy, false);
-
-  const std::size_t nl = env_hierarchy->GetNumLevels();
-  env_mg_op = std::make_unique<MultigridOperator>(nl);
-  for (std::size_t l = 0; l < nl; l++)
-  {
-    auto &fes_l = env_hierarchy->GetFESpaceAtLevel(l);
-    auto A_l = std::make_unique<ParOperator>(std::move(a_vec[l]), fes_l);
-    A_l->SetEssentialTrueDofs(dbc_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-    env_mg_op->AddOperator(std::move(A_l));
-  }
-  env_ess = dbc_lists.back();  // finest essential, consistent with the operators
-
-  auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
-  amg->SetDropSmallEntries(false);
-  MPI_Comm comm = env_submesh->GetComm();
-  auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      iodata, comm, std::move(amg), env_hierarchy->GetProlongationOperators());
-  auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-  pcg->SetInitialGuess(false);
-  pcg->SetRelTol(kEnvCgTol);
-  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-  pcg->SetMaxIter(kEnvCgMaxIts);
-  env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
-  env_ksp->SetOperators(*env_mg_op, *env_mg_op);
-
-  env_sgf.SetSpace(env_solve_fes);
-  return true;
+  env_A_ee_parent = EliminateToIdentity(Aenv(), non_env_int);
+  env_lu_parent = std::make_unique<substructuring::BlockedDirectSolver>(
+      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()));
+  env_lu_parent->SetOperator(*env_A_ee_parent);
 }
 
 void SubstructuringSolver::Impl::ApplyAeeInvMulti(
@@ -824,31 +561,6 @@ void SubstructuringSolver::Impl::MaskToEnvInterior(
 void SubstructuringSolver::Impl::ApplyAeeInv(const mfem::Vector &x, mfem::Vector &y) const
 {
   ApplyAeeInvMulti({&x}, {&y});
-}
-
-void SubstructuringSolver::Impl::ApplyAeeInvIterative(const mfem::Vector &x_parent,
-                                                      mfem::Vector &y_parent) const
-{
-  env_pgf.SetFromTrueDofs(x_parent);
-  env_sgf = 0.0;
-  env_submesh->Transfer(env_pgf, env_sgf);
-  env_sgf.GetTrueDofs(env_srhs);
-  linalg::SetSubVector(env_srhs, env_ess, 0.0);
-  env_ssol = 0.0;
-  env_ksp->Mult(env_srhs, env_ssol);
-  env_sgf.SetFromTrueDofs(env_ssol);
-  env_pgf = 0.0;
-  env_submesh->Transfer(env_sgf, env_pgf);
-  y_parent.SetSize(nt);
-  env_pgf.GetTrueDofs(y_parent);
-  double *yy = y_parent.HostReadWrite();
-  for (int i = 0; i < nt; i++)
-  {
-    if (!is_env_int[i])
-    {
-      yy[i] = 0.0;
-    }
-  }
 }
 
 void SubstructuringSolver::Impl::MaterializeWithEnergy()
