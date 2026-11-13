@@ -181,6 +181,8 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
   y = 1.0;  // Overwritten
   linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y);
 
+  // On the host the terms are added in this order, so the result is exact.
+  const double tol = mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ? 1.0e-14 : 0.0;
   const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
   int mismatch = 0;
   for (int i = 0; i < N; i++)
@@ -188,13 +190,16 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
     double ref_r = 0.0, ref_i = 0.0;
     for (int j = 0; j < n; j++)
     {
-      if (c[j] != 0.0)
+      if (c[j].real() != 0.0)
       {
         ref_r += c[j].real() * X[j].HostRead()[i];
+      }
+      if (c[j].imag() != 0.0)
+      {
         ref_i += c[j].imag() * X[j].HostRead()[i];
       }
     }
-    mismatch += !(std::abs(YR[i] - ref_r) <= 1.0e-14 && std::abs(YI[i] - ref_i) <= 1.0e-14);
+    mismatch += !(std::abs(YR[i] - ref_r) <= tol && std::abs(YI[i] - ref_i) <= tol);
   }
   CHECK(mismatch == 0);
 }
