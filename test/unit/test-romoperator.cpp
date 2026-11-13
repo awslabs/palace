@@ -704,19 +704,110 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   std::vector<std::uint32_t> seeds(2 * nr_random_vec);
   seed_gen.generate(seeds.begin(), seeds.end());
 
+  // Return V c for coefficients c zero-padded to the basis dimension.
+  auto expand = [&](const Eigen::VectorXcd &c)
+  {
+    Eigen::VectorXcd c_pad = Eigen::VectorXcd::Zero(prom_op.GetReducedDimension());
+    c_pad.head(c.size()) = c;
+    ComplexVector w(vector_temp.Size());
+    w.UseDevice(true);
+    linalg::LinearCombination(prom_op.GetVectors(),
+                              {c_pad.data(), static_cast<std::size_t>(c_pad.size())}, w);
+    return w;
+  };
+
+  // The projected matrices are those of the operators on the basis, Vᵀ A V.
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  auto check_projection = [&](const ComplexOperator &A, const Eigen::MatrixXcd &Ar)
+  {
+    const auto &V = prom_op.GetVectors();
+    const auto n = static_cast<Eigen::Index>(V.size());
+    REQUIRE(Ar.rows() == n);
+    REQUIRE(Ar.cols() == n);
+    Eigen::MatrixXcd Ar_ref(n, n);
+    ComplexVector v(vector_temp.Size()), w(vector_temp.Size());
+    v.UseDevice(true);
+    w.UseDevice(true);
+    for (Eigen::Index j = 0; j < n; j++)
+    {
+      v.Real() = V[j];
+      v.Imag() = 0.0;
+      A.Mult(v, w);
+      for (Eigen::Index i = 0; i < n; i++)
+      {
+        Ar_ref(i, j) = {V[i] * w.Real(), V[i] * w.Imag()};
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(Ar_ref.size()), Ar_ref.data(), world_comm);
+    const double error = (Ar - Ar_ref).cwiseAbs().maxCoeff();
+    const double scale = Ar_ref.cwiseAbs().maxCoeff();
+    CAPTURE(n, error, scale);
+    REQUIRE(scale > 0.0);
+    CHECK(error <= 1.0e-12 * scale);
+  };
+
+  Eigen::VectorXcd c_prev;
+  auto check_update = [&](const ComplexVector &u, const Eigen::VectorXcd &c)
+  {
+    // The returned coefficients reproduce the vector in the updated basis.
+    const double norm_u = linalg::Norml2(world_comm, u);
+    ComplexVector w = expand(c);
+    w -= u;
+    CHECK(linalg::Norml2(world_comm, w) <= 1.0e-12 * norm_u);
+
+    // The norm in coefficient space from the Gram factor, VᵀV = L Lᵀ, matches the norm of
+    // the vector, for the new vector and for its difference with the previous one, which
+    // involves the whole factor.
+    CHECK_THAT(prom_op.BasisNorm(c), WithinRel(norm_u, 1.0e-10));
+    if (c_prev.size() > 0)
+    {
+      Eigen::VectorXcd dc = c;
+      dc.head(c_prev.size()) -= c_prev;
+      ComplexVector du = expand(c_prev);
+      du -= u;
+      CHECK_THAT(prom_op.BasisNorm(dc), WithinRel(linalg::Norml2(world_comm, du), 1.0e-10));
+    }
+    c_prev = c;
+  };
+
   for (std::size_t i = 0; i < nr_random_vec; i++)
   {
     vector_temp.Real().Randomize(seeds.at(2 * i));
     vector_temp.Imag().Randomize(seeds.at(2 * i + 1));
-
-    // The returned coefficients reproduce the vector in the updated basis.
     const auto c = prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
-    ComplexVector w(vector_temp.Size());
-    linalg::LinearCombination(prom_op.GetVectors(),
-                              {c.data(), static_cast<std::size_t>(c.size())}, w);
-    w -= vector_temp;
-    CHECK(linalg::Norml2(world_comm, w) <=
-          1.0e-12 * linalg::Norml2(world_comm, vector_temp));
+    REQUIRE(c.size() == static_cast<Eigen::Index>(prom_op.GetReducedDimension()));
+    check_update(vector_temp, c);
+  }
+  check_projection(*K, prom_op.GetKr());
+  check_projection(*C, prom_op.GetCr());
+  check_projection(*M, prom_op.GetMr());
+
+  // A purely real vector adds a single basis vector, with real coefficients.
+  {
+    const auto dim = prom_op.GetReducedDimension();
+    vector_temp.Real().Randomize(seeds.back() + 1);
+    vector_temp.Imag() = 0.0;
+    const auto c = prom_op.UpdatePROM(vector_temp, "vec_real");
+    REQUIRE(prom_op.GetReducedDimension() == dim + 1);
+    REQUIRE(c.size() == static_cast<Eigen::Index>(dim + 1));
+    CHECK(c.imag().cwiseAbs().maxCoeff() == 0.0);
+    check_update(vector_temp, c);
+    check_projection(*K, prom_op.GetKr());
+    check_projection(*C, prom_op.GetCr());
+    check_projection(*M, prom_op.GetMr());
+  }
+
+  // A zero vector leaves the basis unchanged, with zero coefficients.
+  {
+    const auto dim = prom_op.GetReducedDimension();
+    vector_temp = 0.0;
+    const auto c = prom_op.UpdatePROM(vector_temp, "vec_zero");
+    CHECK(prom_op.GetReducedDimension() == dim);
+    REQUIRE(c.size() == static_cast<Eigen::Index>(dim));
+    CHECK(c.cwiseAbs().maxCoeff() == 0.0);
   }
 
   // Check orthogonality with s-matrix vectors.

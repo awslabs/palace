@@ -265,6 +265,9 @@ protected:
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
+  // Whether RHS1 holds the assembled excitation vector, the same on every process (its
+  // local size can be zero).
+  bool RHS1_assembled = false;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
@@ -315,9 +318,6 @@ protected:
   // basis, VᵀV = L Lᵀ, so that ||V c|| = ||Lᵀ c|| for the error estimates. Empty otherwise
   // (V is orthonormal).
   Eigen::MatrixXd gram_L;
-
-  // Workspace for the operator applies in the projections onto the basis.
-  std::vector<Vector> proj_ws;
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;

@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
+#include <utility>
 #include <random>
 #include <mfem/general/forall.hpp>
 #include "linalg/hypre.hpp"
@@ -845,76 +847,128 @@ void AXPYAndAYPX(std::complex<double> alpha, ComplexVector &x, ComplexVector &y,
                       });
 }
 
-void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
-                       ComplexVector &y)
+namespace
 {
-  const std::size_t n = X.size();
-  const int N = y.Size();
-  MFEM_VERIFY(c.size() == n, "Size mismatch for linear combination coefficients!");
+
+// y = Σⱼ c[j] X[j] (plus y if add), for the real and, if YI is not null, the imaginary parts
+// of the coefficients. The zero parts are skipped, and the terms are added in order.
+void LinearCombination(std::span<const Vector> X, const double *CR, const double *CI,
+                       Vector &yr, Vector *yi, bool add)
+{
+  const int n = static_cast<int>(X.size()), N = yr.Size();
   for (const auto &Xj : X)
   {
     MFEM_VERIFY(Xj.Size() == N, "Size mismatch for linear combination!");
   }
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
-    y = 0.0;
-    for (std::size_t j = 0; j < n; j++)
+    // One pass over y with all terms, each thread reading one entry of every X[j].
+    mfem::Array<const double *> P(n);
+    mfem::Array<double> C(2 * n);
+    for (int j = 0; j < n; j++)
     {
-      if (c[j].real() != 0.0)
-      {
-        y.Real().Add(c[j].real(), X[j]);
-      }
-      if (c[j].imag() != 0.0)
-      {
-        y.Imag().Add(c[j].imag(), X[j]);
-      }
+      P[j] = X[j].Read();
+      C[j] = CR[j];
+      C[n + j] = CI ? CI[j] : 0.0;
     }
+    const auto *XP = P.Read();
+    const auto *CC = C.Read();
+    auto *YR = add ? yr.ReadWrite() : yr.Write();
+    auto *YI = yi ? (add ? yi->ReadWrite() : yi->Write()) : nullptr;
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   double sr = add ? YR[i] : 0.0, si = (add && YI) ? YI[i] : 0.0;
+                   for (int j = 0; j < n; j++)
+                   {
+                     const double x = XP[j][i];
+                     if (CC[j] != 0.0)
+                     {
+                       sr += CC[j] * x;
+                     }
+                     if (CC[n + j] != 0.0)
+                     {
+                       si += CC[n + j] * x;
+                     }
+                   }
+                   YR[i] = sr;
+                   if (YI)
+                   {
+                     YI[i] = si;
+                   }
+                 });
     return;
   }
 
   // On the host, add all terms to one block of y at a time, which stays in cache, so each
-  // X[j] is read once and y is written once. The terms are added in the same order as on
-  // the device, skipping the zero parts of the coefficients. The blocks are smaller when
-  // needed to give every thread one.
+  // X[j] is read once and y is written once. The blocks are smaller when needed to give
+  // every thread one.
   const int nt = utils::GetMaxThreads();
   const int B = std::clamp((N + nt - 1) / nt, 64, 1024);
   std::vector<const double *> XP(n);
-  for (std::size_t j = 0; j < n; j++)
+  for (int j = 0; j < n; j++)
   {
     XP[j] = X[j].HostRead();
   }
-  auto *YR = y.Real().HostWrite();
-  auto *YI = y.Imag().HostWrite();
+  auto *YR = add ? yr.HostReadWrite() : yr.HostWrite();
+  auto *YI = yi ? (add ? yi->HostReadWrite() : yi->HostWrite()) : nullptr;
   PalacePragmaOmp(parallel for schedule(static) if (N > B))
   for (int b = 0; b < N; b += B)
   {
     const int e = std::min(b + B, N);
-    std::fill(YR + b, YR + e, 0.0);
-    std::fill(YI + b, YI + e, 0.0);
-    for (std::size_t j = 0; j < n; j++)
+    if (!add)
     {
-      const double cr = c[j].real(), ci = c[j].imag();
-      const double *Xj = XP[j];
-      if (cr != 0.0)
+      std::fill(YR + b, YR + e, 0.0);
+      if (YI)
       {
-        for (int i = b; i < e; i++)
-        {
-          YR[i] += cr * Xj[i];
-        }
+        std::fill(YI + b, YI + e, 0.0);
       }
-      if (ci != 0.0)
+    }
+    for (int j = 0; j < n; j++)
+    {
+      const double *Xj = XP[j];
+      for (auto [Y, cj] : {std::pair{YR, CR[j]}, std::pair{YI, CI ? CI[j] : 0.0}})
       {
-        for (int i = b; i < e; i++)
+        if (Y && cj != 0.0)
         {
-          YI[i] += ci * Xj[i];
+          for (int i = b; i < e; i++)
+          {
+            Y[i] += cj * Xj[i];
+          }
         }
       }
     }
   }
 }
 
+}  // namespace
+
+void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
+                       ComplexVector &y, bool add)
+{
+  MFEM_VERIFY(c.size() == X.size(), "Size mismatch for linear combination coefficients!");
+  const auto *C = reinterpret_cast<const double *>(c.data());
+  std::vector<double> CR(c.size()), CI(c.size());
+  for (std::size_t j = 0; j < c.size(); j++)
+  {
+    CR[j] = C[2 * j];
+    CI[j] = C[2 * j + 1];
+  }
+  LinearCombination(X, CR.data(), CI.data(), y.Real(), &y.Imag(), add);
+}
+
+void LinearCombination(std::span<const Vector> X, std::span<const double> c, Vector &y,
+                       bool add)
+{
+  MFEM_VERIFY(c.size() == X.size(), "Size mismatch for linear combination coefficients!");
+  LinearCombination(X, c.data(), nullptr, y, nullptr, add);
+}
+
 void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H)
 {
+  MFEM_VERIFY(static_cast<long long>(X.size()) * static_cast<long long>(Y.size()) <=
+                  std::numeric_limits<int>::max(),
+              "Too many local inner products!");
   const int m = static_cast<int>(X.size()), k = static_cast<int>(Y.size()), mk = m * k;
   if (mk == 0)
   {
@@ -929,13 +983,21 @@ void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, doub
     P[i] = x.Read();
   }
 
-  // Partial sums over blocks of entries, with all pairs of a block next to each other and
-  // the Y index varying fastest, so that on the host each X is read once from memory while
-  // a block of every Y stays in cache. The partial sums are then added in block order, so
-  // the result does not depend on the backend or the number of threads.
-  constexpr int B = 1024;
-  const int nb = (N + B - 1) / B;
-  Vector partial(nb * mk), h(mk);
+  // Partial sums over nb slices of the entries of each pair, then added in slice order, so
+  // the result does not depend on the number of threads. On the host a slice is a block of
+  // contiguous entries, with all pairs of a block next to each other and the Y index varying
+  // fastest, so that each X is read once from memory while a block of every Y stays in
+  // cache. On the device a slice is every nb-th entry, so that neighboring threads read
+  // neighboring entries, with enough slices to fill the device. The partial sums take at
+  // most max_partial doubles.
+  constexpr int B = 1024, max_partial = 1 << 22;
+  const bool dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  const int nb = std::max(1, std::min({dev ? std::max(N, 1) : (N + B - 1) / B,
+                                       dev ? 8192 : std::numeric_limits<int>::max(),
+                                       max_partial / mk}));
+  const int len = (N + nb - 1) / nb;  // Entries per slice
+  Vector partial(nb * mk, mfem::Device::GetDeviceMemoryType()),
+      h(mk, mfem::Device::GetDeviceMemoryType());
   partial.UseDevice(true);
   h.UseDevice(true);
   const auto *XY = P.Read();
@@ -943,27 +1005,34 @@ void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, doub
   mfem::forall(nb * mk,
                [=] MFEM_HOST_DEVICE(int t)
                {
-                 const int b = t / mk, i = t % mk / k, j = t % k;
+                 const int b = dev ? t % nb : t / mk, q = dev ? t / nb : t % mk;
+                 const int i = dev ? q % m : q / k, j = dev ? q / m : q % k;
                  const double *x = XY[i], *y = XY[m + j];
-                 const int end = (b + 1) * B < N ? (b + 1) * B : N;
+                 // Entries l = start + r stride of the slice, r < count.
+                 const int start = dev ? b : b * len, stride = dev ? nb : 1;
+                 const int rest = N - start;
+                 const int count =
+                     dev ? (rest + nb - 1) / nb : (rest < len ? (rest > 0 ? rest : 0) : len);
                  constexpr int K = 8;
                  double s[K] = {};
-                 int l = b * B;
-                 for (; l + K <= end; l += K)
+                 int r = 0;
+                 for (; r + K <= count; r += K)
                  {
-                   for (int r = 0; r < K; r++)
+                   for (int l = 0; l < K; l++)
                    {
-                     s[r] += x[l + r] * y[l + r];
+                     const int e = start + (r + l) * stride;
+                     s[l] += x[e] * y[e];
                    }
                  }
-                 for (int r = 0; l < end; l++, r++)
+                 for (int l = 0; r < count; r++, l++)
                  {
-                   s[r] += x[l] * y[l];
+                   const int e = start + r * stride;
+                   s[l] += x[e] * y[e];
                  }
                  double sum = 0.0;
-                 for (int r = 0; r < K; r++)
+                 for (int l = 0; l < K; l++)
                  {
-                   sum += s[r];
+                   sum += s[l];
                  }
                  S[b * mk + i + j * m] = sum;
                });

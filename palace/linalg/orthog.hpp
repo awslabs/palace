@@ -66,22 +66,27 @@ inline std::span<const Vector> RealParts(std::span<ComplexVector> V,
 // Classical Gram-Schmidt, reorthogonalized if refine, in the inner product of the real
 // weight operator W (Euclidean without W). Returns the norms of w before and after. Each
 // pass applies W once and computes all inner products, including the squared norm of w, in
-// one pass over the real and imaginary parts of V with one reduction. The workspace must
-// not alias any vector of V.
+// one pass over the real and imaginary parts of V with one reduction, then updates w in one
+// pass; the norm after takes one more reduction (and W application). With W, the workspace
+// is required and must not alias any vector of V.
 template <typename VecType, typename ScalarType, typename WeightOperator = Operator>
 inline std::array<double, 2>
 OrthogonalizeColumnCGS(MPI_Comm comm, std::span<VecType> V, ScalarType *H, bool refine,
-                       ComplexVector &work, const WeightOperator *W = nullptr)
+                       const WeightOperator *W = nullptr, ComplexVector *work = nullptr)
 {
   MFEM_ASSERT(!V.empty(), "Missing vector for CGS orthogonalization!");
+  MFEM_ASSERT(!W || work, "Missing workspace for weighted CGS orthogonalization!");
   constexpr std::size_t p = std::is_same_v<VecType, ComplexVector> ? 2 : 1;
   constexpr std::complex<double> unit[2] = {1.0, {0.0, 1.0}};
   const std::size_t m = V.size() - 1;
   std::vector<Vector> parts;
   const auto X = internal::RealParts(V, parts);  // vⱼ = Σₐ iᵃ X[p j + a]
   auto &w = V.back();
-  work.SetSize(w.Size());
-  work.UseDevice(w.UseDevice());
+  if (W)
+  {
+    work->SetSize(w.Size());
+    work->UseDevice(w.UseDevice());
+  }
   auto apply = [&]()  // Parts of W w
   {
     std::array<const Vector *, p> Ww;
@@ -90,14 +95,15 @@ OrthogonalizeColumnCGS(MPI_Comm comm, std::span<VecType> V, ScalarType *H, bool 
       Ww[a] = &X[p * m + a];
       if (W)
       {
-        W->Mult(*Ww[a], a ? work.Imag() : work.Real());
-        Ww[a] = a ? &work.Imag() : &work.Real();
+        W->Mult(*Ww[a], a ? work->Imag() : work->Real());
+        Ww[a] = a ? &work->Imag() : &work->Real();
       }
     }
     return Ww;
   };
   std::vector<double> dots(p * p * (m + 1));
-  std::vector<std::complex<double>> h(m + 1), c(p * m);
+  std::vector<std::complex<double>> h(m + 1);
+  std::vector<std::conditional_t<p == 1, double, std::complex<double>>> c(p * m);
   std::fill_n(H, m, ScalarType(0.0));
   double pre_norm_sq = 0.0;
   for (int pass = 0; pass < ((refine && m > 0) ? 2 : 1); pass++)
@@ -120,33 +126,28 @@ OrthogonalizeColumnCGS(MPI_Comm comm, std::span<VecType> V, ScalarType *H, bool 
     {
       pre_norm_sq = h[m].real();
     }
-    if (m > 0)
+    if (m == 0)
     {
-      for (std::size_t j = 0; j < m; j++)
+      const double norm = std::sqrt(std::abs(pre_norm_sq));
+      return {norm, norm};
+    }
+    for (std::size_t j = 0; j < m; j++)
+    {
+      if constexpr (p == 1)
       {
-        if constexpr (p == 1)
-        {
-          H[j] += h[j].real();
-        }
-        else
-        {
-          H[j] += h[j];
-        }
+        H[j] += h[j].real();
+        c[j] = -h[j].real();
+      }
+      else
+      {
+        H[j] += h[j];
         for (std::size_t a = 0; a < p; a++)
         {
           c[p * j + a] = -h[j] * unit[a];
         }
       }
-      LinearCombination(X.first(p * m), c, work);
-      if constexpr (p == 1)
-      {
-        AXPY(1.0, work.Real(), w);
-      }
-      else
-      {
-        w.AXPY(1.0, work);
-      }
     }
+    LinearCombination(X.first(p * m), c, w, true);
   }
   double norm_sq = 0.0;
   const auto Ww = apply();
@@ -161,11 +162,11 @@ OrthogonalizeColumnCGS(MPI_Comm comm, std::span<VecType> V, ScalarType *H, bool 
 // Gram-Schmidt of the given type, Euclidean. Returns the norm of w after.
 template <typename VecType, typename ScalarType>
 inline double OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
-                                  std::span<VecType> V, ScalarType *H, ComplexVector &work)
+                                  std::span<VecType> V, ScalarType *H)
 {
   return (type == Orthogonalization::MGS)
              ? OrthogonalizeColumnMGS(comm, V, H)
-             : OrthogonalizeColumnCGS(comm, V, H, type == Orthogonalization::CGS2, work)[1];
+             : OrthogonalizeColumnCGS(comm, V, H, type == Orthogonalization::CGS2)[1];
 }
 
 }  // namespace palace::linalg

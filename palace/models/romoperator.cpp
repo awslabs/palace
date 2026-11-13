@@ -281,9 +281,10 @@ public:
     Add(nullptr, b.Imag(), n0, out, true);
   }
 
-  void Compute(MPI_Comm comm, std::vector<Vector> &Z) const
+  void Compute(MPI_Comm comm) const
   {
     constexpr std::size_t max_group = 8;
+    std::vector<Vector> Z;  // Operator applications of a group
     std::vector<double> H;
     std::vector<std::size_t> offset;
     for (std::size_t c0 = 0; c0 < columns.size(); c0 += max_group)
@@ -314,6 +315,8 @@ public:
         offset.push_back(k + (c - c0) * m + (columns[c].i0 - i0));
       }
     }
+    MFEM_VERIFY(H.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+                "Too many projections onto the PROM basis in one reduction!");
     Mpi::GlobalSum(static_cast<int>(H.size()), H.data(), comm);
     for (std::size_t c = 0; c < columns.size(); c++)
     {
@@ -348,8 +351,7 @@ Eigen::MatrixXcd ProjectVectors(MPI_Comm comm, const std::vector<Vector> &V,
   {
     proj.AddVector(*x, B.col(l++).data());
   }
-  std::vector<Vector> Z;
-  proj.Compute(comm, Z);
+  proj.Compute(comm);
   return B;
 }
 
@@ -775,9 +777,10 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   {
     RHS1r = it->second;
     has_RHS1 = (RHS1r.size() > 0);
+    RHS1_assembled = false;
     return;
   }
-  has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
+  has_RHS1 = RHS1_assembled = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
   if (!has_RHS1)
   {
     RHS1.SetSize(0);
@@ -1161,13 +1164,13 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
                 "PROM basis storage exceeded. Please increase maximum number of prom "
                 "vector per excitation using AdaptiveMaxSamples.");
     auto &v = V.emplace_back(vector);
-    // MGS is applied as CGS2, which is as stable with two reductions instead of one per
+    // MGS is applied as CGS2, which is as stable with three reductions instead of one per
     // basis vector.
     const bool refine = (orthog_type != Orthogonalization::CGS);
     double *H = orth_R.col(dim_V).data();
     MPI_Comm comm = space_op.GetComm();
     const auto [pre_norm, norm] = linalg::OrthogonalizeColumnCGS(
-        comm, std::span(V), H, refine, r, weight_op_W ? &*weight_op_W : nullptr);
+        comm, std::span(V), H, refine, weight_op_W ? &*weight_op_W : nullptr, &r);
     orth_R(dim_V, dim_V) = norm;
 
     if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
@@ -1266,56 +1269,15 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     Mp_r.conservativeResize(n, n);
     proj.AddOperator(*M_floquet_p_.at(port_idx), Mp_r, true);
   }
-  if (RHS1.Size())
+  if (RHS1_assembled)
   {
     RHS1r.conservativeResize(n);
     proj.AddVector(RHS1, &RHS1r(n0));
   }
-  // Inner products of the new basis vectors with the basis, for the Gram matrix.
-  Eigen::MatrixXcd G(n, n - n0);
-  if (weight_op_W)
-  {
-    for (int j = n0; j < n; j++)
-    {
-      proj.Add(nullptr, V[j], 0, &G(0, j - n0), false);
-    }
-  }
-  proj.Compute(comm, proj_ws);
-
-  if (weight_op_W)
-  {
-    // Extend the Cholesky factor of VᵀV.
-    const Eigen::MatrixXd Gr = G.real();
-    gram_L.conservativeResizeLike(Eigen::MatrixXd::Zero(n, n));
-    auto L21 = gram_L.bottomLeftCorner(n - n0, n0);
-    L21 = gram_L.topLeftCorner(n0, n0)
-              .triangularView<Eigen::Lower>()
-              .solve(Gr.topRows(n0))
-              .transpose();
-    Eigen::LLT<Eigen::MatrixXd> llt(Gr.bottomRows(n - n0) - L21 * L21.transpose());
-    MFEM_VERIFY(llt.info() == Eigen::Success,
-                "Euclidean Gram matrix of the PROM basis is not positive definite!");
-    gram_L.bottomRightCorner(n - n0, n - n0) = llt.matrixL();
-  }
-  // Initialize map entries for new ports that haven't been projected yet (first call).
-  for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
-  {
-    if (!M_floquet_p_r.contains(port_idx))
-    {
-      auto &Mp_r = M_floquet_p_r[port_idx];
-      Mp_r.resize(n, n);
-      BasisProjection proj_p(V, 0);
-      proj_p.AddOperator(*Mp_hdm, Mp_r, true);
-      proj_p.Compute(comm, proj_ws);
-    }
-  }
-
-  // Update reduced Floquet port projection vectors. For F = Σ g_k v_k v_k^H,
-  // the PROM contribution is Σ g_k (V^T v_k) (v_k^H V) = Σ g_k (V^T v_k) conj(V^T v_k)^T.
-  // Since V is real: V^T v_k is stored as vk_V, conj(V^T v_k) as Vh_cvk.
+  // Reduced Floquet port mode vectors: for F = Σ g_k v_k v_kᴴ, the PROM contribution is
+  // Σ g_k (Vᵀ v_k) (v_kᴴ V), from Vᵀ v_k (vk_V).
   if (dim_V_old == 0)
   {
-    // First time: enumerate all Floquet modes with for_dtn flag.
     floquet_reduced.clear();
     for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
     {
@@ -1327,33 +1289,75 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
         }
         for (bool is_te : {true, false})
         {
-          ReducedFloquetMode rm;
-          rm.port_idx = port_idx;
-          rm.order = &order;
-          rm.is_te = is_te;
-          rm.vk_V.resize(dim_V_new);
-          rm.Vh_cvk.resize(dim_V_new);
-          floquet_reduced.push_back(std::move(rm));
+          floquet_reduced.push_back({.port_idx = port_idx, .order = &order, .is_te = is_te});
         }
       }
     }
   }
   for (auto &rm : floquet_reduced)
   {
-    // Compute V^T v_k for new basis vectors [dim_V_old, dim_V_new).
-    rm.vk_V.conservativeResize(dim_V_new);
-    rm.Vh_cvk.conservativeResize(dim_V_new);
-    for (int i = dim_V_old; i < dim_V_new; i++)
+    rm.vk_V.conservativeResize(n);
+    proj.AddVector(rm.order->v[rm.is_te ? 0 : 1], &rm.vk_V(n0));
+  }
+  // Inner products of the new basis vectors with the basis, for the Gram matrix.
+  Eigen::MatrixXcd G = Eigen::MatrixXcd::Zero(n, n - n0);
+  if (weight_op_W)
+  {
+    for (int j = n0; j < n; j++)
     {
-      // V[i] is real. v_k is complex. V[i]^T v_k = (V[i] · v_k_real) + j(V[i] · v_k_imag).
-      double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
-      double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
-      Mpi::GlobalSum(1, &dr, comm);
-      Mpi::GlobalSum(1, &di, comm);
-      std::complex<double> vt_vi(dr, di);
-      rm.vk_V(i) = vt_vi;               // v_k^T V[i]
-      rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
+      proj.Add(nullptr, V[j], 0, &G(0, j - n0), false);
     }
+  }
+  proj.Compute(comm);
+
+  if (weight_op_W)
+  {
+    // Extend the Cholesky factor of VᵀV.
+    const Eigen::MatrixXd Gr = G.real();
+    gram_L.conservativeResizeLike(Eigen::MatrixXd::Zero(n, n));
+    auto L21 = gram_L.bottomLeftCorner(n - n0, n0);
+    L21 = gram_L.topLeftCorner(n0, n0)
+              .triangularView<Eigen::Lower>()
+              .solve(Gr.topRows(n0))
+              .transpose();
+    // The Schur complement is positive definite, unless the new vectors are dependent on
+    // the previous ones to round-off in the Euclidean inner product (W is ill-conditioned
+    // on the basis). Then its eigenvalues are clamped, which only affects the error
+    // estimate.
+    Eigen::MatrixXd S = Gr.bottomRows(n - n0) - L21 * L21.transpose();
+    Eigen::LLT<Eigen::MatrixXd> llt(S);
+    if (llt.info() != Eigen::Success)
+    {
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(S);
+      const double floor = n * std::numeric_limits<double>::epsilon() *
+                           Gr.bottomRows(n - n0).diagonal().maxCoeff();
+      Mpi::Warning("Euclidean Gram matrix of the PROM basis is not positive definite to "
+                   "round-off (smallest eigenvalue {:.3e}, floor {:.3e}); the adaptive "
+                   "error estimate may be less accurate!\n",
+                   eig.eigenvalues().minCoeff(), floor);
+      llt.compute(eig.eigenvectors() * eig.eigenvalues().cwiseMax(floor).asDiagonal() *
+                  eig.eigenvectors().transpose());
+    }
+    gram_L.bottomRightCorner(n - n0, n - n0) = llt.matrixL();
+  }
+  // Initialize map entries for new ports that haven't been projected yet (first call).
+  for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
+  {
+    if (!M_floquet_p_r.contains(port_idx))
+    {
+      auto &Mp_r = M_floquet_p_r[port_idx];
+      Mp_r.resize(n, n);
+      BasisProjection proj_p(V, 0);
+      proj_p.AddOperator(*Mp_hdm, Mp_r, true);
+      proj_p.Compute(comm);
+    }
+  }
+
+  // Vᴴ conj(v_k) = conj(Vᵀ v_k) of the Floquet modes, for V real.
+  for (auto &rm : floquet_reduced)
+  {
+    rm.Vh_cvk.conservativeResize(n);
+    rm.Vh_cvk.tail(n - n0) = rm.vk_V.tail(n - n0).conjugate();
   }
   return c;
 }
@@ -1535,7 +1539,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega)
         {
           BasisProjection proj(V, 0);
           proj.AddOperator(*A2, Ar_hdm, true);
-          proj.Compute(space_op.GetComm(), proj_ws);
+          proj.Compute(space_op.GetComm());
         }
         const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
         const double ref =
@@ -1574,7 +1578,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega)
       {
         BasisProjection proj(V, 0);
         proj.AddOperator(*A2, Ar, true);
-        proj.Compute(space_op.GetComm(), proj_ws);
+        proj.Compute(space_op.GetComm());
       }
     }
     Ar += Kr;

@@ -358,9 +358,12 @@ template <typename VecType, typename ScalarType>
 void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
                  const VecType &z);
 
-// Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex coefficients c.
+// Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex or real
+// coefficients c, or y += Σⱼ c[j] X[j] if add. y must not alias any X[j].
 void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
-                       ComplexVector &y);
+                       ComplexVector &y, bool add = false);
+void LinearCombination(std::span<const Vector> X, std::span<const double> c, Vector &y,
+                       bool add = false);
 
 // Local inner products H[i + j m] = X[i] · Y[j] of the real vectors X (m of them) and
 // Y, without the global reduction. On the host every vector is read once.

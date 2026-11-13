@@ -188,7 +188,6 @@ protected:
   // Temporary workspace for solve.
   mutable std::vector<VecType> V;
   mutable VecType r;
-  mutable ComplexVector orthog_work;
   mutable std::vector<ScalarType> H;
   mutable std::vector<ScalarType> s, sn;
   mutable std::vector<RealType> cs;
@@ -247,7 +246,6 @@ protected:
   using GmresSolver<OperType>::gs_orthog;
   using GmresSolver<OperType>::pc_side;
   using GmresSolver<OperType>::V;
-  using GmresSolver<OperType>::orthog_work;
   using GmresSolver<OperType>::H;
   using GmresSolver<OperType>::s;
   using GmresSolver<OperType>::sn;
