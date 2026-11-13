@@ -3,6 +3,7 @@
 
 #include "floquetportoperator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <fmt/core.h>
@@ -844,48 +845,47 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
   return result;
 }
 
+std::array<std::complex<double>, 2>
+FloquetPortData::GetExcitationCoefficients(double omega) const
+{
+  // s_p = c_inc × 2i × α_p × λ_p / μ_r for the polarizations of the incident field.
+  const auto norm = ComputeIncidentNormalization(omega);
+  auto coeff = [&](std::complex<double> alpha, double lambda) -> std::complex<double>
+  {
+    return (std::abs(alpha) < 1e-14) ? 0.0
+                                     : norm.c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;
+  };
+  std::array<std::complex<double>, 2> s;
+  s[PolIndex(true)] = coeff(inc_alpha_te, norm.lambda_te_00);
+  s[PolIndex(false)] = coeff(inc_alpha_tm, norm.lambda_tm_00);
+  return s;
+}
+
 bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) const
 {
-  // Collect the (0,0) TE and TM modes for the incident excitation.
-  const ComplexVector *mode_te = nullptr, *mode_tm = nullptr;
-  for (const auto &order : orders)
-  {
-    if (order.m == 0 && order.n == 0)
-    {
-      mode_te = &order.v[PolIndex(true)];
-      mode_tm = &order.v[PolIndex(false)];
-      break;
-    }
-  }
-  if (!mode_te && !mode_tm)
+  // f = Σ_p s_p × conj(v_p) for the (0,0) TE and TM modes: conj(v) appears because the
+  // bilinear form uses v^T (not v^H), and the incident field ê exp(+iB·r) projects to
+  // conj(v).
+  const auto it = std::ranges::find_if(orders, [](const FloquetOrder &order)
+                                       { return order.m == 0 && order.n == 0; });
+  if (it == orders.end())
   {
     return false;
   }
-
-  auto norm = ComputeIncidentNormalization(omega);
-  double lambda_te = norm.lambda_te_00;
-  double lambda_tm = norm.lambda_tm_00;
-  double c_inc = norm.c_inc;
-
-  // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)
-  // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident
-  // field ê exp(+iB·r) projects to conj(v).
-  auto add_pol = [&](const ComplexVector *mode, std::complex<double> alpha, double lambda)
+  const auto s = GetExcitationCoefficients(omega);
+  for (int p = 0; p < 2; p++)
   {
-    if (!mode || std::abs(alpha) < 1e-14)
+    if (s[p] == 0.0)
     {
-      return;
+      continue;
     }
-    // s = c_inc × 2i × alpha × lambda / mu_r (complex scalar)
-    std::complex<double> s = c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;
     // RHS += s × conj(v) = (s_r + i s_i)(v_r - i v_i)
-    RHS.Real().Add(s.real(), mode->Real());
-    RHS.Real().Add(s.imag(), mode->Imag());
-    RHS.Imag().Add(s.imag(), mode->Real());
-    RHS.Imag().Add(-s.real(), mode->Imag());
-  };
-  add_pol(mode_te, inc_alpha_te, lambda_te);
-  add_pol(mode_tm, inc_alpha_tm, lambda_tm);
+    const auto &mode = it->v[p];
+    RHS.Real().Add(s[p].real(), mode.Real());
+    RHS.Real().Add(s[p].imag(), mode.Imag());
+    RHS.Imag().Add(s[p].imag(), mode.Real());
+    RHS.Imag().Add(-s[p].real(), mode.Imag());
+  }
   return true;
 }
 

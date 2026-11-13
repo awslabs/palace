@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <fstream>
 #include <numbers>
+#include <tuple>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -1633,6 +1635,37 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
        {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
   IoData iodata(setup_json, false);
   CheckPROMAgainstHDM(iodata, {1});
+}
+
+// Floquet ports, with a frequency-dependent (fixed angle of incidence) or fixed Floquet
+// wave vector, together with second-order farfield boundaries or a wave port.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator Floquet ports match the HDM system",
+                 "[romoperator][Serial][Parallel][GPU]")
+{
+  const auto [dir, file, excitations] = GENERATE(
+      std::make_tuple("floquet_absorbing", "floquet_absorbing_adaptive.json",
+                      std::vector<int>{1}),
+      std::make_tuple("floquet_absorbing", "floquet_absorbing_scatterer_adaptive.json",
+                      std::vector<int>{1}),
+      std::make_tuple("floquet_wave", "floquet_wave.json", std::vector<int>{1, 2}));
+  CAPTURE(file);
+  const auto input_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / dir;
+  std::ifstream f(input_dir / file);
+  REQUIRE(f.good());
+  json setup_json = json::parse(f, nullptr, true, /*ignore_comments=*/true);
+  setup_json["Model"]["Mesh"] =
+      (input_dir / setup_json["Model"]["Mesh"].get<std::string>()).string();
+  setup_json["Problem"]["Output"] = temp_dir;
+  setup_json["Problem"]["Verbose"] = 0;
+  setup_json["Solver"]["Order"] = 1;
+  if (std::string(file) == "floquet_absorbing_scatterer_adaptive.json")
+  {
+    // Both polarizations of the incident field.
+    setup_json["Boundaries"]["FloquetPort"][0]["IncidentPolarization"] = "RHC";
+  }
+  IoData iodata(setup_json, false);
+  CheckPROMAgainstHDM(iodata, excitations);
 }
 
 // Several wave ports can observe different modes of the same boundary, for example
