@@ -313,6 +313,47 @@ incidence (such as the backscattered field of a scatterer), a weaker absorption,
 5 to 20 dB less with 8 to 12 second-order elements and a target of ``10^{-6}`` to
 ``10^{-7}``), at the cost of larger reflections at grazing incidence.
 
+The figure shows both regimes for a plane wave on the periodic vacuum cell of
+[`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
+at 3 GHz, against its angle of incidence ``\theta``, with a layer of 24 second-order
+elements of size ``\lambda / 8`` and the theory as lines. With `"ReflectionTarget": 1e-3`,
+the reflection follows the theory of the continuous layer, ``R(0)^{\cos\theta}``, to
+1.2 dB at normal incidence and 0.5 dB from 15°. With `1e-12`, it follows the
+theory from 70° to grazing incidence, and below 65° it is set by the
+discretization of the layer: -77 dB at normal incidence, falling to -100 dB at
+60°. The figure shows the meshed PML. The same layer extruded along the normal of the
+back of the cell, where it follows 0.3 m more of the cell, reflects the same as the meshed PML
+on a cell of that length, to ``10^{-8}`` dB. The length of the cell changes the reflection by
+up to 0.1 dB with `1e-12`, and by up to 1.1 dB with `1e-3` from 10° to 30°, where the
+reflections of the two lengths differ by ``2 \times 10^{-4}`` of the incident amplitude. The
+script
+[`pml_oblique.jl`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique/pml_oblique.jl)
+runs the cases and draws the figure:
+
+```bash
+julia --project=examples -e 'include("examples/pml_oblique/pml_oblique.jl"); generate_reflection_data()'
+```
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/pml-reflection-angle.svg" width="90%" />
+</p><br/>
+```
+
+For comparison, the figure includes the absorbing boundaries on the same cell. A boundary
+condition which imposes the normal wavenumber ``q`` on a plane wave with the normal
+wavenumber ``k_n = k \cos\theta`` reflects ``R = (k_n - q) / (k_n + q)``. The first-order
+condition imposes ``q = k``, so that ``\lvert R \rvert = (1 - \cos\theta) / (1 + \cos\theta)``
+in both polarizations (-15.3 dB at 45°). The second-order condition imposes
+``q = k - k_t^2 / (2k) = k (1 + \cos^2\theta) / 2`` in TE polarization (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)), so that
+``\lvert R \rvert = (1 - \cos\theta)^2 / (1 + \cos\theta)^2``, the square of the first-order
+reflection (-30.6 dB at 45°), and it is the first-order condition in TM
+polarization. *Palace* matches these to 0.1 dB from 5° (first order) and
+0.2 dB from 25° (second order). Below 25°, the reflection of the
+second-order condition approaches the discretization error of the cell, -108 dB at normal
+incidence.
+
 A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
 of the structures, which it distorts instead. The PML regions should therefore be placed at
 a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
