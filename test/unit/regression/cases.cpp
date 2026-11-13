@@ -2376,7 +2376,7 @@ TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_oblique", "oblique_45_tm_adaptive", "port-floquet-S.csv", -70.0);
 }
 
-// --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
+// --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all four ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
 {
@@ -2385,6 +2385,15 @@ TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 5.0e-9;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole.json",
                                   "antenna_halfwave_dipole", opts);
+}
+
+TEST_CASE("antenna_halfwave_dipole_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 5.0e-9;
+  palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_pml.json",
+                                  "antenna_halfwave_dipole_pml", opts);
 }
 
 TEST_CASE("antenna_short_dipole", "[Serial][Parallel][GPU][Regression]")
