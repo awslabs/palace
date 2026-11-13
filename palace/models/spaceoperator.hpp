@@ -212,11 +212,7 @@ public:
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
 
-  // Get the rank-1 terms of the wave-port modal correction W = Σ_k g_k s_k s_kᵀ at ω, for
-  // callers that project onto a reduced basis (the PROM / adaptive sweep) rather than
-  // applying the matrix-free operator built by GetExtraSystemOperator. Forwards to
-  // WavePortOperator::GetModalCorrectionTerms on the finest ND space.
-  std::vector<WavePortOperator::ModalCorrectionTerm> GetModalCorrectionTerms(double omega);
+  // Get the full modal n×H vector of a wave port at ω on the finest ND space.
   std::unique_ptr<ComplexVector> GetWavePortModeVector(int port_idx, double omega);
 
   // Circuit-synthesis form of the wave-port modal correction W (see

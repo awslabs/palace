@@ -863,14 +863,14 @@ void RomOperator::PrepareOnlineExcitations()
   excitation_idx_cache = 0;
   // The wave-port state feeding Aᵣ(ω) (kₙ, modal correction) may have been re-solved since
   // the last offline assembly (synthesis tolerances, reduced port models), so do not reuse
-  // it. Re-verify the port-space pairings once with the final basis.
+  // it.
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
-  wp_pairing_checked = false;
 }
 
 void RomOperator::UpdateWavePortBasisRestriction()
 {
-  if (V_wp_dim == V.size())
+  const auto &wave_port_op = space_op.GetWavePortOp();
+  if (wave_port_op.Size() == 0 || V_wp_dim == V.size())
   {
     return;
   }
@@ -881,12 +881,8 @@ void RomOperator::UpdateWavePortBasisRestriction()
   for (std::size_t j = V_wp_dim; j < V.size(); j++)
   {
     V_wp_gf->SetFromTrueDofs(V[j]);
-    for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+    for (const auto &[port_idx, port_data] : wave_port_op)
     {
-      if (!port_data.active)
-      {
-        continue;
-      }
       auto &vp = V_wp[port_idx];
       vp.resize(V.size());
       port_data.RestrictToPort(*V_wp_gf, vp[j]);
@@ -897,126 +893,56 @@ void RomOperator::UpdateWavePortBasisRestriction()
 
 void RomOperator::AddWavePortModalCorrection(double omega)
 {
-  BlockTimer bt(Timer::WAVE_PORT);
-  MPI_Comm comm = space_op.GetComm();
   auto &wave_port_op = space_op.GetWavePortOp();
-  const auto n = static_cast<Eigen::Index>(V.size());
-  sV_wp_full.clear();
-
-  // Parent-space path: assemble the full and scalar-admittance modal shape vectors per port
-  // on the parent ND space and project onto the basis.
-  auto add_assembled = [&](Eigen::MatrixXcd &Wr, std::map<int, Eigen::VectorXcd> *sV_full)
+  if (wave_port_op.Size() == 0)
   {
-    auto wp_terms = space_op.GetModalCorrectionTerms(omega);
-    Eigen::VectorXcd sV(n);
-    for (auto &term : wp_terms)
-    {
-      sV = ProjectVectors(comm, V, {term.s.get()}).col(0);
-      Wr.noalias() += term.g * sV * sV.transpose();
-    }
-    if (sV_full)
-    {
-      // Excitation shape vectors (the full n×H, for every port).
-      for (const auto &[port_idx, port_data] : wave_port_op)
-      {
-        if (!port_data.active)
-        {
-          continue;
-        }
-        auto s = space_op.GetWavePortModeVector(port_idx, omega);
-        sV_full->emplace(port_idx, ProjectVectors(comm, V, {s.get()}).col(0));
-      }
-    }
-  };
-
-  if (!wp_pairing_ok)
-  {
-    add_assembled(Ar, nullptr);
     return;
   }
+  BlockTimer bt(Timer::WAVE_PORT);
 
-  // Port-space path: pair the port-restricted basis with the port-space mode forms.
+  // Pair the port-restricted basis with the full and the scalar-admittance modal n×H of
+  // every port, in one reduction.
   UpdateWavePortBasisRestriction();
   wave_port_op.PrepareFrequency(omega);
-  std::vector<int> port_idxs;
-  for (const auto &[port_idx, port_data] : wave_port_op)
+  const auto n = static_cast<Eigen::Index>(V.size());
+  Eigen::MatrixXcd sV(n, 2 * wave_port_op.Size());
+  for (Eigen::Index p = 0; const auto &[port_idx, port_data] : wave_port_op)
   {
-    if (port_data.active)
-    {
-      port_idxs.push_back(port_idx);
-    }
-  }
-  const auto np = static_cast<Eigen::Index>(port_idxs.size());
-  Eigen::MatrixXcd sV_full(n, np), sV_scalar(n, np);
-  for (Eigen::Index p = 0; p < np; p++)
-  {
-    const auto &vp = V_wp.at(port_idxs[p]);
-    const auto &port_data = wave_port_op.GetPort(port_idxs[p]);
+    const auto &vp = V_wp.at(port_idx);
     for (Eigen::Index j = 0; j < n; j++)
     {
       const auto pairing = port_data.LocalModePairing(vp[j]);
-      sV_full(j, p) = pairing.full;
-      sV_scalar(j, p) = pairing.scalar;
+      sV(j, 2 * p) = pairing.full;
+      sV(j, 2 * p + 1) = pairing.scalar;
     }
+    p++;
   }
-  Mpi::GlobalSum(static_cast<int>(sV_full.size()), sV_full.data(), comm);
-  Mpi::GlobalSum(static_cast<int>(sV_scalar.size()), sV_scalar.data(), comm);
-  Eigen::MatrixXcd Wr = Eigen::MatrixXcd::Zero(n, n);
-  for (Eigen::Index p = 0; p < np; p++)
+  Mpi::GlobalSum(static_cast<int>(sV.size()), sV.data(), space_op.GetComm());
+  for (Eigen::Index p = 0; const auto &[port_idx, port_data] : wave_port_op)
   {
-    const auto &port_data = wave_port_op.GetPort(port_idxs[p]);
-    sV_wp_full[port_idxs[p]] = sV_full.col(p);
+    const auto s_full = sV.col(2 * p), s_scalar = sV.col(2 * p + 1);
+    sV_wp_full[port_idx] = s_full;
+    p++;
+    if (!port_data.active)
+    {
+      continue;
+    }
     // Mirror WavePortOperator::GetModalCorrectionTerms: skip the correction (falling back
     // to the scalar-admittance baseline) for a port with vanishing modal reaction.
     if (!(std::abs(port_data.modal_reaction) > 0.0) ||
         !(std::abs(port_data.modal_reaction_scalar) > 0.0))
     {
       Mpi::Warning(
-          comm, "Wave port {:d} has zero modal reaction; skipping its modal correction!\n",
-          port_idxs[p]);
+          space_op.GetComm(),
+          "Wave port {:d} has zero modal reaction; skipping its modal correction!\n",
+          port_idx);
       continue;
     }
-    Wr.noalias() += (std::complex<double>(0.0, -omega) / port_data.modal_reaction) *
-                    sV_full.col(p) * sV_full.col(p).transpose();
-    Wr.noalias() += (std::complex<double>(0.0, omega) / port_data.modal_reaction_scalar) *
-                    sV_scalar.col(p) * sV_scalar.col(p).transpose();
+    Ar.noalias() += (std::complex<double>(0.0, -omega) / port_data.modal_reaction) *
+                    s_full * s_full.transpose();
+    Ar.noalias() += (std::complex<double>(0.0, omega) / port_data.modal_reaction_scalar) *
+                    s_scalar * s_scalar.transpose();
   }
-
-  if (!wp_pairing_checked && np > 0)
-  {
-    // One-time correctness self-check against the parent-space assembled shape vectors
-    // (same integrals, different assembly path). Cheap: runs once per RomOperator plus once
-    // more at the start of the online sweep.
-    Eigen::MatrixXcd Wr_hdm = Eigen::MatrixXcd::Zero(n, n);
-    std::map<int, Eigen::VectorXcd> sV_full_hdm;
-    add_assembled(Wr_hdm, &sV_full_hdm);
-    double err = (Wr - Wr_hdm).cwiseAbs().maxCoeff();
-    double ref = std::max(Wr.cwiseAbs().maxCoeff(), Wr_hdm.cwiseAbs().maxCoeff());
-    for (const auto &[port_idx, sV_hdm] : sV_full_hdm)
-    {
-      const auto &sV_port = sV_wp_full.at(port_idx);
-      err = std::max(err, (sV_port - sV_hdm).cwiseAbs().maxCoeff());
-      ref = std::max({ref, sV_port.cwiseAbs().maxCoeff(), sV_hdm.cwiseAbs().maxCoeff()});
-    }
-    if (ref > 0.0)
-    {
-      wp_pairing_checked = true;
-      if (err / ref > 1.0e-8)
-      {
-        wp_pairing_ok = false;
-        Mpi::Warning(
-            comm,
-            "Port-space wave port mode pairings disagree with the assembled mode "
-            "vectors (rel. err {:.3e})!\nReverting to per-frequency assembly of the "
-            "wave port mode vectors for the remaining sweep.\n",
-            err / ref);
-        Ar += Wr_hdm;
-        sV_wp_full.clear();
-        return;
-      }
-    }
-  }
-  Ar += Wr;
 }
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
@@ -1477,37 +1403,19 @@ void RomOperator::SolvePROM(int excitation_idx, double omega)
     Ar_omega = omega;
   }
 
+  // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
+  // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
+  // pairings Vᵀs_full,p at this frequency.
   RHSr.setZero();
-  if (has_RHS2 && wp_pairing_ok && space_op.GetFloquetPortOp().Empty())
+  for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
   {
-    // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
-    // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), projected
-    // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
-    // for active ports only, so an excitation that also drives an inactive port uses the
-    // assembled excitation vector instead.
-    BlockTimer bt_wp(Timer::WAVE_PORT);
-    for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+    if (port_data.excitation == excitation_idx)
     {
-      if (port_data.excitation != excitation_idx)
-      {
-        continue;
-      }
-      const auto it = sV_wp_full.find(port_idx);
-      if (it == sV_wp_full.end())
-      {
-        // Excited but inactive port: no port-space pairing is cached, so use the assembled
-        // excitation vector for this excitation instead (overwrites RHSᵣ).
-        space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-        RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
-        break;
-      }
-      RHSr += std::complex<double>(0.0, -2.0 * omega) * it->second;
+      RHSr += std::complex<double>(0.0, -2.0 * omega) * sV_wp_full.at(port_idx);
     }
   }
-  else if (has_RHS2)
+  if (has_RHS2 && !space_op.GetFloquetPortOp().Empty())
   {
-    // RHS2 depends on the wave-port modal fields, refreshed at this ω by the cross-section
-    // EVP triggered above, so it is reassembled and projected per ω (no interpolation).
     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
     RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
   }

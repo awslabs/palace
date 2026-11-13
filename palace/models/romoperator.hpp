@@ -218,22 +218,17 @@ protected:
                                                   double omega) const;
 
   // Port-space evaluation of the wave-port terms of the PROM. The modal correction
-  // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ and the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full only
-  // need the pairings Vᵀs of the basis with the per-port modal n×H shape vectors. Since s
-  // is supported on the port only, Vᵀs is computed from the basis restricted to the port
-  // submesh (V_wp, kept on the host and extended as the basis grows) and the port-space
-  // mode forms refreshed by WavePortData::Initialize, without any per-frequency assembly
-  // and projection of HDM-size vectors. sV_wp_full caches Vᵀs_full per port at Ar_omega
-  // for the excitation of every excitation index at that frequency. A one-time self-check
-  // (repeated once more at the start of the online sweep with the final basis) compares
-  // against the parent-space assembled vectors; on mismatch we fall back permanently to
-  // the assembled path.
+  // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full, and the
+  // S-parameters only need the pairings Vᵀs of the basis with the per-port modal n×H shape
+  // vectors. Since s is supported on the port only, Vᵀs is computed from the basis
+  // restricted to the port submesh (V_wp, kept on the host and extended as the basis
+  // grows) and the port-space mode forms refreshed by WavePortData::Initialize, without
+  // any per-frequency assembly and projection of HDM-size vectors. sV_wp_full caches
+  // Vᵀs_full of every port at Ar_omega.
   std::map<int, std::vector<Vector>> V_wp;
   std::size_t V_wp_dim = 0;
   std::unique_ptr<mfem::ParGridFunction> V_wp_gf;
   std::map<int, Eigen::VectorXcd> sV_wp_full;
-  bool wp_pairing_ok = true;
-  bool wp_pairing_checked = false;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
@@ -497,7 +492,7 @@ public:
   const Eigen::VectorXcd &GetReducedSolution() const { return RHSr; }
 
   // Return the pairing Vᵀs_full of the basis with the mode of a wave port at the frequency
-  // of the last PROM assembly, or nullptr if it is not cached.
+  // of the last PROM assembly, or nullptr before the first one.
   const Eigen::VectorXcd *GetWavePortModePairing(int port_idx) const
   {
     const auto it = sV_wp_full.find(port_idx);
@@ -516,9 +511,8 @@ public:
   // Extend the port-restricted basis V_wp to the current basis size.
   void UpdateWavePortBasisRestriction();
 
-  // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the projected excitation
-  // shape vectors at ω. Uses the port-space pairings when available (see wp_pairing_ok),
-  // otherwise the parent-space assembled vectors.
+  // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the pairings of the basis
+  // with the mode of every wave port at ω.
   void AddWavePortModalCorrection(double omega);
 
   // Project and cache every frequency-linear excitation vector once after the adaptive
