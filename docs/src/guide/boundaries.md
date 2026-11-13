@@ -183,7 +183,10 @@ The extruded elements take the material of the elements below them, and the othe
 through the edges of the extruded boundary, such as a ground plane, extend through the
 layer. The outer boundary of the layer is PEC, unless a boundary condition is given for its
 `"BackAttribute"`. The extruded boundary becomes an interior boundary, whose attribute can
-still be used for postprocessing. For a layered medium which reaches the boundary, such as a
+still be used for postprocessing, such as the far field of
+[`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries-postprocessing-farfield):
+for the antenna example, the far field with the extruded PML above agrees with the one with
+the second-order absorbing boundary to 0.06 dB. For a layered medium which reaches the boundary, such as a
 substrate, a segment `"Center"` normal to the layers and spanning all of the layers which
 reach the boundary keeps each layer in its plane through the PML.
 
