@@ -6,6 +6,7 @@
 
 #include <string>
 #include <mfem.hpp>
+#include "linalg/complexcoarse.hpp"
 
 mfem::Mesh SingleTetMesh();
 
@@ -14,5 +15,20 @@ mfem::Mesh SingleTetMesh();
 // are "star-quad.mesh" and "fichera-hex.mesh" after mfem::Mesh::MakeSimplicial, written on
 // first use to a temporary file private to the calling process and removed at exit.
 std::string TestMeshPath(const std::string &name);
+
+namespace palace
+{
+
+// Forget the measured choice of the complex-valued coarse solve (see
+// MeasuredComplexCoarseSolver) before and after a test which builds a complex-valued sparse
+// direct coarse solver with ComplexCoarseSolve omitted, so that no choice leaks between
+// tests.
+struct ComplexCoarseChoiceReset
+{
+  ComplexCoarseChoiceReset() { MeasuredComplexCoarseSolver::ResetChoice(); }
+  ~ComplexCoarseChoiceReset() { MeasuredComplexCoarseSolver::ResetChoice(); }
+};
+
+}  // namespace palace
 
 #endif  // PALACE_TEST_HELPERS_HPP

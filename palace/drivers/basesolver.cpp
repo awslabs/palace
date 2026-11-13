@@ -10,6 +10,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/complexcoarse.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -232,6 +233,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
   MPI_Comm comm = mesh.back()->GetComm();
+
+  // A measured choice of the complex-valued coarse solve is kept for this simulation.
+  MeasuredComplexCoarseSolver::ResetChoice();
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);

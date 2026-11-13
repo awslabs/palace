@@ -2144,6 +2144,52 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Linear ComplexCoarseSolve", "[config][Serial]")
+{
+  // When omitted, the coarse solve chooses between the real-valued approximation and the
+  // complex-valued matrix at setup, and the resolved configuration keeps the key omitted;
+  // an explicit value is used as given and resolved as given.
+  auto MakeConfig = [](const json &linear)
+  {
+    return json{{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                {"Model", {{"Mesh", "test.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                {"Boundaries", json::object()},
+                {"Solver", {{"Eigenmode", {{"Target", 1.0}}}, {"Linear", linear}}}};
+  };
+
+  SECTION("Omitted")
+  {
+    json config = MakeConfig(json::object());
+    IoData iodata1(config, false);
+    CHECK(iodata1.solver.linear.complex_coarse_auto);
+    CHECK_FALSE(iodata1.solver.linear.complex_coarse_solve);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK_FALSE(config["Solver"]["Linear"].contains("ComplexCoarseSolve"));
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.linear.complex_coarse_auto);
+    CHECK_FALSE(iodata2.solver.linear.complex_coarse_solve);
+  }
+
+  SECTION("Explicit")
+  {
+    const bool value = GENERATE(false, true);
+    json config = MakeConfig({{"ComplexCoarseSolve", value}});
+    IoData iodata1(config, false);
+    CHECK_FALSE(iodata1.solver.linear.complex_coarse_auto);
+    CHECK(iodata1.solver.linear.complex_coarse_solve == value);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+    REQUIRE(config["Solver"]["Linear"].contains("ComplexCoarseSolve"));
+    CHECK(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() == value);
+    IoData iodata2(config, false);
+    CHECK_FALSE(iodata2.solver.linear.complex_coarse_auto);
+    CHECK(iodata2.solver.linear.complex_coarse_solve == value);
+  }
+}
+
 #if defined(MFEM_USE_CUDSS)
 TEST_CASE("Linear solver Type cuDSS parses when built with cuDSS", "[config][Serial]")
 {

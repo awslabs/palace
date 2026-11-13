@@ -1168,8 +1168,12 @@ public:
   int pc_mat_shifted = -1;
 
   // For frequency domain applications, use the complex-valued system matrix in the sparse
-  // direct solver.
+  // direct solver. When not specified (complex_coarse_auto), the sparse direct solvers with
+  // an implementation in complex arithmetic choose between the complex-valued matrix and
+  // the real-valued approximation at setup, from the measured error of the latter (see
+  // MeasuredComplexCoarseSolver), and the other solvers use the real-valued approximation.
   bool complex_coarse_solve = false;
+  bool complex_coarse_auto = true;
 
   // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
   // solver.

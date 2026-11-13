@@ -33,6 +33,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-complexcoarse.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-complexdirectsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp

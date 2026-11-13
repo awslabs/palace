@@ -20,6 +20,7 @@
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -200,6 +201,10 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
   const double tandelta = GENERATE(0.0, 0.3);
   CAPTURE(tandelta);
   MPI_Comm comm = Mpi::World();
+
+  // The coarse solve of the driven problem measures its choice of the complex-valued matrix
+  // (ComplexCoarseSolve is omitted).
+  ComplexCoarseChoiceReset reset;
 
   // Mesh units are millimetres; L0 = Lc = 1 mm so the mesh is already in internal units.
   IoData iodata{Units(1.0e-3, 1.0e-3)};

@@ -100,6 +100,28 @@ for i in range(4):
     subprocess.run(["palace", "-np", 2, config_path_i])
 ```
 
+For eigenmode and frequency domain driven simulations, the coarse-level sparse direct
+solve of the multigrid preconditioner (or the whole preconditioner without multigrid) uses
+either the real-valued approximation `Ar + Ai` of the complex-valued system matrix
+`A = Ar + i Ai` or the complex-valued matrix itself, chosen by
+[`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear).
+The real-valued approximation is cheaper to factor, but with second-order absorbing or
+Floquet periodic boundaries, or with many lossy boundaries, it can make the linear solver
+need many more iterations. When the option is omitted, SuperLU_DIST (without
+`"SuperLU3DCommunicator"`), STRUMPACK (without compression), and MUMPS factor the
+real-valued approximation first and measure its error, relative to a pseudo-random vector
+which is fixed on the mesh, over up to three successive solves. When a measured value
+exceeds 1 (the real-valued solve is not a contraction), the complex-valued matrix is
+factored instead, for the rest of the simulation. The measured errors and the choice are
+printed in the log. When the coarse level is first order, they do not depend on the
+number of processes; otherwise, they can differ slightly. Because the choice is kept, the
+preconditioner for a frequency or an eigenvalue shift depends on the operators measured
+before it in the simulation: a driven frequency sweep which is split into several
+simulations, or restarted, can keep the real-valued approximation at frequencies where the
+full sweep uses the complex-valued matrix, and the results then differ at the level of the
+linear solver tolerance. Set `"ComplexCoarseSolve"` to `true` or `false` to skip the
+measurement, for example when the choice is known for a model.
+
 ## Driven problems in the time domain
 
 The previous simulation types describe simulations based on frequency domain formulations of

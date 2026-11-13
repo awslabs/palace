@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-3-0",
+  "$id": "urn:palace:schema:5-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3044,8 +3044,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation. SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), STRUMPACK (with `\"STRUMPACKCompressionType\": \"None\"`), and MUMPS factor the complex-valued matrix in complex arithmetic unless `\"PCMatReal\"` or `\"DropSmallEntries\"` is `true`, otherwise the equivalent real-valued system of twice the size is factored, which needs more memory.",
-          "default": false
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation, the sum of the real and imaginary parts of the matrix. SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), STRUMPACK (with `\"STRUMPACKCompressionType\": \"None\"`), and MUMPS factor the complex-valued matrix in complex arithmetic unless `\"PCMatReal\"` or `\"DropSmallEntries\"` is `true`, otherwise the equivalent real-valued system of twice the size is factored, which needs more memory. If omitted, these solvers in complex arithmetic choose at setup: they factor the real-valued approximation and measure its error for the complex-valued matrix over up to three successive solves of a pseudo-random vector which is fixed on the mesh, so that the choice does not depend on the number of processes when the coarse level is first order (otherwise the measured errors can differ slightly). When a measured value exceeds 1 (the real-valued solve is not a contraction, for example with second-order absorbing or Floquet periodic boundaries, or many lossy boundaries), the complex-valued matrix is factored instead, and from then on for the rest of the simulation (later frequencies, eigenvalue iterations and adaptively refined meshes) without the real-valued approximation. The other cases use the real-valued approximation. The wave port mode solves, which inherit this key, use the real-valued approximation when it is omitted."
         },
         "DropSmallEntries": {
           "type": "boolean",

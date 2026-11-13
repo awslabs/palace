@@ -14,6 +14,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
 #include "fem/mesh.hpp"
+#include "linalg/complexcoarse.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/mumpscomplex.hpp"
@@ -25,6 +26,7 @@
 #include "linalg/superlucomplex.hpp"
 #include "linalg/vector.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -419,7 +421,10 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   // ConfigurePreconditionerSolver uses the complex arithmetic solvers where they apply,
   // and they solve the ComplexParOperator of a simulation (assembled again for a new
   // operator after the previous assembly was released, essential boundary conditions
-  // eliminated) as the equivalent real-valued system of twice the size does.
+  // eliminated) as the equivalent real-valued system of twice the size does. With
+  // ComplexCoarseSolve omitted, it uses the measured choice between the real-valued
+  // approximation and the complex arithmetic solver where they apply.
+  ComplexCoarseChoiceReset reset;
   MPI_Comm comm = Mpi::World();
   const auto type = GENERATE(from_range(SparseDirectSolverTypes()));
   INFO("type " << type);
@@ -468,12 +473,37 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     block_options.push_back(
         json{{"ComplexCoarseSolve", true}, {"STRUMPACKCompressionType", "BLR"}});
   }
-  for (const auto &options : block_options)
+  for (auto options : block_options)
   {
     INFO("options " << options.dump());
+    {
+      DrivenTestProblem problem(LinearOptions(type, options));
+      auto ksp = problem.MakeKspSolver();
+      CHECK(dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner()));
+    }
+
+    // These cases keep the real-valued approximation without a measurement when
+    // ComplexCoarseSolve is omitted.
+    options.erase("ComplexCoarseSolve");
     DrivenTestProblem problem(LinearOptions(type, options));
     auto ksp = problem.MakeKspSolver();
     CHECK(dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner()));
+  }
+
+  // ComplexCoarseSolve omitted: the measured choice, which measures the real-valued
+  // approximation (not the exact real-valued system of twice the size).
+  {
+    DrivenTestProblem problem(LinearOptions(type, json::object()));
+    auto ksp = problem.MakeKspSolver();
+    auto *pc = dynamic_cast<MeasuredComplexCoarseSolver *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    ComplexVector E;
+    problem.Solve(*ksp, 1.0, E);
+    const auto &err = pc->GetRealSolveError();
+    INFO("measured errors " << fmt::format("{:.6e}", fmt::join(err, ", ")));
+    REQUIRE(!err.empty());
+    CHECK(err.front() > 1.0e-3);
+    CHECK(pc->UsesComplexMatrix() == !(err.back() <= 1.0));
   }
 
   // The real-valued approximation.
