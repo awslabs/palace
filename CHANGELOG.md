@@ -41,6 +41,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - `"AdaptiveGSOrthogonalization": "MGS"` now orthogonalizes the reduced-order basis of
+    adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
+    minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
+    4-2-4 [PR 1187](https://github.com/awslabs/palace/pull/1187).
 
 #### New Features
 
@@ -128,6 +132,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
     full space in one pass over memory on CPUs, reading each basis vector once.
     [PR 1165](https://github.com/awslabs/palace/pull/1165).
+  - Sped up the offline phase of adaptive driven sweeps and lowered its memory use. Each
+    Gram-Schmidt pass of a new basis vector, and of GMRES with `"CGS"` or `"CGS2"`
+    orthogonalization, computes all inner products in one pass over the basis with one
+    reduction, the projections onto the basis are summed in one reduction per update, and
+    the error estimate no longer stores the full-size solutions. GMRES with `"CGS"` or
+    `"CGS2"` no longer allocates a workspace vector for the orthogonalization.
+    [PR 1187](https://github.com/awslabs/palace/pull/1187).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.

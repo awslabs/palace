@@ -243,12 +243,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
   const auto &Curl = space_op.GetCurlMatrix();
-  ComplexVector E(Curl.Width()), Eh(Curl.Width()), B(Curl.Height());
+  ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
-  Eh.UseDevice(true);
   B.UseDevice(true);
   E = 0.0;
-  Eh = 0.0;
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
@@ -296,12 +294,21 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
-  // of the RomOperator.
+  // of the RomOperator. Returns the relative error of the PROM solution at the sample
+  // before the update, from the coefficients of the HDM solution in the updated basis.
   auto UpdatePROM = [&](int excitation_idx, double omega, std::size_t sample_idx)
   {
     // Add the HDM solution to the PROM reduced basis.
-    prom_op.UpdatePROM(E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
-    prom_op.UpdateMRI(excitation_idx, omega, E);
+    prom_op.SolvePROM(excitation_idx, omega);
+    Eigen::VectorXcd d = -prom_op.GetReducedSolution();
+    const auto c = prom_op.UpdatePROM(
+        E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
+    prom_op.UpdateMRI(excitation_idx, omega, c);
+    d.conservativeResizeLike(Eigen::VectorXcd::Zero(c.size()));
+    // The error decides whether to sample again, so it must be the same on every process,
+    // while the replicated dense computations can differ in round-off between them.
+    double error = prom_op.BasisNorm(c + d) / prom_op.BasisNorm(c);
+    Mpi::GlobalMax(1, &error, space_op.GetComm());
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for energy postprocessing and error estimation.
@@ -321,6 +328,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    return error;
   };
 
   // Loop excitations to add to PROM.
@@ -344,12 +352,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     {
       auto omega = omega_sample[i];
       prom_op.SolveHDM(excitation_idx, omega, E);
-      prom_op.SolvePROM(excitation_idx, omega, Eh);
-      linalg::AXPY(-1.0, E, Eh);
-      max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
-                           linalg::Norml2(space_op.GetComm(), E));
-      UpdatePROM(excitation_idx, omega, counter_rom_sample);
-      counter_rom_sample++;
+      max_errors.push_back(UpdatePROM(excitation_idx, omega, counter_rom_sample++));
     }
     // The estimates associated to the end points are assumed inaccurate.
     max_errors[0] = std::numeric_limits<double>::infinity();
@@ -371,19 +374,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
       // Sample HDM and add solution to basis.
       prom_op.SolveHDM(excitation_idx, omega_star, E);
-      prom_op.SolvePROM(excitation_idx, omega_star, Eh);
-      linalg::AXPY(-1.0, E, Eh);
-
-      max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
-                           linalg::Norml2(space_op.GetComm(), E));
+      const auto n = prom_op.GetReducedDimension();
+      max_errors.push_back(UpdatePROM(excitation_idx, omega_star, counter_rom_sample++));
       memory = max_errors.back() < offline_tol ? memory + 1 : 0;
 
       Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
                  "{:.3e}, memory = {:d}/{:d}\n",
-                 it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
-                 omega_star, max_errors.back(), memory, convergence_memory);
-      UpdatePROM(excitation_idx, omega_star, counter_rom_sample);
-      counter_rom_sample++;
+                 it - it0 + 1, n, omega_star * unit_GHz, omega_star, max_errors.back(),
+                 memory, convergence_memory);
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",

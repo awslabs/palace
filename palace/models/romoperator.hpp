@@ -129,23 +129,24 @@ struct HybridBulkBoundaryOperator
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
 // as an error indicator and for selecting the next frequency sample points in PROM
 // construction. Each excitation gets a separate MRI, so sample frequencies are not shared.
+// The samples are given by their coefficients in an orthonormal basis, which may grow
+// between samples (the coefficients of the later basis vectors are zero for the earlier
+// samples), and are replicated on every process.
 class MinimalRationalInterpolation
 {
 private:
-  // (Complex-valued) upper-triangular matrix R from orthogonalization of the HDM samples.
+  // QR decomposition of the snapshot matrix with columns [c; iω c] for the coefficients c
+  // of each sample, with rows interleaved so that a new basis vector only adds rows.
   // Minimal rational interpolant (MRI) defined by the vector q of interpolation weights and
   // support points z is used as an error indicator.
-  std::vector<ComplexVector> Q;
-  std::size_t dim_Q = 0;
-  Eigen::MatrixXcd R;
+  Eigen::MatrixXcd Q, R;
   Eigen::VectorXcd q;
   std::vector<double> z;
 
 public:
-  MinimalRationalInterpolation(std::size_t max_size);
-  void AddSolutionSample(double omega, const ComplexVector &u, MPI_Comm comm,
-                         Orthogonalization orthog_type);
-  std::vector<double> FindMaxError(std::size_t N) const;
+  void AddSolutionSample(double omega, const Eigen::VectorXcd &c);
+  // With a communicator, the search for N = 1 is split over its processes (same result).
+  std::vector<double> FindMaxError(std::size_t N, MPI_Comm comm = MPI_COMM_NULL) const;
 
   const auto &GetSamplePoints() const { return z; }
 };
@@ -264,6 +265,9 @@ protected:
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
+  // Whether RHS1 holds the assembled excitation vector, the same on every process (its
+  // local size can be zero).
+  bool RHS1_assembled = false;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
@@ -309,6 +313,11 @@ protected:
   // Upper-triangular matrix R from orthogonalization procedure U = VR. Here U the HDM
   // fields added by `UpdatePROM`.
   Eigen::MatrixXd orth_R;
+
+  // With a weight operator, the Cholesky factor L of the Euclidean Gram matrix of the
+  // basis, VᵀV = L Lᵀ, so that ||V c|| = ||Lᵀ c|| for the error estimates. Empty otherwise
+  // (V is orthonormal).
+  Eigen::MatrixXd gram_L;
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
@@ -543,23 +552,34 @@ public:
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
-  // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+  // to reconstruct if field configuration are pure real, imaginary or complex. Returns the
+  // coefficients c of u in the updated basis, u = V c.
+  Eigen::VectorXcd UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
-  // Add solution u to the minimal-rational interpolation for error estimation. MRI are
-  // separated by excitation index.
-  void UpdateMRI(int excitation_idx, double omega, const ComplexVector &u);
+  // Add the solution with basis coefficients c to the minimal-rational interpolation for
+  // error estimation. MRI are separated by excitation index.
+  void UpdateMRI(int excitation_idx, double omega, const Eigen::VectorXcd &c);
 
-  // Assemble and solve the PROM at the specified frequency, expanding the solution back
-  // into the high-dimensional space.
-  void SolvePROM(int excitation_idx, double omega, ComplexVector &u);
+  // Return ||V c|| for the coefficients c of a vector in the basis (zero-padded to the
+  // basis dimension).
+  double BasisNorm(const Eigen::VectorXcd &c) const;
+
+  // Assemble and solve the PROM at the specified frequency. The reduced solution is
+  // available from GetReducedSolution().
+  void SolvePROM(int excitation_idx, double omega);
+
+  // Expand the reduced solution back into the high-dimensional space.
+  void ExpandPROMSolution(ComplexVector &u) const;
+
+  void SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+  {
+    SolvePROM(excitation_idx, omega);
+    ExpandPROMSolution(u);
+  }
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int excitation_idx, std::size_t N = 1) const
-  {
-    return mri.at(excitation_idx).FindMaxError(N);
-  }
+  std::vector<double> FindMaxError(int excitation_idx, std::size_t N = 1) const;
 
   // Print PROM matrices to file include in input (SI) units.
   void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;

@@ -112,20 +112,18 @@ auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
 
 TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 {
-  MPI_Comm comm = Mpi::World();
-
   auto fn_tan_shift = [](double z)
   { return std::tan(0.5 * std::numbers::pi * (z - std::complex<double>(1., 1.))); };
 
   // Test scalar case: 2 sample points for 4 x 2 vector
-  MinimalRationalInterpolation mri_1(6);
+  MinimalRationalInterpolation mri_1;
 
   CHECK(mri_1.GetSamplePoints() == std::vector<double>{});
   CHECK_THROWS(mri_1.FindMaxError(1));
 
   for (double x_sample : {-2.0, -1.0, 1.0, 2.0})
   {
-    auto tan_eval = fn_tan_shift(x_sample) / double(Mpi::Size(comm));
+    auto tan_eval = fn_tan_shift(x_sample);
 
     // The rational vector function we want to evaluate. The vector has common poles all
     // determined by tan. The minimal-rational interpolation method finds coefficients using
@@ -134,13 +132,11 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
     //
     // Here we pick a 5 component vector where 2 pairs are degenerate (scalar multiples of
     // each other) which is sufficiently large but challenging a problem.
-    std::vector<std::complex<double>> tmp = {-tan_eval, 5. * tan_eval, x_sample * tan_eval,
-                                             10. * x_sample * tan_eval,
-                                             2 * x_sample * x_sample * x_sample * tan_eval};
-    ComplexVector c_vec(tmp.size());
-    c_vec.Set(tmp.data(), tmp.size(), false);
+    Eigen::VectorXcd c_vec(5);
+    c_vec << -tan_eval, 5. * tan_eval, x_sample * tan_eval, 10. * x_sample * tan_eval,
+        2 * x_sample * x_sample * x_sample * tan_eval;
 
-    mri_1.AddSolutionSample(x_sample, c_vec, comm, Orthogonalization::MGS);
+    mri_1.AddSolutionSample(x_sample, c_vec);
   }
 
   CHECK(mri_1.GetSamplePoints().size() == 4);
@@ -161,18 +157,36 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   // TODO: Add more stringent tests of MRI, including estimating poles.
 }
 
+TEST_CASE("MinimalRationalInterpolation-DistributedSearch",
+          "[romoperator][Serial][Parallel]")
+{
+  // The search split over the processes gives the same point as one scan. The basis grows
+  // between the samples.
+  MPI_Comm comm = Mpi::World();
+  MinimalRationalInterpolation mri;
+  int n = 2;
+  for (double x : {-2.0, -1.3, 0.4, 1.0, 2.0})
+  {
+    const auto t = std::tan(0.5 * std::numbers::pi * (x - std::complex<double>(1., 1.)));
+    Eigen::VectorXcd c = Eigen::VectorXcd::Zero(++n);
+    c.head(3) << -t, 5. * t, 2. * x * x * x * t;
+    c(n - 1) += 0.1 * x * t;
+    mri.AddSolutionSample(x, c);
+  }
+  CHECK(mri.FindMaxError(1, comm) == mri.FindMaxError(1));
+}
+
 TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
 {
   // Samples 2e-11 apart relative to z: delta = span / 1e6 is below the spacing of doubles
   // near z, so the scan must not step by accumulating delta.
-  MinimalRationalInterpolation mri(2);
+  MinimalRationalInterpolation mri;
   const double z0 = 100.0, z1 = 100.0 + 2.0e-9;
   for (int i = 0; i < 2; i++)
   {
-    std::vector<std::complex<double>> tmp = {double(i == 0), double(i == 1)};
-    ComplexVector u(tmp.size());
-    u.Set(tmp.data(), tmp.size(), false);
-    mri.AddSolutionSample(i == 0 ? z0 : z1, u, Mpi::World(), Orthogonalization::MGS);
+    Eigen::VectorXcd c = Eigen::VectorXcd::Zero(2);
+    c(i) = 1.0;
+    mri.AddSolutionSample(i == 0 ? z0 : z1, c);
   }
   const auto z_max = mri.FindMaxError(1);
   REQUIRE(z_max.size() == 1);
@@ -690,12 +704,110 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   std::vector<std::uint32_t> seeds(2 * nr_random_vec);
   seed_gen.generate(seeds.begin(), seeds.end());
 
+  // Return V c for coefficients c zero-padded to the basis dimension.
+  auto expand = [&](const Eigen::VectorXcd &c)
+  {
+    Eigen::VectorXcd c_pad = Eigen::VectorXcd::Zero(prom_op.GetReducedDimension());
+    c_pad.head(c.size()) = c;
+    ComplexVector w(vector_temp.Size());
+    w.UseDevice(true);
+    linalg::LinearCombination(prom_op.GetVectors(),
+                              {c_pad.data(), static_cast<std::size_t>(c_pad.size())}, w);
+    return w;
+  };
+
+  // The projected matrices are those of the operators on the basis, Vᵀ A V.
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  auto check_projection = [&](const ComplexOperator &A, const Eigen::MatrixXcd &Ar)
+  {
+    const auto &V = prom_op.GetVectors();
+    const auto n = static_cast<Eigen::Index>(V.size());
+    REQUIRE(Ar.rows() == n);
+    REQUIRE(Ar.cols() == n);
+    Eigen::MatrixXcd Ar_ref(n, n);
+    ComplexVector v(vector_temp.Size()), w(vector_temp.Size());
+    v.UseDevice(true);
+    w.UseDevice(true);
+    for (Eigen::Index j = 0; j < n; j++)
+    {
+      v.Real() = V[j];
+      v.Imag() = 0.0;
+      A.Mult(v, w);
+      for (Eigen::Index i = 0; i < n; i++)
+      {
+        Ar_ref(i, j) = {V[i] * w.Real(), V[i] * w.Imag()};
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(Ar_ref.size()), Ar_ref.data(), world_comm);
+    const double error = (Ar - Ar_ref).cwiseAbs().maxCoeff();
+    const double scale = Ar_ref.cwiseAbs().maxCoeff();
+    CAPTURE(n, error, scale);
+    REQUIRE(scale > 0.0);
+    CHECK(error <= 1.0e-12 * scale);
+  };
+
+  Eigen::VectorXcd c_prev;
+  auto check_update = [&](const ComplexVector &u, const Eigen::VectorXcd &c)
+  {
+    // The returned coefficients reproduce the vector in the updated basis.
+    const double norm_u = linalg::Norml2(world_comm, u);
+    ComplexVector w = expand(c);
+    w -= u;
+    CHECK(linalg::Norml2(world_comm, w) <= 1.0e-12 * norm_u);
+
+    // The norm in coefficient space from the Gram factor, VᵀV = L Lᵀ, matches the norm of
+    // the vector, for the new vector and for its difference with the previous one, which
+    // involves the whole factor.
+    CHECK_THAT(prom_op.BasisNorm(c), WithinRel(norm_u, 1.0e-10));
+    if (c_prev.size() > 0)
+    {
+      Eigen::VectorXcd dc = c;
+      dc.head(c_prev.size()) -= c_prev;
+      ComplexVector du = expand(c_prev);
+      du -= u;
+      CHECK_THAT(prom_op.BasisNorm(dc), WithinRel(linalg::Norml2(world_comm, du), 1.0e-10));
+    }
+    c_prev = c;
+  };
+
   for (std::size_t i = 0; i < nr_random_vec; i++)
   {
     vector_temp.Real().Randomize(seeds.at(2 * i));
     vector_temp.Imag().Randomize(seeds.at(2 * i + 1));
+    const auto c = prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
+    REQUIRE(c.size() == static_cast<Eigen::Index>(prom_op.GetReducedDimension()));
+    check_update(vector_temp, c);
+  }
+  check_projection(*K, prom_op.GetKr());
+  check_projection(*C, prom_op.GetCr());
+  check_projection(*M, prom_op.GetMr());
 
-    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
+  // A purely real vector adds a single basis vector, with real coefficients.
+  {
+    const auto dim = prom_op.GetReducedDimension();
+    vector_temp.Real().Randomize(seeds.back() + 1);
+    vector_temp.Imag() = 0.0;
+    const auto c = prom_op.UpdatePROM(vector_temp, "vec_real");
+    REQUIRE(prom_op.GetReducedDimension() == dim + 1);
+    REQUIRE(c.size() == static_cast<Eigen::Index>(dim + 1));
+    CHECK(c.imag().cwiseAbs().maxCoeff() == 0.0);
+    check_update(vector_temp, c);
+    check_projection(*K, prom_op.GetKr());
+    check_projection(*C, prom_op.GetCr());
+    check_projection(*M, prom_op.GetMr());
+  }
+
+  // A zero vector leaves the basis unchanged, with zero coefficients.
+  {
+    const auto dim = prom_op.GetReducedDimension();
+    vector_temp = 0.0;
+    const auto c = prom_op.UpdatePROM(vector_temp, "vec_zero");
+    CHECK(prom_op.GetReducedDimension() == dim);
+    REQUIRE(c.size() == static_cast<Eigen::Index>(dim));
+    CHECK(c.cwiseAbs().maxCoeff() == 0.0);
   }
 
   // Check orthogonality with s-matrix vectors.
