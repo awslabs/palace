@@ -407,7 +407,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
   prom_op.PrepareOnlineExcitations();
-  post_op.ConfigureReducedPostprocessing(prom_op);
+  post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
@@ -425,8 +425,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                    (2 * std::numbers::pi),
                Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble and solve the PROM linear system.
-    prom_op.SolvePROM(excitation_idx, omega, E);
+    // Assemble and solve the PROM linear system. Reduced postprocessing evaluates the
+    // outputs from the reduced solution, mostly without expanding it.
+    prom_op.SolvePROM(excitation_idx, omega);
+    const bool reduced = post_op.HasReducedPostprocessing() &&
+                         !post_op.WillWriteFields(static_cast<int>(omega_i));
+    const bool expand =
+        !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx, prom_op);
+    if (expand)
+    {
+      prom_op.ExpandPROMSolution(E);
+    }
     Mpi::Print("\n");
     if (omega_i == 0 && post_op.WillWriteFields())
     {
@@ -435,11 +444,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       post_op.InitializeParaviewDataCollection(excitation_idx);
     }
 
-    if (post_op.HasReducedPostprocessing() &&
-        !post_op.WillWriteFields(static_cast<int>(omega_i)))
+    if (reduced)
     {
-      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
-                                     prom_op.GetReducedSolution());
+      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), expand ? &E : nullptr,
+                                     omega, prom_op.GetReducedSolution(), prom_op);
       return;
     }
 
