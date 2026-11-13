@@ -79,10 +79,13 @@ and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-ex
 
 The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
 electrostatic or magnetostatic simulation. The capacitance and inductance matrices are written to
-the files of a regular simulation (`terminal-C.csv`, `terminal-M.csv`, and the others); the domain
-and surface postprocessing of a regular simulation is not computed. Field output follows
-`"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`; the environment part
-of a saved field is recovered only when fields are written.
+the files of a regular simulation (`terminal-C.csv`, `terminal-M.csv`, and the others). The
+domain and surface postprocessing and the probes of a regular simulation are not computed, and a
+configuration that requests them is rejected: `config["Domains"]["Postprocessing"]`, and
+`"SurfaceFlux"`, `"Dielectric"` (in electrostatics) and `"FarField"` in
+`config["Boundaries"]["Postprocessing"]`. Field output follows `"Solver"/"Electrostatic"/"Save"`
+and `"Solver"/"Magnetostatic"/"Save"`, in the ParaView format only; the environment part of a saved
+field is recovered only when fields are written.
 
 ### Choosing the region
 

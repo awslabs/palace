@@ -241,6 +241,69 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
+  SECTION("Substructuring rejects the postprocessing it does not compute")
+  {
+    // Each key of a regular simulation that the substructured solves would skip.
+    auto check = [](const std::string &type, const char *key, const json &postpro,
+                    const json &domains_postpro)
+    {
+      json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver",
+                      {{"Substructuring",
+                        {{"Region", {{"Attributes", {1}}}},
+                         {"Environment", {{"Attributes", {2}}}}}}}}};
+      CHECK_NOTHROW(IoData(config, false));
+      if (!postpro.is_null())
+      {
+        config["Boundaries"]["Postprocessing"] = postpro;
+      }
+      if (!domains_postpro.is_null())
+      {
+        config["Domains"]["Postprocessing"] = domains_postpro;
+      }
+      CHECK_THROWS_WITH(IoData(config, false), Catch::Matchers::ContainsSubstring(key));
+    };
+    const json energy = {{"Energy", {{{"Index", 1}, {"Attributes", {1}}}}}};
+    const json probe = {{"Probe", {{{"Index", 1}, {"Center", {0.5, 0.5, 0.5}}}}}};
+    const json flux = {
+        {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {3}}, {"Type", "Electric"}}}}};
+    const json dielectric = {{"Dielectric",
+                              {{{"Index", 1},
+                                {"Attributes", {3}},
+                                {"Thickness", 1.0e-9},
+                                {"Permittivity", 4.0}}}}};
+    const json farfield = {{"FarField", {{"Attributes", {3}}, {"NSample", 8}}}};
+    for (const std::string type : {"Electrostatic", "Magnetostatic"})
+    {
+      CAPTURE(type);
+      check(type, "Domains.Postprocessing.Energy", nullptr, energy);
+      check(type, "Domains.Postprocessing.Probe", nullptr, probe);
+      check(type, "Boundaries.Postprocessing.SurfaceFlux", flux, nullptr);
+      check(type, "Boundaries.Postprocessing.FarField", farfield, nullptr);
+    }
+    check("Electrostatic", "Boundaries.Postprocessing.Dielectric", dielectric, nullptr);
+
+    // The saved fields are written in the ParaView format only.
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Electrostatic", {{"Save", 1}}},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+    config["Problem"]["OutputFormats"] = {{"Paraview", true}, {"GridFunction", true}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("Problem.OutputFormats"));
+    config["Solver"]["Electrostatic"]["Save"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
   SECTION("Magnetostatic substructuring excitations")
   {
     const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};

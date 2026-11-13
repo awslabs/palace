@@ -30,12 +30,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     factorizations on the CPU. Includes optional block low-rank environment factorization
     with MUMPS (`"FactorizationTol"`). The factorizations use the sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names, if any, and Palace must be built with one.
-    Magnetostatic substructuring supports `"FluxLoop"` and `"SurfaceCurrent"` excitations,
-    alone or together (flux loops also grouped or held at zero fluxoid), with the films and
-    `"Superconductor"` boundaries as London sheets (kinetic inductance included, also of
-    `"TwoSided"` films crossing the interface). Adds substructuring examples in
-    `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of flux
-    loops, on separate rings and on one plate). SchemaVer 4-3-0.
+    The domain and surface postprocessing of a regular simulation, which substructuring does
+    not compute, is rejected. Magnetostatic substructuring supports `"FluxLoop"` and
+    `"SurfaceCurrent"` excitations, alone or together (flux loops also grouped or held at
+    zero fluxoid), with the films and `"Superconductor"` boundaries as London sheets
+    (kinetic inductance included, also of `"TwoSided"` films crossing the interface). Adds
+    substructuring examples in `examples/transmon` and `examples/substructuring` (5 x 5
+    lattices of qubits and of flux loops, on separate rings and on one plate). SchemaVer
+    4-3-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
