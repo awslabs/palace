@@ -17,6 +17,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Tests
+
+  - Added direct and adaptive Lorentz-slab regressions checking complex Floquet scattering
+    and passive absorption against the analytic Fresnel solution across a material resonance.
+
 #### New Features
 
   - `validate-config` accepts several configuration files and validates them in one Julia

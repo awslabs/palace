@@ -38,6 +38,57 @@
 namespace
 {
 
+// A 5 mm Lorentz slab between vacuum ports, with 37.5 mm vacuum on each side.
+// The CSV supplies the layout; the oracle is the normal-incidence Fresnel solution.
+palace::test::CustomCheck TestLorentzSlab()
+{
+  return [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  {
+    REQUIRE(actual.n_rows() == 9);
+    REQUIRE(actual.n_complete_rows() == 9);
+    REQUIRE(actual.n_cols() == 9);
+    constexpr std::complex<double> imaginary{0.0, 1.0};
+    for (std::size_t row = 0; row < actual.n_rows(); ++row)
+    {
+      const double frequency = 1.0 + 0.25 * row;  // GHz
+      INFO("Frequency: " << frequency << " GHz");
+      CHECK_THAT(actual[0].data[row], Catch::Matchers::WithinAbs(frequency, 1.0e-8));
+      // Positive-time convention: passive permittivity has negative imaginary part.
+      const auto epsilon =
+          2.0 + 4.0 / (4.0 - frequency * frequency + imaginary * 0.2 * frequency);
+      const auto index = std::sqrt(epsilon);
+      const double k0 = 2.0 * std::numbers::pi * frequency * 1.0e9 / 299792458.0;
+      const auto q = std::exp(-imaginary * k0 * index * 0.005);
+      const auto rho = (1.0 - index) / (1.0 + index);
+      const auto denominator = 1.0 - rho * rho * q * q;
+      const auto reflection =
+          rho * (1.0 - q * q) / denominator * std::exp(-imaginary * k0 * 0.075);
+      const auto transmission =
+          (1.0 - rho * rho) * q / denominator * std::exp(-imaginary * k0 * 0.075);
+      double outgoing_power = 0.0;
+      for (std::size_t column = 1; column + 1 < actual.n_cols(); column += 2)
+      {
+        const auto &header = actual[column].header_text;
+        INFO("Floquet channel: " << header);
+        const double magnitude = std::pow(10.0, actual[column].data[row] / 20.0);
+        const double phase = actual[column + 1].data[row] * std::numbers::pi / 180.0;
+        const auto amplitude = std::polar(magnitude, phase);
+        const auto expected = header == "|S[P1(0;0)TE][1]| (dB)"   ? reflection
+                              : header == "|S[P2(0;0)TE][1]| (dB)" ? transmission
+                                                                   : std::complex<double>{};
+        CHECK(std::abs(amplitude - expected) < 1.0e-7);
+        outgoing_power += std::norm(amplitude);
+      }
+      const double absorption = 1.0 - outgoing_power;
+      const double expected_absorption =
+          1.0 - std::norm(reflection) - std::norm(transmission);
+      CHECK(absorption >= -1.0e-8);
+      CHECK(absorption <= 1.0 + 1.0e-8);
+      CHECK_THAT(absorption, Catch::Matchers::WithinAbs(expected_absorption, 1.0e-8));
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Shared custom-check factories. Each returns a callable matching
 // palace::test::CustomCheck so TEST_CASEs can register them per-CSV.
@@ -2357,6 +2408,24 @@ TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
                                   "floquet_wave_dispersive", opts);
+}
+
+TEST_CASE("floquet_lorentz_slab_direct", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestLorentzSlab();
+  palace::test::RunRegressionCase("dielectric_slab", "direct.json", "direct", opts);
+}
+
+TEST_CASE("floquet_lorentz_slab_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestLorentzSlab();
+  palace::test::RunRegressionCase("dielectric_slab", "adaptive.json", "adaptive", opts);
 }
 
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
