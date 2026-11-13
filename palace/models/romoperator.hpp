@@ -176,40 +176,46 @@ protected:
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
-  // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
-  //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
   // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
   //   are cached before frequency-major online evaluation.
-  std::unique_ptr<ComplexOperator> K, M, C, A2;
+  std::unique_ptr<ComplexOperator> K, M, C;
   ComplexVector RHS1, RHS2, r;
 
-  // Per-port wave-port boundary mass operators M_{μ⁻¹,p} (ω-independent). The
-  // wave-port contribution to A(ω) factors as i·Σ_p k_{n,p}(ω)·M_{μ⁻¹,p}; storing the
-  // ω-independent operator once and the per-port reduced projection separately lets the
-  // PROM online phase apply the wave-port term without touching any HDM-size object.
-  // Keys are wave-port indices. Mwp_p carries the boundary mass in its imaginary slot
-  // only (the i in i·Σ_p kₙ,p(ω)·M is baked in at assembly time), so Mwp_p_r is purely
-  // imaginary; SolvePROM multiplies by the real scalar kₙ,p(ω) to get the i·kₙ·M
-  // contribution to Aᵣ(ω) without an extra factor of i. The synthesis path inspects
-  // Mp_r.imag() to recover the real symmetric M_proj used for SVD-based augmentation.
-  std::map<int, std::unique_ptr<ComplexOperator>> Mwp_p;
-  std::map<int, Eigen::MatrixXcd> Mwp_p_r;
-  // True iff GetExtraSystemMatrix has any non-wave-port contributors (currently
-  // second-order farfield, surface conductivity, or Floquet Robin terms). Set in the
-  // ctor; controls the slow SolvePROM A2 fallback path. NOTE: the farfield and surface
-  // conductivity contributors are now ALSO folded into the circuit synthesis (see M_ff_,
-  // Asig_g_ below); has_other_A2 still gates the online SolvePROM fallback, which is
-  // independent of synthesis.
-  bool has_other_A2 = false;
-  // One-time self-check state for the factored online A2_other path (SolvePROM). On the
-  // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +
-  // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r) reproduces the full HDM projection of A2_other(ω)
-  // to round-off. This guards against a future ω-dependent non-wave-port BC being added to
-  // GetExtraSystemMatrix without a matching factored operator (which would otherwise be
-  // silently dropped). On failure we set other_A2_factored_ok = false and permanently use
-  // the slow per-ω HDM fallback.
-  mutable bool other_A2_self_checked = false;
-  mutable bool other_A2_factored_ok = true;
+  // The sparse frequency-dependent boundary terms of A(ω), each a scalar f(ω) times an
+  // ω-independent operator i·M stored with the boundary form M on the imaginary slot, so
+  // that the PROM gets f(ω)·Vᵀ(i·M)V without any HDM-size work online and circuit
+  // synthesis can fit f(ω) on the sweep band:
+  //   - Wave port p: f = kₙ,ₚ(ω) and the µ⁻¹ boundary mass. Inactive ports included in
+  //     synthesis are unloaded nodes: kept for their node scaling and reference data, they
+  //     do not contribute to A(ω).
+  //   - Second-order farfield ABC: f = 0.5/ω, with the negative sign of β inside M (see
+  //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
+  //   - Surface conductivity, per attribute group: f = ω/Z(ω).
+  //   - Rational surface impedance, per boundary: f = g(iω)/i for the Robin coefficient
+  //     g(s) = s·D(s)/N(s).
+  //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
+  //     constant.
+  enum class BoundaryTermKind
+  {
+    WavePort,
+    Farfield,
+    SurfaceConductivity,
+    RationalImpedance,
+    FloquetPort
+  };
+  struct BoundaryTerm
+  {
+    BoundaryTermKind kind;
+    int idx;  // Port, group, or boundary index
+    std::unique_ptr<ComplexOperator> op;
+    bool symmetric;
+    Eigen::MatrixXcd Ar;  // Vᵀ op V
+  };
+  std::vector<BoundaryTerm> bdr_terms;
+
+  // Return f(ω) of a boundary term, zero if it does not contribute to A(ω).
+  std::complex<double> GetBoundaryTermCoefficient(const BoundaryTerm &term,
+                                                  double omega) const;
 
   // Port-space evaluation of the wave-port terms of the PROM. The modal correction
   // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ and the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full only
@@ -229,33 +235,6 @@ protected:
   bool wp_pairing_ok = true;
   bool wp_pairing_checked = false;
 
-  // ω-independent boundary operators for the other frequency-dependent BCs, folded into
-  // circuit synthesis the same way as the wave ports (each contributes i·f(ω)·M_proj·v to
-  // Aᵣ(ω); project M_proj once, fit/inject the scalar f(ω)). Stored with the boundary mass
-  // in the IMAGINARY slot (matching Mwp_p) so the synthesis path treats them uniformly.
-  //   - Second-order farfield ABC: f(ω) = 0.5/ω, a single exact pole at ω=0 (residue 0.5),
-  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix, which
-  //     includes the negative sign of β (see
-  //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
-  //   - Surface conductivity, one entry per attribute group g: f(ω) = ω/Z_g(ω) (the i is
-  //     the implicit slot factor; surf_sigma_op.EvaluateScalar returns i·ω/Z, so the scalar
-  //     used here is EvaluateScalar/i, generally complex), fit by poly+AAA.
-  //   - Floquet port Robin BC, one entry per port p: f(ω) = γ₀,p(ω) =
-  //     sqrt(max(0, ω²µε - |B₀₀+kF|²)), the specular (0,0) propagation constant.
-  //     Closed form, no fit. The i is the implicit slot factor (imaginary-slot mass).
-  //   - Rational surface impedance, one entry per boundary b: f(ω) = g(iω)/i with
-  //     g(s) = s·D(s)/N(s) the Robin coefficient (the i is the implicit slot factor;
-  //     the full term is i·f(ω)·M_b = g(iω)·M_b), generally complex, fit by poly+AAA.
-  //     Since g is rational in ω the poly+AAA fit is typically exact to rounding.
-  std::unique_ptr<ComplexOperator> M_ff_;
-  Eigen::MatrixXcd M_ff_r;
-  std::vector<std::unique_ptr<ComplexOperator>> Asig_g_;
-  std::vector<Eigen::MatrixXcd> Asig_g_r;
-  std::map<int, std::unique_ptr<ComplexOperator>> M_floquet_p_;
-  std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
-  std::vector<std::unique_ptr<ComplexOperator>> Arz_b_;
-  std::vector<Eigen::MatrixXcd> Arz_b_r;
-
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
   // dense grid over which the fit residual is evaluated.
@@ -269,7 +248,6 @@ protected:
   double waveport_synthesis_rank_tol = 1.0e-6;
 
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
-  bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
   // Whether RHS1 holds the assembled excitation vector, the same on every process (its
