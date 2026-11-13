@@ -2616,7 +2616,7 @@
         },
         "AdaptiveGSOrthogonalization": {
           "$ref": "#/$defs/Orthogonalization",
-          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization), with `\"MGS\"` applied as `\"CGS2\"`.",
           "default": "CGS2",
           "x-palace-advanced": true
         },

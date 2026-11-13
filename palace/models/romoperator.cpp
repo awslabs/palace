@@ -1167,34 +1167,14 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
                 "PROM basis storage exceeded. Please increase maximum number of prom "
                 "vector per excitation using AdaptiveMaxSamples.");
     auto &v = V.emplace_back(vector);
-    double pre_norm;
-    if (weight_op_W.has_value())
-    {
-      auto pre_norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
-      pre_norm = std::sqrt(std::abs(pre_norm_sq));
-      if (orthog_type == Orthogonalization::MGS)
-      {
-        linalg::OrthogonalizeColumnMGS(
-            space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
-            [&W = *weight_op_W, &r = this->r](const Vector &x, const Vector &y)
-            { return W.InnerProduct(x, y, r.Real()); });
-      }
-      else
-      {
-        linalg::OrthogonalizeColumnWeightedCGS(
-            space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V, *weight_op_W,
-            r.Real(), orthog_type == Orthogonalization::CGS2);
-      }
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
-      orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
-    }
-    else
-    {
-      pre_norm = linalg::Norml2(space_op.GetComm(), v);
-      linalg::OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v,
-                                  orth_R.col(dim_V).data(), dim_V);
-      orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
-    }
+    // MGS is applied as CGS2, which is as stable with two reductions instead of one per
+    // basis vector.
+    const bool refine = (orthog_type != Orthogonalization::CGS);
+    double *H = orth_R.col(dim_V).data();
+    MPI_Comm comm = space_op.GetComm();
+    const auto [pre_norm, norm] = linalg::OrthogonalizeColumnCGS(
+        comm, std::span(V), H, refine, r, weight_op_W ? &*weight_op_W : nullptr);
+    orth_R(dim_V, dim_V) = norm;
 
     if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
     {

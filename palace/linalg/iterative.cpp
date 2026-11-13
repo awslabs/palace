@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <span>
 #include <string>
 #include <typeinfo>
 #include "linalg/jacobi.hpp"
@@ -655,8 +656,8 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
+      Hj[j + 1] = linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2),
+                                              Hj, orthog_work);
       w *= 1.0 / Hj[j + 1];
 
       for (int k = 0; k < j; k++)
@@ -834,8 +835,8 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
+      Hj[j + 1] = linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2),
+                                              Hj, orthog_work);
       w *= 1.0 / Hj[j + 1];
 
       for (int k = 0; k < j; k++)

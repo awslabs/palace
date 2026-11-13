@@ -41,6 +41,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - `"AdaptiveGSOrthogonalization": "MGS"` now orthogonalizes the reduced-order basis of
+    adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions.
 
 #### New Features
 
