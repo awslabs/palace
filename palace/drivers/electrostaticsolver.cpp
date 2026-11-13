@@ -386,6 +386,10 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
       {"GlobalH1TrueDofs", laplace_op.GlobalTrueVSize()},
       {"GlobalNDTrueDofs", laplace_op.GetNDSpace().GlobalTrueVSize()},
       {"GlobalRTTrueDofs", laplace_op.GetRTSpace().GlobalTrueVSize()},
+      // P3-21: the recovered D lives on the estimator's flux recovery space (broken across
+      // the interior sheet faces when the mesh has any, else the RT space above).
+      {"GlobalFluxTrueDofs", estimator.GetFluxSpace().GlobalTrueVSize()},
+      {"FluxSpaceBroken", estimator.GetFluxSpace().IsBroken()},
       {"VoltageScaleV", voltage_scale},
       {"EnergyScaleJ", energy_scale},
       {"BCAbsTolInternal", bc_tol},
@@ -485,6 +489,7 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
                     {"RTLayoutFNV1a64", Fingerprint(laplace_op.GetRTSpace())},
                     {"NDTrueDofs", Grad.Height()},
                     {"RTTrueDofs", laplace_op.GetRTSpace().GetTrueVSize()},
+                    {"FluxTrueDofs", estimator.GetFluxSpace().GetTrueVSize()},
                     {"LocalElements", laplace_op.GetMesh().GetNE()}})
                   .dump(2)
            << '\n';
@@ -2832,6 +2837,12 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
       {
         D_source =
             ReadArchivedVector(archive, source, ArchivedField::FLUX, laplace_op.GetComm());
+        // P3-21: an archived recovered flux lives on the flux recovery space of the run
+        // that wrote it, this run holds D on its own (the same space for the same mesh and
+        // crack form).
+        MFEM_VERIFY(D_source.Size() == post_op.GetRecoveredElectricFluxTrueVSize(),
+                    "Archived recovered electric flux has an incompatible local size (the "
+                    "flux recovery spaces of the archive and of this run differ)!");
       }
       E_basis = 0.0;
       Grad.AddMult(V, E_basis, -1.0);

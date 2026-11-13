@@ -701,6 +701,14 @@ public:
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
 
+  // The true-dof size of a recovered electric flux D the postprocessing accepts (the
+  // drivers recover it on the error estimator's flux space, SD-403; the archive reduction
+  // reads it).
+  int GetRecoveredElectricFluxTrueVSize() const
+  {
+    return fem_op->GetRTSpace().GetTrueVSize();
+  }
+
   // PatchEnergy: the applied patches' raw claims as the partition reads them (taken from
   // the operator at the construction, round 2b B1).
   const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &
@@ -735,7 +743,7 @@ public:
     surface_response_corrected_field->Imag().ExchangeFaceNbrData();
     if (d)
     {
-      MFEM_VERIFY(d->Size() == fem_op->GetRTSpace().GetTrueVSize(),
+      MFEM_VERIFY(d->Size() == GetRecoveredElectricFluxTrueVSize(),
                   kFluxRecoveryBrokenSpaceMessage);
       if (!surface_response_corrected_flux)
       {
@@ -766,7 +774,7 @@ public:
       -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
     MFEM_VERIFY(D_recovered, "Recovered electric flux was not requested!");
-    MFEM_VERIFY(d.Size() == fem_op->GetRTSpace().GetTrueVSize(),
+    MFEM_VERIFY(d.Size() == GetRecoveredElectricFluxTrueVSize(),
                 kFluxRecoveryBrokenSpaceMessage);
     D_recovered->Real().SetFromTrueDofs(d.Real());
     D_recovered->Imag().SetFromTrueDofs(d.Imag());
@@ -780,7 +788,7 @@ public:
       -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
     MFEM_VERIFY(D_recovered, "Recovered electric flux was not requested!");
-    MFEM_VERIFY(d.Size() == fem_op->GetRTSpace().GetTrueVSize(),
+    MFEM_VERIFY(d.Size() == GetRecoveredElectricFluxTrueVSize(),
                 kFluxRecoveryBrokenSpaceMessage);
     D_recovered->Real().SetFromTrueDofs(d);
     D_recovered->Real().ExchangeFaceNbrData();
