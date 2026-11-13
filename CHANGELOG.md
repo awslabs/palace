@@ -50,7 +50,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     S-parameters of single-port excitations are normalized by the weight; with a nonzero
     phase `port-V.csv` and `port-I.csv` report the real and imaginary parts of the
     incident voltage and current. A nonzero phase is an error for transient simulations.
-    SchemaVer 4-2-2 [PR 1169](https://github.com/awslabs/palace/pull/1169).
+    SchemaVer 4-2-4 [PR 1169](https://github.com/awslabs/palace/pull/1169).
 
 #### New Features
 
