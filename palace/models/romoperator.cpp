@@ -817,12 +817,6 @@ void RomOperator::PrepareOnlineExcitations()
 
 void RomOperator::UpdateWavePortBasisRestriction()
 {
-  if (V_wp_dim > V.size())
-  {
-    // Basis was rebuilt: start over.
-    V_wp.clear();
-    V_wp_dim = 0;
-  }
   if (V_wp_dim == V.size())
   {
     return;
