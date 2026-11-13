@@ -145,8 +145,9 @@ private:
 
 public:
   void AddSolutionSample(double omega, const Eigen::VectorXcd &c);
-  // With a communicator, the search for N = 1 is split over its processes (same result).
-  std::vector<double> FindMaxError(std::size_t N, MPI_Comm comm = MPI_COMM_NULL) const;
+  // Location of the maximum error in the range of the samples. With a communicator, the
+  // search is split over its processes (same result).
+  double FindMaxError(MPI_Comm comm = MPI_COMM_NULL) const;
 
   const auto &GetSamplePoints() const { return z; }
 };
@@ -265,6 +266,9 @@ protected:
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
+  // Whether RHS1 holds the assembled excitation vector, the same on every process (its
+  // local size can be zero).
+  bool RHS1_assembled = false;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
@@ -315,9 +319,6 @@ protected:
   // basis, VᵀV = L Lᵀ, so that ||V c|| = ||Lᵀ c|| for the error estimates. Empty otherwise
   // (V is orthonormal).
   Eigen::MatrixXd gram_L;
-
-  // Workspace for the operator applies in the projections onto the basis.
-  std::vector<Vector> proj_ws;
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
@@ -577,9 +578,9 @@ public:
     ExpandPROMSolution(u);
   }
 
-  // Compute the location(s) of the maximum error in the range of the previously sampled
+  // Compute the location of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int excitation_idx, std::size_t N = 1) const;
+  double FindMaxError(int excitation_idx) const;
 
   // Print PROM matrices to file include in input (SI) units.
   void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;
