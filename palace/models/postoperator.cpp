@@ -2334,25 +2334,12 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
 }
 
 template <ProblemType solver_t>
-bool PostOperator<solver_t>::ReducedPostprocessingNeedsField(
-    int ex_idx, const RomOperator &rom_op) const
+bool PostOperator<solver_t>::ReducedPostprocessingNeedsField(int ex_idx) const
   requires(solver_t == ProblemType::DRIVEN)
 {
-  // The full solution is needed for the check against the full evaluation at the first
-  // point of each excitation, and for the S-parameters of wave ports without a cached mode
-  // pairing at this frequency.
-  if (!reduced_postprocessing_checked.contains(ex_idx))
-  {
-    return true;
-  }
-  for (const auto &[idx, data] : fem_op->GetWavePortOp())
-  {
-    if (!rom_op.GetWavePortModePairing(idx))
-    {
-      return true;
-    }
-  }
-  return false;
+  // The full solution is needed only for the check against the full evaluation at the
+  // first point of each excitation.
+  return !reduced_postprocessing_checked.contains(ex_idx);
 }
 
 template <ProblemType solver_t>
@@ -2366,7 +2353,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   BlockTimer bt0(Timer::POSTPRO);
   MFEM_VERIFY(reduced_postprocessing_ready && y.size() == reduced_energy_E.rows(),
               "Invalid reduced postprocessing state!");
-  MFEM_VERIFY(e || !ReducedPostprocessingNeedsField(ex_idx, rom_op),
+  MFEM_VERIFY(e || !ReducedPostprocessingNeedsField(ex_idx),
               "Reduced postprocessing requires the expanded solution!");
   if (e)
   {
@@ -2399,8 +2386,8 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
 
   // Lumped-port voltages and wave-port S-parameters are linear in the solution. The wave
   // port S-parameter is sᵀe / R for the port mode s and its reaction R
-  // (WavePortData::GetSParameter), and the PROM caches the pairings sᵀv of the basis
-  // vectors for its wave-port terms.
+  // (WavePortData::GetSParameter), and every PROM solve caches the pairings sᵀv of the
+  // basis vectors with the modes of all wave ports for its wave-port terms.
   const Eigen::MatrixX2d port_V = reduced_port_V * Y;
   std::map<int, std::complex<double>> port_voltages;
   for (Eigen::Index i = 0; const auto &[idx, data] : fem_op->GetLumpedPortOp())
@@ -2412,8 +2399,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   for (const auto &[idx, data] : fem_op->GetWavePortOp())
   {
     const auto *sV = rom_op.GetWavePortModePairing(idx);
-    measurement_cache.wave_port_vi[idx].S =
-        sV ? sV->cwiseProduct(y).sum() / data.modal_reaction : data.GetSParameter(*E);
+    MFEM_VERIFY(sV && sV->size() == y.size(),
+                "Missing or stale PROM mode pairing for wave port " << idx << "!");
+    measurement_cache.wave_port_vi[idx].S = sV->cwiseProduct(y).sum() / data.modal_reaction;
   }
   MeasureSParameter();
 
