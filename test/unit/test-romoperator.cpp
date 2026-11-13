@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <limits>
 #include <numbers>
+#include <random>
 #include <tuple>
 #include <vector>
 #include <Eigen/Dense>
@@ -2496,6 +2498,23 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
 }
 
+namespace
+{
+
+// Wilkinson's matrix: 1 on the diagonal and in the last column, -1 below the diagonal.
+// Partial pivoting does not swap rows and the entries of the last column of U grow as
+// 2^(k-1), so the LU solution has a large backward error. The matrix itself is well
+// conditioned.
+Eigen::MatrixXcd WilkinsonMatrix(int m)
+{
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Identity(m, m);
+  A.triangularView<Eigen::StrictlyLower>().setConstant(-1.0);
+  A.col(m - 1).setOnes();
+  return A;
+}
+
+}  // namespace
+
 TEST_CASE("RomOperator-SolveReducedSystem", "[romoperator][Serial]")
 {
   // LU solves well and ill-conditioned systems, and full-pivoting QR takes over for
@@ -2595,20 +2614,9 @@ TEST_CASE("RomOperator-SolveReducedSystem", "[romoperator][Serial]")
 
   SECTION("Pivot growth")
   {
-    // Partial pivoting on Wilkinson's matrix (1 on the diagonal and in the last column, -1
-    // below the diagonal) does not swap rows and the entries of the last column of U grow
-    // as 2^(k-1), so the LU solution has a large backward error. The matrix itself is well
-    // conditioned.
+    // Partial pivoting on Wilkinson's matrix gives a large backward error.
     constexpr int m = 64;
-    Matrix A = Matrix::Identity(m, m);
-    for (int j = 0; j < m; j++)
-    {
-      for (int i = j + 1; i < m; i++)
-      {
-        A(i, j) = -1.0;
-      }
-    }
-    A.col(m - 1).setOnes();
+    const Matrix A = WilkinsonMatrix(m);
     const VectorC bw = VectorC::Random(m);
     VectorC x_lu = A.partialPivLu().solve(bw);
     REQUIRE(!(backward_error(A, x_lu, bw) < 1.0e-12));
@@ -2618,5 +2626,61 @@ TEST_CASE("RomOperator-SolveReducedSystem", "[romoperator][Serial]")
     CHECK(SolveReducedSystem(comm, A, x));
     CHECK(x.col(0).isZero());
     CHECK(backward_error(A, x.col(1), bw) < 1.0e-14);
+  }
+}
+
+TEST_CASE("RomOperator-SolveReducedSystem-NonFinite", "[romoperator][Serial]")
+{
+  // A finite LU solution whose backward-error bound overflows is not verified, so QR is
+  // used. (A residual that overflows implies an overflowing bound, |Aᵢⱼ xⱼ| ≤ ‖A‖ ‖x‖.)
+  // Here x = (1e-300, 1e10) is finite but ‖A‖ |x| = 1e310.
+  using Matrix = Eigen::MatrixXcd;
+  MPI_Comm comm = Mpi::World();
+  Matrix A = Matrix::Zero(2, 2);
+  A(0, 0) = 1.0e300;
+  A(1, 1) = 1.0e-10;
+  Matrix x = Matrix::Ones(2, 1);
+  REQUIRE(Matrix(A.partialPivLu().solve(x)).allFinite());
+  CHECK(SolveReducedSystem(comm, A, x));
+  // The condition number 1e310 is singular to working precision for the rank-revealing
+  // QR, which drops the second column.
+  CHECK(x.allFinite());
+}
+
+TEST_CASE("RomOperator-SolveReducedSystem-Parallel", "[romoperator][Serial][Parallel]")
+{
+  // The choice of QR is collective: with Wilkinson's matrix (pivot growth, see
+  // RomOperator-SolveReducedSystem) on all ranks and a nonzero right-hand side only on rank
+  // 0, LU is accurate (x = 0) on the other ranks, but every rank falls back to QR.
+  using Matrix = Eigen::MatrixXcd;
+  MPI_Comm comm = Mpi::World();
+  constexpr int m = 64;
+  const Matrix A = WilkinsonMatrix(m);
+  std::mt19937 gen(1234);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  Matrix b(m, 1);
+  for (int i = 0; i < m; i++)
+  {
+    b(i) = {dist(gen), dist(gen)};
+  }
+  if (Mpi::Rank(comm) != 0)
+  {
+    b.setZero();
+  }
+  Matrix x = b;
+  const int use_qr = SolveReducedSystem(comm, A, x);
+  int qr_min = use_qr, qr_max = use_qr;
+  Mpi::GlobalMin(1, &qr_min, comm);
+  Mpi::GlobalMax(1, &qr_max, comm);
+  CHECK(use_qr == 1);
+  CHECK(qr_min == qr_max);
+  const double backward_error =
+      (b - A * x).lpNorm<Eigen::Infinity>() /
+      (A.cwiseAbs().rowwise().sum().maxCoeff() * x.lpNorm<Eigen::Infinity>() +
+       b.lpNorm<Eigen::Infinity>() + std::numeric_limits<double>::min());
+  CHECK(backward_error < 1.0e-14);
+  if (Mpi::Rank(comm) != 0)
+  {
+    CHECK(x.isZero());
   }
 }
