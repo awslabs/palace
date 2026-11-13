@@ -899,10 +899,14 @@ void RomOperator::AddWavePortModalCorrection(double omega)
     if (!(std::abs(port_data.modal_reaction) > 0.0) ||
         !(std::abs(port_data.modal_reaction_scalar) > 0.0))
     {
-      Mpi::Warning(
-          space_op.GetComm(),
-          "Wave port {:d} has zero modal reaction; skipping its modal correction!\n",
-          port_idx);
+      if (!warned_modal_reaction)
+      {
+        Mpi::Warning(space_op.GetComm(),
+                     "Wave port {:d} has zero modal reaction; skipping its modal "
+                     "correction (further occurrences are not reported)!\n",
+                     port_idx);
+        warned_modal_reaction = true;
+      }
       continue;
     }
     Ar.noalias() += (std::complex<double>(0.0, -omega) / port_data.modal_reaction) *

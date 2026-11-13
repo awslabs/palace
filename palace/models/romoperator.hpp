@@ -258,6 +258,7 @@ protected:
   // PROM matrix Ar at the frequency of the last SolvePROM, and the reduced solutions of all
   // excitations, one column per excitation.
   Eigen::MatrixXcd Ar, Y;
+  bool warned_modal_reaction = false;
 
   // Column of an excitation in RHS1, RHS1r, and Y.
   Eigen::Index GetExcitationColumn(int excitation_idx) const;
