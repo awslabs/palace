@@ -26,6 +26,7 @@
 using namespace palace;
 using namespace nlohmann;
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 // Assemble operators as Eigen matrices for simpler testing.
 template <typename T>
@@ -119,7 +120,7 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   MinimalRationalInterpolation mri_1;
 
   CHECK(mri_1.GetSamplePoints() == std::vector<double>{});
-  CHECK_THROWS(mri_1.FindMaxError(1));
+  CHECK_THROWS(mri_1.FindMaxError());
 
   for (double x_sample : {-2.0, -1.0, 1.0, 2.0})
   {
@@ -143,37 +144,82 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   CHECK(mri_1.GetSamplePoints() == std::vector<double>{-2.0, -1.0, 1.0, 2.0});
 
   // By symmetry of poles max error should be at zero.
-  auto max_err_1 = mri_1.FindMaxError(5);
-  REQUIRE(max_err_1.size() == 5);
-
-  // By symmetry highest error should be at zero.
-  CHECK_THAT(max_err_1[0], Catch::Matchers::WithinAbsMatcher(0.0, 1e-6));
-
-  // Test that elements of max_error are unique.
-  // TODO: get better test for multiple N.
-  std::ranges::sort(max_err_1);
-  CHECK(std::adjacent_find(max_err_1.begin(), max_err_1.end()) == max_err_1.end());
-
-  // TODO: Add more stringent tests of MRI, including estimating poles.
+  CHECK_THAT(mri_1.FindMaxError(), WithinAbs(0.0, 1e-6));
 }
 
 TEST_CASE("MinimalRationalInterpolation-DistributedSearch",
           "[romoperator][Serial][Parallel]")
 {
-  // The search split over the processes gives the same point as one scan. The basis grows
-  // between the samples.
+  // Samples of u(ω) = Σₖ aₖ / (ω - pₖ) + η g(ω) in C⁸ with three poles pₖ, one 10⁻⁴ above
+  // the real axis between the samples, and a smooth g with η = 10⁻⁸, which keeps the
+  // snapshot matrix of full numerical rank. The MRI is given the coefficients of each
+  // sample in the orthonormal basis of the samples so far, which grows with each sample.
+  // The maximum error is compared with a brute-force evaluation of its definition: the
+  // minimum of |Q(z)| = |Σᵢ qᵢ / (z - zᵢ)| over the scanned grid of 10⁶ intervals, where q
+  // is the right singular vector of the smallest singular value of the snapshot matrix with
+  // columns [uᵢ; iωᵢ uᵢ]. The pole is at the last point of the first half of the grid,
+  // which is the last point of a process when the scan is split over 2 or 4 processes. From
+  // five samples on, the maximum error is at the pole.
   MPI_Comm comm = Mpi::World();
-  MinimalRationalInterpolation mri;
-  int n = 2;
-  for (double x : {-2.0, -1.3, 0.4, 1.0, 2.0})
+  const std::vector<double> z = {-2.0, 2.0, -1.3, 0.4, 1.0, -0.7, 1.6};
+  constexpr int nr_sample = 1000000, n = 8;
+  const double delta = (z[1] - z[0]) / nr_sample;
+  const double z_pole = z[0] + 499999 * delta;
+  const std::array<std::complex<double>, 3> p = {z_pole + 1.0e-4i, -0.9 + 0.8i, 1.2 - 0.6i};
+  const auto S = static_cast<Eigen::Index>(z.size());
+  Eigen::MatrixXcd U(2 * n, S);  // Snapshot matrix
+  for (Eigen::Index l = 0; l < S; l++)
   {
-    const auto t = std::tan(0.5 * std::numbers::pi * (x - std::complex<double>(1., 1.)));
-    Eigen::VectorXcd c = Eigen::VectorXcd::Zero(++n);
-    c.head(3) << -t, 5. * t, 2. * x * x * x * t;
-    c(n - 1) += 0.1 * x * t;
-    mri.AddSolutionSample(x, c);
+    for (int r = 0; r < n; r++)
+    {
+      std::complex<double> u = 1.0e-8 * std::exp(std::complex<double>(0.3 * r, 1.0) * z[l]);
+      for (std::size_t k = 0; k < p.size(); k++)
+      {
+        u += std::complex<double>(std::cos(1.0 + r + 2.0 * k), std::sin(0.5 * r - k)) /
+             (z[l] - p[k]);
+      }
+      U(r, l) = u;
+      U(n + r, l) = (1i * z[l]) * u;
+    }
   }
-  CHECK(mri.FindMaxError(1, comm) == mri.FindMaxError(1));
+  // The coefficients R of the samples U = Q R in the orthonormal basis Q.
+  const Eigen::MatrixXcd R = Eigen::HouseholderQR<Eigen::MatrixXcd>(U.topRows(n))
+                                 .matrixQR()
+                                 .triangularView<Eigen::Upper>();
+  MinimalRationalInterpolation mri;
+  for (Eigen::Index m = 1; m <= S; m++)
+  {
+    mri.AddSolutionSample(z[m - 1], R.col(m - 1).head(m));
+    if (m < 2)
+    {
+      continue;
+    }
+    CAPTURE(m);
+    Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd(U.leftCols(m));
+    const Eigen::VectorXcd q = svd.matrixV().col(m - 1);
+    double Q_min = std::numeric_limits<double>::infinity(), z_min = z[0];
+    for (int i = 0; i <= nr_sample; i++)
+    {
+      const double x = z[0] + i * delta;
+      std::complex<double> Q = 0.0;
+      for (Eigen::Index l = 0; l < m; l++)
+      {
+        Q += q(l) / (z[l] - x);
+      }
+      if (std::abs(Q) < Q_min)
+      {
+        Q_min = std::abs(Q);
+        z_min = x;
+      }
+    }
+    const double z_max = mri.FindMaxError(comm);
+    CHECK(z_max == mri.FindMaxError());
+    CHECK_THAT(z_max, WithinAbs(z_min, 0.5 * delta));
+    if (m >= 5)
+    {
+      CHECK_THAT(z_max, WithinAbs(z_pole, 0.5 * delta));
+    }
+  }
 }
 
 TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
@@ -188,10 +234,9 @@ TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
     c(i) = 1.0;
     mri.AddSolutionSample(i == 0 ? z0 : z1, c);
   }
-  const auto z_max = mri.FindMaxError(1);
-  REQUIRE(z_max.size() == 1);
-  CHECK(z_max[0] >= z0);
-  CHECK(z_max[0] <= z1);
+  const double z_max = mri.FindMaxError();
+  CHECK(z_max >= z0);
+  CHECK(z_max <= z1);
 }
 
 // TODO: Do some more basic RomOperator Ctor Checks
@@ -704,19 +749,110 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   std::vector<std::uint32_t> seeds(2 * nr_random_vec);
   seed_gen.generate(seeds.begin(), seeds.end());
 
+  // Return V c for coefficients c zero-padded to the basis dimension.
+  auto expand = [&](const Eigen::VectorXcd &c)
+  {
+    Eigen::VectorXcd c_pad = Eigen::VectorXcd::Zero(prom_op.GetReducedDimension());
+    c_pad.head(c.size()) = c;
+    ComplexVector w(vector_temp.Size());
+    w.UseDevice(true);
+    linalg::LinearCombination(prom_op.GetVectors(),
+                              {c_pad.data(), static_cast<std::size_t>(c_pad.size())}, w);
+    return w;
+  };
+
+  // The projected matrices are those of the operators on the basis, Vᵀ A V.
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  auto check_projection = [&](const ComplexOperator &A, const Eigen::MatrixXcd &Ar)
+  {
+    const auto &V = prom_op.GetVectors();
+    const auto n = static_cast<Eigen::Index>(V.size());
+    REQUIRE(Ar.rows() == n);
+    REQUIRE(Ar.cols() == n);
+    Eigen::MatrixXcd Ar_ref(n, n);
+    ComplexVector v(vector_temp.Size()), w(vector_temp.Size());
+    v.UseDevice(true);
+    w.UseDevice(true);
+    for (Eigen::Index j = 0; j < n; j++)
+    {
+      v.Real() = V[j];
+      v.Imag() = 0.0;
+      A.Mult(v, w);
+      for (Eigen::Index i = 0; i < n; i++)
+      {
+        Ar_ref(i, j) = {V[i] * w.Real(), V[i] * w.Imag()};
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(Ar_ref.size()), Ar_ref.data(), world_comm);
+    const double error = (Ar - Ar_ref).cwiseAbs().maxCoeff();
+    const double scale = Ar_ref.cwiseAbs().maxCoeff();
+    CAPTURE(n, error, scale);
+    REQUIRE(scale > 0.0);
+    CHECK(error <= 1.0e-12 * scale);
+  };
+
+  Eigen::VectorXcd c_prev;
+  auto check_update = [&](const ComplexVector &u, const Eigen::VectorXcd &c)
+  {
+    // The returned coefficients reproduce the vector in the updated basis.
+    const double norm_u = linalg::Norml2(world_comm, u);
+    ComplexVector w = expand(c);
+    w -= u;
+    CHECK(linalg::Norml2(world_comm, w) <= 1.0e-12 * norm_u);
+
+    // The norm in coefficient space from the Gram factor, VᵀV = L Lᵀ, matches the norm of
+    // the vector, for the new vector and for its difference with the previous one, which
+    // involves the whole factor.
+    CHECK_THAT(prom_op.BasisNorm(c), WithinRel(norm_u, 1.0e-10));
+    if (c_prev.size() > 0)
+    {
+      Eigen::VectorXcd dc = c;
+      dc.head(c_prev.size()) -= c_prev;
+      ComplexVector du = expand(c_prev);
+      du -= u;
+      CHECK_THAT(prom_op.BasisNorm(dc), WithinRel(linalg::Norml2(world_comm, du), 1.0e-10));
+    }
+    c_prev = c;
+  };
+
   for (std::size_t i = 0; i < nr_random_vec; i++)
   {
     vector_temp.Real().Randomize(seeds.at(2 * i));
     vector_temp.Imag().Randomize(seeds.at(2 * i + 1));
-
-    // The returned coefficients reproduce the vector in the updated basis.
     const auto c = prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
-    ComplexVector w(vector_temp.Size());
-    linalg::LinearCombination(prom_op.GetVectors(),
-                              {c.data(), static_cast<std::size_t>(c.size())}, w);
-    w -= vector_temp;
-    CHECK(linalg::Norml2(world_comm, w) <=
-          1.0e-12 * linalg::Norml2(world_comm, vector_temp));
+    REQUIRE(c.size() == static_cast<Eigen::Index>(prom_op.GetReducedDimension()));
+    check_update(vector_temp, c);
+  }
+  check_projection(*K, prom_op.GetKr());
+  check_projection(*C, prom_op.GetCr());
+  check_projection(*M, prom_op.GetMr());
+
+  // A purely real vector adds a single basis vector, with real coefficients.
+  {
+    const auto dim = prom_op.GetReducedDimension();
+    vector_temp.Real().Randomize(seeds.back() + 1);
+    vector_temp.Imag() = 0.0;
+    const auto c = prom_op.UpdatePROM(vector_temp, "vec_real");
+    REQUIRE(prom_op.GetReducedDimension() == dim + 1);
+    REQUIRE(c.size() == static_cast<Eigen::Index>(dim + 1));
+    CHECK(c.imag().cwiseAbs().maxCoeff() == 0.0);
+    check_update(vector_temp, c);
+    check_projection(*K, prom_op.GetKr());
+    check_projection(*C, prom_op.GetCr());
+    check_projection(*M, prom_op.GetMr());
+  }
+
+  // A zero vector leaves the basis unchanged, with zero coefficients.
+  {
+    const auto dim = prom_op.GetReducedDimension();
+    vector_temp = 0.0;
+    const auto c = prom_op.UpdatePROM(vector_temp, "vec_zero");
+    CHECK(prom_op.GetReducedDimension() == dim);
+    REQUIRE(c.size() == static_cast<Eigen::Index>(dim));
+    CHECK(c.cwiseAbs().maxCoeff() == 0.0);
   }
 
   // Check orthogonality with s-matrix vectors.

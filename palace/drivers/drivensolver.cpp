@@ -326,7 +326,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
     prom_op.UpdateMRI(excitation_idx, omega, c);
     d.conservativeResizeLike(Eigen::VectorXcd::Zero(c.size()));
-    const double error = prom_op.BasisNorm(c + d) / prom_op.BasisNorm(c);
+    // The error decides whether to sample again, so it must be the same on every process,
+    // while the replicated dense computations can differ in round-off between them.
+    double error = prom_op.BasisNorm(c + d) / prom_op.BasisNorm(c);
+    Mpi::GlobalMax(1, &error, space_op.GetComm());
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for energy postprocessing and error estimation.
@@ -388,7 +391,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     {
       // Compute the location of the maximum error in parameter domain (bounded by the
       // previous samples).
-      double omega_star = prom_op.FindMaxError(excitation_idx)[0];
+      double omega_star = prom_op.FindMaxError(excitation_idx);
 
       // Sample HDM and add solution to basis.
       prom_op.SolveHDM(excitation_idx, omega_star, E);

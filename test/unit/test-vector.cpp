@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <limits>
@@ -176,18 +177,30 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
   // The last vector is not part of the combination.
   X[n].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
 
+  // Overwritten, or added to.
+  const bool add = GENERATE(false, true);
+  const double y0 = add ? 0.75 : std::numeric_limits<double>::quiet_NaN();
   ComplexVector y(N);
   y.UseDevice(true);
-  y = 1.0;  // Overwritten
-  linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y);
+  y = y0;
+  linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y, add);
+  Vector yr(N);
+  yr.UseDevice(true);
+  yr = y0;
+  std::vector<double> cr(n);
+  for (int j = 0; j < n; j++)
+  {
+    cr[j] = c[j].real();
+  }
+  linalg::LinearCombination(std::span(X).first(n), cr, yr, add);
 
-  // On the host the terms are added in this order, so the result is exact.
-  const double tol = mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ? 1.0e-14 : 0.0;
-  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
+  // The terms are added in this order (up to contractions into fused multiply-adds).
+  const double tol = 1.0e-14;
+  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead(), *Yr = yr.HostRead();
   int mismatch = 0;
   for (int i = 0; i < N; i++)
   {
-    double ref_r = 0.0, ref_i = 0.0;
+    double ref_r = add ? y0 : 0.0, ref_i = 0.0;  // y = y0 sets the real part
     for (int j = 0; j < n; j++)
     {
       if (c[j].real() != 0.0)
@@ -199,17 +212,22 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
         ref_i += c[j].imag() * X[j].HostRead()[i];
       }
     }
-    mismatch += !(std::abs(YR[i] - ref_r) <= tol && std::abs(YI[i] - ref_i) <= tol);
+    mismatch += !(std::abs(YR[i] - ref_r) <= tol && std::abs(YI[i] - ref_i) <= tol &&
+                  std::abs(Yr[i] - ref_r) <= tol);
   }
   CHECK(mismatch == 0);
 }
 
 TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
 {
-  const int N = GENERATE(1, 7, 64, 513, 1025, 3001);
-  const int m = GENERATE(0, 1, 3, 8);
-  const int k = GENERATE(1, 2, 7);
+  // N = 0 stands for a process without entries; with more than one process, the first one
+  // has none for every N. With m k = 576 pairs, the partial sums on the device are capped
+  // at 2^22 doubles, which limits the slices to fewer than 8192 for N >= 10000.
   const int rank = Mpi::Rank(Mpi::World());
+  const int N0 = GENERATE(0, 1, 7, 64, 513, 1025, 3001, 10000, 70001);
+  const int N = (rank == 0 && Mpi::Size(Mpi::World()) > 1) ? 0 : N0;
+  const int m = GENERATE(0, 1, 3, 8, 64);
+  const int k = GENERATE(1, 2, 7, 9);
   auto fill = [&](Vector &x, double a)
   {
     x.UseDevice(true);
@@ -232,15 +250,21 @@ TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
   }
   std::vector<double> H(m * k, std::numeric_limits<double>::quiet_NaN());
   linalg::LocalDots(X, Yc, H.data());
+  // A reduction afterwards works on every process, with the same number of entries.
+  std::vector<double> H_sum(H);
+  Mpi::GlobalSum(static_cast<int>(H_sum.size()), H_sum.data(), Mpi::World());
+  CHECK(std::all_of(H_sum.begin(), H_sum.end(), [](double h) { return std::isfinite(h); }));
   int mismatch = 0;
   for (int j = 0; j < k; j++)
   {
+    const auto *y = Y[j].HostRead();
     for (int i = 0; i < m; i++)
     {
+      const auto *x = X[i].HostRead();
       double ref = 0.0;
       for (int l = 0; l < N; l++)
       {
-        ref += X[i].HostRead()[l] * Y[j].HostRead()[l];
+        ref += x[l] * y[l];
       }
       mismatch += !(std::abs(H[i + j * m] - ref) <= 1.0e-12 * N);
     }
