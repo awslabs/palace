@@ -130,6 +130,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
     full space in one pass over memory on CPUs, reading each basis vector once.
     [PR 1165](https://github.com/awslabs/palace/pull/1165).
+  - Sped up the offline phase of adaptive driven sweeps and lowered its memory use. Each
+    Gram-Schmidt pass of a new basis vector, and of GMRES with `"CGS"` or `"CGS2"`
+    orthogonalization, computes all inner products in one pass over the basis with one
+    reduction, the projections onto the basis are summed in one reduction per update, and
+    the error estimate no longer stores the full-size solutions.
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.

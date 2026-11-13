@@ -858,17 +858,15 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
     y = 0.0;
-    for (std::size_t j = 0; j < n; j += 2)
+    for (std::size_t j = 0; j < n; j++)
     {
-      if (j + 1 < n)
+      if (c[j].real() != 0.0)
       {
-        AXPBYPCZ(c[j].real(), X[j], c[j + 1].real(), X[j + 1], 1.0, y.Real());
-        AXPBYPCZ(c[j].imag(), X[j], c[j + 1].imag(), X[j + 1], 1.0, y.Imag());
+        y.Real().Add(c[j].real(), X[j]);
       }
-      else
+      if (c[j].imag() != 0.0)
       {
-        AXPY(c[j].real(), X[j], y.Real());
-        AXPY(c[j].imag(), X[j], y.Imag());
+        y.Imag().Add(c[j].imag(), X[j]);
       }
     }
     return;
@@ -876,8 +874,8 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
 
   // On the host, add all terms to one block of y at a time, which stays in cache, so each
   // X[j] is read once and y is written once. The terms are added in the same order as on
-  // the device, which also skips the zero parts of the coefficients. The blocks are
-  // smaller when needed to give every thread one.
+  // the device, skipping the zero parts of the coefficients. The blocks are smaller when
+  // needed to give every thread one.
   const int nt = utils::GetMaxThreads();
   const int B = std::clamp((N + nt - 1) / nt, 64, 1024);
   std::vector<const double *> XP(n);
