@@ -141,6 +141,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     are evaluated from the projections of the port modes, without assembling and projecting
     full-size vectors at each frequency, and the reduced system is assembled and solved once
     per frequency for all excitations.
+  - The reduced system of adaptive driven sweeps is solved with partial-pivoting LU instead
+    of full-pivoting QR, falling back to the QR when the LU solution is not finite or
+    inaccurate.
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
