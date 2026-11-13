@@ -32,6 +32,8 @@
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -859,6 +861,80 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  WithinRel(*metal_oblique_surface_energy, 1.0e-10));
     }
   }
+#endif
+}
+
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Driven reduced postprocessing is refused with a surface response correction",
+    "[postoperator][romoperator][sheetenergy][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // P3-32 (SD-505 (1), SD-606 (2), SD-701 (2)): upstream's reduced-coordinate output path
+  // of the adaptive driven sweep (PostOperator::ConfigureReducedPostprocessing) is built on
+  // the raw PROM's basis; a surface response correction (its gate, corrected energies and
+  // corrected field) is measured on the full field only. With the correction (the
+  // PostOperator holds a SurfaceResponseOperator) the reduced path stays disabled and the
+  // driver's online loop takes MeasureAndPrintAll; without it (and without the interface
+  // dielectric postprocessing, which upstream's guard also excludes) upstream's reduced
+  // path is configured. The driven island problem: a lumped port on the exterior face z =
+  // 0, the island metal in Ground, in both crack forms.
+  const bool legacy_key = GENERATE(true, false);
+  const bool correction = GENERATE(true, false);
+  CAPTURE(legacy_key, correction);
+  const auto mesh_path =
+      WriteSheetMesh(temp.temp_dir, MakeSerialIslandMesh(), "driven-island.mesh");
+  json config = ConvexMaxwellIslandConfig();
+  config["Problem"]["Type"] = "Driven";
+  config["Problem"]["Verbose"] = 0;
+  config["Model"]["Mesh"] = mesh_path.string();
+  if (legacy_key)
+  {
+    config["Model"]["CrackInternalBoundaryElements"] = true;
+  }
+  else
+  {
+    config["Model"].erase("CrackInternalBoundaryElements");
+  }
+  config["Boundaries"]["Ground"]["Attributes"] = {2, 3, 4, 5, 6, 9};
+  config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
+                                         {"Attributes", {1}},
+                                         {"R", 50.0},
+                                         {"Direction", "+X"},
+                                         {"Excitation", 1}}};
+  json solver = {
+      {"Order", 1},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 30.0}}},
+      {"Linear", {{"Type", "Default"}, {"KSPType", "GMRES"}, {"Tol", 1.0e-10}}}};
+  if (correction)
+  {
+    solver["SurfaceResponseCorrection"] = config["Solver"]["SurfaceResponseCorrection"];
+  }
+  else
+  {
+    config["Boundaries"].erase("Postprocessing");
+  }
+  config["Solver"] = solver;
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+  CHECK(iodata.boundaries.cracked_attributes.contains(9) == legacy_key);
+  SpaceOperator space_op(iodata, meshes);
+  RomOperator rom_op(iodata, space_op, 2);
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  linalg::SetRandom(space_op.GetComm(), sample.Real(), 42);
+  linalg::SetRandom(space_op.GetComm(), sample.Imag(), 43);
+  rom_op.UpdatePROM(sample, "reduced_postprocessing_sample");
+  REQUIRE(rom_op.GetReducedDimension() > 0);
+
+  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  CHECK((post_op.GetSurfaceResponseOperator() != nullptr) == correction);
+  post_op.ConfigureReducedPostprocessing(rom_op);
+  CHECK(post_op.HasReducedPostprocessing() == !correction);
 #endif
 }
 
