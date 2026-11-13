@@ -1692,8 +1692,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Recovered flux size mismatch aborts",
 }
 
 TEST_CASE_METHOD(test::SharedTempDir,
-                 "PostOperator FluxRecovery on a mesh without interior sheet faces matches "
-                 "the pre-integration binary",
+                 "FluxRecovery without interior sheet faces matches pre-integration values",
                  "[postoperator][Serial]")
 {
   // Where the recovery space is not broken (no interior sheet face: a mesh without sheets,
