@@ -109,6 +109,10 @@ public:
   // Mutual energy u_i^T K u_j with the full (region + environment) energy operator.
   double MutualEnergy(const Vector &ui, const Vector &uj) const;
 
+  // Mutual energy u_i^T A u_j with the full (region + environment) operator of the solves:
+  // the energy operator and, in magnetostatics, the sheet terms and the regularization.
+  double MutualSystemEnergy(const Vector &ui, const Vector &uj) const;
+
   // Unit Dirichlet lift of a terminal (1 on its true DOFs, 0 elsewhere).
   Vector TerminalLift(int terminal_index) const;
 

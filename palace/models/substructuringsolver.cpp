@@ -1631,6 +1631,15 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
   return mfem::InnerProduct(impl->parent_fes.GetComm(), ui, t);
 }
 
+double SubstructuringSolver::MutualSystemEnergy(const Vector &ui, const Vector &uj) const
+{
+  Vector t(impl->nt), t2(impl->nt);
+  impl->A_region->Mult(uj, t);
+  impl->Aenv().Mult(uj, t2);
+  t += t2;
+  return mfem::InnerProduct(impl->parent_fes.GetComm(), ui, t);
+}
+
 long long int SubstructuringSolver::GlobalTrueVSize() const
 {
   return impl->SolutionSpace().GlobalTrueVSize();
