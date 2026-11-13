@@ -1579,6 +1579,161 @@ SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
   return energies;
 }
 
+std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
+SurfacePostOperator::GetInterfaceCoveragePartition(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<CoveragePartitionClass> &kept_classes,
+    const std::vector<UncoveredPerimeterPortion> &served) const
+{
+  // Per interface the local bins in a fixed order (identical on every rank: the portion
+  // lists are): per kept class its piece groups, the served groups, the remainder and the
+  // within-R total; ONE reduction for all of them.
+  auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  struct InterfaceBins
+  {
+    int idx = 0;
+    std::vector<PartitionedEdgePieces> pieces;  // the kept classes, then the served claims
+    std::vector<std::size_t> offsets;           // each one's first bin
+    std::size_t unclaimed = 0, within = 0;
+  };
+  std::vector<InterfaceBins> bins;
+  std::vector<double> local_energies;
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "The coverage partition requires a matching edge distance!");
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    const double radius = data.edge_distances.back();
+    const double tolerance = kSignatureParameterToleranceOverRadius * radius;
+    auto &interface = bins.emplace_back();
+    interface.idx = idx;
+    auto AddPieces = [&](const std::vector<UncoveredPerimeterPortion> &portions)
+    {
+      interface.pieces.emplace_back(UncoveredEdgeIntervals(tree, portions, tolerance));
+      interface.offsets.push_back(local_energies.size());
+      local_energies.resize(local_energies.size() + interface.pieces.back().groups.size(),
+                            0.0);
+    };
+    for (const auto &kept : kept_classes)
+    {
+      MFEM_VERIFY(kept.portions, "A coverage-partition class requires its portions!");
+      AddPieces(*kept.portions);
+    }
+    AddPieces(served);
+    interface.unclaimed = local_energies.size();
+    local_energies.push_back(0.0);
+    interface.within = local_energies.size();
+    local_energies.push_back(0.0);
+
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    const int quadrature_order = data.ownership_quadrature_order;
+    const std::optional<OwnershipQuadrature> ownership_rules =
+        quadrature_order > 0 ? std::optional<OwnershipQuadrature>(quadrature_order)
+                             : std::nullopt;
+    mfem::Vector point(mesh.SpaceDimension());
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      const auto geometry = h1_fespace.GetBE(be)->GetGeomType();
+      const mfem::IntegrationRule &rule =
+          ownership_rules
+              ? ownership_rules->Get(geometry)
+              : mfem::IntRules.Get(geometry, fem::DefaultIntegrationOrder::Get(*T));
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &ip = rule.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, point);
+        const auto nearest = tree.Nearest(point);
+        const double within =
+            1.0 - EdgeDistanceOutsideWeight(std::sqrt(nearest.distance_squared), radius,
+                                            data.edge_distance_smoothing);
+        if (within <= 0.0)
+        {
+          continue;
+        }
+        // PartitionedEdgeCoefficient's foot test; the first piece list holding the foot
+        // takes the point.
+        const auto &segment = tree.GetSegment(nearest.segment);
+        double length2 = 0.0, projection = 0.0;
+        for (int d = 0; d < point.Size(); d++)
+        {
+          const double chord = segment.p1[d] - segment.p0[d];
+          length2 += chord * chord;
+          projection += (point(d) - segment.p0[d]) * chord;
+        }
+        const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+        std::size_t bin = interface.unclaimed;
+        for (std::size_t list = 0; list < interface.pieces.size(); list++)
+        {
+          const auto found = interface.pieces[list].by_segment.find(nearest.segment);
+          if (found == interface.pieces[list].by_segment.end() || found->second.empty())
+          {
+            continue;
+          }
+          auto piece = std::upper_bound(found->second.begin(), found->second.end(), foot,
+                                        [](double x, const auto &p) { return x < p.a; });
+          if (piece == found->second.begin())
+          {
+            continue;
+          }
+          piece = std::prev(piece);
+          const bool last = std::next(piece) == found->second.end();
+          if (foot >= piece->a && (foot < piece->b || (last && foot == piece->b)))
+          {
+            bin = interface.offsets[list] + piece->group;
+            break;
+          }
+        }
+        const double value = PhysicalQuadratureWeight(*T, ip, axisymmetric) *
+                             (within * coefficient->Eval(*T, ip));
+        local_energies[bin] += value;
+        local_energies[interface.within] += value;
+      }
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  std::map<int, InterfaceCoveragePartition> partitions;
+  for (const auto &interface : bins)
+  {
+    auto &partition = partitions[interface.idx];
+    for (std::size_t list = 0; list < interface.pieces.size(); list++)
+    {
+      const auto &groups = interface.pieces[list].groups;
+      for (std::size_t group = 0; group < groups.size(); group++)
+      {
+        const double energy = local_energies[interface.offsets[list] + group];
+        if (list < kept_classes.size())
+        {
+          partition.classes[{kept_classes[list].name, groups[group]}] += energy;
+        }
+        else
+        {
+          partition.served[groups[group]] += energy;
+        }
+      }
+    }
+    partition.unclaimed = local_energies[interface.unclaimed];
+    partition.within = local_energies[interface.within];
+  }
+  return partitions;
+}
+
 std::map<int, std::map<std::string, double>>
 SurfacePostOperator::GetInterfaceWeightedPortionEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,

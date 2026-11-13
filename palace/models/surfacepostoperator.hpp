@@ -361,6 +361,33 @@ public:
   GetInterfaceUncoveredFeatureEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
+  // Lane L1 (decision 1634 (1), ruling 1641): THE CLOSED COVERAGE PARTITION of one field.
+  // ONE quadrature pass per interface (the rule and weight of
+  // GetInterfaceUncoveredFeatureEdgeEnergies); every within-R point counts in exactly ONE
+  // bin, by the correction's own ownership: first the KEPT-RAW classes in the given order
+  // (the corrected total keeps their raw energy whatever claim lies under them; within a
+  // class the exact piece partition of PartitionedEdgePieces labels a piece by the
+  // ascending '+'-joined labels of the class portions covering it: "m<feature>" tokens for
+  // feature labels), then the SERVED claims (the applied patches' claims by model-set
+  // label), else the unclaimed remainder. `within` is the total of the same pass: per
+  // interface the bins sum to it up to the summation round-off.
+  struct CoveragePartitionClass
+  {
+    std::string name;
+    const std::vector<UncoveredPerimeterPortion> *portions = nullptr;
+  };
+  struct InterfaceCoveragePartition
+  {
+    double within = 0.0;
+    std::map<std::pair<std::string, std::string>, double> classes;  // (class, label)
+    std::map<std::string, double> served;                           // model-set label
+    double unclaimed = 0.0;
+  };
+  std::map<int, InterfaceCoveragePartition>
+  GetInterfaceCoveragePartition(const std::set<int> &indices, const GridFunction &E,
+                                const GridFunction *D,
+                                const std::vector<CoveragePartitionClass> &kept_classes,
+                                const std::vector<UncoveredPerimeterPortion> &served) const;
   // OI-MX-LOOPGATE (decision 955): the within-R energy of each requested interface on the
   // portions, WEIGHTED per portion (`weights`, parallel to `portions`: the patch's rho_p)
   // and grouped by the portions' `type` label (the model row "m<idx>"): per label the

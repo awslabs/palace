@@ -2693,6 +2693,212 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Lane L1 (decision 1634 (1), ruling 1641): THE CLOSED COVERAGE PARTITION on the lead
+// fixture above (one isolated-edge model; two Missing convex corners, 8 portions). With E =
+// -grad V: (a) the bins (the Missing class by feature, the served claims, the remainder)
+// sum to `within` and `within` = the raw interface energy minus its energy outside R; the
+// Missing class's feature bins sum to GetInterfaceUncoveredEdgeEnergies (no claim overlaps
+// them); (b) a served claim laid over the first corner's portions takes nothing from the
+// Missing class (a kept-raw class is binned first, as the corrected total keeps it raw);
+// with no kept class the same claim takes exactly the first corner's Missing energy;
+// (c) a second kept class over the same portions after Missing takes nothing.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage partition bins sum to the within-R energy by ownership order",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "coverage-partition-lead.mesh";
+  const auto basis_path = temp.temp_dir / "coverage-partition-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-coverage-partition-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-coverage-partition-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  const fs::path output_dir = temp.temp_dir / "coverage-partition";
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "Both"}}}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter, missing;
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    missing.push_back(
+        {portion.p0, portion.p1, "m" + std::to_string(portion.feature), portion.feature});
+  }
+  REQUIRE(perimeter.size() == 8);
+  std::set<int> features;
+  for (const auto &portion : perimeter)
+  {
+    features.insert(portion.feature);
+  }
+  REQUIRE(features.size() == 2);
+  const int first = *features.begin();
+
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[1]) + 0.3 * x[2] * x[2]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto BinSum = [](const SurfacePostOperator::InterfaceCoveragePartition &partition)
+  {
+    double sum = partition.unclaimed;
+    for (const auto &[key, energy] : partition.classes)
+    {
+      (void)key;
+      sum += energy;
+    }
+    for (const auto &[label, energy] : partition.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+  const auto by_type =
+      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, perimeter);
+  REQUIRE(by_type.count(4) == 1);
+  const double missing_energy = by_type.at(4).energy;
+  REQUIRE(missing_energy > 0.0);
+
+  // (a) The closed identity and the class identity.
+  const auto plain = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &missing}}, {});
+  REQUIRE(plain.count(4) == 1);
+  const auto &a = plain.at(4);
+  CHECK_THAT(BinSum(a), WithinRel(a.within, 1.0e-12));
+  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+  const double outside =
+      surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
+  CHECK_THAT(a.within, WithinRel(raw - outside, 1.0e-10));
+  double missing_bins = 0.0;
+  for (const auto &[key, energy] : a.classes)
+  {
+    CHECK(key.first == "Missing");
+    missing_bins += energy;
+  }
+  CHECK(a.classes.size() == 2);
+  CHECK(a.classes.count({"Missing", "m" + std::to_string(first)}) == 1);
+  CHECK_THAT(missing_bins, WithinRel(missing_energy, 1.0e-12));
+  CHECK(a.served.empty());
+  CHECK_THAT(a.unclaimed, WithinRel(a.within - missing_energy, 1.0e-12));
+
+  // (b) A served claim over the first corner: the kept class is binned first.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> claim;
+  for (const auto &portion : missing)
+  {
+    if (portion.feature == first)
+    {
+      claim.push_back({portion.p0, portion.p1, "m7", -1});
+    }
+  }
+  const double first_energy = a.classes.at({"Missing", "m" + std::to_string(first)});
+  const auto owned = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &missing}}, claim);
+  const auto &b = owned.at(4);
+  CHECK_THAT(BinSum(b), WithinRel(b.within, 1.0e-12));
+  CHECK(b.classes == a.classes);
+  CHECK(b.served.count("m7") == 1);
+  CHECK(std::abs(b.served.at("m7")) <= 1.0e-14 * b.within);
+  const auto served_only =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim);
+  const auto &s = served_only.at(4);
+  CHECK(s.classes.empty());
+  CHECK_THAT(s.served.at("m7"), WithinRel(first_energy, 1.0e-12));
+  CHECK_THAT(s.served.at("m7") + s.unclaimed, WithinRel(s.within, 1.0e-12));
+
+  // (c) A second kept class over the same portions comes after Missing: it takes nothing.
+  const auto ordered = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &missing}, {"ConductorConsistency", &perimeter}},
+      {});
+  const auto &c = ordered.at(4);
+  CHECK_THAT(BinSum(c), WithinRel(c.within, 1.0e-12));
+  for (const auto &[key, energy] : c.classes)
+  {
+    if (key.first == "ConductorConsistency")
+    {
+      CHECK(std::abs(energy) <= 1.0e-14 * c.within);
+    }
+    else
+    {
+      CHECK(energy == a.classes.at(key));
+    }
+  }
+#endif
+}
+
 // M-5 (decisions 845 O-C / 846): the Maxwell path writes surface-response-model-energy.csv
 // with the electrostatic driver's column set exactly and in order as a strict prefix, then
 // the Maxwell keys "m" / "exc". On the lead fixture above (one isolated-edge model, three
