@@ -844,30 +844,6 @@ Eigen::Index RomOperator::GetExcitationColumn(int excitation_idx) const
   return -1;
 }
 
-void RomOperator::UpdateWavePortBasisRestriction()
-{
-  const auto &wave_port_op = space_op.GetWavePortOp();
-  if (wave_port_op.Size() == 0 || V_wp_dim == V.size())
-  {
-    return;
-  }
-  if (!V_wp_gf)
-  {
-    V_wp_gf = std::make_unique<mfem::ParGridFunction>(&space_op.GetNDSpace().Get());
-  }
-  for (std::size_t j = V_wp_dim; j < V.size(); j++)
-  {
-    V_wp_gf->SetFromTrueDofs(V[j]);
-    for (const auto &[port_idx, port_data] : wave_port_op)
-    {
-      auto &vp = V_wp[port_idx];
-      vp.resize(V.size());
-      port_data.RestrictToPort(*V_wp_gf, vp[j]);
-    }
-  }
-  V_wp_dim = V.size();
-}
-
 void RomOperator::AddWavePortModalCorrection(double omega)
 {
   auto &wave_port_op = space_op.GetWavePortOp();
@@ -877,11 +853,25 @@ void RomOperator::AddWavePortModalCorrection(double omega)
   }
   BlockTimer bt(Timer::WAVE_PORT);
 
-  // Pair the port-restricted basis with the full and the scalar-admittance modal n×H of
-  // every port, in one reduction.
-  UpdateWavePortBasisRestriction();
-  wave_port_op.PrepareFrequency(omega);
+  // Extend the port-restricted basis to the current basis, then pair it with the full and
+  // the scalar-admittance modal n×H of every port, in one reduction.
   const auto n = static_cast<Eigen::Index>(V.size());
+  if (V_wp_dim < V.size())
+  {
+    mfem::ParGridFunction v(&space_op.GetNDSpace().Get());
+    for (std::size_t j = V_wp_dim; j < V.size(); j++)
+    {
+      v.SetFromTrueDofs(V[j]);
+      for (const auto &[port_idx, port_data] : wave_port_op)
+      {
+        auto &vp = V_wp[port_idx];
+        vp.resize(V.size());
+        port_data.RestrictToPort(v, vp[j]);
+      }
+    }
+    V_wp_dim = V.size();
+  }
+  wave_port_op.PrepareFrequency(omega);
   Eigen::MatrixXcd sV(n, 2 * wave_port_op.Size());
   for (Eigen::Index p = 0; const auto &[port_idx, port_data] : wave_port_op)
   {
