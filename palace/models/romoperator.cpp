@@ -386,21 +386,20 @@ std::vector<Eigen::MatrixXd> ProjectSymmetricOperators(MPI_Comm comm,
                                                        const std::vector<Vector> &V,
                                                        std::span<const Operator *const> A)
 {
+  // The lower triangle, one operator at a time, which bounds the temporary storage.
   const auto n = static_cast<Eigen::Index>(V.size());
-  std::vector<Eigen::MatrixXcd> Ar(A.size(), Eigen::MatrixXcd(n, n));
-  BasisProjection proj(V, 0);
-  for (std::size_t t = 0; t < A.size(); t++)
+  std::vector<Eigen::MatrixXd> result;
+  Eigen::MatrixXcd Ar(n, n);
+  for (const auto *At : A)
   {
+    BasisProjection proj(V, 0);
     for (Eigen::Index j = 0; j < n; j++)
     {
-      proj.Add(A[t], V[j], 0, &Ar[t](0, j), false);
+      proj.Add(At, V[j], static_cast<int>(j), &Ar(j, j), false);
     }
-  }
-  proj.Compute(comm);
-  std::vector<Eigen::MatrixXd> result;
-  for (const auto &Ar_t : Ar)
-  {
-    result.push_back(Ar_t.real());
+    proj.Compute(comm);
+    auto &R = result.emplace_back(Ar.real());
+    R.triangularView<Eigen::StrictlyUpper>() = R.transpose().eval();
   }
   return result;
 }
