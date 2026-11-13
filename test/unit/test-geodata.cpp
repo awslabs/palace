@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -240,6 +241,167 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
   CHECK_THAT(normals(1, 1), WithinAbs(ax1[1], 1e-4));
   CHECK_THAT(normals(2, 1), WithinAbs(ax1[2], 1e-4));
   CHECK(box.planar);
+}
+
+TEST_CASE("BoundingBoxContainsAllPoints", "[geodata][Serial]")
+{
+  auto comm = Mpi::World();
+
+  // Check that the box contains every point, touches the point cloud on both sides along
+  // each axis, and spans the point cloud (no point off the axes for planar boxes).
+  auto CheckBox =
+      [](const mesh::BoundingBox &box, const std::vector<Eigen::Vector3d> &vertices)
+  {
+    auto normals = box.Normals();
+    auto lengths = box.Lengths();
+    double scale = 0.0;
+    for (const auto &v : vertices)
+    {
+      scale = std::max(scale, v.norm());
+    }
+    const double tol = 1e-12 * scale;
+    for (int i = 0; i < box.Dim(); i++)
+    {
+      for (int j = 0; j < i; j++)
+      {
+        double dot = 0.0;
+        for (int k = 0; k < 3; k++)
+        {
+          dot += normals(k, i) * normals(k, j);
+        }
+        CHECK_THAT(dot, WithinAbs(0.0, 1e-12));
+      }
+    }
+    std::vector<double> d_min(box.Dim(), mfem::infinity()),
+        d_max(box.Dim(), -mfem::infinity());
+    for (const auto &v : vertices)
+    {
+      Eigen::Vector3d r = v;
+      for (int k = 0; k < 3; k++)
+      {
+        r(k) -= box.center[k];
+      }
+      for (int i = 0; i < box.Dim(); i++)
+      {
+        double d = 0.0;
+        for (int k = 0; k < 3; k++)
+        {
+          d += (v(k) - box.center[k]) * normals(k, i);
+        }
+        CHECK(std::abs(d) <= 0.5 * lengths[i] + tol);
+        d_min[i] = std::min(d_min[i], d);
+        d_max[i] = std::max(d_max[i], d);
+        for (int k = 0; k < 3; k++)
+        {
+          r(k) -= d * normals(k, i);
+        }
+      }
+      CHECK(r.norm() <= tol);
+    }
+    for (int i = 0; i < box.Dim(); i++)
+    {
+      if (lengths[i] > 0.0)
+      {
+        CHECK_THAT(d_min[i], WithinAbs(-0.5 * lengths[i], tol));
+        CHECK_THAT(d_max[i], WithinAbs(0.5 * lengths[i], tol));
+      }
+    }
+  };
+
+  // A 10 x 55.4 rectangle whose top edge bulges past the corners by up to 0.15.
+  const std::vector<Eigen::Vector3d> bulged_rectangle{
+      {830.0, 550.85, 199.0}, {840.0, 550.85, 199.0},        {840.0, 606.25, 199.0},
+      {830.0, 606.25, 199.0}, {838.33333333, 606.35, 199.0}, {837.5, 606.4, 199.0},
+      {832.5, 606.4, 199.0},  {831.66666667, 606.35, 199.0}, {835.0, 580.0, 199.0},
+      {832.0, 560.0, 199.0}};
+
+  SECTION("Rectangle with a bulging edge")
+  {
+    auto box = mesh::BoundingBoxFromPointCloud(comm, bulged_rectangle, 0);
+    CHECK(box.planar);
+    auto lengths = box.Lengths();
+    CHECK_THAT(lengths[0], WithinRel(606.4 - 550.85, 1e-12));
+    CHECK_THAT(lengths[1], WithinRel(10.0, 1e-12));
+    CHECK_THAT(lengths[2], WithinAbs(0.0, 1e-12));
+    CHECK_THAT(box.center[0], WithinRel(835.0, 1e-12));
+    CHECK_THAT(box.center[1], WithinRel(0.5 * (550.85 + 606.4), 1e-12));
+    CHECK_THAT(box.center[2], WithinRel(199.0, 1e-12));
+    CheckBox(box, bulged_rectangle);
+  }
+
+  SECTION("Rotated rectangle with a bulging edge")
+  {
+    // The same rectangle, rotated out of the coordinate axes.
+    const Eigen::Matrix3d R = (Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()) *
+                               Eigen::AngleAxisd(0.7, Eigen::Vector3d::UnitX()))
+                                  .toRotationMatrix();
+    std::vector<Eigen::Vector3d> vertices;
+    for (const auto &v : bulged_rectangle)
+    {
+      vertices.push_back(R * v);
+    }
+    auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
+    CHECK(box.planar);
+    auto lengths = box.Lengths();
+    CHECK_THAT(lengths[0], WithinRel(606.4 - 550.85, 1e-10));
+    CHECK_THAT(lengths[1], WithinRel(10.0, 1e-10));
+    CheckBox(box, vertices);
+  }
+
+  SECTION("Trapezoid whose extremal edges are not perpendicular")
+  {
+    std::vector<Eigen::Vector3d> vertices{{0.0, 0.0, 0.0},
+                                          {10.0, 0.0, 0.0},
+                                          {11.0, 3.0, 0.0},
+                                          {2.0, 3.5, 0.0},
+                                          {5.0, 1.0, 0.0}};
+    auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
+    CHECK(box.planar);
+    CheckBox(box, vertices);
+  }
+
+  SECTION("Cuboid with a bulging face")
+  {
+    std::vector<Eigen::Vector3d> vertices;
+    for (double x : {0.0, 10.0})
+    {
+      for (double y : {0.0, 4.0})
+      {
+        for (double z : {0.0, 2.0})
+        {
+          vertices.emplace_back(x, y, z);
+        }
+      }
+    }
+    vertices.emplace_back(5.0, 2.0, 2.1);
+    auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
+    CHECK(!box.planar);
+    auto lengths = box.Lengths();
+    CHECK_THAT(lengths[0], WithinRel(10.0, 1e-12));
+    CHECK_THAT(lengths[1], WithinRel(4.0, 1e-12));
+    CHECK_THAT(lengths[2], WithinRel(2.1, 1e-12));
+    CHECK_THAT(box.center[0], WithinRel(5.0, 1e-12));
+    CHECK_THAT(box.center[1], WithinRel(2.0, 1e-12));
+    CHECK_THAT(box.center[2], WithinRel(1.05, 1e-12));
+    CheckBox(box, vertices);
+  }
+
+  SECTION("Exact rectangle is unchanged")
+  {
+    std::vector<Eigen::Vector3d> vertices{{0.0, 0.0, 0.0},
+                                          {3.0, 0.0, 0.0},
+                                          {3.0, 1.0, 0.0},
+                                          {0.0, 1.0, 0.0},
+                                          {1.5, 0.5, 0.0}};
+    auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
+    CHECK(box.planar);
+    auto lengths = box.Lengths();
+    CHECK_THAT(lengths[0], WithinRel(3.0, 1e-12));
+    CHECK_THAT(lengths[1], WithinRel(1.0, 1e-12));
+    CHECK_THAT(box.center[0], WithinRel(1.5, 1e-12));
+    CHECK_THAT(box.center[1], WithinRel(0.5, 1e-12));
+    CheckBox(box, vertices);
+  }
 }
 
 TEST_CASE("TetToHex", "[geodata][Serial]")

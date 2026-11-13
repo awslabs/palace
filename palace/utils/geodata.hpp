@@ -181,10 +181,9 @@ struct BoundingBox
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers. These do not need
-// to be axis-aligned. Note: This function only returns a minimum oriented bounding box for
-// points whose convex hull exactly forms a rectangle or rectangular prism, implementing a
-// vastly simplified version of QuickHull for this case. For other shapes, the result is
-// less predictable, and may not even form a bounding box of the sampled point cloud.
+// to be axis-aligned. The box always contains the sampled point cloud, but its axes come
+// from a few extremal points: it is the minimum oriented bounding box only for points whose
+// convex hull is a rectangle or rectangular prism.
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr);
 

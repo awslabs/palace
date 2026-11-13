@@ -151,6 +151,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed lumped ports aborting at setup with "Bounding box discovered length ... should
+    match projected length" when the port is not exactly rectangular.
+    [PR 1194](https://github.com/awslabs/palace/pull/1194).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
