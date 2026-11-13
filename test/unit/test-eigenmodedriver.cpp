@@ -472,6 +472,9 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "Debye ABC2: current full operator at the historical reference",
                  "[debyereference][Serial]")
 {
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires the SLEPc eigensolver");
+#endif
   using namespace std::complex_literals;
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   test::IntegrationSettingsGuard settings_guard;
@@ -972,6 +975,9 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "Debye ABC2: lowest four from the complete constant-material spectrum",
                  "[debyeoracle][Serial]")
 {
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires the SLEPc eigensolver");
+#endif
   CheckFixedBoxSpectrumLowestFour(temp_dir, FixedBoxSpectrumFixture::Debye);
 }
 
@@ -979,6 +985,9 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "Lorentz ABC2: lowest four from the complete constant-material spectrum",
                  "[lorentzoracle][Serial]")
 {
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires the SLEPc eigensolver");
+#endif
   CheckFixedBoxSpectrumLowestFour(temp_dir, FixedBoxSpectrumFixture::Lorentz);
 }
 
@@ -986,6 +995,9 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "Surface conductivity: lowest four from the complete skin-effect spectrum",
                  "[conductivityoracle][Serial]")
 {
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires the SLEPc eigensolver");
+#endif
   CheckFixedBoxSpectrumLowestFour(temp_dir, FixedBoxSpectrumFixture::Conductivity);
 }
 
