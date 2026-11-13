@@ -13687,8 +13687,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // measured on the initial mesh's own face normals, every other column at 1e-12; (b1) and
   // (b2) have the same identification and patch table outside the Axis columns. That bound
   // is the angle between the two copies (|n_a + n_b| = 2 x each copy's tilt from the sheet
-  // plane, 4.10586e-12 here), the worst case for two frames tilted to opposite sides; ruling
-  // 1615 names the per-copy tilt (P3-C review m-3: put to the supervisor by the P3 lead).
+  // plane, 4.10586e-12 here), the worst case for two frames tilted to opposite sides;
+  // ruling 1615 names the per-copy tilt (P3-C review m-3: put to the supervisor by the P3
+  // lead).
   {
     const fs::path mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
     struct CpwComparison
