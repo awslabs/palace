@@ -62,6 +62,21 @@ set -o noclobber \
 RUN cd {{ paths.environment }} && spack env activate . && \
     spack compiler find
 
+# The target pin is only a preference, so an unknown target (e.g. a broken
+# archspec extension) silently falls back to an older one. Fail instead.
+# TODO: Remove, together with the archspec extension, once Palace moves to a
+# Spack release after v1.2.2 whose vendored archspec includes neoverse_v3.
+ARG PALACE_TARGET
+RUN if [ -n "$PALACE_TARGET" ]; then \
+      cd {{ paths.environment }} && spack env activate . && \
+      spack concretize && \
+      target="$(spack find -c --format '{architecture.target}' palace)" && \
+      if [ "$target" != "$PALACE_TARGET" ]; then \
+        echo "palace concretized to target=$target, expected $PALACE_TARGET" >&2; \
+        exit 1; \
+      fi; \
+    fi
+
 # Keep dependency installation before `COPY .` so Palace source changes can
 # reuse this layer. If installation fails partway through, save the exit status,
 # push every dependency that did install, perform the usual cleanup, and then

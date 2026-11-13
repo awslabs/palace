@@ -165,6 +165,7 @@ runs:
         CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
         CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+        PALACE_TARGET: ${{ inputs.target }}
         SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
         source /tmp/timing_functions.sh
@@ -185,6 +186,7 @@ runs:
             --secret "id=github_user,src=$GITHUB_USER_FILE" \
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
             --build-arg "PALACE_CUDA=$PALACE_CUDA" \
+            --build-arg "PALACE_TARGET=$PALACE_TARGET" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             --build-arg "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" \
             -t "$IMAGE_NAME" .
