@@ -90,16 +90,18 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
   {
     mfem::Vector v(vals.data(), npts * vdim);
     op.Interpolate(U, v);
+    v.HostRead();
   }
   else
   {
     mfem::Vector v(npts * vdim);
     op.Interpolate(U, v);
+    const double *v_host = v.HostRead();
     for (int d = 0; d < vdim; d++)
     {
       for (int i = 0; i < npts; i++)
       {
-        vals[i * vdim + d] = v(d * npts + i);
+        vals[i * vdim + d] = v_host[d * npts + i];
       }
     }
   }
