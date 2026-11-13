@@ -236,6 +236,20 @@ rejected, and every face must face its direction. For example:
           "Center": [[0, 0, -1], [0, 0, 1]] }]
 ```
 
+The figure shows cross-sections of the layers of some of these cases, with their entry under
+each: (a) a sphere, extruded along the rays from its center; (b) the end of a waveguide and
+(c) both ends of a pipe, flat parts extruded along their normals; a cube (d) extruded from
+its center, (e) from a box inside of it, with straight columns over the box and fans at its
+edges and corners, and (f) with a cuboid on each face; (g) the top of a Floquet cell, with
+the periodic boundaries through the layer; and (h) a patch antenna,
+extruded from a segment through the substrate on the ground plane.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/pml-extrusion.svg" width="100%" />
+</p><br/>
+```
+
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
 layer. The outer boundary of the layer is PEC, unless a boundary condition is given for its

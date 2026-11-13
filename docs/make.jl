@@ -66,6 +66,10 @@ generate_schema_compatibility_table()
 include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
 generate_coaxial_schematic()
 
+# Draw the diagrams of the extruded PML used by guide/boundaries.md.
+include(joinpath(@__DIR__, "generate_pml_diagrams.jl"))
+generate_pml_diagrams()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
