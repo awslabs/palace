@@ -10,12 +10,15 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -29,7 +32,10 @@
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponseoperator.hpp"
+#include "surfaceresponse-fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -281,6 +287,118 @@ double Sum(const std::map<std::string, double> &energies)
   }
   return sum;
 }
+
+// The forms of an impedance-type metal sheet (Impedance, RationalImpedance, Conductivity)
+// in the integration (USER 1566 (3); SD-000): the legacy key cracks it and splits an
+// impedance between the two faces of the crack (twice the impedance on each face); the new
+// default cracks it only with the per-boundary "Crack" true (two faces, the given impedance
+// on each) and keeps it as one uncracked sheet with "Crack" false.
+enum class MetalCrackForm
+{
+  LegacyKey,
+  CrackTrue,
+  CrackFalse
+};
+
+const char *MetalCrackFormName(MetalCrackForm form)
+{
+  switch (form)
+  {
+    case MetalCrackForm::LegacyKey:
+      return "legacy-key";
+    case MetalCrackForm::CrackTrue:
+      return "crack-true";
+    case MetalCrackForm::CrackFalse:
+      return "crack-false";
+  }
+  return "";
+}
+
+// The boundary law (library "BoundaryCondition" form) of an impedance-type metal in a crack
+// form, from its legacy-key law: the Crack-true form describes the same faces with twice
+// the impedance (2 Rs, 2 Ls, Cs / 2; a rational impedance's numerator times two), as the
+// legacy key splits it; a Conductivity is never split; the Crack-false form (one thin film)
+// keeps the numbers.
+json CrackFormLaw(const json &legacy_law, MetalCrackForm form)
+{
+  json law = legacy_law;
+  if (form != MetalCrackForm::CrackTrue)
+  {
+    return law;
+  }
+  const auto type = law.at("Type").get<std::string>();
+  if (type == "Impedance")
+  {
+    for (const auto *key : {"Rs", "Ls"})
+    {
+      if (law.contains(key))
+      {
+        law[key] = 2.0 * law[key].get<double>();
+      }
+    }
+    if (law.contains("Cs"))
+    {
+      law["Cs"] = 0.5 * law["Cs"].get<double>();
+    }
+  }
+  else if (type == "RationalImpedance")
+  {
+    for (auto &coefficient : law["Numerator"])
+    {
+      coefficient = 2.0 * coefficient.get<double>();
+    }
+  }
+  return law;
+}
+
+// The placed patches of a response operator (the global list, held by the root) as
+// order-free signatures: the model name, the origin and frame axes (to 1e-7 mesh units) and
+// the weight (7 digits).
+std::multiset<std::string> PatchSignatures(const SurfaceResponseOperator &response)
+{
+  const auto names = response.GetModelNames();
+  std::multiset<std::string> signatures;
+  for (const auto &patch : response.GetPatchAssignments())
+  {
+    std::string signature = names.at(patch.model);
+    for (const auto *vector : {&patch.origin, &patch.axis_u, &patch.axis_v, &patch.axis_w})
+    {
+      for (const double x : *vector)
+      {
+        signature += "," + std::to_string(std::llround(x * 1.0e7));
+      }
+    }
+    char weight[32];
+    std::snprintf(weight, sizeof(weight), ",%.6e", patch.weight);
+    signatures.insert(signature + weight);
+  }
+  return signatures;
+}
+
+// A Maxwell surface response problem read from its configuration: the mesh loaded with the
+// crack form of the configuration by mesh::ReadMesh, the space operator and the response.
+struct MaxwellIslandResponse
+{
+  IoData iodata;
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  std::unique_ptr<SpaceOperator> space_op;
+  std::unique_ptr<SurfaceResponseOperator> response;
+
+  explicit MaxwellIslandResponse(const json &config) : iodata(config, false)
+  {
+    meshes.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    space_op = std::make_unique<SpaceOperator>(iodata, meshes);
+    response = std::make_unique<SurfaceResponseOperator>(iodata, *space_op);
+  }
+
+  auto ConstantFieldResponse(mfem::VectorCoefficient &field_coefficient) const
+  {
+    GridFunction field(space_op->GetNDSpace(), true);
+    field.Real().ProjectCoefficient(field_coefficient);
+    field.Imag() = 0.0;
+    return response->GetMaxwellResponse(field, 0.0);
+  }
+};
 
 }  // namespace
 
@@ -601,6 +719,147 @@ TEST_CASE("Batched interface response refuses a two-qualifying-side sheet",
           ContainsSubstring(refusal));
     }
   }
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator identification on impedance-type metals in every "
+                 "crack form",
+                 "[surfaceresponseoperator][sheetenergy][maxwell][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // P3-30 (USER 1566 (3): per-boundary cracking of impedance-type metals; R4 T2 / T6): the
+  // island metal of the Maxwell island problem as an Impedance, a RationalImpedance or a
+  // Conductivity boundary, under the legacy key (cracked, the impedance split), the new
+  // default with "Crack" true (cracked) and with "Crack" false (uncracked), loaded by
+  // mesh::ReadMesh. The library is the convex PEC library with every model re-keyed to the
+  // metal's own law: a test device (decision 1610), as a PEC-built library matches no model
+  // on an impedance-type metal (OI-LIBRARY-KEYED-BY-METAL-BOUNDARY-LAW). In every form the
+  // identification places the same patches as the PEC-equivalent (the island in Ground,
+  // the PEC library) order-free, and the response runs with every edge matched (no refusal:
+  // UnmatchedPolicy Error) and the law verified. The corrected values of a field normal to
+  // the metal equal the PEC-equivalent's; those of an oblique field (whose tangential trace
+  // on the metal enters an impedance-type island, not a PEC one) are the same in every type
+  // and form. Whether PEC-built models are valid on impedance-type metals is not tested
+  // here (OI-CORRECTION-VALIDATED-ON-PEC-METALS-ONLY).
+  constexpr int metal_attr = 9;  // the island of MakeSerialIslandMesh
+  const auto mesh_path =
+      WriteSheetMesh(temp.temp_dir, MakeSerialIslandMesh(), "island.mesh");
+  auto PecIslandConfig = [&](bool legacy_key)
+  {
+    json config = ConvexMaxwellIslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    if (legacy_key)
+    {
+      config["Model"]["CrackInternalBoundaryElements"] = true;
+    }
+    else
+    {
+      config["Model"].erase("CrackInternalBoundaryElements");
+    }
+    return config;
+  };
+  MaxwellIslandResponse pec_cracked(PecIslandConfig(true));
+  MaxwellIslandResponse pec_uncracked(PecIslandConfig(false));
+  REQUIRE(pec_cracked.iodata.boundaries.cracked_attributes.contains(metal_attr));
+  REQUIRE(!pec_uncracked.iodata.boundaries.cracked_attributes.contains(metal_attr));
+  REQUIRE(pec_cracked.response->GetPatchCount() > 0);
+  const auto pec_patches = PatchSignatures(*pec_cracked.response);
+  CHECK(PatchSignatures(*pec_uncracked.response) == pec_patches);
+  auto field_coefficient = ConstantFieldCoefficient();
+  const auto pec_cracked_result = pec_cracked.ConstantFieldResponse(field_coefficient);
+  const auto pec_uncracked_result = pec_uncracked.ConstantFieldResponse(field_coefficient);
+  mfem::Vector normal_value(3);
+  normal_value = 0.0;
+  normal_value[1] = -0.4;
+  mfem::VectorConstantCoefficient normal_coefficient(normal_value);
+  const auto pec_cracked_normal = pec_cracked.ConstantFieldResponse(normal_coefficient);
+  const auto pec_uncracked_normal = pec_uncracked.ConstantFieldResponse(normal_coefficient);
+  // The response of the oblique field depends on the boundary type through its tangential
+  // trace on the metal (essential on a PEC island only); that of a field normal to the
+  // metal does not. Both are independent of the crack form.
+  for (const auto &[cracked_result, uncracked_result] :
+       {std::pair{&pec_cracked_result, &pec_uncracked_result},
+        std::pair{&pec_cracked_normal, &pec_uncracked_normal}})
+  {
+    CHECK_THAT(uncracked_result->domain_correction,
+               WithinRel(cracked_result->domain_correction, 1.0e-10));
+    CHECK_THAT(uncracked_result->fabricated_surface_energy.at(4),
+               WithinRel(cracked_result->fabricated_surface_energy.at(4), 1.0e-10));
+  }
+  std::optional<double> metal_oblique_correction, metal_oblique_surface_energy;
+
+  for (const json *legacy_law :
+       {&impedance_law, &rational_impedance_law, &conductivity_law})
+  {
+    for (const auto form :
+         {MetalCrackForm::LegacyKey, MetalCrackForm::CrackTrue, MetalCrackForm::CrackFalse})
+    {
+      const json law = CrackFormLaw(*legacy_law, form);
+      const auto type = law.at("Type").get<std::string>();
+      const std::string label = type + "-" + MetalCrackFormName(form);
+      INFO(label << " " << law.dump());
+      const auto library_path = temp.temp_dir / ("convex-" + label + ".json");
+      if (Mpi::Root(Mpi::World()))
+      {
+        std::ifstream input(convex_library_3d_path);
+        json library = json::parse(input);
+        library["Name"] = "unit-test-process-convex-3d-" + label;
+        for (auto &model : library["Models"])
+        {
+          model["BoundaryCondition"] = law;
+        }
+        std::ofstream output(library_path);
+        output << library.dump(2) << "\n";
+      }
+      Mpi::Barrier(Mpi::World());
+      json config = PecIslandConfig(form == MetalCrackForm::LegacyKey);
+      config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+      json entry = law;
+      entry.erase("Type");
+      entry["Attributes"] = json::array({metal_attr});
+      if (form != MetalCrackForm::LegacyKey)
+      {
+        entry["Crack"] = (form == MetalCrackForm::CrackTrue);
+      }
+      config["Boundaries"][type] = json::array({entry});
+      config["Solver"]["SurfaceResponseCorrection"]["Library"] = library_path.string();
+      MaxwellIslandResponse metal(config);
+
+      // The mesh form, and the split of the impedance under the legacy key only.
+      const bool cracked = (form != MetalCrackForm::CrackFalse);
+      CHECK(metal.iodata.boundaries.cracked_attributes.contains(metal_attr) == cracked);
+      CHECK(metal.iodata.boundaries.split_impedance_attributes.contains(metal_attr) ==
+            (form == MetalCrackForm::LegacyKey));
+
+      // The identification of the PEC-equivalent, order-free; every edge matched and the
+      // law verified.
+      CHECK(PatchSignatures(*metal.response) == pec_patches);
+      const auto result = metal.ConstantFieldResponse(field_coefficient);
+      CHECK_THAT(result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+      CHECK(result.boundary_law_verified);
+      CHECK(result.loop_residual < 1.0e-10);
+
+      // The corrected values: for the field normal to the metal those of the
+      // PEC-equivalent; for the oblique field the same in every type and form.
+      const auto normal = metal.ConstantFieldResponse(normal_coefficient);
+      CHECK_THAT(normal.domain_correction,
+                 WithinRel(pec_cracked_normal.domain_correction, 1.0e-10));
+      CHECK_THAT(normal.fabricated_surface_energy.at(4),
+                 WithinRel(pec_cracked_normal.fabricated_surface_energy.at(4), 1.0e-10));
+      if (!metal_oblique_correction)
+      {
+        metal_oblique_correction = result.domain_correction;
+        metal_oblique_surface_energy = result.fabricated_surface_energy.at(4);
+      }
+      CHECK(*metal_oblique_correction > 0.0);
+      CHECK_THAT(result.domain_correction, WithinRel(*metal_oblique_correction, 1.0e-10));
+      CHECK_THAT(result.fabricated_surface_energy.at(4),
+                 WithinRel(*metal_oblique_surface_energy, 1.0e-10));
+    }
+  }
+#endif
 }
 
 }  // namespace palace
