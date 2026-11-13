@@ -218,8 +218,11 @@ protected:
   // Vᵀs_full of every port at the frequency of the last SolvePROM.
   std::map<int, std::vector<Vector>> V_wp;
   std::size_t V_wp_dim = 0;
-  std::unique_ptr<mfem::ParGridFunction> V_wp_gf;
   std::map<int, Eigen::VectorXcd> sV_wp_full;
+
+  // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the pairings of the basis
+  // with the mode of every wave port at ω.
+  void AddWavePortModalCorrection(double omega);
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
@@ -487,13 +490,6 @@ public:
   {
     return mri.at(excitation_idx).GetSamplePoints();
   }
-
-  // Extend the port-restricted basis V_wp to the current basis size.
-  void UpdateWavePortBasisRestriction();
-
-  // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the pairings of the basis
-  // with the mode of every wave port at ω.
-  void AddWavePortModalCorrection(double omega);
 
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
