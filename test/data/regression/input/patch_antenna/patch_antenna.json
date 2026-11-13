@@ -1,0 +1,75 @@
+{
+  // The patch antenna of examples/patch_antenna/patch_antenna.json, with the second-order
+  // absorbing boundary, at four frequencies: below the first resonance, at the first and
+  // the second, and at the fourth.
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/patch_antenna",
+    "OutputFormats": {
+      "Paraview": false
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/patch_antenna.msh",
+    "L0": 1.0e-3
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.2
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [3, 4]
+    },
+    "WavePort": [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Mode": 1,
+        "Offset": 16.0,
+        "Excitation": true
+      }
+    ],
+    "WavePortPEC": {
+      "Attributes": [6]
+    },
+    "Absorbing": {
+      "Attributes": [6, 7],
+      "Order": 2
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "Samples": [
+        {
+          "Type": "Point",
+          "Freq": [6.0, 7.5, 10.0, 14.5],  // GHz
+          "SaveStep": 0
+        }
+      ]
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200,
+      // The box is two wavelengths across at 20 GHz, where the complex coarse solve needs
+      // far fewer iterations
+      "ComplexCoarseSolve": true,
+      "EstimatorTol": 1.0e-2
+    }
+  }
+}

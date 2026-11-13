@@ -111,6 +111,7 @@ makedocs(
             "examples/spheres.md",
             "examples/rings.md",
             "examples/antenna.md",
+            "examples/patch_antenna.md",
             "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",

@@ -2456,6 +2456,34 @@ TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_oblique", "oblique_45_tm_adaptive", "port-floquet-S.csv", -70.0);
 }
 
+// The microstrip patch antenna of examples/patch_antenna at 6, 7.5, 10 and 14.5 GHz, whose
+// substrate and ground plane run through the open faces of the box: with the second-order
+// absorbing boundary, and (without 6 GHz) with the PML extruded from the open faces as one
+// closed layer from a segment through the substrate, which ends flush with the ground plane
+// and the port face (the absorbing boundary continues across its ends). At 7.5 GHz, near
+// the first resonance, |S11| is -17.8 dB with the absorbing boundary and -19.9 dB with the
+// PML.
+void RunPatchAntennaCase(const std::string &config)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("patch_antenna", config + ".json", config, opts);
+}
+
+TEST_CASE("patch_antenna", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPatchAntennaCase("patch_antenna");
+}
+
+TEST_CASE("patch_antenna_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPatchAntennaCase("patch_antenna_pml");
+}
+
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all four ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")

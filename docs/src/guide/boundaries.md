@@ -226,7 +226,7 @@ rejected, and every face must face its direction. For example:
 // A patch antenna in a box with the PML on its top, its two sides, and its back: the core
 // is on the port face and on the ground plane, as a segment through the substrate, so that
 // the layer ends flush with both and the substrate stays flat.
-"PML": [{ "Attributes": [7], "Thickness": 6.0, "Layers": 4,
+"PML": [{ "Attributes": [7], "Thickness": 4.0, "Layers": 4,
           "Center": [[0, 0, 0], [0, 0, 0.794]] }]
 
 // A closed cylinder has its caps along their normals, and its wall along the rays from
@@ -241,14 +241,20 @@ each: (a) a sphere, extruded along the rays from its center; (b) the end of a wa
 (c) both ends of a pipe, flat parts extruded along their normals; a cube (d) extruded from
 its center, (e) from a box inside of it, with straight columns over the box and fans at its
 edges and corners, and (f) with a cuboid on each face; (g) the top of a Floquet cell, with
-the periodic boundaries through the layer; and (h) a patch antenna,
-extruded from a segment through the substrate on the ground plane.
+the periodic boundaries through the layer; and (h) the
+[patch antenna example](../examples/patch_antenna.md), extruded from a segment through the
+substrate on the ground plane.
 
 ```@raw html
 <br/><p align="center">
   <img src="../../assets/examples/pml-extrusion.svg" width="100%" />
 </p><br/>
 ```
+
+In the edge and corner regions of a box, the layer is made of the columns of the boundary
+elements next to the edges, which are as wide as these elements: refine the mesh along the
+edges between the faces with a PML to about the element size of the layer, `"Thickness"` /
+`"Layers"`, as in the [patch antenna example](../examples/patch_antenna.md#Truncation).
 
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
