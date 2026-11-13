@@ -280,13 +280,33 @@ participation ratios, relative to the energy of the physical region, can exceed 
 PML can cause convergence difficulties in iterative linear solvers. By default,
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve of the
-PML regions, which restores the convergence of the multigrid preconditioner without PML.
-Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
-STRUMPACK, or MUMPS) and AMS is not supported with PML regions. The static pivoting of
-SuperLU_DIST can be unstable for the indefinite matrix of the PML regions, so the accuracy
-of its factorization is checked: an inaccurate factorization is repeated with tiny pivot
-replacement and iterative refinement, and a warning suggests STRUMPACK or MUMPS if it is
-still inaccurate.
+PML regions. The coarse-level solve uses the real-valued approximation of the operator,
+in which the PML terms are those of the magnitudes of the stretch factors, unless the
+complex-valued coarse solve is enabled. For domains several wavelengths across, such as the
+air region around a radiating antenna, the complex-valued coarse solve
+([`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear-complexcoarsesolve))
+is recommended: the number of iterations with the real-valued coarse solve grows quickly
+with the size of the domain, for example 150 against 26 for the half-wave dipole antenna
+with an extruded PML, three wavelengths across, and 188 against 7 for a box 3.6
+wavelengths across with a PML on all faces. On domains under about one wavelength across,
+the complex-valued coarse solve does not reduce the number of iterations, and its
+coarse-level factorization needs more memory. Simulations with PML regions therefore
+require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not
+supported with PML regions. The static pivoting of SuperLU_DIST can be unstable for the
+indefinite matrix of the PML regions, so the accuracy of its factorization is checked: an
+inaccurate factorization is repeated with tiny pivot replacement and iterative refinement,
+and a warning suggests STRUMPACK or MUMPS if it is still inaccurate.
+
+The sparse direct solve of the PML regions dominates the cost of the simulation when they
+hold a large fraction of the unknowns, and its share grows with the number of PML elements:
+for a box of 1.15 million unknowns, half of which are in a PML of 4 elements on all faces,
+on 16 processes and with the complex-valued coarse solve, it takes 34 s of the 50 s of the
+simulation and 26 GB of its 43 GB of memory. This is 4.6 times the time and 3.6 times the
+memory of the same mesh with a first-order absorbing boundary (11 s and 12 GB), but less
+than a sparse direct solve of the whole system: for a box of 546,000 unknowns, 81% of which
+are in the PML, 38 s and 35 GB, against 77 s and 57 GB. PML regions are therefore best
+limited to the faces through which waves leave the domain, with few elements across the
+layer.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
