@@ -748,13 +748,14 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
   y2.UseDevice(true);
 }
 
-void SlepcPEPLinearSolver::AddPoleTerms(const ComplexOperator &B,
-                                        const std::vector<std::complex<double>> &poles,
-                                        const std::vector<std::complex<double>> &coeffs)
+void SlepcPEPLinearSolver::AddRationalTerm(
+    const ComplexOperator &B, const std::array<std::complex<double>, 3> &poly,
+    const std::vector<std::complex<double>> &poles,
+    const std::vector<std::complex<double>> &residues)
 {
   MFEM_VERIFY(!opK, "The rational terms of SlepcPEPLinearSolver must be added before its "
                     "problem (SetOperators)!");
-  rational.Add(B, poles, coeffs);
+  rational.Add(GetComm(), B, poly, poles, residues);
   for (std::size_t j = 0; j < poles.size(); j++)
   {
     xa.emplace_back(B.Height()).UseDevice(true);
@@ -896,16 +897,14 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
                                                 ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || T(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
-  // eigenvalue λ, with every rational term (Σⱼ cⱼ λ² / (λ - pⱼ)) B x.
+  // eigenvalue λ, with every rational term f(λ) B x.
   opK->Mult(x, r);
   if (opC)
   {
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  rational.AddMult(
-      x, [l](std::complex<double> c, std::complex<double> p)
-      { return c * l * l / (l - p); }, r);
+  rational.AddMult(x, [this, l](std::size_t t) { return rational.Value(t, l); }, r);
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -1761,15 +1760,18 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
 {
   // Apply the linearized operator L₀ = [  0  I ]
   //                                    [ -K -C ] ,
-  // or with rational terms (auxiliary blocks uⱼ = wⱼ / γ, scaled poles qⱼ = pⱼ / γ):
-  //                               L₀ = [  0  I   0     ]
-  //                                    [ -K -C  -cⱼ Bⱼ ]
-  //                                    [  0  0   qⱼ I  ] .
+  // or with rational terms f(λ) B, f(λ) = d₀ + d₁ λ + d₂ λ² + Σⱼ cⱼ / (λ - pⱼ) (auxiliary
+  // blocks wⱼ, scaled poles qⱼ = pⱼ / γ, κ = σ² / γ):
+  //                               L₀ = [  0                  I            0           ]
+  //                                    [ -K - d₀ B          -C - d₁ B    -cⱼ β / κ I  ]
+  //                                    [ κ / γ B / β         0            qⱼ I        ] .
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2, &ctx->xa));
+  const auto &rational = ctx->rational;
+  const std::complex<double> sigma = ctx->sigma, gamma = ctx->gamma;
   ctx->y1 = ctx->x2;
   if (ctx->opC)
   {
@@ -1779,16 +1781,17 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   {
     ctx->y2 = 0.0;
   }
-  ctx->rational.AddMult(
-      ctx->xa, [](std::complex<double> c, std::complex<double>) { return c; }, ctx->y2);
+  rational.AddMult(ctx->x2, [&](std::size_t t) { return rational.Poly(t, 1); }, ctx->y2);
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  rational.AddMult(ctx->x1, [&](std::size_t t) { return rational.Poly(t, 0); }, ctx->y2);
+  const std::complex<double> kappa = sigma * sigma / gamma;
+  rational.AddAuxiliary(
+      ctx->xa, [&](std::size_t k) { return rational.Residue(k) / kappa; }, ctx->y2);
   ctx->y2 *= -ctx->delta;
-  for (std::size_t k = 0; k < ctx->xa.size(); k++)
-  {
-    ctx->ya[k].AXPBY(ctx->rational.Pole(k) / ctx->gamma, ctx->xa[k], 0.0);
-  }
-  ctx->rational.Mask(ctx->ya);
+  rational.SetAuxiliary(
+      ctx->x1, [&](std::size_t) { return kappa / gamma; }, ctx->xa,
+      [&](std::size_t k) { return rational.Pole(k) / gamma; }, ctx->ya);
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -1798,24 +1801,21 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
 {
   // Apply the linearized operator L₁ = [ I  0 ]
   //                                    [ 0  M ] ,
-  // or with rational terms:       L₁ = [ I  0  0 ]
-  //                                    [ 0  M  0 ]
-  //                                    [ 0 -I  I ] .
+  // or with rational terms:       L₁ = [ I  0         0 ]
+  //                                    [ 0  M + d₂ B  0 ]
+  //                                    [ 0  0         I ] .
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2, &ctx->xa));
+  const auto &rational = ctx->rational;
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
+  rational.AddMult(ctx->x2, [&](std::size_t t) { return rational.Poly(t, 2); }, ctx->y2);
   ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
-  for (std::size_t k = 0; k < ctx->xa.size(); k++)
-  {
-    ctx->ya[k].AXPBYPCZ(1.0, ctx->xa[k], -1.0, ctx->x2, 0.0);
-  }
-  ctx->rational.Mask(ctx->ya);
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->xa));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1853,10 +1853,10 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   //                    [ -K -C ] ,       [ 0  M ] .
   // Enforces the divergence-free constraint using the supplied projector.
   // With rational terms, block elimination of the auxiliary rows (right-hand sides bⱼ)
-  // leaves one solve with T(σ) = K + σ C + σ² M + Σⱼ cⱼ σ² / (σ - pⱼ) Bⱼ, the operator of
-  // the linear solver, for the second block y₂:
-  //   T(σ) y₂ = K x₁ - σ / (δ γ) x₂ + Σⱼ cⱼ σ γ / (σ - pⱼ) Bⱼ bⱼ ,
-  //   y₁ = γ / σ (y₂ - x₁) ,   uⱼ = (σ y₂ - γ bⱼ) / (σ - pⱼ) .
+  // leaves one solve with T(σ) = K + σ C + σ² M + Σ f(σ) B, the operator of the linear
+  // solver, for the second block y₂, with sⱼ = cⱼ / (σ - pⱼ):
+  //   T(σ) y₂ = K x₁ - σ / (δ γ) x₂ + Σ (d₀ + Σⱼ sⱼ) B x₁ + σ Σⱼ sⱼ β bⱼ / κ ,
+  //   y₁ = γ / σ (y₂ - x₁) ,   wⱼ = (κ B y₁ / β - γ bⱼ) / (σ - pⱼ) .
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
@@ -1886,11 +1886,18 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   }
   else
   {
+    const auto &rational = ctx->rational;
+    const std::complex<double> sigma = ctx->sigma, gamma = ctx->gamma;
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->rational.AddMult(
-        ctx->xa, [ctx](std::complex<double> c, std::complex<double> p)
-        { return c * ctx->sigma * ctx->gamma / (ctx->sigma - p); }, ctx->y1);
+    rational.AddMult(
+        ctx->x1, [&](std::size_t t)
+        { return rational.Poly(t, 0) + rational.PoleValue(t, sigma); }, ctx->y1);
+    const std::complex<double> kappa = sigma * sigma / gamma;
+    rational.AddAuxiliary(
+        ctx->xa, [&](std::size_t k)
+        { return sigma * rational.Residue(k) / (kappa * (sigma - rational.Pole(k))); },
+        ctx->y1);
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
@@ -1898,12 +1905,6 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
       ctx->opProj->Mult(ctx->y2);
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
     }
-    for (std::size_t k = 0; k < ctx->xa.size(); k++)
-    {
-      const std::complex<double> d = ctx->sigma - ctx->rational.Pole(k);
-      ctx->ya[k].AXPBYPCZ(ctx->sigma / d, ctx->y2, -ctx->gamma / d, ctx->xa[k], 0.0);
-    }
-    ctx->rational.Mask(ctx->ya);
 
     ctx->y1.AXPBYPCZ(ctx->gamma / ctx->sigma, ctx->y2, -ctx->gamma / ctx->sigma, ctx->x1,
                      0.0);
@@ -1915,6 +1916,9 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
       // suffices to keep it from growing.
       ctx->opProj->Mult(ctx->y1, 1.0e-3);
     }
+    rational.SetAuxiliary(
+        ctx->y1, [&](std::size_t k) { return kappa / (sigma - rational.Pole(k)); }, ctx->xa,
+        [&](std::size_t k) { return -gamma / (sigma - rational.Pole(k)); }, ctx->ya);
   }
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
 

@@ -4,6 +4,7 @@
 #include "eigensolver.hpp"
 
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <numbers>
 #include <vector>
@@ -110,14 +111,28 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Frequency-dependent permittivity pole terms as the only frequency-dependent terms:
   // A2(λ) = Σₘ gₘ(λ) Bₘ with gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ) is rational with known poles, and
   // the linearized eigensolvers represent it exactly, with one auxiliary block per pole
-  // (EigenvalueSolver::AddPoleTerms). The problem is then a linear eigenvalue problem:
+  // (EigenvalueSolver::AddRationalTerm). The problem is then a linear eigenvalue problem:
   // there is no polynomial seed and no nonlinear refinement. Djordjevic-Sarkar terms and
   // the frequency-dependent boundary terms are not of this form, and keep the Hybrid seed
   // and the Quasi-Newton refinement. RefineNonlinear has no effect here: the solution is
   // exact and there is nothing to refine. With PEPLinear = false, SLEPc's polynomial
   // eigensolver linearizes the problem itself, without the auxiliary blocks.
-  std::vector<std::unique_ptr<ComplexOperator>> pole_ops;
-  std::vector<std::vector<std::complex<double>>> pole_p, pole_c;
+  struct RationalA2Term
+  {
+    std::unique_ptr<ComplexOperator> B;
+    std::array<std::complex<double>, 3> poly = {0.0, 0.0, 0.0};
+    std::vector<std::complex<double>> poles, residues;
+    std::complex<double> Eval(std::complex<double> l) const
+    {
+      std::complex<double> f = poly[0] + l * (poly[1] + l * poly[2]);
+      for (std::size_t j = 0; j < poles.size(); j++)
+      {
+        f += residues[j] / (l - poles[j]);
+      }
+      return f;
+    }
+  };
+  std::vector<RationalA2Term> a2_terms;
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
       (iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK ||
        iodata.solver.eigenmode.pep_linear))
@@ -150,47 +165,45 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         continue;  // No nonzero pole (exact zero poles are in the conductivity of C)
       }
       // A2 holds gₘ(λ)·Bₘ, and the operator is on the imaginary slot: it applies i·Bₘ.
-      auto &p = pole_p.emplace_back();
-      auto &c = pole_c.emplace_back();
-      for (const auto &term : mat_op.GetPermittivityPoleTerms(m))
+      // With c = -i r: c λ² / (λ - p) = c p + c λ + c p² / (λ - p).
+      auto &term = a2_terms.emplace_back();
+      for (const auto &pole : mat_op.GetPermittivityPoleTerms(m))
       {
-        p.push_back(term.pole);
-        c.push_back(-1i * term.residue);
+        const std::complex<double> c = -1i * pole.residue;
+        term.poly[0] += c * pole.pole;
+        term.poly[1] += c;
+        term.poles.push_back(pole.pole);
+        term.residues.push_back(c * pole.pole * pole.pole);
       }
-      pole_ops.push_back(std::move(B));
+      term.B = std::move(B);
     }
-    if (!pole_ops.empty())
+    if (!a2_terms.empty())
     {
       // The terms must be the complete A2(λ): any other contribution is an error here, not
       // an approximation. Checked at one complex λ, off the interpolation points.
       const std::complex<double> l(-0.01 * target, 1.05 * target);
-      ComplexVector v, r, r_poles;
+      ComplexVector v, r, r_terms;
       space_op.GetRandomInitialVector(v, 2);
       r.SetSize(v.Size());
       r.UseDevice(true);
-      r_poles.SetSize(v.Size());
-      r_poles.UseDevice(true);
+      r_terms.SetSize(v.Size());
+      r_terms.UseDevice(true);
       funcA2(l)->Mult(v, r);
-      r_poles = 0.0;
-      for (std::size_t t = 0; t < pole_ops.size(); t++)
+      r_terms = 0.0;
+      for (const auto &term : a2_terms)
       {
-        std::complex<double> s = 0.0;
-        for (std::size_t j = 0; j < pole_p[t].size(); j++)
-        {
-          s += pole_c[t][j] * l * l / (l - pole_p[t][j]);
-        }
-        pole_ops[t]->AddMult(v, r_poles, s);
+        term.B->AddMult(v, r_terms, term.Eval(l));
       }
       const double norm = linalg::Norml2(space_op.GetComm(), r);
-      r_poles.AXPY(-1.0, r);
-      const double err = linalg::Norml2(space_op.GetComm(), r_poles);
+      r_terms.AXPY(-1.0, r);
+      const double err = linalg::Norml2(space_op.GetComm(), r_terms);
       MFEM_VERIFY(err <= 1.0e-10 * norm,
                   "The permittivity pole terms do not reproduce the frequency-dependent "
                   "operator (relative difference "
                       << err / norm << ")!");
     }
   }
-  const bool exact_poles = !pole_ops.empty();
+  const bool exact_poles = !a2_terms.empty();
   const bool hybrid_seed =
       has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID && !exact_poles;
   if (hybrid_seed || nonlinear_type == NonlinearEigenSolver::SLP)
@@ -352,10 +365,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (exact_poles)
   {
     std::size_t num_poles = 0;
-    for (std::size_t t = 0; t < pole_ops.size(); t++)
+    for (const auto &term : a2_terms)
     {
-      eigen->AddPoleTerms(*pole_ops[t], pole_p[t], pole_c[t]);
-      num_poles += pole_p[t].size();
+      eigen->AddRationalTerm(*term.B, term.poly, term.poles, term.residues);
+      num_poles += term.poles.size();
     }
     Mpi::Print(" Frequency-dependent permittivity linearized exactly ({:d} pole{}), "
                "without nonlinear refinement\n",

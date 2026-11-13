@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <iterator>
@@ -228,13 +229,15 @@ struct DiagonalLorentzProblem
 
 // T(λ) = K + λ² M + λ² χ(λ) B on the dofs of a DiagonalLorentzProblem, with B = diag(b) the
 // indicator of the dofs which have the Lorentz medium. λ² χ(λ) B is a rational term with
-// the two poles of χ and its residues there.
+// the two poles of χ: with χ(λ) = Σⱼ aⱼ / (λ - pⱼ), λ² χ(λ) = Σⱼ aⱼ (pⱼ + λ + pⱼ² / (λ -
+// pⱼ)).
 struct RationalDiagonalProblem
 {
   DiagonalLorentzProblem p;
   std::vector<double> b;  // Global, by element
   std::unique_ptr<ComplexParOperator> B;
-  std::vector<std::complex<double>> poles, coeffs;
+  std::array<std::complex<double>, 3> poly = {0.0, 0.0, 0.0};
+  std::vector<std::complex<double>> poles, residues;
 
   RationalDiagonalProblem(std::vector<double> k, std::vector<double> b_)
     : p(std::move(k)), b(std::move(b_))
@@ -249,8 +252,14 @@ struct RationalDiagonalProblem
     const std::complex<double> pole(-0.5 * gamma_l,
                                     std::sqrt(w0 * w0 - 0.25 * gamma_l * gamma_l));
     poles = {pole, std::conj(pole)};
-    coeffs = {delta_eps * w0 * w0 / (poles[0] - poles[1]),
-              delta_eps * w0 * w0 / (poles[1] - poles[0])};
+    const std::complex<double> a[2] = {delta_eps * w0 * w0 / (poles[0] - poles[1]),
+                                       delta_eps * w0 * w0 / (poles[1] - poles[0])};
+    for (int j = 0; j < 2; j++)
+    {
+      poly[0] += a[j] * poles[j];
+      poly[1] += a[j];
+      residues.push_back(a[j] * poles[j] * poles[j]);
+    }
   }
 
   // The diagonal entry of T(λ) of global dof j, and T(λ).
@@ -328,6 +337,248 @@ public:
 
 }  // namespace
 
+namespace
+{
+
+// The rank-one matrix c v vᵀ, v = e₀ + e₁ (one process): its support is {0, 1}, and
+// e₀ - e₁ is in its kernel there, as the surface gradients for the boundary curl-curl
+// matrix of a second-order absorbing boundary.
+class RankOneOperator : public Operator
+{
+public:
+  explicit RankOneOperator(int n) : Operator(n) {}
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    const auto *hx = x.HostRead();
+    auto *hy = y.HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      hy[i] = 0.0;
+    }
+    hy[0] = hy[1] = hx[0] + hx[1];
+  }
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+  void AssembleDiagonal(Vector &diag) const override
+  {
+    diag = 0.0;
+    diag(0) = diag(1) = 1.0;
+  }
+};
+
+// A dense matrix on one process, as the operator of the linear solver and its exact
+// inverse as the preconditioner.
+class DenseComplexOperator : public ComplexOperator
+{
+public:
+  Eigen::MatrixXcd A;
+  explicit DenseComplexOperator(Eigen::MatrixXcd &&A)
+    : ComplexOperator(static_cast<int>(A.rows())), A(std::move(A))
+  {
+  }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    Eigen::VectorXcd v(height);
+    const auto *xr = x.Real().HostRead();
+    const auto *xi = x.Imag().HostRead();
+    for (int i = 0; i < height; i++)
+    {
+      v(i) = {xr[i], xi[i]};
+    }
+    const Eigen::VectorXcd w = A * v;
+    auto *yr = y.Real().HostWrite();
+    auto *yi = y.Imag().HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      yr[i] = w(i).real();
+      yi[i] = w(i).imag();
+    }
+  }
+};
+
+class DenseInverse : public Solver<ComplexOperator>
+{
+  DenseComplexOperator inv{Eigen::MatrixXcd()};
+
+public:
+  void SetOperator(const ComplexOperator &op) override
+  {
+    const auto *dense = dynamic_cast<const DenseComplexOperator *>(&op);
+    MFEM_VERIFY(dense, "Unexpected preconditioner operator!");
+    height = width = op.Height();
+    inv = DenseComplexOperator(dense->A.inverse());
+  }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override { inv.Mult(x, y); }
+};
+
+// The roots of the polynomial with the coefficients a (lowest degree first), from its
+// companion matrix.
+std::vector<std::complex<double>> PolynomialRoots(std::vector<std::complex<double>> a)
+{
+  while (a.back() == 0.0)
+  {
+    a.pop_back();
+  }
+  const int n = static_cast<int>(a.size()) - 1;
+  Eigen::MatrixXcd companion = Eigen::MatrixXcd::Zero(n, n);
+  for (int j = 0; j < n; j++)
+  {
+    companion(0, j) = -a[n - 1 - j] / a[n];
+  }
+  for (int i = 1; i < n; i++)
+  {
+    companion(i, i - 1) = 1.0;
+  }
+  const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> roots(companion, false);
+  REQUIRE(roots.info() == Eigen::Success);
+  return {roots.eigenvalues().begin(), roots.eigenvalues().end()};
+}
+
+// The product of two polynomials (lowest degree first).
+std::vector<std::complex<double>>
+PolynomialProduct(const std::vector<std::complex<double>> &a,
+                  const std::vector<std::complex<double>> &b)
+{
+  std::vector<std::complex<double>> c(a.size() + b.size() - 1, 0.0);
+  for (std::size_t i = 0; i < a.size(); i++)
+  {
+    for (std::size_t j = 0; j < b.size(); j++)
+    {
+      c[i + j] += a[i] * b[j];
+    }
+  }
+  return c;
+}
+
+}  // namespace
+
+// A rational term f(λ) B whose matrix B has a kernel on its support, with a pole at zero
+// (as the second-order absorbing boundary) and one next to the shift, and a polynomial
+// part. T(λ) = K + λ² I + f(λ) B, f(λ) = d₀ + d₁ λ + d₂ λ² + c₁ / λ + c₂ / (λ - p), with K
+// diagonal and B = v vᵀ, v = e₀ + e₁. The linearization must have no eigenvalue at 0 or p
+// from the kernel of B: a vector of it, e₀ - e₁, is no eigenvector of T at a pole, where T
+// is not defined. The reference roots are those of the scalar polynomials: k + λ² for the
+// dofs other than 0 and 1, and for them, with f = q / (λ (λ - p)), λ (λ - p) det(D + λ² I +
+// f J) = λ (λ - p) (k₀ + λ²) (k₁ + λ²) + q (k₀ + k₁ + 2 λ²).
+TEST_CASE("Linearized eigensolvers have no eigenvalue at a pole from the kernel of B",
+          "[nleps][Serial]")
+{
+  const std::vector<double> k = {1.5, 2.5, 4.0, 6.5, 3.0, 12.0, 16.0, 20.0, 25.0, 30.0};
+  const DiagonalLorentzProblem p(k);
+  const int n = p.LocalSize();
+  REQUIRE(n == static_cast<int>(k.size()));
+  const std::array<std::complex<double>, 3> poly = {0.1, 0.05, 0.02};
+  const std::complex<double> c1 = -0.5, c2 = 0.02, pole(-0.05, 1.62), sigma(0.0, 1.6);
+  auto f = [&](std::complex<double> l)
+  { return poly[0] + l * (poly[1] + l * poly[2]) + c1 / l + c2 / (l - pole); };
+  ComplexParOperator B(std::make_unique<RankOneOperator>(n), nullptr, *p.fespace);
+
+  // The reference roots.
+  std::vector<std::complex<double>> expected;
+  for (int j = 2; j < n; j++)
+  {
+    expected.emplace_back(0.0, std::sqrt(k[j]));
+    expected.emplace_back(0.0, -std::sqrt(k[j]));
+  }
+  {
+    // λ (λ - p) f(λ) = q(λ) and the block determinant times λ (λ - p).
+    const std::vector<std::complex<double>> lp = {0.0, -pole, 1.0};  // λ (λ - p)
+    auto q = PolynomialProduct(lp, {poly[0], poly[1], poly[2]});
+    q[0] += -c1 * pole;
+    q[1] += c1 + c2;
+    auto det = PolynomialProduct(PolynomialProduct(lp, {k[0], 0.0, 1.0}), {k[1], 0.0, 1.0});
+    const auto r = PolynomialProduct(q, {k[0] + k[1], 0.0, 2.0});
+    for (std::size_t i = 0; i < r.size(); i++)
+    {
+      det[i] += r[i];
+    }
+    for (const auto l : PolynomialRoots(det))
+    {
+      // A root of the block, where T(λ) is singular (0 and p are not roots).
+      const std::complex<double> fl = f(l), a = k[0] + l * l + fl, d = k[1] + l * l + fl;
+      REQUIRE(std::abs(a * d - fl * fl) <= 1.0e-10 * std::abs(a * d));
+      expected.push_back(l);
+    }
+  }
+  auto Nearer = [sigma](auto a, auto b)
+  { return std::abs(a - sigma) < std::abs(b - sigma); };
+  std::ranges::sort(expected, Nearer);
+  constexpr int nev = 8;
+  // The pole p is the nearest point to the shift, and 0 is nearer than the last requested
+  // eigenvalue: an eigenvalue at either would displace a requested one.
+  REQUIRE(std::abs(pole - sigma) < std::abs(expected[0] - sigma));
+  REQUIRE(std::abs(sigma) < std::abs(expected[nev - 1] - sigma));
+  REQUIRE(std::abs(expected[nev] - sigma) > 1.1 * std::abs(expected[nev - 1] - sigma));
+
+  // T(σ) as a dense matrix, with its exact inverse.
+  Eigen::MatrixXcd Ts = Eigen::MatrixXcd::Zero(n, n);
+  for (int i = 0; i < n; i++)
+  {
+    Ts(i, i) = k[i] + sigma * sigma;
+  }
+  Ts.block(0, 0, 2, 2).array() += f(sigma);
+  DenseComplexOperator T(std::move(Ts));
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-14);
+  gmres->SetMaxIter(10);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<DenseInverse>());
+  ksp.SetOperators(T, T);
+  ComplexVector start(n);
+  {
+    auto *vr = start.Real().HostWrite();
+    auto *vi = start.Imag().HostWrite();
+    for (int i = 0; i < n; i++)
+    {
+      vr[i] = 1.0 + 0.1 * i;
+      vi[i] = 0.3 - 0.05 * i;
+    }
+  }
+  const auto scale =
+      GENERATE(EigenvalueSolver::ScaleType::NONE, EigenvalueSolver::ScaleType::NORM_2);
+  auto Check = [&](EigenvalueSolver &eigen)
+  {
+    eigen.AddRationalTerm(B, poly, {0.0, pole}, {c1, c2});
+    eigen.SetOperators(*p.K, *p.M, scale);
+    eigen.SetLinearSolver(ksp);
+    eigen.SetShiftInvert(sigma);
+    eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
+    eigen.SetNumModes(nev, 20);
+    eigen.SetTol(1.0e-10);
+    eigen.SetMaxIter(200);
+    eigen.SetInitialSpace(start);
+    const int num = eigen.Solve();
+    REQUIRE(num >= nev);
+    std::vector<std::complex<double>> found;
+    for (int i = 0; i < nev; i++)
+    {
+      found.push_back(eigen.GetEigenvalue(i));
+      CAPTURE(i, found.back());
+      CHECK(eigen.GetError(i, EigenvalueSolver::ErrorType::BACKWARD) <= 1.0e-8);
+    }
+    std::ranges::sort(found, Nearer);
+    for (int i = 0; i < nev; i++)
+    {
+      CAPTURE(i, found[i], expected[i]);
+      CHECK(std::abs(found[i] - expected[i]) <= 1.0e-8);
+    }
+  };
+#if defined(PALACE_WITH_SLEPC)
+  SECTION("SLEPc")
+  {
+    slepc::SlepcPEPLinearSolver eigen(Mpi::World(), 0);
+    eigen.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    eigen.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    Check(eigen);
+  }
+#endif
+#if defined(PALACE_WITH_ARPACK)
+  SECTION("ARPACK")
+  {
+    arpack::ArpackPEPSolver eigen(Mpi::World(), 0);
+    Check(eigen);
+  }
+#endif
+}
+
 // The eigensolvers which linearize the quadratic problem solve a problem with rational
 // terms as a linear one: the eigenvalues nearest the shift are the exact roots, on both
 // sides of the poles (|p±| = 1), with one of a dof without the medium among them.
@@ -373,7 +624,7 @@ TEST_CASE("Linearized eigensolvers solve rational terms exactly",
       GENERATE(EigenvalueSolver::ScaleType::NONE, EigenvalueSolver::ScaleType::NORM_2);
   auto Check = [&](EigenvalueSolver &eigen)
   {
-    eigen.AddPoleTerms(*q.B, q.poles, q.coeffs);
+    eigen.AddRationalTerm(*q.B, q.poly, q.poles, q.residues);
     eigen.SetOperators(*q.p.K, *q.p.M, scale);
     eigen.SetLinearSolver(ksp);
     eigen.SetShiftInvert(sigma);

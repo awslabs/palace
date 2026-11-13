@@ -12,6 +12,7 @@
 #error "SLEPc interface requires PETSc compiled with complex scalars!"
 #endif
 
+#include <array>
 #include <complex>
 #include <memory>
 #include <optional>
@@ -282,10 +283,10 @@ public:
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 , solved via
-// linearization: L₀ y = λ L₁ y . With rational terms (AddPoleTerms), the problem is
-//   T(λ) x = (P(λ) + Σₜ (Σⱼ cₜⱼ λ² / (λ - pₜⱼ)) Bₜ) x = 0 ,
+// linearization: L₀ y = λ L₁ y . With rational terms (AddRationalTerm), the problem is
+//   T(λ) x = (P(λ) + Σₜ fₜ(λ) Bₜ) x = 0 ,  fₜ(λ) = d₀ + d₁ λ + d₂ λ² + Σⱼ cⱼ / (λ - pⱼ) ,
 // and the linearization is still exact: each pole adds the auxiliary block
-// wₜⱼ = λ² x / (λ - pₜⱼ), which satisfies pₜⱼ wₜⱼ = λ (wₜⱼ - λ x) (see RationalTerms).
+// wⱼ = κ Bₜ x / ((λ - pⱼ) βₜ), κ = σ² / γ (see RationalTerms).
 class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 {
 public:
@@ -327,9 +328,10 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
 
-  void AddPoleTerms(const ComplexOperator &B,
-                    const std::vector<std::complex<double>> &poles,
-                    const std::vector<std::complex<double>> &coeffs) override;
+  void AddRationalTerm(const ComplexOperator &B,
+                       const std::array<std::complex<double>, 3> &poly,
+                       const std::vector<std::complex<double>> &poles,
+                       const std::vector<std::complex<double>> &residues) override;
 
   void SetBMat(const Operator &B) override;
 

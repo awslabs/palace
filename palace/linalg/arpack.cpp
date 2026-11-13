@@ -706,13 +706,14 @@ ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   normK = normC = normM = 0.0;
 }
 
-void ArpackPEPSolver::AddPoleTerms(const ComplexOperator &B,
-                                   const std::vector<std::complex<double>> &poles,
-                                   const std::vector<std::complex<double>> &coeffs)
+void ArpackPEPSolver::AddRationalTerm(const ComplexOperator &B,
+                                      const std::array<std::complex<double>, 3> &poly,
+                                      const std::vector<std::complex<double>> &poles,
+                                      const std::vector<std::complex<double>> &residues)
 {
   MFEM_VERIFY(!opK, "The rational terms of ArpackPEPSolver must be added before its "
                     "problem (SetOperators)!");
-  rational.Add(B, poles, coeffs);
+  rational.Add(comm, B, poly, poles, residues);
   for (std::size_t j = 0; j < poles.size(); j++)
   {
     xa.emplace_back(B.Height()).UseDevice(true);
@@ -844,11 +845,18 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
   // With:
   //               L₀ = [ -K  0 ]    L₁ = [ C  M ]
   //                    [  0  M ] ,       [ M  0 ] .
-  // With rational terms (shift-and-invert only), each pole pⱼ adds an auxiliary block
-  // aⱼ = λ² / (γ (λ - pⱼ)) x to the vector [x; λ / γ x]. Eliminating these blocks leaves
-  // the solve with T(σ) = P(σ) + Σⱼ cⱼ σ² / (σ - pⱼ) Bⱼ and adds to its right-hand side
-  //               Σⱼ cⱼ / (σ - pⱼ) Bⱼ (σ x₁ + γ x₂ - γ aⱼ) ,
-  // and the auxiliary blocks of the result are (σ y₂ + γ x₂ - γ aⱼ) / (σ - pⱼ).
+  // With rational terms f(λ) B (shift-and-invert only), f(λ) = d₀ + d₁ λ + d₂ λ² +
+  // Σⱼ cⱼ / (λ - pⱼ), each pole pⱼ adds an auxiliary block wⱼ = κ B x / ((λ - pⱼ) β),
+  // κ = σ² / γ, to the vector [x; λ / γ x] (see RationalTerms). In the scaled eigenvalue
+  // μ = λ / γ, with qⱼ = pⱼ / γ:
+  //   L₀ = [ -K - d₀ B        0     -cⱼ β / κ I ]    L₁ = [ γ (C + d₁ B)  γ² (M + d₂ B)  0
+  //   ]
+  //        [  0               γ² M   0          ]         [ γ² M          0              0
+  //        ] [ κ / γ B / β      0      qⱼ I       ] ,       [ 0             0 I ] .
+  // Eliminating the auxiliary blocks leaves the solve with T(σ) = P(σ) + Σ f(σ) B for
+  // y₁ = -γ T(σ)⁻¹ z₁, with the input blocks aⱼ and sⱼ = cⱼ / (σ - pⱼ):
+  //   z₁ = (C + d₁ B) x₁ + (M + d₂ B) (σ x₁ + γ x₂) - Σⱼ sⱼ β aⱼ / κ ,
+  // and the auxiliary blocks of the result are (κ B y₁ / β - γ aⱼ) / (σ - pⱼ).
   // The input pointers are always to host memory (ARPACK runs on host).
   x1.Set(px, n, false);
   x2.Set(px + n, n, false);
@@ -890,16 +898,14 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
     {
       opC->AddMult(x1, z1, 1.0 + 0.0i);
     }
-    if (!xa.empty())
+    const std::complex<double> kappa = sigma * sigma / gamma;
+    if (!rational.Empty())
     {
-      const auto s = sigma;
-      const auto g = gamma;
-      rational.AddMult(
-          y2, [s](std::complex<double> c, std::complex<double> p) { return c / (s - p); },
-          z1);
-      rational.AddMult(
-          xa, [s, g](std::complex<double> c, std::complex<double> p)
-          { return -g * c / (s - p); }, z1);
+      rational.AddMult(x1, [this](std::size_t t) { return rational.Poly(t, 1); }, z1);
+      rational.AddMult(y2, [this](std::size_t t) { return rational.Poly(t, 2); }, z1);
+      rational.AddAuxiliary(
+          xa, [&](std::size_t k)
+          { return -rational.Residue(k) / (kappa * (sigma - rational.Pole(k))); }, z1);
     }
     opInv->Mult(z1, y1);
     y1 *= -gamma;
@@ -917,13 +923,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
       opProj->Mult(y2);
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(comm, y2));
     }
-    for (std::size_t k = 0; k < xa.size(); k++)
-    {
-      const std::complex<double> d = sigma - rational.Pole(k);
-      ya[k].AXPBYPCZ(sigma / d, y2, gamma / d, x2, 0.0);
-      ya[k].AXPY(-gamma / d, xa[k]);
-    }
-    rational.Mask(ya);
+    rational.SetAuxiliary(
+        y1, [&](std::size_t k) { return kappa / (sigma - rational.Pole(k)); }, xa,
+        [this](std::size_t k) { return -gamma / (sigma - rational.Pole(k)); }, ya);
   }
   y1.Get(py, n, false);
   y2.Get(py + n, n, false);
@@ -960,16 +962,14 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
                                         ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || T(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
-  // eigenvalue λ, with every rational term (Σⱼ cⱼ λ² / (λ - pⱼ)) B x.
+  // eigenvalue λ, with every rational term f(λ) B x.
   opK->Mult(x, r);
   if (opC)
   {
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  rational.AddMult(
-      x, [l](std::complex<double> c, std::complex<double> p)
-      { return c * l * l / (l - p); }, r);
+  rational.AddMult(x, [this, l](std::size_t t) { return rational.Value(t, l); }, r);
   return linalg::Norml2(comm, r);
 }
 

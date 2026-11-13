@@ -6,6 +6,7 @@
 
 #if defined(PALACE_WITH_ARPACK)
 
+#include <array>
 #include <complex>
 #include <memory>
 #include <vector>
@@ -202,8 +203,8 @@ public:
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 , solved via
-// linearization. With rational terms (AddPoleTerms), the problem is
-//   T(λ) x = (P(λ) + Σₜ (Σⱼ cₜⱼ λ² / (λ - pₜⱼ)) Bₜ) x = 0 ,
+// linearization. With rational terms (AddRationalTerm), the problem is
+//   T(λ) x = (P(λ) + Σₜ fₜ(λ) Bₜ) x = 0 ,  fₜ(λ) = d₀ + d₁ λ + d₂ λ² + Σⱼ cⱼ / (λ - pⱼ) ,
 // and the linearization is still exact, with one auxiliary block for each pole (see
 // RationalTerms).
 class ArpackPEPSolver : public ArpackEigenvalueSolver
@@ -248,9 +249,10 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
 
-  void AddPoleTerms(const ComplexOperator &B,
-                    const std::vector<std::complex<double>> &poles,
-                    const std::vector<std::complex<double>> &coeffs) override;
+  void AddRationalTerm(const ComplexOperator &B,
+                       const std::array<std::complex<double>, 3> &poly,
+                       const std::vector<std::complex<double>> &poles,
+                       const std::vector<std::complex<double>> &residues) override;
 
   int Solve() override;
 };
