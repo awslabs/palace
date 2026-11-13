@@ -179,7 +179,7 @@ protected:
   // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
   //   are cached before frequency-major online evaluation.
   std::unique_ptr<ComplexOperator> K, M, C;
-  ComplexVector RHS1, RHS2, r;
+  ComplexVector RHS1, r;
 
   // The sparse frequency-dependent boundary terms of A(ω), each a scalar f(ω) times an
   // ω-independent operator i·M stored with the boundary form M on the imaginary slot, so
@@ -255,18 +255,16 @@ protected:
   Eigen::VectorXcd RHS1r;       // Active excitation's projected frequency-linear source.
   std::map<int, Eigen::VectorXcd> RHS1r_online;  // Final-basis cache for online switching.
 
-  // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
-  // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
-  // The frequency-dependent scalar g_k(ω) is computed during SolvePROM.
-  struct ReducedFloquetMode
-  {
-    int port_idx;
-    const FloquetOrder *order;  // Not owned — points into FloquetPortData::orders
-    bool is_te;
-    Eigen::VectorXcd vk_V;    // v_k^T V (row vector, size n_basis)
-    Eigen::VectorXcd Vh_cvk;  // V^H conj(v_k) (column vector, size n_basis)
-  };
-  std::vector<ReducedFloquetMode> floquet_reduced;
+  // Projections onto the basis of the Floquet port modes, for the DtN correction
+  // F(ω) = Σ_k g_k(ω) v_k v_kᴴ and the excitation of the (0,0) modes (see FloquetPortData).
+  // A mode v = Σ_d e_d v_d combines the Cartesian component projections v_d with the
+  // polarization e, which rotates with frequency when k_F scales with it, so Vᵀv_d is
+  // projected once as the basis grows: three columns per order.
+  std::vector<std::pair<int, const FloquetOrder *>> floquet_orders;  // Port, order
+  Eigen::MatrixXcd floquet_comp_V;
+
+  // Return Vᵀv of the TE or TM mode of order k at the current frequency.
+  Eigen::VectorXcd GetFloquetModeProjection(std::size_t k, bool is_te) const;
 
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
   // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.

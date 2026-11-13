@@ -680,6 +680,13 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
              space_op.GetFloquetRobinBoundaryMassMatrix<ComplexOperator>(
                  idx, Operator::DIAG_ZERO),
              true);
+    for (const auto &order : port.GetOrders())
+    {
+      if (HasFlag(order.use, FloquetModeUse::Dtn) || (order.m == 0 && order.n == 0))
+      {
+        floquet_orders.emplace_back(idx, &order);
+      }
+    }
   }
   {
     // The terms other than the wave ports reproduce the assembled A2(ω): check on a random
@@ -806,6 +813,13 @@ std::complex<double> RomOperator::GetBoundaryTermCoefficient(const BoundaryTerm 
       return space_op.GetFloquetPortOp().GetPort(term.idx).GetGamma0();
   }
   return 0.0;
+}
+
+Eigen::VectorXcd RomOperator::GetFloquetModeProjection(std::size_t k, bool is_te) const
+{
+  // v = Σ_d e_d v_d for the polarization e at the current frequency.
+  const auto &e = floquet_orders[k].second->e_pol[is_te ? 0 : 1];
+  return floquet_comp_V.middleCols(3 * k, 3) * Eigen::Vector3cd(e(0), e(1), e(2));
 }
 
 void RomOperator::SetExcitationIndex(int excitation_idx)
@@ -1185,10 +1199,11 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   }
 
   // Update the projections for the new basis vectors (the resized matrices keep those for
-  // the previous ones): the operators, the excitation, and the Gram matrix, together. With
-  // a Floquet wave vector, the stiffness matrix can be nonsymmetric: Hermitian (domain
-  // Floquet terms) or with an antisymmetric real part (Floquet terms of second-order
-  // farfield boundaries, with a frequency dependent wave vector).
+  // the previous ones): the operators, the excitation, the Floquet port mode components,
+  // and the Gram matrix, together. With a Floquet wave vector, the stiffness matrix can be
+  // nonsymmetric: Hermitian (domain Floquet terms) or with an antisymmetric real part
+  // (Floquet terms of second-order farfield boundaries, with a frequency dependent wave
+  // vector).
   const auto n0 = static_cast<int>(dim_V_old), n = static_cast<int>(dim_V_new);
   BasisProjection proj(V, n0);
   Kr.conservativeResize(n, n);
@@ -1209,6 +1224,14 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   {
     RHS1r.conservativeResize(n);
     proj.AddVector(RHS1, &RHS1r(n0));
+  }
+  floquet_comp_V.conservativeResize(n, 3 * floquet_orders.size());
+  for (std::size_t k = 0; k < floquet_orders.size(); k++)
+  {
+    for (std::size_t d = 0; d < 3; d++)
+    {
+      proj.AddVector(floquet_orders[k].second->v_comp[d], &floquet_comp_V(n0, 3 * k + d));
+    }
   }
   // Inner products of the new basis vectors with the basis, for the Gram matrix.
   Eigen::MatrixXcd G(n, n - n0);
@@ -1235,52 +1258,6 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     MFEM_VERIFY(llt.info() == Eigen::Success,
                 "Euclidean Gram matrix of the PROM basis is not positive definite!");
     gram_L.bottomRightCorner(n - n0, n - n0) = llt.matrixL();
-  }
-
-  // Update reduced Floquet port projection vectors. For F = Σ g_k v_k v_k^H,
-  // the PROM contribution is Σ g_k (V^T v_k) (v_k^H V) = Σ g_k (V^T v_k) conj(V^T v_k)^T.
-  // Since V is real: V^T v_k is stored as vk_V, conj(V^T v_k) as Vh_cvk.
-  if (dim_V_old == 0)
-  {
-    // First time: enumerate all Floquet modes with for_dtn flag.
-    floquet_reduced.clear();
-    for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
-    {
-      for (const auto &order : port.GetOrders())
-      {
-        if (!HasFlag(order.use, FloquetModeUse::Dtn))
-        {
-          continue;
-        }
-        for (bool is_te : {true, false})
-        {
-          ReducedFloquetMode rm;
-          rm.port_idx = port_idx;
-          rm.order = &order;
-          rm.is_te = is_te;
-          rm.vk_V.resize(dim_V_new);
-          rm.Vh_cvk.resize(dim_V_new);
-          floquet_reduced.push_back(std::move(rm));
-        }
-      }
-    }
-  }
-  for (auto &rm : floquet_reduced)
-  {
-    // Compute V^T v_k for new basis vectors [dim_V_old, dim_V_new).
-    rm.vk_V.conservativeResize(dim_V_new);
-    rm.Vh_cvk.conservativeResize(dim_V_new);
-    for (int i = dim_V_old; i < dim_V_new; i++)
-    {
-      // V[i] is real. v_k is complex. V[i]^T v_k = (V[i] · v_k_real) + j(V[i] · v_k_imag).
-      double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
-      double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
-      Mpi::GlobalSum(1, &dr, comm);
-      Mpi::GlobalSum(1, &di, comm);
-      std::complex<double> vt_vi(dr, di);
-      rm.vk_V(i) = vt_vi;               // v_k^T V[i]
-      rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
-    }
   }
   return c;
 }
@@ -1364,37 +1341,23 @@ void RomOperator::SolvePROM(int excitation_idx, double omega)
     // reactive/TM modes; for TEM modes s_full = s_scalar and Wᵣ ≡ 0.
     AddWavePortModalCorrection(omega);
 
-    // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^T v_k) conj(V^T v_k)^T
-    // (per-frequency state refreshed by the Initialize(omega) at the top of SolvePROM).
-
-    // When k_F scales with frequency, the mode vectors v_k change (polarization rotation).
-    // Reproject onto the PROM basis V for the current frequency.
-    if (space_op.GetMaterialOp().HasFloquetFrequencyScaling())
+    // Add the low-rank Floquet port DtN correction Fᵣ = Σ_k g_k(ω) (Vᵀv_k)(Vᵀv_k)ᴴ.
+    for (std::size_t k = 0; k < floquet_orders.size(); k++)
     {
-      MPI_Comm comm = space_op.GetComm();
-      auto dim_V = static_cast<int>(V.size());
-      for (auto &rm : floquet_reduced)
+      const auto &[port_idx, order] = floquet_orders[k];
+      if (!HasFlag(order->use, FloquetModeUse::Dtn))
       {
-        for (int i = 0; i < dim_V; i++)
-        {
-          double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
-          double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
-          Mpi::GlobalSum(1, &dr, comm);
-          Mpi::GlobalSum(1, &di, comm);
-          std::complex<double> vt_vi(dr, di);
-          rm.vk_V(i) = vt_vi;
-          rm.Vh_cvk(i) = std::conj(vt_vi);
-        }
+        continue;
       }
-    }
-
-    for (const auto &rm : floquet_reduced)
-    {
-      const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);
-      auto g = port.ComputeDtNCorrectionCoeff(*rm.order, rm.is_te);
-      if (g != 0.0)
+      const auto &port = space_op.GetFloquetPortOp().GetPort(port_idx);
+      for (bool is_te : {true, false})
       {
-        Ar.noalias() += g * rm.vk_V * rm.Vh_cvk.transpose();
+        const auto g = port.ComputeDtNCorrectionCoeff(*order, is_te);
+        if (g != 0.0)
+        {
+          const Eigen::VectorXcd vV = GetFloquetModeProjection(k, is_te);
+          Ar.noalias() += g * vV * vV.adjoint();
+        }
       }
     }
     Ar_solver.compute(Ar);
@@ -1412,10 +1375,24 @@ void RomOperator::SolvePROM(int excitation_idx, double omega)
       RHSr += std::complex<double>(0.0, -2.0 * omega) * sV_wp_full.at(port_idx);
     }
   }
-  if (has_RHS2 && !space_op.GetFloquetPortOp().Empty())
+  // Floquet port excitation Σ_p s_p conj(v_p) over the (0,0) modes of the ports excited by
+  // this excitation index (see FloquetPortData::AddExcitationVector).
+  for (std::size_t k = 0; k < floquet_orders.size(); k++)
   {
-    space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-    RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
+    const auto &[port_idx, order] = floquet_orders[k];
+    const auto &port = space_op.GetFloquetPortOp().GetPort(port_idx);
+    if (port.excitation != excitation_idx || order->m != 0 || order->n != 0)
+    {
+      continue;
+    }
+    const auto s = port.GetExcitationCoefficients(omega);
+    for (bool is_te : {true, false})
+    {
+      if (s[is_te ? 0 : 1] != 0.0)
+      {
+        RHSr += s[is_te ? 0 : 1] * GetFloquetModeProjection(k, is_te).conjugate();
+      }
+    }
   }
   if (has_RHS1)
   {
