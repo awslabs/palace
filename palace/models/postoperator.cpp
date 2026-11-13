@@ -7,10 +7,12 @@
 #include <cmath>
 #include <compare>
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numbers>
 #include <set>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -20,6 +22,8 @@
 #include "fem/face_sampling_plan.hpp"
 #include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/orthog.hpp"
+#include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -2157,6 +2161,7 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
                                                             double tol)
   requires(solver_t == ProblemType::DRIVEN)
 {
+  BlockTimer bt0(Timer::POSTPRO);
   reduced_postprocessing_ready = false;
   reduced_postprocessing_checked.clear();
   reduced_postprocessing_tol = 0.1 * tol;
@@ -2192,61 +2197,82 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   {
     return;
   }
-  std::vector<Vector> basis_E, basis_B;
-  basis_E.reserve(n);
-  basis_B.reserve(n);
-  const auto &curl = fem_op->GetCurlMatrix();
-  Vector b_true(curl.Height());
   // Lumped-port voltages are linear in E and the basis is real, so the voltages at any
   // frequency are the reduced solution applied to the voltages of the basis vectors.
   const auto &lumped_port_op = fem_op->GetLumpedPortOp();
   reduced_port_V.resize(lumped_port_op.Size(), n);
-  for (std::size_t j = 0; j < n; j++)
+  for (std::size_t j = 0; j < n && lumped_port_op.Size() > 0; j++)
   {
     E->Real().SetFromTrueDofs(basis[j]);
-    basis_E.emplace_back(E->Real());
-    curl.Mult(basis[j], b_true);
-    B->Real().SetFromTrueDofs(b_true);
-    basis_B.emplace_back(B->Real());
-    if (lumped_port_op.Size() > 0)
+    E->Real().ExchangeFaceNbrData();
+    Eigen::Index i = 0;
+    for (const auto &[idx, voltage] : lumped_port_op.GetVoltages(*E))
     {
-      E->Real().ExchangeFaceNbrData();
-      Eigen::Index i = 0;
-      for (const auto &[idx, voltage] : lumped_port_op.GetVoltages(*E))
-      {
-        reduced_port_V(i++, j) = voltage.real();
-      }
+      reduced_port_V(i++, j) = voltage.real();
     }
   }
 
-  auto project = [&](const Operator *op,
-                     const std::vector<Vector> &local_basis) -> Eigen::MatrixXd
-  {
-    Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n, n);
-    if (!op)
-    {
-      return result;
-    }
-    Vector z(op->Height());
-    for (std::size_t j = 0; j < n; j++)
-    {
-      op->Mult(local_basis[j], z);
-      for (std::size_t i = 0; i < n; i++)
-      {
-        result(i, j) = linalg::LocalDot(z, local_basis[i]);
-      }
-    }
-    Mpi::GlobalSum(static_cast<int>(n * n), result.data(), fem_op->GetComm());
-    return 0.5 * (result + result.transpose()).eval();
-  };
-
-  reduced_energy_E = project(dom_post_op.M_elec.get(), basis_E);
-  reduced_energy_H = project(dom_post_op.M_mag.get(), basis_B);
-  reduced_domain_energy.clear();
+  // The energy forms on the true dofs, the whole domain first.
+  std::vector<std::unique_ptr<ParOperator>> ops_E, ops_H;
+  const auto &nd_fespace = fem_op->GetNDSpace();
+  const auto &curl_fespace = fem_op->GetCurlSpace();
+  ops_E.push_back(std::make_unique<ParOperator>(*dom_post_op.M_elec, nd_fespace));
+  ops_H.push_back(std::make_unique<ParOperator>(*dom_post_op.M_mag, curl_fespace));
   for (const auto &[idx, ops] : dom_post_op.M_i)
   {
-    reduced_domain_energy.emplace(idx, std::make_pair(project(ops.first.get(), basis_E),
-                                                      project(ops.second.get(), basis_B)));
+    ops_E.push_back(std::make_unique<ParOperator>(*ops.first, nd_fespace));
+    ops_H.push_back(std::make_unique<ParOperator>(*ops.second, curl_fespace));
+  }
+  auto pointers = [](const auto &ops, std::size_t first)
+  {
+    std::vector<const Operator *> p;
+    for (std::size_t i = first; i < ops.size(); i++)
+    {
+      p.push_back(ops[i].get());
+    }
+    return p;
+  };
+  const MPI_Comm comm = fem_op->GetComm();
+  auto forms_E = ProjectSymmetricOperators(comm, basis, pointers(ops_E, 0));
+
+  // The curls of the basis vectors nearly cancel in the magnetic energy at low frequency,
+  // so the energy is not evaluated from Vᵀ Cᵀ M C V but as |R y|² from the factorization
+  // C V = Q R by CGS2, with Q orthonormal in the inner product of the magnetic energy and
+  // without the columns numerically in the span of the previous ones. The domain energies
+  // are (R y)ᴴ Qᵀ Mᵢ Q (R y).
+  const auto &curl = fem_op->GetCurlMatrix();
+  const auto &M_mag = *ops_H[0];
+  Eigen::MatrixXd R = Eigen::MatrixXd::Zero(n, n);
+  std::vector<Vector> Q;
+  ComplexVector work;
+  for (std::size_t j = 0; j < n; j++)
+  {
+    Q.emplace_back(curl.Height());
+    Q.back().UseDevice(true);
+    curl.Mult(basis[j], Q.back());
+    const auto [norm0, norm] = linalg::OrthogonalizeColumnCGS(
+        comm, std::span(Q), R.col(j).data(), true, &M_mag, &work);
+    if (!(norm <= 100.0 * std::numeric_limits<double>::epsilon() * norm0))
+    {
+      R(Q.size() - 1, j) = norm;
+      Q.back() *= 1.0 / norm;
+    }
+    else
+    {
+      Q.pop_back();
+    }
+  }
+  const auto r = Q.size();
+  reduced_curl_R = R.topRows(r);
+  auto forms_H = (r > 0) ? ProjectSymmetricOperators(comm, Q, pointers(ops_H, 1))
+                         : std::vector<Eigen::MatrixXd>(ops_H.size() - 1);
+  reduced_energy_E = std::move(forms_E[0]);
+  reduced_domain_energy.clear();
+  for (std::size_t i = 0; const auto &[idx, ops] : dom_post_op.M_i)
+  {
+    reduced_domain_energy.emplace(
+        idx, std::make_pair(std::move(forms_E[i + 1]), std::move(forms_H[i])));
+    i++;
   }
   reduced_postprocessing_ready = true;
 }
@@ -2291,18 +2317,22 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     SetEGridFunction(*e);
   }
 
-  auto quadratic = [&y](const Eigen::MatrixXd &Q)
-  { return 0.5 * std::real(y.dot(Q.cast<std::complex<double>>() * y)); };
+  // The quadratic forms in real arithmetic, on the columns [Re{y}, Im{y}].
+  Eigen::MatrixX2d Y(y.size(), 2);
+  Y << y.real(), y.imag();
+  const Eigen::MatrixX2d RY = reduced_curl_R * Y;
+  auto quadratic = [](const Eigen::MatrixXd &A, const Eigen::MatrixX2d &X)
+  { return 0.5 * (X.array() * (A.selfadjointView<Eigen::Lower>() * X).array()).sum(); };
+  const double scale_H = 1.0 / (omega.real() * omega.real());
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
-  measurement_cache.domain_E_field_energy_all = quadratic(reduced_energy_E);
-  measurement_cache.domain_H_field_energy_all =
-      quadratic(reduced_energy_H) / (omega.real() * omega.real());
+  measurement_cache.domain_E_field_energy_all = quadratic(reduced_energy_E, Y);
+  measurement_cache.domain_H_field_energy_all = 0.5 * RY.squaredNorm() * scale_H;
   for (const auto &[idx, forms] : reduced_domain_energy)
   {
-    const double energy_E = quadratic(forms.first);
-    const double energy_H = quadratic(forms.second) / (omega.real() * omega.real());
+    const double energy_E = quadratic(forms.first, Y);
+    const double energy_H = quadratic(forms.second, RY) * scale_H;
     measurement_cache.domain_E_field_energy_i.push_back(
         {idx, energy_E,
          (measurement_cache.domain_E_field_energy_all != 0.0)
