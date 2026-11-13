@@ -101,8 +101,8 @@ public:
     const auto *A = dynamic_cast<const mfem::HypreParMatrix *>(&op);
     MFEM_VERIFY(A, "MumpsDirectSolver requires a HypreParMatrix operator!");
     height = width = A->Height();
-    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, serial,
-                                               ordering);
+    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0,
+                                               serial ? 1 : 0, false, true, ordering);
   }
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
@@ -169,7 +169,7 @@ MakePartialFactorization(const IoData &iodata,
   {
     name = "MUMPS";
     return std::make_unique<MumpsSchurSolver>(
-        A, schur_vars, iodata.solver.substructuring->factorization_tol, false,
+        A, schur_vars, iodata.solver.substructuring->factorization_tol, 0, false, true,
         iodata.solver.linear.sym_factorization);
   }
 #endif

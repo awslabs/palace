@@ -41,6 +41,10 @@ public:
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
+  // The field is known on part of the domain only: no total energies (see
+  // config::DomainPostData::partial).
+  bool partial = false;
+
   DomainPostOperator() = default;
   DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,

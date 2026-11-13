@@ -347,17 +347,17 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
+std::vector<double> MinimizeBarycentricDenominator(const std::vector<double> &z,
+                                                   const std::complex<double> *q,
+                                                   std::size_t N)
 {
-  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
-  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
-  BlockTimer bt(Timer::CONSTRUCT_PROM);
-  const auto S = dim_Q;
+  const auto S = z.size();
   MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
                       "added to the PROM to define the parameter domain!");
   double start = *std::ranges::min_element(z);
   double end = *std::ranges::max_element(z);
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
+  Eigen::Map<const Eigen::VectorXcd> q_map(q, S);
 
   // Sample Q on discrete points. The case of N>1 samples is not very useful below. It will
   // typically give us multiple sample points right next to each other in the same local
@@ -384,7 +384,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
     // Index the points rather than accumulate delta, which can be below the spacing of
     // doubles near z, so the loop always ends.
     const double z_sample = start + i * delta;
-    const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
+    const double Q_sample = std::abs((q_map.array() / (z_map.array() - z_sample)).sum());
 
     bool partial_full = (queue.size() < N);
     if (partial_full || Q_sample < queue.back().second)
@@ -404,6 +404,14 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   std::vector<double> vals(N);
   std::ranges::transform(queue, vals.begin(), [](const q_t &p) { return p.first.real(); });
   return vals;
+}
+
+std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
+{
+  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  return MinimizeBarycentricDenominator(z, q.data(), N);
 }
 
 // Hybrid inner-product matrix. This is made from MassIntegrator of the domain and port

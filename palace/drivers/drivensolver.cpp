@@ -10,6 +10,7 @@
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
+#include "drivers/drivensubstructuredsweep.hpp"
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -18,6 +19,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/drivensubstructure.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -73,8 +75,31 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Main frequency sweep loop.
+  if (iodata.solver.substructuring)
+  {
+    return {SweepSubstructured(iodata, space_op, adaptive), space_op.GlobalTrueVSize()};
+  }
   return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
           space_op.GlobalTrueVSize()};
+}
+
+void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                              MPI_Comm comm) const
+{
+  if (const auto &sub = iodata.solver.substructuring;
+      sub && sub->mode == SubstructuringMode::ONLINE)
+  {
+    DrivenSubstructureModel model;
+    model.ReadHeader(sub->save_model, comm);
+    MFEM_VERIFY(
+        !(iodata.model.Lc > 0.0) ||
+            std::abs(iodata.model.Lc - model.length_scale) <= 1.0e-12 * model.length_scale,
+        "\"Model\": \"Lc\" (" << iodata.model.Lc
+                              << ") differs from that of the saved substructuring model ("
+                              << model.length_scale << ")!");
+    iodata.model.Lc = model.length_scale;
+  }
+  BaseSolver::Preprocess(iodata, smesh, comm);
 }
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const

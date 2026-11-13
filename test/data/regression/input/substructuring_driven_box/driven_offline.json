@@ -1,0 +1,19 @@
+{
+  "Problem": { "Type": "Driven", "Output": "postpro/offline" },
+  "Model": { "Mesh": "mesh/box.mesh", "L0": 1.0e-3 },
+  "Domains": { "Materials": [
+    { "Attributes": [1], "Permittivity": 4.0, "LossTan": 1.0e-3 },
+    { "Attributes": [2], "Permittivity": 2.0 } ],
+    "Postprocessing": { "Energy": [ { "Index": 1, "Attributes": [1] } ] } },
+  "Boundaries": {
+    "PEC": { "Attributes": [2] },
+    "Absorbing": { "Attributes": [1], "Order": 1 },
+    "LumpedPort": [
+      { "Index": 1, "R": 50.0, "Attributes": [3], "Direction": "+X", "Excitation": 1 },
+      { "Index": 2, "R": 50.0, "Attributes": [4], "Direction": "+X", "Excitation": 2 } ] },
+  "Solver": { "Order": 2, "Device": "CPU",
+    "Driven": { "MinFreq": 20.0, "MaxFreq": 30.0, "FreqStep": 10.0 },
+    "Linear": { "Type": "MUMPS", "KSPType": "GMRES", "Tol": 1e-12, "MaxIts": 100 },
+    "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
+      "SaveModel": "environment_model.bin" } }
+}

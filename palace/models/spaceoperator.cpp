@@ -568,6 +568,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     AddStiffnessPeriodicBdrCoefficients(1.0, fpb);
   }
+  RestrictToAssemblyDomains({&df, &f, &fc}, {&fb, &fpb});
   int empty[2] = {AreExactlyZero(df, f, fb, fpb), fc.IsExactlyZero()};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -618,6 +619,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     AddImagPeriodicCoefficients(1.0, fp);
     AddDampingPeriodicBdrCoefficients(1.0, frb);
   }
+  RestrictToAssemblyDomains({&f, &fp}, {&fb, &frb});
   int empty = AreExactlyZero(f, fb, fp, frb);
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -657,6 +659,7 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
+  RestrictToAssemblyDomains({&fr, &fi}, {&fbr, &fbi});
   int empty[2] = {AreExactlyZero(fr, fbr), AreExactlyZero(fi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -710,6 +713,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       fpbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi,
                                 include_wave_ports);
+  RestrictToAssemblyDomains({}, {&dfbr, &dfbi, &fbr, &fbi, &frbr, &frbi, &fpbr, &fpbi});
   int empty[2] = {AreExactlyZero(dfbr, fbr, frbr, fpbr),
                   AreExactlyZero(dfbi, fbi, frbi, fpbi)};
   Mpi::GlobalMin(2, empty, GetComm());
@@ -761,6 +765,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
       frbi(mat_op.MaxCeedBdrAttribute()), fpbr(mat_op.MaxCeedBdrAttribute()),
       fpbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
+  RestrictToAssemblyDomains({}, {&dfbr, &dfbi, &fbr, &fbi, &frbr, &frbi, &fpbr, &fpbi});
   int empty[2] = {AreExactlyZero(dfbr, fbr, frbr, fpbr),
                   AreExactlyZero(dfbi, fbi, frbi, fpbi)};
   Mpi::GlobalMin(2, empty, GetComm());
@@ -1504,6 +1509,32 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
     A->AddOperator(std::move(F));
   }
   return A;
+}
+
+SpaceOperator::AssemblyRestriction::AssemblyRestriction(
+    SpaceOperator &op, const std::vector<int> &domain_attrs)
+  : op(op), previous(std::move(op.assembly_domains))
+{
+  op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
+                              op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
+}
+
+void SpaceOperator::RestrictToAssemblyDomains(
+    std::initializer_list<MaterialPropertyCoefficient *> f,
+    std::initializer_list<MaterialPropertyCoefficient *> fb)
+{
+  if (!assembly_domains)
+  {
+    return;
+  }
+  for (auto *c : f)
+  {
+    c->RestrictCoefficient(assembly_domains->first);
+  }
+  for (auto *c : fb)
+  {
+    c->RestrictCoefficient(assembly_domains->second);
+  }
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
