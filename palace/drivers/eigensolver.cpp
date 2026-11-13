@@ -64,6 +64,20 @@ internal::BuildResponseCorrectedStiffness(const ComplexOperator &stiffness,
   return corrected;
 }
 
+internal::ResponseCorrectedStiffnesses
+internal::BuildResponseCorrectedStiffnesses(const ComplexOperator &stiffness,
+                                            const ComplexOperator *seed_stiffness,
+                                            const Operator &response_stiffness)
+{
+  ResponseCorrectedStiffnesses corrected;
+  corrected.K = BuildResponseCorrectedStiffness(stiffness, response_stiffness);
+  if (seed_stiffness)
+  {
+    corrected.Kp = BuildResponseCorrectedStiffness(*seed_stiffness, response_stiffness);
+  }
+  return corrected;
+}
+
 internal::EigenvalueTarget
 internal::GetEigenvalueTarget(double target, bool lambda_eigenproblem,
                               EigenSolverBackend backend,
@@ -461,12 +475,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction);
       response_stiffness =
           std::make_unique<ComplexWrapperOperator>(response_stiffness_real.get(), nullptr);
-      corrected_K = internal::BuildResponseCorrectedStiffness(*K, *response_stiffness_real);
-      if (has_A2)
-      {
-        corrected_Kp =
-            internal::BuildResponseCorrectedStiffness(*Kp, *response_stiffness_real);
-      }
+      // Kp exists only for the HYBRID polynomial seed (has_A2 and not SLP).
+      auto corrected_stiffnesses = internal::BuildResponseCorrectedStiffnesses(
+          *K, Kp.get(), *response_stiffness_real);
+      corrected_K = std::move(corrected_stiffnesses.K);
+      corrected_Kp = std::move(corrected_stiffnesses.Kp);
     }
     corrected_eigen = MakeEigenvalueSolver();
     E_corrected.SetSize(Curl.Width());

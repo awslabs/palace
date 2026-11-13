@@ -12,6 +12,7 @@ using palace::EigenSolverBackend;
 using palace::EigenvalueSolver;
 using palace::NonlinearEigenSolver;
 using palace::internal::BuildResponseCorrectedMass;
+using palace::internal::BuildResponseCorrectedStiffnesses;
 using palace::internal::EigenvalueToAngularFrequency;
 using palace::internal::GetEigenvalueTarget;
 using palace::internal::MaximumWeightModeAssignment;
@@ -50,6 +51,48 @@ TEST_CASE("Eigenmode response-corrected mass", "[eigensolver][surface-response][
   CHECK(yc.Real()[1] == Catch::Approx(-7.5));
   CHECK(yc.Imag()[0] == Catch::Approx(-1.0));
   CHECK(yc.Imag()[1] == Catch::Approx(2.0));
+}
+
+// OI-UPSYNC-NULL-KP (P3-11): with magnetic leaves the corrected eigenproblem builds K + dK
+// and, only when the HYBRID polynomial seed Kp = K + A2_0 exists, Kp + dK. On the SLP path
+// (an A2 term, no seed) Kp is null: the corrected Kp was built from it.
+TEST_CASE("Eigenmode response-corrected stiffness without a polynomial seed",
+          "[eigensolver][surface-response][Serial]")
+{
+  mfem::DenseMatrix stiffness_real(2), seed_real(2), seed_imag(2), response(2);
+  stiffness_real = 0.0;
+  seed_real = 0.0;
+  seed_imag = 0.0;
+  response = 0.0;
+  stiffness_real(0, 0) = 2.0;
+  stiffness_real(1, 1) = 3.0;
+  seed_real(0, 0) = 5.0;
+  seed_real(1, 1) = 7.0;
+  seed_imag(0, 1) = 0.5;
+  seed_imag(1, 0) = 0.5;
+  response(0, 0) = -0.25;
+  response(1, 1) = 0.75;
+  ComplexWrapperOperator stiffness(&stiffness_real, nullptr);
+  ComplexWrapperOperator seed(&seed_real, &seed_imag);
+  mfem::Vector x({2.0, -1.0}), y(2);
+
+  // SLP: no seed, so only K + dK.
+  auto slp = BuildResponseCorrectedStiffnesses(stiffness, nullptr, response);
+  REQUIRE(slp.K.op);
+  CHECK_FALSE(slp.Kp.op);
+  CHECK_FALSE(slp.Kp.real);
+  slp.K.op->Real()->Mult(x, y);
+  CHECK(y[0] == Catch::Approx(3.5));
+  CHECK(y[1] == Catch::Approx(-3.75));
+
+  // HYBRID: both twins; Kp + dK keeps the seed's imaginary part.
+  auto hybrid = BuildResponseCorrectedStiffnesses(stiffness, &seed, response);
+  REQUIRE(hybrid.K.op);
+  REQUIRE(hybrid.Kp.op);
+  CHECK(hybrid.Kp.op->Imag() == &seed_imag);
+  hybrid.Kp.op->Real()->Mult(x, y);
+  CHECK(y[0] == Catch::Approx(9.5));
+  CHECK(y[1] == Catch::Approx(-7.75));
 }
 
 TEST_CASE("Eigenmode spectral conventions", "[eigensolver][surface-response][Serial]")

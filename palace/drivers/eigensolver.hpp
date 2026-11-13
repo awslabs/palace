@@ -44,6 +44,19 @@ ResponseCorrectedMass BuildResponseCorrectedMass(const ComplexOperator &mass,
 ResponseCorrectedMass BuildResponseCorrectedStiffness(const ComplexOperator &stiffness,
                                                       const Operator &response_stiffness);
 
+// The response-corrected twins of the stiffness operators: K + dK and, when the HYBRID
+// polynomial seed exists (Kp = K + A2_0), Kp + dK. Kp is null on the SLP path, which
+// applies the exact A2 beside K + dK; then no corrected Kp is built (OI-UPSYNC-NULL-KP:
+// it was built from the null Kp).
+struct ResponseCorrectedStiffnesses
+{
+  ResponseCorrectedMass K, Kp;
+};
+ResponseCorrectedStiffnesses
+BuildResponseCorrectedStiffnesses(const ComplexOperator &stiffness,
+                                  const ComplexOperator *seed_stiffness,
+                                  const Operator &response_stiffness);
+
 // Return the shift and spectrum selector for an eigenproblem represented in either
 // λ = iω or μ = -λ² = ω².
 EigenvalueTarget GetEigenvalueTarget(double target, bool lambda_eigenproblem,
