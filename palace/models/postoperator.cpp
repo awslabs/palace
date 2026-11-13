@@ -21,6 +21,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/face_sampling_plan.hpp"
 #include "fem/interpolator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/floquetportoperator.hpp"
@@ -50,6 +51,48 @@ namespace
 {
 
 constexpr double minimum_eigenmode_response_overlap = 0.8;
+
+// The RT elements of a space (the same finite elements, so the same basis and Piola map)
+// with every DOF interior to its element: the space of a field which is discontinuous
+// across every face, in the elements' native basis (no DOF transformation). It holds the
+// restriction to each element of a field of the flux space broken across the interior
+// sheet faces (P3-14, SD-3202), so that the coefficients that read D per element see the
+// version of the element's own side.
+class DiscontinuousRTFECollection : public mfem::FiniteElementCollection
+{
+  const mfem::FiniteElementCollection &rt_fec;
+  const int dim;
+  std::string name;
+
+public:
+  DiscontinuousRTFECollection(const mfem::FiniteElementCollection &rt_fec, int dim)
+    : mfem::FiniteElementCollection(rt_fec.GetOrder()), rt_fec(rt_fec), dim(dim),
+      name(std::string("Discontinuous_") + rt_fec.Name())
+  {
+  }
+
+  const mfem::FiniteElement *
+  FiniteElementForGeometry(mfem::Geometry::Type geom) const override
+  {
+    return (mfem::Geometry::Dimension[geom] == dim) ? rt_fec.FiniteElementForGeometry(geom)
+                                                    : nullptr;
+  }
+
+  int DofForGeometry(mfem::Geometry::Type geom) const override
+  {
+    const auto *fe = FiniteElementForGeometry(geom);
+    return fe ? fe->GetDof() : 0;
+  }
+
+  const int *DofOrderForOrientation(mfem::Geometry::Type, int) const override
+  {
+    return nullptr;
+  }
+
+  const char *Name() const override { return name.c_str(); }
+
+  int GetContType() const override { return DISCONTINUOUS; }
+};
 
 bool IsSupportedDomainOutputDimension(const mfem::ParMesh &mesh)
 {
@@ -228,18 +271,14 @@ PostOperator<solver_t>::PostOperator(
                                        HasComplexGridFunction<solver_t>());
     if (surf_post_op.NeedsFluxRecovery())
     {
-      // OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE (decision 1578): the
-      // drivers recover D with the error estimator, whose recovery space is broken across
-      // the interior faces of the sheet attributes whenever the mesh has any (the
-      // estimators' BuildBrokenRecoverySpace rule). A grid function cannot live on a broken
-      // space, so the request is refused here, before the solve.
-      const auto sheet_attributes = boundaries.GetSheetAttributes();
-      int broken = !sheet_attributes.empty() &&
-                   fem_op->GetRTSpace().GetMesh().GetCrackSides(sheet_attributes).Any();
-      Mpi::GlobalMax(1, &broken, fem_op->GetComm());
-      MFEM_VERIFY(!broken, kFluxRecoveryBrokenSpaceMessage);
-      D_recovered = std::make_unique<GridFunction>(fem_op->GetRTSpace(),
-                                                   HasComplexGridFunction<solver_t>());
+      // The drivers recover D with the error estimator, on its flux space: broken across
+      // the interior faces of the sheet attributes whenever the mesh has any (SD-403). The
+      // same rule on the same RT space and attributes gives the same view here (P3-14,
+      // SD-3202; OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE of decision 1578
+      // lifted): D is then held per side for the energies.
+      flux_space =
+          BuildBrokenFluxSpace(fem_op->GetRTSpace(), boundaries.GetSheetAttributes());
+      D_recovered = MakeRecoveredFluxGridFunction(HasComplexGridFunction<solver_t>());
     }
     if constexpr (solver_t == ProblemType::ELECTROSTATIC)
     {
@@ -1330,6 +1369,71 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_bdr->RegisterVCoeffField(fmt::format("E0_{}_imag", idx), data.E0i.get());
   }
   RegisterSurfaceResponseParaviewFields();
+}
+
+template <ProblemType solver_t>
+std::unique_ptr<GridFunction>
+PostOperator<solver_t>::MakeRecoveredFluxGridFunction(bool complex)
+{
+  auto &rt_fespace = fem_op->GetRTSpace();
+  if (!flux_space)
+  {
+    return std::make_unique<GridFunction>(rt_fespace, complex);
+  }
+  if (!flux_sides_space)
+  {
+    flux_sides_fec = std::make_unique<DiscontinuousRTFECollection>(
+        rt_fespace.GetFEColl(), rt_fespace.GetMesh().Dimension());
+    flux_sides_space =
+        std::make_unique<FiniteElementSpace>(rt_fespace.GetMesh(), flux_sides_fec.get());
+  }
+  return std::make_unique<GridFunction>(*flux_sides_space, complex);
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::SetRecoveredFluxGridFunction(const Vector &d,
+                                                          mfem::ParGridFunction &flux) const
+{
+  MFEM_VERIFY(d.Size() == GetRecoveredElectricFluxTrueVSize(), kRecoveredFluxSpaceMessage);
+  if (!flux_space)
+  {
+    flux.SetFromTrueDofs(d);
+    flux.ExchangeFaceNbrData();
+    return;
+  }
+  // Each element takes the values of the broken L-vector at its signed element DOFs (the
+  // versions of its side for split DOFs), in its native basis (undoing the DOF
+  // transformation of the RT space); the other side of a sheet face on another process
+  // arrives with the face-neighbour data.
+  Vector l(flux_space->GetVSize());
+  flux_space->GetProlongationMatrix()->Mult(d, l);
+  const auto *hl = l.HostRead();
+  auto *hf = flux.HostWrite();
+  mfem::Array<int> dofs, element_dofs;
+  mfem::DofTransformation dof_trans;
+  mfem::Vector values;
+  for (int e = 0; e < flux_space->GetMesh().GetNE(); e++)
+  {
+    flux_space->GetElementDofs(e, dofs, dof_trans);
+    values.SetSize(dofs.Size());
+    for (int i = 0; i < dofs.Size(); i++)
+    {
+      const int dof = dofs[i];
+      values(i) = (dof >= 0) ? hl[dof] : -hl[-1 - dof];
+    }
+    if (dof_trans.GetDofTransformation())
+    {
+      dof_trans.InvTransformPrimal(values);
+    }
+    flux.ParFESpace()->GetElementDofs(e, element_dofs);
+    MFEM_ASSERT(element_dofs.Size() == values.Size(),
+                "Unexpected element DOF count of the per-side recovered flux!");
+    for (int i = 0; i < element_dofs.Size(); i++)
+    {
+      hf[element_dofs[i]] = values(i);
+    }
+  }
+  flux.ExchangeFaceNbrData();
 }
 
 template <ProblemType solver_t>
@@ -2707,9 +2811,12 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         MFEM_VERIFY(has_surface_response_corrected_field,
                     "Self-consistent surface response mode requires a corrected field!");
         auto &corrected_field = *surface_response_corrected_field;
-        const GridFunction *corrected_flux = has_surface_response_corrected_flux
-                                                 ? surface_response_corrected_flux.get()
-                                                 : nullptr;
+        // The energies read the per-side corrected flux on a broken flux space (P3-14).
+        const GridFunction *corrected_flux =
+            !has_surface_response_corrected_flux ? nullptr
+            : surface_response_corrected_flux_sides
+                ? surface_response_corrected_flux_sides.get()
+                : surface_response_corrected_flux.get();
 
         double capacitor_energy = 0.0;
         for (const auto &[idx, data] : fem_op->GetLumpedPortOp())

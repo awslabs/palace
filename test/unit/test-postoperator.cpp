@@ -1545,6 +1545,10 @@ class FluxRecoveryPostOperator : public PostOperator<solver_t>
 public:
   using PostOperator<solver_t>::PostOperator;
   const Measurement &Cache() const { return this->measurement_cache; }
+  const GridFunction &CorrectedFluxOutput() const
+  {
+    return *this->surface_response_corrected_flux;
+  }
 };
 
 }  // namespace
@@ -1554,18 +1558,17 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "[postoperator][Serial][Parallel]")
 {
   // An interface dielectric "FluxRecovery" is refused at the construction of the
-  // postprocessing, before any solve: (i) on an interior sheet face, cracked or not, by the
+  // postprocessing, before any solve, on an interior sheet face, cracked or not, by the
   // SurfacePostOperator (our method rule: no controlled normal trace of the volume
-  // projection on a zero-thickness PEC sheet; SD-606 (1)), and (ii) anywhere on a mesh with
-  // interior sheet faces, by the PostOperator, since the recovered flux lives on a recovery
-  // space broken across them (decision 1578,
-  // OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE). An exterior sheet boundary
-  // keeps FluxRecovery, and without FluxRecovery nothing is refused. The sheet faces cross
-  // the process boundaries in parallel (collective checks).
+  // projection on a zero-thickness PEC sheet; SD-606 (1); kept by ruling 1600). Elsewhere
+  // on a mesh with interior sheet faces it is accepted: the recovered flux lives on a
+  // recovery space broken across them, which the PostOperator holds per side (P3-14,
+  // SD-3202; the refusal of decision 1578,
+  // OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE, is lifted). An exterior sheet
+  // boundary keeps FluxRecovery, and without FluxRecovery nothing is refused. The sheet
+  // faces cross the process boundaries in parallel (collective checks).
   auto comm = Mpi::World();
   const std::string sheet_refusal = "is not supported on internal boundary sheets";
-  const std::string broken_space_refusal =
-      "OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE";
   auto Electrostatic =
       [&](bool interior_sheet, InterfaceDielectric type, int attr, bool flux_recovery)
   {
@@ -1604,9 +1607,10 @@ TEST_CASE_METHOD(test::SharedTempDir,
   }
   SECTION("Elsewhere on a mesh with an interior sheet")
   {
-    CHECK_THROWS_WITH(
-        Electrostatic(true, InterfaceDielectric::SA, flux_interface_attr, true),
-        ContainsSubstring(broken_space_refusal));
+    bool needs_flux = false;
+    CHECK_NOTHROW(needs_flux = Electrostatic(true, InterfaceDielectric::SA,
+                                             flux_interface_attr, true));
+    CHECK(needs_flux);
   }
   SECTION("Exterior sheet boundary")
   {
@@ -1625,9 +1629,10 @@ TEST_CASE_METHOD(test::SharedTempDir,
   {
     CHECK_THROWS_WITH(BoundaryMode(true, InterfaceDielectric::MA, 5),
                       ContainsSubstring(sheet_refusal));
-    CHECK_THROWS_WITH(BoundaryMode(true, InterfaceDielectric::SA, 6),
-                      ContainsSubstring(broken_space_refusal));
     bool needs_flux = false;
+    CHECK_NOTHROW(needs_flux = BoundaryMode(true, InterfaceDielectric::SA, 6));
+    CHECK(needs_flux);
+    needs_flux = false;
     CHECK_NOTHROW(needs_flux = BoundaryMode(false, InterfaceDielectric::SA, 6));
     CHECK(needs_flux);
   }
@@ -1641,8 +1646,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Recovered flux size mismatch aborts",
   // (SD-502 / SD-605 backstop), for FluxRecovery and for the self-consistent corrected
   // flux.
   auto comm = Mpi::World();
-  const std::string size_refusal =
-      "OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE";
+  const std::string size_refusal = "does not match the flux recovery space";
   SECTION("Electrostatic FluxRecovery")
   {
     IoData iodata =
@@ -1787,4 +1791,87 @@ TEST_CASE_METHOD(test::SharedTempDir, "Transient FluxRecovery sets the recovered
   CHECK_THROWS_WITH(
       post_op.MeasureAndPrintAll(2, e, b, 0.2, 0.0),
       ContainsSubstring("requires the recovered electric flux of the current time step"));
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "FluxRecovery next to an interior lumped port on the broken flux space",
+                 "[postoperator][Serial][Parallel]")
+{
+  // P3-14 (SD-3202 (c)): an interior lumped port is never cracked, so under the legacy key
+  // too the drivers' recovered D lives on a flux space broken across it (refused on M1,
+  // decision 1578). The postprocessing accepts it with that space's size, holds it per side
+  // for the energies, and writes the corrected flux (ParaView, grid functions) as its FIRST
+  // version on the RT space (upstream's rule for a broken field); a D of the RT size is
+  // refused.
+  auto comm = Mpi::World();
+  IoData iodata = MakeFluxRecoveryIoData(ProblemType::DRIVEN, {1}, InterfaceDielectric::SA,
+                                         flux_interface_attr, true, temp_dir.string());
+  iodata.solver.driven.sample_f = {1.0};
+  config::BoundaryData port(json{{"LumpedPort",
+                                  {{{"Attributes", {flux_sheet_attr}},
+                                    {"Index", 1},
+                                    {"R", 50.0},
+                                    {"Direction", "+Y"},
+                                    {"Excitation", true}}}}});
+  iodata.boundaries.lumpedport = port.lumpedport;
+  auto mesh = MakeFluxRecoveryParMesh(comm, MakeFluxRecoveryCubeMesh(true));
+  SpaceOperator space_op(iodata, mesh);
+  FluxRecoveryPostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  REQUIRE(post_op.NeedsRecoveredElectricFlux());
+  FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  const auto &flux_space = estimator.GetElectricFluxSpace();
+  REQUIRE(flux_space.IsBroken());
+  CHECK(post_op.GetRecoveredElectricFluxTrueVSize() == flux_space.GetTrueVSize());
+  CHECK(flux_space.GlobalTrueVSize() > space_op.GetRTSpace().GlobalTrueVSize());
+
+  // A smooth complex field and its recovered flux on the broken space.
+  GridFunction E(space_op.GetNDSpace(), true);
+  mfem::VectorFunctionCoefficient fr(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = 1.0 + 0.5 * x(1);
+                                       v(1) = 0.3 * x(0) * x(2);
+                                       v(2) = 2.0 - x(0) + 0.2 * x(1);
+                                     });
+  mfem::VectorFunctionCoefficient fi(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = -0.2 * x(2);
+                                       v(1) = 0.4 + 0.1 * x(0);
+                                       v(2) = 0.3 * x(1);
+                                     });
+  E.Real().ProjectCoefficient(fr);
+  E.Imag().ProjectCoefficient(fi);
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize()), d(flux_space.GetTrueVSize());
+  E.Real().GetTrueDofs(e.Real());
+  E.Imag().GetTrueDofs(e.Imag());
+  estimator.RecoverElectricFlux(e, d);
+  CHECK_NOTHROW(post_op.SetRecoveredElectricFlux(d));
+  ComplexVector d_rt(space_op.GetRTSpace().GetTrueVSize());
+  d_rt = 0.0;
+  CHECK_THROWS_WITH(post_op.SetRecoveredElectricFlux(d_rt),
+                    ContainsSubstring("does not match the flux recovery space"));
+
+  // The corrected flux output = the FIRST version of D on the RT space.
+  post_op.SetSurfaceResponseCorrectedField(e, &d);
+  const auto first = flux_space.BuildVersionMap(FiniteElementSpace::VersionMap::FIRST);
+  for (const bool imag : {false, true})
+  {
+    Vector expected(space_op.GetRTSpace().GetTrueVSize()),
+        actual(space_op.GetRTSpace().GetTrueVSize());
+    first->Mult(imag ? d.Imag() : d.Real(), expected);
+    const auto &output = post_op.CorrectedFluxOutput();
+    (imag ? output.Imag() : output.Real()).GetTrueDofs(actual);
+    double max_expected = expected.Size() ? expected.Normlinf() : 0.0, max_diff = 0.0;
+    for (int i = 0; i < expected.Size(); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(actual(i) - expected(i)));
+    }
+    Mpi::GlobalMax(1, &max_expected, comm);
+    Mpi::GlobalMax(1, &max_diff, comm);
+    INFO((imag ? "imaginary" : "real")
+         << " part: max. difference " << max_diff << " (max. " << max_expected << ")");
+    CHECK(max_expected > 0.0);
+    CHECK(max_diff <= 1.0e-14 * max_expected);
+  }
 }

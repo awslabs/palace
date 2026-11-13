@@ -20,6 +20,16 @@ namespace palace
 class MaterialPropertyCoefficient;
 class MaterialOperator;
 
+// The flux recovery space of the error estimators: a view of the given space which is
+// broken (discontinuous) across the interior boundaries formed by the boundary attributes
+// in crack_attr_list (see FiniteElementSpace's broken-view constructor), or nullptr when
+// the mesh has no such interior boundaries (then the recovery uses the given space itself).
+// The estimators and the postprocessing of the recovered flux (PostOperator) build it with
+// this one rule from the same space and list, so that they hold D on the same space
+// (SD-403, SD-3202). Collective.
+std::unique_ptr<FiniteElementSpace>
+BuildBrokenFluxSpace(FiniteElementSpace &fespace, const std::vector<int> &crack_attr_list);
+
 //
 // Classes used in the estimation of element-wise solution errors via a global L2 projection
 // of a discontinuous flux onto a smooth space (flux recovery).

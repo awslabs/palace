@@ -9,16 +9,23 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
+#include "linalg/errorestimator.hpp"
+#include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
@@ -35,17 +42,17 @@ namespace fs = std::filesystem;
 namespace
 {
 
-// The unit cube (4 x 4 x 4 tetrahedra) split by the plane x = 0.5: element attribute 1
-// for x < 0.5 and 2 above; the interior faces of the plane with y and z in [0.25, 0.75]
-// form the metal island (boundary attribute island_attr), the other faces of the plane the
-// open interface (open_attr); mfem::Mesh::MakeCartesian3D numbers the exterior boundary 1
-// to 6.
-constexpr int island_attr = 7, open_attr = 8;
+// The unit cube (4 x 4 x 4 tetrahedra or hexahedra) split by the plane x = 0.5: element
+// attribute 1 for x < 0.5 and 2 above; the interior faces of the plane with y and z in
+// [0.25, 0.75] form the metal island (boundary attribute island_attr), the other faces of
+// the plane the open interface (open_attr), and the faces of the plane x = 0.75 facing the
+// island the probe plane (probe_attr, vacuum on both sides); mfem::Mesh::MakeCartesian3D
+// numbers the exterior boundary 1 to 6.
+constexpr int island_attr = 7, open_attr = 8, probe_attr = 9;
 
-mfem::Mesh MakeSerialIslandMesh()
+mfem::Mesh MakeSerialIslandMesh(mfem::Element::Type type = mfem::Element::TETRAHEDRON)
 {
-  mfem::Mesh mesh =
-      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  mfem::Mesh mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, type, 1.0, 1.0, 1.0);
   for (int face = 0; face < mesh.GetNumFaces(); face++)
   {
     int e1, e2;
@@ -56,18 +63,20 @@ mfem::Mesh MakeSerialIslandMesh()
     }
     mfem::Array<int> vertices;
     mesh.GetFaceVertices(face, vertices);
-    bool on_plane = true, inside = true;
+    bool on_plane = true, on_probe = true, inside = true;
     for (const int v : vertices)
     {
       const double *x = mesh.GetVertex(v);
       on_plane = on_plane && std::abs(x[0] - 0.5) < 1.0e-12;
+      on_probe = on_probe && std::abs(x[0] - 0.75) < 1.0e-12;
       inside = inside && x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12 &&
                x[2] > 0.25 - 1.0e-12 && x[2] < 0.75 + 1.0e-12;
     }
-    if (on_plane)
+    if (on_plane || (on_probe && inside))
     {
       mesh.AddBdrElement(mesh.GetFace(face)->Duplicate(&mesh));
-      mesh.SetBdrAttribute(mesh.GetNBE() - 1, inside ? island_attr : open_attr);
+      mesh.SetBdrAttribute(mesh.GetNBE() - 1,
+                           on_probe ? probe_attr : (inside ? island_attr : open_attr));
     }
   }
   mfem::Vector center(3);
@@ -83,13 +92,14 @@ mfem::Mesh MakeSerialIslandMesh()
 }
 
 // The island mesh written once (root) into the shared temporary directory.
-fs::path WriteIslandMesh(const fs::path &dir)
+fs::path WriteIslandMesh(const fs::path &dir,
+                         mfem::Element::Type type = mfem::Element::TETRAHEDRON)
 {
-  const auto path = dir / "island.mesh";
+  const auto path = dir / ("island-" + std::to_string(int(type)) + ".mesh");
   if (Mpi::Root(Mpi::World()))
   {
     std::ofstream output(path);
-    MakeSerialIslandMesh().Print(output);
+    MakeSerialIslandMesh(type).Print(output);
   }
   Mpi::Barrier(Mpi::World());
   return path;
@@ -127,6 +137,152 @@ json IslandConfig(const fs::path &mesh_path, const fs::path &output, bool legacy
     config["Model"]["CrackInternalBoundaryElements"] = true;
   }
   return config;
+}
+
+// A partition of the island mesh in the file format of Model.Partitioning, written once
+// (root): the rank of an element = (x > 0.5) + 2 (y > 0.5) + (z > 0.5) of its center,
+// modulo the process count, so that the process boundaries lie ON the sheet plane and
+// ACROSS the island (the planes y = 0.5 and z = 0.5 cut it).
+fs::path WriteIslandPartition(const fs::path &dir, mfem::Element::Type type)
+{
+  const int num_procs = Mpi::Size(Mpi::World());
+  const auto path = dir / ("island-" + std::to_string(int(type)) + "-np" +
+                           std::to_string(num_procs) + ".partition");
+  if (Mpi::Root(Mpi::World()))
+  {
+    auto mesh = MakeSerialIslandMesh(type);
+    std::ofstream output(path);
+    output << "number_of_elements " << mesh.GetNE() << "\n"
+           << "number_of_processors " << num_procs << "\n";
+    mfem::Vector center(3);
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      mesh.GetElementCenter(e, center);
+      output << ((center(0) > 0.5) + 2 * (center(1) > 0.5) + (center(2) > 0.5)) % num_procs
+             << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  return path;
+}
+
+// An electrostatic configuration of the island mesh with FluxRecovery entries NEXT to the
+// island (never on it: our method rule keeps FluxRecovery off interior sheets, ruling
+// 1600): 1 = SA on the open interface (the rest of the plane x = 0.5, which meets the
+// island along its perimeter), 2 = MA on the exterior face x = 1 (vacuum side), 3 = MS on
+// the exterior face x = 0 (substrate side), 4 = entry 1 without FluxRecovery, 5 = MA on the
+// probe plane (it reads the normal flux of the elements that face the island). Substrate
+// (permittivity 4) for x < 0.5, vacuum above; second order; a tight flux recovery; the
+// crack without the bisection of RefineCrackElements in both forms (the same elements), and
+// the partition.
+json FluxRecoveryIslandConfig(const fs::path &mesh_path, const fs::path &partition,
+                              const fs::path &output, bool legacy)
+{
+  auto Entry = [](int index, int attr, const char *type, bool flux_recovery)
+  {
+    return json{{"Index", index},       {"Attributes", {attr}},
+                {"Type", type},         {"Thickness", 2.0e-3},
+                {"Permittivity", 10.0}, {"FluxRecovery", flux_recovery}};
+  };
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Verbose", 0}, {"Output", output.string()}}},
+      {"Model",
+       {{"Mesh", mesh_path.string()},
+        {"Partitioning", partition.string()},
+        {"RefineCrackElements", false}}},
+      {"Domains",
+       {{"Materials", json::array({{{"Attributes", {1}}, {"Permittivity", 4.0}},
+                                   {{"Attributes", {2}}, {"Permittivity", 1.0}}})}}},
+      {"Boundaries",
+       {{"Ground", {{"Attributes", {island_attr}}}},
+        {"Terminal", json::array({{{"Index", 1}, {"Attributes", {1}}}})},
+        {"Postprocessing",
+         {{"Dielectric",
+           json::array({Entry(1, open_attr, "SA", true), Entry(2, 3, "MA", true),
+                        Entry(3, 5, "MS", true), Entry(4, open_attr, "SA", false),
+                        Entry(5, probe_attr, "MA", true)})}}}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Linear", {{"EstimatorTol", 1.0e-14}, {"EstimatorMaxIts", 10000}}}}}};
+  if (legacy)
+  {
+    config["Model"]["CrackInternalBoundaryElements"] = true;
+  }
+  return config;
+}
+
+// The FluxRecovery energies of the entries 1-5 for a smooth field (no jump, so that the
+// cracked and the uncracked mesh carry the same field element by element) with D recovered
+// by the electrostatic error estimator as the driver builds it; on a broken flux space also
+// the probe entry 5 with the CONTINUOUS recovery (the RT space, not broken across the
+// island), i.e. what a D on the RT space gives there.
+struct IslandFluxEnergies
+{
+  std::vector<double> energies;
+  double continuous_probe = 0.0;
+  bool broken = false;
+  long long flux_true_dofs = 0;
+};
+
+IslandFluxEnergies RecoverIslandFluxEnergies(const json &config)
+{
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+  LaplaceOperator laplace_op(iodata, mesh);
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+  REQUIRE(post_op.NeedsRecoveredElectricFlux());
+  mfem::FunctionCoefficient V_coeff(
+      [](const mfem::Vector &x) { return 1.0 - x(2) + 0.3 * x(0) * x(1) - 0.2 * x(1); });
+  mfem::VectorFunctionCoefficient E_coeff(3,
+                                          [](const mfem::Vector &x, mfem::Vector &v)
+                                          {
+                                            v(0) = -0.3 * x(1);
+                                            v(1) = -0.3 * x(0) + 0.2;
+                                            v(2) = 1.0;
+                                          });
+  GridFunction V(laplace_op.GetH1Space()), E(laplace_op.GetNDSpace());
+  V.Real().ProjectCoefficient(V_coeff);
+  E.Real().ProjectCoefficient(E_coeff);
+  Vector v(laplace_op.GetH1Space().GetTrueVSize()),
+      e(laplace_op.GetNDSpace().GetTrueVSize());
+  V.Real().GetTrueDofs(v);
+  E.Real().GetTrueDofs(e);
+  E.Real().SetFromTrueDofs(e);
+  E.Real().ExchangeFaceNbrData();
+  const auto &linear = iodata.solver.linear;
+  auto Estimator = [&](const std::vector<int> &crack_attr_list)
+  {
+    return GradFluxErrorEstimator<Vector>(laplace_op.GetMaterialOp(),
+                                          laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+                                          linear.estimator_tol, linear.estimator_max_it, 0,
+                                          linear.estimator_mg, crack_attr_list);
+  };
+  const auto estimator = Estimator(iodata.boundaries.GetSheetAttributes());
+  IslandFluxEnergies result;
+  result.broken = estimator.GetFluxSpace().IsBroken();
+  result.flux_true_dofs = estimator.GetFluxSpace().GlobalTrueVSize();
+  REQUIRE(post_op.GetRecoveredElectricFluxTrueVSize() ==
+          estimator.GetFluxSpace().GetTrueVSize());
+  Vector d(estimator.GetFluxSpace().GetTrueVSize());
+  estimator.RecoverFlux(e, d);
+  const auto energies = post_op.GetElectrostaticEnergies(v, e, &d);
+  for (int idx : {1, 2, 3, 4, 5})
+  {
+    result.energies.push_back(energies.interfaces.at(idx).energy);
+  }
+  if (result.broken)
+  {
+    const auto continuous = Estimator({});
+    Vector dc(continuous.GetFluxSpace().GetTrueVSize());
+    continuous.RecoverFlux(e, dc);
+    GridFunction Dc(laplace_op.GetRTSpace());
+    Dc.Real().SetFromTrueDofs(dc);
+    Dc.Real().ExchangeFaceNbrData();
+    result.continuous_probe =
+        post_op.GetSurfacePostOp().GetInterfaceElectricFieldEnergy(5, E, &Dc);
+  }
+  return result;
 }
 
 }  // namespace
@@ -203,6 +359,156 @@ TEST_CASE_METHOD(test::SharedTempDir,
       CHECK_NOTHROW(PostOperator<ProblemType::ELECTROSTATIC>(iodata, laplace_op));
     }
   }
+}
+
+// P3-14 (SD-3202, T1): with FluxRecovery next to an interior sheet that is NOT cracked (the
+// new default), the drivers' recovered D lives on the flux space broken across the sheet,
+// and the postprocessing reads it per side: each element sees the version of its own side.
+// That is the function space of the same elements CRACKED along the sheet (the legacy key,
+// without the bisection), so the FluxRecovery energies of the two forms agree to the
+// recovery's tolerance, with process boundaries on and across the sheet (the other side
+// through the face-neighbour data); the continuous recovery (a D on the RT space, as
+// before the broken space) differs next to the sheet.
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Per-side recovered flux on an uncracked sheet equals the cracked mesh's",
+                 "[sheetflux][Serial][Parallel]")
+{
+  constexpr auto type = mfem::Element::HEXAHEDRON;
+  const auto mesh_path = WriteIslandMesh(temp_dir, type);
+  const auto partition = WriteIslandPartition(temp_dir, type);
+  const auto uncracked = RecoverIslandFluxEnergies(
+      FluxRecoveryIslandConfig(mesh_path, partition, temp_dir / "postpro-default", false));
+  const auto cracked = RecoverIslandFluxEnergies(
+      FluxRecoveryIslandConfig(mesh_path, partition, temp_dir / "postpro-legacy", true));
+  CHECK(uncracked.broken);
+  CHECK(!cracked.broken);
+  // The broken view and the RT space of the cracked mesh have the same true DOFs.
+  CHECK(uncracked.flux_true_dofs == cracked.flux_true_dofs);
+  for (std::size_t i = 0; i < uncracked.energies.size(); i++)
+  {
+    INFO("entry " << i + 1 << ": uncracked (per side) " << std::setprecision(17)
+                  << uncracked.energies[i] << ", cracked " << cracked.energies[i]
+                  << ", relative difference "
+                  << std::abs(uncracked.energies[i] - cracked.energies[i]) /
+                         std::abs(cracked.energies[i]));
+    CHECK(cracked.energies[i] > 0.0);
+    // MEASURED (np 1 / 2 / 3): <= 1e-14 relative; frozen at 1e-12.
+    CHECK_THAT(uncracked.energies[i], WithinRel(cracked.energies[i], 1.0e-12));
+  }
+  // The probe plane reads the normal flux of the elements facing the island: there the
+  // per-side recovery differs from the continuous one. (The open interface does not show
+  // it on this Cartesian hexahedral mesh: the normal flux of its faces is decoupled from
+  // the island's in the projection, MEASURED bitwise equal.)
+  INFO("entry 5 with the continuous recovery " << std::setprecision(17)
+                                               << uncracked.continuous_probe);
+  CHECK(std::abs(uncracked.continuous_probe - uncracked.energies[4]) >
+        1.0e-6 * uncracked.energies[4]);
+}
+
+// P3-14 (SD-3202, T6): the response-matrix paths with FluxRecovery read the per-side D too:
+// the batched Gram (the in-run response matrix) and the streamed rows (the archive
+// reduction, whose FLUX vectors have the flux space's size, P3-21) agree with a D on the
+// broken flux space, and the uncracked (per-side) matrices equal the cracked mesh's.
+TEST_CASE_METHOD(
+    test::SharedTempDir,
+    "Batched and streamed interface responses read the per-side recovered flux",
+    "[sheetflux][Serial][Parallel]")
+{
+  constexpr auto type = mfem::Element::HEXAHEDRON;
+  const auto mesh_path = WriteIslandMesh(temp_dir, type);
+  const auto partition = WriteIslandPartition(temp_dir, type);
+  using ResponseMatrices =
+      std::map<int, std::vector<SurfacePostOperator::InterfaceResponseMatrix>>;
+  auto Responses = [&](bool legacy)
+  {
+    auto config = FluxRecoveryIslandConfig(
+        mesh_path, partition, temp_dir / (legacy ? "rm-legacy" : "rm-default"), legacy);
+    auto &entry = config["Boundaries"]["Postprocessing"]["Dielectric"][0];
+    entry["AutomaticEdges"] = true;
+    entry["EdgeDistances"] = {0.1, 0.2};
+    entry["LocalizeEdgeEnergy"] = true;
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    LaplaceOperator laplace_op(iodata, mesh);
+    PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+    const auto &linear = iodata.solver.linear;
+    GradFluxErrorEstimator<Vector> estimator(
+        laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+        linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg,
+        iodata.boundaries.GetSheetAttributes());
+    CHECK(estimator.GetFluxSpace().IsBroken() == !legacy);
+    // Two basis fields and their recovered fluxes.
+    std::vector<Vector> e(2), d(2);
+    for (int i = 0; i < 2; i++)
+    {
+      mfem::VectorFunctionCoefficient f(3,
+                                        [i](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = (i == 0) ? -0.3 * x(1) : 0.2 + 0.1 * x(2);
+                                          v(1) = (i == 0) ? -0.3 * x(0) + 0.2 : 0.5 * x(0);
+                                          v(2) = (i == 0) ? 1.0 : -0.4 + 0.2 * x(1);
+                                        });
+      GridFunction E(laplace_op.GetNDSpace());
+      E.Real().ProjectCoefficient(f);
+      e[i].SetSize(laplace_op.GetNDSpace().GetTrueVSize());
+      E.Real().GetTrueDofs(e[i]);
+      d[i].SetSize(estimator.GetFluxSpace().GetTrueVSize());
+      estimator.RecoverFlux(e[i], d[i]);
+    }
+    auto batched = post_op.GetInterfaceElectricFieldEnergyMatrices(e, &d);
+    ResponseMatrices streamed;
+    for (const auto &samples : post_op.CacheInterfaceResponseSamples())
+    {
+      std::vector<double> rows(2 * samples.RowSize());
+      for (int i = 0; i < 2; i++)
+      {
+        post_op.SetInterfaceResponseField(e[i], &d[i]);
+        post_op.EvaluateInterfaceResponseRow(samples, rows.data() + i * samples.RowSize());
+      }
+      streamed.emplace(samples.interface_index,
+                       post_op.AssembleInterfaceResponseMatrices(samples, rows.data(), 2));
+    }
+    return std::make_pair(std::move(batched), std::move(streamed));
+  };
+  auto Compare =
+      [](const ResponseMatrices &a, const ResponseMatrices &b, double tol, const char *what)
+  {
+    REQUIRE(a.size() == 1);
+    REQUIRE(b.size() == 1);
+    const auto &ma = a.at(1), &mb = b.at(1);
+    REQUIRE(ma.size() == mb.size());
+    REQUIRE(!ma.empty());
+    for (std::size_t k = 0; k < ma.size(); k++)
+    {
+      for (int i = 0; i < 2; i++)
+      {
+        for (int j = 0; j < 2; j++)
+        {
+          INFO(what << ": radius " << k << ", (" << i << ", " << j << "): total "
+                    << std::setprecision(17) << ma[k].energy_total(i, j) << " vs "
+                    << mb[k].energy_total(i, j) << " (relative difference "
+                    << std::abs(ma[k].energy_total(i, j) - mb[k].energy_total(i, j)) /
+                           std::abs(mb[k].energy_total(i, j))
+                    << "); inside " << ma[k].energy_inside(i, j) << " vs "
+                    << mb[k].energy_inside(i, j));
+          CHECK_THAT(ma[k].energy_total(i, j),
+                     WithinRel(mb[k].energy_total(i, j), tol) ||
+                         WithinAbs(mb[k].energy_total(i, j), 1.0e-30));
+          CHECK_THAT(ma[k].energy_inside(i, j),
+                     WithinRel(mb[k].energy_inside(i, j), tol) ||
+                         WithinAbs(mb[k].energy_inside(i, j), 1.0e-30));
+        }
+      }
+    }
+  };
+  const auto [batched_default, streamed_default] = Responses(false);
+  const auto [batched_legacy, streamed_legacy] = Responses(true);
+  // MEASURED (np 1 / 2 / 3): <= 1.4e-15 relative (all three comparisons); frozen at 1e-12.
+  Compare(batched_default, streamed_default, 1.0e-12, "default: batched vs streamed");
+  Compare(batched_legacy, streamed_legacy, 1.0e-12, "legacy: batched vs streamed");
+  Compare(batched_default, batched_legacy, 1.0e-12,
+          "per side (default) vs cracked (legacy)");
 }
 
 }  // namespace palace

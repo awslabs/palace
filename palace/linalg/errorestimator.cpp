@@ -106,19 +106,29 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
 }
 
 // Construct a single-level view of the finest space of the hierarchy, which is broken
-// (discontinuous) across the interior boundaries formed by the given boundary attributes.
-// Returns nullptr when the mesh has no such interior boundaries. Without the coarser
-// levels, the projection on a broken space uses Jacobi preconditioning also when multigrid
-// is requested, rather than assembling the high-order mass matrix for AMG.
+// (discontinuous) across the interior boundaries formed by the given boundary attributes
+// (BuildBrokenFluxSpace). Returns nullptr when the mesh has no such interior boundaries.
+// Without the coarser levels, the projection on a broken space uses Jacobi preconditioning
+// also when multigrid is requested, rather than assembling the high-order mass matrix for
+// AMG.
 std::unique_ptr<FiniteElementSpaceHierarchy>
 BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
                          const std::vector<int> &crack_attr_list)
+{
+  auto broken = BuildBrokenFluxSpace(fespaces.GetFinestFESpace(), crack_attr_list);
+  return broken ? std::make_unique<FiniteElementSpaceHierarchy>(std::move(broken))
+                : nullptr;
+}
+
+}  // namespace
+
+std::unique_ptr<FiniteElementSpace>
+BuildBrokenFluxSpace(FiniteElementSpace &fespace, const std::vector<int> &crack_attr_list)
 {
   if (crack_attr_list.empty())
   {
     return nullptr;
   }
-  auto &fespace = fespaces.GetFinestFESpace();
   auto &mesh = fespace.GetMesh();
   const auto &sides = mesh.GetCrackSides(crack_attr_list);
   int broken = sides.Any();
@@ -127,11 +137,8 @@ BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
   {
     return nullptr;
   }
-  return std::make_unique<FiniteElementSpaceHierarchy>(
-      std::make_unique<FiniteElementSpace>(fespace, sides));
+  return std::make_unique<FiniteElementSpace>(fespace, sides);
 }
-
-}  // namespace
 
 template <typename VecType>
 FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,

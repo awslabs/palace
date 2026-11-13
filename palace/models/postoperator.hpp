@@ -84,15 +84,13 @@ double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &
 // 1 at full coverage, NaN when there is no within-R energy to cover.
 double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_energy);
 
-// OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE (decision 1578): the recovered
-// electric flux D of the interface "FluxRecovery" postprocessing is held on the continuous
-// H(div) space; the error estimators that recover it use a recovery space broken across the
-// interior faces of the sheet attributes whenever the mesh has any.
-inline constexpr const char *kFluxRecoveryBrokenSpaceMessage =
-    "Interface dielectric \"FluxRecovery\" is not available on a mesh with interior "
-    "boundary sheet faces: the error estimator's flux recovery space is broken across "
-    "them and the postprocessing holds the recovered flux on the continuous H(div) space "
-    "(OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE)!";
+// The recovered electric flux D of the interface "FluxRecovery" postprocessing lives on the
+// flux recovery space of the error estimators (BuildBrokenFluxSpace: broken across the
+// interior faces of the sheet attributes whenever the mesh has any, SD-403); a vector of
+// another size is refused (GetRecoveredElectricFluxTrueVSize).
+inline constexpr const char *kRecoveredFluxSpaceMessage =
+    "The recovered electric flux does not match the flux recovery space of the error "
+    "estimators (broken across the interior boundary sheet faces when the mesh has any)!";
 
 // Statically specify if solver uses real or complex fields.
 
@@ -172,6 +170,25 @@ protected:
 
   // Base post-op output directory.
   fs::path post_dir;
+
+  // P3-14 (SD-3202): with FluxRecovery on a mesh with interior sheet faces the recovered D
+  // lives on the estimators' flux space broken across them; flux_space is that view, built
+  // by the same rule from the same RT space and sheet attributes (null when unbroken: D is
+  // then held on the RT space, as before). D is held for the energies per element (each
+  // element reads the version of its own side) on a discontinuous RT space of the same
+  // elements, flux_sides_space (ghost sides by the face-neighbour exchange); flux_first
+  // maps a broken D to its FIRST version on the RT space (the output fields). Declared
+  // before the grid functions that live on these spaces (destroyed after them).
+  std::unique_ptr<FiniteElementSpace> flux_space;
+  std::unique_ptr<mfem::FiniteElementCollection> flux_sides_fec;
+  std::unique_ptr<FiniteElementSpace> flux_sides_space;
+  std::unique_ptr<mfem::HypreParMatrix> flux_first;
+
+  // A grid function holding a recovered flux for the energies: on the RT space, or per side
+  // on flux_sides_space when the flux space is broken; and its setter from the true DOFs of
+  // the flux space (MFEM_VERIFY on the size).
+  std::unique_ptr<GridFunction> MakeRecoveredFluxGridFunction(bool complex);
+  void SetRecoveredFluxGridFunction(const Vector &d, mfem::ParGridFunction &flux) const;
 
   // Fields: Electric, recovered electric displacement, Magnetic, Scalar Potential, Vector
   // Potential.
@@ -390,6 +407,10 @@ protected:
   bool surface_response_patch_energy_enabled = false;
   std::unique_ptr<GridFunction> surface_response_corrected_field;
   std::unique_ptr<GridFunction> surface_response_corrected_flux;
+  // P3-14 (SD-3202): on a broken flux space the corrected flux is held twice: the output
+  // field above (the FIRST version on the RT space, upstream's rule for a broken field) and
+  // the per-side field for the energies (each element reads its own side).
+  std::unique_ptr<GridFunction> surface_response_corrected_flux_sides;
   bool has_surface_response_corrected_field = false;
   bool has_surface_response_corrected_flux = false;
   bool surface_response_field_paraview_registered = false;
@@ -706,7 +727,7 @@ public:
   // reads it).
   int GetRecoveredElectricFluxTrueVSize() const
   {
-    return fem_op->GetRTSpace().GetTrueVSize();
+    return flux_space ? flux_space->GetTrueVSize() : fem_op->GetRTSpace().GetTrueVSize();
   }
 
   // PatchEnergy: the applied patches' raw claims as the partition reads them (taken from
@@ -744,14 +765,38 @@ public:
     if (d)
     {
       MFEM_VERIFY(d->Size() == GetRecoveredElectricFluxTrueVSize(),
-                  kFluxRecoveryBrokenSpaceMessage);
+                  kRecoveredFluxSpaceMessage);
       if (!surface_response_corrected_flux)
       {
         surface_response_corrected_flux =
             std::make_unique<GridFunction>(fem_op->GetRTSpace(), true);
       }
-      surface_response_corrected_flux->Real().SetFromTrueDofs(d->Real());
-      surface_response_corrected_flux->Imag().SetFromTrueDofs(d->Imag());
+      if (flux_space)
+      {
+        // The output field: the FIRST version of the broken D on the RT space.
+        if (!flux_first)
+        {
+          flux_first = flux_space->BuildVersionMap(FiniteElementSpace::VersionMap::FIRST);
+        }
+        Vector first(fem_op->GetRTSpace().GetTrueVSize());
+        flux_first->Mult(d->Real(), first);
+        surface_response_corrected_flux->Real().SetFromTrueDofs(first);
+        flux_first->Mult(d->Imag(), first);
+        surface_response_corrected_flux->Imag().SetFromTrueDofs(first);
+        if (!surface_response_corrected_flux_sides)
+        {
+          surface_response_corrected_flux_sides = MakeRecoveredFluxGridFunction(true);
+        }
+        SetRecoveredFluxGridFunction(d->Real(),
+                                     surface_response_corrected_flux_sides->Real());
+        SetRecoveredFluxGridFunction(d->Imag(),
+                                     surface_response_corrected_flux_sides->Imag());
+      }
+      else
+      {
+        surface_response_corrected_flux->Real().SetFromTrueDofs(d->Real());
+        surface_response_corrected_flux->Imag().SetFromTrueDofs(d->Imag());
+      }
       surface_response_corrected_flux->Real().ExchangeFaceNbrData();
       surface_response_corrected_flux->Imag().ExchangeFaceNbrData();
       has_surface_response_corrected_flux = true;
@@ -774,12 +819,8 @@ public:
       -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
     MFEM_VERIFY(D_recovered, "Recovered electric flux was not requested!");
-    MFEM_VERIFY(d.Size() == GetRecoveredElectricFluxTrueVSize(),
-                kFluxRecoveryBrokenSpaceMessage);
-    D_recovered->Real().SetFromTrueDofs(d.Real());
-    D_recovered->Imag().SetFromTrueDofs(d.Imag());
-    D_recovered->Real().ExchangeFaceNbrData();
-    D_recovered->Imag().ExchangeFaceNbrData();
+    SetRecoveredFluxGridFunction(d.Real(), D_recovered->Real());
+    SetRecoveredFluxGridFunction(d.Imag(), D_recovered->Imag());
     recovered_flux_set = true;
   }
 
@@ -788,10 +829,7 @@ public:
       -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
     MFEM_VERIFY(D_recovered, "Recovered electric flux was not requested!");
-    MFEM_VERIFY(d.Size() == GetRecoveredElectricFluxTrueVSize(),
-                kFluxRecoveryBrokenSpaceMessage);
-    D_recovered->Real().SetFromTrueDofs(d);
-    D_recovered->Real().ExchangeFaceNbrData();
+    SetRecoveredFluxGridFunction(d, D_recovered->Real());
     recovered_flux_set = true;
   }
 
@@ -1085,9 +1123,8 @@ public:
       e_grid.push_back(std::move(field));
       if (d)
       {
-        auto flux = std::make_unique<GridFunction>(*D_recovered->ParFESpace());
-        flux->Real().SetFromTrueDofs((*d)[i]);
-        flux->Real().ExchangeFaceNbrData();
+        auto flux = MakeRecoveredFluxGridFunction(false);
+        SetRecoveredFluxGridFunction((*d)[i], flux->Real());
         d_ptr.push_back(flux.get());
         d_grid.push_back(std::move(flux));
       }
