@@ -4615,6 +4615,12 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e,
   requires(solver_t == ProblemType::TRANSIENT)
 {
   BlockTimer bt0(Timer::POSTPRO);
+  // SD-504 (ruling 1574 (3)): with interface "FluxRecovery" the measurement reads the
+  // recovered D of this time step, which the driver sets before measuring.
+  MFEM_VERIFY(!NeedsRecoveredElectricFlux() || recovered_flux_set,
+              "Transient interface \"FluxRecovery\" postprocessing requires the recovered "
+              "electric flux of the current time step (SetRecoveredElectricFlux)!");
+  recovered_flux_set = false;
   SetEGridFunction(e);
   SetBGridFunction(b);
 

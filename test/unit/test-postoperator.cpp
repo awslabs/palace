@@ -1723,7 +1723,8 @@ TEST_CASE_METHOD(test::SharedTempDir, "Transient FluxRecovery sets the recovered
 {
   // The transient driver recovers D with the estimator and sets it before each measurement
   // when FluxRecovery is requested (ruling 1574; SD-504): the measured interface energy is
-  // then the one of that D (the substrate-air normal part reads D, the tangential part E).
+  // then the one of that D (the substrate-air normal part reads D, the tangential part E),
+  // and a measurement without a D for its time step is refused (P3-20).
   auto comm = Mpi::World();
   IoData iodata =
       MakeFluxRecoveryIoData(ProblemType::TRANSIENT, {1}, InterfaceDielectric::SA,
@@ -1782,4 +1783,9 @@ TEST_CASE_METHOD(test::SharedTempDir, "Transient FluxRecovery sets the recovered
   const double energy2 = Measured(d2, 1);
   CHECK_THAT(energy2, WithinRel(Expected(d2), 1.0e-12));
   CHECK(std::abs(energy2 - energy) > 1.0e-6 * energy);
+
+  // Each D serves one measurement: the next time step without a new D is refused.
+  CHECK_THROWS_WITH(
+      post_op.MeasureAndPrintAll(2, e, b, 0.2, 0.0),
+      ContainsSubstring("requires the recovered electric flux of the current time step"));
 }

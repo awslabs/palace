@@ -177,6 +177,11 @@ protected:
   // Potential.
   std::unique_ptr<GridFunction> E, D_recovered, B, V, A;
 
+  // Whether SetRecoveredElectricFlux ran since the last transient measurement: the
+  // transient MeasureAndPrintAll takes no D, so it fails closed without a D for its time
+  // step (SD-504).
+  bool recovered_flux_set = false;
+
   // Mode analysis: normal (out-of-plane) E component on H1 space, and in-plane B field
   // on ND space for visualization. The in-plane B is the dominant component:
   //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
@@ -767,6 +772,7 @@ public:
     D_recovered->Imag().SetFromTrueDofs(d.Imag());
     D_recovered->Real().ExchangeFaceNbrData();
     D_recovered->Imag().ExchangeFaceNbrData();
+    recovered_flux_set = true;
   }
 
   template <ProblemType U = solver_t>
@@ -778,6 +784,7 @@ public:
                 kFluxRecoveryBrokenSpaceMessage);
     D_recovered->Real().SetFromTrueDofs(d);
     D_recovered->Real().ExchangeFaceNbrData();
+    recovered_flux_set = true;
   }
 
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
