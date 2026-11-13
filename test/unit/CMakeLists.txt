@@ -91,6 +91,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsesetupcache.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-sheetenergy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-signaturekeytext.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
