@@ -1023,6 +1023,130 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
   CHECK_THROWS(RomOperator(iodata, space_op, 4, nullptr, std::move(lone_stiffness)));
 }
 
+// The response-corrected HDM on upstream's matrix-free system-operator path (SD-701 (3);
+// P3-07): at Order 2 with MGMaxLevels 2 (PCMatReal / PCMatShifted false, a sparse direct
+// or default coarse solver) SpaceOperator::GetSystemOperator applies the HDM system through
+// the finest preconditioner level; the response mass (and the magnetic stiffness beside
+// it) must wrap that operator as it wraps the assembled one (MGMaxLevels 1). The stand-ins
+// are the (DIAG_ZERO) mass as in the two cases above, on the same cube scaled to 1 cm (L0)
+// so that omega^2 dM is comparable to the stiffness at 4 GHz and the two paths, whose
+// preconditioners differ, agree to the solve tolerance.
+static json ResponseSystemPathConfig(const fs::path &temp_dir, int mg_max_levels)
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object()},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0},
+                                               {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"Samples", json::array({json::object({{"Type", "Linear"},
+                                               {"MinFreq", 2.0},
+                                               {"MaxFreq", 4.0},
+                                               {"FreqStep", 2.0}})})},
+        {"AdaptiveTol", 1.0e-3},
+        {"AdaptiveMaxSamples", 4}}},
+      {"Linear",
+       {{"Type", "Default"},
+        {"KSPType", "GMRES"},
+        {"MaxIts", 200},
+        {"Tol", 1.0e-10},
+        {"MGMaxLevels", mg_max_levels},
+        {"PCMatReal", false},
+        {"PCMatShifted", false}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"SolveTol", 1.0e-10}}}};
+  return setup_json;
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass-SystemOperatorPath",
+                 "[romoperator][Serial][Parallel]")
+{
+  // The response mass alone, and with the stand-in magnetic stiffness beside it.
+  const bool with_stiffness = GENERATE(false, true);
+  IoData iodata_mf(ResponseSystemPathConfig(temp_dir, 2), false);
+  IoData iodata_asm(ResponseSystemPathConfig(temp_dir, 1), false);
+  auto mesh_mf = LoadScaleParMesh2(iodata_mf, Mpi::World());
+  auto mesh_asm = LoadScaleParMesh2(iodata_asm, Mpi::World());
+  SpaceOperator space_op_mf(iodata_mf, mesh_mf);
+  SpaceOperator space_op_asm(iodata_asm, mesh_asm);
+  const int n = space_op_mf.GetNDSpace().GetTrueVSize();
+  REQUIRE(space_op_asm.GetNDSpace().GetTrueVSize() == n);
+  const double omega = iodata_mf.solver.driven.sample_f.back();
+
+  // The HDM operator of the multigrid configuration is really the matrix-free one (and the
+  // single-level configuration's is not).
+  {
+    const std::complex<double> a0(1.0, 0.0), a1(0.0, omega), a2(-omega * omega, 0.0);
+    auto P_mf = space_op_mf.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
+    auto P_asm = space_op_asm.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
+    REQUIRE(space_op_mf.GetSystemOperator(omega, *P_mf));
+    REQUIRE_FALSE(space_op_asm.GetSystemOperator(omega, *P_asm));
+  }
+
+  auto MakeCorrected = [&](IoData &iodata, SpaceOperator &space_op)
+  {
+    auto response_mass = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(response_mass);
+    std::unique_ptr<ComplexOperator> response_stiffness;
+    if (with_stiffness)
+    {
+      response_stiffness = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    }
+    return std::make_unique<RomOperator>(iodata, space_op, 4, std::move(response_mass),
+                                         std::move(response_stiffness));
+  };
+  RomOperator raw_mf(iodata_mf, space_op_mf, 4);
+  auto corrected_mf = MakeCorrected(iodata_mf, space_op_mf);
+  auto corrected_asm = MakeCorrected(iodata_asm, space_op_asm);
+
+  const int excitation = 1;
+  ComplexVector raw_hdm(n), hdm_mf(n), hdm_asm(n), prom_mf(n);
+  raw_hdm.UseDevice(true);
+  hdm_mf.UseDevice(true);
+  hdm_asm.UseDevice(true);
+  prom_mf.UseDevice(true);
+  raw_hdm = 0.0;
+  hdm_mf = 0.0;
+  hdm_asm = 0.0;
+  prom_mf = 0.0;
+  raw_mf.SolveHDM(excitation, omega, raw_hdm);
+  corrected_mf->SolveHDM(excitation, omega, hdm_mf);
+  corrected_asm->SolveHDM(excitation, omega, hdm_asm);
+  const double corrected_norm = linalg::Norml2(space_op_mf.GetComm(), hdm_mf);
+  REQUIRE(corrected_norm > 0.0);
+  auto RelativeToCorrected = [&](const ComplexVector &a, const ComplexVector &b)
+  {
+    ComplexVector difference(a);
+    linalg::AXPY(-1.0, b, difference);
+    return linalg::Norml2(space_op_mf.GetComm(), difference) / corrected_norm;
+  };
+
+  // The correction moves the matrix-free HDM, which equals the assembled corrected HDM
+  // within the solve tolerance; the PROM built on that sample reproduces it.
+  CHECK(RelativeToCorrected(hdm_mf, raw_hdm) > 1.0e-6);
+  CHECK(RelativeToCorrected(hdm_mf, hdm_asm) < 1.0e-8);
+  corrected_mf->UpdatePROM(hdm_mf, "corrected_sample");
+  corrected_mf->SolvePROM(excitation, omega, prom_mf);
+  CHECK(RelativeToCorrected(prom_mf, hdm_mf) < 1.0e-8);
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,
