@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <compare>
 #include <complex>
 #include <map>
@@ -2152,11 +2153,13 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &rom_op)
+void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &rom_op,
+                                                            double tol)
   requires(solver_t == ProblemType::DRIVEN)
 {
   reduced_postprocessing_ready = false;
-  reduced_postprocessing_checked = false;
+  reduced_postprocessing_checked.clear();
+  reduced_postprocessing_tol = 0.1 * tol;
   // The reduced magnetic form contains curl(E) only, while a Floquet wave vector adds a
   // frequency-dependent k × E correction to the full magnetic flux density.
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
@@ -2250,12 +2253,13 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
 
 template <ProblemType solver_t>
 bool PostOperator<solver_t>::ReducedPostprocessingNeedsField(
-    const RomOperator &rom_op) const
+    int ex_idx, const RomOperator &rom_op) const
   requires(solver_t == ProblemType::DRIVEN)
 {
-  // The full solution is needed for the one-time check against the full evaluation, and
-  // for the S-parameters of wave ports without a cached mode pairing at this frequency.
-  if (!reduced_postprocessing_checked)
+  // The full solution is needed for the check against the full evaluation at the first
+  // point of each excitation, and for the S-parameters of wave ports without a cached mode
+  // pairing at this frequency.
+  if (!reduced_postprocessing_checked.contains(ex_idx))
   {
     return true;
   }
@@ -2280,7 +2284,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   BlockTimer bt0(Timer::POSTPRO);
   MFEM_VERIFY(reduced_postprocessing_ready && y.size() == reduced_energy_E.rows(),
               "Invalid reduced postprocessing state!");
-  MFEM_VERIFY(e || !ReducedPostprocessingNeedsField(rom_op),
+  MFEM_VERIFY(e || !ReducedPostprocessingNeedsField(ex_idx, rom_op),
               "Reduced postprocessing requires the expanded solution!");
   if (e)
   {
@@ -2327,7 +2331,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     port_S[idx] =
         sV ? sV->cwiseProduct(y).sum() / data.modal_reaction : data.GetSParameter(*E);
   }
-  if (!reduced_postprocessing_checked)
+  if (!reduced_postprocessing_checked.contains(ex_idx))
   {
     ComplexVector b(fem_op->GetCurlMatrix().Height());
     b.UseDevice(true);
@@ -2336,39 +2340,45 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     b *= -1.0 / (1i * omega);
     SetBGridFunction(b);
 
-    double max_error = 0.0, max_reference = 0.0;
-    auto compare = [&](double reduced, double exact)
+    // Compare each kind of output relative to its scale: the total electric or magnetic
+    // energy for the energies, the largest value for the port values. The reduced outputs
+    // need to match the full evaluation to a tenth of the PROM tolerance only: their
+    // round-off exceeds machine precision by orders of magnitude where the terms cancel
+    // (the curls of the basis vectors in the magnetic energy, most at the lowest frequency,
+    // which is this first one, and by an amount that depends on the excitation), while
+    // implementation errors give O(1) differences. A NaN error fails the check.
+    auto worst = [](double a, double b) { return (std::isnan(a) || a >= b) ? a : b; };
+    double rel_error = 0.0;
+    auto compare = [&](double reduced, double exact, double scale)
     {
-      max_error = std::max(max_error, std::abs(reduced - exact));
-      max_reference = std::max(max_reference, std::abs(exact));
+      const double error = std::abs(reduced - exact) / std::max(std::abs(scale), 1.0e-300);
+      rel_error = worst(rel_error, error);
     };
     const double exact_E = dom_post_op.GetElectricFieldEnergy(*E);
     const double exact_H = dom_post_op.GetMagneticFieldEnergy(*B);
-    compare(measurement_cache.domain_E_field_energy_all, exact_E);
-    compare(measurement_cache.domain_H_field_energy_all, exact_H);
+    compare(measurement_cache.domain_E_field_energy_all, exact_E, exact_E);
+    compare(measurement_cache.domain_H_field_energy_all, exact_H, exact_H);
     std::vector<Measurement::DomainData> exact_domain_E, exact_domain_H;
     for (const auto &[idx, forms] : reduced_domain_energy)
     {
       const double energy_E = dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
       const double energy_H = dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
       compare(measurement_cache.domain_E_field_energy_i[exact_domain_E.size()].energy,
-              energy_E);
+              energy_E, exact_E);
       compare(measurement_cache.domain_H_field_energy_i[exact_domain_H.size()].energy,
-              energy_H);
+              energy_H, exact_H);
       exact_domain_E.push_back(
           {idx, energy_E, (exact_E != 0.0) ? energy_E / exact_E : 0.0});
       exact_domain_H.push_back(
           {idx, energy_H, (exact_H != 0.0) ? energy_H / exact_H : 0.0});
     }
-    // The reduced and full values differ by round-off only (order of summation), so
-    // compare each kind of output relative to its largest value.
-    auto port_error = [](const auto &reduced, const auto &exact)
+    auto port_error = [&worst](const auto &reduced, const auto &exact)
     {
       double error = 0.0, reference = 0.0;
       for (const auto &[idx, value] : exact)
       {
-        error = std::max(error, std::abs(reduced.at(idx) - value));
-        reference = std::max(reference, std::abs(value));
+        error = worst(error, std::abs(reduced.at(idx) - value));
+        reference = worst(reference, std::abs(value));
       }
       return error / std::max(reference, 1.0e-300);
     };
@@ -2378,11 +2388,10 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     {
       exact_S[idx] = data.GetSParameter(*E);
     }
-    const double rel_error =
-        std::max({max_error / std::max(max_reference, 1.0e-300),
-                  port_error(port_voltages, exact_voltages), port_error(port_S, exact_S)});
-    reduced_postprocessing_checked = true;
-    if (rel_error > 1.0e-9)
+    rel_error = worst(worst(rel_error, port_error(port_voltages, exact_voltages)),
+                      port_error(port_S, exact_S));
+    reduced_postprocessing_checked.insert(ex_idx);
+    if (!(rel_error <= reduced_postprocessing_tol))
     {
       reduced_postprocessing_ready = false;
       measurement_cache.domain_E_field_energy_all = exact_E;
