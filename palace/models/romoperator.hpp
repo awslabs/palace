@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -167,10 +168,12 @@ protected:
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
-  // - RHS1 is assembled once per excitation (empty if zero), in the order of the port
-  //   excitations, and projected onto the basis as it grows.
+  // - RHS1 is assembled once per excitation (empty if zero on every process), in the
+  //   order of the port excitations, and projected onto the basis as it grows. It is
+  //   complex for lumped ports with a complex excitation weight.
   std::unique_ptr<ComplexOperator> K, M, C;
   std::vector<ComplexVector> RHS1;
+  std::vector<bool> has_RHS1;  // The same on every process
   ComplexVector r;
 
   // The sparse frequency-dependent boundary terms of A(ω), each a scalar f(ω) times an
@@ -259,7 +262,7 @@ protected:
   // PROM matrix Ar at the frequency of the last SolvePROM, and the reduced solutions of all
   // excitations, one column per excitation.
   Eigen::MatrixXcd Ar, Y;
-  bool warned_modal_reaction = false;
+  std::set<int> warned_modal_reaction;  // Ports
 
   // Column of an excitation in RHS1, RHS1r, and Y.
   Eigen::Index GetExcitationColumn(int excitation_idx) const;
@@ -479,8 +482,9 @@ public:
     return Y.col(GetExcitationColumn(excitation_idx));
   }
 
-  // Return the pairing Vᵀs_full of the basis with the mode of a wave port at the frequency
-  // of the last PROM assembly, or nullptr before the first one.
+  // Return the pairing Vᵀs_full of the basis with the mode of a wave port (every port,
+  // active or not) at the frequency of the last PROM assembly, or nullptr before the first
+  // one.
   const Eigen::VectorXcd *GetWavePortModePairing(int port_idx) const
   {
     const auto it = sV_wp_full.find(port_idx);
@@ -525,7 +529,7 @@ public:
   double BasisNorm(const Eigen::VectorXcd &c) const;
 
   // Assemble and solve the PROM at the specified frequency, for every excitation. The
-  // reduced solutions are available from GetReducedSolution().
+  // reduced solutions are available from GetReducedSolution(excitation_idx).
   void SolvePROM(double omega);
 
   // Expand the reduced solution of an excitation into the high-dimensional space.

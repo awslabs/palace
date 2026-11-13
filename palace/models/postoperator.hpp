@@ -479,12 +479,13 @@ public:
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain
   // energies plus port S-parameters). Unsupported configured measurements leave the path
-  // disabled and use full postprocessing. The expanded solution e is needed only when
-  // ReducedPostprocessingNeedsField is true, otherwise e may be nullptr. tol is the PROM
-  // tolerance.
+  // disabled and use full postprocessing. The wave port S-parameters use the mode pairings
+  // of the last RomOperator::SolvePROM, which must be at omega. The expanded solution e is
+  // needed only when ReducedPostprocessingNeedsField is true, otherwise e may be nullptr.
+  // tol is the PROM tolerance.
   void ConfigureReducedPostprocessing(const RomOperator &rom_op, double tol)
     requires(solver_t == ProblemType::DRIVEN);
-  bool ReducedPostprocessingNeedsField(int ex_idx, const RomOperator &rom_op) const
+  bool ReducedPostprocessingNeedsField(int ex_idx) const
     requires(solver_t == ProblemType::DRIVEN);
   void MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector *e,
                               std::complex<double> omega, const Eigen::VectorXcd &y,

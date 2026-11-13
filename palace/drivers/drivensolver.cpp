@@ -448,8 +448,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     const Eigen::VectorXcd y = prom_op.GetReducedSolution(excitation_idx);
     const bool reduced = post_op.HasReducedPostprocessing() &&
                          !post_op.WillWriteFields(static_cast<int>(omega_i));
-    const bool expand =
-        !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx, prom_op);
+    const bool expand = !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx);
     if (expand)
     {
       prom_op.ExpandPROMSolution(excitation_idx, E);

@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <numbers>
@@ -1209,7 +1210,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega_back);
   post_op.MeasureAndPrintAll(1, 1, E, B, omega_back);
   const Measurement full = post_op.GetMeasurement();
-  REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(1, rom_op));
+  REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(1));
   post_op.MeasureAndPrintReduced(1, 1, nullptr, omega_back, y, rom_op);
   const Measurement reduced = post_op.GetMeasurement();
   REQUIRE(post_op.HasReducedPostprocessing());
@@ -1287,7 +1288,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   post_op.ConfigureReducedPostprocessing(rom_op, tol);
   post_op.MeasureAndPrintReduced(1, 0, &E, omega_front, y, rom_op);
   REQUIRE(post_op.HasReducedPostprocessing());
-  REQUIRE(post_op.ReducedPostprocessingNeedsField(2, rom_op));
+  REQUIRE(post_op.ReducedPostprocessingNeedsField(2));
   E *= 1.001;
   post_op.MeasureAndPrintReduced(2, 0, &E, omega_front, y, rom_op);
   CHECK_FALSE(post_op.HasReducedPostprocessing());
@@ -1409,9 +1410,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 // The adaptive sweep with a complex RHS1: for the same random basis, the PROM solution of
-// the configuration with the excitation weight a is a times the solution without a weight,
-// both for the excitation vector projected on the fly and for the one cached by
-// PrepareOnlineExcitations.
+// the configuration with the excitation weight a is a times the solution without a weight.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator PROM solution scales with the excitation weight",
                  "[romoperator][Serial][Parallel]")
@@ -1421,10 +1420,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const double phase = 30.0;
   const std::complex<double> a = std::polar(amplitude, phase * std::numbers::pi / 180.0);
 
-  struct PROMSolutions
-  {
-    ComplexVector before, after;
-  };
   auto solve = [&](double amp, double ph)
   {
     IoData iodata(WeightedExcitationSetup(temp_dir, amp, ph), false);
@@ -1446,15 +1441,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     }
     REQUIRE(rom_op.GetReducedDimension() > 0);
 
-    PROMSolutions solutions;
-    solutions.before.SetSize(space_op.GetNDSpace().GetTrueVSize());
-    solutions.before.UseDevice(true);
-    solutions.after.SetSize(space_op.GetNDSpace().GetTrueVSize());
-    solutions.after.UseDevice(true);
-    rom_op.SolvePROM(1, omega, solutions.before);
-    rom_op.PrepareOnlineExcitations();
-    rom_op.SolvePROM(1, omega, solutions.after);
-    return solutions;
+    ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    rom_op.SolvePROM(omega);
+    rom_op.ExpandPROMSolution(1, u);
+    return u;
   };
 
   const auto unweighted = solve(1.0, 0.0);
@@ -1472,8 +1463,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     REQUIRE(norm_ref > 0.0);
     CHECK(norm_diff <= 1.0e-8 * norm_ref);
   };
-  check_scaled(weighted.before, unweighted.before);
-  check_scaled(weighted.after, unweighted.after);
+  check_scaled(weighted, unweighted);
 }
 
 // The reduced magnetic energy of a field V y with large, nearly cancelling coefficients y
@@ -1584,6 +1574,191 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(full.domain_H_field_energy_all <= 1.0e-20 * full.domain_E_field_energy_all);
     REQUIRE(reduced.domain_H_field_energy_i.size() == 1);
     CHECK(reduced.domain_H_field_energy_i[0].energy == 0.0);
+  }
+}
+
+// The 3 cm x 2 cm x 1 cm vacuum box of the wave port tests: attributes 14 and 18 are
+// non-adjacent 1 cm x 1 cm faces on the y = 2 cm side, above the domain attributes 2 and 6,
+// for the wave ports, with PEC on every other face except other_ports (TE10 above cutoff
+// over the 20-30 GHz band). The caller adds the ports.
+json WavePortBoxConfig(const fs::path &output, double freq_step, bool hex,
+                       const std::vector<int> &other_ports)
+{
+  json pec_attributes = json::array();
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14 && attr != 18 &&
+        std::find(other_ports.begin(), other_ports.end(), attr) == other_ports.end())
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh" /
+                   (hex ? "cube_mesh_3_2_1_hex.msh" : "cube_mesh_3_2_1_tet.msh")},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object()},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {{"PEC", {{"Attributes", pec_attributes}}}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"MinFreq", 20.0},
+        {"MaxFreq", 30.0},
+        {"FreqStep", freq_step}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+  return setup_json;
+}
+
+// The reduced S-parameters of wave ports, from the mode pairings of the PROM, with the
+// incident wave of the driven port removed and the de-embedding of the offsets as in the
+// full evaluation, also at the first point of each excitation, where the reduced outputs
+// are checked against the full evaluation and a mismatch reverts to full postprocessing.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced wave port postprocessing matches full evaluation",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  // An excited wave port on attribute 14, a passive one on attribute 18, and an excited
+  // lumped port on attribute 1. The domain below the passive port is a lossy dielectric,
+  // so its mode and the pairings with it are complex, and the S-parameter differs from a
+  // conjugated pairing.
+  json setup_json = WavePortBoxConfig(temp_dir, 5.0, false, {1});
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}}),
+                                 json::object({{"Attributes", json::array({6})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 2.0},
+                                               {"LossTan", 0.05}})})},
+      {"Postprocessing",
+       {{"Energy",
+         json::array({json::object(
+             {{"Index", 1}, {"Attributes", json::array({1, 2, 3, 4, 5, 6})}})})}}}};
+  setup_json["Boundaries"]["WavePort"] =
+      json::array({json::object({{"Index", 1},
+                                 {"Attributes", json::array({14})},
+                                 {"Mode", 1},
+                                 {"Offset", 0.5},
+                                 {"Excitation", uint(1)}}),
+                   json::object({{"Index", 3},
+                                 {"Attributes", json::array({18})},
+                                 {"Mode", 1},
+                                 {"Offset", 0.25}})});
+  setup_json["Boundaries"]["LumpedPort"] =
+      json::array({json::object({{"Index", 2},
+                                 {"R", 50.0},
+                                 {"Excitation", uint(2)},
+                                 {"Attributes", json::array({1})},
+                                 {"Direction", "+Y"}})});
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+
+  // The PROM from HDM solutions of both excitations at the ends of the band.
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  REQUIRE(sample_f.size() == 3);
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector E(size);
+  E.UseDevice(true);
+  for (int excitation_idx : {1, 2})
+  {
+    for (double omega : {sample_f.front(), sample_f.back()})
+    {
+      rom_op.SolveHDM(excitation_idx, omega, E);
+      rom_op.UpdatePROM(E, fmt::format("sample_e{:d}_{:.3e}", excitation_idx, omega));
+    }
+  }
+  REQUIRE(rom_op.GetReducedDimension() > 0);
+  post_op.ConfigureReducedPostprocessing(rom_op, iodata.solver.driven.adaptive_tol);
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  auto check_complex = [](std::complex<double> x, std::complex<double> y)
+  {
+    CAPTURE(x, y);
+    REQUIRE(std::abs(y) > 0.0);
+    CHECK(std::abs(x - y) <= 1.0e-8 * std::abs(y));
+  };
+  ComplexVector B(space_op.GetCurlMatrix().Height());
+  B.UseDevice(true);
+  // At the middle of the band, the first point of each excitation, and away from the
+  // samples.
+  const std::array<double, 2> omegas = {sample_f[1],
+                                        0.3 * sample_f.front() + 0.7 * sample_f.back()};
+  for (int step = 0; step < 2; step++)
+  {
+    const double omega = omegas[step];
+    rom_op.SolvePROM(omega);
+    for (int excitation_idx : {1, 2})
+    {
+      CAPTURE(omega, excitation_idx);
+      const Eigen::VectorXcd y = rom_op.GetReducedSolution(excitation_idx);
+      // The pairings with the mode of the lossy port are complex.
+      const auto *sV = rom_op.GetWavePortModePairing(3);
+      REQUIRE(sV);
+      CHECK(std::abs(sV->dot(y) - sV->cwiseProduct(y).sum()) >
+            1.0e-3 * std::abs(sV->cwiseProduct(y).sum()));
+      rom_op.ExpandPROMSolution(excitation_idx, E);
+      if (post_op.ReducedPostprocessingNeedsField(excitation_idx))
+      {
+        // The check of the reduced outputs against the full evaluation passes, and the
+        // field is not needed at later points.
+        REQUIRE(step == 0);
+        post_op.MeasureAndPrintReduced(excitation_idx, step, &E, omega, y, rom_op);
+        REQUIRE(post_op.HasReducedPostprocessing());
+      }
+      REQUIRE_FALSE(post_op.ReducedPostprocessingNeedsField(excitation_idx));
+      post_op.MeasureAndPrintReduced(excitation_idx, step, nullptr, omega, y, rom_op);
+      REQUIRE(post_op.HasReducedPostprocessing());
+      const Measurement reduced = post_op.GetMeasurement();
+
+      space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+      space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+      B *= -1.0 / (1i * omega);
+      post_op.MeasureAndPrintAll(excitation_idx, step, E, B, omega);
+      const Measurement &full = post_op.GetMeasurement();
+
+      CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
+              reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+      REQUIRE(full.domain_E_field_energy_all > 0.0);
+      REQUIRE(full.domain_H_field_energy_all > 0.0);
+      CHECK_THAT(reduced.domain_E_field_energy_all,
+                 WithinRel(full.domain_E_field_energy_all, 1.0e-8));
+      CHECK_THAT(reduced.domain_H_field_energy_all,
+                 WithinRel(full.domain_H_field_energy_all, 1.0e-8));
+      REQUIRE(full.wave_port_vi.size() == 2);
+      REQUIRE(reduced.wave_port_vi.size() == full.wave_port_vi.size());
+      for (const auto &[idx, full_port] : full.wave_port_vi)
+      {
+        CAPTURE(idx);
+        check_complex(reduced.wave_port_vi.at(idx).S, full_port.S);
+      }
+      REQUIRE(full.lumped_port_vi.size() == 1);
+      REQUIRE(reduced.lumped_port_vi.size() == full.lumped_port_vi.size());
+      for (const auto &[idx, full_port] : full.lumped_port_vi)
+      {
+        CAPTURE(idx);
+        const auto &reduced_port = reduced.lumped_port_vi.at(idx);
+        check_complex(reduced_port.V, full_port.V);
+        check_complex(reduced_port.I, full_port.I);
+        check_complex(reduced_port.S, full_port.S);
+      }
+    }
   }
 }
 
@@ -1754,60 +1929,28 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator wave ports match the 
   const bool hex = GENERATE(false, true);
   CAPTURE(inactive_excitation, hex);
 
-  // 3 cm x 2 cm x 1 cm box: attributes 14 and 18 are non-adjacent 1 cm x 1 cm faces on the
-  // y = 2 cm side, used as an active and an inactive (excited) wave port with PEC on every
-  // other face (TE10 above cutoff over the 20-30 GHz band).
-  json pec_attributes = json::array();
-  for (int attr = 1; attr <= 22; attr++)
-  {
-    if (attr != 14 && attr != 18)
-    {
-      pec_attributes.push_back(attr);
-    }
-  }
-  json refinement = json::object();
+  // An active and an inactive (excited) wave port on attributes 14 and 18.
+  json setup_json = WavePortBoxConfig(temp_dir, 10.0, hex, {});
   if (hex)
   {
     // Refine the element below port 1.
-    refinement = {
+    setup_json["Model"]["Refinement"] = {
         {"Boxes", json::array({json::object({{"Levels", 1},
                                              {"BoundingBoxMin", {0.0, 1.9, 0.0}},
                                              {"BoundingBoxMax", {0.1, 2.0, 0.1}}})})}};
   }
-  json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
-  setup_json["Model"] = {
-      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh" /
-                   (hex ? "cube_mesh_3_2_1_hex.msh" : "cube_mesh_3_2_1_tet.msh")},
-      {"L0", 1.0e-2},
-      {"Refinement", refinement},
-      {"CrackInternalBoundaryElements", false}};
-  setup_json["Domains"] = {
-      {"Materials",
-       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
-                                  {"Permeability", 1.0},
-                                  {"Permittivity", 1.0},
-                                  {"LossTan", 0.0}})})}};
-  setup_json["Boundaries"] = {
-      {"PEC", {{"Attributes", pec_attributes}}},
-      {"WavePort", json::array({json::object({{"Index", 1},
-                                              {"Attributes", json::array({14})},
-                                              {"Mode", 1},
-                                              {"Offset", 0.0},
-                                              {"Excitation", uint(1)}}),
-                                json::object({{"Index", 2},
-                                              {"Attributes", json::array({18})},
-                                              {"Mode", 1},
-                                              {"Offset", 0.0},
-                                              {"Active", false},
-                                              {"Excitation", inactive_excitation}})})}};
-  setup_json["Solver"] = {
-      {"Order", 2UL},
-      {"Device", "CPU"},
-      {"Driven",
-       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 20.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}}},
-      {"Linear",
-       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+  setup_json["Boundaries"]["WavePort"] =
+      json::array({json::object({{"Index", 1},
+                                 {"Attributes", json::array({14})},
+                                 {"Mode", 1},
+                                 {"Offset", 0.0},
+                                 {"Excitation", uint(1)}}),
+                   json::object({{"Index", 2},
+                                 {"Attributes", json::array({18})},
+                                 {"Mode", 1},
+                                 {"Offset", 0.0},
+                                 {"Active", false},
+                                 {"Excitation", inactive_excitation}})});
   IoData iodata(setup_json, false);
   std::vector<int> excitations = {1};
   if (inactive_excitation != 1)
