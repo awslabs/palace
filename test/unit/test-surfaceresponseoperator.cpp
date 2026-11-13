@@ -6156,9 +6156,17 @@ TEST_CASE_METHOD(
   empty_spatial_library["Models"] = json::array();
   const auto empty_spatial_library_path =
       temp.temp_dir / "surface-process-empty-spatial-3d.json";
-  std::ofstream empty_spatial_library_output(empty_spatial_library_path);
-  empty_spatial_library_output << empty_spatial_library.dump(2) << "\n";
-  empty_spatial_library_output.close();
+  // Every rank reads a library file itself (ReadProcessLibrary): the root writes each
+  // shared file and no rank reads it before the write is complete. An every-rank write
+  // truncates the file under a rank that is already reading it (a rank-local parse error
+  // that deadlocks the other ranks in their next collective).
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream empty_spatial_library_output(empty_spatial_library_path);
+    empty_spatial_library_output << empty_spatial_library.dump(2) << "\n";
+    empty_spatial_library_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
   auto empty_spatial_config = missing_spatial_cluster_config;
   empty_spatial_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
       empty_spatial_library_path.string();
@@ -6220,9 +6228,13 @@ TEST_CASE_METHOD(
   exact_mask_model["PlanViewBoundary"] = plan_view_boundary;
   const auto exact_mask_library_path =
       temp.temp_dir / "surface-process-spatial-cluster-exact-mask-3d.json";
-  std::ofstream exact_mask_output(exact_mask_library_path);
-  exact_mask_output << exact_mask_library.dump(2) << "\n";
-  exact_mask_output.close();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream exact_mask_output(exact_mask_library_path);
+    exact_mask_output << exact_mask_library.dump(2) << "\n";
+    exact_mask_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
 
   auto exact_mask_config = spatial_cluster_config;
   exact_mask_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -6271,9 +6283,13 @@ TEST_CASE_METHOD(
   mismatched_coordinate = mismatched_coordinate.get<long long int>() + 1;
   const auto mismatched_mask_library_path =
       temp.temp_dir / "surface-process-spatial-cluster-mismatched-mask-3d.json";
-  std::ofstream mismatched_mask_output(mismatched_mask_library_path);
-  mismatched_mask_output << mismatched_mask_library.dump(2) << "\n";
-  mismatched_mask_output.close();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream mismatched_mask_output(mismatched_mask_library_path);
+    mismatched_mask_output << mismatched_mask_library.dump(2) << "\n";
+    mismatched_mask_output.close();
+  }
+  Mpi::Barrier(Mpi::World());
   CheckPlanViewMaskStatus(mismatched_mask_library_path, "Missing", "mismatched");
 
   // Spatial clusters match each physical edge's complete boundary law. The second
