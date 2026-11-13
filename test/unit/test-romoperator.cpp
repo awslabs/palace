@@ -2503,3 +2503,128 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
 }
+
+TEST_CASE("RomOperator-SolveReducedSystem", "[romoperator][Serial]")
+{
+  // LU solves well and ill-conditioned systems, and full-pivoting QR takes over for
+  // singular matrices and for LU solutions with a large backward error in any column.
+  using Matrix = Eigen::MatrixXcd;
+  using VectorC = Eigen::VectorXcd;
+  constexpr int n = 12;
+  std::srand(1234);
+  auto backward_error = [](const Matrix &A, const Matrix &x, const Matrix &b)
+  {
+    return (b - A * x).lpNorm<Eigen::Infinity>() /
+           (A.cwiseAbs().rowwise().sum().maxCoeff() * x.lpNorm<Eigen::Infinity>() +
+            b.lpNorm<Eigen::Infinity>());
+  };
+  auto with_singular_values = [](const Eigen::VectorXd &s)
+  {
+    Eigen::HouseholderQR<Matrix> qr_u(Matrix::Random(s.size(), s.size())),
+        qr_v(Matrix::Random(s.size(), s.size()));
+    const Matrix U = qr_u.householderQ(), W = qr_v.householderQ();
+    return Matrix(U * s.cast<std::complex<double>>().asDiagonal() * W.adjoint());
+  };
+  MPI_Comm comm = Mpi::World();
+  const VectorC b = VectorC::Random(n);
+
+  SECTION("Conditioning")
+  {
+    // Condition numbers 1e10 and 1e17 (singular to working precision): the LU solution is
+    // backward stable, accurate to cond ε for the first.
+    const double s_min = GENERATE(1.0e-10, 1.0e-17);
+    CAPTURE(s_min);
+    Eigen::VectorXd s = Eigen::VectorXd::LinSpaced(n, 0.0, -3.0)
+                            .unaryExpr([](double e) { return std::pow(10.0, e); });
+    s(n - 1) = s_min;
+    const Matrix A = with_singular_values(s);
+    Matrix x = b;
+    CHECK_FALSE(SolveReducedSystem(comm, A, x));
+    CHECK(backward_error(A, x, b) < 1.0e-14);
+    if (s_min > 1.0e-12)
+    {
+      const VectorC x_ref = A.fullPivHouseholderQr().solve(b);
+      CHECK((x - x_ref).norm() < 1.0e-4 * x_ref.norm());
+    }
+  }
+
+  SECTION("Singular")
+  {
+    // With a zero column, the LU solution is not finite and the rank-revealing QR gives a
+    // solution of norm ~ |b| / 1e-3, the smallest nonzero singular value.
+    Eigen::VectorXd s = Eigen::VectorXd::LinSpaced(n, 0.0, -3.0)
+                            .unaryExpr([](double e) { return std::pow(10.0, e); });
+    Matrix A = with_singular_values(s);
+    A.col(3).setZero();
+    Matrix x = b;
+    CHECK(SolveReducedSystem(comm, A, x));
+    CHECK(x.allFinite());
+    CHECK(x.norm() < 1.0e4 * b.norm());
+  }
+
+  SECTION("Badly scaled circuit-synthesis matrices")
+  {
+    // Synthetic L⁻¹, R⁻¹, C like those of circuit synthesis, with a port row (a 50 Ω port)
+    // and three sample rows, couplings much weaker for the port, and entries spanning about
+    // 1e-28 to 1e14: LU is used, and agrees with QR.
+    auto symmetric = [](const Eigen::Vector4d &d, double port, double sample)
+    {
+      Eigen::Matrix4d S;
+      for (int i = 0; i < 4; i++)
+      {
+        for (int j = 0; j < 4; j++)
+        {
+          S(i, j) = (i == j) ? d(i)
+                             : ((i == 0 || j == 0) ? port : sample) *
+                                   std::sin(1.0 + i + j) * std::sqrt(d(i) * d(j));
+        }
+      }
+      return S;
+    };
+    const Eigen::Matrix4d Linv =
+        symmetric({3.0e12, 1.7e14, 1.8e14, 2.2e14}, 1.0e-9, 1.0e-4);
+    const Eigen::Matrix4d Rinv = symmetric({0.02, 1.1e-12, 6.4e-13, 1.5e-12}, 1.0e-20, 0.1);
+    const Eigen::Matrix4d Cm =
+        symmetric({2.0e-16, 1.8e-13, 1.8e-13, 1.8e-13}, 1.0e-11, 1.0e-12);
+    for (double f : {2.5e9, 6.0e9, 9.9e9})
+    {
+      const double w = 2.0 * std::numbers::pi * f;
+      Matrix A = Linv.cast<std::complex<double>>() +
+                 (1i * w) * Rinv.cast<std::complex<double>>() -
+                 (w * w) * Cm.cast<std::complex<double>>();
+      A /= A.cwiseAbs().maxCoeff();
+      const VectorC b4 = VectorC::Random(4);
+      Matrix x = b4;
+      CHECK_FALSE(SolveReducedSystem(comm, A, x));
+      const VectorC x_ref = A.fullPivHouseholderQr().solve(b4);
+      CHECK((x - x_ref).norm() < 1.0e-12 * x_ref.norm());
+    }
+  }
+
+  SECTION("Pivot growth")
+  {
+    // Partial pivoting on Wilkinson's matrix (1 on the diagonal and in the last column, -1
+    // below the diagonal) does not swap rows and the entries of the last column of U grow
+    // as 2^(k-1), so the LU solution has a large backward error. The matrix itself is well
+    // conditioned.
+    constexpr int m = 64;
+    Matrix A = Matrix::Identity(m, m);
+    for (int j = 0; j < m; j++)
+    {
+      for (int i = j + 1; i < m; i++)
+      {
+        A(i, j) = -1.0;
+      }
+    }
+    A.col(m - 1).setOnes();
+    const VectorC bw = VectorC::Random(m);
+    VectorC x_lu = A.partialPivLu().solve(bw);
+    REQUIRE(!(backward_error(A, x_lu, bw) < 1.0e-12));
+    // A zero first column of the right-hand side does not hide the error of the second.
+    Matrix x(m, 2);
+    x << VectorC::Zero(m), bw;
+    CHECK(SolveReducedSystem(comm, A, x));
+    CHECK(x.col(0).isZero());
+    CHECK(backward_error(A, x.col(1), bw) < 1.0e-14);
+  }
+}
