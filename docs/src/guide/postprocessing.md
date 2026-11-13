@@ -138,9 +138,12 @@ file. These include:
     and SA interfaces,
     `FluxRecovery` evaluates the normal displacement field using an H(div)-conforming
     recovered flux; the SA tangential term continues to use the native electric field.
-    This option is rejected on the zero-thickness metal sheets, whether or not the mesh
-    is cracked along them, and on cracked internal boundaries, because a volume L2
-    projection does not provide a controlled normal trace on the singular PEC surface.
+    This option is rejected on interior boundary sheets, whether or not the mesh is
+    cracked along them, and on cracked internal boundaries, because a volume L2
+    projection does not provide a controlled normal trace on the singular PEC surface. In
+    this version, it is also rejected on any mesh with uncracked interior boundary sheet
+    faces (see
+    [Bulk and interface dielectric loss](../reference.md#Bulk-and-interface-dielectric-loss)).
     Electrostatic fabrication-coupon simulations can combine `LocalizeEdgeEnergy` with
     prescribed-potential basis excitations and
     [`ResponseMatrix`](../config/reference.md#config-solver-electrostatic-responsematrix).
@@ -158,14 +161,15 @@ file. These include:
     `surface-Q.csv` remain the uncorrected thin-metal result. PEC, conductivity,
     impedance, and rational-impedance boundaries require coupons with matching
     boundary-law metadata. See
-    [Maxwell response correction](../reference.md#maxwell-response-correction)
+    [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
 
 ```@raw html
-<!-- UPSYNC-P3 TODO (SL10, upstream integration, decision 1566): the FluxRecovery
-sentences of the Dielectric item above follow SL6's refusal (SHARED-DECISIONS SD-603);
-state the exterior case of sheet-type boundary conditions with reference.md once SL6
-has answered SD-1002. -->
+<!-- UPSYNC-P3 TODO (P3-38, upstream integration P3, decision 1593; waits for P3-14): the
+'In this version' sentence of the Dielectric item above states
+OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE (SHARED-DECISIONS SD-605). P3-14's
+design is ruled (decision 1600, SD-3202 (d)): when P3-14 is committed, delete that sentence
+together with the one in reference.md; the interior-sheet refusal before it stays. -->
 ```
 
 ## Visualization

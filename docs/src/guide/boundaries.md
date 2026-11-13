@@ -124,6 +124,12 @@ charge:
     through the sheet, since the tangential electric field vanishes on it. The mesh is not
     cracked along them by default.
 
+  - [`"PrescribedPotential"`](../config/reference.md#config-boundaries-prescribedpotential)
+    boundaries of electrostatic simulations prescribe the potential on a sheet: the trace
+    of their `"DataFile"` on `"Attributes"`, and one volt on `"TerminalAttributes"`. As for
+    terminals, the potential is imposed on both sides, which are not coupled through the
+    sheet. The mesh is not cracked along them by default.
+
   - [`"Superconductor"`](../config/reference.md#config-boundaries-superconductor)
     boundaries, and the films of
     [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop) boundaries, are

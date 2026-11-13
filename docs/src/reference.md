@@ -970,19 +970,25 @@ electric displacement using the same H(div)-conforming flux recovery used by the
 finite-element error estimator. This supplies a single-valued normal trace and can
 improve convergence of the outside and annular interface energies. The tangential
 SA contribution remains evaluated from the native H(curl) electric field.
-`FluxRecovery` is not supported on the zero-thickness metal sheets used for thin-metal
-simulations, whether or not the mesh is cracked along them (the sheets of
+`FluxRecovery` is not supported on an interface over interior boundary sheets, whether or
+not the mesh is cracked along them (the sheets of
 [Interior boundaries](guide/boundaries.md#Interior-boundaries), including
-prescribed-potential sheets), nor on cracked internal boundaries. The recovery is a
-volume L2 projection and its boundary trace is not controlled for the singular
-thin-sheet field.
+prescribed-potential sheets), nor on cracked internal boundaries; an interface over an
+exterior metal or terminal boundary keeps it. The recovery is a volume L2 projection and
+its boundary trace is not controlled for the singular thin-sheet field. In this version,
+`FluxRecovery` is also refused before the solve on any mesh with uncracked interior
+boundary sheet faces, because the error estimator's flux recovery space is broken across
+them: with the default treatment of interior boundaries, this is every thin-metal model,
+and with `CrackInternalBoundaryElements` set to `true`, a mesh with interior lumped ports.
 
 ```@raw html
-<!-- UPSYNC-P3 TODO (SL10, upstream integration, decision 1566): the sentence above follows
-SL6's refusal (SHARED-DECISIONS SD-603: an entry attribute in GetSheetAttributes() or in
-the crack set). GetSheetAttributes() also lists EXTERIOR attributes of sheet-type
-boundary conditions, so the refusal also fires on an exterior PEC MA / MS interface,
-which OURS allowed: state the exterior case here once SL6 has answered SD-1002. -->
+<!-- UPSYNC-P3 TODO (P3-38, upstream integration P3, decision 1593; waits for P3-14): the
+'In this version' sentence above states OI-UPSYNC-FLUXRECOVERY-REFUSED-ON-BROKEN-RECOVERY-SPACE
+(SHARED-DECISIONS SD-605, ruling 1578); the per-entry rule before it is SD-606 (1). P3-14's
+design is ruled (decision 1600, SD-3202 (d)): the broken-space refusal is lifted and the
+interior-sheet refusal is kept in both forms. When P3-14 is committed, delete the 'In this
+version' sentence (FluxRecovery then works on every non-sheet interface, cracked or
+uncracked); the OI closes when T2 passes. The same note is in guide/postprocessing.md. -->
 ```
 
 ### Mesh cracking and the thin-metal postprocessing
@@ -1002,17 +1008,23 @@ a sheet face are read, so the same edges, patches, and patch weights are found e
 the solved field and does not depend on the crack structure. Cracking does change the
 mesh that is solved: a cracked mesh may be refined next to the crack where the decoupling
 requires it (`config["Model"]["RefineCrackElements"]`, default `true`), so cracked and
-uncracked runs from one input mesh are in general not on the same mesh. A coupon library
-records no crack policy; the libraries built so far use cracked thin coupons and are
-applied to cracked and uncracked targets alike.
+uncracked runs from one input mesh are in general not on the same mesh.
+
+The coupon generators and library-build tools under `examples/` write the key explicitly:
+`--crack-policy legacy`, their default in this version, writes
+`CrackInternalBoundaryElements: true`, and `--crack-policy default` omits the key. The
+policy is part of their cache keys and of the qualification records, so a coupon solved
+under one policy is not reused for a build under the other, and a model qualified against
+a reference made under the other policy is labelled as such. A coupon library does not
+yet record the crack policy of each model; the libraries built so far use cracked thin
+coupons and are applied to cracked and uncracked targets alike.
 
 ```@raw html
-<!-- UPSYNC-P3 TODO (SL10, upstream integration, decision 1566): the paragraph above is
-READ from the code and MEASURED on the pre-integration binary (R4-CRACKING T3 / T4: six
-local cases, cracked vs uncracked: identical identification, corrected participations
-within 3.5e-4). Confirm it on the integrated binary both ways (SHARED-DECISIONS SD-000).
-The prescribed-potential sheets follow SL2's E-1 decision (SD-201: sheets, not in the
-default crack set, cracked under the legacy key). -->
+<!-- UPSYNC-P3 TODO (P3-38, upstream integration P3, decision 1593; waits for the T1-D / P4
+readings, not for P3-14): the identification paragraph above is READ from the code and
+MEASURED on the pre-integration binary only (R4-CRACKING T3 / T4: six local cases, cracked
+vs uncracked: identical identification, corrected participations within 3.5e-4). Confirm
+it on the integrated binary both ways (SHARED-DECISIONS SD-000; P3 plan review m-7). -->
 ```
 
 ### Experimental quadrature-point interface ownership
