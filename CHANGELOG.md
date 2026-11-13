@@ -22,17 +22,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
     eigenmode simulations. A PML meshed with the model is configured with blocks of
     `config["Domains"]["PML"]`, whose `"Attributes"` are the domains of the PML regions (the
-    other parameters have suitable defaults). With `config["Boundaries"]["PML"]`, *Palace*
-    instead extrudes the PML from farfield boundaries of the mesh, for example in place of
-    an absorbing boundary on a sphere: each face becomes a column of prisms or hexahedra
-    along rays from a core point or segment, and the coordinates are stretched along the
-    rays. The stretch can be evaluated at a fixed reference frequency or at the solve
-    frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of the field
-    energy of each mode in the PML regions is written to `eig.csv`, which identifies the
-    spurious modes of the layer. The multigrid preconditioner is complemented by a sparse
-    direct solve of the PML regions (`Solver.Linear.PMLSubdomainSolver`); with SuperLU_DIST,
-    the accuracy of its factorization is checked, and an inaccurate factorization is
-    repeated with tiny pivot replacement and iterative refinement. SchemaVer 4-3-0
+    other parameters have suitable defaults). With the entries of
+    `config["Boundaries"]["PML"]`, *Palace* instead extrudes the PML from farfield
+    boundaries of the mesh, for example in place of an absorbing boundary on a sphere: each
+    face becomes a column of prisms or hexahedra, along the normal of a flat part of the
+    boundary, per component on a box (whose layer is the Cartesian PML of the box grown by
+    the thickness), or along rays from a core point or axis-aligned box, and the coordinates
+    are stretched across the layer. Periodic boundaries may cross a part extruded along its
+    normal, as on top of a Floquet cell. The stretch can be evaluated at a fixed reference
+    frequency or at the solve frequency (`"FrequencyDependent"`). For eigenmode simulations,
+    the fraction of the field energy of each mode in the PML regions is written to
+    `eig.csv`, which identifies the spurious modes of the layer. The multigrid
+    preconditioner is complemented by a sparse direct solve of the PML regions
+    (`Solver.Linear.PMLSubdomainSolver`); with SuperLU_DIST, the accuracy of its
+    factorization is checked, and an inaccurate factorization is repeated with tiny pivot
+    replacement and iterative refinement. SchemaVer 4-3-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Interface Changes

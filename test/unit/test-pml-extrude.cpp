@@ -1765,6 +1765,9 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
       CHECK(iodata.domains.pml.at(0).extrusion.type ==
             ((extrusion == "Normal") ? config::PMLData::Extrusion::Type::NORMAL
                                      : config::PMLData::Extrusion::Type::RADIAL));
+      const auto resolved = IoData::ConcretizeDefaults(iodata, MakeConfig(entry));
+      CHECK(resolved["Boundaries"]["PML"][0]["Extrusion"] == extrusion);
+      CHECK(ValidateConfig(resolved).empty());
     }
     else
     {

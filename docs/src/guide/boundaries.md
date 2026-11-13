@@ -92,8 +92,9 @@ can be:
     [Meshed perfectly matched layer](#Meshed-perfectly-matched-layer)).
   - Extruded by *Palace* from farfield boundaries of the mesh when it is loaded, with
     [`config["Boundaries"]["PML"]`](../config/reference.md#config-boundaries-pml): the
-    coordinates are stretched along the normal of a flat boundary or along rays from a core
-    point or box, for example as a spherical PML on the outer sphere of the domain (see
+    coordinates are stretched along the normal of a flat boundary, per component on a box,
+    or along rays from a core, for example as a spherical PML on the outer sphere of the
+    domain (see
     [Extruded perfectly matched layer](#Extruded-perfectly-matched-layer)).
 
 The extruded PML does not require meshing the layer, and terminates flat and curved
@@ -167,35 +168,87 @@ example in place of the `"Absorbing"` boundary on the outer sphere of the
 }
 ```
 
-Each geometry node of a flat boundary moves along its normal, each node of a box (a boundary
-whose faces are all flat, normal to the axes, and on the sides of its bounding box) along
-each axis in proportion to its distance from the core, and otherwise along its ray from its
-closest point on a core, by default the center of the bounding box of the boundary, or the
-point or the axis-aligned box `"Center"`, so that each face becomes a column of `"Layers"`
-prisms (triangles) or hexahedra (quadrilaterals), curved on curved meshes. The coordinates
-are stretched across the layer, with the same parameters as `config["Domains"]["PML"]` at
-the depth into the layer: on a flat boundary, this is the Cartesian PML of a face, on a box,
-the Cartesian PML of the box grown by the thickness, with its edge and corner regions, and
-on a sphere, the spherical PML. Every face of the boundary must face its closest point on
-the core. The depth is a function of the position: the distance from the plane of a flat
-boundary, the distance beyond the box along each axis, or the distance from the core less
-that of the boundary when the boundary is at a constant distance from the core (a sphere
-around a point or the wall of a cylinder around a segment, within 5% of the thickness).
-Other boundaries are rejected. The sides of the bounding box of a box without a face, such
-as a port face or a ground plane, are open: the core must lie on them, and by default it is
-the center of the bounding box moved onto them, so that the layer ends flush with them.
+Each entry of the array gives a surface and its layer. The surface is split into parts, and
+each part becomes one PML block:
+
+  - By default, the parts are the connected parts of the surface. A flat part without
+    `"Center"` is extruded along its outward normal, and any other part radially, from a
+    core: the center of the bounding box of the part, or `"Center"`, a point or the two
+    corners of an axis-aligned box (a rectangle or a segment where they share coordinates).
+  - With `"Extrusion": "Normal"`, the parts are the flat patches of the surface (its
+    connected, coplanar faces), each extruded along its own normal, and a curved face is an
+    error.
+  - With `"Extrusion": "Radial"`, every connected part is extruded radially, flat or not.
+
+Each face becomes a column of `"Layers"` prisms (triangles) or hexahedra (quadrilaterals),
+curved on curved meshes, and the layer has the same thickness everywhere, measured straight
+out from the surface. The coordinates are stretched with the same parameters as
+`config["Domains"]["PML"]`, at the depth into the layer, which is a function of the
+position. This limits the shapes of the parts extruded radially:
+
+  - A box, whose faces are all flat, normal to the coordinate axes, and on the sides of its
+    bounding box, moves each node component by component, away from its closest point on
+    the core, so that the outside of the layer is the bounding box grown by the thickness
+    on its sides with a face. Its stretch is that of a block of `config["Domains"]["PML"]`
+    with the bounding box as its inner faces, with edge and corner regions. The sides
+    without a face, such as a port face or a ground plane, are open: the core must lie on
+    them, so that the layer ends flush with them and their boundaries continue across its
+    ends, and by default it is the center of the bounding box moved onto the open sides. An
+    interface between two materials which crosses the box, such as a substrate, stays flat
+    in the layer only if the core spans the layers, as a segment through the substrate.
+  - Any other part moves each node along its ray from its closest point on the core, and
+    must be at a constant distance from the core, within 5% of the thickness: a sphere
+    around its center, or the wall of a cylinder around its axis. On a sphere, the stretch
+    is the spherical PML. A part of a sphere which ends on a flat boundary, such as a half
+    sphere on a ground plane, needs its center on that boundary.
+
+Other parts, such as an L-shaped box or a box whose faces are not normal to the axes, are
+rejected, and every face must face its direction. For example:
+
+```json
+// The end of a waveguide is flat, so it is extruded along its normal, and the side walls
+// continue straight through the layer.
+"PML": [{ "Attributes": [3], "Thickness": 0.1, "Layers": 6 }]
+
+// Both ends of a pipe are two flat parts, each along its own normal, here with a thicker
+// layer at one end.
+"PML": [{ "Attributes": [5], "Thickness": 0.1, "Layers": 6 },
+        { "Attributes": [6], "Thickness": 0.2, "Layers": 8 }]
+
+// A cube is one closed layer extruded from its center, whose outside is a larger cube, or
+// from a box just inside of it (with straight columns over the box), or a cuboid on each
+// face (the edge and corner regions stay outside of the domain).
+"PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4 }]
+"PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4,
+          "Center": [[-0.9, -0.9, -0.9], [0.9, 0.9, 0.9]] }]
+"PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4, "Extrusion": "Normal" }]
+
+// A patch antenna in a box with the PML on its top, its two sides, and its back: the core
+// is on the port face and on the ground plane, as a segment through the substrate, so that
+// the layer ends flush with both and the substrate stays flat.
+"PML": [{ "Attributes": [7], "Thickness": 6.0, "Layers": 4,
+          "Center": [[0, 0, 0], [0, 0, 0.794]] }]
+
+// A closed cylinder has its caps along their normals, and its wall along the rays from
+// its axis.
+"PML": [{ "Attributes": [5, 6], "Thickness": 0.1, "Layers": 6 },
+        { "Attributes": [4], "Thickness": 0.1, "Layers": 6,
+          "Center": [[0, 0, -1], [0, 0, 1]] }]
+```
 
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
 layer. The outer boundary of the layer is PEC, unless a boundary condition is given for its
-`"BackAttribute"`. The extruded boundary becomes an interior boundary, whose attribute can
-still be used for postprocessing, such as the far field of
+`"BackAttribute"`, and so are its sides where two layers meet only along an edge, as on the
+cube and the cylinder above. These sides reflect the waves which reach them obliquely: for a
+dipole at the center of a cube one wavelength across, the field 0.3 wavelengths from it is
+within 1.5% of the free-space field with the layer extruded from the center (1.1% from a box
+just inside of the cube), and 29% off with the cuboids. The extruded boundary becomes an
+interior boundary, whose attribute can still be used for postprocessing, such as the far
+field of
 [`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries-postprocessing-farfield):
 for the antenna example, the far field with the extruded PML above agrees with the one with
-the second-order absorbing boundary to 0.06 dB. For a layered medium which reaches the boundary, such as a
-substrate, a segment `"Center"` (a box whose corners differ in one coordinate) normal to
-the layers and spanning all of the layers which reach the boundary keeps each layer in its
-plane through the PML.
+the second-order absorbing boundary to 0.06 dB.
 
 The extruded layer is refined with the rest of the mesh by parallel uniform refinement
 ([`"UniformLevels"`](../config/reference.md#config-model-refinement-uniformlevels)) and by
