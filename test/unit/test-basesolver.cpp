@@ -726,7 +726,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 // palace.json.tmp + rename (#906) with ours' checked streamed write BEFORE the rename. A
 // short write (here: palace.json.tmp is a symbolic link to /dev/full, so the flush fails
 // with ENOSPC) aborts and leaves the previous palace.json byte-identical; the partial
-// temporary file is left behind, never renamed into place.
+// temporary file is left behind, never renamed into place. The fault is injected THROUGH
+// the symbolic link, so the case relies on WriteMetadata opening its temporary file through
+// an existing link: if that writer is hardened to remove links before writing (as the other
+// outputs, SD-302), the injection must change (P3-C review m-5). REQUIRE (not CHECK) stops
+// the case on the defect it guards: a renamed link to /dev/full is never read back (P3-C
+// review m-7: the read would not end).
 TEST_CASE_METHOD(palace::test::SharedTempDir, "WriteMetadata short write keeps palace.json",
                  "[basesolver][Serial]")
 {
@@ -759,8 +764,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "WriteMetadata short write keeps p
   const std::string before = ReadFile(path);
   REQUIRE_FALSE(before.empty());
   fs::create_symlink("/dev/full", tmp_path);
-  CHECK_THROWS_WITH(solver.SaveMetadata(counts),
-                    Catch::Matchers::ContainsSubstring("a short write"));
+  REQUIRE_THROWS_WITH(solver.SaveMetadata(counts),
+                      Catch::Matchers::ContainsSubstring("a short write"));
+  REQUIRE_FALSE(fs::is_symlink(path));
   CHECK(ReadFile(path) == before);
   CHECK(fs::is_symlink(tmp_path));
   fs::remove(tmp_path);
