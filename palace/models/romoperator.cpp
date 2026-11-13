@@ -380,6 +380,30 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
 
 }  // namespace
 
+std::vector<Eigen::MatrixXd> ProjectSymmetricOperators(MPI_Comm comm,
+                                                       const std::vector<Vector> &V,
+                                                       std::span<const Operator *const> A)
+{
+  const auto n = static_cast<Eigen::Index>(V.size());
+  std::vector<Eigen::MatrixXcd> Ar(A.size(), Eigen::MatrixXcd(n, n));
+  BasisProjection proj(V, 0);
+  for (std::size_t t = 0; t < A.size(); t++)
+  {
+    for (Eigen::Index j = 0; j < n; j++)
+    {
+      proj.Add(A[t], V[j], 0, &Ar[t](0, j), false);
+    }
+  }
+  std::vector<Vector> Z;
+  proj.Compute(comm, Z);
+  std::vector<Eigen::MatrixXd> result;
+  for (const auto &Ar_t : Ar)
+  {
+    result.push_back(Ar_t.real());
+  }
+  return result;
+}
+
 void MinimalRationalInterpolation::AddSolutionSample(double omega,
                                                      const Eigen::VectorXcd &c)
 {

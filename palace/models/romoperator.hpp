@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -150,6 +151,12 @@ public:
 
   const auto &GetSamplePoints() const { return z; }
 };
+
+// Projections Vᵀ A V of symmetric operators A onto the real vectors V, replicated on every
+// process.
+std::vector<Eigen::MatrixXd> ProjectSymmetricOperators(MPI_Comm comm,
+                                                       const std::vector<Vector> &V,
+                                                       std::span<const Operator *const> A);
 
 //
 // A class handling projection-based reduced order model (PROM) construction and use for
