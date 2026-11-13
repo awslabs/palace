@@ -161,6 +161,31 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   // TODO: Add more stringent tests of MRI, including estimating poles.
 }
 
+TEST_CASE("MinimalRationalInterpolation-DistributedSearch",
+          "[romoperator][Serial][Parallel]")
+{
+  // The search split over the processes gives the same points as one scan, also with
+  // classical Gram-Schmidt for the snapshots.
+  MPI_Comm comm = Mpi::World();
+  const auto orthog = GENERATE(Orthogonalization::MGS, Orthogonalization::CGS2);
+  MinimalRationalInterpolation mri(6);
+  for (double x : {-2.0, -1.3, 0.4, 1.0, 2.0})
+  {
+    const auto t = std::tan(0.5 * std::numbers::pi * (x - std::complex<double>(1., 1.)));
+    std::vector<std::complex<double>> tmp = {-t, 5. * t, x * t, 10. * x * t,
+                                             2. * x * x * x * t + double(Mpi::Rank(comm))};
+    ComplexVector u(tmp.size());
+    u.Set(tmp.data(), tmp.size(), false);
+    mri.AddSolutionSample(x, u, comm, orthog);
+  }
+  for (std::size_t N : {1, 5})
+  {
+    const auto local = mri.FindMaxError(N);
+    const auto split = mri.FindMaxError(N, comm);
+    CHECK(split == local);
+  }
+}
+
 TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
 {
   // Samples 2e-11 apart relative to z: delta = span / 1e6 is below the spacing of doubles
