@@ -747,9 +747,16 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   waveport_synthesis_rank_tol = std::clamp(
       waveport_synthesis_tol, WAVEPORT_SYNTHESIS_EIG_TOL, WAVEPORT_SYNTHESIS_RANK_TOL_MAX);
 
-  // Initialize working vector storage.
+  // Initialize working vector storage, and the frequency-linear excitation vectors.
   r.SetSize(K->Height());
   r.UseDevice(true);
+  for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
+  {
+    if (!space_op.GetExcitationVector1(excitation_idx, RHS1.emplace_back()))
+    {
+      RHS1.back() = ComplexVector();
+    }
+  }
 
   // Set up the linear solver and set operators but don't set the operators yet (this will
   // be done during an HDM solve at a given parameter point). The preconditioner for the
@@ -822,63 +829,19 @@ Eigen::VectorXcd RomOperator::GetFloquetModeProjection(std::size_t k, bool is_te
   return floquet_comp_V.middleCols(3 * k, 3) * Eigen::Vector3cd(e(0), e(1), e(2));
 }
 
-void RomOperator::SetExcitationIndex(int excitation_idx)
+Eigen::Index RomOperator::GetExcitationColumn(int excitation_idx) const
 {
-  // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
-  // excitation index, so this is triggered the first time it is called in
-  // drivensolver.cpp.
-  if (excitation_idx_cache == excitation_idx)
+  Eigen::Index k = 0;
+  for (const auto &[idx, data] : space_op.GetPortExcitations())
   {
-    return;
-  }
-
-  // Set up RHS vector (linear in frequency part) for the incident field at port
-  // boundaries, and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
-  excitation_idx_cache = excitation_idx;
-  // Reset has_RHS2 so SolveHDM re-checks, since it may differ per excited port.
-  has_RHS2 = true;
-  if (auto it = RHS1r_online.find(excitation_idx); it != RHS1r_online.end())
-  {
-    RHS1r = it->second;
-    has_RHS1 = (RHS1r.size() > 0);
-    RHS1_assembled = false;
-    return;
-  }
-  has_RHS1 = RHS1_assembled = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
-  if (!has_RHS1)
-  {
-    RHS1.SetSize(0);
-  }
-  else
-  {
-    // Project RHS1 to RHS1r with current PROM.
-    auto dim_V = V.size();
-    if (dim_V > 0)
+    if (idx == excitation_idx)
     {
-      RHS1r = ProjectVectors(space_op.GetComm(), V, {&RHS1}).col(0);
+      return k;
     }
+    k++;
   }
-}
-
-void RomOperator::PrepareOnlineExcitations()
-{
-  RHS1r_online.clear();
-  MPI_Comm comm = space_op.GetComm();
-  ComplexVector rhs;
-  for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
-  {
-    if (!space_op.GetExcitationVector1(excitation_idx, rhs))
-    {
-      RHS1r_online.emplace(excitation_idx, Eigen::VectorXcd{});
-      continue;
-    }
-    RHS1r_online.emplace(excitation_idx, ProjectVectors(comm, V, {&rhs}).col(0));
-  }
-  excitation_idx_cache = 0;
-  // The wave-port state feeding Aᵣ(ω) (kₙ, modal correction) may have been re-solved since
-  // the last offline assembly (synthesis tolerances, reduced port models), so do not reuse
-  // it.
-  Ar_omega = std::numeric_limits<double>::quiet_NaN();
+  MFEM_ABORT("Unknown excitation index " << excitation_idx << "!");
+  return -1;
 }
 
 void RomOperator::UpdateWavePortBasisRestriction()
@@ -961,8 +924,6 @@ void RomOperator::AddWavePortModalCorrection(double omega)
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
-  SetExcitationIndex(excitation_idx);
-
   // Compute HDM solution at the given frequency. The HDM system operator is applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), or else built locally with
   // the full frequency-dependent operator (A2 + low-rank Floquet DtN). A refers to P and
@@ -982,17 +943,10 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
-  if (has_RHS2)
+  space_op.GetExcitationVector2(excitation_idx, omega, r);
+  if (const auto &rhs1 = RHS1[GetExcitationColumn(excitation_idx)]; rhs1.Size())
   {
-    has_RHS2 = space_op.GetExcitationVector2(excitation_idx, omega, r);
-  }
-  else
-  {
-    r = 0.0;
-  }
-  if (has_RHS1)
-  {
-    r.Add(1i * omega, RHS1);
+    r.Add(1i * omega, rhs1);
   }
 
   // Solve the linear system.
@@ -1120,8 +1074,6 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
                                          std::string_view node_label)
 {
-  RHS1r_online.clear();
-  Ar_omega = std::numeric_limits<double>::quiet_NaN();
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
   // vectors, if it has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
@@ -1200,7 +1152,7 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   }
 
   // Update the projections for the new basis vectors (the resized matrices keep those for
-  // the previous ones): the operators, the excitation, the Floquet port mode components,
+  // the previous ones): the operators, the excitations, the Floquet port mode components,
   // and the Gram matrix, together. With a Floquet wave vector, the stiffness matrix can be
   // nonsymmetric: Hermitian (domain Floquet terms) or with an antisymmetric real part
   // (Floquet terms of second-order farfield boundaries, with a frequency dependent wave
@@ -1221,10 +1173,13 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     term.Ar.conservativeResize(n, n);
     proj.AddOperator(*term.op, term.Ar, term.symmetric);
   }
-  if (RHS1_assembled)
+  RHS1r.conservativeResizeLike(Eigen::MatrixXcd::Zero(n, RHS1.size()));
+  for (std::size_t k = 0; k < RHS1.size(); k++)
   {
-    RHS1r.conservativeResize(n);
-    proj.AddVector(RHS1, &RHS1r(n0));
+    if (RHS1[k].Size())
+    {
+      proj.AddVector(RHS1[k], &RHS1r(n0, k));
+    }
   }
   floquet_comp_V.conservativeResize(n, 3 * floquet_orders.size());
   for (std::size_t k = 0; k < floquet_orders.size(); k++)
@@ -1304,125 +1259,118 @@ double RomOperator::BasisNorm(const Eigen::VectorXcd &c) const
   return weight_op_W ? (gram_L.topRows(c.size()).transpose() * c).norm() : c.norm();
 }
 
-void RomOperator::SolvePROM(int excitation_idx, double omega)
+void RomOperator::SolvePROM(double omega)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
-  SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
-  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ (A2(ω) + F(ω)) V and source vector
-  // RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2(ω), all from reduced quantities (no HDM-size work).
-
-  // No basis states ill-defined: return zero vector to match current behaviour.
+  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ (A2(ω) + F(ω)) V and source vectors
+  // RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2(ω), all from reduced quantities (no HDM-size work). It is
+  // factored once and solved for every excitation. The PROM is solved on every process so
+  // the matrix-vector product for vector expansion does not require communication.
+  const auto &excitations = space_op.GetPortExcitations();
+  Y.resize(V.size(), excitations.Size());
   if (V.empty())
   {
-    RHSr.resize(0);
     return;
   }
 
-  RHSr.resize(V.size());
+  // Refresh the Floquet port state (propagation constants, and mode vectors when k_F
+  // scales with frequency) for the Robin term, the DtN correction, and the excitation.
+  space_op.GetFloquetPortOp().Initialize(omega);
 
-  if (omega != Ar_omega)
+  // The frequency-dependent boundary terms are added in factored form, as a scalar times
+  // a projected ω-independent operator. For wave ports, GetWavePortKn solves the port
+  // mode problem at this frequency, which also refreshes the modal state used by
+  // the wave-port terms below and the postprocessing.
+  Ar = Kr;
+  if (C)
   {
-    // Refresh the Floquet port state (propagation constants, and mode vectors when k_F
-    // scales with frequency) for the Robin term, the DtN correction, and the excitation.
-    space_op.GetFloquetPortOp().Initialize(omega);
-
-    // The frequency-dependent boundary terms are added in factored form, as a scalar times
-    // a projected ω-independent operator. For wave ports, GetWavePortKn solves the port
-    // mode problem at this frequency, which also refreshes the modal state used by
-    // the wave-port terms below and the postprocessing.
-    Ar = Kr;
-    if (C)
+    Ar += (1i * omega) * Cr;
+  }
+  Ar += (-omega * omega) * Mr;
+  for (const auto &term : bdr_terms)
+  {
+    const auto f = GetBoundaryTermCoefficient(term, omega);
+    if (f != 0.0)
     {
-      Ar += (1i * omega) * Cr;
+      Ar += f * term.Ar;
     }
-    Ar += (-omega * omega) * Mr;
-    for (const auto &term : bdr_terms)
-    {
-      const auto f = GetBoundaryTermCoefficient(term, omega);
-      if (f != 0.0)
-      {
-        Ar += f * term.Ar;
-      }
-    }
-
-    // Add the low-rank wave-port modal correction Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the
-    // Galerkin projection of the complex-symmetric W = Σ_k g_k s_k s_kᵀ that the uniform
-    // path applies via GetExtraSystemOperator (V is real, so Vᴴ = Vᵀ). Reassembled per ω
-    // since the modal fields and reactions change with frequency, but independent of the
-    // excitation so it is shared by every excitation at this ω. Without it Aᵣ carries only
-    // i·kₙ·M while the reduced RHS carries the full modal n×H, breaking unitarity for
-    // reactive/TM modes; for TEM modes s_full = s_scalar and Wᵣ ≡ 0.
-    AddWavePortModalCorrection(omega);
-
-    // Add the low-rank Floquet port DtN correction Fᵣ = Σ_k g_k(ω) (Vᵀv_k)(Vᵀv_k)ᴴ.
-    for (std::size_t k = 0; k < floquet_orders.size(); k++)
-    {
-      const auto &[port_idx, order] = floquet_orders[k];
-      if (!HasFlag(order->use, FloquetModeUse::Dtn))
-      {
-        continue;
-      }
-      const auto &port = space_op.GetFloquetPortOp().GetPort(port_idx);
-      for (bool is_te : {true, false})
-      {
-        const auto g = port.ComputeDtNCorrectionCoeff(*order, is_te);
-        if (g != 0.0)
-        {
-          const Eigen::VectorXcd vV = GetFloquetModeProjection(k, is_te);
-          Ar.noalias() += g * vV * vV.adjoint();
-        }
-      }
-    }
-    Ar_solver.compute(Ar);
-    Ar_omega = omega;
   }
 
-  // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
-  // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
-  // pairings Vᵀs_full,p at this frequency.
-  RHSr.setZero();
-  for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
-  {
-    if (port_data.excitation == excitation_idx)
-    {
-      RHSr += std::complex<double>(0.0, -2.0 * omega) * sV_wp_full.at(port_idx);
-    }
-  }
-  // Floquet port excitation Σ_p s_p conj(v_p) over the (0,0) modes of the ports excited by
-  // this excitation index (see FloquetPortData::AddExcitationVector).
+  // Add the low-rank wave-port modal correction Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the
+  // Galerkin projection of the complex-symmetric W = Σ_k g_k s_k s_kᵀ that the uniform
+  // path applies via GetExtraSystemOperator (V is real, so Vᴴ = Vᵀ). Reassembled per ω
+  // since the modal fields and reactions change with frequency, but independent of the
+  // excitation so it is shared by every excitation at this ω. Without it Aᵣ carries only
+  // i·kₙ·M while the reduced RHS carries the full modal n×H, breaking unitarity for
+  // reactive/TM modes; for TEM modes s_full = s_scalar and Wᵣ ≡ 0.
+  AddWavePortModalCorrection(omega);
+
+  // Add the low-rank Floquet port DtN correction Fᵣ = Σ_k g_k(ω) (Vᵀv_k)(Vᵀv_k)ᴴ.
   for (std::size_t k = 0; k < floquet_orders.size(); k++)
   {
     const auto &[port_idx, order] = floquet_orders[k];
-    const auto &port = space_op.GetFloquetPortOp().GetPort(port_idx);
-    if (port.excitation != excitation_idx || order->m != 0 || order->n != 0)
+    if (!HasFlag(order->use, FloquetModeUse::Dtn))
     {
       continue;
     }
-    const auto s = port.GetExcitationCoefficients(omega);
+    const auto &port = space_op.GetFloquetPortOp().GetPort(port_idx);
     for (bool is_te : {true, false})
     {
-      if (s[is_te ? 0 : 1] != 0.0)
+      const auto g = port.ComputeDtNCorrectionCoeff(*order, is_te);
+      if (g != 0.0)
       {
-        RHSr += s[is_te ? 0 : 1] * GetFloquetModeProjection(k, is_te).conjugate();
+        const Eigen::VectorXcd vV = GetFloquetModeProjection(k, is_te);
+        Ar.noalias() += g * vV * vV.adjoint();
       }
     }
   }
-  if (has_RHS1)
+
+  for (Eigen::Index k = 0; const auto &[excitation_idx, data] : excitations)
   {
-    RHSr += (1i * omega) * RHS1r;
+    // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
+    // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
+    // pairings Vᵀs_full,p at this frequency.
+    Eigen::VectorXcd b = (1i * omega) * RHS1r.col(k);
+    for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+    {
+      if (port_data.excitation == excitation_idx)
+      {
+        b += std::complex<double>(0.0, -2.0 * omega) * sV_wp_full.at(port_idx);
+      }
+    }
+    // Floquet port excitation Σ_p s_p conj(v_p) over the (0,0) modes of the ports excited
+    // by this excitation index (see FloquetPortData::AddExcitationVector).
+    for (std::size_t l = 0; l < floquet_orders.size(); l++)
+    {
+      const auto &[port_idx, order] = floquet_orders[l];
+      const auto &port = space_op.GetFloquetPortOp().GetPort(port_idx);
+      if (port.excitation != excitation_idx || order->m != 0 || order->n != 0)
+      {
+        continue;
+      }
+      const auto s = port.GetExcitationCoefficients(omega);
+      for (bool is_te : {true, false})
+      {
+        if (s[is_te ? 0 : 1] != 0.0)
+        {
+          b += s[is_te ? 0 : 1] * GetFloquetModeProjection(l, is_te).conjugate();
+        }
+      }
+    }
+    Y.col(k++) = b;
   }
 
-  // Compute PROM solution at the given frequency. The PROM is solved on every process so
-  // the matrix-vector product for vector expansion does not require communication.
+  // Compute the PROM solutions at the given frequency. The PROM is solved on every process
+  // so the matrix-vector product for vector expansion does not require communication.
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
-  RHSr = Ar_solver.solve(RHSr);
+  Y = Ar.fullPivHouseholderQr().solve(Y).eval();
 }
 
-void RomOperator::ExpandPROMSolution(ComplexVector &u) const
+void RomOperator::ExpandPROMSolution(int excitation_idx, ComplexVector &u) const
 {
   BlockTimer bt(Timer::SOLVE_PROM);
   if (V.empty())
@@ -1430,7 +1378,8 @@ void RomOperator::ExpandPROMSolution(ComplexVector &u) const
     u = 0.0;
     return;
   }
-  linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
+  const Eigen::VectorXcd y = Y.col(GetExcitationColumn(excitation_idx));
+  linalg::LinearCombination(V, {y.data(), static_cast<std::size_t>(y.size())}, u);
 }
 
 RomOperator::WavePortDispersionFit

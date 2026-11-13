@@ -299,8 +299,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   auto UpdatePROM = [&](int excitation_idx, double omega, std::size_t sample_idx)
   {
     // Add the HDM solution to the PROM reduced basis.
-    prom_op.SolvePROM(excitation_idx, omega);
-    Eigen::VectorXcd d = -prom_op.GetReducedSolution();
+    prom_op.SolvePROM(omega);
+    Eigen::VectorXcd d = -prom_op.GetReducedSolution(excitation_idx);
     const auto c = prom_op.UpdatePROM(
         E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
     prom_op.UpdateMRI(excitation_idx, omega, c);
@@ -343,8 +343,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       Mpi::Print("\nAdding excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  ++excitation_counter, port_excitations.Size());
     }
-    prom_op.SetExcitationIndex(excitation_idx);  // Pre-compute RHS1
-
     // Initialize PROM with explicit HDM samples, record the estimate but do not act on it.
     std::vector<double> max_errors;
     std::size_t counter_rom_sample = 0;
@@ -409,18 +407,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
-  prom_op.PrepareOnlineExcitations();
   post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  auto solve_online_point = [&](int excitation_idx, std::size_t omega_i)
+  auto postprocess_online_point = [&](int excitation_idx, std::size_t omega_i)
   {
     const auto omega = omega_sample[omega_i];
-    // Refresh every port, including inactive observation-only ports, before either PROM
-    // assembly or postprocessing. Repeated calls at the same frequency are cached.
-    space_op.GetWavePortOp().PrepareFrequency(omega);
     Mpi::Print("\nIt {:d}/{:d}, excitation {:d}: ω/2π = {:.3e} GHz "
                "(total elapsed time = {:.2e} s)\n",
                omega_i + 1, omega_sample.size(), excitation_idx,
@@ -428,16 +422,16 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                    (2 * std::numbers::pi),
                Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble and solve the PROM linear system. Reduced postprocessing evaluates the
-    // outputs from the reduced solution, mostly without expanding it.
-    prom_op.SolvePROM(excitation_idx, omega);
+    // Reduced postprocessing evaluates the outputs from the reduced solution, mostly
+    // without expanding it.
+    const Eigen::VectorXcd y = prom_op.GetReducedSolution(excitation_idx);
     const bool reduced = post_op.HasReducedPostprocessing() &&
                          !post_op.WillWriteFields(static_cast<int>(omega_i));
     const bool expand =
         !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx, prom_op);
     if (expand)
     {
-      prom_op.ExpandPROMSolution(E);
+      prom_op.ExpandPROMSolution(excitation_idx, E);
     }
     Mpi::Print("\n");
     if (omega_i == 0 && post_op.WillWriteFields())
@@ -450,7 +444,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     if (reduced)
     {
       post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), expand ? &E : nullptr,
-                                     omega, prom_op.GetReducedSolution(), prom_op);
+                                     omega, y, prom_op);
       return;
     }
 
@@ -472,21 +466,22 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
   };
 
+  // The PROM (and the port modes) depend on frequency, not excitation: assemble, factor,
+  // and solve it for all excitations once per frequency.
   if (!post_op.WillWriteFields())
   {
-    // Port modes depend on frequency, not excitation. Frequency-major traversal keeps the
-    // one-frequency modal cache hot for every excitation.
     for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
     {
+      prom_op.SolvePROM(omega_sample[omega_i]);
       for (const auto &[excitation_idx, excitation_spec] : port_excitations)
       {
-        solve_online_point(excitation_idx, omega_i);
+        postprocess_online_point(excitation_idx, omega_i);
       }
     }
   }
   else
   {
-    // Preserve excitation-major ordering for excitation-specific field collections.
+    // Excitation-major ordering for the excitation-specific field collections.
     for (const auto &[excitation_idx, excitation_spec] : port_excitations)
     {
       if (port_excitations.Size() > 1)
@@ -495,7 +490,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       }
       for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
       {
-        solve_online_point(excitation_idx, omega_i);
+        prom_op.SolvePROM(omega_sample[omega_i]);
+        postprocess_online_point(excitation_idx, omega_i);
       }
     }
   }
