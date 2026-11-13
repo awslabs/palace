@@ -174,37 +174,6 @@ ComplexVector &ComplexVector::operator=(std::complex<double> s)
   return *this;
 }
 
-void ComplexVector::SetBlocks(const std::vector<const ComplexVector *> &y,
-                              const std::vector<std::complex<double>> &s)
-{
-  MFEM_ASSERT(s.empty() || y.size() == s.size(),
-              "Mismatch in dimension of vector blocks and scaling coefficients!");
-  auto *XR = Real().Write();
-  auto *XI = Imag().Write();
-  int offset = 0;
-  for (std::size_t b = 0; b < y.size(); b++)
-  {
-    MFEM_VERIFY(y[b] && ((b < y.size() - 1 && offset + y[b]->Size() < Size()) ||
-                         (b == y.size() - 1 && offset + y[b]->Size() == Size())),
-                "Mismatch between sum of block dimensions and parent vector dimension!");
-    const double sr = s.empty() ? 1.0 : s[b].real();
-    const double si = s.empty() ? 0.0 : s[b].imag();
-    const bool use_dev = UseDevice() || y[b]->UseDevice();
-    const int N = y[b]->Size();
-    const auto *YR = y[b]->Real().Read();
-    const auto *YI = y[b]->Imag().Read();
-    mfem::forall_switch(use_dev, N,
-                        [=] MFEM_HOST_DEVICE(int i)
-                        {
-                          XR[i] = sr * YR[i] - si * YI[i];
-                          XI[i] = si * YR[i] + sr * YI[i];
-                        });
-    XR += N;
-    XI += N;
-    offset += N;
-  }
-}
-
 ComplexVector &ComplexVector::operator*=(std::complex<double> s)
 {
   const double sr = s.real();
@@ -889,17 +858,15 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
     y = 0.0;
-    for (std::size_t j = 0; j < n; j += 2)
+    for (std::size_t j = 0; j < n; j++)
     {
-      if (j + 1 < n)
+      if (c[j].real() != 0.0)
       {
-        AXPBYPCZ(c[j].real(), X[j], c[j + 1].real(), X[j + 1], 1.0, y.Real());
-        AXPBYPCZ(c[j].imag(), X[j], c[j + 1].imag(), X[j + 1], 1.0, y.Imag());
+        y.Real().Add(c[j].real(), X[j]);
       }
-      else
+      if (c[j].imag() != 0.0)
       {
-        AXPY(c[j].real(), X[j], y.Real());
-        AXPY(c[j].imag(), X[j], y.Imag());
+        y.Imag().Add(c[j].imag(), X[j]);
       }
     }
     return;
@@ -907,8 +874,8 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
 
   // On the host, add all terms to one block of y at a time, which stays in cache, so each
   // X[j] is read once and y is written once. The terms are added in the same order as on
-  // the device, which also skips the zero parts of the coefficients. The blocks are
-  // smaller when needed to give every thread one.
+  // the device, skipping the zero parts of the coefficients. The blocks are smaller when
+  // needed to give every thread one.
   const int nt = utils::GetMaxThreads();
   const int B = std::clamp((N + nt - 1) / nt, 64, 1024);
   std::vector<const double *> XP(n);
@@ -944,6 +911,75 @@ void LinearCombination(std::span<const Vector> X, std::span<const std::complex<d
       }
     }
   }
+}
+
+void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H)
+{
+  const int m = static_cast<int>(X.size()), k = static_cast<int>(Y.size()), mk = m * k;
+  if (mk == 0)
+  {
+    return;
+  }
+  const int N = X[0].Size();
+  mfem::Array<const double *> P(m + k);
+  for (int i = 0; i < m + k; i++)
+  {
+    const Vector &x = (i < m) ? X[i] : *Y[i - m];
+    MFEM_VERIFY(x.Size() == N, "Size mismatch for local inner products!");
+    P[i] = x.Read();
+  }
+
+  // Partial sums over blocks of entries, with all pairs of a block next to each other and
+  // the Y index varying fastest, so that on the host each X is read once from memory while
+  // a block of every Y stays in cache. The partial sums are then added in block order, so
+  // the result does not depend on the backend or the number of threads.
+  constexpr int B = 1024;
+  const int nb = (N + B - 1) / B;
+  Vector partial(nb * mk), h(mk);
+  partial.UseDevice(true);
+  h.UseDevice(true);
+  const auto *XY = P.Read();
+  auto *S = partial.Write();
+  mfem::forall(nb * mk,
+               [=] MFEM_HOST_DEVICE(int t)
+               {
+                 const int b = t / mk, i = t % mk / k, j = t % k;
+                 const double *x = XY[i], *y = XY[m + j];
+                 const int end = (b + 1) * B < N ? (b + 1) * B : N;
+                 constexpr int K = 8;
+                 double s[K] = {};
+                 int l = b * B;
+                 for (; l + K <= end; l += K)
+                 {
+                   for (int r = 0; r < K; r++)
+                   {
+                     s[r] += x[l + r] * y[l + r];
+                   }
+                 }
+                 for (int r = 0; l < end; l++, r++)
+                 {
+                   s[r] += x[l] * y[l];
+                 }
+                 double sum = 0.0;
+                 for (int r = 0; r < K; r++)
+                 {
+                   sum += s[r];
+                 }
+                 S[b * mk + i + j * m] = sum;
+               });
+  const auto *PS = partial.Read();
+  auto *D = h.Write();
+  mfem::forall(mk,
+               [=] MFEM_HOST_DEVICE(int p)
+               {
+                 double sum = 0.0;
+                 for (int b = 0; b < nb; b++)
+                 {
+                   sum += PS[p + b * mk];
+                 }
+                 D[p] = sum;
+               });
+  std::copy_n(h.HostRead(), mk, H);
 }
 
 void Sqrt(Vector &x, double s)

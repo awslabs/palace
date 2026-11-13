@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -211,82 +212,145 @@ inline std::complex<double> EvaluatePolyPlusPoles(std::complex<double> a0,
   return val;
 }
 
-inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexOperator &A, Eigen::MatrixXcd &Ar,
-                               ComplexVector &r, int n0, bool symmetric)
+// Projections onto the real basis V for the new basis dimension n0 -> n: rows [i0, n) of
+// Vᵀ x for real vectors x, given or an operator applied to a basis vector, stored in the
+// real or imaginary parts of complex columns, replicated on every process. The operators
+// are applied in groups, the inner products of a group with the basis are computed in one
+// pass over it, and all are summed over the processes in one reduction.
+class BasisProjection
 {
-  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real. Ar is replicated
-  // across all processes as a sequential n x n matrix.
-  const auto n = Ar.rows();
-  MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM matrix projection!");
-
-  // Compute the right block: columns [n0, n), all rows [0, n).
-  for (int j = n0; j < n; j++)
+private:
+  struct Column
   {
-    MFEM_VERIFY(A.Real() || A.Imag(),
-                "Invalid zero ComplexOperator for PROM matrix projection!");
-    if (A.Real())
-    {
-      A.Real()->Mult(V[j], r.Real());
-    }
-    if (A.Imag())
-    {
-      A.Imag()->Mult(V[j], r.Imag());
-    }
-    for (int i = 0; i < n; i++)
-    {
-      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);  // Local inner product
-      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
-    }
+    const Operator *A;  // Applied to x if not null
+    const Vector *x;
+    int i0;
+    std::complex<double> *out;  // Row i0
+    bool imag;
+  };
+  const std::vector<Vector> &V;
+  const int n0, n;
+  std::vector<Column> columns;
+  std::vector<Eigen::MatrixXcd *> symmetric;
+
+public:
+  BasisProjection(const std::vector<Vector> &V, int n0)
+    : V(V), n0(n0), n(static_cast<int>(V.size()))
+  {
+    MFEM_VERIFY(0 <= n0 && n0 <= n, "Invalid dimensions in PROM projection!");
   }
-  Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);
 
-  if (symmetric)
+  void Add(const Operator *A, const Vector &x, int i0, std::complex<double> *out, bool imag)
   {
-    for (int j = 0; j < n0; j++)
+    columns.push_back({A, &x, i0, out, imag});
+  }
+
+  // Update Ar = Vᴴ A V. Without symmetry the lower-left block (rows [n0, n), columns
+  // [0, n0)) is computed directly, so this works for Hermitian, anti-symmetric, or general
+  // operators.
+  void AddOperator(const ComplexOperator &A, Eigen::MatrixXcd &Ar, bool sym)
+  {
+    MFEM_VERIFY(A.Real() || A.Imag(), "Invalid zero ComplexOperator for PROM projection!");
+    MFEM_VERIFY(Ar.rows() == n && Ar.cols() == n, "Invalid dimensions in PROM projection!");
+    Ar.rightCols(n - n0).setZero();
+    if (sym)
     {
-      for (int i = n0; i < n; i++)
+      symmetric.push_back(&Ar);
+    }
+    else
+    {
+      Ar.bottomLeftCorner(n - n0, n0).setZero();
+    }
+    for (bool imag : {false, true})
+    {
+      if (const auto *Ap = imag ? A.Imag() : A.Real())
       {
-        Ar(i, j) = Ar(j, i);
+        for (int j = sym ? n0 : 0; j < n; j++)
+        {
+          const int i0 = (j < n0) ? n0 : 0;
+          Add(Ap, V[j], i0, &Ar(i0, j), imag);
+        }
       }
     }
-    return;
   }
 
-  // Compute the lower-left block directly: rows [n0, n), columns [0, n0).
-  // No symmetry assumption — works for Hermitian, anti-symmetric, or general operators.
-  for (int j = 0; j < n0; j++)
+  // Update rows [n0, n) of Vᴴ b, starting at out.
+  void AddVector(const ComplexVector &b, std::complex<double> *out)
   {
-    if (A.Real())
-    {
-      A.Real()->Mult(V[j], r.Real());
-    }
-    if (A.Imag())
-    {
-      A.Imag()->Mult(V[j], r.Imag());
-    }
-    for (int i = n0; i < n; i++)
-    {
-      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);
-      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
-    }
-    Mpi::GlobalSum(n - n0, Ar.data() + j * n + n0, comm);
+    Add(nullptr, b.Real(), n0, out, false);
+    Add(nullptr, b.Imag(), n0, out, true);
   }
-}
 
-inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexVector &b, Eigen::VectorXcd &br, int n0)
+  void Compute(MPI_Comm comm, std::vector<Vector> &Z) const
+  {
+    constexpr std::size_t max_group = 8;
+    std::vector<double> H;
+    std::vector<std::size_t> offset;
+    for (std::size_t c0 = 0; c0 < columns.size(); c0 += max_group)
+    {
+      const std::size_t c1 = std::min(columns.size(), c0 + max_group);
+      Z.resize(std::max(Z.size(), c1 - c0));
+      std::vector<const Vector *> Y;
+      int i0 = n;
+      for (std::size_t c = c0; c < c1; c++)
+      {
+        const auto &col = columns[c];
+        Y.push_back(col.x);
+        if (col.A)
+        {
+          auto &z = Z[c - c0];
+          z.SetSize(col.x->Size());
+          z.UseDevice(true);
+          col.A->Mult(*col.x, z);
+          Y.back() = &z;
+        }
+        i0 = std::min(i0, col.i0);
+      }
+      const auto m = static_cast<std::size_t>(n - i0), k = H.size();
+      H.resize(k + m * Y.size());
+      linalg::LocalDots(std::span<const Vector>(V.data() + i0, m), Y, H.data() + k);
+      for (std::size_t c = c0; c < c1; c++)
+      {
+        offset.push_back(k + (c - c0) * m + (columns[c].i0 - i0));
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(H.size()), H.data(), comm);
+    for (std::size_t c = 0; c < columns.size(); c++)
+    {
+      const auto &col = columns[c];
+      for (int i = 0; i < n - col.i0; i++)
+      {
+        const double h = H[offset[c] + i];
+        if (col.imag)
+        {
+          col.out[i].imag(h);
+        }
+        else
+        {
+          col.out[i].real(h);
+        }
+      }
+    }
+    for (auto *Ar : symmetric)
+    {
+      Ar->bottomLeftCorner(n - n0, n0) = Ar->topRightCorner(n0, n - n0).transpose();
+    }
+  }
+};
+
+// Vᴴ b of complex vectors b, one column each.
+Eigen::MatrixXcd ProjectVectors(MPI_Comm comm, const std::vector<Vector> &V,
+                                std::initializer_list<const ComplexVector *> b)
 {
-  // Update br = Vᴴ b for the new basis dimension n0 -> n. br is replicated across all
-  // processes as a sequential n-dimensional vector.
-  const auto n = br.size();
-  MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM vector projection!");
-  for (int i = n0; i < n; i++)
+  Eigen::MatrixXcd B(V.size(), b.size());
+  BasisProjection proj(V, 0);
+  for (Eigen::Index l = 0; const auto *x : b)
   {
-    br(i).real(V[i] * b.Real());  // Local inner product
-    br(i).imag(V[i] * b.Imag());
+    proj.AddVector(*x, B.col(l++).data());
   }
-  Mpi::GlobalSum(n - n0, br.data() + n0, comm);
+  std::vector<Vector> Z;
+  proj.Compute(comm, Z);
+  return B;
 }
 
 inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
@@ -316,93 +380,101 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
 
 }  // namespace
 
-MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
+void MinimalRationalInterpolation::AddSolutionSample(double omega,
+                                                     const Eigen::VectorXcd &c)
 {
-  z.reserve(max_size);
-  Q.resize(max_size, ComplexVector());
-}
-
-void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                     MPI_Comm comm,
-                                                     Orthogonalization orthog_type)
-{
-  // Compute the coefficients for the minimal rational interpolation of the state u used
-  // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
-  // stored by its QR decomposition.
-  MFEM_VERIFY(dim_Q + 1 <= Q.size(),
-              "Unable to increase basis storage size, increase maximum number of vectors!");
-  R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
+  // Compute the coefficients for the minimal rational interpolation of the state u = V c
+  // used as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
+  // stored by its QR decomposition, computed from the coefficients since V is orthonormal.
+  const auto S = static_cast<Eigen::Index>(z.size());
+  const auto m = std::max(Q.rows(), 2 * c.size());
+  Eigen::VectorXcd x = Eigen::VectorXcd::Zero(m);
+  x(Eigen::seqN(0, c.size(), 2)) = c;
+  x(Eigen::seqN(1, c.size(), 2)) = (1i * omega) * c;
+  Q.conservativeResizeLike(Eigen::MatrixXcd::Zero(m, S + 1));
+  R.conservativeResizeLike(Eigen::MatrixXcd::Zero(S + 1, S + 1));
+  for (int pass = 0; pass < 2; pass++)  // CGS2
   {
-    std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {{1.0, 0.0}, {0.0, omega}};
-    Q[dim_Q].SetSize(2 * u.Size());
-    Q[dim_Q].UseDevice(true);
-    Q[dim_Q].SetBlocks(blocks, s);
+    const Eigen::VectorXcd h = Q.leftCols(S).adjoint() * x;
+    x -= Q.leftCols(S) * h;
+    R.col(S).head(S) += h;
   }
-  linalg::OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
-  R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
-  Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
-  dim_Q++;
+  R(S, S) = x.norm();
+  Q.col(S) = x / R(S, S).real();
   ComputeMRI(R, q);
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
+std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N,
+                                                               MPI_Comm comm) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
-  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u), on a uniform
+  // grid over the sampled range. |Q| is taken as infinite where it is not finite (at the
+  // support points), and ties go to the smaller z. N > 1 is not very useful: it typically
+  // gives points right next to each other in the same local maximum of the error.
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  const auto S = dim_Q;
-  MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
-                      "added to the PROM to define the parameter domain!");
-  double start = *std::ranges::min_element(z);
-  double end = *std::ranges::max_element(z);
-  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
-
-  // Sample Q on discrete points. The case of N>1 samples is not very useful below. It will
-  // typically give us multiple sample points right next to each other in the same local
-  // maximum, rather than N separate local maxima.
-
-  // We could use priority queue here to keep the N lowest values. However, we don't use
-  // std::priority_queue class since we want to have access to the vector and also binary
-  // tree structure of heap class as rebalancing is excessive overhead for tiny size N.
-  using q_t = std::pair<std::complex<double>, double>;
-  std::vector<q_t> queue{};
-  queue.reserve(N);
+  MFEM_VERIFY(z.size() >= 2, "Maximum error can only be found once two sample points have "
+                             "been added to the PROM to define the parameter domain!");
+  const double start = *std::ranges::min_element(z);
+  const double end = *std::ranges::max_element(z);
+  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), z.size());
 
   // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
   // Consider making configurable or scaling with the parameter range, so that it is e.g.
   // always 1 kHz.
-  const std::size_t nr_sample = 1.0e6;  // must be >= N
-  MFEM_VERIFY(N < nr_sample,
-              fmt::format("Number of location of error maximum N={} needs to be less than "
-                          "the fine sampling grid nr_sample={}.",
-                          N, nr_sample));
-  const auto delta = (end - start) / nr_sample;
-  for (std::size_t i = 0; i <= nr_sample; i++)
+  constexpr int nr_sample = 1000000;
+  MFEM_VERIFY(N <= std::size_t{nr_sample}, "Number of locations of the error maximum N = "
+                                               << N << " exceeds the sampling grid size "
+                                               << nr_sample << "!");
+  const double delta = (end - start) / nr_sample;
+  // Index the points rather than accumulate delta, which can be below the spacing of
+  // doubles near z.
+  auto Q_abs = [&](int i)
   {
-    // Index the points rather than accumulate delta, which can be below the spacing of
-    // doubles near z, so the loop always ends.
-    const double z_sample = start + i * delta;
-    const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
-
-    bool partial_full = (queue.size() < N);
-    if (partial_full || Q_sample < queue.back().second)
+    const double v = std::abs((q.array() / (z_map.array() - (start + i * delta))).sum());
+    return std::isfinite(v) ? v : std::numeric_limits<double>::infinity();
+  };
+  if (N == 1)
+  {
+    // With a communicator, each process scans a contiguous part of the grid.
+    int i_begin = 0, i_end = nr_sample + 1;
+    if (comm != MPI_COMM_NULL)
     {
-      auto it_loc = std::ranges::upper_bound(queue, Q_sample, {}, &q_t::second);
-      queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
-      if (!partial_full)
+      const long np = Mpi::Size(comm), rank = Mpi::Rank(comm);
+      i_begin = static_cast<int>((nr_sample + 1L) * rank / np);
+      i_end = static_cast<int>((nr_sample + 1L) * (rank + 1) / np);
+    }
+    struct
+    {
+      double v;
+      int i;
+    } best = {std::numeric_limits<double>::infinity(), i_begin};
+    for (int i = i_begin; i < i_end; i++)
+    {
+      if (const double v = Q_abs(i); v < best.v)
       {
-        queue.pop_back();
+        best = {v, i};
       }
     }
+    if (comm != MPI_COMM_NULL)
+    {
+      MPI_Allreduce(MPI_IN_PLACE, &best, 1, MPI_DOUBLE_INT, MPI_MINLOC, comm);
+    }
+    return {start + best.i * delta};
   }
-  MFEM_VERIFY(queue.size() == N,
-              fmt::format("Internal failure: queue should be size should be N={} (got {})",
-                          N, queue.size()));
-
+  std::vector<double> v(nr_sample + 1);
+  std::vector<int> idx(nr_sample + 1);
+  for (int i = 0; i <= nr_sample; i++)
+  {
+    v[i] = Q_abs(i);
+    idx[i] = i;
+  }
+  std::ranges::partial_sort(idx, idx.begin() + N, [&](int a, int b)
+                            { return v[a] < v[b] || (v[a] == v[b] && a < b); });
   std::vector<double> vals(N);
-  std::ranges::transform(queue, vals.begin(), [](const q_t &p) { return p.first.real(); });
+  std::ranges::transform(idx.begin(), idx.begin() + N, vals.begin(),
+                         [&](int i) { return start + i * delta; });
   return vals;
 }
 
@@ -676,7 +748,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // Set up MinimalRationalInterpolation.
   for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
   {
-    mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
+    mri.try_emplace(excitation_idx);
   }
 }
 
@@ -716,9 +788,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
     auto dim_V = V.size();
     if (dim_V > 0)
     {
-      MPI_Comm comm = space_op.GetComm();
-      RHS1r.conservativeResize(dim_V);
-      ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
+      RHS1r = ProjectVectors(space_op.GetComm(), V, {&RHS1}).col(0);
     }
   }
 }
@@ -735,9 +805,7 @@ void RomOperator::PrepareOnlineExcitations()
       RHS1r_online.emplace(excitation_idx, Eigen::VectorXcd{});
       continue;
     }
-    Eigen::VectorXcd projected(V.size());
-    ProjectVecInternal(comm, V, rhs, projected, 0);
-    RHS1r_online.emplace(excitation_idx, std::move(projected));
+    RHS1r_online.emplace(excitation_idx, ProjectVectors(comm, V, {&rhs}).col(0));
   }
   excitation_idx_cache = 0;
   // The wave-port state feeding Aᵣ(ω) (kₙ, modal correction) may have been re-solved since
@@ -749,12 +817,6 @@ void RomOperator::PrepareOnlineExcitations()
 
 void RomOperator::UpdateWavePortBasisRestriction()
 {
-  if (V_wp_dim > V.size())
-  {
-    // Basis was rebuilt: start over.
-    V_wp.clear();
-    V_wp_dim = 0;
-  }
   if (V_wp_dim == V.size())
   {
     return;
@@ -795,7 +857,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
     Eigen::VectorXcd sV(n);
     for (auto &term : wp_terms)
     {
-      ProjectVecInternal(comm, V, *term.s, sV, 0);
+      sV = ProjectVectors(comm, V, {term.s.get()}).col(0);
       Wr.noalias() += term.g * sV * sV.transpose();
     }
     if (sV_full)
@@ -808,9 +870,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
           continue;
         }
         auto s = space_op.GetWavePortModeVector(port_idx, omega);
-        Eigen::VectorXcd sV_p(n);
-        ProjectVecInternal(comm, V, *s, sV_p, 0);
-        sV_full->emplace(port_idx, std::move(sV_p));
+        sV_full->emplace(port_idx, ProjectVectors(comm, V, {s.get()}).col(0));
       }
     }
   };
@@ -1066,7 +1126,8 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
+                                         std::string_view node_label)
 {
   RHS1r_online.clear();
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
@@ -1100,34 +1161,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
                 "PROM basis storage exceeded. Please increase maximum number of prom "
                 "vector per excitation using AdaptiveMaxSamples.");
     auto &v = V.emplace_back(vector);
-    double pre_norm;
-    if (weight_op_W.has_value())
-    {
-      auto pre_norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
-      pre_norm = std::sqrt(std::abs(pre_norm_sq));
-      if (orthog_type == Orthogonalization::MGS)
-      {
-        linalg::OrthogonalizeColumnMGS(
-            space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
-            [&W = *weight_op_W, &r = this->r](const Vector &x, const Vector &y)
-            { return W.InnerProduct(x, y, r.Real()); });
-      }
-      else
-      {
-        linalg::OrthogonalizeColumnWeightedCGS(
-            space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V, *weight_op_W,
-            r.Real(), orthog_type == Orthogonalization::CGS2);
-      }
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
-      orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
-    }
-    else
-    {
-      pre_norm = linalg::Norml2(space_op.GetComm(), v);
-      linalg::OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v,
-                                  orth_R.col(dim_V).data(), dim_V);
-      orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
-    }
+    // MGS is applied as CGS2, which is as stable with two reductions instead of one per
+    // basis vector.
+    const bool refine = (orthog_type != Orthogonalization::CGS);
+    double *H = orth_R.col(dim_V).data();
+    MPI_Comm comm = space_op.GetComm();
+    const auto [pre_norm, norm] = linalg::OrthogonalizeColumnCGS(
+        comm, std::span(V), H, refine, r, weight_op_W ? &*weight_op_W : nullptr);
+    orth_R(dim_V, dim_V) = norm;
 
     if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
     {
@@ -1152,34 +1193,44 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
                "times accidentally).");
   }
 
+  // Coefficients of u in the updated basis (a part below the tolerance is dropped).
+  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_new);
+  if (has_real)
+  {
+    c.real() = orth_R.col(dim_V_old);
+  }
+  if (has_imag)
+  {
+    c.imag() = orth_R.col(dim_V_new - 1);
+  }
   if (dim_V_new == dim_V_old)
   {
-    return;
+    return c;
   }
 
-  // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
-  // matrix and first dim0 entries of each vector and the projection uses the values
-  // computed for the unchanged basis vectors.
-  // With a Floquet wave vector, the stiffness matrix can be nonsymmetric: Hermitian (domain
+  // Update the projections for the new basis vectors (the resized matrices keep those for
+  // the previous ones): the operators, the excitation, and the Gram matrix, together. With
+  // a Floquet wave vector, the stiffness matrix can be nonsymmetric: Hermitian (domain
   // Floquet terms) or with an antisymmetric real part (Floquet terms of second-order
   // farfield boundaries, with a frequency dependent wave vector).
-  Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old, space_op.HasSymmetricStiffnessMatrix());
+  const auto n0 = static_cast<int>(dim_V_old), n = static_cast<int>(dim_V_new);
+  BasisProjection proj(V, n0);
+  Kr.conservativeResize(n, n);
+  proj.AddOperator(*K, Kr, space_op.HasSymmetricStiffnessMatrix());
   if (C)
   {
-    Cr.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old,
-                       !space_op.GetMaterialOp().HasFloquetFrequencyScaling());
+    Cr.conservativeResize(n, n);
+    proj.AddOperator(*C, Cr, !space_op.GetMaterialOp().HasFloquetFrequencyScaling());
   }
-  Mr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old, true);
+  Mr.conservativeResize(n, n);
+  proj.AddOperator(*M, Mr, true);
   // Per-port wave-port masses. M_{r,p} is initialized lazily so the map only contains
   // entries when the per-port HDM operator was non-null on this rank.
   for (auto &[port_idx, Mp_hdm] : Mwp_p)
   {
     auto &Mp_r = Mwp_p_r[port_idx];
-    Mp_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *Mp_hdm, Mp_r, r, dim_V_old, true);
+    Mp_r.conservativeResize(n, n);
+    proj.AddOperator(*Mp_hdm, Mp_r, true);
   }
   // Other frequency-dependent BC boundary masses folded into circuit synthesis: the
   // 2nd-order farfield ABC (M_ff_) and each surface-conductivity group (Asig_g_). Projected
@@ -1189,31 +1240,62 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     // Hermitian (not symmetric) with a Floquet wave vector which does not depend on
     // frequency.
     const auto &mat_op = space_op.GetMaterialOp();
-    M_ff_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *M_ff_, M_ff_r, r, dim_V_old,
-                       !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
+    M_ff_r.conservativeResize(n, n);
+    proj.AddOperator(*M_ff_, M_ff_r,
+                     !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
   }
   for (std::size_t g = 0; g < Asig_g_.size(); g++)
   {
     if (Asig_g_[g])
     {
-      Asig_g_r[g].conservativeResize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Asig_g_[g], Asig_g_r[g], r, dim_V_old, true);
+      Asig_g_r[g].conservativeResize(n, n);
+      proj.AddOperator(*Asig_g_[g], Asig_g_r[g], true);
     }
   }
   for (std::size_t b = 0; b < Arz_b_.size(); b++)
   {
     if (Arz_b_[b])
     {
-      Arz_b_r[b].conservativeResize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Arz_b_[b], Arz_b_r[b], r, dim_V_old, true);
+      Arz_b_r[b].conservativeResize(n, n);
+      proj.AddOperator(*Arz_b_[b], Arz_b_r[b], true);
     }
   }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
   for (auto &[port_idx, Mp_r] : M_floquet_p_r)
   {
-    Mp_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *M_floquet_p_.at(port_idx), Mp_r, r, dim_V_old, true);
+    Mp_r.conservativeResize(n, n);
+    proj.AddOperator(*M_floquet_p_.at(port_idx), Mp_r, true);
+  }
+  if (RHS1.Size())
+  {
+    RHS1r.conservativeResize(n);
+    proj.AddVector(RHS1, &RHS1r(n0));
+  }
+  // Inner products of the new basis vectors with the basis, for the Gram matrix.
+  Eigen::MatrixXcd G(n, n - n0);
+  if (weight_op_W)
+  {
+    for (int j = n0; j < n; j++)
+    {
+      proj.Add(nullptr, V[j], 0, &G(0, j - n0), false);
+    }
+  }
+  proj.Compute(comm, proj_ws);
+
+  if (weight_op_W)
+  {
+    // Extend the Cholesky factor of VᵀV.
+    const Eigen::MatrixXd Gr = G.real();
+    gram_L.conservativeResizeLike(Eigen::MatrixXd::Zero(n, n));
+    auto L21 = gram_L.bottomLeftCorner(n - n0, n0);
+    L21 = gram_L.topLeftCorner(n0, n0)
+              .triangularView<Eigen::Lower>()
+              .solve(Gr.topRows(n0))
+              .transpose();
+    Eigen::LLT<Eigen::MatrixXd> llt(Gr.bottomRows(n - n0) - L21 * L21.transpose());
+    MFEM_VERIFY(llt.info() == Eigen::Success,
+                "Euclidean Gram matrix of the PROM basis is not positive definite!");
+    gram_L.bottomRightCorner(n - n0, n - n0) = llt.matrixL();
   }
   // Initialize map entries for new ports that haven't been projected yet (first call).
   for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
@@ -1221,14 +1303,11 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     if (!M_floquet_p_r.contains(port_idx))
     {
       auto &Mp_r = M_floquet_p_r[port_idx];
-      Mp_r.resize(dim_V_new, dim_V_new);
-      ProjectMatInternal(comm, V, *Mp_hdm, Mp_r, r, 0, true);
+      Mp_r.resize(n, n);
+      BasisProjection proj_p(V, 0);
+      proj_p.AddOperator(*Mp_hdm, Mp_r, true);
+      proj_p.Compute(comm, proj_ws);
     }
-  }
-  if (RHS1.Size())
-  {
-    RHS1r.conservativeResize(dim_V_new);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
 
   // Update reduced Floquet port projection vectors. For F = Σ g_k v_k v_k^H,
@@ -1276,15 +1355,36 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+  return c;
 }
 
-void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
+std::vector<double> RomOperator::FindMaxError(int excitation_idx, std::size_t N) const
+{
+  return mri.at(excitation_idx).FindMaxError(N, space_op.GetComm());
+}
+
+void RomOperator::UpdateMRI(int excitation_idx, double omega, const Eigen::VectorXcd &c)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
+  // The MRI needs the coefficients in an orthonormal basis: with a weight operator, those
+  // in the basis Q of V = Q Lᵀ.
+  auto &mri_e = mri.at(excitation_idx);
+  if (weight_op_W)
+  {
+    mri_e.AddSolutionSample(omega, gram_L.topRows(c.size()).transpose() * c);
+  }
+  else
+  {
+    mri_e.AddSolutionSample(omega, c);
+  }
 }
 
-void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+double RomOperator::BasisNorm(const Eigen::VectorXcd &c) const
+{
+  return weight_op_W ? (gram_L.topRows(c.size()).transpose() * c).norm() : c.norm();
+}
+
+void RomOperator::SolvePROM(int excitation_idx, double omega)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
@@ -1297,7 +1397,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // No basis states ill-defined: return zero vector to match current behaviour.
   if (V.empty())
   {
-    u = 0.0;
+    RHSr.resize(0);
     return;
   }
 
@@ -1433,7 +1533,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
                                                             /*include_wave_ports=*/false);
         if (A2)
         {
-          ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0, true);
+          BasisProjection proj(V, 0);
+          proj.AddOperator(*A2, Ar_hdm, true);
+          proj.Compute(space_op.GetComm(), proj_ws);
         }
         const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
         const double ref =
@@ -1470,7 +1572,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
                                                           /*include_wave_ports=*/false);
       if (A2)
       {
-        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
+        BasisProjection proj(V, 0);
+        proj.AddOperator(*A2, Ar, true);
+        proj.Compute(space_op.GetComm(), proj_ws);
       }
     }
     Ar += Kr;
@@ -1565,7 +1669,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         // Excited but inactive port: no port-space pairing is cached, so use the assembled
         // excitation vector for this excitation instead (overwrites RHSᵣ).
         space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-        ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+        RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
         break;
       }
       RHSr += std::complex<double>(0.0, -2.0 * omega) * it->second;
@@ -1576,20 +1680,29 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // RHS2 depends on the wave-port modal fields, refreshed at this ω by the cross-section
     // EVP triggered above, so it is reassembled and projected per ω (no interpolation).
     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-    ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+    RHSr = ProjectVectors(space_op.GetComm(), V, {&RHS2}).col(0);
   }
   if (has_RHS1)
   {
     RHSr += (1i * omega) * RHS1r;
   }
 
-  // Compute PROM solution at the given frequency and expand into high-dimensional space.
-  // The PROM is solved on every process so the matrix-vector product for vector expansion
-  // does not require communication.
+  // Compute PROM solution at the given frequency. The PROM is solved on every process so
+  // the matrix-vector product for vector expansion does not require communication.
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
+}
+
+void RomOperator::ExpandPROMSolution(ComplexVector &u) const
+{
+  BlockTimer bt(Timer::SOLVE_PROM);
+  if (V.empty())
+  {
+    u = 0.0;
+    return;
+  }
   linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }
 
@@ -2232,8 +2345,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       ss = Eigen::VectorXcd::Zero(nr);
       if (smp.active)
       {
-        ProjectVecInternal(space_op.GetComm(), V, *smp.s_full, sf, 0);
-        ProjectVecInternal(space_op.GetComm(), V, *smp.s_scalar, ss, 0);
+        const auto P =
+            ProjectVectors(space_op.GetComm(), V, {smp.s_full.get(), smp.s_scalar.get()});
+        sf = P.col(0);
+        ss = P.col(1);
       }
       return smp;
     };
@@ -3043,7 +3158,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
         if (coupled_ports[p].is_wave)
         {
           auto s = space_op.GetWavePortModeVector(coupled_ports[p].idx, omega);
-          ProjectVecInternal(space_op.GetComm(), V, *s, cvec, 0);
+          cvec = ProjectVectors(space_op.GetComm(), V, {s.get()}).col(0);
           // kn0 is current (GetWavePortModeVector just Initialized at omega).
           const auto &pd = space_op.GetWavePortOp().GetPort(coupled_ports[p].idx);
           coupled_deembed[fi][p] = std::exp(1i * pd.kn0 * pd.d_offset);

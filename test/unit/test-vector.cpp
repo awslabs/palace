@@ -181,6 +181,8 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
   y = 1.0;  // Overwritten
   linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y);
 
+  // On the host the terms are added in this order, so the result is exact.
+  const double tol = mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ? 1.0e-14 : 0.0;
   const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
   int mismatch = 0;
   for (int i = 0; i < N; i++)
@@ -188,13 +190,60 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
     double ref_r = 0.0, ref_i = 0.0;
     for (int j = 0; j < n; j++)
     {
-      if (c[j] != 0.0)
+      if (c[j].real() != 0.0)
       {
         ref_r += c[j].real() * X[j].HostRead()[i];
+      }
+      if (c[j].imag() != 0.0)
+      {
         ref_i += c[j].imag() * X[j].HostRead()[i];
       }
     }
-    mismatch += !(std::abs(YR[i] - ref_r) <= 1.0e-14 && std::abs(YI[i] - ref_i) <= 1.0e-14);
+    mismatch += !(std::abs(YR[i] - ref_r) <= tol && std::abs(YI[i] - ref_i) <= tol);
+  }
+  CHECK(mismatch == 0);
+}
+
+TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
+{
+  const int N = GENERATE(1, 7, 64, 513, 1025, 3001);
+  const int m = GENERATE(0, 1, 3, 8);
+  const int k = GENERATE(1, 2, 7);
+  const int rank = Mpi::Rank(Mpi::World());
+  auto fill = [&](Vector &x, double a)
+  {
+    x.UseDevice(true);
+    auto *X = x.HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      X[i] = std::sin(0.3 * i + a + 0.1 * rank);
+    }
+  };
+  std::vector<Vector> X(m, Vector(N)), Y(k, Vector(N));
+  for (int i = 0; i < m; i++)
+  {
+    fill(X[i], 1.7 * i);
+  }
+  std::vector<const Vector *> Yc(k);
+  for (int j = 0; j < k; j++)
+  {
+    fill(Y[j], 0.5 - 2.3 * j);
+    Yc[j] = &Y[j];
+  }
+  std::vector<double> H(m * k, std::numeric_limits<double>::quiet_NaN());
+  linalg::LocalDots(X, Yc, H.data());
+  int mismatch = 0;
+  for (int j = 0; j < k; j++)
+  {
+    for (int i = 0; i < m; i++)
+    {
+      double ref = 0.0;
+      for (int l = 0; l < N; l++)
+      {
+        ref += X[i].HostRead()[l] * Y[j].HostRead()[l];
+      }
+      mismatch += !(std::abs(H[i + j * m] - ref) <= 1.0e-12 * N);
+    }
   }
   CHECK(mismatch == 0);
 }

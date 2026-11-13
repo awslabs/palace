@@ -112,20 +112,18 @@ auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
 
 TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 {
-  MPI_Comm comm = Mpi::World();
-
   auto fn_tan_shift = [](double z)
   { return std::tan(0.5 * std::numbers::pi * (z - std::complex<double>(1., 1.))); };
 
   // Test scalar case: 2 sample points for 4 x 2 vector
-  MinimalRationalInterpolation mri_1(6);
+  MinimalRationalInterpolation mri_1;
 
   CHECK(mri_1.GetSamplePoints() == std::vector<double>{});
   CHECK_THROWS(mri_1.FindMaxError(1));
 
   for (double x_sample : {-2.0, -1.0, 1.0, 2.0})
   {
-    auto tan_eval = fn_tan_shift(x_sample) / double(Mpi::Size(comm));
+    auto tan_eval = fn_tan_shift(x_sample);
 
     // The rational vector function we want to evaluate. The vector has common poles all
     // determined by tan. The minimal-rational interpolation method finds coefficients using
@@ -134,13 +132,11 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
     //
     // Here we pick a 5 component vector where 2 pairs are degenerate (scalar multiples of
     // each other) which is sufficiently large but challenging a problem.
-    std::vector<std::complex<double>> tmp = {-tan_eval, 5. * tan_eval, x_sample * tan_eval,
-                                             10. * x_sample * tan_eval,
-                                             2 * x_sample * x_sample * x_sample * tan_eval};
-    ComplexVector c_vec(tmp.size());
-    c_vec.Set(tmp.data(), tmp.size(), false);
+    Eigen::VectorXcd c_vec(5);
+    c_vec << -tan_eval, 5. * tan_eval, x_sample * tan_eval, 10. * x_sample * tan_eval,
+        2 * x_sample * x_sample * x_sample * tan_eval;
 
-    mri_1.AddSolutionSample(x_sample, c_vec, comm, Orthogonalization::MGS);
+    mri_1.AddSolutionSample(x_sample, c_vec);
   }
 
   CHECK(mri_1.GetSamplePoints().size() == 4);
@@ -161,18 +157,36 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   // TODO: Add more stringent tests of MRI, including estimating poles.
 }
 
+TEST_CASE("MinimalRationalInterpolation-DistributedSearch",
+          "[romoperator][Serial][Parallel]")
+{
+  // The search split over the processes gives the same point as one scan. The basis grows
+  // between the samples.
+  MPI_Comm comm = Mpi::World();
+  MinimalRationalInterpolation mri;
+  int n = 2;
+  for (double x : {-2.0, -1.3, 0.4, 1.0, 2.0})
+  {
+    const auto t = std::tan(0.5 * std::numbers::pi * (x - std::complex<double>(1., 1.)));
+    Eigen::VectorXcd c = Eigen::VectorXcd::Zero(++n);
+    c.head(3) << -t, 5. * t, 2. * x * x * x * t;
+    c(n - 1) += 0.1 * x * t;
+    mri.AddSolutionSample(x, c);
+  }
+  CHECK(mri.FindMaxError(1, comm) == mri.FindMaxError(1));
+}
+
 TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
 {
   // Samples 2e-11 apart relative to z: delta = span / 1e6 is below the spacing of doubles
   // near z, so the scan must not step by accumulating delta.
-  MinimalRationalInterpolation mri(2);
+  MinimalRationalInterpolation mri;
   const double z0 = 100.0, z1 = 100.0 + 2.0e-9;
   for (int i = 0; i < 2; i++)
   {
-    std::vector<std::complex<double>> tmp = {double(i == 0), double(i == 1)};
-    ComplexVector u(tmp.size());
-    u.Set(tmp.data(), tmp.size(), false);
-    mri.AddSolutionSample(i == 0 ? z0 : z1, u, Mpi::World(), Orthogonalization::MGS);
+    Eigen::VectorXcd c = Eigen::VectorXcd::Zero(2);
+    c(i) = 1.0;
+    mri.AddSolutionSample(i == 0 ? z0 : z1, c);
   }
   const auto z_max = mri.FindMaxError(1);
   REQUIRE(z_max.size() == 1);
@@ -695,7 +709,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
     vector_temp.Real().Randomize(seeds.at(2 * i));
     vector_temp.Imag().Randomize(seeds.at(2 * i + 1));
 
-    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
+    // The returned coefficients reproduce the vector in the updated basis.
+    const auto c = prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
+    ComplexVector w(vector_temp.Size());
+    linalg::LinearCombination(prom_op.GetVectors(),
+                              {c.data(), static_cast<std::size_t>(c.size())}, w);
+    w -= vector_temp;
+    CHECK(linalg::Norml2(world_comm, w) <=
+          1.0e-12 * linalg::Norml2(world_comm, vector_temp));
   }
 
   // Check orthogonality with s-matrix vectors.

@@ -93,10 +93,6 @@ public:
     return *this;
   }
 
-  // Set the vector from an array of blocks and coefficients, without resizing.
-  void SetBlocks(const std::vector<const ComplexVector *> &y,
-                 const std::vector<std::complex<double>> &s);
-
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);
 
@@ -365,6 +361,10 @@ void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
 // Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex coefficients c.
 void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
                        ComplexVector &y);
+
+// Local inner products H[i + j m] = X[i] · Y[j] of the real vectors X (m of them) and
+// Y, without the global reduction. On the host every vector is read once.
+void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H);
 
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
