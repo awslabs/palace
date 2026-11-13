@@ -843,6 +843,58 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
   REQUIRE(pml.extrusion.depth == Depth::NORMAL);
   CHECK(DepthError(*smesh, pml, [](const mfem::Vector &x) { return x(2) - 1.0; }) <
         1.0e-12);
+  {
+    // The uniformly refined layer keeps the depth, from 0 at the surface to the thickness
+    // at the back.
+    mfem::ParMesh pmesh(Mpi::World(), *smesh);
+    pmesh.UniformRefinement();
+    CHECK(DepthError(
+              pmesh, pml, [](const mfem::Vector &x) { return x(2) - 1.0; }, false) <
+          1.0e-12);
+    double lo = mfem::infinity(), hi = -mfem::infinity();
+    DepthError(
+        pmesh, pml,
+        [&](const mfem::Vector &x)
+        {
+          lo = std::min(lo, x(2) - 1.0);
+          hi = std::max(hi, x(2) - 1.0);
+          return x(2) - 1.0;
+        },
+        false);
+    CHECK_THAT(lo, Matchers::WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(hi, Matchers::WithinAbs(0.5, 1.0e-12));
+  }
+
+  // The same face of the box tilted by a rotation, along its tilted normal n, with the
+  // depth n · x - 1.
+  {
+    smesh = std::make_unique<mfem::Mesh>(MakeBoxTop(type, 2, order));
+    const double c = std::cos(0.4), s = std::sin(0.4);  // About the axis (1, 1, 1) / √3
+    const double k = (1.0 - c) / 3.0, r = s / std::sqrt(3.0);
+    const double R[3][3] = {
+        {c + k, k - r, k + r}, {k + r, c + k, k - r}, {k - r, k + r, c + k}};
+    smesh->Transform(
+        [&](const mfem::Vector &x, mfem::Vector &y)
+        {
+          y.SetSize(3);
+          for (int i = 0; i < 3; i++)
+          {
+            y(i) = R[i][0] * x(0) + R[i][1] * x(1) + R[i][2] * x(2);
+          }
+        });
+    const int ne = smesh->GetNE();
+    pml = MakePML({{"Attributes", {2}}});
+    ExtrudeEntry(smesh, pml, {});
+    REQUIRE(pml.extrusion.depth == Depth::NORMAL);
+    for (int i = 0; i < 3; i++)
+    {
+      CHECK_THAT(pml.extrusion.plane[i], Matchers::WithinAbs(R[i][2], 1.0e-12));
+    }
+    CHECK(DepthError(*smesh, pml, [&](const mfem::Vector &x)
+                     { return R[0][2] * x(0) + R[1][2] * x(1) + R[2][2] * x(2) - 1.0; }) <
+          1.0e-12);
+    CHECK(MinExtrudedJacobian(*smesh, ne, order) > 0.0);
+  }
 
   // A sphere, at the distance 1 from its centre.
   if (order == 2)
@@ -1658,6 +1710,93 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
     CHECK_THAT(RelErr(), Matchers::WithinAbs(0.0, 1.0e-10));
   }
   BilinearForm::pa_order_threshold = pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = p_trial;
+}
+
+TEST_CASE("SpaceOperator normal extruded PML matches the Cartesian PML",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  // The layer extruded along the normal +z of the top of a box, and the Cartesian PML block
+  // of config["Domains"]["PML"] on the same elements, with the direction +z and the same
+  // thickness and profile, give the same operators for an anisotropic, lossy background,
+  // and so do the layer of the whole box, extruded per component, and the block with all of
+  // its faces, edges, and corners, for the static stretch and the frequency-dependent one
+  // with α > 0 at a complex frequency.
+  MPI_Comm comm = Mpi::World();
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const bool box = GENERATE(false, true);
+  const bool frequency_dependent = GENERATE(false, true);
+  auto serial_mesh =
+      std::make_unique<mfem::Mesh>(box ? MakeBox(type, 2, 2) : MakeBoxTop(type, 2, 2));
+  auto extruded = MakePML({{"Attributes", {box ? 1 : 2}}, {"SigmaMax", 2.0}});
+  ExtrudeEntry(serial_mesh, extruded);
+  REQUIRE(extruded.extrusion.depth == (box ? config::PMLData::Extrusion::Depth::BOX
+                                           : config::PMLData::Extrusion::Depth::NORMAL));
+  config::PMLData cartesian;
+  cartesian.attributes = extruded.attributes;
+  cartesian.autodetect_geometry = box;
+  cartesian.directions[5] = true;
+  cartesian.thickness[5] = 0.5;
+  cartesian.sigma_auto = false;
+  cartesian.sigma_max.fill(2.0);
+  for (auto *data : {&extruded, &cartesian})
+  {
+    data->reference_frequency = 1.5;
+    data->kappa_max.fill(1.5);
+    data->frequency_dependent = frequency_dependent;
+    data->alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
+  }
+
+  const int p_trial = fem::DefaultIntegrationOrder::p_trial;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  config::MaterialData material;
+  material.attributes = {1, 2};
+  material.mu_r.s = {1.0, 2.0, 1.5};
+  material.epsilon_r.s = {2.0, 3.0, 4.0};
+  material.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+  std::vector<std::unique_ptr<Mesh>> mesh[2];
+  std::unique_ptr<SpaceOperator> space_op[2];
+  for (int k = 0; k < 2; k++)
+  {
+    config::DomainData domains;
+    domains.attributes = {1, 2};
+    domains.materials = {material};
+    domains.pml = {(k == 0) ? extruded : cartesian};
+    mesh[k].push_back(std::make_unique<Mesh>(comm, *serial_mesh));
+    space_op[k] =
+        std::make_unique<SpaceOperator>(solver, domains, config::BoundaryData{},
+                                        ProblemType::DRIVEN, Units(1.0, 1.0), mesh[k]);
+    const auto &layer = space_op[k]->GetMaterialOp().GetPMLLayers().at(0);
+    REQUIRE(layer.GetStretch().extruded == (k == 0 && !box));
+    REQUIRE(layer.IsFrequencyDependent() == frequency_dependent);
+  }
+  // The stiffness and mass matrices, and the PML terms of A2(ω) of the frequency-dependent
+  // stretch.
+  for (int op = 0; op < (frequency_dependent ? 3 : 2); op++)
+  {
+    std::unique_ptr<ComplexOperator> A[2];
+    for (int k = 0; k < 2; k++)
+    {
+      A[k] = (op == 0)
+                 ? space_op[k]->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+             : (op == 1)
+                 ? space_op[k]->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+                 : space_op[k]->GetExtraSystemPMLMatrix(1.3 + 0.05i, Operator::DIAG_ZERO);
+      REQUIRE(A[k]);
+    }
+    ComplexVector x(A[0]->Width()), y(A[0]->Height()), y_ref(A[0]->Height());
+    x.Real().Randomize(42 + Mpi::Rank(comm));
+    x.Imag().Randomize(4242 + Mpi::Rank(comm));
+    A[0]->Mult(x, y);
+    A[1]->Mult(x, y_ref);
+    const double norm = linalg::Norml2(comm, y_ref);
+    y.Add(-1.0, y_ref);
+    INFO("op = " << op);
+    CHECK_THAT(linalg::Norml2(comm, y) / norm, Matchers::WithinAbs(0.0, 1.0e-12));
+  }
   fem::DefaultIntegrationOrder::p_trial = p_trial;
 }
 
