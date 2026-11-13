@@ -367,6 +367,10 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
   const auto &linear = iodata.solver.linear;
   PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op, nullptr,
                                                    &surface_post_geometry);
+  // P3-16: every excitation below is evaluated by the batched interface response, so a
+  // summed sheet sample is refused before the archive is read (whatever the response-matrix
+  // keys of the configuration).
+  post_op.VerifyBatchedInterfaceResponse();
   GradFluxErrorEstimator<Vector> estimator(
       laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
       linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg,

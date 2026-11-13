@@ -1088,6 +1088,18 @@ public:
         e_ptr, d_ptr, quadrature_extra, quadrature_rules);
   }
 
+  // P3-16: a batched interface response (the two forms above and below) cannot represent
+  // the summed energies of both sides of an interior sheet, so the runs that use it refuse
+  // such a sample before the solve (SurfacePostOperator::VerifyBatchedInterfaceResponse):
+  // the constructor for the aggregated response matrix (also the response archive's
+  // writer and reducer), the archive estimate itself.
+  template <ProblemType U = solver_t>
+  auto VerifyBatchedInterfaceResponse() const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, void>
+  {
+    surf_post_op.VerifyBatchedInterfaceResponse(*E);
+  }
+
   // Streaming one-pass form of the above (the archive reduction, decision 62(4)): the
   // interface samples are cached once, each basis field is set as the E grid function
   // (and the recovered flux, when archived) and evaluated once into its amplitude rows,

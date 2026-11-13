@@ -2234,6 +2234,64 @@ void SurfacePostOperator::EvaluateInterfaceResponseRow(
   }
 }
 
+template <InterfaceDielectric Type>
+int SurfacePostOperator::CountSummedInterfaceResponseSamples(
+    const InterfaceResponseSamples &samples, const GridFunction &E) const
+{
+  const auto &data = *samples.data;
+  const auto &mesh = *h1_fespace.GetParMesh();
+  InterfaceDielectricCoefficient<Type> probe(E, mat_op, data.t, data.epsilon,
+                                             &data.sum_sides_marker);
+  mfem::ElementTransformation *T = nullptr;
+  int element = -1, count = 0;
+  for (std::size_t sample = 0; sample < samples.Count(); sample++)
+  {
+    if (samples.elements[sample] != element)
+    {
+      element = samples.elements[sample];
+      T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(element);
+    }
+    const auto &ip = samples.rules[sample]->IntPoint(samples.points[sample]);
+    T->SetIntPoint(&ip);
+    count += probe.IsSummedSample(*T, ip);
+  }
+  return count;
+}
+
+void SurfacePostOperator::VerifyBatchedInterfaceResponse(const GridFunction &E) const
+{
+  // The neighbouring elements of shared sheet faces (the other side on another process).
+  auto &mesh = const_cast<mfem::ParMesh &>(*h1_fespace.GetParMesh());
+  mesh.ExchangeFaceNbrData();
+  for (const auto &samples : CacheInterfaceResponseSamples())
+  {
+    int summed = 0;
+    switch (samples.data->type)
+    {
+      case InterfaceDielectric::DEFAULT:
+        summed =
+            CountSummedInterfaceResponseSamples<InterfaceDielectric::DEFAULT>(samples, E);
+        break;
+      case InterfaceDielectric::MA:
+        summed = CountSummedInterfaceResponseSamples<InterfaceDielectric::MA>(samples, E);
+        break;
+      case InterfaceDielectric::MS:
+        summed = CountSummedInterfaceResponseSamples<InterfaceDielectric::MS>(samples, E);
+        break;
+      case InterfaceDielectric::SA:
+        break;
+    }
+    Mpi::GlobalSum(1, &summed, mesh.GetComm());
+    MFEM_VERIFY(summed == 0,
+                "Batched interface response fields (the aggregated response matrix, the "
+                "response archive) cannot represent the summed energies of both sides of "
+                "an interior sheet: interface dielectric "
+                    << samples.interface_index << " has " << summed
+                    << " quadrature samples on interior sheet faces whose two sides both "
+                       "qualify (refused before the solve; SD-401 (d))!");
+  }
+}
+
 std::vector<SurfacePostOperator::InterfaceResponseMatrix>
 SurfacePostOperator::AssembleInterfaceResponseMatrices(
     const InterfaceResponseSamples &samples, const double *rows, int basis_size,

@@ -474,6 +474,13 @@ public:
   // Gram assembly without reevaluating a quadratic coefficient for every basis pair.
   void EvalEnergyField(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                        mfem::Vector &field);
+
+  // Whether the energies of both sides are summed at a sample: a marked interior sheet face
+  // whose two sides both qualify (vacuum for MA, non-vacuum for MS; any marked interior
+  // face for DEFAULT; never for SA). EvalEnergyField refuses exactly these samples (one
+  // amplitude vector cannot hold two sides, SD-401 (d)); the runs that use it refuse them
+  // before the solve with this test (SurfacePostOperator::VerifyBatchedInterfaceResponse).
+  bool IsSummedSample(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip);
 };
 
 template <>
@@ -846,6 +853,37 @@ inline void InterfaceDielectricCoefficient<InterfaceDielectric::SA>::EvalEnergyF
   {
     field[d + 1] = tangential_scale * value[d];
   }
+}
+
+template <>
+inline bool InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::IsSummedSample(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  Initialize(T, ip, nullptr);
+  return SumSides(T);
+}
+
+template <>
+inline bool InterfaceDielectricCoefficient<InterfaceDielectric::MA>::IsSummedSample(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  Initialize(T, ip, nullptr);
+  return SumSides(T) && Qualifies(1, true) && Qualifies(2, true);
+}
+
+template <>
+inline bool InterfaceDielectricCoefficient<InterfaceDielectric::MS>::IsSummedSample(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  Initialize(T, ip, nullptr);
+  return SumSides(T) && Qualifies(1, false) && Qualifies(2, false);
+}
+
+template <>
+inline bool InterfaceDielectricCoefficient<InterfaceDielectric::SA>::IsSummedSample(
+    mfem::ElementTransformation &, const mfem::IntegrationPoint &)
+{
+  return false;
 }
 
 // Helper for EnergyDensityCoefficient.

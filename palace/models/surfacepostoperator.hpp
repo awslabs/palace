@@ -409,7 +409,18 @@ public:
                                     const GridFunction &E, const GridFunction *D,
                                     double *row) const;
 
+  // P3-16: the batched amplitudes of the two forms above cannot represent the summed
+  // energies of both sides of an interior sheet (SD-401 (d)), so the runs that use them
+  // refuse such a sample before the solve: fails closed (collectively) when any sample of
+  // the batched traversal (CacheInterfaceResponseSamples) is a summed sample
+  // (InterfaceDielectricCoefficient::IsSummedSample). E is any field on the ND space (it
+  // carries the mesh; its values are not read).
+  void VerifyBatchedInterfaceResponse(const GridFunction &E) const;
+
 private:
+  template <InterfaceDielectric Type>
+  int CountSummedInterfaceResponseSamples(const InterfaceResponseSamples &samples,
+                                          const GridFunction &E) const;
   template <InterfaceDielectric Type>
   void EvaluateInterfaceResponseRowImpl(const InterfaceResponseSamples &samples,
                                         const GridFunction &E, const GridFunction *D,

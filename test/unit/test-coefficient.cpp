@@ -572,11 +572,14 @@ TEST_CASE("InterfaceDielectricCoefficient batched amplitudes refuse a summed she
   mfem::Vector field;
   auto Refused = [&](auto &&coefficient, TwoSidedSheet &sheet)
   {
+    // The pre-solve test of the runs that use the amplitudes (P3-16) is the same rule.
+    CHECK(coefficient.IsSummedSample(*sheet.T, sheet.ip));
     CHECK_THROWS_WITH(coefficient.EvalEnergyField(*sheet.T, sheet.ip, field),
                       Catch::Matchers::ContainsSubstring(summed_batched_refusal));
   };
   auto Reproduces = [&](auto &&coefficient, TwoSidedSheet &sheet)
   {
+    CHECK(!coefficient.IsSummedSample(*sheet.T, sheet.ip));
     coefficient.EvalEnergyField(*sheet.T, sheet.ip, field);
     CHECK_THAT(0.5 * (field * field),
                Catch::Matchers::WithinAbs(coefficient.Eval(*sheet.T, sheet.ip), 1.0e-12));

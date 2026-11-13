@@ -241,6 +241,14 @@ PostOperator<solver_t>::PostOperator(
       D_recovered = std::make_unique<GridFunction>(fem_op->GetRTSpace(),
                                                    HasComplexGridFunction<solver_t>());
     }
+    if constexpr (solver_t == ProblemType::ELECTROSTATIC)
+    {
+      if (solver.electrostatic.response_matrix &&
+          solver.electrostatic.aggregate_response_matrix)
+      {
+        VerifyBatchedInterfaceResponse();
+      }
+    }
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
