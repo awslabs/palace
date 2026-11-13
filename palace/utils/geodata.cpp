@@ -3345,6 +3345,52 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::PMLData &pml,
     orig_mesh->GetBoundingBox(bbmin, bbmax);
     bbmax -= bbmin;
     const double tol = 1.0e-12 * bbmax.Normlinf();
+
+    // The default core of a flat surface, the center of its bounding box, lies in its plane
+    // for an axis-aligned surface, where no face faces it.
+    if (!ex.has_center)
+    {
+      bool flat = true, in_plane = false;
+      mfem::Vector n0(3), x0(3);
+      for (std::size_t i = 0; i < faces.size() && flat; i++)
+      {
+        mesh.GetFaceTransformation(faces[i], &T);
+        const auto &ir = SamplePoints(T.GetGeometryType());
+        for (int j = 0; j < ir.GetNPoints() && flat; j++)
+        {
+          T.SetIntPoint(&ir.IntPoint(j));
+          T.Transform(ir.IntPoint(j), x);
+          mfem::CalcOrtho(T.Jacobian(), normal);
+          normal /= normal.Norml2();
+          if (i == 0 && j == 0)
+          {
+            n0 = normal;
+            x0 = x;
+          }
+          // The surface is flat if all of its normals are the same and all of its points
+          // are in the plane of the first one.
+          x -= x0;
+          flat = (normal * n0 > 1.0 - 1.0e-10) && std::abs(x * n0) <= tol;
+        }
+      }
+      if (flat)
+      {
+        double dist = 0.0;
+        for (int c = 0; c < 3; c++)
+        {
+          dist += (ex.center[0][c] - x0(c)) * n0(c);
+        }
+        in_plane = std::abs(dist) <= tol;
+      }
+      MFEM_VERIFY(
+          !flat || !in_plane,
+          "The default core of the rays of the extrusion from "
+              << surface << ", the center of its bounding box at the " << core
+              << ", lies on the boundary, which is flat: no face of the boundary "
+                 "faces the core! Flat boundaries are best terminated by the meshed "
+                 "PML of config[\"Domains\"][\"PML\"]; otherwise, set "
+                 "\"PML.Center\" behind the boundary.");
+    }
     for (const int f : faces)
     {
       mesh.GetFaceTransformation(f, &T);

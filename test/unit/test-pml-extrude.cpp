@@ -339,6 +339,27 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
   // An interior boundary.
   CHECK_THROWS_WITH(Extrude(json::object(), {}, true),
                     ContainsSubstring("is not on the exterior boundary"));
+
+  // A flat face of the box with the default core, the center of the face, and the same
+  // face with a core behind it.
+  auto ExtrudeFace = [&](json extra)
+  {
+    auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, 1));
+    for (int be = 0; be < mesh->GetNBE(); be++)
+    {
+      mfem::Vector c(3);
+      mfem::IsoparametricTransformation T;
+      mesh->GetBdrElementTransformation(be, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+      mesh->SetBdrAttribute(be, (c(2) > 1.0 - 1.0e-12) ? 1 : 2);
+    }
+    mesh->SetAttributes();
+    auto pml = MakePML(extra);
+    mesh::ExtrudePML(mesh, pml, {});
+  };
+  CHECK_THROWS_WITH(ExtrudeFace(json::object()),
+                    ContainsSubstring("lies on the boundary, which is flat"));
+  CHECK_NOTHROW(ExtrudeFace({{"Center", {0.0, 0.0, -10.0}}}));
   // No boundary elements, and a back attribute of the mesh.
   CHECK_THROWS_WITH(Extrude({{"Attributes", {7}}}),
                     ContainsSubstring("No boundary elements"));
