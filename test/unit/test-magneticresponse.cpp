@@ -19,6 +19,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/gridfunction.hpp"
@@ -156,9 +157,10 @@ MagneticLibraryFiles WriteMagneticLibrary(
 
 // The 3D CPW Maxwell problem of the fixtures (the test mesh cpw3d-surface-nc.msh, order 1,
 // the legacy translational IsolatedEdge library) on the given library.
-json MaxwellCpw3dConfig(const test::SurfaceResponseFiles &files, const fs::path &library)
+json MaxwellCpw3dConfig(const test::SurfaceResponseFiles &files, const fs::path &library,
+                        test::CrackPolicy crack_policy = test::CrackPolicy::Legacy)
 {
-  json config = files.Cpw3dLegacyConfig();
+  json config = files.Cpw3dLegacyConfig(crack_policy);
   config["Problem"]["Type"] = "Eigenmode";
   config["Boundaries"]["Ground"]["Attributes"] = {1, 2};
   config["Boundaries"].erase("Terminal");
@@ -401,9 +403,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto files =
       WriteMagneticLibrary(library_3d_path, temp.temp_dir, "psd", kPsdDefect);
-  IoData iodata(MaxwellCpw3dConfig(*this, files.library), false);
+  IoData iodata(MaxwellCpw3dConfig(*this, files.library, crack_policy), false);
   auto device_mesh = mesh::ReadMesh(iodata, Mpi::World());
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(device_mesh)));
@@ -559,14 +564,17 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // One mesh read; every library below is loaded on it.
-  IoData reader(MaxwellCpw3dConfig(*this, library_3d_path), false);
+  IoData reader(MaxwellCpw3dConfig(*this, library_3d_path, crack_policy), false);
   auto device_mesh = mesh::ReadMesh(reader, Mpi::World());
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(device_mesh)));
   auto Load = [&](const fs::path &library, bool allow_fallback, bool magnetic = true)
   {
-    json config = MaxwellCpw3dConfig(*this, library);
+    json config = MaxwellCpw3dConfig(*this, library, crack_policy);
     if (allow_fallback)
     {
       config["Solver"]["SurfaceResponseCorrection"]["AllowElectricOnlyFallback"] = true;
@@ -1816,6 +1824,9 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   auto Load = [&](const std::string &tag, const json &rules)
   {
     const auto files = WriteMagneticLibrary(library_3d_path, temp.temp_dir, tag, kPsdDefect,
@@ -1827,7 +1838,7 @@ TEST_CASE_METHOD(
                                                 library["MagneticRules"] = rules;
                                               }
                                             });
-    IoData iodata(MaxwellCpw3dConfig(*this, files.library), false);
+    IoData iodata(MaxwellCpw3dConfig(*this, files.library, crack_policy), false);
     auto device_mesh = mesh::ReadMesh(iodata, Mpi::World());
     std::vector<std::unique_ptr<Mesh>> meshes;
     meshes.push_back(std::make_unique<Mesh>(std::move(device_mesh)));
@@ -1887,12 +1898,15 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   auto Load = [&](const std::string &tag, const json &rules)
   {
     const auto files = WriteMagneticLibrary(library_3d_path, temp.temp_dir, tag, kPsdDefect,
                                             DefaultMagneticSource(), [&](json &library)
                                             { library["MagneticRules"] = rules; });
-    IoData iodata(MaxwellCpw3dConfig(*this, files.library), false);
+    IoData iodata(MaxwellCpw3dConfig(*this, files.library, crack_policy), false);
     REQUIRE(iodata.solver.order == 1);
     auto device_mesh = mesh::ReadMesh(iodata, Mpi::World());
     std::vector<std::unique_ptr<Mesh>> meshes;

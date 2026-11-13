@@ -25,6 +25,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/gridfunction.hpp"
@@ -2085,7 +2086,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  json config_3d = Cpw3dLegacyConfig();
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json config_3d = Cpw3dLegacyConfig(crack_policy);
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
   const auto geometry_3d = ExtractMetalEdgeGeometry(
@@ -2327,9 +2331,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // The electrostatic (Laplace, order 3) counterparts of the Maxwell operators below, built
   // on one mesh read (their own checks are the legacy electrostatic case's).
-  json config_3d = Cpw3dLegacyConfig();
+  json config_3d = Cpw3dLegacyConfig(crack_policy);
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
   const auto geometry_3d = ExtractMetalEdgeGeometry(
@@ -7262,6 +7269,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // The identification fix round DESIGN section 4 (b) (decision 1075 Q1): a translational
   // pair feature with no model within the signature tolerance (1e-3 R) matches the nearest
   // model of its topology within max(SeparationTolerance, 5e-3 R) of its separation, Status
@@ -7314,7 +7324,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   auto Read = [&](const std::string &tag, const fs::path &library_path)
   {
-    json config = IslandConfig();
+    json config = IslandConfig(crack_policy);
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     correction["Library"] = library_path.string();
@@ -7459,6 +7469,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // U-NEARMATCH-PEC (DESIGN A.10 G-3; A.5 (b) / decision 1079 Q4): a Missing
   // ParallelEdgeCluster key matches a library model with the same EdgeCount / GapSide
   // pattern / Conductor labels / Interfaces / Law whose every OffsetOverR lies within
@@ -7468,7 +7481,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // the library's in-band pairs. The CPW of cpw3d-surface-nc (edges at 0 / 12 / 32 / 44 um,
   // R = 11) against the parallel-cluster library with the 4-edge model's offsets shifted.
   constexpr double R = 11.0;
-  json config = Cpw3dLegacyConfig();
+  json config = Cpw3dLegacyConfig(crack_policy);
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["UnmatchedPolicy"] = "Warn";
@@ -7670,6 +7683,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // 9 (i) (DESIGN section 9 (b) (i); decision 1081): the preflight writes the knife-edge
   // census by default (Identification.KnifeEdgeCensus an object); the config's
   // ResponseCorrection.KnifeEdgeCensus overrides it (false: null; true: the object). A
@@ -7677,7 +7693,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // diagnostic, verified byte-identical on the chain's Maxwell / transmon records.
   auto Census = [&](const std::string &tag, std::optional<bool> flag)
   {
-    json config = Cpw3dLegacyConfig();
+    json config = Cpw3dLegacyConfig(crack_policy);
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     correction["UnmatchedPolicy"] = "Warn";
@@ -13383,6 +13399,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   auto ReadJson = [](const fs::path &path)
   {
@@ -13549,7 +13568,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     const fs::path mesh_path = temp.temp_dir / "adaptid-islands.mesh";
     const fs::path library_path = temp.temp_dir / "fabrication-process-adaptid-3d.json";
-    json config = HighOrderSpatialConfig();
+    json config = HighOrderSpatialConfig(crack_policy);
     auto spatial_mesh = MakeIslandMesh(true, false, false, true);
     if (Mpi::Root(comm))
     {
@@ -13638,7 +13657,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
         {"Model",
          {{"Mesh", mesh_path.string()},
-          {"CrackInternalBoundaryElements", true},
           {"L0", 1.0e-6},
           {"Refinement",
            {{"MaxIts", 3},
@@ -13656,6 +13674,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
           {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
         {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
+    test::ApplyCrackPolicy(config, crack_policy);  // explicit crack policy (P3-23)
     test::RunElectrostatic(config);
     Mpi::Barrier(comm);
     REQUIRE(fs::is_regular_file(saved_mesh_path));
@@ -14621,6 +14640,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   auto ReadJson = [](const fs::path &path)
   {
@@ -14671,7 +14693,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     output_library << library.dump(2) << "\n";
   }
   Mpi::Barrier(comm);
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
   config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};

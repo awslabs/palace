@@ -22,6 +22,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
@@ -942,6 +943,9 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   constexpr double R = kHalfU;
   const fs::path mesh_path = temp.temp_dir / "conductor-consistency-islands.mesh";
   if (Mpi::Root(Mpi::World()))
@@ -954,7 +958,7 @@ TEST_CASE_METHOD(
   const auto inconsistent = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
   const auto consistent = WriteCoupon(temp.temp_dir, CouponVariant::CONSISTENT);
 
-  json config = HighOrderSpatialConfig();
+  json config = HighOrderSpatialConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   // Mesh units are metres and stay unscaled (Lc = 1 x L0): the placed geometry of the
   // cache and the surface response files' R (m) = 0.2 are in mesh coordinates.

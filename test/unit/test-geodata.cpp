@@ -20,6 +20,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fixtures.hpp"
+#include "surfaceresponse-fixtures.hpp"
 #include "test-helpers.hpp"
 
 #include "fem/fespace.hpp"
@@ -1609,11 +1610,14 @@ TEST_CASE("Automatic edge distance to nonregular vertex crosses mesh segments",
 TEST_CASE("Automatic metal edge extraction on 3D CPW",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
-  iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 0;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
@@ -1708,11 +1712,14 @@ TEST_CASE("Automatic metal edge extraction on 3D CPW",
 TEST_CASE("Automatic metal edge chains survive local refinement",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
-  iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 1;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
@@ -1802,11 +1809,14 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
 TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
-  iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 1;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
   REQUIRE(mesh->Nonconforming());
@@ -1829,9 +1839,14 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
     CHECK(coarse_root.segments[i].type == coarse.segments[i].type);
   }
 
-  // Refine the elements on ONE side of the two PEC sheets (the boundary elements' adjacent
-  // elements): the crack copies of the sheets are then at different depths and the leaf
-  // perimeter is split at the refinement midpoints.
+  // Refine the elements on ONE side of the two PEC sheets (the vacuum-side neighbours of
+  // the sheet faces): the crack copies of the sheets are then at different depths and the
+  // leaf perimeter is split at the refinement midpoints. P3-23: the neighbours are read
+  // through the sheet face (GetFaceElements), not the boundary element's adjacent element:
+  // on the cracked mesh each copy's face has the one element of its side (the same set as
+  // GetBdrElementAdjacentElement); on the uncracked mesh (upstream's default) a sheet face
+  // is interior and its boundary element names one neighbour only, the other side's
+  // element is the face's second (local) neighbour.
   std::set<int> adjacent_elements;
   for (int be = 0; be < mesh->GetNBE(); be++)
   {
@@ -1840,11 +1855,14 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
     {
       continue;
     }
-    int element, info;
-    mesh->GetBdrElementAdjacentElement(be, element, info);
-    if (mesh->GetAttribute(element) == 2)  // the vacuum side only
+    int element1, element2;
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &element1, &element2);
+    for (const int element : {element1, element2})
     {
-      adjacent_elements.insert(element);
+      if (element >= 0 && mesh->GetAttribute(element) == 2)  // the vacuum side only
+      {
+        adjacent_elements.insert(element);
+      }
     }
   }
   int marked_count = static_cast<int>(adjacent_elements.size());
@@ -1978,17 +1996,33 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
   const auto leaf_physical = PhysicalSegments(refined);
   BuildMetalEdgeProcessNormals(*mesh, refined, leaf_physical, Score, std::nullopt,
                                &leaf_ambiguous);
-  CHECK(std::count(leaf_ambiguous.begin(), leaf_ambiguous.end(), true) > 0);
+  // P3-23 (MEASURED): mechanism (A) needs two crack copies of a sheet refined to different
+  // depths. Uncracked (upstream's default), the sheet is one set of interior faces that the
+  // one-sided refinement splits for both sides at once: no leaf segment is one-sided, the
+  // leaf frame is unambiguous as the root one.
+  const auto leaf_ambiguous_count =
+      std::count(leaf_ambiguous.begin(), leaf_ambiguous.end(), true);
+  if (crack_policy == test::CrackPolicy::Legacy)
+  {
+    CHECK(leaf_ambiguous_count > 0);
+  }
+  else
+  {
+    CHECK(leaf_ambiguous_count == 0);
+  }
 }
 
 TEST_CASE("Automatic metal edge extraction on 3D transmon",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/transmon/transmon_surface_coarse.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
-  iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 0;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
@@ -2010,6 +2044,14 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   int nonmanifold_segments = 0, port_segments = 0;
   int embedded_segments = 0;
   int corners = 0;
+  double fold_length = 0.0, embedded_length = 0.0;  // P3-23: the form-invariant measure
+  auto SegmentLength = [&geometry](const MetalEdgeSegment &segment)
+  {
+    const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+    const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+    return std::sqrt((p1[0] - p0[0]) * (p1[0] - p0[0]) + (p1[1] - p0[1]) * (p1[1] - p0[1]) +
+                     (p1[2] - p0[2]) * (p1[2] - p0[2]));
+  };
   int sa_segments = 0;
   std::set<int> truncation_attributes;
   for (const auto &segment : geometry.segments)
@@ -2025,6 +2067,14 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     nonmanifold_segments += segment.type == MetalEdgeSegmentType::NONMANIFOLD;
     port_segments += segment.type == MetalEdgeSegmentType::PORT;
     embedded_segments += segment.side_attributes.size() == 1;
+    if (segment.type == MetalEdgeSegmentType::FOLD)
+    {
+      fold_length += SegmentLength(segment);
+    }
+    if (segment.side_attributes.size() == 1)
+    {
+      embedded_length += SegmentLength(segment);
+    }
     sa_segments += !segment.sa_interfaces.empty();
     truncation_attributes.insert(segment.truncation_attributes.begin(),
                                  segment.truncation_attributes.end());
@@ -2065,9 +2115,18 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
         static_cast<int>(geometry.segments.size()));
   CHECK(physical_segments == 3122);
   CHECK(port_segments == 6);
-  CHECK(fold_segments == 16);
+  // P3-23 (MEASURED, both forms): the 16 deck-leg folds of the legacy form are the 8 fold
+  // mesh edges of the uncracked mesh, each split in two by the legacy crack's bisection
+  // (Load, Model.RefineCrackElements: an element with an edge interior to the crack between
+  // two seam vertices is refined); the fold length, 80, and the one-sided length, 496, are
+  // the same in both forms, and so is everything else checked here.
+  const bool legacy = crack_policy == test::CrackPolicy::Legacy;
+  CHECK(fold_segments == (legacy ? 16 : 8));
   CHECK(nonmanifold_segments == 8);
-  CHECK(embedded_segments == 40 + 16);  // the feet also touch the ground sheet faces
+  // The feet also touch the ground sheet faces.
+  CHECK(embedded_segments == 40 + (legacy ? 16 : 8));
+  CHECK_THAT(fold_length, WithinRel(80.0, 1.0e-12));
+  CHECK_THAT(embedded_length, WithinRel(496.0, 1.0e-12));
   CHECK(geometry.physical_chains == 460);
   CHECK(truncation_segments == 58);
   CHECK(truncation_attributes == std::set<int>{3});
@@ -2399,6 +2458,9 @@ TEST_CASE("Automatic metal edge extraction treats a junction face as the open ga
 TEST_CASE("Automatic metal edge classification is partition independent",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // The metal perimeter and its edge frames must be a function of the global mesh only.
   // Palace's interior-boundary cracking displaces the duplicated crack vertices by
   // CrackDisplacementFactor x h_min, so coincident copies of a perimeter vertex carry
@@ -2410,7 +2472,7 @@ TEST_CASE("Automatic metal edge classification is partition independent",
                            "examples/transmon/transmon_surface_coarse.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
-  iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 0;
   auto serial_mesh = mesh::Load(iodata, MPI_COMM_SELF);
   REQUIRE(serial_mesh);
@@ -2596,15 +2658,64 @@ TEST_CASE("Boundary edge extraction on cracked CPW mesh", "[geodata][Serial]")
   }
 }
 
+// P3-23 (the sibling of the case above for upstream's default crack form, SL8-RESOLUTION s4
+// (a)): the same 2D CPW metal line read with Model.CrackInternalBoundaryElements unset (the
+// Ground / Terminal sheets 1 / 2 are then NOT cracked) and, in the same case, with the
+// legacy key: the premise (the cracked mesh carries the duplicated sheet vertices, the
+// uncracked one does not) and the extraction's result, order-free: the same six metal end
+// points on y = 0.
+TEST_CASE("Boundary edge extraction on uncracked CPW mesh", "[geodata][Serial]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw2d/cpw2d_thin_electrostatic.json";
+  auto EdgePoints = [&](test::CrackPolicy crack_policy, int &vertices)
+  {
+    IoData iodata(config_path.c_str(), false);
+    iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+    test::ApplyCrackPolicy(iodata, crack_policy);
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    // MEASURED: the legacy key cracks the Ground (PEC) sheet 2 only: Terminal attributes
+    // are not in BoundaryData::attributes, the legacy crack set, so the Terminal sheet 1 is
+    // not cracked in either form.
+    CHECK(std::set<int>(iodata.boundaries.cracked_attributes.begin(),
+                        iodata.boundaries.cracked_attributes.end()) ==
+          (crack_policy == test::CrackPolicy::Legacy ? std::set<int>{2} : std::set<int>{}));
+    vertices = mesh->GetNV();
+    auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});
+    std::vector<std::array<double, 2>> points;
+    for (const auto &edge : mesh::GetBoundaryEdgeSegments(*mesh, marker))
+    {
+      CHECK(edge.p0 == edge.p1);
+      points.push_back({edge.p0[0], edge.p0[1]});
+    }
+    std::sort(points.begin(), points.end());
+    return points;
+  };
+  int cracked_vertices = 0, uncracked_vertices = 0;
+  const auto cracked = EdgePoints(test::CrackPolicy::Legacy, cracked_vertices);
+  const auto uncracked = EdgePoints(test::CrackPolicy::Default, uncracked_vertices);
+  CHECK(uncracked_vertices < cracked_vertices);
+  REQUIRE(uncracked.size() == cracked.size());
+  REQUIRE(uncracked.size() == 6);
+  for (std::size_t i = 0; i < uncracked.size(); i++)
+  {
+    CHECK_THAT(uncracked[i][0], WithinAbs(cracked[i][0], 1.0e-12));
+    CHECK_THAT(uncracked[i][1], WithinAbs(0.0, 1.0e-12));
+  }
+}
+
 TEST_CASE("Boundary edge extraction on NC 3D CPW mesh", "[geodata][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   auto ExtractEdges = [&](bool use_amr)
   {
     IoData iodata(config_path.c_str(), false);
     iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
-    iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
+    test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
     iodata.model.refinement.max_it = use_amr ? 1 : 0;
     auto mesh = mesh::ReadMesh(iodata, Mpi::World());
     auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});

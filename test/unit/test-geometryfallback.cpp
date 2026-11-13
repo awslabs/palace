@@ -18,6 +18,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
@@ -305,6 +306,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   const fs::path mesh_path = temp.temp_dir / "h1-island.mesh";
   if (Mpi::Root(comm))
@@ -314,7 +318,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     serial.Print(output);
   }
   Mpi::Barrier(comm);
-  json config = ConvexIslandConfig();
+  json config = ConvexIslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-10}, {"MaxIts", 400}};
