@@ -1001,7 +1001,9 @@ The coupon generators and library-build tools under `examples/` write the key ex
 `CrackInternalBoundaryElements: true`, and `--crack-policy default` omits the key. The
 policy is part of their cache keys and of the qualification records, so a coupon solved
 under one policy is not reused for a build under the other, and a model qualified against
-a reference made under the other policy is labelled as such. A coupon library does not
+a reference made under the other policy is labelled as such; a reference without a
+crack-policy record counts as made under `legacy`, so a model qualified under `default`
+against it is labelled. A coupon library does not
 yet record the crack policy of each model; the libraries built so far use cracked thin
 coupons and are applied to cracked and uncracked targets alike.
 
