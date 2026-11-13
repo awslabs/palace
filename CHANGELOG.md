@@ -148,6 +148,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     preconditioner and no longer assemble it separately for uniform sweeps, reducing CPU
     time by 1–5% and peak memory by up to 6%.
     [PR 980](https://github.com/awslabs/palace/pull/980).
+  - Adaptive driven sweeps with Floquet ports and a frequency-scaled Floquet wave vector
+    now project the frequency-independent Cartesian components of each Floquet mode onto
+    the reduced basis once per basis update, instead of reprojecting every mode at every
+    frequency with two MPI reductions per basis vector. This speeds up the dielectric
+    grating example by 1.25x. [PR 1184](https://github.com/awslabs/palace/pull/1184).
 
 #### Bug Fixes
 
