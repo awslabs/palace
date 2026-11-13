@@ -199,6 +199,50 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
   CHECK(mismatch == 0);
 }
 
+TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
+{
+  const int N = GENERATE(1, 7, 64, 513, 1025, 3001);
+  const int m = GENERATE(0, 1, 3, 8);
+  const int k = GENERATE(1, 2, 7);
+  const int rank = Mpi::Rank(Mpi::World());
+  auto fill = [&](Vector &x, double a)
+  {
+    x.UseDevice(true);
+    auto *X = x.HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      X[i] = std::sin(0.3 * i + a + 0.1 * rank);
+    }
+  };
+  std::vector<Vector> X(m, Vector(N)), Y(k, Vector(N));
+  for (int i = 0; i < m; i++)
+  {
+    fill(X[i], 1.7 * i);
+  }
+  std::vector<const Vector *> Yc(k);
+  for (int j = 0; j < k; j++)
+  {
+    fill(Y[j], 0.5 - 2.3 * j);
+    Yc[j] = &Y[j];
+  }
+  std::vector<double> H(m * k, std::numeric_limits<double>::quiet_NaN());
+  linalg::LocalDots(X, Yc, H.data());
+  int mismatch = 0;
+  for (int j = 0; j < k; j++)
+  {
+    for (int i = 0; i < m; i++)
+    {
+      double ref = 0.0;
+      for (int l = 0; l < N; l++)
+      {
+        ref += X[i].HostRead()[l] * Y[j].HostRead()[l];
+      }
+      mismatch += !(std::abs(H[i + j * m] - ref) <= 1.0e-12 * N);
+    }
+  }
+  CHECK(mismatch == 0);
+}
+
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 {
   ComplexVector cv(2);
