@@ -2114,6 +2114,23 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// The cell of dielectric_grating_uniform with a PML extruded along the normal of its top
+// (1 cm in 4 layers, with the periodic boundaries through the layer) in place of the second
+// Floquet port. The specular reflection is that of the second Floquet port to 0.07 dB, and
+// that of a meshed slab of the same elements to 1e-9 dB.
+TEST_CASE("dielectric_grating_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_pml.json",
+                                  "pml", opts);
+}
+
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
 // normalization bridge for cross-type observations. Use custom checks to verify power
 // balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
@@ -2167,12 +2184,14 @@ TEST_CASE("pml_waveguide", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
 }
 
-// The same waveguide terminated by a PML extruded from its end (z = 0.4, beyond the meshed
-// layer, which is part of the guide), with the lateral PEC walls extending through the
-// layer. |S11| (-59 dB) is that of the meshed layer to within 5 dB.
-TEST_CASE("pml_waveguide_extruded", "[Serial][Parallel][GPU][Regression]")
+// The guide of waveguide_absorbing terminated by a PML extruded along the normal of its end
+// (10 mm in 4 layers), in place of the absorbing boundary, with the PEC walls extending
+// through the layer. |S11| is -58 to -84 dB from 8 to 14 GHz, against -13 to -43 dB for
+// the second-order absorbing boundary, and the same as for the meshed slab of the same
+// elements.
+TEST_CASE("waveguide_absorbing_pml", "[Serial][Parallel][GPU][Regression]")
 {
-  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_extruded", "port-S.csv", -55.0);
+  RunPMLDrivenCase("waveguide_absorbing", "waveguide_absorbing_pml", "port-S.csv", -55.0);
 }
 
 // E-plane bifurcation with arms of different lengths, each terminated by its own block of
