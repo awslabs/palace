@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">66.7&nbsp;%</td>
@@ -116,11 +116,11 @@
 <span id="L46"><span class="lineNum">      46</span>              :   xi.UseDevice(use_dev);</span>
 <span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">      125215 : }</span></span>
 <span id="L48"><span class="lineNum">      48</span>              : </span>
-<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">     1177573 : void ComplexVector::SetSize(int size)</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">     1176687 : void ComplexVector::SetSize(int size)</span></span>
 <span id="L50"><span class="lineNum">      50</span>              : {</span>
-<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">     1177573 :   xr.SetSize(size);</span></span>
-<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">     1177573 :   xi.SetSize(size);</span></span>
-<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">     1177573 : }</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">     1176687 :   xr.SetSize(size);</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">     1176687 :   xi.SetSize(size);</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">     1176687 : }</span></span>
 <span id="L54"><span class="lineNum">      54</span>              : </span>
 <span id="L55"><span class="lineNum">      55</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexVector::MakeRef(Vector &amp;y, int offset, int size)</span></span>
 <span id="L56"><span class="lineNum">      56</span>              : {</span>
@@ -131,13 +131,13 @@
 <span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC">           0 :   xi.MakeRef(y, offset + size, size);</span></span>
 <span id="L62"><span class="lineNum">      62</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L63"><span class="lineNum">      63</span>              : </span>
-<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC tlaBgGNC">      247542 : void ComplexVector::Set(const ComplexVector &amp;y)</span></span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC tlaBgGNC">      247318 : void ComplexVector::Set(const ComplexVector &amp;y)</span></span>
 <span id="L65"><span class="lineNum">      65</span>              : {</span>
 <span id="L66"><span class="lineNum">      66</span>              :   MFEM_ASSERT(y.Size() == Size(),</span>
 <span id="L67"><span class="lineNum">      67</span>              :               &quot;Mismatch in dimension of provided parts in ComplexVector!&quot;);</span>
-<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">      247542 :   Real() = y.Real();</span></span>
-<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">      247542 :   Imag() = y.Imag();</span></span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">      247542 : }</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">      247318 :   Real() = y.Real();</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">      247318 :   Imag() = y.Imag();</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">      247318 : }</span></span>
 <span id="L71"><span class="lineNum">      71</span>              : </span>
 <span id="L72"><span class="lineNum">      72</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexVector::Set(const Vector &amp;yr, const Vector &amp;yi)</span></span>
 <span id="L73"><span class="lineNum">      73</span>              : {</span>
@@ -147,27 +147,27 @@
 <span id="L77"><span class="lineNum">      77</span> <span class="tlaUNC">           0 :   Imag() = yi;</span></span>
 <span id="L78"><span class="lineNum">      78</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L79"><span class="lineNum">      79</span>              : </span>
-<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC tlaBgGNC">       14866 : void ComplexVector::Set(const std::complex&lt;double&gt; *py, int size, bool on_dev)</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC tlaBgGNC">       14864 : void ComplexVector::Set(const std::complex&lt;double&gt; *py, int size, bool on_dev)</span></span>
 <span id="L81"><span class="lineNum">      81</span>              : {</span>
 <span id="L82"><span class="lineNum">      82</span>              :   MFEM_ASSERT(size == Size(),</span>
 <span id="L83"><span class="lineNum">      83</span>              :               &quot;Mismatch in dimension for array of std::complex&lt;double&gt; in ComplexVector!&quot;);</span>
-<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">       14866 :   auto SetImpl = [this](const double *Y, const int N, bool use_dev)</span></span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">       14864 :   auto SetImpl = [this](const double *Y, const int N, bool use_dev)</span></span>
 <span id="L85"><span class="lineNum">      85</span>              :   {</span>
-<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">       14866 :     auto *XR = Real().Write(use_dev);</span></span>
-<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">       14866 :     auto *XI = Imag().Write(use_dev);</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">       14864 :     auto *XR = Real().Write(use_dev);</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">       14864 :     auto *XI = Imag().Write(use_dev);</span></span>
 <span id="L88"><span class="lineNum">      88</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">       14866 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">       14864 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L90"><span class="lineNum">      90</span>              :                         {</span>
 <span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC">          70 :                           XR[i] = Y[2 * i];</span></span>
 <span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">          70 :                           XI[i] = Y[2 * i + 1];</span></span>
 <span id="L93"><span class="lineNum">      93</span>              :                         });</span>
-<span id="L94"><span class="lineNum">      94</span> <span class="tlaGNC">       14866 :   };</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaGNC">       14864 :   };</span></span>
 <span id="L95"><span class="lineNum">      95</span>              :   const bool use_dev = UseDevice();</span>
-<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">       14866 :   if (((!use_dev || !mfem::Device::Allows(mfem::Backend::DEVICE_MASK)) &amp;&amp; !on_dev) ||</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">       14864 :   if (((!use_dev || !mfem::Device::Allows(mfem::Backend::DEVICE_MASK)) &amp;&amp; !on_dev) ||</span></span>
 <span id="L97"><span class="lineNum">      97</span> <span class="tlaUNC tlaBgUNC">           0 :       (use_dev &amp;&amp; mfem::Device::Allows(mfem::Backend::DEVICE_MASK) &amp;&amp; on_dev))</span></span>
 <span id="L98"><span class="lineNum">      98</span>              :   {</span>
 <span id="L99"><span class="lineNum">      99</span>              :     // No copy (host pointer and not using device, or device pointer and using device).</span>
-<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC tlaBgGNC">       14866 :     SetImpl(reinterpret_cast&lt;const double *&gt;(py), size, use_dev);</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC tlaBgGNC">       14864 :     SetImpl(reinterpret_cast&lt;const double *&gt;(py), size, use_dev);</span></span>
 <span id="L101"><span class="lineNum">     101</span>              :   }</span>
 <span id="L102"><span class="lineNum">     102</span> <span class="tlaUNC tlaBgUNC">           0 :   else if (!on_dev)</span></span>
 <span id="L103"><span class="lineNum">     103</span>              :   {</span>
@@ -192,7 +192,7 @@
 <span id="L122"><span class="lineNum">     122</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;ComplexVector::Set using a device pointer is not implemented when MFEM is &quot;</span></span>
 <span id="L123"><span class="lineNum">     123</span>              :                &quot;not configured to use the device!&quot;);</span>
 <span id="L124"><span class="lineNum">     124</span>              :   }</span>
-<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC tlaBgGNC">       14866 : }</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC tlaBgGNC">       14864 : }</span></span>
 <span id="L126"><span class="lineNum">     126</span>              : </span>
 <span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">       13222 : void ComplexVector::Get(std::complex&lt;double&gt; *py, int size, bool on_dev) const</span></span>
 <span id="L128"><span class="lineNum">     128</span>              : {</span>
@@ -237,11 +237,11 @@
 <span id="L167"><span class="lineNum">     167</span>              :   }</span>
 <span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC tlaBgGNC">       13222 : }</span></span>
 <span id="L169"><span class="lineNum">     169</span>              : </span>
-<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">       50674 : ComplexVector &amp;ComplexVector::operator=(std::complex&lt;double&gt; s)</span></span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">       50646 : ComplexVector &amp;ComplexVector::operator=(std::complex&lt;double&gt; s)</span></span>
 <span id="L171"><span class="lineNum">     171</span>              : {</span>
-<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">       50674 :   Real() = s.real();</span></span>
-<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">       50674 :   Imag() = s.imag();</span></span>
-<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">       50674 :   return *this;</span></span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">       50646 :   Real() = s.real();</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">       50646 :   Imag() = s.imag();</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">       50646 :   return *this;</span></span>
 <span id="L175"><span class="lineNum">     175</span>              : }</span>
 <span id="L176"><span class="lineNum">     176</span>              : </span>
 <span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">          14 : void ComplexVector::SetBlocks(const std::vector&lt;const ComplexVector *&gt; &amp;y,</span></span>
@@ -275,14 +275,14 @@
 <span id="L205"><span class="lineNum">     205</span>              :   }</span>
 <span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">          14 : }</span></span>
 <span id="L207"><span class="lineNum">     207</span>              : </span>
-<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">       45430 : ComplexVector &amp;ComplexVector::operator*=(std::complex&lt;double&gt; s)</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">       45423 : ComplexVector &amp;ComplexVector::operator*=(std::complex&lt;double&gt; s)</span></span>
 <span id="L209"><span class="lineNum">     209</span>              : {</span>
 <span id="L210"><span class="lineNum">     210</span>              :   const double sr = s.real();</span>
 <span id="L211"><span class="lineNum">     211</span>              :   const double si = s.imag();</span>
-<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">       45430 :   if (si == 0.0)</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">       45423 :   if (si == 0.0)</span></span>
 <span id="L213"><span class="lineNum">     213</span>              :   {</span>
-<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">       43392 :     Real() *= sr;</span></span>
-<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">       43392 :     Imag() *= sr;</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">       43385 :     Real() *= sr;</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">       43385 :     Imag() *= sr;</span></span>
 <span id="L216"><span class="lineNum">     216</span>              :   }</span>
 <span id="L217"><span class="lineNum">     217</span>              :   else</span>
 <span id="L218"><span class="lineNum">     218</span>              :   {</span>
@@ -298,7 +298,7 @@
 <span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">      141121 :                           XI[i] = t;</span></span>
 <span id="L229"><span class="lineNum">     229</span>              :                         });</span>
 <span id="L230"><span class="lineNum">     230</span>              :   }</span>
-<span id="L231"><span class="lineNum">     231</span> <span class="tlaGNC">       45430 :   return *this;</span></span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaGNC">       45423 :   return *this;</span></span>
 <span id="L232"><span class="lineNum">     232</span>              : }</span>
 <span id="L233"><span class="lineNum">     233</span>              : </span>
 <span id="L234"><span class="lineNum">     234</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexVector::Conj()</span></span>
@@ -348,58 +348,58 @@
 <span id="L278"><span class="lineNum">     278</span> <span class="tlaUNC">           0 :                        : ((Imag() * y.Real()) + (Real() * y.Imag()))};</span></span>
 <span id="L279"><span class="lineNum">     279</span>              : }</span>
 <span id="L280"><span class="lineNum">     280</span>              : </span>
-<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC tlaBgGNC">      641661 : void ComplexVector::AXPY(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x)</span></span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC tlaBgGNC">      641203 : void ComplexVector::AXPY(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x)</span></span>
 <span id="L282"><span class="lineNum">     282</span>              : {</span>
-<span id="L283"><span class="lineNum">     283</span> <span class="tlaGNC">      641661 :   AXPY(alpha, x.Real(), x.Imag(), Real(), Imag());</span></span>
-<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">      641661 : }</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaGNC">      641203 :   AXPY(alpha, x.Real(), x.Imag(), Real(), Imag());</span></span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">      641203 : }</span></span>
 <span id="L285"><span class="lineNum">     285</span>              : </span>
-<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">      641661 : void ComplexVector::AXPY(std::complex&lt;double&gt; alpha, const Vector &amp;xr, const Vector &amp;xi,</span></span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">      641203 : void ComplexVector::AXPY(std::complex&lt;double&gt; alpha, const Vector &amp;xr, const Vector &amp;xi,</span></span>
 <span id="L287"><span class="lineNum">     287</span>              :                          Vector &amp;yr, Vector &amp;yi)</span>
 <span id="L288"><span class="lineNum">     288</span>              : {</span>
-<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">      641661 :   const bool use_dev = yr.UseDevice() || xr.UseDevice();</span></span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">      641203 :   const bool use_dev = yr.UseDevice() || xr.UseDevice();</span></span>
 <span id="L290"><span class="lineNum">     290</span>              :   const int N = yr.Size();</span>
 <span id="L291"><span class="lineNum">     291</span>              :   const double ar = alpha.real();</span>
 <span id="L292"><span class="lineNum">     292</span>              :   const double ai = alpha.imag();</span>
-<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">      641661 :   const auto *XR = xr.Read(use_dev);</span></span>
-<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">      641661 :   const auto *XI = xi.Read(use_dev);</span></span>
-<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">      641661 :   auto *YR = yr.ReadWrite(use_dev);</span></span>
-<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">      641661 :   auto *YI = yi.ReadWrite(use_dev);</span></span>
-<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">      641661 :   if (ai == 0.0)</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">      641203 :   const auto *XR = xr.Read(use_dev);</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">      641203 :   const auto *XI = xi.Read(use_dev);</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">      641203 :   auto *YR = yr.ReadWrite(use_dev);</span></span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">      641203 :   auto *YI = yi.ReadWrite(use_dev);</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">      641203 :   if (ai == 0.0)</span></span>
 <span id="L298"><span class="lineNum">     298</span>              :   {</span>
 <span id="L299"><span class="lineNum">     299</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">      395200 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">      394892 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L301"><span class="lineNum">     301</span>              :                         {</span>
-<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">   279807216 :                           YR[i] += ar * XR[i];</span></span>
-<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">   279807216 :                           YI[i] += ar * XI[i];</span></span>
-<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">   279807216 :                         });</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">   279536898 :                           YR[i] += ar * XR[i];</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">   279536898 :                           YI[i] += ar * XI[i];</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">   279536898 :                         });</span></span>
 <span id="L305"><span class="lineNum">     305</span>              :   }</span>
 <span id="L306"><span class="lineNum">     306</span>              :   else</span>
 <span id="L307"><span class="lineNum">     307</span>              :   {</span>
 <span id="L308"><span class="lineNum">     308</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">      246461 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">      246311 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L310"><span class="lineNum">     310</span>              :                         {</span>
-<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">   267844578 :                           const auto t = ai * XR[i] + ar * XI[i];</span></span>
-<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">   267844578 :                           YR[i] += ar * XR[i] - ai * XI[i];</span></span>
-<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">   267844578 :                           YI[i] += t;</span></span>
-<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">   267844578 :                         });</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">   267477510 :                           const auto t = ai * XR[i] + ar * XI[i];</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">   267477510 :                           YR[i] += ar * XR[i] - ai * XI[i];</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">   267477510 :                           YI[i] += t;</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">   267477510 :                         });</span></span>
 <span id="L315"><span class="lineNum">     315</span>              :   }</span>
-<span id="L316"><span class="lineNum">     316</span> <span class="tlaGNC">      641661 : }</span></span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaGNC">      641203 : }</span></span>
 <span id="L317"><span class="lineNum">     317</span>              : </span>
-<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">       60165 : void ComplexVector::AXPBY(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x,</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">       60116 : void ComplexVector::AXPBY(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x,</span></span>
 <span id="L319"><span class="lineNum">     319</span>              :                           std::complex&lt;double&gt; beta)</span>
 <span id="L320"><span class="lineNum">     320</span>              : {</span>
-<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">       60165 :   AXPBY(alpha, x.Real(), x.Imag(), beta, Real(), Imag());</span></span>
-<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">       60165 : }</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">       60116 :   AXPBY(alpha, x.Real(), x.Imag(), beta, Real(), Imag());</span></span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">       60116 : }</span></span>
 <span id="L323"><span class="lineNum">     323</span>              : </span>
-<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">       61054 : void ComplexVector::AXPBY(std::complex&lt;double&gt; alpha, const Vector &amp;xr, const Vector &amp;xi,</span></span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">       61005 : void ComplexVector::AXPBY(std::complex&lt;double&gt; alpha, const Vector &amp;xr, const Vector &amp;xi,</span></span>
 <span id="L325"><span class="lineNum">     325</span>              :                           std::complex&lt;double&gt; beta, Vector &amp;yr, Vector &amp;yi)</span>
 <span id="L326"><span class="lineNum">     326</span>              : {</span>
-<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">       61054 :   const bool use_dev = yr.UseDevice() || xr.UseDevice();</span></span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">       61005 :   const bool use_dev = yr.UseDevice() || xr.UseDevice();</span></span>
 <span id="L328"><span class="lineNum">     328</span>              :   const int N = yr.Size();</span>
 <span id="L329"><span class="lineNum">     329</span>              :   const double ar = alpha.real();</span>
 <span id="L330"><span class="lineNum">     330</span>              :   const double ai = alpha.imag();</span>
-<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">       61054 :   const auto *XR = xr.Read(use_dev);</span></span>
-<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC">       61054 :   const auto *XI = xi.Read(use_dev);</span></span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">       61005 :   const auto *XR = xr.Read(use_dev);</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC">       61005 :   const auto *XI = xi.Read(use_dev);</span></span>
 <span id="L333"><span class="lineNum">     333</span>              :   if (beta == 0.0)</span>
 <span id="L334"><span class="lineNum">     334</span>              :   {</span>
 <span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">         889 :     auto *YR = yr.Write(use_dev);</span></span>
@@ -428,17 +428,17 @@
 <span id="L358"><span class="lineNum">     358</span>              :   {</span>
 <span id="L359"><span class="lineNum">     359</span>              :     const double br = beta.real();</span>
 <span id="L360"><span class="lineNum">     360</span>              :     const double bi = beta.imag();</span>
-<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">       60165 :     auto *YR = yr.ReadWrite(use_dev);</span></span>
-<span id="L362"><span class="lineNum">     362</span> <span class="tlaGNC">       60165 :     auto *YI = yi.ReadWrite(use_dev);</span></span>
-<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">       60165 :     if (ai == 0.0 &amp;&amp; bi == 0.0)</span></span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">       60116 :     auto *YR = yr.ReadWrite(use_dev);</span></span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaGNC">       60116 :     auto *YI = yi.ReadWrite(use_dev);</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">       60116 :     if (ai == 0.0 &amp;&amp; bi == 0.0)</span></span>
 <span id="L364"><span class="lineNum">     364</span>              :     {</span>
 <span id="L365"><span class="lineNum">     365</span>              :       mfem::forall_switch(use_dev, N,</span>
-<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">       60165 :                           [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">       60116 :                           [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L367"><span class="lineNum">     367</span>              :                           {</span>
-<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">    48714832 :                             YR[i] = ar * XR[i] + br * YR[i];</span></span>
-<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">    48714832 :                             YI[i] = ar * XI[i] + br * YI[i];</span></span>
-<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">    48714832 :                           });</span></span>
-<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">       60165 :     }</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">    48662542 :                             YR[i] = ar * XR[i] + br * YR[i];</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">    48662542 :                             YI[i] = ar * XI[i] + br * YI[i];</span></span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">    48662542 :                           });</span></span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">       60116 :     }</span></span>
 <span id="L372"><span class="lineNum">     372</span>              :     else</span>
 <span id="L373"><span class="lineNum">     373</span>              :     {</span>
 <span id="L374"><span class="lineNum">     374</span>              :       mfem::forall_switch(use_dev, N,</span>
@@ -451,7 +451,7 @@
 <span id="L381"><span class="lineNum">     381</span> <span class="tlaUNC">           0 :                           });</span></span>
 <span id="L382"><span class="lineNum">     382</span>              :     }</span>
 <span id="L383"><span class="lineNum">     383</span>              :   }</span>
-<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC tlaBgGNC">       61054 : }</span></span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC tlaBgGNC">       61005 : }</span></span>
 <span id="L385"><span class="lineNum">     385</span>              : </span>
 <span id="L386"><span class="lineNum">     386</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexVector::AXPBYPCZ(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x,</span></span>
 <span id="L387"><span class="lineNum">     387</span>              :                              std::complex&lt;double&gt; beta, const ComplexVector &amp;y,</span>
@@ -549,22 +549,22 @@
 <span id="L479"><span class="lineNum">     479</span> <span class="tlaGNC tlaBgGNC">       22460 : }</span></span>
 <span id="L480"><span class="lineNum">     480</span>              : </span>
 <span id="L481"><span class="lineNum">     481</span>              : template &lt;&gt;</span>
-<span id="L482"><span class="lineNum">     482</span> <span class="tlaGNC">      193145 : void SetSubVector(ComplexVector &amp;x, const mfem::Array&lt;int&gt; &amp;rows, double s)</span></span>
+<span id="L482"><span class="lineNum">     482</span> <span class="tlaGNC">      192949 : void SetSubVector(ComplexVector &amp;x, const mfem::Array&lt;int&gt; &amp;rows, double s)</span></span>
 <span id="L483"><span class="lineNum">     483</span>              : {</span>
 <span id="L484"><span class="lineNum">     484</span>              :   const bool use_dev = x.UseDevice();</span>
 <span id="L485"><span class="lineNum">     485</span>              :   const int N = rows.Size();</span>
 <span id="L486"><span class="lineNum">     486</span>              :   const double sr = s;</span>
-<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">      193145 :   const auto *idx = rows.Read(use_dev);</span></span>
-<span id="L488"><span class="lineNum">     488</span> <span class="tlaGNC">      193145 :   auto *XR = x.Real().ReadWrite(use_dev);</span></span>
-<span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">      193145 :   auto *XI = x.Imag().ReadWrite(use_dev);</span></span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">      192949 :   const auto *idx = rows.Read(use_dev);</span></span>
+<span id="L488"><span class="lineNum">     488</span> <span class="tlaGNC">      192949 :   auto *XR = x.Real().ReadWrite(use_dev);</span></span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">      192949 :   auto *XI = x.Imag().ReadWrite(use_dev);</span></span>
 <span id="L490"><span class="lineNum">     490</span>              :   mfem::forall_switch(use_dev, N,</span>
-<span id="L491"><span class="lineNum">     491</span> <span class="tlaGNC">      193145 :                       [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaGNC">      192949 :                       [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L492"><span class="lineNum">     492</span>              :                       {</span>
 <span id="L493"><span class="lineNum">     493</span> <span class="tlaUNC tlaBgUNC">           0 :                         const int id = idx[i];</span></span>
 <span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :                         XR[id] = sr;</span></span>
 <span id="L495"><span class="lineNum">     495</span> <span class="tlaUNC">           0 :                         XI[id] = 0.0;</span></span>
 <span id="L496"><span class="lineNum">     496</span>              :                       });</span>
-<span id="L497"><span class="lineNum">     497</span> <span class="tlaGNC tlaBgGNC">      193145 : }</span></span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaGNC tlaBgGNC">      192949 : }</span></span>
 <span id="L498"><span class="lineNum">     498</span>              : </span>
 <span id="L499"><span class="lineNum">     499</span>              : template &lt;&gt;</span>
 <span id="L500"><span class="lineNum">     500</span> <span class="tlaGNC">       10257 : void SetSubVector(Vector &amp;x, const mfem::Array&lt;int&gt; &amp;rows, const Vector &amp;y)</span></span>
@@ -583,23 +583,23 @@
 <span id="L513"><span class="lineNum">     513</span> <span class="tlaGNC tlaBgGNC">       10257 : }</span></span>
 <span id="L514"><span class="lineNum">     514</span>              : </span>
 <span id="L515"><span class="lineNum">     515</span>              : template &lt;&gt;</span>
-<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">      165754 : void SetSubVector(ComplexVector &amp;x, const mfem::Array&lt;int&gt; &amp;rows, const ComplexVector &amp;y)</span></span>
+<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">      165586 : void SetSubVector(ComplexVector &amp;x, const mfem::Array&lt;int&gt; &amp;rows, const ComplexVector &amp;y)</span></span>
 <span id="L517"><span class="lineNum">     517</span>              : {</span>
 <span id="L518"><span class="lineNum">     518</span>              :   const bool use_dev = x.UseDevice();</span>
 <span id="L519"><span class="lineNum">     519</span>              :   const int N = rows.Size();</span>
-<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">      165754 :   const auto *idx = rows.Read(use_dev);</span></span>
-<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">      165754 :   const auto *YR = y.Real().Read(use_dev);</span></span>
-<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">      165754 :   const auto *YI = y.Imag().Read(use_dev);</span></span>
-<span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">      165754 :   auto *XR = x.Real().ReadWrite(use_dev);</span></span>
-<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">      165754 :   auto *XI = x.Imag().ReadWrite(use_dev);</span></span>
+<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">      165586 :   const auto *idx = rows.Read(use_dev);</span></span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">      165586 :   const auto *YR = y.Real().Read(use_dev);</span></span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">      165586 :   const auto *YI = y.Imag().Read(use_dev);</span></span>
+<span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">      165586 :   auto *XR = x.Real().ReadWrite(use_dev);</span></span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">      165586 :   auto *XI = x.Imag().ReadWrite(use_dev);</span></span>
 <span id="L525"><span class="lineNum">     525</span>              :   mfem::forall_switch(use_dev, N,</span>
-<span id="L526"><span class="lineNum">     526</span> <span class="tlaGNC">      165754 :                       [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L526"><span class="lineNum">     526</span> <span class="tlaGNC">      165586 :                       [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L527"><span class="lineNum">     527</span>              :                       {</span>
 <span id="L528"><span class="lineNum">     528</span> <span class="tlaUNC tlaBgUNC">           0 :                         const int id = idx[i];</span></span>
 <span id="L529"><span class="lineNum">     529</span> <span class="tlaUNC">           0 :                         XR[id] = YR[id];</span></span>
 <span id="L530"><span class="lineNum">     530</span> <span class="tlaUNC">           0 :                         XI[id] = YI[id];</span></span>
 <span id="L531"><span class="lineNum">     531</span>              :                       });</span>
-<span id="L532"><span class="lineNum">     532</span> <span class="tlaGNC tlaBgGNC">      165754 : }</span></span>
+<span id="L532"><span class="lineNum">     532</span> <span class="tlaGNC tlaBgGNC">      165586 : }</span></span>
 <span id="L533"><span class="lineNum">     533</span>              : </span>
 <span id="L534"><span class="lineNum">     534</span>              : template &lt;&gt;</span>
 <span id="L535"><span class="lineNum">     535</span> <span class="tlaGNC">        8828 : void SetSubVector(Vector &amp;x, int start, const Vector &amp;y)</span></span>
@@ -743,50 +743,50 @@
 <span id="L673"><span class="lineNum">     673</span>              : // The sums of HostSums over [0, N). With several threads, each sums a contiguous block and</span>
 <span id="L674"><span class="lineNum">     674</span>              : // the blocks are added in order, so the result only depends on the number of threads.</span>
 <span id="L675"><span class="lineNum">     675</span>              : template &lt;int M, typename Function&gt;</span>
-<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC tlaBgGNC">      365332 : std::array&lt;double, M&gt; ThreadedHostSums(int N, Function &amp;&amp;f)</span></span>
+<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC tlaBgGNC">      365176 : std::array&lt;double, M&gt; ThreadedHostSums(int N, Function &amp;&amp;f)</span></span>
 <span id="L677"><span class="lineNum">     677</span>              : {</span>
-<span id="L678"><span class="lineNum">     678</span> <span class="tlaGNC">      365332 :   const int nt = utils::GetMaxThreads();</span></span>
-<span id="L679"><span class="lineNum">     679</span> <span class="tlaGNC">      365332 :   if (nt == 1)</span></span>
+<span id="L678"><span class="lineNum">     678</span> <span class="tlaGNC">      365176 :   const int nt = utils::GetMaxThreads();</span></span>
+<span id="L679"><span class="lineNum">     679</span> <span class="tlaGNC">      365176 :   if (nt == 1)</span></span>
 <span id="L680"><span class="lineNum">     680</span>              :   {</span>
 <span id="L681"><span class="lineNum">     681</span> <span class="tlaUNC tlaBgUNC">           0 :     return HostSums&lt;M&gt;(0, N, f);</span></span>
 <span id="L682"><span class="lineNum">     682</span>              :   }</span>
-<span id="L683"><span class="lineNum">     683</span> <span class="tlaGNC tlaBgGNC">      365332 :   std::vector&lt;std::array&lt;double, M&gt;&gt; blocks(nt, std::array&lt;double, M&gt;{});</span></span>
-<span id="L684"><span class="lineNum">     684</span> <span class="tlaGNC">      365332 :   PalacePragmaOmp(parallel)</span></span>
+<span id="L683"><span class="lineNum">     683</span> <span class="tlaGNC tlaBgGNC">      365176 :   std::vector&lt;std::array&lt;double, M&gt;&gt; blocks(nt, std::array&lt;double, M&gt;{});</span></span>
+<span id="L684"><span class="lineNum">     684</span> <span class="tlaGNC">      365176 :   PalacePragmaOmp(parallel)</span></span>
 <span id="L685"><span class="lineNum">     685</span>              :   {</span>
 <span id="L686"><span class="lineNum">     686</span>              :     const std::int64_t t = utils::GetThreadNum(), T = utils::GetNumActiveThreads();</span>
 <span id="L687"><span class="lineNum">     687</span>              :     blocks[t] =</span>
 <span id="L688"><span class="lineNum">     688</span>              :         HostSums&lt;M&gt;(static_cast&lt;int&gt;(N * t / T), static_cast&lt;int&gt;(N * (t + 1) / T), f);</span>
 <span id="L689"><span class="lineNum">     689</span>              :   }</span>
-<span id="L690"><span class="lineNum">     690</span> <span class="tlaGNC">      365332 :   std::array&lt;double, M&gt; sum = {};</span></span>
-<span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC">     1095996 :   for (const auto &amp;block : blocks)</span></span>
+<span id="L690"><span class="lineNum">     690</span> <span class="tlaGNC">      365176 :   std::array&lt;double, M&gt; sum = {};</span></span>
+<span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC">     1095528 :   for (const auto &amp;block : blocks)</span></span>
 <span id="L692"><span class="lineNum">     692</span>              :   {</span>
-<span id="L693"><span class="lineNum">     693</span> <span class="tlaGNC">     1921640 :     for (int m = 0; m &lt; M; m++)</span></span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaGNC">     1920734 :     for (int m = 0; m &lt; M; m++)</span></span>
 <span id="L694"><span class="lineNum">     694</span>              :     {</span>
-<span id="L695"><span class="lineNum">     695</span> <span class="tlaGNC">     1190976 :       sum[m] += block[m];</span></span>
+<span id="L695"><span class="lineNum">     695</span> <span class="tlaGNC">     1190382 :       sum[m] += block[m];</span></span>
 <span id="L696"><span class="lineNum">     696</span>              :     }</span>
 <span id="L697"><span class="lineNum">     697</span>              :   }</span>
-<span id="L698"><span class="lineNum">     698</span> <span class="tlaGNC">      365332 :   return sum;</span></span>
+<span id="L698"><span class="lineNum">     698</span> <span class="tlaGNC">      365176 :   return sum;</span></span>
 <span id="L699"><span class="lineNum">     699</span>              : }</span>
 <span id="L700"><span class="lineNum">     700</span>              : </span>
 <span id="L701"><span class="lineNum">     701</span>              : }  // namespace</span>
 <span id="L702"><span class="lineNum">     702</span>              : </span>
-<span id="L703"><span class="lineNum">     703</span> <span class="tlaGNC">       93414 : double LocalDot(const Vector &amp;x, const Vector &amp;y)</span></span>
+<span id="L703"><span class="lineNum">     703</span> <span class="tlaGNC">       93412 : double LocalDot(const Vector &amp;x, const Vector &amp;y)</span></span>
 <span id="L704"><span class="lineNum">     704</span>              : {</span>
 <span id="L705"><span class="lineNum">     705</span>              :   MFEM_ASSERT(x.Size() == y.Size(), &quot;Size mismatch for vector inner product!&quot;);</span>
-<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">       93414 :   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))</span></span>
+<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">       93412 :   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))</span></span>
 <span id="L707"><span class="lineNum">     707</span>              :   {</span>
 <span id="L708"><span class="lineNum">     708</span> <span class="tlaUNC tlaBgUNC">           0 :     static hypre::HypreVector X, Y;</span></span>
 <span id="L709"><span class="lineNum">     709</span> <span class="tlaUNC">           0 :     X.Update(x);</span></span>
 <span id="L710"><span class="lineNum">     710</span> <span class="tlaUNC">           0 :     Y.Update(y);</span></span>
 <span id="L711"><span class="lineNum">     711</span> <span class="tlaUNC">           0 :     return hypre_SeqVectorInnerProd(X, Y);</span></span>
 <span id="L712"><span class="lineNum">     712</span>              :   }</span>
-<span id="L713"><span class="lineNum">     713</span> <span class="tlaGNC tlaBgGNC">       93414 :   const auto *X = x.HostRead(), *Y = y.HostRead();</span></span>
-<span id="L714"><span class="lineNum">     714</span> <span class="tlaGNC">   214954306 :   return ThreadedHostSums&lt;1&gt;(x.Size(), [=](int i) { return std::array{Y[i] * X[i]}; })[0];</span></span>
+<span id="L713"><span class="lineNum">     713</span> <span class="tlaGNC tlaBgGNC">       93412 :   const auto *X = x.HostRead(), *Y = y.HostRead();</span></span>
+<span id="L714"><span class="lineNum">     714</span> <span class="tlaGNC">   214945844 :   return ThreadedHostSums&lt;1&gt;(x.Size(), [=](int i) { return std::array{Y[i] * X[i]}; })[0];</span></span>
 <span id="L715"><span class="lineNum">     715</span>              : }</span>
 <span id="L716"><span class="lineNum">     716</span>              : </span>
-<span id="L717"><span class="lineNum">     717</span> <span class="tlaGNC">      271918 : std::complex&lt;double&gt; LocalDot(const ComplexVector &amp;x, const ComplexVector &amp;y)</span></span>
+<span id="L717"><span class="lineNum">     717</span> <span class="tlaGNC">      271764 : std::complex&lt;double&gt; LocalDot(const ComplexVector &amp;x, const ComplexVector &amp;y)</span></span>
 <span id="L718"><span class="lineNum">     718</span>              : {</span>
-<span id="L719"><span class="lineNum">     719</span> <span class="tlaGNC">      271918 :   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))</span></span>
+<span id="L719"><span class="lineNum">     719</span> <span class="tlaGNC">      271764 :   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))</span></span>
 <span id="L720"><span class="lineNum">     720</span>              :   {</span>
 <span id="L721"><span class="lineNum">     721</span> <span class="tlaUNC tlaBgUNC">           0 :     if (&amp;x == &amp;y)</span></span>
 <span id="L722"><span class="lineNum">     722</span>              :     {</span>
@@ -801,17 +801,17 @@
 <span id="L731"><span class="lineNum">     731</span>              : </span>
 <span id="L732"><span class="lineNum">     732</span>              :   // On the host, a single pass over the data instead of one per real inner product.</span>
 <span id="L733"><span class="lineNum">     733</span>              :   MFEM_ASSERT(x.Size() == y.Size(), &quot;Size mismatch for vector inner product!&quot;);</span>
-<span id="L734"><span class="lineNum">     734</span> <span class="tlaGNC tlaBgGNC">      271918 :   const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();</span></span>
-<span id="L735"><span class="lineNum">     735</span> <span class="tlaGNC">      271918 :   const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();</span></span>
-<span id="L736"><span class="lineNum">     736</span> <span class="tlaGNC">      271918 :   if (&amp;x == &amp;y)</span></span>
+<span id="L734"><span class="lineNum">     734</span> <span class="tlaGNC tlaBgGNC">      271764 :   const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();</span></span>
+<span id="L735"><span class="lineNum">     735</span> <span class="tlaGNC">      271764 :   const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();</span></span>
+<span id="L736"><span class="lineNum">     736</span> <span class="tlaGNC">      271764 :   if (&amp;x == &amp;y)</span></span>
 <span id="L737"><span class="lineNum">     737</span>              :   {</span>
-<span id="L738"><span class="lineNum">     738</span> <span class="tlaGNC">       41762 :     return ThreadedHostSums&lt;1&gt;(x.Size(), [=](int i)</span></span>
-<span id="L739"><span class="lineNum">     739</span> <span class="tlaGNC">    58282391 :                                { return std::array{XR[i] * XR[i] + XI[i] * XI[i]}; })[0];</span></span>
+<span id="L738"><span class="lineNum">     738</span> <span class="tlaGNC">       41749 :     return ThreadedHostSums&lt;1&gt;(x.Size(), [=](int i)</span></span>
+<span id="L739"><span class="lineNum">     739</span> <span class="tlaGNC">    58261201 :                                { return std::array{XR[i] * XR[i] + XI[i] * XI[i]}; })[0];</span></span>
 <span id="L740"><span class="lineNum">     740</span>              :   }</span>
-<span id="L741"><span class="lineNum">     741</span> <span class="tlaGNC">      230156 :   const auto sum = ThreadedHostSums&lt;2&gt;(</span></span>
-<span id="L742"><span class="lineNum">     742</span> <span class="tlaGNC">      230156 :       x.Size(), [=](int i)</span></span>
-<span id="L743"><span class="lineNum">     743</span> <span class="tlaGNC">   279901903 :       { return std::array{YR[i] * XR[i] + YI[i] * XI[i], YR[i] * XI[i] - YI[i] * XR[i]}; });</span></span>
-<span id="L744"><span class="lineNum">     744</span> <span class="tlaGNC">      230156 :   return {sum[0], sum[1]};</span></span>
+<span id="L741"><span class="lineNum">     741</span> <span class="tlaGNC">      230015 :   const auto sum = ThreadedHostSums&lt;2&gt;(</span></span>
+<span id="L742"><span class="lineNum">     742</span> <span class="tlaGNC">      230015 :       x.Size(), [=](int i)</span></span>
+<span id="L743"><span class="lineNum">     743</span> <span class="tlaGNC">   279551306 :       { return std::array{YR[i] * XR[i] + YI[i] * XI[i], YR[i] * XI[i] - YI[i] * XR[i]}; });</span></span>
+<span id="L744"><span class="lineNum">     744</span> <span class="tlaGNC">      230015 :   return {sum[0], sum[1]};</span></span>
 <span id="L745"><span class="lineNum">     745</span>              : }</span>
 <span id="L746"><span class="lineNum">     746</span>              : </span>
 <span id="L747"><span class="lineNum">     747</span>              : // We implement LocalSum using Hypre instead of using MFEM's Sum because it is</span>
@@ -867,10 +867,10 @@
 <span id="L797"><span class="lineNum">     797</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L798"><span class="lineNum">     798</span>              : </span>
 <span id="L799"><span class="lineNum">     799</span>              : template &lt;&gt;</span>
-<span id="L800"><span class="lineNum">     800</span> <span class="tlaGNC tlaBgGNC">       60165 : void AXPBY(double alpha, const ComplexVector &amp;x, double beta, ComplexVector &amp;y)</span></span>
+<span id="L800"><span class="lineNum">     800</span> <span class="tlaGNC tlaBgGNC">       60116 : void AXPBY(double alpha, const ComplexVector &amp;x, double beta, ComplexVector &amp;y)</span></span>
 <span id="L801"><span class="lineNum">     801</span>              : {</span>
-<span id="L802"><span class="lineNum">     802</span> <span class="tlaGNC">       60165 :   y.AXPBY(alpha, x, beta);</span></span>
-<span id="L803"><span class="lineNum">     803</span> <span class="tlaGNC">       60165 : }</span></span>
+<span id="L802"><span class="lineNum">     802</span> <span class="tlaGNC">       60116 :   y.AXPBY(alpha, x, beta);</span></span>
+<span id="L803"><span class="lineNum">     803</span> <span class="tlaGNC">       60116 : }</span></span>
 <span id="L804"><span class="lineNum">     804</span>              : </span>
 <span id="L805"><span class="lineNum">     805</span>              : template &lt;&gt;</span>
 <span id="L806"><span class="lineNum">     806</span> <span class="tlaUNC tlaBgUNC">           0 : void AXPBYPCZ(double alpha, const Vector &amp;x, double beta, const Vector &amp;y, double gamma,</span></span>
@@ -902,23 +902,23 @@
 <span id="L832"><span class="lineNum">     832</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L833"><span class="lineNum">     833</span>              : </span>
 <span id="L834"><span class="lineNum">     834</span>              : template &lt;&gt;</span>
-<span id="L835"><span class="lineNum">     835</span> <span class="tlaGNC tlaBgGNC">       31511 : void AXPYAndAYPX(double alpha, Vector &amp;x, Vector &amp;y, double beta, const Vector &amp;z)</span></span>
+<span id="L835"><span class="lineNum">     835</span> <span class="tlaGNC tlaBgGNC">       31510 : void AXPYAndAYPX(double alpha, Vector &amp;x, Vector &amp;y, double beta, const Vector &amp;z)</span></span>
 <span id="L836"><span class="lineNum">     836</span>              : {</span>
 <span id="L837"><span class="lineNum">     837</span>              :   MFEM_ASSERT(y.Size() == x.Size() &amp;&amp; z.Size() == x.Size(),</span>
 <span id="L838"><span class="lineNum">     838</span>              :               &quot;Size mismatch for vector updates!&quot;);</span>
-<span id="L839"><span class="lineNum">     839</span> <span class="tlaGNC">       31511 :   const bool use_dev = x.UseDevice() || y.UseDevice() || z.UseDevice();</span></span>
+<span id="L839"><span class="lineNum">     839</span> <span class="tlaGNC">       31510 :   const bool use_dev = x.UseDevice() || y.UseDevice() || z.UseDevice();</span></span>
 <span id="L840"><span class="lineNum">     840</span>              :   const int N = x.Size();</span>
-<span id="L841"><span class="lineNum">     841</span> <span class="tlaGNC">       31511 :   const auto *Z = z.Read(use_dev);</span></span>
-<span id="L842"><span class="lineNum">     842</span> <span class="tlaGNC">       31511 :   auto *X = x.ReadWrite(use_dev);</span></span>
-<span id="L843"><span class="lineNum">     843</span> <span class="tlaGNC">       31511 :   auto *Y = y.ReadWrite(use_dev);</span></span>
+<span id="L841"><span class="lineNum">     841</span> <span class="tlaGNC">       31510 :   const auto *Z = z.Read(use_dev);</span></span>
+<span id="L842"><span class="lineNum">     842</span> <span class="tlaGNC">       31510 :   auto *X = x.ReadWrite(use_dev);</span></span>
+<span id="L843"><span class="lineNum">     843</span> <span class="tlaGNC">       31510 :   auto *Y = y.ReadWrite(use_dev);</span></span>
 <span id="L844"><span class="lineNum">     844</span>              :   mfem::forall_switch(use_dev, N,</span>
-<span id="L845"><span class="lineNum">     845</span> <span class="tlaGNC">       31511 :                       [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L845"><span class="lineNum">     845</span> <span class="tlaGNC">       31510 :                       [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L846"><span class="lineNum">     846</span>              :                       {</span>
 <span id="L847"><span class="lineNum">     847</span> <span class="tlaUNC tlaBgUNC">           0 :                         const auto t = X[i];</span></span>
 <span id="L848"><span class="lineNum">     848</span> <span class="tlaUNC">           0 :                         Y[i] += alpha * t;</span></span>
 <span id="L849"><span class="lineNum">     849</span> <span class="tlaUNC">           0 :                         X[i] = Z[i] + beta * t;</span></span>
 <span id="L850"><span class="lineNum">     850</span>              :                       });</span>
-<span id="L851"><span class="lineNum">     851</span> <span class="tlaGNC tlaBgGNC">       31511 : }</span></span>
+<span id="L851"><span class="lineNum">     851</span> <span class="tlaGNC tlaBgGNC">       31510 : }</span></span>
 <span id="L852"><span class="lineNum">     852</span>              : </span>
 <span id="L853"><span class="lineNum">     853</span>              : template &lt;&gt;</span>
 <span id="L854"><span class="lineNum">     854</span> <span class="tlaGNC">        3367 : void AXPYAndAYPX(std::complex&lt;double&gt; alpha, ComplexVector &amp;x, ComplexVector &amp;y,</span></span>

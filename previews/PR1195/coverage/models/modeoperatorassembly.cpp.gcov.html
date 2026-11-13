@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -508,15 +508,15 @@
 <span id="L438"><span class="lineNum">     438</span> <span class="tlaGNC">         177 :   ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());</span></span>
 <span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">         177 : }</span></span>
 <span id="L440"><span class="lineNum">     440</span>              : </span>
-<span id="L441"><span class="lineNum">     441</span> <span class="tlaGNC">       14111 : std::complex&lt;double&gt; PropagationConstant(std::complex&lt;double&gt; kn2,</span></span>
+<span id="L441"><span class="lineNum">     441</span> <span class="tlaGNC">       14109 : std::complex&lt;double&gt; PropagationConstant(std::complex&lt;double&gt; kn2,</span></span>
 <span id="L442"><span class="lineNum">     442</span>              :                                          std::complex&lt;double&gt; omega)</span>
 <span id="L443"><span class="lineNum">     443</span>              : {</span>
 <span id="L444"><span class="lineNum">     444</span>              :   // Real kₙ² at the real frequency Re{ω}, for kₙ² = n²ω² − k_c² with real n² and k_c².</span>
 <span id="L445"><span class="lineNum">     445</span> <span class="tlaGNC">       12082 :   const double kn2_real = (omega.imag() != 0.0 &amp;&amp; omega.real() != 0.0)</span></span>
-<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">       26193 :                               ? kn2.real() + 0.5 * kn2.imag() * omega.imag() / omega.real()</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">       26191 :                               ? kn2.real() + 0.5 * kn2.imag() * omega.imag() / omega.real()</span></span>
 <span id="L447"><span class="lineNum">     447</span>              :                               : kn2.real();</span>
-<span id="L448"><span class="lineNum">     448</span> <span class="tlaGNC">       14111 :   return (kn2_real &lt; 0.0) ? std::complex&lt;double&gt;(0.0, -1.0) * std::sqrt(-kn2)</span></span>
-<span id="L449"><span class="lineNum">     449</span> <span class="tlaGNC">       14111 :                           : std::sqrt(kn2);</span></span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaGNC">       14109 :   return (kn2_real &lt; 0.0) ? std::complex&lt;double&gt;(0.0, -1.0) * std::sqrt(-kn2)</span></span>
+<span id="L449"><span class="lineNum">     449</span> <span class="tlaGNC">       14109 :                           : std::sqrt(kn2);</span></span>
 <span id="L450"><span class="lineNum">     450</span>              : }</span>
 <span id="L451"><span class="lineNum">     451</span>              : </span>
 <span id="L452"><span class="lineNum">     452</span> <span class="tlaGNC">         157 : void AddFarfieldScalarDampingBdrCoefficients(const MaterialOperator &amp;mat_op,</span></span>
@@ -541,10 +541,10 @@
 <span id="L471"><span class="lineNum">     471</span>              :   }</span>
 <span id="L472"><span class="lineNum">     472</span>              : }</span>
 <span id="L473"><span class="lineNum">     473</span>              : </span>
-<span id="L474"><span class="lineNum">     474</span> <span class="tlaGNC">        1536 : double TargetDistance(std::complex&lt;double&gt; kn, double kn_target)</span></span>
+<span id="L474"><span class="lineNum">     474</span> <span class="tlaGNC">        1534 : double TargetDistance(std::complex&lt;double&gt; kn, double kn_target)</span></span>
 <span id="L475"><span class="lineNum">     475</span>              : {</span>
 <span id="L476"><span class="lineNum">     476</span>              :   const double distance = std::abs(kn - kn_target);</span>
-<span id="L477"><span class="lineNum">     477</span> <span class="tlaGNC">        1536 :   return std::isnan(distance) ? std::numeric_limits&lt;double&gt;::infinity() : distance;</span></span>
+<span id="L477"><span class="lineNum">     477</span> <span class="tlaGNC">        1534 :   return std::isnan(distance) ? std::numeric_limits&lt;double&gt;::infinity() : distance;</span></span>
 <span id="L478"><span class="lineNum">     478</span>              : }</span>
 <span id="L479"><span class="lineNum">     479</span>              : </span>
 <span id="L480"><span class="lineNum">     480</span>              : }  // namespace palace::mode_assembly</span>

@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -146,15 +146,15 @@
 <span id="L76"><span class="lineNum">      76</span>              : }</span>
 <span id="L77"><span class="lineNum">      77</span>              : </span>
 <span id="L78"><span class="lineNum">      78</span>              : template &lt;bool Transpose = false&gt;</span>
-<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC tlaBgGNC">       33414 : inline void Apply(const Vector &amp;dinv, const Vector &amp;x, Vector &amp;y)</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC tlaBgGNC">       33413 : inline void Apply(const Vector &amp;dinv, const Vector &amp;x, Vector &amp;y)</span></span>
 <span id="L80"><span class="lineNum">      80</span>              : {</span>
-<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">       33414 :   const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">       33413 :   const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();</span></span>
 <span id="L82"><span class="lineNum">      82</span>              :   const int N = dinv.Size();</span>
-<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">       33414 :   const auto *DI = dinv.Read(use_dev);</span></span>
-<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">       33414 :   const auto *X = x.Read(use_dev);</span></span>
-<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">       33414 :   auto *Y = y.Write(use_dev);</span></span>
-<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">       33414 :   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });</span></span>
-<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">       33414 : }</span></span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">       33413 :   const auto *DI = dinv.Read(use_dev);</span></span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">       33413 :   const auto *X = x.Read(use_dev);</span></span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">       33413 :   auto *Y = y.Write(use_dev);</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">       33413 :   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">       33413 : }</span></span>
 <span id="L88"><span class="lineNum">      88</span>              : </span>
 <span id="L89"><span class="lineNum">      89</span>              : template &lt;bool Transpose = false&gt;</span>
 <span id="L90"><span class="lineNum">      90</span> <span class="tlaGNC">        4187 : inline void Apply(const ComplexVector &amp;dinv, const ComplexVector &amp;x, ComplexVector &amp;y)</span></span>
@@ -249,11 +249,11 @@
 <span id="L179"><span class="lineNum">     179</span>              : }</span>
 <span id="L180"><span class="lineNum">     180</span>              : </span>
 <span id="L181"><span class="lineNum">     181</span>              : template &lt;OperatorType OperType&gt;</span>
-<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">       37601 : void JacobiSmoother&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">       37600 : void JacobiSmoother&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
 <span id="L183"><span class="lineNum">     183</span>              : {</span>
 <span id="L184"><span class="lineNum">     184</span>              :   MFEM_ASSERT(!this-&gt;initial_guess, &quot;JacobiSmoother does not use initial guess!&quot;);</span>
-<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">       37601 :   Apply(dinv, x, y);</span></span>
-<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">       37601 : }</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">       37600 :   Apply(dinv, x, y);</span></span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">       37600 : }</span></span>
 <span id="L187"><span class="lineNum">     187</span>              : </span>
 <span id="L188"><span class="lineNum">     188</span>              : template class JacobiSmoother&lt;Operator&gt;;</span>
 <span id="L189"><span class="lineNum">     189</span>              : template class JacobiSmoother&lt;ComplexOperator&gt;;</span>

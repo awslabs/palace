@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">40.0&nbsp;%</td>
@@ -103,7 +103,7 @@
 <span id="L33"><span class="lineNum">      33</span>              :   virtual ~Solver() = default;</span>
 <span id="L34"><span class="lineNum">      34</span>              : </span>
 <span id="L35"><span class="lineNum">      35</span>              :   // Configure whether or not to use an initial guess when applying the solver.</span>
-<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">       71715 :   virtual void SetInitialGuess(bool guess) { initial_guess = guess; }</span></span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">       71659 :   virtual void SetInitialGuess(bool guess) { initial_guess = guess; }</span></span>
 <span id="L37"><span class="lineNum">      37</span>              : </span>
 <span id="L38"><span class="lineNum">      38</span>              :   // Set the operator associated with the solver, or update it if called repeatedly.</span>
 <span id="L39"><span class="lineNum">      39</span>              :   virtual void SetOperator(const OperType &amp;op) = 0;</span>
@@ -188,11 +188,11 @@
 <span id="L118"><span class="lineNum">     118</span>              :   // or the real-valued approximation.</span>
 <span id="L119"><span class="lineNum">     119</span>              :   void SetComplexMatrix(bool use_complex) { complex_matrix = use_complex; }</span>
 <span id="L120"><span class="lineNum">     120</span>              : </span>
-<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC tlaBgGNC">       17241 :   void SetInitialGuess(bool guess) override</span></span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC tlaBgGNC">       17227 :   void SetInitialGuess(bool guess) override</span></span>
 <span id="L122"><span class="lineNum">     122</span>              :   {</span>
 <span id="L123"><span class="lineNum">     123</span>              :     Solver&lt;OperType&gt;::SetInitialGuess(guess);</span>
-<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">       17241 :     pc-&gt;iterative_mode = guess;</span></span>
-<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">       17241 :   }</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">       17227 :     pc-&gt;iterative_mode = guess;</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">       17227 :   }</span></span>
 <span id="L126"><span class="lineNum">     126</span>              : </span>
 <span id="L127"><span class="lineNum">     127</span>              :   void SetOperator(const OperType &amp;op) override;</span>
 <span id="L128"><span class="lineNum">     128</span>              : </span>

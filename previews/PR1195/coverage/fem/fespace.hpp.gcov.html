@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">95.7&nbsp;%</td>
@@ -201,7 +201,7 @@
 <span id="L131"><span class="lineNum">     131</span>              : </span>
 <span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">       35660 :   virtual ~FiniteElementSpace() { ResetCeedObjects(); }</span></span>
 <span id="L133"><span class="lineNum">     133</span>              : </span>
-<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">      915869 :   const auto &amp;Get() const { return fespace; }</span></span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">      915309 :   const auto &amp;Get() const { return fespace; }</span></span>
 <span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">       30831 :   auto &amp;Get() { return fespace; }</span></span>
 <span id="L136"><span class="lineNum">     136</span>              : </span>
 <span id="L137"><span class="lineNum">     137</span>              :   operator const mfem::ParFiniteElementSpace &amp;() const { return Get(); }</span>
@@ -217,9 +217,9 @@
 <span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">        1125 :   auto &amp;GetParMesh() { return mesh.Get(); }</span></span>
 <span id="L148"><span class="lineNum">     148</span>              : </span>
 <span id="L149"><span class="lineNum">     149</span>              :   auto GetVDim() const { return Get().GetVDim(); }</span>
-<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">      835722 :   auto GetVSize() const { return broken ? broken-&gt;vsize : Get().GetVSize(); }</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">      835160 :   auto GetVSize() const { return broken ? broken-&gt;vsize : Get().GetVSize(); }</span></span>
 <span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">        5742 :   auto GlobalVSize() const { return broken ? broken-&gt;global_vsize : Get().GlobalVSize(); }</span></span>
-<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">      465088 :   auto GetTrueVSize() const { return broken ? broken-&gt;tsize : Get().GetTrueVSize(); }</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">      464766 :   auto GetTrueVSize() const { return broken ? broken-&gt;tsize : Get().GetTrueVSize(); }</span></span>
 <span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">        1170 :   auto GlobalTrueVSize() const</span></span>
 <span id="L154"><span class="lineNum">     154</span>              :   {</span>
 <span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">        1170 :     return broken ? broken-&gt;global_tsize : Get().GlobalTrueVSize();</span></span>
@@ -230,7 +230,7 @@
 <span id="L160"><span class="lineNum">     160</span>              : </span>
 <span id="L161"><span class="lineNum">     161</span>              :   const Operator *GetProlongationMatrix() const</span>
 <span id="L162"><span class="lineNum">     162</span>              :   {</span>
-<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">     1070340 :     return broken ? broken-&gt;P.P.get() : Get().GetProlongationMatrix();</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">     1069554 :     return broken ? broken-&gt;P.P.get() : Get().GetProlongationMatrix();</span></span>
 <span id="L164"><span class="lineNum">     164</span>              :   }</span>
 <span id="L165"><span class="lineNum">     165</span>              : </span>
 <span id="L166"><span class="lineNum">     166</span>              :   // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the</span>
@@ -247,10 +247,10 @@
 <span id="L177"><span class="lineNum">     177</span>              :   {</span>
 <span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">         468 :     return broken ? broken-&gt;P.col_offsets.GetData() : Get().GetTrueDofOffsets();</span></span>
 <span id="L179"><span class="lineNum">     179</span>              :   }</span>
-<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">      136917 :   const mfem::SparseMatrix *GetRestrictionMatrix() const</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">      136805 :   const mfem::SparseMatrix *GetRestrictionMatrix() const</span></span>
 <span id="L181"><span class="lineNum">     181</span>              :   {</span>
-<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">      136917 :     MFEM_VERIFY(!broken, &quot;Restriction matrix is not available for a broken space!&quot;);</span></span>
-<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">      136917 :     return Get().GetRestrictionMatrix();</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">      136805 :     MFEM_VERIFY(!broken, &quot;Restriction matrix is not available for a broken space!&quot;);</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">      136805 :     return Get().GetRestrictionMatrix();</span></span>
 <span id="L184"><span class="lineNum">     184</span>              :   }</span>
 <span id="L185"><span class="lineNum">     185</span>              : </span>
 <span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">          36 :   bool IsBroken() const { return broken != nullptr; }</span></span>
@@ -365,23 +365,23 @@
 <span id="L295"><span class="lineNum">     295</span>              :                            bool is_interp = false, bool is_interp_range = false);</span>
 <span id="L296"><span class="lineNum">     296</span>              : </span>
 <span id="L297"><span class="lineNum">     297</span>              :   template &lt;typename VecType&gt;</span>
-<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">      373557 :   auto &amp;GetTVector() const</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">      373235 :   auto &amp;GetTVector() const</span></span>
 <span id="L299"><span class="lineNum">     299</span>              :   {</span>
-<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">      747114 :     tx.SetSize(GetTrueVSize());</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">      746470 :     tx.SetSize(GetTrueVSize());</span></span>
 <span id="L301"><span class="lineNum">     301</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L302"><span class="lineNum">     302</span>              :     {</span>
-<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">      319129 :       return tx;</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">      318835 :       return tx;</span></span>
 <span id="L304"><span class="lineNum">     304</span>              :     }</span>
 <span id="L305"><span class="lineNum">     305</span>              :     else</span>
 <span id="L306"><span class="lineNum">     306</span>              :     {</span>
-<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">       54428 :       return tx.Real();</span></span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">       54400 :       return tx.Real();</span></span>
 <span id="L308"><span class="lineNum">     308</span>              :     }</span>
 <span id="L309"><span class="lineNum">     309</span>              :   }</span>
 <span id="L310"><span class="lineNum">     310</span>              : </span>
 <span id="L311"><span class="lineNum">     311</span>              :   template &lt;typename VecType&gt;</span>
 <span id="L312"><span class="lineNum">     312</span>              :   auto &amp;GetLVector() const</span>
 <span id="L313"><span class="lineNum">     313</span>              :   {</span>
-<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">     1063560 :     lx.SetSize(GetVSize());</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">     1062774 :     lx.SetSize(GetVSize());</span></span>
 <span id="L315"><span class="lineNum">     315</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L316"><span class="lineNum">     316</span>              :     {</span>
 <span id="L317"><span class="lineNum">     317</span>              :       return lx;</span>
@@ -395,7 +395,7 @@
 <span id="L325"><span class="lineNum">     325</span>              :   template &lt;typename VecType&gt;</span>
 <span id="L326"><span class="lineNum">     326</span>              :   auto &amp;GetLVector2() const</span>
 <span id="L327"><span class="lineNum">     327</span>              :   {</span>
-<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">      511748 :     ly.SetSize(GetVSize());</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">      511410 :     ly.SetSize(GetVSize());</span></span>
 <span id="L329"><span class="lineNum">     329</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L330"><span class="lineNum">     330</span>              :     {</span>
 <span id="L331"><span class="lineNum">     331</span>              :       return ly;</span>

@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryMed">83.3&nbsp;%</td>
@@ -87,28 +87,28 @@
 <span id="L17"><span class="lineNum">      17</span>              : #endif</span>
 <span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">         667 : }</span></span>
 <span id="L19"><span class="lineNum">      19</span>              : </span>
-<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">      366591 : int GetMaxThreads()</span></span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">      366435 : int GetMaxThreads()</span></span>
 <span id="L21"><span class="lineNum">      21</span>              : {</span>
 <span id="L22"><span class="lineNum">      22</span>              : #if defined(MFEM_USE_OPENMP)</span>
-<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC">      366591 :   return omp_get_max_threads();</span></span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC">      366435 :   return omp_get_max_threads();</span></span>
 <span id="L24"><span class="lineNum">      24</span>              : #else</span>
 <span id="L25"><span class="lineNum">      25</span>              :   return 1;</span>
 <span id="L26"><span class="lineNum">      26</span>              : #endif</span>
 <span id="L27"><span class="lineNum">      27</span>              : }</span>
 <span id="L28"><span class="lineNum">      28</span>              : </span>
-<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">      731331 : int GetNumActiveThreads()</span></span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">      731019 : int GetNumActiveThreads()</span></span>
 <span id="L30"><span class="lineNum">      30</span>              : {</span>
 <span id="L31"><span class="lineNum">      31</span>              : #if defined(MFEM_USE_OPENMP)</span>
-<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">      731331 :   return omp_get_num_threads();</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">      731019 :   return omp_get_num_threads();</span></span>
 <span id="L33"><span class="lineNum">      33</span>              : #else</span>
 <span id="L34"><span class="lineNum">      34</span>              :   return 1;</span>
 <span id="L35"><span class="lineNum">      35</span>              : #endif</span>
 <span id="L36"><span class="lineNum">      36</span>              : }</span>
 <span id="L37"><span class="lineNum">      37</span>              : </span>
-<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">     2732335 : int GetThreadNum()</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">     2730453 : int GetThreadNum()</span></span>
 <span id="L39"><span class="lineNum">      39</span>              : {</span>
 <span id="L40"><span class="lineNum">      40</span>              : #if defined(MFEM_USE_OPENMP)</span>
-<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">     2732335 :   return omp_get_thread_num();</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">     2730453 :   return omp_get_thread_num();</span></span>
 <span id="L42"><span class="lineNum">      42</span>              : #else</span>
 <span id="L43"><span class="lineNum">      43</span>              :   return 0;</span>
 <span id="L44"><span class="lineNum">      44</span>              : #endif</span>

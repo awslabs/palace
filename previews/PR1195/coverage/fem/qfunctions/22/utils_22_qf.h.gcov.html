@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">-</td>
@@ -101,10 +101,10 @@
 <span id="L31"><span class="lineNum">      31</span>              : CEED_QFUNCTION_HELPER void MatUnpack22(const CeedScalar *A, const CeedInt A_stride,</span>
 <span id="L32"><span class="lineNum">      32</span>              :                                        CeedScalar A_loc[4])</span>
 <span id="L33"><span class="lineNum">      33</span>              : {</span>
-<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">   619980896 :   A_loc[0] = A[A_stride * 0];</span></span>
-<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">   619992800 :   A_loc[1] = A[A_stride * 1];</span></span>
-<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">   619992800 :   A_loc[2] = A[A_stride * 2];</span></span>
-<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">   619980056 :   A_loc[3] = A[A_stride * 3];</span></span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">   619303520 :   A_loc[0] = A[A_stride * 0];</span></span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">   619315424 :   A_loc[1] = A[A_stride * 1];</span></span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">   619315424 :   A_loc[2] = A[A_stride * 2];</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">   619302680 :   A_loc[3] = A[A_stride * 3];</span></span>
 <span id="L38"><span class="lineNum">      38</span>              : }</span>
 <span id="L39"><span class="lineNum">      39</span>              : </span>
 <span id="L40"><span class="lineNum">      40</span>              : // Map a scalar INTEGRAL finite-element value to physical space. Unlike scalar VALUE</span>
@@ -134,14 +134,14 @@
 <span id="L64"><span class="lineNum">      64</span>              :   //          1 3</span>
 <span id="L65"><span class="lineNum">      65</span>              :   CeedScalar z[2];</span>
 <span id="L66"><span class="lineNum">      66</span>              : </span>
-<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">   615130664 :   y[0] = C[0] * x[0] + C[2] * x[1];</span></span>
-<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">   615130664 :   y[1] = C[1] * x[0] + C[3] * x[1];</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">   614453288 :   y[0] = C[0] * x[0] + C[2] * x[1];</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">   614453288 :   y[1] = C[1] * x[0] + C[3] * x[1];</span></span>
 <span id="L69"><span class="lineNum">      69</span>              : </span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">   615130664 :   z[0] = B[0] * y[0] + B[2] * y[1];</span></span>
-<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">   615130664 :   z[1] = B[1] * y[0] + B[3] * y[1];</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">   614453288 :   z[0] = B[0] * y[0] + B[2] * y[1];</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">   614453288 :   z[1] = B[1] * y[0] + B[3] * y[1];</span></span>
 <span id="L72"><span class="lineNum">      72</span>              : </span>
-<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">   615130664 :   y[0] = A[0] * z[0] + A[1] * z[1];</span></span>
-<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">   615130664 :   y[1] = A[2] * z[0] + A[3] * z[1];</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">   614453288 :   y[0] = A[0] * z[0] + A[1] * z[1];</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">   614453288 :   y[1] = A[2] * z[0] + A[3] * z[1];</span></span>
 <span id="L75"><span class="lineNum">      75</span>              : }</span>
 <span id="L76"><span class="lineNum">      76</span>              : </span>
 <span id="L77"><span class="lineNum">      77</span>              : CEED_QFUNCTION_HELPER void MultBAx22(const CeedScalar A[4], const CeedScalar B[4],</span>

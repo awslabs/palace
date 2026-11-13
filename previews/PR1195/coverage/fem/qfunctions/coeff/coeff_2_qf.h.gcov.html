@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">-</td>
@@ -79,12 +79,12 @@
 <span id="L9"><span class="lineNum">       9</span>              : CEED_QFUNCTION_HELPER void CoeffUnpack2(const CeedIntScalar *ctx, const CeedInt attr,</span>
 <span id="L10"><span class="lineNum">      10</span>              :                                         CeedScalar coeff[4])</span>
 <span id="L11"><span class="lineNum">      11</span>              : {</span>
-<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC tlaBgGNC">   629048680 :   const CeedInt k = (NumAttr(ctx) &gt; 0) ? AttrMat(ctx)[attr - 1].first : 0;</span></span>
+<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC tlaBgGNC">   628359016 :   const CeedInt k = (NumAttr(ctx) &gt; 0) ? AttrMat(ctx)[attr - 1].first : 0;</span></span>
 <span id="L13"><span class="lineNum">      13</span>              :   const CeedIntScalar *mat_coeff = MatCoeff(ctx);</span>
-<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">   629070232 :   coeff[0] = mat_coeff[4 * k + 0].second;</span></span>
-<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">   629070232 :   coeff[1] = mat_coeff[4 * k + 1].second;</span></span>
-<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">   629070232 :   coeff[2] = mat_coeff[4 * k + 2].second;</span></span>
-<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">   629070232 :   coeff[3] = mat_coeff[4 * k + 3].second;</span></span>
+<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">   628380568 :   coeff[0] = mat_coeff[4 * k + 0].second;</span></span>
+<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">   628380568 :   coeff[1] = mat_coeff[4 * k + 1].second;</span></span>
+<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">   628380568 :   coeff[2] = mat_coeff[4 * k + 2].second;</span></span>
+<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">   628380568 :   coeff[3] = mat_coeff[4 * k + 3].second;</span></span>
 <span id="L18"><span class="lineNum">      18</span>              : }</span>
 <span id="L19"><span class="lineNum">      19</span>              : </span>
 <span id="L20"><span class="lineNum">      20</span>              : #endif  // PALACE_LIBCEED_COEFF_2_QF_H</span>

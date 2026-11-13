@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryMed">80.0&nbsp;%</td>
@@ -212,18 +212,18 @@
 <span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">         390 : }</span></span>
 <span id="L143"><span class="lineNum">     143</span>              : </span>
 <span id="L144"><span class="lineNum">     144</span>              : template &lt;&gt;</span>
-<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">       39968 : void MfemWrapperSolver&lt;ComplexOperator&gt;::Mult(const ComplexVector &amp;x,</span></span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">       39954 : void MfemWrapperSolver&lt;ComplexOperator&gt;::Mult(const ComplexVector &amp;x,</span></span>
 <span id="L146"><span class="lineNum">     146</span>              :                                               ComplexVector &amp;y) const</span>
 <span id="L147"><span class="lineNum">     147</span>              : {</span>
-<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">       39968 :   if (pc-&gt;Height() == x.Size())</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">       39954 :   if (pc-&gt;Height() == x.Size())</span></span>
 <span id="L149"><span class="lineNum">     149</span>              :   {</span>
 <span id="L150"><span class="lineNum">     150</span>              :     mfem::Array&lt;const Vector *&gt; X(2);</span>
 <span id="L151"><span class="lineNum">     151</span>              :     mfem::Array&lt;Vector *&gt; Y(2);</span>
-<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">       35554 :     X[0] = &amp;x.Real();</span></span>
-<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       35554 :     X[1] = &amp;x.Imag();</span></span>
-<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">       35554 :     Y[0] = &amp;y.Real();</span></span>
-<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">       35554 :     Y[1] = &amp;y.Imag();</span></span>
-<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">       35554 :     pc-&gt;ArrayMult(X, Y);</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">       35540 :     X[0] = &amp;x.Real();</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       35540 :     X[1] = &amp;x.Imag();</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">       35540 :     Y[0] = &amp;y.Real();</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">       35540 :     Y[1] = &amp;y.Imag();</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">       35540 :     pc-&gt;ArrayMult(X, Y);</span></span>
 <span id="L157"><span class="lineNum">     157</span>              :   }</span>
 <span id="L158"><span class="lineNum">     158</span>              :   else</span>
 <span id="L159"><span class="lineNum">     159</span>              :   {</span>
@@ -244,7 +244,7 @@
 <span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">        4414 :     y.Real() = yr;</span></span>
 <span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">        4414 :     y.Imag() = yi;</span></span>
 <span id="L176"><span class="lineNum">     176</span>              :   }</span>
-<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">       39968 : }</span></span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">       39954 : }</span></span>
 <span id="L178"><span class="lineNum">     178</span>              : </span>
 <span id="L179"><span class="lineNum">     179</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L180"><span class="lineNum">     180</span> <span class="tlaUNC tlaBgUNC">           0 : void MfemWrapperSolver&lt;OperType&gt;::DropSmallEntries()</span></span>

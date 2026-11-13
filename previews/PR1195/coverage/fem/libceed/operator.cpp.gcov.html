@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">48.8&nbsp;%</td>
@@ -215,17 +215,17 @@
 <span id="L145"><span class="lineNum">     145</span>              : namespace</span>
 <span id="L146"><span class="lineNum">     146</span>              : {</span>
 <span id="L147"><span class="lineNum">     147</span>              : </span>
-<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">      836254 : inline void CeedAddMult(const std::vector&lt;CeedOperator&gt; &amp;op,</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">      835469 : inline void CeedAddMult(const std::vector&lt;CeedOperator&gt; &amp;op,</span></span>
 <span id="L149"><span class="lineNum">     149</span>              :                         const std::vector&lt;CeedVector&gt; &amp;u, const std::vector&lt;CeedVector&gt; &amp;v,</span>
 <span id="L150"><span class="lineNum">     150</span>              :                         const Vector &amp;x, Vector &amp;y)</span>
 <span id="L151"><span class="lineNum">     151</span>              : {</span>
 <span id="L152"><span class="lineNum">     152</span>              :   Ceed ceed;</span>
-<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">      836254 :   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &amp;ceed));</span></span>
-<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">      836254 :   const CeedMemType mem = GetUsableMemType(ceed);</span></span>
-<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">      836254 :   const auto *x_data = x.Read(mem == CEED_MEM_DEVICE);</span></span>
-<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">      836254 :   auto *y_data = y.ReadWrite(mem == CEED_MEM_DEVICE);</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">      835469 :   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &amp;ceed));</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">      835469 :   const CeedMemType mem = GetUsableMemType(ceed);</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">      835469 :   const auto *x_data = x.Read(mem == CEED_MEM_DEVICE);</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">      835469 :   auto *y_data = y.ReadWrite(mem == CEED_MEM_DEVICE);</span></span>
 <span id="L157"><span class="lineNum">     157</span>              : </span>
-<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">      836254 :   PalacePragmaOmp(parallel if (op.size() &gt; 1))</span></span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">      835469 :   PalacePragmaOmp(parallel if (op.size() &gt; 1))</span></span>
 <span id="L159"><span class="lineNum">     159</span>              :   {</span>
 <span id="L160"><span class="lineNum">     160</span>              :     const int id = utils::GetThreadNum();</span>
 <span id="L161"><span class="lineNum">     161</span>              :     MFEM_ASSERT(static_cast&lt;std::size_t&gt;(id) &lt; op.size(),</span>
@@ -240,24 +240,24 @@
 <span id="L170"><span class="lineNum">     170</span>              :     PalaceCeedCall(ceed, CeedVectorTakeArray(u[id], mem, nullptr));</span>
 <span id="L171"><span class="lineNum">     171</span>              :     PalaceCeedCall(ceed, CeedVectorTakeArray(v[id], mem, nullptr));</span>
 <span id="L172"><span class="lineNum">     172</span>              :   }</span>
-<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">      836254 : }</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">      835469 : }</span></span>
 <span id="L174"><span class="lineNum">     174</span>              : </span>
 <span id="L175"><span class="lineNum">     175</span>              : }  // namespace</span>
 <span id="L176"><span class="lineNum">     176</span>              : </span>
-<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">      350927 : void Operator::Mult(const Vector &amp;x, Vector &amp;y) const</span></span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">      350534 : void Operator::Mult(const Vector &amp;x, Vector &amp;y) const</span></span>
 <span id="L178"><span class="lineNum">     178</span>              : {</span>
-<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">      350927 :   y = 0.0;</span></span>
-<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">      350927 :   CeedAddMult(op, u, v, x, y);</span></span>
-<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">      350927 :   if (dof_multiplicity.Size() &gt; 0)</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">      350534 :   y = 0.0;</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">      350534 :   CeedAddMult(op, u, v, x, y);</span></span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">      350534 :   if (dof_multiplicity.Size() &gt; 0)</span></span>
 <span id="L182"><span class="lineNum">     182</span>              :   {</span>
-<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">       68966 :     y *= dof_multiplicity;</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">       68910 :     y *= dof_multiplicity;</span></span>
 <span id="L184"><span class="lineNum">     184</span>              :   }</span>
-<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">      350927 : }</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">      350534 : }</span></span>
 <span id="L186"><span class="lineNum">     186</span>              : </span>
-<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">      416448 : void Operator::AddMult(const Vector &amp;x, Vector &amp;y, const double a) const</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">      416112 : void Operator::AddMult(const Vector &amp;x, Vector &amp;y, const double a) const</span></span>
 <span id="L188"><span class="lineNum">     188</span>              : {</span>
-<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC">      416448 :   MFEM_VERIFY(a == 1.0, &quot;ceed::Operator::AddMult only supports coefficient = 1.0!&quot;);</span></span>
-<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">      416448 :   if (dof_multiplicity.Size() &gt; 0)</span></span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC">      416112 :   MFEM_VERIFY(a == 1.0, &quot;ceed::Operator::AddMult only supports coefficient = 1.0!&quot;);</span></span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">      416112 :   if (dof_multiplicity.Size() &gt; 0)</span></span>
 <span id="L191"><span class="lineNum">     191</span>              :   {</span>
 <span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC tlaBgUNC">           0 :     temp.SetSize(height);</span></span>
 <span id="L193"><span class="lineNum">     193</span> <span class="tlaUNC">           0 :     temp = 0.0;</span></span>
@@ -272,37 +272,37 @@
 <span id="L202"><span class="lineNum">     202</span>              :   }</span>
 <span id="L203"><span class="lineNum">     203</span>              :   else</span>
 <span id="L204"><span class="lineNum">     204</span>              :   {</span>
-<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC tlaBgGNC">      416448 :     CeedAddMult(op, u, v, x, y);</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC tlaBgGNC">      416112 :     CeedAddMult(op, u, v, x, y);</span></span>
 <span id="L206"><span class="lineNum">     206</span>              :   }</span>
-<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">      416448 : }</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">      416112 : }</span></span>
 <span id="L208"><span class="lineNum">     208</span>              : </span>
-<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">       68879 : void Operator::MultTranspose(const Vector &amp;x, Vector &amp;y) const</span></span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">       68823 : void Operator::MultTranspose(const Vector &amp;x, Vector &amp;y) const</span></span>
 <span id="L210"><span class="lineNum">     210</span>              : {</span>
-<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">       68879 :   y = 0.0;</span></span>
-<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">       68879 :   AddMultTranspose(x, y);</span></span>
-<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">       68879 : }</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">       68823 :   y = 0.0;</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">       68823 :   AddMultTranspose(x, y);</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">       68823 : }</span></span>
 <span id="L214"><span class="lineNum">     214</span>              : </span>
-<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">       68879 : void Operator::AddMultTranspose(const Vector &amp;x, Vector &amp;y, const double a) const</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">       68823 : void Operator::AddMultTranspose(const Vector &amp;x, Vector &amp;y, const double a) const</span></span>
 <span id="L216"><span class="lineNum">     216</span>              : {</span>
-<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">       68879 :   MFEM_VERIFY(a == 1.0,</span></span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">       68823 :   MFEM_VERIFY(a == 1.0,</span></span>
 <span id="L218"><span class="lineNum">     218</span>              :               &quot;ceed::Operator::AddMultTranspose only supports coefficient = 1.0!&quot;);</span>
-<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">       68879 :   if (dof_multiplicity.Size() &gt; 0)</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">       68823 :   if (dof_multiplicity.Size() &gt; 0)</span></span>
 <span id="L220"><span class="lineNum">     220</span>              :   {</span>
-<span id="L221"><span class="lineNum">     221</span> <span class="tlaGNC">       68879 :     temp.SetSize(height);</span></span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaGNC">       68823 :     temp.SetSize(height);</span></span>
 <span id="L222"><span class="lineNum">     222</span>              :     {</span>
 <span id="L223"><span class="lineNum">     223</span>              :       const auto *d_dof_multiplicity = dof_multiplicity.Read();</span>
-<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">       68879 :       const auto *d_x = x.Read();</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">       68823 :       const auto *d_x = x.Read();</span></span>
 <span id="L225"><span class="lineNum">     225</span>              :       auto *d_temp = temp.Write();</span>
-<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">       68879 :       mfem::forall(height, [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">       68823 :       mfem::forall(height, [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC tlaBgUNC">           0 :                    { d_temp[i] = d_dof_multiplicity[i] * d_x[i]; });</span></span>
 <span id="L228"><span class="lineNum">     228</span>              :     }</span>
-<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC tlaBgGNC">       68879 :     CeedAddMult(op_t, v, u, temp, y);</span></span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC tlaBgGNC">       68823 :     CeedAddMult(op_t, v, u, temp, y);</span></span>
 <span id="L230"><span class="lineNum">     230</span>              :   }</span>
 <span id="L231"><span class="lineNum">     231</span>              :   else</span>
 <span id="L232"><span class="lineNum">     232</span>              :   {</span>
 <span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC tlaBgUNC">           0 :     CeedAddMult(op_t, v, u, x, y);</span></span>
 <span id="L234"><span class="lineNum">     234</span>              :   }</span>
-<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC tlaBgGNC">       68879 : }</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC tlaBgGNC">       68823 : }</span></span>
 <span id="L236"><span class="lineNum">     236</span>              : </span>
 <span id="L237"><span class="lineNum">     237</span>              : namespace</span>
 <span id="L238"><span class="lineNum">     238</span>              : {</span>

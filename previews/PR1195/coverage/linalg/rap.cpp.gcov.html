@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">57.8&nbsp;%</td>
@@ -315,19 +315,19 @@
 <span id="L245"><span class="lineNum">     245</span>              :   }</span>
 <span id="L246"><span class="lineNum">     246</span>              : }</span>
 <span id="L247"><span class="lineNum">     247</span>              : </span>
-<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC tlaBgGNC">       77641 : void ParOperator::Mult(const Vector &amp;x, Vector &amp;y) const</span></span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC tlaBgGNC">       77612 : void ParOperator::Mult(const Vector &amp;x, Vector &amp;y) const</span></span>
 <span id="L249"><span class="lineNum">     249</span>              : {</span>
 <span id="L250"><span class="lineNum">     250</span>              :   MFEM_ASSERT(x.Size() == width &amp;&amp; y.Size() == height,</span>
 <span id="L251"><span class="lineNum">     251</span>              :               &quot;Incompatible dimensions for ParOperator::Mult!&quot;);</span>
-<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">       77641 :   if (RAP)</span></span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">       77612 :   if (RAP)</span></span>
 <span id="L253"><span class="lineNum">     253</span>              :   {</span>
 <span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">         120 :     RAP-&gt;Mult(x, y);</span></span>
 <span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">         120 :     return;</span></span>
 <span id="L256"><span class="lineNum">     256</span>              :   }</span>
 <span id="L257"><span class="lineNum">     257</span>              : </span>
-<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">       77521 :   auto &amp;lx = trial_fespace.GetLVector&lt;Vector&gt;();</span></span>
-<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">       77521 :   auto &amp;ly = GetTestLVector();</span></span>
-<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">       77521 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">       77492 :   auto &amp;lx = trial_fespace.GetLVector&lt;Vector&gt;();</span></span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">       77492 :   auto &amp;ly = GetTestLVector();</span></span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">       77492 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L261"><span class="lineNum">     261</span>              :   {</span>
 <span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">       12585 :     auto &amp;tx = trial_fespace.GetTVector&lt;Vector&gt;();</span></span>
 <span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">       12585 :     tx = x;</span></span>
@@ -336,14 +336,14 @@
 <span id="L266"><span class="lineNum">     266</span>              :   }</span>
 <span id="L267"><span class="lineNum">     267</span>              :   else</span>
 <span id="L268"><span class="lineNum">     268</span>              :   {</span>
-<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">      129872 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(x, lx);</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">      129814 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(x, lx);</span></span>
 <span id="L270"><span class="lineNum">     270</span>              :   }</span>
 <span id="L271"><span class="lineNum">     271</span>              : </span>
 <span id="L272"><span class="lineNum">     272</span>              :   // Apply the operator on the L-vector.</span>
-<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">       77521 :   A-&gt;Mult(lx, ly);</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">       77492 :   A-&gt;Mult(lx, ly);</span></span>
 <span id="L274"><span class="lineNum">     274</span>              : </span>
-<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">       77521 :   RestrictionMatrixMult(ly, y);</span></span>
-<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">       77521 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">       77492 :   RestrictionMatrixMult(ly, y);</span></span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">       77492 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L277"><span class="lineNum">     277</span>              :   {</span>
 <span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">       12585 :     if (diag_policy == DiagonalPolicy::DIAG_ONE)</span></span>
 <span id="L279"><span class="lineNum">     279</span>              :     {</span>
@@ -354,25 +354,25 @@
 <span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">        5140 :       linalg::SetSubVector(y, dbc_tdof_list, 0.0);</span></span>
 <span id="L285"><span class="lineNum">     285</span>              :     }</span>
 <span id="L286"><span class="lineNum">     286</span>              :   }</span>
-<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">       77521 :   if (B)</span></span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">       77492 :   if (B)</span></span>
 <span id="L288"><span class="lineNum">     288</span>              :   {</span>
 <span id="L289"><span class="lineNum">     289</span> <span class="tlaUNC tlaBgUNC">           0 :     B-&gt;Mult(1.0, x, 1.0, y);</span></span>
 <span id="L290"><span class="lineNum">     290</span>              :   }</span>
 <span id="L291"><span class="lineNum">     291</span>              : }</span>
 <span id="L292"><span class="lineNum">     292</span>              : </span>
-<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC tlaBgGNC">       68339 : void ParOperator::MultTranspose(const Vector &amp;x, Vector &amp;y) const</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC tlaBgGNC">       68283 : void ParOperator::MultTranspose(const Vector &amp;x, Vector &amp;y) const</span></span>
 <span id="L294"><span class="lineNum">     294</span>              : {</span>
 <span id="L295"><span class="lineNum">     295</span>              :   MFEM_ASSERT(x.Size() == height &amp;&amp; y.Size() == width,</span>
 <span id="L296"><span class="lineNum">     296</span>              :               &quot;Incompatible dimensions for ParOperator::MultTranspose!&quot;);</span>
-<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">       68339 :   if (RAP)</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">       68283 :   if (RAP)</span></span>
 <span id="L298"><span class="lineNum">     298</span>              :   {</span>
 <span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC tlaBgUNC">           0 :     RAP-&gt;MultTranspose(x, y);</span></span>
 <span id="L300"><span class="lineNum">     300</span> <span class="tlaUNC">           0 :     return;</span></span>
 <span id="L301"><span class="lineNum">     301</span>              :   }</span>
 <span id="L302"><span class="lineNum">     302</span>              : </span>
-<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC tlaBgGNC">       68339 :   auto &amp;lx = trial_fespace.GetLVector&lt;Vector&gt;();</span></span>
-<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">       68339 :   auto &amp;ly = GetTestLVector();</span></span>
-<span id="L305"><span class="lineNum">     305</span> <span class="tlaGNC">       68339 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC tlaBgGNC">       68283 :   auto &amp;lx = trial_fespace.GetLVector&lt;Vector&gt;();</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">       68283 :   auto &amp;ly = GetTestLVector();</span></span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaGNC">       68283 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L306"><span class="lineNum">     306</span>              :   {</span>
 <span id="L307"><span class="lineNum">     307</span> <span class="tlaUNC tlaBgUNC">           0 :     auto &amp;ty = test_fespace.GetTVector&lt;Vector&gt;();</span></span>
 <span id="L308"><span class="lineNum">     308</span> <span class="tlaUNC">           0 :     ty = x;</span></span>
@@ -381,14 +381,14 @@
 <span id="L311"><span class="lineNum">     311</span>              :   }</span>
 <span id="L312"><span class="lineNum">     312</span>              :   else</span>
 <span id="L313"><span class="lineNum">     313</span>              :   {</span>
-<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC tlaBgGNC">       68339 :     RestrictionMatrixMultTranspose(x, ly);</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC tlaBgGNC">       68283 :     RestrictionMatrixMultTranspose(x, ly);</span></span>
 <span id="L315"><span class="lineNum">     315</span>              :   }</span>
 <span id="L316"><span class="lineNum">     316</span>              : </span>
 <span id="L317"><span class="lineNum">     317</span>              :   // Apply the operator on the L-vector.</span>
-<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">       68339 :   A-&gt;MultTranspose(ly, lx);</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">       68283 :   A-&gt;MultTranspose(ly, lx);</span></span>
 <span id="L319"><span class="lineNum">     319</span>              : </span>
-<span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">      136678 :   trial_fespace.GetProlongationMatrix()-&gt;MultTranspose(lx, y);</span></span>
-<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">       68339 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">      136566 :   trial_fespace.GetProlongationMatrix()-&gt;MultTranspose(lx, y);</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">       68283 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L322"><span class="lineNum">     322</span>              :   {</span>
 <span id="L323"><span class="lineNum">     323</span> <span class="tlaUNC tlaBgUNC">           0 :     if (diag_policy == DiagonalPolicy::DIAG_ONE)</span></span>
 <span id="L324"><span class="lineNum">     324</span>              :     {</span>
@@ -399,25 +399,25 @@
 <span id="L329"><span class="lineNum">     329</span> <span class="tlaUNC">           0 :       linalg::SetSubVector(y, dbc_tdof_list, 0.0);</span></span>
 <span id="L330"><span class="lineNum">     330</span>              :     }</span>
 <span id="L331"><span class="lineNum">     331</span>              :   }</span>
-<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC tlaBgGNC">       68339 :   if (B)</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC tlaBgGNC">       68283 :   if (B)</span></span>
 <span id="L333"><span class="lineNum">     333</span>              :   {</span>
 <span id="L334"><span class="lineNum">     334</span> <span class="tlaUNC tlaBgUNC">           0 :     B-&gt;MultTranspose(1.0, x, 1.0, y);</span></span>
 <span id="L335"><span class="lineNum">     335</span>              :   }</span>
 <span id="L336"><span class="lineNum">     336</span>              : }</span>
 <span id="L337"><span class="lineNum">     337</span>              : </span>
-<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC tlaBgGNC">       39031 : void ParOperator::AddMult(const Vector &amp;x, Vector &amp;y, const double a) const</span></span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC tlaBgGNC">       39003 : void ParOperator::AddMult(const Vector &amp;x, Vector &amp;y, const double a) const</span></span>
 <span id="L339"><span class="lineNum">     339</span>              : {</span>
 <span id="L340"><span class="lineNum">     340</span>              :   MFEM_ASSERT(x.Size() == width &amp;&amp; y.Size() == height,</span>
 <span id="L341"><span class="lineNum">     341</span>              :               &quot;Incompatible dimensions for ParOperator::AddMult!&quot;);</span>
-<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">       39031 :   if (RAP)</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">       39003 :   if (RAP)</span></span>
 <span id="L343"><span class="lineNum">     343</span>              :   {</span>
 <span id="L344"><span class="lineNum">     344</span> <span class="tlaUNC tlaBgUNC">           0 :     RAP-&gt;AddMult(x, y, a);</span></span>
 <span id="L345"><span class="lineNum">     345</span> <span class="tlaUNC">           0 :     return;</span></span>
 <span id="L346"><span class="lineNum">     346</span>              :   }</span>
 <span id="L347"><span class="lineNum">     347</span>              : </span>
-<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC tlaBgGNC">       39031 :   auto &amp;lx = trial_fespace.GetLVector&lt;Vector&gt;();</span></span>
-<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">       39031 :   auto &amp;ly = GetTestLVector();</span></span>
-<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">       39031 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC tlaBgGNC">       39003 :   auto &amp;lx = trial_fespace.GetLVector&lt;Vector&gt;();</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">       39003 :   auto &amp;ly = GetTestLVector();</span></span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">       39003 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L351"><span class="lineNum">     351</span>              :   {</span>
 <span id="L352"><span class="lineNum">     352</span> <span class="tlaGNC">        2722 :     auto &amp;tx = trial_fespace.GetTVector&lt;Vector&gt;();</span></span>
 <span id="L353"><span class="lineNum">     353</span> <span class="tlaGNC">        2722 :     tx = x;</span></span>
@@ -426,15 +426,15 @@
 <span id="L356"><span class="lineNum">     356</span>              :   }</span>
 <span id="L357"><span class="lineNum">     357</span>              :   else</span>
 <span id="L358"><span class="lineNum">     358</span>              :   {</span>
-<span id="L359"><span class="lineNum">     359</span> <span class="tlaGNC">       72618 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(x, lx);</span></span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaGNC">       72562 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(x, lx);</span></span>
 <span id="L360"><span class="lineNum">     360</span>              :   }</span>
 <span id="L361"><span class="lineNum">     361</span>              : </span>
 <span id="L362"><span class="lineNum">     362</span>              :   // Apply the operator on the L-vector.</span>
-<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">       39031 :   A-&gt;Mult(lx, ly);</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">       39003 :   A-&gt;Mult(lx, ly);</span></span>
 <span id="L364"><span class="lineNum">     364</span>              : </span>
-<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">       39031 :   auto &amp;ty = test_fespace.GetTVector&lt;Vector&gt;();</span></span>
-<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">       39031 :   RestrictionMatrixMult(ly, ty);</span></span>
-<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">       39031 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">       39003 :   auto &amp;ty = test_fespace.GetTVector&lt;Vector&gt;();</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">       39003 :   RestrictionMatrixMult(ly, ty);</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">       39003 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L368"><span class="lineNum">     368</span>              :   {</span>
 <span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">        2722 :     if (diag_policy == DiagonalPolicy::DIAG_ONE)</span></span>
 <span id="L370"><span class="lineNum">     370</span>              :     {</span>
@@ -445,8 +445,8 @@
 <span id="L375"><span class="lineNum">     375</span> <span class="tlaUNC">           0 :       linalg::SetSubVector(ty, dbc_tdof_list, 0.0);</span></span>
 <span id="L376"><span class="lineNum">     376</span>              :     }</span>
 <span id="L377"><span class="lineNum">     377</span>              :   }</span>
-<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC tlaBgGNC">       39031 :   y.Add(a, ty);</span></span>
-<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">       39031 :   if (B)</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC tlaBgGNC">       39003 :   y.Add(a, ty);</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">       39003 :   if (B)</span></span>
 <span id="L380"><span class="lineNum">     380</span>              :   {</span>
 <span id="L381"><span class="lineNum">     381</span> <span class="tlaUNC tlaBgUNC">           0 :     B-&gt;Mult(a, x, 1.0, y);</span></span>
 <span id="L382"><span class="lineNum">     382</span>              :   }</span>
@@ -499,34 +499,34 @@
 <span id="L429"><span class="lineNum">     429</span>              :   }</span>
 <span id="L430"><span class="lineNum">     430</span>              : }</span>
 <span id="L431"><span class="lineNum">     431</span>              : </span>
-<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC tlaBgGNC">      116597 : void ParOperator::RestrictionMatrixMult(const Vector &amp;ly, Vector &amp;ty) const</span></span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC tlaBgGNC">      116540 : void ParOperator::RestrictionMatrixMult(const Vector &amp;ly, Vector &amp;ty) const</span></span>
 <span id="L433"><span class="lineNum">     433</span>              : {</span>
-<span id="L434"><span class="lineNum">     434</span> <span class="tlaGNC">      116597 :   if (!use_R)</span></span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaGNC">      116540 :   if (!use_R)</span></span>
 <span id="L435"><span class="lineNum">     435</span>              :   {</span>
-<span id="L436"><span class="lineNum">     436</span> <span class="tlaGNC">       96302 :     test_fespace.GetProlongationMatrix()-&gt;MultTranspose(ly, ty);</span></span>
+<span id="L436"><span class="lineNum">     436</span> <span class="tlaGNC">       96300 :     test_fespace.GetProlongationMatrix()-&gt;MultTranspose(ly, ty);</span></span>
 <span id="L437"><span class="lineNum">     437</span>              :   }</span>
 <span id="L438"><span class="lineNum">     438</span>              :   else</span>
 <span id="L439"><span class="lineNum">     439</span>              :   {</span>
-<span id="L440"><span class="lineNum">     440</span> <span class="tlaGNC">       68446 :     test_fespace.GetRestrictionMatrix()-&gt;Mult(ly, ty);</span></span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaGNC">       68390 :     test_fespace.GetRestrictionMatrix()-&gt;Mult(ly, ty);</span></span>
 <span id="L441"><span class="lineNum">     441</span>              :   }</span>
-<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">      116597 : }</span></span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">      116540 : }</span></span>
 <span id="L443"><span class="lineNum">     443</span>              : </span>
-<span id="L444"><span class="lineNum">     444</span> <span class="tlaGNC">       68339 : void ParOperator::RestrictionMatrixMultTranspose(const Vector &amp;ty, Vector &amp;ly) const</span></span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaGNC">       68283 : void ParOperator::RestrictionMatrixMultTranspose(const Vector &amp;ty, Vector &amp;ly) const</span></span>
 <span id="L445"><span class="lineNum">     445</span>              : {</span>
-<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">       68339 :   if (!use_R)</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">       68283 :   if (!use_R)</span></span>
 <span id="L447"><span class="lineNum">     447</span>              :   {</span>
 <span id="L448"><span class="lineNum">     448</span> <span class="tlaUNC tlaBgUNC">           0 :     test_fespace.GetProlongationMatrix()-&gt;Mult(ty, ly);</span></span>
 <span id="L449"><span class="lineNum">     449</span>              :   }</span>
 <span id="L450"><span class="lineNum">     450</span>              :   else</span>
 <span id="L451"><span class="lineNum">     451</span>              :   {</span>
-<span id="L452"><span class="lineNum">     452</span> <span class="tlaGNC tlaBgGNC">       68339 :     test_fespace.GetRestrictionMatrix()-&gt;MultTranspose(ty, ly);</span></span>
+<span id="L452"><span class="lineNum">     452</span> <span class="tlaGNC tlaBgGNC">       68283 :     test_fespace.GetRestrictionMatrix()-&gt;MultTranspose(ty, ly);</span></span>
 <span id="L453"><span class="lineNum">     453</span>              :   }</span>
-<span id="L454"><span class="lineNum">     454</span> <span class="tlaGNC">       68339 : }</span></span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaGNC">       68283 : }</span></span>
 <span id="L455"><span class="lineNum">     455</span>              : </span>
-<span id="L456"><span class="lineNum">     456</span> <span class="tlaGNC">      184936 : Vector &amp;ParOperator::GetTestLVector() const</span></span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaGNC">      184823 : Vector &amp;ParOperator::GetTestLVector() const</span></span>
 <span id="L457"><span class="lineNum">     457</span>              : {</span>
-<span id="L458"><span class="lineNum">     458</span> <span class="tlaGNC">      184936 :   return (&amp;trial_fespace == &amp;test_fespace) ? trial_fespace.GetLVector2&lt;Vector&gt;()</span></span>
-<span id="L459"><span class="lineNum">     459</span> <span class="tlaGNC">      184936 :                                            : test_fespace.GetLVector&lt;Vector&gt;();</span></span>
+<span id="L458"><span class="lineNum">     458</span> <span class="tlaGNC">      184823 :   return (&amp;trial_fespace == &amp;test_fespace) ? trial_fespace.GetLVector2&lt;Vector&gt;()</span></span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaGNC">      184823 :                                            : test_fespace.GetLVector&lt;Vector&gt;();</span></span>
 <span id="L460"><span class="lineNum">     460</span>              : }</span>
 <span id="L461"><span class="lineNum">     461</span>              : </span>
 <span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC">         795 : ComplexParOperator::ComplexParOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;dAr,</span></span>
@@ -617,20 +617,20 @@
 <span id="L547"><span class="lineNum">     547</span>              :   }</span>
 <span id="L548"><span class="lineNum">     548</span> <span class="tlaGNC">          90 : }</span></span>
 <span id="L549"><span class="lineNum">     549</span>              : </span>
-<span id="L550"><span class="lineNum">     550</span> <span class="tlaGNC">       53241 : void ComplexParOperator::Mult(const ComplexVector &amp;x, ComplexVector &amp;y) const</span></span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaGNC">       53199 : void ComplexParOperator::Mult(const ComplexVector &amp;x, ComplexVector &amp;y) const</span></span>
 <span id="L551"><span class="lineNum">     551</span>              : {</span>
 <span id="L552"><span class="lineNum">     552</span>              :   MFEM_ASSERT(x.Size() == width &amp;&amp; y.Size() == height,</span>
 <span id="L553"><span class="lineNum">     553</span>              :               &quot;Incompatible dimensions for ComplexParOperator::Mult!&quot;);</span>
 <span id="L554"><span class="lineNum">     554</span>              : </span>
-<span id="L555"><span class="lineNum">     555</span> <span class="tlaGNC">       53241 :   auto &amp;lx = trial_fespace.GetLVector&lt;ComplexVector&gt;();</span></span>
-<span id="L556"><span class="lineNum">     556</span> <span class="tlaGNC">       53241 :   auto &amp;ly = GetTestLVector();</span></span>
-<span id="L557"><span class="lineNum">     557</span> <span class="tlaGNC">       53241 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaGNC">       53199 :   auto &amp;lx = trial_fespace.GetLVector&lt;ComplexVector&gt;();</span></span>
+<span id="L556"><span class="lineNum">     556</span> <span class="tlaGNC">       53199 :   auto &amp;ly = GetTestLVector();</span></span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaGNC">       53199 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L558"><span class="lineNum">     558</span>              :   {</span>
-<span id="L559"><span class="lineNum">     559</span> <span class="tlaGNC">       42179 :     auto &amp;tx = trial_fespace.GetTVector&lt;ComplexVector&gt;();</span></span>
+<span id="L559"><span class="lineNum">     559</span> <span class="tlaGNC">       42137 :     auto &amp;tx = trial_fespace.GetTVector&lt;ComplexVector&gt;();</span></span>
 <span id="L560"><span class="lineNum">     560</span>              :     tx = x;</span>
-<span id="L561"><span class="lineNum">     561</span> <span class="tlaGNC">       42179 :     linalg::SetSubVector(tx, dbc_tdof_list, 0.0);</span></span>
-<span id="L562"><span class="lineNum">     562</span> <span class="tlaGNC">       84358 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Real(), lx.Real());</span></span>
-<span id="L563"><span class="lineNum">     563</span> <span class="tlaGNC">       84358 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Imag(), lx.Imag());</span></span>
+<span id="L561"><span class="lineNum">     561</span> <span class="tlaGNC">       42137 :     linalg::SetSubVector(tx, dbc_tdof_list, 0.0);</span></span>
+<span id="L562"><span class="lineNum">     562</span> <span class="tlaGNC">       84274 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Real(), lx.Real());</span></span>
+<span id="L563"><span class="lineNum">     563</span> <span class="tlaGNC">       84274 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Imag(), lx.Imag());</span></span>
 <span id="L564"><span class="lineNum">     564</span>              :   }</span>
 <span id="L565"><span class="lineNum">     565</span>              :   else</span>
 <span id="L566"><span class="lineNum">     566</span>              :   {</span>
@@ -639,21 +639,21 @@
 <span id="L569"><span class="lineNum">     569</span>              :   }</span>
 <span id="L570"><span class="lineNum">     570</span>              : </span>
 <span id="L571"><span class="lineNum">     571</span>              :   // Apply the operator on the L-vector.</span>
-<span id="L572"><span class="lineNum">     572</span> <span class="tlaGNC">       53241 :   A-&gt;Mult(lx, ly);</span></span>
+<span id="L572"><span class="lineNum">     572</span> <span class="tlaGNC">       53199 :   A-&gt;Mult(lx, ly);</span></span>
 <span id="L573"><span class="lineNum">     573</span>              : </span>
-<span id="L574"><span class="lineNum">     574</span> <span class="tlaGNC">       53241 :   RestrictionMatrixMult(ly, y);</span></span>
-<span id="L575"><span class="lineNum">     575</span> <span class="tlaGNC">       53241 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L574"><span class="lineNum">     574</span> <span class="tlaGNC">       53199 :   RestrictionMatrixMult(ly, y);</span></span>
+<span id="L575"><span class="lineNum">     575</span> <span class="tlaGNC">       53199 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L576"><span class="lineNum">     576</span>              :   {</span>
-<span id="L577"><span class="lineNum">     577</span> <span class="tlaGNC">       42179 :     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)</span></span>
+<span id="L577"><span class="lineNum">     577</span> <span class="tlaGNC">       42137 :     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)</span></span>
 <span id="L578"><span class="lineNum">     578</span>              :     {</span>
-<span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">       42128 :       linalg::SetSubVector(y, dbc_tdof_list, x);</span></span>
+<span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">       42086 :       linalg::SetSubVector(y, dbc_tdof_list, x);</span></span>
 <span id="L580"><span class="lineNum">     580</span>              :     }</span>
 <span id="L581"><span class="lineNum">     581</span> <span class="tlaGNC">          51 :     else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)</span></span>
 <span id="L582"><span class="lineNum">     582</span>              :     {</span>
 <span id="L583"><span class="lineNum">     583</span> <span class="tlaGNC">          51 :       linalg::SetSubVector(y, dbc_tdof_list, 0.0);</span></span>
 <span id="L584"><span class="lineNum">     584</span>              :     }</span>
 <span id="L585"><span class="lineNum">     585</span>              :   }</span>
-<span id="L586"><span class="lineNum">     586</span> <span class="tlaGNC">       53241 : }</span></span>
+<span id="L586"><span class="lineNum">     586</span> <span class="tlaGNC">       53199 : }</span></span>
 <span id="L587"><span class="lineNum">     587</span>              : </span>
 <span id="L588"><span class="lineNum">     588</span> <span class="tlaGNC">          36 : void ComplexParOperator::MultTranspose(const ComplexVector &amp;x, ComplexVector &amp;y) const</span></span>
 <span id="L589"><span class="lineNum">     589</span>              : {</span>
@@ -730,21 +730,21 @@
 <span id="L660"><span class="lineNum">     660</span>              :   }</span>
 <span id="L661"><span class="lineNum">     661</span> <span class="tlaGNC tlaBgGNC">        1734 : }</span></span>
 <span id="L662"><span class="lineNum">     662</span>              : </span>
-<span id="L663"><span class="lineNum">     663</span> <span class="tlaGNC">      153324 : void ComplexParOperator::AddMult(const ComplexVector &amp;x, ComplexVector &amp;y,</span></span>
+<span id="L663"><span class="lineNum">     663</span> <span class="tlaGNC">      153198 : void ComplexParOperator::AddMult(const ComplexVector &amp;x, ComplexVector &amp;y,</span></span>
 <span id="L664"><span class="lineNum">     664</span>              :                                  const std::complex&lt;double&gt; a) const</span>
 <span id="L665"><span class="lineNum">     665</span>              : {</span>
 <span id="L666"><span class="lineNum">     666</span>              :   MFEM_ASSERT(x.Size() == width &amp;&amp; y.Size() == height,</span>
 <span id="L667"><span class="lineNum">     667</span>              :               &quot;Incompatible dimensions for ComplexParOperator::AddMult!&quot;);</span>
 <span id="L668"><span class="lineNum">     668</span>              : </span>
-<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">      153324 :   auto &amp;lx = trial_fespace.GetLVector&lt;ComplexVector&gt;();</span></span>
-<span id="L670"><span class="lineNum">     670</span> <span class="tlaGNC">      153324 :   auto &amp;ly = GetTestLVector();</span></span>
-<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">      153324 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">      153198 :   auto &amp;lx = trial_fespace.GetLVector&lt;ComplexVector&gt;();</span></span>
+<span id="L670"><span class="lineNum">     670</span> <span class="tlaGNC">      153198 :   auto &amp;ly = GetTestLVector();</span></span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">      153198 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L672"><span class="lineNum">     672</span>              :   {</span>
-<span id="L673"><span class="lineNum">     673</span> <span class="tlaGNC">      122052 :     auto &amp;tx = trial_fespace.GetTVector&lt;ComplexVector&gt;();</span></span>
+<span id="L673"><span class="lineNum">     673</span> <span class="tlaGNC">      121926 :     auto &amp;tx = trial_fespace.GetTVector&lt;ComplexVector&gt;();</span></span>
 <span id="L674"><span class="lineNum">     674</span>              :     tx = x;</span>
-<span id="L675"><span class="lineNum">     675</span> <span class="tlaGNC">      122052 :     linalg::SetSubVector(tx, dbc_tdof_list, 0.0);</span></span>
-<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC">      244104 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Real(), lx.Real());</span></span>
-<span id="L677"><span class="lineNum">     677</span> <span class="tlaGNC">      244104 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Imag(), lx.Imag());</span></span>
+<span id="L675"><span class="lineNum">     675</span> <span class="tlaGNC">      121926 :     linalg::SetSubVector(tx, dbc_tdof_list, 0.0);</span></span>
+<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC">      243852 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Real(), lx.Real());</span></span>
+<span id="L677"><span class="lineNum">     677</span> <span class="tlaGNC">      243852 :     trial_fespace.GetProlongationMatrix()-&gt;Mult(tx.Imag(), lx.Imag());</span></span>
 <span id="L678"><span class="lineNum">     678</span>              :   }</span>
 <span id="L679"><span class="lineNum">     679</span>              :   else</span>
 <span id="L680"><span class="lineNum">     680</span>              :   {</span>
@@ -753,23 +753,23 @@
 <span id="L683"><span class="lineNum">     683</span>              :   }</span>
 <span id="L684"><span class="lineNum">     684</span>              : </span>
 <span id="L685"><span class="lineNum">     685</span>              :   // Apply the operator on the L-vector.</span>
-<span id="L686"><span class="lineNum">     686</span> <span class="tlaGNC">      153324 :   A-&gt;Mult(lx, ly);</span></span>
+<span id="L686"><span class="lineNum">     686</span> <span class="tlaGNC">      153198 :   A-&gt;Mult(lx, ly);</span></span>
 <span id="L687"><span class="lineNum">     687</span>              : </span>
-<span id="L688"><span class="lineNum">     688</span> <span class="tlaGNC">      153324 :   auto &amp;ty = test_fespace.GetTVector&lt;ComplexVector&gt;();</span></span>
-<span id="L689"><span class="lineNum">     689</span> <span class="tlaGNC">      153324 :   RestrictionMatrixMult(ly, ty);</span></span>
-<span id="L690"><span class="lineNum">     690</span> <span class="tlaGNC">      153324 :   if (dbc_tdof_list.Size())</span></span>
+<span id="L688"><span class="lineNum">     688</span> <span class="tlaGNC">      153198 :   auto &amp;ty = test_fespace.GetTVector&lt;ComplexVector&gt;();</span></span>
+<span id="L689"><span class="lineNum">     689</span> <span class="tlaGNC">      153198 :   RestrictionMatrixMult(ly, ty);</span></span>
+<span id="L690"><span class="lineNum">     690</span> <span class="tlaGNC">      153198 :   if (dbc_tdof_list.Size())</span></span>
 <span id="L691"><span class="lineNum">     691</span>              :   {</span>
-<span id="L692"><span class="lineNum">     692</span> <span class="tlaGNC">      122052 :     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)</span></span>
+<span id="L692"><span class="lineNum">     692</span> <span class="tlaGNC">      121926 :     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)</span></span>
 <span id="L693"><span class="lineNum">     693</span>              :     {</span>
-<span id="L694"><span class="lineNum">     694</span> <span class="tlaGNC">      122052 :       linalg::SetSubVector(ty, dbc_tdof_list, x);</span></span>
+<span id="L694"><span class="lineNum">     694</span> <span class="tlaGNC">      121926 :       linalg::SetSubVector(ty, dbc_tdof_list, x);</span></span>
 <span id="L695"><span class="lineNum">     695</span>              :     }</span>
 <span id="L696"><span class="lineNum">     696</span> <span class="tlaUNC tlaBgUNC">           0 :     else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)</span></span>
 <span id="L697"><span class="lineNum">     697</span>              :     {</span>
 <span id="L698"><span class="lineNum">     698</span> <span class="tlaUNC">           0 :       linalg::SetSubVector(ty, dbc_tdof_list, 0.0);</span></span>
 <span id="L699"><span class="lineNum">     699</span>              :     }</span>
 <span id="L700"><span class="lineNum">     700</span>              :   }</span>
-<span id="L701"><span class="lineNum">     701</span> <span class="tlaGNC tlaBgGNC">      153324 :   y.AXPY(a, ty);</span></span>
-<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC">      153324 : }</span></span>
+<span id="L701"><span class="lineNum">     701</span> <span class="tlaGNC tlaBgGNC">      153198 :   y.AXPY(a, ty);</span></span>
+<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC">      153198 : }</span></span>
 <span id="L703"><span class="lineNum">     703</span>              : </span>
 <span id="L704"><span class="lineNum">     704</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexParOperator::AddMultTranspose(const ComplexVector &amp;x, ComplexVector &amp;y,</span></span>
 <span id="L705"><span class="lineNum">     705</span>              :                                           const std::complex&lt;double&gt; a) const</span>
@@ -851,20 +851,20 @@
 <span id="L781"><span class="lineNum">     781</span> <span class="tlaUNC">           0 :   y.AXPY(a, tx);</span></span>
 <span id="L782"><span class="lineNum">     782</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L783"><span class="lineNum">     783</span>              : </span>
-<span id="L784"><span class="lineNum">     784</span> <span class="tlaGNC tlaBgGNC">      206565 : void ComplexParOperator::RestrictionMatrixMult(const ComplexVector &amp;ly,</span></span>
+<span id="L784"><span class="lineNum">     784</span> <span class="tlaGNC tlaBgGNC">      206397 : void ComplexParOperator::RestrictionMatrixMult(const ComplexVector &amp;ly,</span></span>
 <span id="L785"><span class="lineNum">     785</span>              :                                                ComplexVector &amp;ty) const</span>
 <span id="L786"><span class="lineNum">     786</span>              : {</span>
-<span id="L787"><span class="lineNum">     787</span> <span class="tlaGNC">      206565 :   if (!use_R)</span></span>
+<span id="L787"><span class="lineNum">     787</span> <span class="tlaGNC">      206397 :   if (!use_R)</span></span>
 <span id="L788"><span class="lineNum">     788</span>              :   {</span>
-<span id="L789"><span class="lineNum">     789</span> <span class="tlaGNC">      413130 :     test_fespace.GetProlongationMatrix()-&gt;MultTranspose(ly.Real(), ty.Real());</span></span>
-<span id="L790"><span class="lineNum">     790</span> <span class="tlaGNC">      413130 :     test_fespace.GetProlongationMatrix()-&gt;MultTranspose(ly.Imag(), ty.Imag());</span></span>
+<span id="L789"><span class="lineNum">     789</span> <span class="tlaGNC">      412794 :     test_fespace.GetProlongationMatrix()-&gt;MultTranspose(ly.Real(), ty.Real());</span></span>
+<span id="L790"><span class="lineNum">     790</span> <span class="tlaGNC">      412794 :     test_fespace.GetProlongationMatrix()-&gt;MultTranspose(ly.Imag(), ty.Imag());</span></span>
 <span id="L791"><span class="lineNum">     791</span>              :   }</span>
 <span id="L792"><span class="lineNum">     792</span>              :   else</span>
 <span id="L793"><span class="lineNum">     793</span>              :   {</span>
 <span id="L794"><span class="lineNum">     794</span> <span class="tlaUNC tlaBgUNC">           0 :     test_fespace.GetRestrictionMatrix()-&gt;Mult(ly.Real(), ty.Real());</span></span>
 <span id="L795"><span class="lineNum">     795</span> <span class="tlaUNC">           0 :     test_fespace.GetRestrictionMatrix()-&gt;Mult(ly.Imag(), ty.Imag());</span></span>
 <span id="L796"><span class="lineNum">     796</span>              :   }</span>
-<span id="L797"><span class="lineNum">     797</span> <span class="tlaGNC tlaBgGNC">      206565 : }</span></span>
+<span id="L797"><span class="lineNum">     797</span> <span class="tlaGNC tlaBgGNC">      206397 : }</span></span>
 <span id="L798"><span class="lineNum">     798</span>              : </span>
 <span id="L799"><span class="lineNum">     799</span> <span class="tlaGNC">        1770 : void ComplexParOperator::RestrictionMatrixMultTranspose(const ComplexVector &amp;ty,</span></span>
 <span id="L800"><span class="lineNum">     800</span>              :                                                         ComplexVector &amp;ly) const</span>
@@ -881,10 +881,10 @@
 <span id="L811"><span class="lineNum">     811</span>              :   }</span>
 <span id="L812"><span class="lineNum">     812</span> <span class="tlaGNC tlaBgGNC">        1770 : }</span></span>
 <span id="L813"><span class="lineNum">     813</span>              : </span>
-<span id="L814"><span class="lineNum">     814</span> <span class="tlaGNC">      208335 : ComplexVector &amp;ComplexParOperator::GetTestLVector() const</span></span>
+<span id="L814"><span class="lineNum">     814</span> <span class="tlaGNC">      208167 : ComplexVector &amp;ComplexParOperator::GetTestLVector() const</span></span>
 <span id="L815"><span class="lineNum">     815</span>              : {</span>
-<span id="L816"><span class="lineNum">     816</span> <span class="tlaGNC">      208335 :   return (&amp;trial_fespace == &amp;test_fespace) ? trial_fespace.GetLVector2&lt;ComplexVector&gt;()</span></span>
-<span id="L817"><span class="lineNum">     817</span> <span class="tlaGNC">      208335 :                                            : test_fespace.GetLVector&lt;ComplexVector&gt;();</span></span>
+<span id="L816"><span class="lineNum">     816</span> <span class="tlaGNC">      208167 :   return (&amp;trial_fespace == &amp;test_fespace) ? trial_fespace.GetLVector2&lt;ComplexVector&gt;()</span></span>
+<span id="L817"><span class="lineNum">     817</span> <span class="tlaGNC">      208167 :                                            : test_fespace.GetLVector&lt;ComplexVector&gt;();</span></span>
 <span id="L818"><span class="lineNum">     818</span>              : }</span>
 <span id="L819"><span class="lineNum">     819</span>              : </span>
 <span id="L820"><span class="lineNum">     820</span>              : // Helper that checks if two containers (Vector or Array&lt;T&gt;) are actually references to the</span>

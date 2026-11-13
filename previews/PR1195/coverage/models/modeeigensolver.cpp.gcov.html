@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">92.0&nbsp;%</td>
@@ -430,16 +430,16 @@
 <span id="L360"><span class="lineNum">     360</span>              :   // exact ties.</span>
 <span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">         360 :   const double kn_target = std::sqrt(-sigma);</span></span>
 <span id="L362"><span class="lineNum">     362</span> <span class="tlaGNC">         360 :   std::vector&lt;double&gt; distance(num_conv);</span></span>
-<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">        1571 :   for (int i = 0; i &lt; num_conv; i++)</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">        1569 :   for (int i = 0; i &lt; num_conv; i++)</span></span>
 <span id="L364"><span class="lineNum">     364</span>              :   {</span>
-<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">        1211 :     distance[i] = mode_assembly::TargetDistance(</span></span>
-<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">        2422 :         mode_assembly::PropagationConstant(-sigma - 1.0 / eigen-&gt;GetEigenvalue(i), omega),</span></span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">        1209 :     distance[i] = mode_assembly::TargetDistance(</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">        2418 :         mode_assembly::PropagationConstant(-sigma - 1.0 / eigen-&gt;GetEigenvalue(i), omega),</span></span>
 <span id="L367"><span class="lineNum">     367</span>              :         kn_target);</span>
 <span id="L368"><span class="lineNum">     368</span>              :   }</span>
 <span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">         360 :   mode_perm.resize(num_conv);</span></span>
 <span id="L370"><span class="lineNum">     370</span>              :   std::iota(mode_perm.begin(), mode_perm.end(), 0);</span>
 <span id="L371"><span class="lineNum">     371</span>              :   std::ranges::stable_sort(mode_perm,</span>
-<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">        1627 :                            [&amp;distance](int a, int b) { return distance[a] &lt; distance[b]; });</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">        1625 :                            [&amp;distance](int a, int b) { return distance[a] &lt; distance[b]; });</span></span>
 <span id="L373"><span class="lineNum">     373</span>              : </span>
 <span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">         360 :   if (real_frequency &amp;&amp; num_conv &gt; 0)</span></span>
 <span id="L375"><span class="lineNum">     375</span>              :   {</span>

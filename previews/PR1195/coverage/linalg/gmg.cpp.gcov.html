@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -192,7 +192,7 @@
 <span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">          82 : }</span></span>
 <span id="L123"><span class="lineNum">     123</span>              : </span>
 <span id="L124"><span class="lineNum">     124</span>              : template &lt;OperatorType OperType&gt;</span>
-<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">       17241 : void GeometricMultigridSolver&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">       17227 : void GeometricMultigridSolver&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
 <span id="L126"><span class="lineNum">     126</span>              : {</span>
 <span id="L127"><span class="lineNum">     127</span>              :   // Initialize.</span>
 <span id="L128"><span class="lineNum">     128</span>              :   const auto n_levels = A.size();</span>
@@ -203,12 +203,12 @@
 <span id="L133"><span class="lineNum">     133</span>              : </span>
 <span id="L134"><span class="lineNum">     134</span>              :   // Apply V-cycle. The initial guess for y is zero'd at the first pre-smooth iteration.</span>
 <span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">         309 :   X.back() = x;</span></span>
-<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">       34482 :   for (int it = 0; it &lt; pc_it; it++)</span></span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">       34454 :   for (int it = 0; it &lt; pc_it; it++)</span></span>
 <span id="L137"><span class="lineNum">     137</span>              :   {</span>
-<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">       17241 :     VCycle(n_levels - 1, (it &gt; 0));</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">       17227 :     VCycle(n_levels - 1, (it &gt; 0));</span></span>
 <span id="L139"><span class="lineNum">     139</span>              :   }</span>
 <span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">         309 :   y = Y.back();</span></span>
-<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">       17241 : }</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">       17227 : }</span></span>
 <span id="L142"><span class="lineNum">     142</span>              : </span>
 <span id="L143"><span class="lineNum">     143</span>              : namespace</span>
 <span id="L144"><span class="lineNum">     144</span>              : {</span>
@@ -220,8 +220,8 @@
 <span id="L150"><span class="lineNum">     150</span>              : </span>
 <span id="L151"><span class="lineNum">     151</span>              : inline void RealMult(const Operator &amp;op, const ComplexVector &amp;x, ComplexVector &amp;y)</span>
 <span id="L152"><span class="lineNum">     152</span>              : {</span>
-<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       16962 :   op.Mult(x.Real(), y.Real());</span></span>
-<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">       16962 :   op.Mult(x.Imag(), y.Imag());</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       16948 :   op.Mult(x.Real(), y.Real());</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">       16948 :   op.Mult(x.Imag(), y.Imag());</span></span>
 <span id="L155"><span class="lineNum">     155</span>              : }</span>
 <span id="L156"><span class="lineNum">     156</span>              : </span>
 <span id="L157"><span class="lineNum">     157</span>              : inline void RealMultTranspose(const Operator &amp;op, const Vector &amp;x, Vector &amp;y)</span>
@@ -231,46 +231,46 @@
 <span id="L161"><span class="lineNum">     161</span>              : </span>
 <span id="L162"><span class="lineNum">     162</span>              : inline void RealMultTranspose(const Operator &amp;op, const ComplexVector &amp;x, ComplexVector &amp;y)</span>
 <span id="L163"><span class="lineNum">     163</span>              : {</span>
-<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">       16962 :   op.MultTranspose(x.Real(), y.Real());</span></span>
-<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">       16962 :   op.MultTranspose(x.Imag(), y.Imag());</span></span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">       16948 :   op.MultTranspose(x.Real(), y.Real());</span></span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">       16948 :   op.MultTranspose(x.Imag(), y.Imag());</span></span>
 <span id="L166"><span class="lineNum">     166</span>              : }</span>
 <span id="L167"><span class="lineNum">     167</span>              : </span>
 <span id="L168"><span class="lineNum">     168</span>              : }  // namespace</span>
 <span id="L169"><span class="lineNum">     169</span>              : </span>
 <span id="L170"><span class="lineNum">     170</span>              : template &lt;OperatorType OperType&gt;</span>
-<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">       34574 : void GeometricMultigridSolver&lt;OperType&gt;::VCycle(int l, bool initial_guess) const</span></span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">       34546 : void GeometricMultigridSolver&lt;OperType&gt;::VCycle(int l, bool initial_guess) const</span></span>
 <span id="L172"><span class="lineNum">     172</span>              : {</span>
 <span id="L173"><span class="lineNum">     173</span>              :   // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at</span>
 <span id="L174"><span class="lineNum">     174</span>              :   // level 0. Important to note that the smoothers must respect the initial guess flag</span>
 <span id="L175"><span class="lineNum">     175</span>              :   // correctly (given X, Y, compute Y &lt;- Y + B (X - A Y)) .</span>
-<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">       34574 :   B[l]-&gt;SetInitialGuess(initial_guess);</span></span>
-<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">       34574 :   if (l == 0)</span></span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">       34546 :   B[l]-&gt;SetInitialGuess(initial_guess);</span></span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">       34546 :   if (l == 0)</span></span>
 <span id="L178"><span class="lineNum">     178</span>              :   {</span>
-<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">       17241 :     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);</span></span>
-<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">       17241 :     B[l]-&gt;Mult(X[l], Y[l]);</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">       17227 :     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">       17227 :     B[l]-&gt;Mult(X[l], Y[l]);</span></span>
 <span id="L181"><span class="lineNum">     181</span>              :     return;</span>
-<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">       17241 :   }</span></span>
-<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">       17333 :   B[l]-&gt;Mult2(X[l], Y[l], R[l]);</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">       17227 :   }</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">       17319 :   B[l]-&gt;Mult2(X[l], Y[l], R[l]);</span></span>
 <span id="L184"><span class="lineNum">     184</span>              : </span>
 <span id="L185"><span class="lineNum">     185</span>              :   // Compute residual.</span>
-<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">       17333 :   A[l]-&gt;Mult(Y[l], R[l]);</span></span>
-<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">       17333 :   linalg::AXPBY(1.0, X[l], -1.0, R[l]);</span></span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">       17319 :   A[l]-&gt;Mult(Y[l], R[l]);</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">       17319 :   linalg::AXPBY(1.0, X[l], -1.0, R[l]);</span></span>
 <span id="L188"><span class="lineNum">     188</span>              : </span>
 <span id="L189"><span class="lineNum">     189</span>              :   // Coarse grid correction.</span>
-<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">       17333 :   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);</span></span>
-<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">       17333 :   if (dbc_tdof_lists[l - 1])</span></span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">       17319 :   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">       17319 :   if (dbc_tdof_lists[l - 1])</span></span>
 <span id="L192"><span class="lineNum">     192</span>              :   {</span>
-<span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">       13859 :     linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);</span></span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">       13845 :     linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);</span></span>
 <span id="L194"><span class="lineNum">     194</span>              :   }</span>
-<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">       17333 :   VCycle(l - 1, false);</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">       17319 :   VCycle(l - 1, false);</span></span>
 <span id="L196"><span class="lineNum">     196</span>              : </span>
 <span id="L197"><span class="lineNum">     197</span>              :   // Prolongate and add.</span>
-<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">       17333 :   RealMult(*P[l - 1], Y[l - 1], R[l]);</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">       17319 :   RealMult(*P[l - 1], Y[l - 1], R[l]);</span></span>
 <span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">         371 :   Y[l] += R[l];</span></span>
 <span id="L200"><span class="lineNum">     200</span>              : </span>
 <span id="L201"><span class="lineNum">     201</span>              :   // Post-smooth, with nonzero initial guess.</span>
-<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">       17333 :   B[l]-&gt;SetInitialGuess(true);</span></span>
-<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC">       17333 :   B[l]-&gt;MultTranspose2(X[l], Y[l], R[l]);</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">       17319 :   B[l]-&gt;SetInitialGuess(true);</span></span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC">       17319 :   B[l]-&gt;MultTranspose2(X[l], Y[l], R[l]);</span></span>
 <span id="L204"><span class="lineNum">     204</span>              : }</span>
 <span id="L205"><span class="lineNum">     205</span>              : </span>
 <span id="L206"><span class="lineNum">     206</span>              : template class GeometricMultigridSolver&lt;Operator&gt;;</span>

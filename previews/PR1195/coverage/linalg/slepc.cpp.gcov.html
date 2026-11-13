@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">26.4&nbsp;%</td>
@@ -110,18 +110,18 @@
 <span id="L40"><span class="lineNum">      40</span>              : namespace</span>
 <span id="L41"><span class="lineNum">      41</span>              : {</span>
 <span id="L42"><span class="lineNum">      42</span>              : </span>
-<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC tlaBgGNC">       14849 : inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &amp;y, int block = 0,</span></span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC tlaBgGNC">       14847 : inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &amp;y, int block = 0,</span></span>
 <span id="L44"><span class="lineNum">      44</span>              :                                    int nblocks = 1)</span>
 <span id="L45"><span class="lineNum">      45</span>              : {</span>
 <span id="L46"><span class="lineNum">      46</span>              :   PetscInt n;</span>
 <span id="L47"><span class="lineNum">      47</span>              :   const PetscScalar *px;</span>
 <span id="L48"><span class="lineNum">      48</span>              :   PetscMemType mtype;</span>
-<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">       14849 :   PetscCall(VecGetLocalSize(x, &amp;n));</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">       14847 :   PetscCall(VecGetLocalSize(x, &amp;n));</span></span>
 <span id="L50"><span class="lineNum">      50</span>              :   MFEM_ASSERT(y.Size() * nblocks == n,</span>
 <span id="L51"><span class="lineNum">      51</span>              :               &quot;Invalid size mismatch for PETSc vector conversion!&quot;);</span>
-<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">       14849 :   PetscCall(VecGetArrayReadAndMemType(x, &amp;px, &amp;mtype));</span></span>
-<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">       14849 :   y.Set(px + block * n / nblocks, n / nblocks, PetscMemTypeDevice(mtype));</span></span>
-<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">       14849 :   PetscCall(VecRestoreArrayReadAndMemType(x, &amp;px));</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">       14847 :   PetscCall(VecGetArrayReadAndMemType(x, &amp;px, &amp;mtype));</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">       14847 :   y.Set(px + block * n / nblocks, n / nblocks, PetscMemTypeDevice(mtype));</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">       14847 :   PetscCall(VecRestoreArrayReadAndMemType(x, &amp;px));</span></span>
 <span id="L55"><span class="lineNum">      55</span>              :   return PETSC_SUCCESS;</span>
 <span id="L56"><span class="lineNum">      56</span>              : }</span>
 <span id="L57"><span class="lineNum">      57</span>              : </span>
@@ -415,16 +415,16 @@
 <span id="L345"><span class="lineNum">     345</span>              :   }</span>
 <span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC tlaBgGNC">         360 : }</span></span>
 <span id="L347"><span class="lineNum">     347</span>              : </span>
-<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">        1211 : PetscReal SlepcEigenvalueSolver::GetEigenvectorNorm(const ComplexVector &amp;x,</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">        1209 : PetscReal SlepcEigenvalueSolver::GetEigenvectorNorm(const ComplexVector &amp;x,</span></span>
 <span id="L349"><span class="lineNum">     349</span>              :                                                     ComplexVector &amp;Bx) const</span>
 <span id="L350"><span class="lineNum">     350</span>              : {</span>
-<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">        1211 :   if (opB)</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">        1209 :   if (opB)</span></span>
 <span id="L352"><span class="lineNum">     352</span>              :   {</span>
 <span id="L353"><span class="lineNum">     353</span> <span class="tlaUNC tlaBgUNC">           0 :     return linalg::Norml2(GetComm(), x, *opB, Bx);</span></span>
 <span id="L354"><span class="lineNum">     354</span>              :   }</span>
 <span id="L355"><span class="lineNum">     355</span>              :   else</span>
 <span id="L356"><span class="lineNum">     356</span>              :   {</span>
-<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC tlaBgGNC">        1211 :     return linalg::Norml2(GetComm(), x);</span></span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC tlaBgGNC">        1209 :     return linalg::Norml2(GetComm(), x);</span></span>
 <span id="L358"><span class="lineNum">     358</span>              :   }</span>
 <span id="L359"><span class="lineNum">     359</span>              : }</span>
 <span id="L360"><span class="lineNum">     360</span>              : </span>
@@ -446,13 +446,13 @@
 <span id="L376"><span class="lineNum">     376</span>              : {</span>
 <span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">         360 :   res = std::make_unique&lt;PetscReal[]&gt;(num_eig);</span></span>
 <span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">         360 :   xscale = std::make_unique&lt;PetscReal[]&gt;(num_eig);</span></span>
-<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">        1571 :   for (int i = 0; i &lt; num_eig; i++)</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">        1569 :   for (int i = 0; i &lt; num_eig; i++)</span></span>
 <span id="L380"><span class="lineNum">     380</span>              :   {</span>
-<span id="L381"><span class="lineNum">     381</span> <span class="tlaGNC">        1211 :     xscale.get()[i] = 0.0;</span></span>
-<span id="L382"><span class="lineNum">     382</span> <span class="tlaGNC">        1211 :     GetEigenvector(i, x1);</span></span>
-<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">        1211 :     xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);</span></span>
-<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC">        1211 :     res.get()[i] =</span></span>
-<span id="L385"><span class="lineNum">     385</span> <span class="tlaGNC">        1211 :         GetResidualNorm(GetEigenvalue(i), x1, y1) / linalg::Norml2(GetComm(), x1);</span></span>
+<span id="L381"><span class="lineNum">     381</span> <span class="tlaGNC">        1209 :     xscale.get()[i] = 0.0;</span></span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaGNC">        1209 :     GetEigenvector(i, x1);</span></span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">        1209 :     xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);</span></span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC">        1209 :     res.get()[i] =</span></span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaGNC">        1209 :         GetResidualNorm(GetEigenvalue(i), x1, y1) / linalg::Norml2(GetComm(), x1);</span></span>
 <span id="L386"><span class="lineNum">     386</span>              :   }</span>
 <span id="L387"><span class="lineNum">     387</span> <span class="tlaGNC">         360 : }</span></span>
 <span id="L388"><span class="lineNum">     388</span>              : </span>
@@ -654,25 +654,25 @@
 <span id="L584"><span class="lineNum">     584</span> <span class="tlaGNC">         360 :   return static_cast&lt;int&gt;(num_conv);</span></span>
 <span id="L585"><span class="lineNum">     585</span>              : }</span>
 <span id="L586"><span class="lineNum">     586</span>              : </span>
-<span id="L587"><span class="lineNum">     587</span> <span class="tlaGNC">        2890 : std::complex&lt;double&gt; SlepcEPSSolverBase::GetEigenvalue(int i) const</span></span>
+<span id="L587"><span class="lineNum">     587</span> <span class="tlaGNC">        2886 : std::complex&lt;double&gt; SlepcEPSSolverBase::GetEigenvalue(int i) const</span></span>
 <span id="L588"><span class="lineNum">     588</span>              : {</span>
-<span id="L589"><span class="lineNum">     589</span> <span class="tlaGNC">        2890 :   PetscScalar l;</span></span>
-<span id="L590"><span class="lineNum">     590</span> <span class="tlaGNC">        2890 :   PalacePetscCall(EPSGetEigenvalue(eps, i, &amp;l, nullptr));</span></span>
-<span id="L591"><span class="lineNum">     591</span> <span class="tlaGNC">        2890 :   return l * gamma;</span></span>
+<span id="L589"><span class="lineNum">     589</span> <span class="tlaGNC">        2886 :   PetscScalar l;</span></span>
+<span id="L590"><span class="lineNum">     590</span> <span class="tlaGNC">        2886 :   PalacePetscCall(EPSGetEigenvalue(eps, i, &amp;l, nullptr));</span></span>
+<span id="L591"><span class="lineNum">     591</span> <span class="tlaGNC">        2886 :   return l * gamma;</span></span>
 <span id="L592"><span class="lineNum">     592</span>              : }</span>
 <span id="L593"><span class="lineNum">     593</span>              : </span>
-<span id="L594"><span class="lineNum">     594</span> <span class="tlaGNC">        1851 : void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &amp;x) const</span></span>
+<span id="L594"><span class="lineNum">     594</span> <span class="tlaGNC">        1849 : void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &amp;x) const</span></span>
 <span id="L595"><span class="lineNum">     595</span>              : {</span>
-<span id="L596"><span class="lineNum">     596</span> <span class="tlaGNC">        1851 :   MFEM_VERIFY(</span></span>
+<span id="L596"><span class="lineNum">     596</span> <span class="tlaGNC">        1849 :   MFEM_VERIFY(</span></span>
 <span id="L597"><span class="lineNum">     597</span>              :       v0,</span>
 <span id="L598"><span class="lineNum">     598</span>              :       &quot;Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!&quot;);</span>
-<span id="L599"><span class="lineNum">     599</span> <span class="tlaGNC">        1851 :   PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));</span></span>
-<span id="L600"><span class="lineNum">     600</span> <span class="tlaGNC">        1851 :   PalacePetscCall(FromPetscVec(v0, x));</span></span>
-<span id="L601"><span class="lineNum">     601</span> <span class="tlaGNC">        1851 :   if (xscale.get()[i] &gt; 0.0)</span></span>
+<span id="L599"><span class="lineNum">     599</span> <span class="tlaGNC">        1849 :   PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));</span></span>
+<span id="L600"><span class="lineNum">     600</span> <span class="tlaGNC">        1849 :   PalacePetscCall(FromPetscVec(v0, x));</span></span>
+<span id="L601"><span class="lineNum">     601</span> <span class="tlaGNC">        1849 :   if (xscale.get()[i] &gt; 0.0)</span></span>
 <span id="L602"><span class="lineNum">     602</span>              :   {</span>
 <span id="L603"><span class="lineNum">     603</span> <span class="tlaGNC">         640 :     x *= xscale.get()[i];</span></span>
 <span id="L604"><span class="lineNum">     604</span>              :   }</span>
-<span id="L605"><span class="lineNum">     605</span> <span class="tlaGNC">        1851 : }</span></span>
+<span id="L605"><span class="lineNum">     605</span> <span class="tlaGNC">        1849 : }</span></span>
 <span id="L606"><span class="lineNum">     606</span>              : </span>
 <span id="L607"><span class="lineNum">     607</span> <span class="tlaUNC tlaBgUNC">           0 : BV SlepcEPSSolverBase::GetBV() const</span></span>
 <span id="L608"><span class="lineNum">     608</span>              : {</span>
@@ -769,13 +769,13 @@
 <span id="L699"><span class="lineNum">     699</span> <span class="tlaUNC">           0 :   PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));</span></span>
 <span id="L700"><span class="lineNum">     700</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L701"><span class="lineNum">     701</span>              : </span>
-<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC tlaBgGNC">        1211 : PetscReal SlepcEPSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &amp;x,</span></span>
+<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC tlaBgGNC">        1209 : PetscReal SlepcEPSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &amp;x,</span></span>
 <span id="L703"><span class="lineNum">     703</span>              :                                           ComplexVector &amp;r) const</span>
 <span id="L704"><span class="lineNum">     704</span>              : {</span>
 <span id="L705"><span class="lineNum">     705</span>              :   // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.</span>
-<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">        1211 :   opK-&gt;Mult(x, r);</span></span>
-<span id="L707"><span class="lineNum">     707</span> <span class="tlaGNC">        1211 :   opM-&gt;AddMult(x, r, -l);</span></span>
-<span id="L708"><span class="lineNum">     708</span> <span class="tlaGNC">        1211 :   return linalg::Norml2(GetComm(), r);</span></span>
+<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">        1209 :   opK-&gt;Mult(x, r);</span></span>
+<span id="L707"><span class="lineNum">     707</span> <span class="tlaGNC">        1209 :   opM-&gt;AddMult(x, r, -l);</span></span>
+<span id="L708"><span class="lineNum">     708</span> <span class="tlaGNC">        1209 :   return linalg::Norml2(GetComm(), r);</span></span>
 <span id="L709"><span class="lineNum">     709</span>              : }</span>
 <span id="L710"><span class="lineNum">     710</span>              : </span>
 <span id="L711"><span class="lineNum">     711</span> <span class="tlaGNC">          21 : PetscReal SlepcEPSSolver::GetBackwardScaling(PetscScalar l) const</span></span>

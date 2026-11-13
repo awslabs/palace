@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">40.0&nbsp;%</td>
@@ -180,13 +180,13 @@
 <span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">         668 :   }</span></span>
 <span id="L111"><span class="lineNum">     111</span>              : </span>
 <span id="L112"><span class="lineNum">     112</span>              :   // Get the current time.</span>
-<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC">       29637 :   static TimePoint Now() { return Clock::now(); }</span></span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC">       29630 :   static TimePoint Now() { return Clock::now(); }</span></span>
 <span id="L114"><span class="lineNum">     114</span>              : </span>
 <span id="L115"><span class="lineNum">     115</span>              :   // Provide stopwatch lap split functionality.</span>
 <span id="L116"><span class="lineNum">     116</span>              :   Duration Lap()</span>
 <span id="L117"><span class="lineNum">     117</span>              :   {</span>
-<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">       78261 :     auto temp_time = last_lap_time;</span></span>
-<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">       78261 :     last_lap_time = Now();</span></span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">       78226 :     auto temp_time = last_lap_time;</span></span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">       78226 :     last_lap_time = Now();</span></span>
 <span id="L120"><span class="lineNum">     120</span>              :     return last_lap_time - temp_time;</span>
 <span id="L121"><span class="lineNum">     121</span>              :   }</span>
 <span id="L122"><span class="lineNum">     122</span>              : </span>
@@ -194,24 +194,24 @@
 <span id="L124"><span class="lineNum">     124</span>              :   Duration TimeFromStart() const { return Now() - start_time; }</span>
 <span id="L125"><span class="lineNum">     125</span>              : </span>
 <span id="L126"><span class="lineNum">     126</span>              :   // Lap and record a timing step.</span>
-<span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">       78261 :   Duration MarkTime(Index idx, bool count_it = true)</span></span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">       78226 :   Duration MarkTime(Index idx, bool count_it = true)</span></span>
 <span id="L128"><span class="lineNum">     128</span>              :   {</span>
-<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">       78261 :     return MarkTime(idx, Lap(), count_it);</span></span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">       78226 :     return MarkTime(idx, Lap(), count_it);</span></span>
 <span id="L130"><span class="lineNum">     130</span>              :   }</span>
 <span id="L131"><span class="lineNum">     131</span>              : </span>
 <span id="L132"><span class="lineNum">     132</span>              :   // Record a timing step by adding a duration, without lapping; optionally, count it.</span>
-<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">       78261 :   Duration MarkTime(Index idx, Duration time, bool count_it = true)</span></span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">       78226 :   Duration MarkTime(Index idx, Duration time, bool count_it = true)</span></span>
 <span id="L134"><span class="lineNum">     134</span>              :   {</span>
-<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">       78261 :     if (idx == Timer::TOTAL)</span></span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">       78226 :     if (idx == Timer::TOTAL)</span></span>
 <span id="L136"><span class="lineNum">     136</span>              :     {</span>
 <span id="L137"><span class="lineNum">     137</span> <span class="tlaUNC tlaBgUNC">           0 :       data[idx] = time;</span></span>
 <span id="L138"><span class="lineNum">     138</span>              :     }</span>
 <span id="L139"><span class="lineNum">     139</span>              :     else</span>
 <span id="L140"><span class="lineNum">     140</span>              :     {</span>
-<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC tlaBgGNC">       78261 :       data[idx] += time;</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC tlaBgGNC">       78226 :       data[idx] += time;</span></span>
 <span id="L142"><span class="lineNum">     142</span>              :     }</span>
-<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">       78261 :     counts[idx] += count_it;</span></span>
-<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">       78261 :     return data[idx];</span></span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">       78226 :     counts[idx] += count_it;</span></span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">       78226 :     return data[idx];</span></span>
 <span id="L145"><span class="lineNum">     145</span>              :   }</span>
 <span id="L146"><span class="lineNum">     146</span>              : </span>
 <span id="L147"><span class="lineNum">     147</span>              :   // Provide map-like read-only access to the timing data.</span>
@@ -223,30 +223,30 @@
 <span id="L153"><span class="lineNum">     153</span>              :   // Snapshot peak RSS and return delta from last snapshot.</span>
 <span id="L154"><span class="lineNum">     154</span>              :   long MemoryLap()</span>
 <span id="L155"><span class="lineNum">     155</span>              :   {</span>
-<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">       53616 :     long current = memory_reporting::GetPeakMemory();</span></span>
-<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">       78262 :     long delta = current - last_memory;</span></span>
-<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">       24647 :     last_memory = current;</span></span>
-<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">       28969 :     return delta;</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">       53595 :     long current = memory_reporting::GetPeakMemory();</span></span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">       78227 :     long delta = current - last_memory;</span></span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">       24633 :     last_memory = current;</span></span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">       28962 :     return delta;</span></span>
 <span id="L160"><span class="lineNum">     160</span>              :   }</span>
 <span id="L161"><span class="lineNum">     161</span>              : </span>
 <span id="L162"><span class="lineNum">     162</span>              :   // Return peak RSS growth since timer creation.</span>
 <span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">           1 :   long MemoryFromStart() const { return memory_reporting::GetPeakMemory() - start_memory; }</span></span>
 <span id="L164"><span class="lineNum">     164</span>              : </span>
 <span id="L165"><span class="lineNum">     165</span>              :   // Lap and record a memory delta for the given phase.</span>
-<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">       53615 :   long MarkMemory(Index idx) { return MarkMemory(idx, MemoryLap()); }</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">       53594 :   long MarkMemory(Index idx) { return MarkMemory(idx, MemoryLap()); }</span></span>
 <span id="L167"><span class="lineNum">     167</span>              : </span>
 <span id="L168"><span class="lineNum">     168</span>              :   // Record a given memory delta for the given phase (without lapping).</span>
 <span id="L169"><span class="lineNum">     169</span>              :   long MarkMemory(Index idx, long delta)</span>
 <span id="L170"><span class="lineNum">     170</span>              :   {</span>
-<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">       53615 :     if (idx == Timer::TOTAL)</span></span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">       53594 :     if (idx == Timer::TOTAL)</span></span>
 <span id="L172"><span class="lineNum">     172</span>              :     {</span>
 <span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">           1 :       mem_data[idx] = delta;</span></span>
 <span id="L174"><span class="lineNum">     174</span>              :     }</span>
 <span id="L175"><span class="lineNum">     175</span>              :     else</span>
 <span id="L176"><span class="lineNum">     176</span>              :     {</span>
-<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">       78262 :       mem_data[idx] += delta;</span></span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">       78227 :       mem_data[idx] += delta;</span></span>
 <span id="L178"><span class="lineNum">     178</span>              :     }</span>
-<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">       24646 :     return mem_data[idx];</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">       24632 :     return mem_data[idx];</span></span>
 <span id="L180"><span class="lineNum">     180</span>              :   }</span>
 <span id="L181"><span class="lineNum">     181</span>              : </span>
 <span id="L182"><span class="lineNum">     182</span>              :   // Provide read-only access to the memory data (bytes) for a given phase.</span>
@@ -312,35 +312,35 @@
 <span id="L242"><span class="lineNum">     242</span> <span class="tlaUNC">           0 :   }</span></span>
 <span id="L243"><span class="lineNum">     243</span>              : </span>
 <span id="L244"><span class="lineNum">     244</span>              : public:</span>
-<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC tlaBgGNC">       99265 :   BlockTimer(Index i, bool count = true) : count(count)</span></span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC tlaBgGNC">       99243 :   BlockTimer(Index i, bool count = true) : count(count)</span></span>
 <span id="L246"><span class="lineNum">     246</span>              :   {</span>
 <span id="L247"><span class="lineNum">     247</span>              :     // Start timing when entering the block, interrupting whatever we were timing before.</span>
-<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC">       99265 :     if (count)</span></span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC">       99243 :     if (count)</span></span>
 <span id="L249"><span class="lineNum">     249</span>              :     {</span>
-<span id="L250"><span class="lineNum">     250</span> <span class="tlaGNC">       53615 :       if (stack.empty())</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaGNC">       53594 :       if (stack.empty())</span></span>
 <span id="L251"><span class="lineNum">     251</span>              :       {</span>
 <span id="L252"><span class="lineNum">     252</span>              :         timer.Lap();</span>
 <span id="L253"><span class="lineNum">     253</span>              :         timer.MemoryLap();</span>
 <span id="L254"><span class="lineNum">     254</span>              :       }</span>
 <span id="L255"><span class="lineNum">     255</span>              :       else</span>
 <span id="L256"><span class="lineNum">     256</span>              :       {</span>
-<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">       24646 :         timer.MarkTime(stack.top(), false);</span></span>
-<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">       24646 :         timer.MarkMemory(stack.top(), timer.MemoryLap());</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">       24632 :         timer.MarkTime(stack.top(), false);</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">       24632 :         timer.MarkMemory(stack.top(), timer.MemoryLap());</span></span>
 <span id="L259"><span class="lineNum">     259</span>              :       }</span>
 <span id="L260"><span class="lineNum">     260</span>              :       stack.push(i);</span>
 <span id="L261"><span class="lineNum">     261</span>              :     }</span>
-<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">       99265 :   }</span></span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">       99243 :   }</span></span>
 <span id="L263"><span class="lineNum">     263</span>              : </span>
-<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">       99265 :   ~BlockTimer()</span></span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">       99243 :   ~BlockTimer()</span></span>
 <span id="L265"><span class="lineNum">     265</span>              :   {</span>
 <span id="L266"><span class="lineNum">     266</span>              :     // When a BlockTimer is no longer in scope, record the time and memory growth.</span>
-<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">       99265 :     if (count &amp;&amp; !stack.empty())</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">       99243 :     if (count &amp;&amp; !stack.empty())</span></span>
 <span id="L268"><span class="lineNum">     268</span>              :     {</span>
-<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">       53615 :       timer.MarkTime(stack.top());</span></span>
-<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">       53615 :       timer.MarkMemory(stack.top());</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">       53594 :       timer.MarkTime(stack.top());</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">       53594 :       timer.MarkMemory(stack.top());</span></span>
 <span id="L271"><span class="lineNum">     271</span>              :       stack.pop();</span>
 <span id="L272"><span class="lineNum">     272</span>              :     }</span>
-<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">       99265 :   }</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">       99243 :   }</span></span>
 <span id="L274"><span class="lineNum">     274</span>              : </span>
 <span id="L275"><span class="lineNum">     275</span>              :   // Read-only access the static Timer object.</span>
 <span id="L276"><span class="lineNum">     276</span>              :   static const Timer &amp;GlobalTimer() { return timer; }</span>

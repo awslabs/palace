@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryMed">86.4&nbsp;%</td>
@@ -172,7 +172,7 @@
 <span id="L102"><span class="lineNum">     102</span>              : {</span>
 <span id="L103"><span class="lineNum">     103</span>              :   if constexpr (!Transpose)</span>
 <span id="L104"><span class="lineNum">     104</span>              :   {</span>
-<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">       16962 :     A.Mult(x, y);</span></span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">       16948 :     A.Mult(x, y);</span></span>
 <span id="L106"><span class="lineNum">     106</span>              :   }</span>
 <span id="L107"><span class="lineNum">     107</span>              :   else</span>
 <span id="L108"><span class="lineNum">     108</span>              :   {</span>
@@ -192,7 +192,7 @@
 <span id="L122"><span class="lineNum">     122</span>              : {</span>
 <span id="L123"><span class="lineNum">     123</span>              :   if constexpr (!Transpose)</span>
 <span id="L124"><span class="lineNum">     124</span>              :   {</span>
-<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">      306732 :     A.AddMult(x, y, a);</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">      306480 :     A.AddMult(x, y, a);</span></span>
 <span id="L126"><span class="lineNum">     126</span>              :   }</span>
 <span id="L127"><span class="lineNum">     127</span>              :   else</span>
 <span id="L128"><span class="lineNum">     128</span>              :   {</span>
@@ -213,24 +213,24 @@
 <span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">         775 : }</span></span>
 <span id="L144"><span class="lineNum">     144</span>              : </span>
 <span id="L145"><span class="lineNum">     145</span>              : template &lt;bool Transpose = false&gt;</span>
-<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">       51006 : inline void ApplyOrder0(const double sr, const ComplexVector &amp;dinv, const ComplexVector &amp;r,</span></span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">       50964 : inline void ApplyOrder0(const double sr, const ComplexVector &amp;dinv, const ComplexVector &amp;r,</span></span>
 <span id="L147"><span class="lineNum">     147</span>              :                         ComplexVector &amp;d)</span>
 <span id="L148"><span class="lineNum">     148</span>              : {</span>
-<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">       51006 :   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">       50964 :   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();</span></span>
 <span id="L150"><span class="lineNum">     150</span>              :   const int N = dinv.Size();</span>
-<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">       51006 :   const auto *DIR = dinv.Real().Read(use_dev);</span></span>
-<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">       51006 :   const auto *DII = dinv.Imag().Read(use_dev);</span></span>
-<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       51006 :   const auto *RR = r.Real().Read(use_dev);</span></span>
-<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">       51006 :   const auto *RI = r.Imag().Read(use_dev);</span></span>
-<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">       51006 :   auto *DR = d.Real().Write(use_dev);</span></span>
-<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">       51006 :   auto *DI = d.Imag().Write(use_dev);</span></span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">       50964 :   const auto *DIR = dinv.Real().Read(use_dev);</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">       50964 :   const auto *DII = dinv.Imag().Read(use_dev);</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       50964 :   const auto *RR = r.Real().Read(use_dev);</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">       50964 :   const auto *RI = r.Imag().Read(use_dev);</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">       50964 :   auto *DR = d.Real().Write(use_dev);</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">       50964 :   auto *DI = d.Imag().Write(use_dev);</span></span>
 <span id="L157"><span class="lineNum">     157</span>              :   if constexpr (!Transpose)</span>
 <span id="L158"><span class="lineNum">     158</span>              :   {</span>
 <span id="L159"><span class="lineNum">     159</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">       51006 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">       50964 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L161"><span class="lineNum">     161</span>              :                         {</span>
-<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">    33684550 :                           DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);</span></span>
-<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">    33684550 :                           DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">    33647950 :                           DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">    33647950 :                           DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);</span></span>
 <span id="L164"><span class="lineNum">     164</span>              :                         });</span>
 <span id="L165"><span class="lineNum">     165</span>              :   }</span>
 <span id="L166"><span class="lineNum">     166</span>              :   else</span>
@@ -242,7 +242,7 @@
 <span id="L172"><span class="lineNum">     172</span>              :                           DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);</span>
 <span id="L173"><span class="lineNum">     173</span>              :                         });</span>
 <span id="L174"><span class="lineNum">     174</span>              :   }</span>
-<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">       51006 : }</span></span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">       50964 : }</span></span>
 <span id="L176"><span class="lineNum">     176</span>              : </span>
 <span id="L177"><span class="lineNum">     177</span>              : template &lt;bool Transpose = false&gt;</span>
 <span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">        2734 : inline void ApplyOrderK(const double sd, const double sr, const Vector &amp;dinv,</span></span>
@@ -258,24 +258,24 @@
 <span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC tlaBgGNC">        2734 : }</span></span>
 <span id="L189"><span class="lineNum">     189</span>              : </span>
 <span id="L190"><span class="lineNum">     190</span>              : template &lt;bool Transpose = false&gt;</span>
-<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">      153366 : inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &amp;dinv,</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">      153240 : inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &amp;dinv,</span></span>
 <span id="L192"><span class="lineNum">     192</span>              :                         const ComplexVector &amp;r, ComplexVector &amp;d)</span>
 <span id="L193"><span class="lineNum">     193</span>              : {</span>
-<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">      153366 :   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();</span></span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">      153240 :   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();</span></span>
 <span id="L195"><span class="lineNum">     195</span>              :   const int N = dinv.Size();</span>
-<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">      153366 :   const auto *DIR = dinv.Real().Read(use_dev);</span></span>
-<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">      153366 :   const auto *DII = dinv.Imag().Read(use_dev);</span></span>
-<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">      153366 :   const auto *RR = r.Real().Read(use_dev);</span></span>
-<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">      153366 :   const auto *RI = r.Imag().Read(use_dev);</span></span>
-<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC">      153366 :   auto *DR = d.Real().ReadWrite(use_dev);</span></span>
-<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">      153366 :   auto *DI = d.Imag().ReadWrite(use_dev);</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">      153240 :   const auto *DIR = dinv.Real().Read(use_dev);</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">      153240 :   const auto *DII = dinv.Imag().Read(use_dev);</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">      153240 :   const auto *RR = r.Real().Read(use_dev);</span></span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">      153240 :   const auto *RI = r.Imag().Read(use_dev);</span></span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC">      153240 :   auto *DR = d.Real().ReadWrite(use_dev);</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">      153240 :   auto *DI = d.Imag().ReadWrite(use_dev);</span></span>
 <span id="L202"><span class="lineNum">     202</span>              :   if constexpr (!Transpose)</span>
 <span id="L203"><span class="lineNum">     203</span>              :   {</span>
 <span id="L204"><span class="lineNum">     204</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">      153366 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">      153240 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L206"><span class="lineNum">     206</span>              :                         {</span>
-<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">   103821208 :                           DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);</span></span>
-<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">   103821208 :                           DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">   103711408 :                           DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">   103711408 :                           DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);</span></span>
 <span id="L209"><span class="lineNum">     209</span>              :                         });</span>
 <span id="L210"><span class="lineNum">     210</span>              :   }</span>
 <span id="L211"><span class="lineNum">     211</span>              :   else</span>
@@ -287,7 +287,7 @@
 <span id="L217"><span class="lineNum">     217</span>              :                           DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);</span>
 <span id="L218"><span class="lineNum">     218</span>              :                         });</span>
 <span id="L219"><span class="lineNum">     219</span>              :   }</span>
-<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">      153366 : }</span></span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">      153240 : }</span></span>
 <span id="L221"><span class="lineNum">     221</span>              : </span>
 <span id="L222"><span class="lineNum">     222</span>              : }  // namespace</span>
 <span id="L223"><span class="lineNum">     223</span>              : </span>
@@ -324,15 +324,15 @@
 <span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">         213 : }</span></span>
 <span id="L255"><span class="lineNum">     255</span>              : </span>
 <span id="L256"><span class="lineNum">     256</span>              : template &lt;OperatorType OperType&gt;</span>
-<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">       51757 : void ChebyshevSmoother&lt;OperType&gt;::Mult2(const VecType &amp;x, VecType &amp;y, VecType &amp;r) const</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">       51715 : void ChebyshevSmoother&lt;OperType&gt;::Mult2(const VecType &amp;x, VecType &amp;y, VecType &amp;r) const</span></span>
 <span id="L258"><span class="lineNum">     258</span>              : {</span>
 <span id="L259"><span class="lineNum">     259</span>              :   // Apply smoother: y = y + p(A) (x - A y) .</span>
-<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">      103514 :   for (int it = 0; it &lt; pc_it; it++)</span></span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">      103430 :   for (int it = 0; it &lt; pc_it; it++)</span></span>
 <span id="L261"><span class="lineNum">     261</span>              :   {</span>
-<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">       51757 :     if (this-&gt;initial_guess || it &gt; 0)</span></span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">       51715 :     if (this-&gt;initial_guess || it &gt; 0)</span></span>
 <span id="L263"><span class="lineNum">     263</span>              :     {</span>
-<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">       17333 :       ApplyOp(*A, y, r);</span></span>
-<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">       17333 :       linalg::AXPBY(1.0, x, -1.0, r);</span></span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">       17319 :       ApplyOp(*A, y, r);</span></span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">       17319 :       linalg::AXPBY(1.0, x, -1.0, r);</span></span>
 <span id="L266"><span class="lineNum">     266</span>              :     }</span>
 <span id="L267"><span class="lineNum">     267</span>              :     else</span>
 <span id="L268"><span class="lineNum">     268</span>              :     {</span>
@@ -342,18 +342,18 @@
 <span id="L272"><span class="lineNum">     272</span>              : </span>
 <span id="L273"><span class="lineNum">     273</span>              :     // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -&gt; k + 1</span>
 <span id="L274"><span class="lineNum">     274</span>              :     // shift due to 1-based indexing).</span>
-<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">       51757 :     ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);</span></span>
-<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">      207833 :     for (int k = 1; k &lt; order; k++)</span></span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">       51715 :     ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);</span></span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">      207665 :     for (int k = 1; k &lt; order; k++)</span></span>
 <span id="L277"><span class="lineNum">     277</span>              :     {</span>
 <span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">        2734 :       y += d;</span></span>
-<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">      156076 :       ApplyOp(*A, d, r, -1.0);</span></span>
-<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">      156076 :       const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);</span></span>
-<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">      156076 :       const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);</span></span>
-<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">      156076 :       ApplyOrderK(sd, sr, dinv, r, d);</span></span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">      155950 :       ApplyOp(*A, d, r, -1.0);</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">      155950 :       const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);</span></span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">      155950 :       const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);</span></span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">      155950 :       ApplyOrderK(sd, sr, dinv, r, d);</span></span>
 <span id="L283"><span class="lineNum">     283</span>              :     }</span>
 <span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">         775 :     y += d;</span></span>
 <span id="L285"><span class="lineNum">     285</span>              :   }</span>
-<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">       51757 : }</span></span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">       51715 : }</span></span>
 <span id="L287"><span class="lineNum">     287</span>              : </span>
 <span id="L288"><span class="lineNum">     288</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">          18 : ChebyshevSmoother1stKind&lt;OperType&gt;::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,</span></span>

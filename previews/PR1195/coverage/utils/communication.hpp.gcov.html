@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">35.9&nbsp;%</td>
@@ -316,10 +316,10 @@
 <span id="L246"><span class="lineNum">     246</span>              : </span>
 <span id="L247"><span class="lineNum">     247</span>              :   // Wrapper for MPI_AllReduce.</span>
 <span id="L248"><span class="lineNum">     248</span>              :   template &lt;typename T&gt;</span>
-<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">        3633 :   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)</span></span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">        3627 :   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)</span></span>
 <span id="L250"><span class="lineNum">     250</span>              :   {</span>
-<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">      396680 :     MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType&lt;T&gt;(), op, comm);</span></span>
-<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">        4565 :   }</span></span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">      396524 :     MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType&lt;T&gt;(), op, comm);</span></span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">        4559 :   }</span></span>
 <span id="L253"><span class="lineNum">     253</span>              : </span>
 <span id="L254"><span class="lineNum">     254</span>              :   // Global minimum (in-place, result is broadcast to all processes).</span>
 <span id="L255"><span class="lineNum">     255</span>              :   template &lt;typename T&gt;</span>
@@ -339,7 +339,7 @@
 <span id="L269"><span class="lineNum">     269</span>              :   template &lt;typename T&gt;</span>
 <span id="L270"><span class="lineNum">     270</span>              :   static void GlobalSum(int len, T *buff, MPI_Comm comm)</span>
 <span id="L271"><span class="lineNum">     271</span>              :   {</span>
-<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">        3633 :     GlobalOp(len, buff, MPI_SUM, comm);</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">        3627 :     GlobalOp(len, buff, MPI_SUM, comm);</span></span>
 <span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">        9981 :   }</span></span>
 <span id="L274"><span class="lineNum">     274</span>              : </span>
 <span id="L275"><span class="lineNum">     275</span>              :   // Global minimum with index (in-place, result is broadcast to all processes).</span>

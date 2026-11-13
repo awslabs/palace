@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -76,19 +76,19 @@
 <span id="L6"><span class="lineNum">       6</span>              : </span>
 <span id="L7"><span class="lineNum">       7</span>              : #include &quot;../coeff/coeff_1_qf.h&quot;</span>
 <span id="L8"><span class="lineNum">       8</span>              : </span>
-<span id="L9"><span class="lineNum">       9</span> <span class="tlaGNC tlaBgGNC">     1379195 : CEED_QFUNCTION(f_apply_h1_1)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,</span></span>
+<span id="L9"><span class="lineNum">       9</span> <span class="tlaGNC tlaBgGNC">     1377691 : CEED_QFUNCTION(f_apply_h1_1)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,</span></span>
 <span id="L10"><span class="lineNum">      10</span>              :                              CeedScalar *const *out)</span>
 <span id="L11"><span class="lineNum">      11</span>              : {</span>
-<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC">     1379195 :   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1];</span></span>
-<span id="L13"><span class="lineNum">      13</span> <span class="tlaGNC">     1379195 :   CeedScalar *v = out[0];</span></span>
+<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC">     1377691 :   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1];</span></span>
+<span id="L13"><span class="lineNum">      13</span> <span class="tlaGNC">     1377691 :   CeedScalar *v = out[0];</span></span>
 <span id="L14"><span class="lineNum">      14</span>              : </span>
-<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">    65188483 :   CeedPragmaSIMD for (CeedInt i = 0; i &lt; Q; i++)</span></span>
+<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">    65120931 :   CeedPragmaSIMD for (CeedInt i = 0; i &lt; Q; i++)</span></span>
 <span id="L16"><span class="lineNum">      16</span>              :   {</span>
-<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">    63809288 :     const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);</span></span>
+<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">    63743240 :     const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);</span></span>
 <span id="L18"><span class="lineNum">      18</span>              : </span>
-<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">    63809288 :     v[i] = coeff * wdetJ[i] * u[i];</span></span>
+<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">    63743240 :     v[i] = coeff * wdetJ[i] * u[i];</span></span>
 <span id="L20"><span class="lineNum">      20</span>              :   }</span>
-<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">     1379195 :   return 0;</span></span>
+<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">     1377691 :   return 0;</span></span>
 <span id="L22"><span class="lineNum">      22</span>              : }</span>
 <span id="L23"><span class="lineNum">      23</span>              : </span>
 <span id="L24"><span class="lineNum">      24</span>              : #endif  // PALACE_LIBCEED_H1_1_QF_H</span>

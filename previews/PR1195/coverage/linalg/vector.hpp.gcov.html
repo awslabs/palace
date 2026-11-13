@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-11-13 20:52:07</td>
+            <td class="headerValue">2026-11-13 23:22:28</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">59.0&nbsp;%</td>
@@ -131,16 +131,16 @@
 <span id="L61"><span class="lineNum">      61</span>              :   void MakeRef(Vector &amp;y, int offset, int size);</span>
 <span id="L62"><span class="lineNum">      62</span>              : </span>
 <span id="L63"><span class="lineNum">      63</span>              :   // Get access to the real and imaginary vector parts.</span>
-<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC">     1550148 :   const Vector &amp;Real() const { return xr; }</span></span>
-<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">     1889242 :   Vector &amp;Real() { return xr; }</span></span>
-<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">     1550227 :   const Vector &amp;Imag() const { return xi; }</span></span>
-<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">     2465144 :   Vector &amp;Imag() { return xi; }</span></span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC">     1549070 :   const Vector &amp;Real() const { return xr; }</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">     1887789 :   Vector &amp;Real() { return xr; }</span></span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">     1549149 :   const Vector &amp;Imag() const { return xi; }</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">     2463222 :   Vector &amp;Imag() { return xi; }</span></span>
 <span id="L68"><span class="lineNum">      68</span>              : </span>
 <span id="L69"><span class="lineNum">      69</span>              :   // Set from a ComplexVector, without resizing.</span>
 <span id="L70"><span class="lineNum">      70</span>              :   void Set(const ComplexVector &amp;y);</span>
 <span id="L71"><span class="lineNum">      71</span>              :   ComplexVector &amp;operator=(const ComplexVector &amp;y)</span>
 <span id="L72"><span class="lineNum">      72</span>              :   {</span>
-<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">      243170 :     Set(y);</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">      242946 :     Set(y);</span></span>
 <span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">        8251 :     return *this;</span></span>
 <span id="L75"><span class="lineNum">      75</span>              :   }</span>
 <span id="L76"><span class="lineNum">      76</span>              : </span>
@@ -159,8 +159,8 @@
 <span id="L89"><span class="lineNum">      89</span>              :   ComplexVector &amp;operator=(std::complex&lt;double&gt; s);</span>
 <span id="L90"><span class="lineNum">      90</span>              :   ComplexVector &amp;operator=(double s)</span>
 <span id="L91"><span class="lineNum">      91</span>              :   {</span>
-<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">       50400 :     *this = std::complex&lt;double&gt;(s, 0.0);</span></span>
-<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">       41398 :     return *this;</span></span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">       50372 :     *this = std::complex&lt;double&gt;(s, 0.0);</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">       41370 :     return *this;</span></span>
 <span id="L94"><span class="lineNum">      94</span>              :   }</span>
 <span id="L95"><span class="lineNum">      95</span>              : </span>
 <span id="L96"><span class="lineNum">      96</span>              :   // Set the vector from an array of blocks and coefficients, without resizing.</span>
@@ -186,11 +186,11 @@
 <span id="L116"><span class="lineNum">     116</span>              : </span>
 <span id="L117"><span class="lineNum">     117</span>              :   // In-place addition (*this) += alpha * x.</span>
 <span id="L118"><span class="lineNum">     118</span>              :   void AXPY(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x);</span>
-<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">      250664 :   void Add(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x) { AXPY(alpha, x); }</span></span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">      250516 :   void Add(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x) { AXPY(alpha, x); }</span></span>
 <span id="L120"><span class="lineNum">     120</span>              :   void Subtract(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x) { AXPY(-alpha, x); }</span>
 <span id="L121"><span class="lineNum">     121</span>              :   ComplexVector &amp;operator+=(const ComplexVector &amp;x)</span>
 <span id="L122"><span class="lineNum">     122</span>              :   {</span>
-<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">      224116 :     AXPY(1.0, x);</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">      223934 :     AXPY(1.0, x);</span></span>
 <span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">        2782 :     return *this;</span></span>
 <span id="L125"><span class="lineNum">     125</span>              :   }</span>
 <span id="L126"><span class="lineNum">     126</span>              :   ComplexVector &amp;operator-=(const ComplexVector &amp;x)</span>
@@ -319,55 +319,55 @@
 <span id="L249"><span class="lineNum">     249</span>              : // split into several partial sums, which do not wait on each other's additions and are</span>
 <span id="L250"><span class="lineNum">     250</span>              : // added in a fixed order.</span>
 <span id="L251"><span class="lineNum">     251</span>              : template &lt;int M, typename Function&gt;</span>
-<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC tlaBgGNC">      730664 : inline std::array&lt;double, M&gt; HostSums(int begin, int end, Function &amp;&amp;f)</span></span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC tlaBgGNC">      730352 : inline std::array&lt;double, M&gt; HostSums(int begin, int end, Function &amp;&amp;f)</span></span>
 <span id="L253"><span class="lineNum">     253</span>              : {</span>
 <span id="L254"><span class="lineNum">     254</span>              :   constexpr int K = 8;</span>
-<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">      730664 :   double s[M][K] = {};</span></span>
-<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">   560264118 :   auto Add = [&amp;](int i, int k)</span></span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">      730352 :   double s[M][K] = {};</span></span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">   559562642 :   auto Add = [&amp;](int i, int k)</span></span>
 <span id="L257"><span class="lineNum">     257</span>              :   {</span>
-<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">   279901903 :     const std::array&lt;double, M&gt; t = f(i);</span></span>
-<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">   839705709 :     for (int m = 0; m &lt; M; m++)</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">   279551306 :     const std::array&lt;double, M&gt; t = f(i);</span></span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">   838653918 :     for (int m = 0; m &lt; M; m++)</span></span>
 <span id="L260"><span class="lineNum">     260</span>              :     {</span>
-<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">   832905327 :       s[m][k] += t[m];</span></span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">   832174496 :       s[m][k] += t[m];</span></span>
 <span id="L262"><span class="lineNum">     262</span>              :     }</span>
 <span id="L263"><span class="lineNum">     263</span>              :   };</span>
 <span id="L264"><span class="lineNum">     264</span>              :   int i = begin;</span>
-<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">    69560089 :   for (; i + K &lt;= end; i += K)</span></span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">    69512261 :   for (; i + K &lt;= end; i += K)</span></span>
 <span id="L266"><span class="lineNum">     266</span>              :   {</span>
-<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">   619464825 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">   619037181 :     for (int k = 0; k &lt; K; k++)</span></span>
 <span id="L268"><span class="lineNum">     268</span>              :     {</span>
-<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">   550635400 :       Add(i + k, k);</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">   550255272 :       Add(i + k, k);</span></span>
 <span id="L270"><span class="lineNum">     270</span>              :     }</span>
 <span id="L271"><span class="lineNum">     271</span>              :   }</span>
-<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">     3098688 :   for (int k = 0; i &lt; end; i++, k++)</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">     3098270 :   for (int k = 0; i &lt; end; i++, k++)</span></span>
 <span id="L273"><span class="lineNum">     273</span>              :   {</span>
-<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">     1512943 :     Add(i, k);</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">     1512922 :     Add(i, k);</span></span>
 <span id="L275"><span class="lineNum">     275</span>              :   }</span>
-<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">      730664 :   std::array&lt;double, M&gt; sum = {};</span></span>
-<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">     1921640 :   for (int m = 0; m &lt; M; m++)</span></span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">      730352 :   std::array&lt;double, M&gt; sum = {};</span></span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">     1920734 :   for (int m = 0; m &lt; M; m++)</span></span>
 <span id="L278"><span class="lineNum">     278</span>              :   {</span>
-<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">    10718784 :     for (int k = 0; k &lt; K; k++)</span></span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">    10713438 :     for (int k = 0; k &lt; K; k++)</span></span>
 <span id="L280"><span class="lineNum">     280</span>              :     {</span>
-<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">     9527808 :       sum[m] += s[m][k];</span></span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">     9523056 :       sum[m] += s[m][k];</span></span>
 <span id="L282"><span class="lineNum">     282</span>              :     }</span>
 <span id="L283"><span class="lineNum">     283</span>              :   }</span>
-<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">      730664 :   return sum;</span></span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">      730352 :   return sum;</span></span>
 <span id="L285"><span class="lineNum">     285</span>              : }</span>
 <span id="L286"><span class="lineNum">     286</span>              : </span>
 <span id="L287"><span class="lineNum">     287</span>              : // Calculate the parallel inner product yᴴ x or yᵀ x.</span>
 <span id="L288"><span class="lineNum">     288</span>              : template &lt;typename VecType&gt;</span>
-<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">      146617 : inline auto Dot(MPI_Comm comm, const VecType &amp;x, const VecType &amp;y)</span></span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">      146602 : inline auto Dot(MPI_Comm comm, const VecType &amp;x, const VecType &amp;y)</span></span>
 <span id="L290"><span class="lineNum">     290</span>              : {</span>
-<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">      146617 :   auto dot = LocalDot(x, y);</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">      146602 :   auto dot = LocalDot(x, y);</span></span>
 <span id="L292"><span class="lineNum">     292</span>              :   Mpi::GlobalSum(1, &amp;dot, comm);</span>
-<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">      146617 :   return dot;</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">      146602 :   return dot;</span></span>
 <span id="L294"><span class="lineNum">     294</span>              : }</span>
 <span id="L295"><span class="lineNum">     295</span>              : </span>
 <span id="L296"><span class="lineNum">     296</span>              : // Calculate the vector 2-norm.</span>
 <span id="L297"><span class="lineNum">     297</span>              : template &lt;typename VecType&gt;</span>
-<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">       47538 : inline auto Norml2(MPI_Comm comm, const VecType &amp;x)</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">       47525 : inline auto Norml2(MPI_Comm comm, const VecType &amp;x)</span></span>
 <span id="L299"><span class="lineNum">     299</span>              : {</span>
-<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">       47538 :   return std::sqrt(std::abs(Dot(comm, x, x)));</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">       47525 :   return std::sqrt(std::abs(Dot(comm, x, x)));</span></span>
 <span id="L301"><span class="lineNum">     301</span>              : }</span>
 <span id="L302"><span class="lineNum">     302</span>              : </span>
 <span id="L303"><span class="lineNum">     303</span>              : // Normalize the vector, possibly with respect to an SPD matrix B.</span>
