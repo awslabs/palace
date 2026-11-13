@@ -406,6 +406,10 @@ public:
   // (a film thinner than the skin depth).
   bool crack = false;
 
+  // Whether "Crack" is given in the configuration, to warn about the default sheet model
+  // of interior boundaries (see mesh::Load).
+  bool crack_given = false;
+
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
 

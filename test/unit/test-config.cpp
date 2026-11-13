@@ -203,6 +203,14 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK(data.impedance[1].crack);
   CHECK_FALSE(data.conductivity[0].crack);
   CHECK(data.conductivity[1].crack);
+  // Whether "Crack" is given is recorded, to tell an explicit false from the default.
+  CHECK_FALSE(data.conductivity[0].crack_given);
+  CHECK(data.conductivity[1].crack_given);
+  const json explicit_false = {
+      {"Attributes", {15}}, {"Conductivity", 1.0e7}, {"Crack", false}};
+  const config::ConductivityData cond_false(explicit_false);
+  CHECK(cond_false.crack_given);
+  CHECK_FALSE(cond_false.crack);
   CHECK_FALSE(data.rational_impedance[0].crack);
   CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
   // All impedance sheets are sheets, including purely capacitive ones.
