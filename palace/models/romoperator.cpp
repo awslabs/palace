@@ -411,62 +411,76 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
+std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N,
+                                                               MPI_Comm comm) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
-  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u), on a uniform
+  // grid over the sampled range. |Q| is taken as infinite where it is not finite (at the
+  // support points), and ties go to the smaller z. N > 1 is not very useful: it typically
+  // gives points right next to each other in the same local maximum of the error.
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  const auto S = dim_Q;
-  MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
-                      "added to the PROM to define the parameter domain!");
-  double start = *std::ranges::min_element(z);
-  double end = *std::ranges::max_element(z);
-  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
-
-  // Sample Q on discrete points. The case of N>1 samples is not very useful below. It will
-  // typically give us multiple sample points right next to each other in the same local
-  // maximum, rather than N separate local maxima.
-
-  // We could use priority queue here to keep the N lowest values. However, we don't use
-  // std::priority_queue class since we want to have access to the vector and also binary
-  // tree structure of heap class as rebalancing is excessive overhead for tiny size N.
-  using q_t = std::pair<std::complex<double>, double>;
-  std::vector<q_t> queue{};
-  queue.reserve(N);
+  MFEM_VERIFY(z.size() >= 2, "Maximum error can only be found once two sample points have "
+                             "been added to the PROM to define the parameter domain!");
+  const double start = *std::ranges::min_element(z);
+  const double end = *std::ranges::max_element(z);
+  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), z.size());
 
   // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
   // Consider making configurable or scaling with the parameter range, so that it is e.g.
   // always 1 kHz.
-  const std::size_t nr_sample = 1.0e6;  // must be >= N
-  MFEM_VERIFY(N < nr_sample,
-              fmt::format("Number of location of error maximum N={} needs to be less than "
-                          "the fine sampling grid nr_sample={}.",
-                          N, nr_sample));
-  const auto delta = (end - start) / nr_sample;
-  for (std::size_t i = 0; i <= nr_sample; i++)
+  constexpr int nr_sample = 1000000;
+  MFEM_VERIFY(N <= std::size_t{nr_sample}, "Number of locations of the error maximum N = "
+                                               << N << " exceeds the sampling grid size "
+                                               << nr_sample << "!");
+  const double delta = (end - start) / nr_sample;
+  // Index the points rather than accumulate delta, which can be below the spacing of
+  // doubles near z.
+  auto Q_abs = [&](int i)
   {
-    // Index the points rather than accumulate delta, which can be below the spacing of
-    // doubles near z, so the loop always ends.
-    const double z_sample = start + i * delta;
-    const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
-
-    bool partial_full = (queue.size() < N);
-    if (partial_full || Q_sample < queue.back().second)
+    const double v = std::abs((q.array() / (z_map.array() - (start + i * delta))).sum());
+    return std::isfinite(v) ? v : std::numeric_limits<double>::infinity();
+  };
+  if (N == 1)
+  {
+    // With a communicator, each process scans a contiguous part of the grid.
+    int i_begin = 0, i_end = nr_sample + 1;
+    if (comm != MPI_COMM_NULL)
     {
-      auto it_loc = std::ranges::upper_bound(queue, Q_sample, {}, &q_t::second);
-      queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
-      if (!partial_full)
+      const long np = Mpi::Size(comm), rank = Mpi::Rank(comm);
+      i_begin = static_cast<int>((nr_sample + 1L) * rank / np);
+      i_end = static_cast<int>((nr_sample + 1L) * (rank + 1) / np);
+    }
+    struct
+    {
+      double v;
+      int i;
+    } best = {std::numeric_limits<double>::infinity(), i_begin};
+    for (int i = i_begin; i < i_end; i++)
+    {
+      if (const double v = Q_abs(i); v < best.v)
       {
-        queue.pop_back();
+        best = {v, i};
       }
     }
+    if (comm != MPI_COMM_NULL)
+    {
+      MPI_Allreduce(MPI_IN_PLACE, &best, 1, MPI_DOUBLE_INT, MPI_MINLOC, comm);
+    }
+    return {start + best.i * delta};
   }
-  MFEM_VERIFY(queue.size() == N,
-              fmt::format("Internal failure: queue should be size should be N={} (got {})",
-                          N, queue.size()));
-
+  std::vector<double> v(nr_sample + 1);
+  std::vector<int> idx(nr_sample + 1);
+  for (int i = 0; i <= nr_sample; i++)
+  {
+    v[i] = Q_abs(i);
+    idx[i] = i;
+  }
+  std::ranges::partial_sort(idx, idx.begin() + N, [&](int a, int b)
+                            { return v[a] < v[b] || (v[a] == v[b] && a < b); });
   std::vector<double> vals(N);
-  std::ranges::transform(queue, vals.begin(), [](const q_t &p) { return p.first.real(); });
+  std::ranges::transform(idx.begin(), idx.begin() + N, vals.begin(),
+                         [&](int i) { return start + i * delta; });
   return vals;
 }
 
@@ -1337,6 +1351,11 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+}
+
+std::vector<double> RomOperator::FindMaxError(int excitation_idx, std::size_t N) const
+{
+  return mri.at(excitation_idx).FindMaxError(N, space_op.GetComm());
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
