@@ -151,6 +151,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
+    overlapping `"Samples"` ranges compute the same frequency with different rounding.
+    [PR 1192](https://github.com/awslabs/palace/pull/1192).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled

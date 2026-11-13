@@ -935,6 +935,23 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     CHECK(driven_solver.prom_indices == prom_indices);
   }
 
+  SECTION("Save and PROM samples which differ from the sample frequencies by rounding")
+  {
+    // Same frequency with different rounding, as from two overlapping ranges.
+    const double f_sweep = 7.85, f_prom = std::nextafter(7.85, 8.0);
+    REQUIRE(f_prom != f_sweep);
+    json driven = {{"Samples",
+                    {{{"Freq", {6.0, 7.0, f_sweep, 8.0}}},
+                     {{"Freq", {f_prom}}, {"SaveStep", 1}, {"AddToPROM", true}},
+                     {{"Freq", {std::nextafter(8.0, 9.0)}}, {"AddToPROM", true}}}},
+                   {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData driven_solver(driven);
+
+    CHECK(driven_solver.sample_f == std::vector{6.0, 7.0, f_sweep, 8.0});
+    CHECK(driven_solver.save_indices == std::vector<size_t>{2});
+    CHECK(driven_solver.prom_indices == std::vector<size_t>{0, 3, 2});
+  }
+
   SECTION("Invalid configs throw")
   {
     // Empty
