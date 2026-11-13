@@ -3086,13 +3086,18 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
     }
   };
   const char *key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
-  std::ofstream fit(fit_path, first_print ? std::ios::out | std::ios::trunc
-                                          : std::ios::out | std::ios::app);
+  // OI-MAXWELL-CC-CSV-HEADERLESS-AFTER-FIRST-PRINT (lane L1, decision 1634 (6)): the
+  // headers go with the first rows (a run whose first print has neither evaluation wrote
+  // both tables without them).
+  const bool write_header =
+      surface_response_tables_with_header.insert(fit_path.string()).second;
+  std::ofstream fit(fit_path, write_header ? std::ios::out | std::ios::trunc
+                                           : std::ios::out | std::ios::app);
   MFEM_VERIFY(fit, "Unable to open " << fit_path.string() << " for writing!");
-  std::ofstream remainder(remainder_path, first_print ? std::ios::out | std::ios::trunc
-                                                      : std::ios::out | std::ios::app);
+  std::ofstream remainder(remainder_path, write_header ? std::ios::out | std::ios::trunc
+                                                       : std::ios::out | std::ios::app);
   MFEM_VERIFY(remainder, "Unable to open " << remainder_path.string() << " for writing!");
-  if (first_print)
+  if (write_header)
   {
     fit << "source,evaluation," << key_header
         << ",max loop share,response-weighted loop share,remainder patches,fallback "
@@ -3580,10 +3585,17 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
       portions_total.length += entry.length;
       portions_total.extra += entry.extra;
     }
-    std::ofstream output(path, first_print ? std::ios::out | std::ios::trunc
-                                           : std::ios::out | std::ios::app);
+    // OI-MAXWELL-CC-CSV-HEADERLESS-AFTER-FIRST-PRINT (lane L1, decision 1634 (6)): the
+    // header goes with the table's first rows (a table first written at a later print, e.g.
+    // the conductor-consistency table of a run whose first exclusion comes at a later mode
+    // or frequency, was appended without one). Every table first written at the first print
+    // is unchanged.
+    const bool write_header =
+        surface_response_tables_with_header.insert(path.string()).second;
+    std::ofstream output(path, write_header ? std::ios::out | std::ios::trunc
+                                            : std::ios::out | std::ios::app);
     MFEM_VERIFY(output, "Unable to open " << path.filename().string() << " for writing!");
-    if (first_print)
+    if (write_header)
     {
       output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
              << ",exc,evaluation,type,portions,length (m)," << extra_header;

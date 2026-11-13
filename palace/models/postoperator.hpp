@@ -450,6 +450,11 @@ protected:
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
   mutable bool surface_response_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;
+  // OI-MAXWELL-CC-CSV-HEADERLESS-AFTER-FIRST-PRINT (lane L1, decision 1634 (6)): the paths
+  // of the plain appended tables (the per-type portion tables, the loop-fit tables) whose
+  // header is written; a table writes its header with its FIRST rows, whichever print
+  // that is.
+  mutable std::set<std::string> surface_response_tables_with_header;
   // The per-type portion tables of the Maxwell correction (decision 751): the uncovered
   // requirements' and the DomainBoundary claims' raw within-R energies and shares per
   // evaluation, written like the electrostatic driver's tables of the same names.
