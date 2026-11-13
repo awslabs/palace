@@ -375,13 +375,9 @@ public:
     }
   }
 
-  // Freeze the per-port modal reference state (mode field, k_n0, reactions) at a real
-  // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
-  // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
-  void InitializeModalReference(double omega) { Initialize(omega); }
-
-  // Prepare all frequency-dependent modal state once before evaluating multiple
-  // excitations at the same frequency.
+  // Compute the modes of all ports at a real frequency, cached: the modal state for the
+  // excitations, postprocessing, and the reference of the complex-ω modal correction
+  // (eigenmode nonlinear solve). A no-op when there are no wave ports.
   void PrepareFrequency(double omega) { Initialize(omega); }
 
   // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
