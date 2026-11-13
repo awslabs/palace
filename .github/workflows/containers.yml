@@ -82,7 +82,8 @@ jobs:
         include:
           - {runner: arm64}
           - {runner: x64}
-          - {runner: gpu, target: x86_64_v3}
+          # Temporarily disabled while no GPU runner is available: revert before merging.
+          # - {runner: gpu, target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       # Two events bypass the paths-filter:
