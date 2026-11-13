@@ -369,8 +369,10 @@ public:
   // class the exact piece partition of PartitionedEdgePieces labels a piece by the
   // ascending '+'-joined labels of the class portions covering it: "m<feature>" tokens for
   // feature labels), then the SERVED claims (the applied patches' claims by model-set
-  // label), else the unclaimed remainder. `within` is the total of the same pass: per
-  // interface the bins sum to it up to the summation round-off.
+  // label), then the `remainder_classes` (labels that only subdivide the points no kept
+  // class and no served claim holds: ruling 1649 Q3), else the unclaimed remainder.
+  // `within` is the total of the same pass: per interface the bins sum to it up to the
+  // summation round-off.
   struct CoveragePartitionClass
   {
     std::string name;
@@ -383,11 +385,11 @@ public:
     std::map<std::string, double> served;                           // model-set label
     double unclaimed = 0.0;
   };
-  std::map<int, InterfaceCoveragePartition>
-  GetInterfaceCoveragePartition(const std::set<int> &indices, const GridFunction &E,
-                                const GridFunction *D,
-                                const std::vector<CoveragePartitionClass> &kept_classes,
-                                const std::vector<UncoveredPerimeterPortion> &served) const;
+  std::map<int, InterfaceCoveragePartition> GetInterfaceCoveragePartition(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<CoveragePartitionClass> &kept_classes,
+      const std::vector<UncoveredPerimeterPortion> &served,
+      const std::vector<CoveragePartitionClass> &remainder_classes = {}) const;
   // OI-MX-LOOPGATE (decision 955): the within-R energy of each requested interface on the
   // portions, WEIGHTED per portion (`weights`, parallel to `portions`: the patch's rho_p)
   // and grouped by the portions' `type` label (the model row "m<idx>"): per label the

@@ -1903,7 +1903,23 @@ public:
       std::array<double, 3> p0{}, p1{};
     };
     std::vector<UncoveredPortionData> uncovered_portions;
-    // The excluded / unclaimed perimeter portions of the identification (idfix DESIGN
+    // Lane L1 (decision 1634 (1), ruling 1649 Q1 / Q2): one record per feature listed in
+    // `uncovered_portions`, read from the identification's result (nothing recomputed):
+    // the feature's id and type, its key Hash, whether the identification matched it (a
+    // matched feature in the uncovered list is one whose placement was rejected, with the
+    // rejection's class as text), and its signature's Unboxable flag. The coverage
+    // partition bins the uncovered energy per key with it. Carried by the geometry cache
+    // (version 25, a required leaf).
+    struct UncoveredKeyData
+    {
+      int feature = -1;
+      std::string type;
+      std::string hash;
+      bool matched = false;
+      std::string placement_rejection;
+      bool unboxable = false;
+    };
+    std::vector<UncoveredKeyData> uncovered_keys;
     // section 8; the exclusion-energy export): `topology` = the exclusion Class by name (a
     // whole-segment exclusion's class, an analytic CrossLayer zone's, CornerArmTrim for the
     // stretch a corner's exit trims off an arm cell, Unclaimed-other for the remainder of a

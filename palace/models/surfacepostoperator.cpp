@@ -1583,7 +1583,8 @@ std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
 SurfacePostOperator::GetInterfaceCoveragePartition(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
     const std::vector<CoveragePartitionClass> &kept_classes,
-    const std::vector<UncoveredPerimeterPortion> &served) const
+    const std::vector<UncoveredPerimeterPortion> &served,
+    const std::vector<CoveragePartitionClass> &remainder_classes) const
 {
   // Per interface the local bins in a fixed order (identical on every rank: the portion
   // lists are): per kept class its piece groups, the served groups, the remainder and the
@@ -1625,6 +1626,11 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
       AddPieces(*kept.portions);
     }
     AddPieces(served);
+    for (const auto &remainder : remainder_classes)
+    {
+      MFEM_VERIFY(remainder.portions, "A coverage-partition class requires its portions!");
+      AddPieces(*remainder.portions);
+    }
     interface.unclaimed = local_energies.size();
     local_energies.push_back(0.0);
     interface.within = local_energies.size();
@@ -1722,9 +1728,14 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
         {
           partition.classes[{kept_classes[list].name, groups[group]}] += energy;
         }
-        else
+        else if (list == kept_classes.size())
         {
           partition.served[groups[group]] += energy;
+        }
+        else
+        {
+          partition.classes[{remainder_classes[list - kept_classes.size() - 1].name,
+                             groups[group]}] += energy;
         }
       }
     }

@@ -367,6 +367,17 @@ protected:
     // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): per target interface, the raw
     // field's uncovered within-R energy per (type, feature label); empty when off.
     std::map<int, std::map<std::pair<std::string, std::string>, double>> uncovered_feature;
+    // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): THE CLOSED COVERAGE PARTITION of
+    // the raw field, per target interface, ALWAYS measured with the postprocessed
+    // correction: the kept-raw classes "Missing" (by "m<feature>" label, the key records of
+    // SurfaceResponseOperator::GetUncoveredKeys), "DomainBoundary",
+    // "SpatialClusterPriority" and "ConductorConsistency" (by portion type), then the
+    // served claims (by model-set label), then "UnpatchedPairs" (the served list's
+    // `unpatched` label alone) and "Excluded" (by exclusion class;
+    // Diagnostics.ExclusionEnergy only), then the unclaimed remainder. The loop remainder
+    // (`loop_remainder`) lies inside the served bins: the coverage shares move it out of
+    // them.
+    std::map<int, SurfacePostOperator::InterfaceCoveragePartition> coverage;
     // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
     // placed patch the raw field's within-box volume energies (empty when off).
     std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;

@@ -942,7 +942,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
     std::ifstream cache_input(cache_path);
     REQUIRE(cache_input);
     const json cache = json::parse(cache_input);
-    CHECK(cache["Version"] == 24);
+    CHECK(cache["Version"] == 25);
     const auto &cached_patches = cache["Patches"];
     for (const std::size_t p : extended)
     {
@@ -3733,7 +3733,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     REQUIRE(response);
     // Round 2b B1: the claims are taken from the operator into the PostOperator's list.
     CHECK(response->GetModelRawClaimPortions().portions.empty());
-    CHECK(post_op.GetSurfaceResponseModelRawPortions().empty() == !patch_energy);
+    // Lane L1 (decision 1634 (1)): the served claims of the coverage partition exist with
+    // PatchEnergy on or off.
+    CHECK(!post_op.GetSurfaceResponseModelRawPortions().empty());
     mfem::FunctionCoefficient potential_coefficient(
         [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
     mfem::ParGridFunction potential(&space_op.GetH1Space().Get());

@@ -1878,7 +1878,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 24);
+      CHECK(cache["Version"] == 25);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3250,7 +3250,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 24);
+      CHECK(cache["Version"] == 25);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {

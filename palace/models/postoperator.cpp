@@ -1941,9 +1941,10 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.conductor_consistency = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
             target_interfaces, *E, D_recovered.get(), conductor_consistency_portions);
       }
-      if (!surface_response_model_raw.empty())
+      if (surface_response_patch_energy_enabled && !surface_response_model_raw.empty())
       {
-        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set.
+        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set
+        // (the claims exist on every run since lane L1; the table with PatchEnergy only).
         result.model_raw_partition = surf_post_op.GetInterfacePartitionedEdgeEnergies(
             target_interfaces, *E, D_recovered.get(), surface_response_model_raw);
       }
@@ -1982,6 +1983,45 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // B of this measurement; the material operator's eps / mu^-1).
         result.within_r_volume_energies =
             surface_response_op->GetWithinRVolumeEnergies(*E, *B, fem_op->GetMaterialOp());
+      }
+      {
+        // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage
+        // partition, every point in ONE bin by the correction's ownership (the kept-raw
+        // classes first: the corrected total keeps them raw whatever claim lies under
+        // them, e.g. a conductor-consistency-excluded patch's claim, REPORT STEP 10).
+        std::vector<SurfacePostOperator::UncoveredPerimeterPortion> missing_by_feature;
+        missing_by_feature.reserve(surface_response_uncovered.size());
+        for (const auto &portion : surface_response_uncovered)
+        {
+          missing_by_feature.push_back({portion.p0, portion.p1,
+                                        fmt::format("m{:d}", portion.feature),
+                                        portion.feature});
+        }
+        std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &surface_response_domain_boundary},
+            {"SpatialClusterPriority", &surface_response_spatial_cluster_priority},
+            {"ConductorConsistency", &conductor_consistency_portions}};
+        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+        if (surface_response_exclusion_energy_enabled)
+        {
+          remainder_classes.push_back({"Excluded", &surface_response_exclusion_energy});
+        }
+        result.coverage = surf_post_op.GetInterfaceCoveragePartition(
+            target_interfaces, *E, D_recovered.get(), kept_classes,
+            surface_response_model_raw, remainder_classes);
+        for (auto &[interface, partition] : result.coverage)
+        {
+          // The served list's `unpatched` label ALONE (no model claim under the point) is
+          // the UnpatchedPairs class (fix round P2 2B), not a served claim.
+          (void)interface;
+          const auto unpatched = partition.served.find("unpatched");
+          if (unpatched != partition.served.end())
+          {
+            partition.classes[{"UnpatchedPairs", "unpatched"}] += unpatched->second;
+            partition.served.erase(unpatched);
+          }
+        }
       }
       if (!result.confidence.loop_remainders.empty())
       {

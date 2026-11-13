@@ -956,6 +956,10 @@ private:
   // electrostatic driver keeps in the corrected interface energies.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
       uncovered_portions;
+  // Lane L1 (ruling 1649 Q1): the key record of every feature listed in
+  // uncovered_portions (the identification's Hash, matched / rejected, Unboxable).
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData>
+      uncovered_keys;
   // The placement's clip of those portions by the matched clusters' support boxes
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
@@ -1725,6 +1729,13 @@ public:
   GetUncoveredPortions() const
   {
     return uncovered_portions;
+  }
+  // Lane L1 (ruling 1649 Q1): the key records of the uncovered features.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData> &
+  GetUncoveredKeys() const
+  {
+    return uncovered_keys;
   }
   // The parts of the uncovered requirements removed inside the matched clusters' support
   // boxes at placement (decision 399 MAJOR-1; GetUncoveredPortions holds the remainder).

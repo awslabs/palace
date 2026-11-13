@@ -1756,9 +1756,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         AppendClippedRows(idx, V[step], true, raw_whole, raw_outside);
       }
-      if (!model_raw_portions.empty())
+      if (patch_energy_response && !model_raw_portions.empty())
       {
-        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set.
+        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set
+        // (the claims exist on every run since lane L1; the table with PatchEnergy only).
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_model_partitions.emplace_back(
             idx, post_op.GetElectrostaticPartitionedEdgeEnergies(

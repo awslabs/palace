@@ -12376,6 +12376,9 @@ FeaturePatchSummary BuildFeaturePatches(
   // disagreement / the A10 context test) under a ledger: NOT placed, read as Missing by
   // the uncovered-portion pass below (their perimeter stays raw).
   std::set<int> placement_rejected;
+  // Lane L1 (ruling 1649 Q2): the class of each refusal (the ledger record's), printed as
+  // the key's rejection reason by the coverage outputs.
+  std::map<int, std::string> placement_rejection_class;
   // The spatial cluster models' trace meshes, read once per library model (the probe snap).
   std::map<std::size_t, TraceMeshData> trace_meshes;
   std::map<std::size_t, const EdgeSegment3D *> framed;
@@ -13589,6 +13592,7 @@ FeaturePatchSummary BuildFeaturePatches(
         }
       }
       placement_rejected.insert(feature.id);
+      placement_rejection_class.emplace(feature.id, cls);
       GeometryFallbackData record;
       record.cls = cls;
       record.site = site;
@@ -14679,6 +14683,7 @@ FeaturePatchSummary BuildFeaturePatches(
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
   // global sub-segments of the perimeter, in the order of the feature list.
   result.uncovered_portions.clear();
+  result.uncovered_keys.clear();
   for (const auto &feature : identification.features)
   {
     if ((feature.matched_model && !placement_rejected.count(feature.id)) ||
@@ -14688,6 +14693,7 @@ FeaturePatchSummary BuildFeaturePatches(
       // features' (decision 481 / 512 (c)): never listed twice.
       continue;
     }
+    const std::size_t listed_portions = result.uncovered_portions.size();
     for (const auto &portion : feature.portions)
     {
       if (IsImage(portion))
@@ -14713,6 +14719,16 @@ FeaturePatchSummary BuildFeaturePatches(
           {feature.id, mirror_formed ? feature.type + ":MirrorFormed" : feature.type,
            static_cast<int>(portion.segment), SegmentPoint(portion.s0),
            SegmentPoint(portion.s1)});
+    }
+    if (result.uncovered_portions.size() > listed_portions)
+    {
+      // Lane L1 (ruling 1649 Q1): the listed feature's key record, as the identification
+      // gives it.
+      const auto rejection = placement_rejection_class.find(feature.id);
+      result.uncovered_keys.push_back(
+          {feature.id, feature.type, feature.hash, feature.matched_model.has_value(),
+           rejection != placement_rejection_class.end() ? rejection->second : "",
+           feature.signature.is_object() && feature.signature.value("Unboxable", false)});
     }
   }
 
@@ -21477,7 +21493,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 24},
+  nlohmann::json cache = {{"Version", 25},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -21543,6 +21559,19 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                            {"P1", portion.p1}});
     }
     cache["UncoveredPortions"] = std::move(uncovered);
+    // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a required leaf of
+    // version 25.
+    nlohmann::json uncovered_keys = nlohmann::json::array();
+    for (const auto &key : config.uncovered_keys)
+    {
+      uncovered_keys.push_back({{"Feature", key.feature},
+                                {"Type", key.type},
+                                {"Hash", key.hash},
+                                {"Matched", key.matched},
+                                {"PlacementRejection", key.placement_rejection},
+                                {"Unboxable", key.unboxable}});
+    }
+    cache["UncoveredKeys"] = std::move(uncovered_keys);
     // The exclusion-energy export's portions (idfix DESIGN section 8; decision 1072 Q3: a
     // required leaf of version 22).
     nlohmann::json exclusions = nlohmann::json::array();
@@ -21655,10 +21684,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 24,
+      data.value("Version", 0) == 25,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 24 = version 23 + the fix round P3's placement rule R-9b (every "
+          << " (version 25 = version 24 + the UncoveredKeys leaf (lane L1, ruling 1649 Q1: "
+             "the uncovered features' key records of the coverage outputs); version 24 = "
+             "version 23 + the fix round P3's placement rule R-9b (every "
              "KeyedAtTheMean feature placed cell-wise at its local cross-section from its "
              "family; decisions 1286 / 1291); version 23 = version 22 + the fix round P2's "
              "placement rule R-9 (the "
@@ -21781,6 +21812,23 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     portion.p0 = entry.at("P0");
     portion.p1 = entry.at("P1");
     result.uncovered_portions.push_back(std::move(portion));
+  }
+  // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a REQUIRED leaf of
+  // version 25 (a cache without it was written by another binary: refused by name).
+  MFEM_VERIFY(data.contains("UncoveredKeys"),
+              "Response-geometry cache version 25 without UncoveredKeys (lane L1, ruling "
+              "1649 Q1): delete the stale cache!");
+  result.uncovered_keys.clear();
+  for (const auto &entry : data.at("UncoveredKeys"))
+  {
+    ResponseCorrectionData::UncoveredKeyData key;
+    key.feature = entry.at("Feature");
+    key.type = entry.at("Type");
+    key.hash = entry.at("Hash");
+    key.matched = entry.at("Matched");
+    key.placement_rejection = entry.at("PlacementRejection");
+    key.unboxable = entry.at("Unboxable");
+    result.uncovered_keys.push_back(std::move(key));
   }
   // Decision 1072 Q3: the exclusion-energy portions are a REQUIRED leaf of version 22 (lane
   // B's version 21); a cache of the right version written before the export existed (the
@@ -31050,6 +31098,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       ownership_diagnostics["MirrorFormedPlacement"] = placements;
     }
     uncovered_portions = config.uncovered_portions;
+    uncovered_keys = config.uncovered_keys;
     exclusion_portions = config.exclusion_portions;  // section 8's export set, by class
     mirror_planes = config.mirror_planes;
     mirror_band = config.mirror_band_over_radius * config.matching_radius;
@@ -31482,8 +31531,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
       // patch's raw claim by model set, for the per-model raw energy partition of
-      // surface-response-model-raw-energy.csv; off by default (the list stays empty).
-      if (config.patch_energy)
+      // surface-response-model-raw-energy.csv (written with PatchEnergy only). Lane L1
+      // (decision 1634 (1)): ALWAYS collected, the SERVED claims of the closed coverage
+      // partition (ruling 1641: a correction's coverage never depends on a switch).
       {
         model_raw_claim_portions = CollectModelRawClaimPortions(
             spatially_owned_patches, placed_patches, config, ownership,
