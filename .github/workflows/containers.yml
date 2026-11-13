@@ -16,6 +16,7 @@ name: Containers
 # - x86_64_v3, x86_64_v4, sapphirerapids   on the x64 (sapphirerapids) host
 # - aarch64, neoverse_v2                   on the arm64-8g (neoverse_v2) host
 # - neoverse_v1                            on the arm64 (neoverse_v1) host
+# - neoverse_v3                            on the arm64-9g (neoverse_v3) host
 # - x86_64_v3_cuda                         on the gpu (x86_64_v3) host
 # Each target is at or below its host's native ISA, so build-time binaries run
 # on the host (no cross-compile-up). neoverse_v1 builds on its own native V1
@@ -128,6 +129,7 @@ jobs:
           - {runner: arm64-8g, target: aarch64}
           - {runner: arm64,    target: neoverse_v1}
           - {runner: arm64-8g, target: neoverse_v2}
+          - {runner: arm64-9g, target: neoverse_v3}
           - {runner: gpu,      target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:

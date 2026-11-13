@@ -21,6 +21,10 @@ RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
 # Copy inputs needed to install dependencies before the Palace source tree.
 COPY spack_repo /opt/palace/spack_repo
 
+# Add neoverse_v3 (Graviton5) to Spack v1.2's vendored archspec; see the
+# "Extend archspec" step in the build-container action.
+ENV ARCHSPEC_EXTENSION_CPU_DIR=/opt/palace/spack_repo/archspec
+
 # Set up spack repo and apply patches to builtin spack packages
 RUN mkdir -p /opt/spack-environment && \
     # Link our local spack repo to /opt/spack-environment
@@ -57,6 +61,21 @@ set -o noclobber \
 # FIXME(awslabs/palace#731): remove with the apt step above.
 RUN cd {{ paths.environment }} && spack env activate . && \
     spack compiler find
+
+# The target pin is only a preference, so an unknown target (e.g. a broken
+# archspec extension) silently falls back to an older one. Fail instead.
+# TODO: Remove, together with the archspec extension, once Palace moves to a
+# Spack release after v1.2.2 whose vendored archspec includes neoverse_v3.
+ARG PALACE_TARGET
+RUN if [ -n "$PALACE_TARGET" ]; then \
+      cd {{ paths.environment }} && spack env activate . && \
+      spack concretize && \
+      target="$(spack find -c --format '{architecture.target}' palace)" && \
+      if [ "$target" != "$PALACE_TARGET" ]; then \
+        echo "palace concretized to target=$target, expected $PALACE_TARGET" >&2; \
+        exit 1; \
+      fi; \
+    fi
 
 # Keep dependency installation before `COPY .` so Palace source changes can
 # reuse this layer. If installation fails partway through, save the exit status,
