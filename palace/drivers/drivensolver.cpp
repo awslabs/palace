@@ -206,6 +206,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
       std::unique_ptr<ComplexOperator> A2;
       auto A = space_op.GetSystemOperator(omega, *P);
+      const bool assembled = !A;
       if (!A)
       {
         if (!K)
@@ -247,6 +248,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                             1 + omega_i + (excitation_counter - 1) * omega_sample.size(),
                             omega_sample.size() * port_excitations.Size())
               : "");
+      if (corrected_ksp)
+      {
+        // The path the response-corrected system operator wraps (log only).
+        Mpi::Print(" Response-corrected system operator: {}\n",
+                   assembled ? "assembled" : "matrix-free");
+      }
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);

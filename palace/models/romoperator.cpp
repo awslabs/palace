@@ -959,6 +959,7 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
                                                              -omega * omega + 0.0i, omega);
   std::unique_ptr<ComplexOperator> A2_full;
   auto A = space_op.GetSystemOperator(omega, *P);
+  const bool assembled = !A;
   if (!A)
   {
     A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
@@ -980,6 +981,12 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   }
   ksp->SetOperators(corrected_A ? static_cast<const ComplexOperator &>(*corrected_A) : *A,
                     *P);
+  if (corrected_A)
+  {
+    // The path the response-corrected HDM system operator wraps (log only).
+    Mpi::Print(" Response-corrected PROM HDM system operator: {}\n",
+               assembled ? "assembled" : "matrix-free");
+  }
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
