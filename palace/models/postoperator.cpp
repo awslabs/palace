@@ -2315,7 +2315,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("participation_self_consistent", "p_surf self-consistent");
     table.insert("quality_self_consistent", "Q_surf self-consistent");
     table.insert("trace_closure_spread", "trace closure spread");
-    table.insert("matched_fraction", "matched edge fraction");
+    table.insert("matched_fraction", "matched edge length fraction");
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     // OI-ZERO-IFACE-NAN (decision 922 C-3 (ii)): the "response target" flag column only
     // when a postprocessing interface is not a target (a run whose interfaces are all
@@ -2348,7 +2348,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("loop_residual", "loop residual");
     table.insert("weighted_loop_residual", "response-weighted loop residual");
     table.insert("loop_failure_fraction", "loop-response fraction above limit");
-    table.insert("matched_fraction", "matched edge fraction");
+    table.insert("matched_fraction", "matched edge length fraction");
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     table.insert("curvature", "max R/rho");
     table.insert("library_distance", "max library distance");

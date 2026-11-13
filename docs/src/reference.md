@@ -1536,7 +1536,7 @@ evaluated before the exclusion reads zero), with the portions under
 `Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
 new. On the Maxwell path a postprocessing interface that is not a response target carries
 its raw energy in the corrected and fixed-flux columns of `surface-Q-corrected.csv` (the
-electrostatic driver's convention; trace closure spread 0, matched edge fraction and
+electrostatic driver's convention; trace closure spread 0, matched edge length fraction and
 unmodeled corner neighborhood fraction 0 / 0), and a run with such an interface adds the
 column `response target` (1 / 0) to that table; the self-consistent columns stay NaN when
 no self-consistent solve was requested. A corner / vertex coupon that an exact spatial cluster drops whole (its basis-point
@@ -2502,7 +2502,7 @@ corrected fields.
 | `loop-response fraction above limit`           | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05                                    | ``\leq 0.01``                 |
 | `hat residual`                                 | Maximum, over cap-interior hats, of the hat's value by its cap-rim line minus its value by the direct anchor line, divided by the sum of the absolute terms | information only |
 | `response-weighted hat residual`               | RMS hat residual weighted by the fabricated surface response of the hat's patch                                               | information only              |
-| `matched edge fraction`                        | Minimum, over target interfaces, of the selected physical edge length assigned a library model                                | effectively 1                 |
+| `matched edge length fraction`                 | Minimum, over target interfaces, of the selected physical edge LENGTH assigned a library model (a length figure, not an energy coverage) | effectively 1                 |
 | `unmodeled corner neighborhood fraction`       | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction        | ``\leq 0.1``                  |
 | `max R/rho`                                    | Largest matching-radius to local-curvature-radius ratio                                                                       | ``\leq 0.25``                 |
 | `max library distance`                         | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span | ``\leq 0.8``                  |

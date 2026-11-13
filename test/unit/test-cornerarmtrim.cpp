@@ -4616,7 +4616,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(std::stod(untargeted[with.Column("E_surf corrected fixed-flux (J)")]),
              WithinRel(raw, 1.0e-12));
   CHECK(std::stod(untargeted[with.Column("trace closure spread")]) == 0.0);
-  CHECK(std::stod(untargeted[with.Column("matched edge fraction")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column("matched edge length fraction")]) == 0.0);
   CHECK(std::stod(untargeted[with.Column("unmodeled corner neighborhood fraction")]) ==
         0.0);
   // p_surf corrected = raw / E_norm corrected (the corrected normalisation of the run).
