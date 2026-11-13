@@ -199,8 +199,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
   // Legacy: the island sheet (attribute 9) is cracked; default (the key unset): it is not.
-  const bool legacy = GENERATE(true, false);
-  INFO("crack policy: " << (legacy ? "legacy" : "default"));
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  const bool legacy = (crack_policy == test::CrackPolicy::Legacy);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   const fs::path mesh_path = temp.temp_dir / "staged-island.mesh";
   if (Mpi::Root(comm))
@@ -210,19 +211,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     serial.Print(output);
   }
   Mpi::Barrier(comm);
-  test::json config = ConvexMaxwellIslandConfig();
+  // The builder writes the crack key of the policy (SD-3301: legacy = true, default =
+  // unset).
+  test::json config = ConvexMaxwellIslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   // Mesh units are metres, unscaled, as the library's R (m).
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
-  if (legacy)
-  {
-    config["Model"]["CrackInternalBoundaryElements"] = true;
-  }
-  else
-  {
-    config["Model"].erase("CrackInternalBoundaryElements");
-  }
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
   config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
