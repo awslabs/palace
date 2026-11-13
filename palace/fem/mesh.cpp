@@ -264,7 +264,7 @@ CeedElemRestriction CreateGeomDataSubsetRestriction(Ceed ceed,
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
                           std::vector<int> &active_indices,
                           const mfem::GridFunction &mesh_nodes, const Vector &elem_attr,
-                          bool coords, const mfem::GridFunction *depth = nullptr)
+                          bool coords, const mfem::GridFunction *field = nullptr)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
@@ -300,11 +300,11 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // (CEED_STRIDES_BACKEND, as for the assembled quadrature data). Backends whose E-vector
   // layout matches that layout (the GPU backends) then read the vector directly as the
   // E-vector of every operator instead of gathering a copy of it per operator at setup.
-  // The depth into an extruded PML and its gradient follow the coordinates.
+  // The value and gradient of the scalar field of the mesh nodes follow the coordinates.
   coords = coords && data.dim == 3 && data.space_dim == 3;
-  depth = coords ? depth : nullptr;
+  field = coords ? field : nullptr;
   const CeedInt geom_data_size =
-      ceed::CeedGeometryDataSize(data.space_dim, data.dim, coords, depth != nullptr);
+      ceed::CeedGeometryDataSize(data.space_dim, data.dim, coords, field != nullptr);
   const CeedSize geom_data_length =
       static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size;
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, geom_data_length, &data.geom_data));
@@ -319,24 +319,24 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   }
 
   // Compute the required geometry factors at quadrature points.
-  CeedElemRestriction depth_restr = nullptr;
-  CeedBasis depth_basis = nullptr;
-  CeedVector depth_vec = nullptr;
-  if (depth)
+  CeedElemRestriction field_restr = nullptr;
+  CeedBasis field_basis = nullptr;
+  CeedVector field_vec = nullptr;
+  if (field)
   {
-    depth_restr = FiniteElementSpace::BuildCeedElemRestriction(*depth->FESpace(), ceed,
+    field_restr = FiniteElementSpace::BuildCeedElemRestriction(*field->FESpace(), ceed,
                                                                geom, data.indices);
-    depth_basis = FiniteElementSpace::BuildCeedBasis(*depth->FESpace(), ceed, geom);
-    ceed::InitCeedVector(*depth, ceed, &depth_vec);
+    field_basis = FiniteElementSpace::BuildCeedBasis(*field->FESpace(), ceed, geom);
+    ceed::InitCeedVector(*field, ceed, &field_vec);
   }
-  ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
-                                 attr_basis, elem_attr_vec, data.geom_data,
-                                 data.geom_data_restr, depth_restr, depth_basis, depth_vec);
-  if (depth)
+  ceed::AssembleCeedGeometryData(
+      ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr, attr_basis, elem_attr_vec,
+      data.geom_data, data.geom_data_restr, coords, field_restr, field_basis, field_vec);
+  if (field)
   {
-    PalaceCeedCall(ceed, CeedVectorDestroy(&depth_vec));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&depth_restr));
-    PalaceCeedCall(ceed, CeedBasisDestroy(&depth_basis));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&field_vec));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&field_restr));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
   }
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
@@ -353,7 +353,7 @@ auto BuildCeedGeomFactorData(
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
     const std::vector<int> &lossy_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
     bool ceed_from_self, const std::vector<int> *attr_list = nullptr,
-    const mfem::GridFunction *depth = nullptr)
+    const mfem::GridFunction *field = nullptr)
 {
   // With attr_list, only the domain elements of the given (sorted) attributes, with the
   // quadrature point coordinates and without the shared element subsets.
@@ -401,7 +401,7 @@ auto BuildCeedGeomFactorData(
           indices, GetCeedAttribute, attr_list ? no_active_attr : lossy_attr);
       geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
                                                        *mesh.GetNodes(), elem_attr, coords,
-                                                       depth));
+                                                       field));
     }
   }
 
@@ -490,7 +490,7 @@ Mesh::GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const
   {
     *geom_data_map =
         BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, lossy_attr, active_bdr_attr,
-                                ceed, ceed_from_self, &attr_list, pml_depth.get());
+                                ceed, ceed_from_self, &attr_list, geom_field.get());
     CheckSameElements(ceed, attr_list);
   }
   return **geom_data_map;
@@ -584,11 +584,11 @@ void Mesh::CheckSameElements(Ceed ceed, const std::vector<int> &attr_list) const
   }
 }
 
-void Mesh::SetPMLDepth(std::unique_ptr<mfem::ParGridFunction> &&depth) const
+void Mesh::SetGeomFactorField(std::unique_ptr<mfem::ParGridFunction> &&field)
 {
-  MFEM_VERIFY(geom_data_attr.empty(), "The depth of the mesh nodes into the extruded PML "
-                                      "must be set before the geometry factor data!");
-  pml_depth = std::move(depth);
+  MFEM_VERIFY(geom_data_attr.empty(), "The field of the geometry factor data must be set "
+                                      "before the geometry factor data is built!");
+  geom_field = std::move(field);
 }
 
 void Mesh::ResetCeedObjects()
@@ -655,7 +655,7 @@ void Mesh::Update()
   lossy_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
-  pml_depth.reset();
+  geom_field.reset();
 }
 
 const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const

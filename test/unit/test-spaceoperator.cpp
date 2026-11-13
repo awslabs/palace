@@ -756,7 +756,7 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
   REQUIRE(mg);
   REQUIRE(mg->GetNumLevels() > 1);
-  const auto &tdofs = mg->GetPMLTrueDofs();
+  const auto &tdofs = mg->GetSubdomainTrueDofs();
   CHECK(std::ranges::is_sorted(tdofs));
   CHECK(std::ranges::adjacent_find(tdofs) == tdofs.end());
   long long n_pml = static_cast<long long>(tdofs.size());
@@ -1204,6 +1204,10 @@ MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_de
   pml.reference_frequency = 2.0;
   mesh.clear();
   mesh.push_back(std::make_unique<Mesh>(Mpi::World(), *serial_mesh));
+  if (extruded)
+  {
+    mesh[0]->SetGeomFactorField(mesh::GetExtrudedPMLDepth(mesh[0]->Get(), pml));
+  }
 
   config::SolverData solver;
   solver.order = order;
@@ -1338,7 +1342,7 @@ void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer
   const int attr = layer.GetAttributes()[0];
   const auto it = mesh.GetCeedAttributes().find(attr);
   const int ceed_attr = (it == mesh.GetCeedAttributes().end()) ? 0 : it->second;
-  const auto *depth = mesh.GetPMLDepth();
+  const auto *depth = mesh.GetGeomFactorField();
 
   BilinearForm a(space);
   a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),

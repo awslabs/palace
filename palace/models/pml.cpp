@@ -185,16 +185,18 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
   }
 
   // The extrusion built the layer of an extruded PML, of known thickness and element size:
-  // the stretch is along its rays, at the depth of the mesh nodes into the layer.
+  // the stretch is along its rays, at the depth of the mesh nodes into the layer (the field
+  // of the geometry factor data, see mesh::GetExtrudedPMLDepth).
   if (data.IsExtruded())
   {
+    MFEM_VERIFY(mesh.GetGeomFactorField(),
+                "The extruded PML requires the depth of the mesh nodes into the layer!");
     const auto &ex = data.extrusion;
     LayerGeometry geometry;
     geometry.thickness[0] = ex.thickness;
     stretch = BuildStretch(data, geometry, n_r, {ex.thickness / ex.layers}, fe_order);
     stretch.extruded = true;
     stretch.center = ex.center;
-    mesh.SetPMLDepth(mesh::GetExtrudedPMLDepth(pmesh, data));
     return;
   }
 

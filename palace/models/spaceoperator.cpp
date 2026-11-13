@@ -2175,15 +2175,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   {
     if (pml_block)
     {
-      const auto *A = dynamic_cast<const ComplexParOperator *>(pml_block.get());
-      MFEM_VERIFY(A, "Unexpected operator type for the PML subdomain correction!");
-      auto Assemble = [](const Operator *op) -> std::unique_ptr<mfem::HypreParMatrix>
-      {
-        return op ? dynamic_cast<const ParOperator &>(*op).StealParallelAssemble()
-                  : nullptr;
-      };
-      B->SetPMLSubdomain(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op),
-                         Assemble(A->Real()), Assemble(A->Imag()));
+      // The PML regions are the subdomain of the subdomain correction of the multigrid
+      // preconditioner (see PMLSubdomainSolver).
+      B->SetSubdomain(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op),
+                      std::move(pml_block));
     }
   }
 

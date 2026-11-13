@@ -763,6 +763,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   mesh::ExtrudePML(serial_mesh, domains.pml[0], {});
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(comm, *serial_mesh));
+  mesh[0]->SetGeomFactorField(mesh::GetExtrudedPMLDepth(mesh[0]->Get(), domains.pml[0]));
 
   const int pa_order_threshold = BilinearForm::pa_order_threshold;
   const int p_trial = fem::DefaultIntegrationOrder::p_trial;
@@ -782,7 +783,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   REQUIRE(space_op.GetMaterialOp().HasPML());
   const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
   REQUIRE(p.extruded);
-  const auto *depth = mesh[0]->GetPMLDepth();
+  const auto *depth = mesh[0]->GetGeomFactorField();
   REQUIRE(depth);
 
   const auto &pfes = space_op.GetNDSpace().Get();
