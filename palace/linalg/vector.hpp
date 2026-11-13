@@ -366,6 +366,10 @@ void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
 void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
                        ComplexVector &y);
 
+// Local inner products H[i + j m] = X[i] · Y[j] of the real vectors X (m of them) and
+// Y, without the global reduction. On the host every vector is read once.
+void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H);
+
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
 void Sqrt(Vector &x, double s = 1.0);
