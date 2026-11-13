@@ -44,6 +44,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
+    a complex weight a = A e^{iφ} on the unit-power incident wave of each lumped port, so
+    ports sharing an `Excitation` index can be driven with different amplitudes and phases.
+    S-parameters of single-port excitations are normalized by the weight; with a nonzero
+    phase `port-V.csv` and `port-I.csv` report the real and imaginary parts of the
+    incident voltage and current. A nonzero phase is an error for transient simulations.
+    SchemaVer 4-2-4 [PR 1169](https://github.com/awslabs/palace/pull/1169).
+
+#### New Features
+
   - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
     that far fields can be computed when the outer boundary is not a valid integration
     surface, or away from the truncation. The fields of each face are taken from the side
