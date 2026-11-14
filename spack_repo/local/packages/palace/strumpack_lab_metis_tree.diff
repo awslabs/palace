@@ -1,0 +1,354 @@
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
+index ff3b03a2..6231af75 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -42,6 +42,7 @@
+ #include "PTScotchReordering.hpp"
+ #endif
+ #include "MetisReordering.hpp"
++#include "MetisTreeReordering.hpp"
+ #if defined(STRUMPACK_USE_PARMETIS)
+ #include "ParMetisReordering.hpp"
+ #endif
+@@ -68,10 +69,14 @@ namespace strumpack {
+   MatrixReorderingMPI<scalar_t,integer_t>::nested_dissection
+   (const Opts_t& opts, const CSRMPI_t& A,
+    int nx, int ny, int nz, int components, int width) {
++    // LAB: step timers, printed with the verbose statistics
++    double ord_t0 = MPI_Wtime(), ord_t1, ord_t2, ord_t3, ord_t4;
++    ord_t_metis_() = ord_t_septree_() = 0.;
+     if (!is_parallel(opts.reordering_method())) {
+       auto rank = comm_->rank();
+       auto P = comm_->size();
+       auto Aseq = A.gather_graph();
++      ord_t1 = MPI_Wtime();
+       SeparatorTree<integer_t> global_sep_tree;
+       if (Aseq) { // only root
+         switch (opts.reordering_method()) {
+@@ -129,6 +134,7 @@ namespace strumpack {
+         Aseq.reset();
+         global_sep_tree.check();
+       }
++      ord_t2 = MPI_Wtime();
+       comm_->broadcast(perm_);
+       comm_->broadcast(iperm_);
+       integer_t nbsep;
+@@ -143,7 +149,16 @@ namespace strumpack {
+       tree_.check();
+       for (std::size_t i=0; i<perm_.size(); i++)
+         iperm_[perm_[i]] = i;
++      ord_t3 = MPI_Wtime();
+       get_local_graphs(A);
++      ord_t4 = MPI_Wtime();
++      if (opts.verbose() && comm_->is_root())
++        std::cout << "# ORDSTEPS seq: gather_graph = " << ord_t1-ord_t0
++                  << " , ordering = " << ord_t2-ord_t1
++                  << " ( METIS_NodeND = " << ord_t_metis_()
++                  << " , sep tree from perm = " << ord_t_septree_() << " )"
++                  << " , broadcast+split trees = " << ord_t3-ord_t2
++                  << " , local graphs = " << ord_t4-ord_t3 << std::endl;
+     } else {
+       switch (opts.reordering_method()) {
+       case ReorderingStrategy::GEOMETRIC: {
+@@ -188,9 +203,10 @@ namespace strumpack {
+         tree_ = ptscotch_nested_dissection
+           (A, comm_->comm(), true, perm_, opts);
+ #else
+-        std::cerr << "ERROR: STRUMPACK was not configured with Scotch support"
+-                  << std::endl;
+-        abort();
++        // LAB: without PT-Scotch this strategy selects the METIS-only nested
++        // dissection which is parallel over the separator tree
++        tree_ = metis_tree_nested_dissection
++          (A, comm_->comm(), perm_, opts);
+ #endif
+         break;
+       }
+@@ -201,11 +217,19 @@ namespace strumpack {
+       default: assert(true);
+       }
+       tree_.check();
++      ord_t1 = MPI_Wtime();
+       get_local_graphs(A);
++      ord_t2 = MPI_Wtime();
+       if (opts.reordering_method() == ReorderingStrategy::PARMETIS ||
+           opts.reordering_method() == ReorderingStrategy::PTSCOTCH)
+         build_local_tree(A);
+       ltree_.check();
++      ord_t3 = MPI_Wtime();
++      if (opts.verbose() && comm_->is_root())
++        std::cout << "# ORDSTEPS par: parallel ordering (incl. gather of perm) = "
++                  << ord_t1-ord_t0
++                  << " , local graphs = " << ord_t2-ord_t1
++                  << " , local trees = " << ord_t3-ord_t2 << std::endl;
+     }
+     nested_dissection_print(opts, A.nnz());
+     return 0;
+diff --git a/src/sparse/ordering/MetisReordering.hpp b/src/sparse/ordering/MetisReordering.hpp
+index 39deafe7..a0ff0dc0 100644
+--- a/src/sparse/ordering/MetisReordering.hpp
++++ b/src/sparse/ordering/MetisReordering.hpp
+@@ -30,6 +30,8 @@
+ #define METIS_REORDERING_HPP
+ 
+ #include <functional>
++#include <cstdlib>
++#include <mpi.h>
+ #include <typeinfo>
+ #include <memory>
+ #include "metis.h"
+@@ -43,6 +45,10 @@
+ 
+ namespace strumpack {
+ 
++  // LAB: step timers of the last ordering (seconds, root only)
++  inline double& ord_t_metis_() { static double t = 0.; return t; }
++  inline double& ord_t_septree_() { static double t = 0.; return t; }
++
+   template<typename integer_t> inline int WRAPPER_METIS_NodeNDP
+   (std::vector<idx_t>& xadj, std::vector<idx_t>& adjncy,
+    idx_t* vwgt, idx_t seps, idx_t* options, std::vector<integer_t>& perm,
+@@ -245,14 +251,18 @@ namespace strumpack {
+ #endif
+         sep_tree = sep_tree_from_metis_sizes(nodes, separators, sizes);
+     } else {
++      double t0 = MPI_Wtime();
+       ierr = WRAPPER_METIS_NodeND
+         (xadj, adjncy, nullptr, options /*nullptr*/, iperm, perm);
++      double t1 = MPI_Wtime();
+ #if defined(STRUMPACK_USE_MPI)
+       if (opts.use_MUMPS_SYMQAMD())
+         sep_tree = aggressive_amalgamation(n, ptr, ind, perm, iperm, opts);
+       else
+ #endif
+         sep_tree = build_sep_tree_from_perm(ptr, ind, perm, iperm);
++      ord_t_metis_() += t1 - t0;
++      ord_t_septree_() += MPI_Wtime() - t1;
+     }
+     if (ierr != METIS_OK) {
+       std::cerr << "# ERROR: Metis nested dissection reordering failed"
+diff --git a/src/sparse/ordering/MetisTreeReordering.hpp b/src/sparse/ordering/MetisTreeReordering.hpp
+new file mode 100644
+index 00000000..7ee6e004
+--- /dev/null
++++ b/src/sparse/ordering/MetisTreeReordering.hpp
+@@ -0,0 +1,219 @@
++/*
++ * Scratch prototype of the ordering study (lane "ordering"), not for upstream as is.
++ *
++ * Nested dissection with METIS only, parallel over the separator tree: the graph is gathered
++ * on process 0, which computes the top vertex separator with METIS_ComputeVertexSeparator
++ * (the bisection METIS_NodeND itself uses), keeps one half and sends the other half to the
++ * process in the middle of its range of processes. Both recurse; a process whose range has
++ * one process left orders its subgraph with METIS_NodeND. The result has the layout of the
++ * ParMETIS ordering (p2 leaves, a power of two <= P, leaf k on process k, the separators
++ * after their two subtrees), so the caller continues as for ParMETIS.
++ */
++#ifndef METIS_TREE_REORDERING_HPP
++#define METIS_TREE_REORDERING_HPP
++
++#include <functional>
++#include <numeric>
++#include <vector>
++#include "metis.h"
++#include "sparse/CSRMatrixMPI.hpp"
++#include "sparse/SeparatorTree.hpp"
++
++namespace strumpack {
++
++  template<typename scalar_t,typename integer_t>
++  SeparatorTree<integer_t>
++  metis_tree_nested_dissection(const CSRMatrixMPI<scalar_t,integer_t>& A,
++                               MPI_Comm comm, std::vector<integer_t>& perm,
++                               const SPOptions<scalar_t>& opts) {
++    const int P = mpi_nprocs(comm), rank = mpi_rank(comm);
++    const integer_t n = A.size();
++    // number of leaves: a power of two, at most the number of processes and
++    // with at least about 2000 rows per leaf
++    int p2 = 1;
++    while (2*p2 <= P && integer_t(2*p2) * 2000 <= n) p2 *= 2;
++    double t0 = MPI_Wtime();
++    // subgraph held by this process: global rows (label), adjacency in local indices, and
++    // the first position of its vertices in the new ordering
++    std::vector<idx_t> xadj, adj;
++    std::vector<integer_t> label;
++    integer_t base = 0;
++    {
++      auto Aseq = A.gather_graph();
++      if (Aseq) {
++        xadj.resize(n+1);
++        adj.reserve(Aseq->ptr(n));
++        xadj[0] = 0;
++        for (integer_t i=0; i<n; i++) {
++          for (integer_t k=Aseq->ptr(i); k<Aseq->ptr(i+1); k++)
++            if (Aseq->ind(k) != i) adj.push_back(Aseq->ind(k));
++          xadj[i+1] = adj.size();
++        }
++        label.resize(n);
++        std::iota(label.begin(), label.end(), integer_t(0));
++      }
++    }
++    double t1 = MPI_Wtime(), tsep = 0., tsplit = 0., tleaf = 0., trecv = 0.;
++    std::vector<integer_t> plabel, ppos;   // (row, new position) pairs found here
++    std::vector<integer_t> hsz(2*p2-1, 0); // sizes of the tree nodes, heap numbering
++    idx_t options[METIS_NOPTIONS];
++    METIS_SetDefaultOptions(options);
++    if (rank < p2) {
++      int p0 = 0, p1 = p2, heap = 0;
++      while (p1 - p0 > 1) {
++        const int pm = (p0 + p1) / 2;
++        if (rank == p0) {
++          double s0 = MPI_Wtime();
++          idx_t nv = label.size(), sepsize = 0;
++          std::vector<idx_t> where(nv, 0);
++          if (nv > 2*(p1-p0))
++            METIS_ComputeVertexSeparator
++              (&nv, xadj.data(), adj.data(), nullptr, options, &sepsize,
++               where.data());
++          double s1 = MPI_Wtime();
++          tsep += s1 - s0;
++          // local numbering of the two halves
++          std::vector<idx_t> loc(nv);
++          idx_t cnt[3] = {0, 0, 0};
++          for (idx_t i=0; i<nv; i++) loc[i] = cnt[where[i]]++;
++          for (idx_t i=0; i<nv; i++)
++            if (where[i] == 2) {
++              plabel.push_back(label[i]);
++              ppos.push_back(base + cnt[0] + cnt[1] + loc[i]);
++            }
++          hsz[heap] = cnt[2];
++          std::vector<idx_t> x[2], a[2];
++          std::vector<integer_t> l[2];
++          for (int s=0; s<2; s++) {
++            x[s].reserve(cnt[s]+1);
++            x[s].push_back(0);
++            l[s].reserve(cnt[s]);
++          }
++          for (idx_t i=0; i<nv; i++) {
++            const int s = where[i];
++            if (s == 2) continue;
++            for (idx_t k=xadj[i]; k<xadj[i+1]; k++)
++              if (where[adj[k]] == s) a[s].push_back(loc[adj[k]]);
++            x[s].push_back(a[s].size());
++            l[s].push_back(label[i]);
++          }
++          long long h[3] = {(long long)cnt[1], (long long)a[1].size(),
++                            (long long)(base + cnt[0])};
++          MPI_Send(h, 3, MPI_LONG_LONG, pm, 0, comm);
++          MPI_Send(l[1].data(), cnt[1], mpi_type<integer_t>(), pm, 1, comm);
++          MPI_Send(x[1].data(), cnt[1]+1, mpi_type<idx_t>(), pm, 2, comm);
++          MPI_Send(a[1].data(), a[1].size(), mpi_type<idx_t>(), pm, 3, comm);
++          xadj.swap(x[0]);
++          adj.swap(a[0]);
++          label.swap(l[0]);
++          tsplit += MPI_Wtime() - s1;
++          p1 = pm;
++          heap = 2*heap + 2;
++        } else if (rank >= pm) {
++          if (rank == pm) {
++            double s0 = MPI_Wtime();
++            long long h[3];
++            MPI_Recv(h, 3, MPI_LONG_LONG, p0, 0, comm, MPI_STATUS_IGNORE);
++            label.resize(h[0]);
++            xadj.resize(h[0]+1);
++            adj.resize(h[1]);
++            base = h[2];
++            MPI_Recv(label.data(), h[0], mpi_type<integer_t>(), p0, 1, comm,
++                     MPI_STATUS_IGNORE);
++            MPI_Recv(xadj.data(), h[0]+1, mpi_type<idx_t>(), p0, 2, comm,
++                     MPI_STATUS_IGNORE);
++            MPI_Recv(adj.data(), h[1], mpi_type<idx_t>(), p0, 3, comm,
++                     MPI_STATUS_IGNORE);
++            trecv += MPI_Wtime() - s0;  // includes the wait for the sender
++          }
++          p0 = pm;
++          heap = 2*heap + 1;
++        } else {
++          p1 = pm;
++          heap = 2*heap + 2;
++        }
++      }
++      // leaf: order the subgraph with METIS_NodeND
++      double s0 = MPI_Wtime();
++      idx_t nv = label.size();
++      hsz[heap] = nv;
++      if (nv > 0) {
++        std::vector<idx_t> mperm(nv), miperm(nv);
++        if (xadj.empty()) xadj.assign(1, 0);
++        METIS_NodeND(&nv, xadj.data(), adj.data(), nullptr, options,
++                     mperm.data(), miperm.data());
++        for (idx_t i=0; i<nv; i++) {
++          plabel.push_back(label[i]);
++          ppos.push_back(base + miperm[i]);
++        }
++      }
++      tleaf = MPI_Wtime() - s0;
++    }
++    double t2 = MPI_Wtime();
++    // every process gets the whole permutation and the sizes of the tree nodes
++    {
++      int cnt = plabel.size();
++      std::vector<int> cnts(P), displs(P+1, 0);
++      MPI_Gather(&cnt, 1, MPI_INT, cnts.data(), 1, MPI_INT, 0, comm);
++      std::vector<integer_t> gl, gp;
++      if (!rank) {
++        for (int p=0; p<P; p++) displs[p+1] = displs[p] + cnts[p];
++        gl.resize(displs[P]);
++        gp.resize(displs[P]);
++      }
++      MPI_Gatherv(plabel.data(), cnt, mpi_type<integer_t>(), gl.data(),
++                  cnts.data(), displs.data(), mpi_type<integer_t>(), 0, comm);
++      MPI_Gatherv(ppos.data(), cnt, mpi_type<integer_t>(), gp.data(),
++                  cnts.data(), displs.data(), mpi_type<integer_t>(), 0, comm);
++      if (!rank)
++        for (std::size_t i=0; i<gl.size(); i++) perm[gl[i]] = gp[i];
++      MPI_Bcast(perm.data(), n, mpi_type<integer_t>(), 0, comm);
++      MPI_Allreduce(MPI_IN_PLACE, hsz.data(), hsz.size(),
++                    mpi_type<integer_t>(), MPI_SUM, comm);
++    }
++    double t3 = MPI_Wtime();
++    if (opts.verbose()) {
++      double tl[4] = {tsep, tsplit, tleaf, t2 - t1}, tm[4];
++      MPI_Reduce(tl, tm, 4, MPI_DOUBLE, MPI_MAX, 0, comm);
++      if (!rank)
++        std::cout << "# ORDSTEPS tree: gather_graph = " << t1 - t0
++                  << " , recursion (wall, process 0) = " << t2 - t1
++                  << " ( separators on process 0 = " << tsep
++                  << " , split+send on process 0 = " << tsplit
++                  << " , max leaf METIS_NodeND = " << tm[2]
++                  << " , max recursion wall over processes = " << tm[3] << " )"
++                  << " , gather+broadcast perm = " << t3 - t2
++                  << " , leaves = " << p2 << std::endl;
++    }
++    // distributed separator tree, as for ParMETIS
++    integer_t dist_nr_sep = 2*p2 - 1;
++    SeparatorTree<integer_t> sep_tree(dist_nr_sep);
++    sep_tree.sizes[0] = 0;
++    for (integer_t i=0; i<dist_nr_sep; i++) {
++      sep_tree.parent[i] = -1;
++      sep_tree.lch[i] = -1;
++      sep_tree.rch[i] = -1;
++    }
++    int nr_dist_levels = std::log2(p2);
++    std::function<void(integer_t,integer_t&,integer_t)> build =
++      [&](integer_t dsep, integer_t& pid, integer_t level) {
++        if (level > 0) {
++          build(2*dsep+2, pid, level-1);
++          integer_t lch = pid - 1;
++          build(2*dsep+1, pid, level-1);
++          sep_tree.lch[pid] = lch;
++          sep_tree.rch[pid] = pid-1;
++          sep_tree.parent[lch] = pid;
++          sep_tree.parent[pid-1] = pid;
++        }
++        sep_tree.sizes[pid+1] = hsz[dsep] + sep_tree.sizes[pid];
++        pid++;
++      };
++    integer_t pid = 0;
++    build(0, pid, nr_dist_levels);
++    return sep_tree;
++  }
++
++} // end namespace strumpack
++
++#endif

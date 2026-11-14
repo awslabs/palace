@@ -327,6 +327,13 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://raw.githubusercontent.com/awslabs/palace/78947a1b0ab466d3de7d1b79d319fd1659c86ed6/extern/patch/STRUMPACK/strumpack_pr171.diff"
   781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a
 )
+# LAB, not for merging: a nested dissection ordering with METIS only which is parallel over
+# the separator tree, selected with the PT-Scotch column ordering in a build without
+# PT-Scotch, and the times of the steps of the ordering in the verbose statistics. Applied
+# after the patches above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_lab_metis_tree.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

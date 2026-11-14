@@ -221,6 +221,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
                 when="@8.1.0",
             ),
+            # LAB, not for merging: METIS-only nested dissection, parallel over the
+            # separator tree (a copy of the file in extern/patch/STRUMPACK)
+            patch("strumpack_lab_metis_tree.diff", when="@8.1.0"),
         ],
     )
 
