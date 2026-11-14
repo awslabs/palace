@@ -1525,6 +1525,7 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   init_v0_const = eigenmode.value("StartVectorConstant", init_v0_const);
   warm_start = eigenmode.value("WarmStart", warm_start);
   min_q = eigenmode.value("MinQ", min_q);
+  adaptive_shift = eigenmode.value("AdaptiveShift", adaptive_shift);
   mass_orthog = eigenmode.value("MassOrthogonal", mass_orthog);
   nonlinear_type = eigenmode.value("NonlinearType", nonlinear_type);
   refine_nonlinear = eigenmode.value("RefineNonlinear", refine_nonlinear);

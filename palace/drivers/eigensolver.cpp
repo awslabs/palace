@@ -516,70 +516,111 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   prev_eigenvectors.reset();
   prev_eigenvalues.clear();
 
-  // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
-  // closest to the specified target, σ.
+  // Shift of the spectral transformation: the target, or with adaptive mesh refinement
+  // (Solver.Eigenmode.AdaptiveShift) a shift inside the band of the requested eigenvalues
+  // of the previous adaptation iteration (see GetEigenvalueShift), with the eigenvalue
+  // search (sorting criterion and region) still relative to the target. A solve which
+  // converged within two Krylov restarts with the shift at the target, as few as a
+  // warm-started one needs, keeps it there.
+  constexpr double shift_fraction = 0.45;
+  double shift = target;
+  if (eigenmode.adaptive_shift && eigen->SupportsTarget() && warm_start_solver && !has_A2 &&
+      static_cast<int>(prev_shift_eigenvalues.size()) >= eigenmode.n &&
+      (prev_shifted || prev_shift_its > 2))
   {
-    const double f_target =
-        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
-        (2 * std::numbers::pi);
-    Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
+    shift = GetEigenvalueShift(target, prev_shift_eigenvalues, eigenmode.n, shift_fraction);
   }
-  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    // Search for eigenvalues closest to λ = iσ.
-    eigen->SetShiftInvert(1i * target);
-    if (nonlinear_type == NonlinearEigenSolver::SLP)
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-    }
-  }
-  else
-  {
-    // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
-      // will be a large-magnitude positive real number for an eigenvalue μ with frequency
-      // close to but below the target σ².
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
-    }
-  }
+  prev_shift_eigenvalues.clear();
 
-  // Set up the linear solver required for solving systems involving the shifted operator
-  // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
-  // preconditioner for complex linear systems is constructed from a real approximation
-  // to the complex system matrix.
-  std::unique_ptr<ComplexOperator> A;
-  std::unique_ptr<ComplexOperator> A2_shift;
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
+  // closest to the specified target, σ, and set up the linear solver required for solving
+  // systems involving the shifted operator (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during
+  // the eigenvalue solve. The preconditioner for complex linear systems is constructed
+  // from a real approximation to the complex system matrix.
+  std::unique_ptr<ComplexOperator> A, A2_shift, P;
+  std::unique_ptr<ComplexKspSolver> ksp;
+  auto ConfigureShiftInvert = [&](double s)
   {
-    // Invert the same W-aware polynomial used by the seed eigensolver.
-    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
-                                 Cp.get(), Mp.get());
-  }
-  else
-  {
-    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
-    A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
-                                                             : std::move(A2);
-    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
-                                 C.get(), M.get(), A2_shift.get());
-  }
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
-  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
-                                                &space_op.GetH1Spaces());
-  ksp->SetOperators(*A, *P);
-  eigen->SetLinearSolver(*ksp);
+    const double f_s = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(s) /
+                       (2 * std::numbers::pi);
+    if (s != target)
+    {
+      const double f_target =
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
+          (2 * std::numbers::pi);
+      Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e}), target {:.3e} GHz ({:.3e})\n",
+                 f_s, s, f_target, target);
+    }
+    else
+    {
+      Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_s, s);
+    }
+    if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
+    {
+      // Search for eigenvalues closest to λ = iσ.
+      eigen->SetShiftInvert(1i * s);
+      if (s != target)
+      {
+        eigen->SetTarget(1i * target);
+      }
+      if (nonlinear_type == NonlinearEigenSolver::SLP)
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
+      }
+      else
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+      }
+    }
+    else
+    {
+      // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
+      eigen->SetShiftInvert(s * s);
+      if (s != target)
+      {
+        eigen->SetTarget(target * target);
+      }
+      if (type == EigenSolverBackend::ARPACK)
+      {
+        // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
+        // will be a large-magnitude positive real number for an eigenvalue μ with
+        // frequency close to but below the target σ².
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+      }
+      else
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
+      }
+    }
+    ksp.reset();
+    P.reset();
+    A.reset();
+    if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+    {
+      // Invert the same W-aware polynomial used by the seed eigensolver.
+      A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
+                                   Kp.get(), Cp.get(), Mp.get());
+    }
+    else
+    {
+      // SLP applies the exact nonlinear operator at the target; linear problems have no
+      // A2.
+      if (!A2_shift)
+      {
+        A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
+                                                                 : std::move(A2);
+      }
+      A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * s, -s * s + 0.0i, K.get(), C.get(),
+                                   M.get(), A2_shift.get());
+    }
+    P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * s, -s * s + 0.0i,
+                                                          s + 0.0i);
+    ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                             &space_op.GetH1Spaces());
+    ksp->SetOperators(*A, *P);
+    eigen->SetLinearSolver(*ksp);
+  };
+  ConfigureShiftInvert(shift);
 
   // Initialize structures for storing and reducing the results of error estimation.
   const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
@@ -589,7 +630,49 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
+  bool shift_repeated = false;
+  while (shift != target)
+  {
+    // The modes nearer to the target than the farthest accepted one were at least as
+    // dominant in the transformed operator as the accepted ones if the shift is at most in
+    // the middle of the target and that eigenvalue. Otherwise (modes entering the requested
+    // set lowered it), repeat the solve once with the shift from the eigenvalues just found
+    // if it is lower, else (or with fewer converged eigenpairs than requested) with the
+    // shift at the target.
+    std::vector<std::complex<double>> lambda;
+    for (int i = 0; i < num_conv; i++)
+    {
+      const auto l = eigen->GetEigenvalue(i);
+      lambda.push_back((!has_C && !has_A2) ? 1i * std::sqrt(l) : l);
+    }
+    if (CheckEigenvalueShift(target, shift, lambda, eigenmode.n))
+    {
+      break;
+    }
+    double new_shift = target;
+    if (num_conv >= eigenmode.n && !shift_repeated)
+    {
+      new_shift = GetEigenvalueShift(target, lambda, eigenmode.n, shift_fraction);
+    }
+    shift = (new_shift < shift) ? new_shift : target;
+    shift_repeated = true;
+    Mpi::Print("\n Repeating the eigenvalue solve with σ = {:.3e} GHz ({})\n",
+               iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(shift) /
+                   (2 * std::numbers::pi),
+               (num_conv < eigenmode.n)
+                   ? fmt::format("{:d} of {:d} eigenpairs converged", num_conv, eigenmode.n)
+                   : "the requested modes were not the dominant ones for the shift");
+    {
+      BlockTimer bt_construct(Timer::CONSTRUCT);
+      ConfigureShiftInvert(shift);
+    }
+    eigen->ResetInitialSpace();
+    Mpi::Print("\n");
+    num_conv = eigen->Solve();
+  }
   const int num_its = eigen->GetNumIterations();
+  prev_shift_its = num_its;
+  prev_shifted = (shift != target);
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
@@ -672,6 +755,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   for (int i = 0; i < num_report; i++)
   {
     eigenvalues[i] = eigen->GetEigenvalue(i);
+    prev_shift_eigenvalues.push_back((!has_C && !has_A2) ? 1i * std::sqrt(eigenvalues[i])
+                                                         : eigenvalues[i]);
     errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
     if (stage_eigenvectors)

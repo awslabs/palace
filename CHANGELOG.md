@@ -65,6 +65,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     warm-started solve uses 1e-2 times the linear solver tolerance, and the solve accepts an
     eigenpair only once its eigenvalue settled between restarts. SchemaVer 4-3-0.
     [PR 1203](https://github.com/awslabs/palace/pull/1203).
+  - With adaptive mesh refinement, the shift of the shift-and-invert spectral transformation
+    of each adaptation iteration after the first moves from the target into the band of the
+    requested eigenvalues of the previous one (new
+    `config["Solver"]["Eigenmode"]["AdaptiveShift"]`, default `true`), 0.45 of the way to
+    the farthest of them, clear of them and of clusters of close ones. The requested modes
+    then dominate the transformed operator over the modes below the target, and are found
+    with fewer restarts. The search and the tolerance, as a relative error of the
+    eigenvalues, do not change. A solve whose shift ends above the middle of the target and
+    the farthest requested eigenvalue is repeated once with a lower shift, or at the target.
+    SchemaVer 4-5-0. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few

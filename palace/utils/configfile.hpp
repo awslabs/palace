@@ -971,6 +971,12 @@ public:
   // only, values <= 0.5 disable the restriction).
   double min_q = 0.54;
 
+  // For adaptive mesh refinement, move the shift of the shift-and-invert spectral
+  // transformation of each adaptation iteration from the target into the band of the
+  // requested eigenvalues of the previous one (SLEPc Krylov-Schur solver for linear or
+  // linearized problems only).
+  bool adaptive_shift = true;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;

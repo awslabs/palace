@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/fieldtransfer.hpp"
@@ -186,11 +187,13 @@ struct TridiagonalEigenTestResult
 };
 
 // Shift-and-invert Krylov-Schur solve for the nev eigenvalues of the tridiagonal operator
-// closest to the shift s, with GMRES and Jacobi preconditioning for the linear solves, from
-// the start vector v0 (a warm start if warm).
+// closest to the shift s (or above the target t > 0, with the shift s), with GMRES and
+// Jacobi preconditioning for the linear solves, from the start vector v0 (a warm start if
+// warm).
 TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, int ncv,
                                                      double tol, double lin_tol,
-                                                     const ComplexVector &v0, bool warm)
+                                                     const ComplexVector &v0, bool warm,
+                                                     double t = 0.0)
 {
   MPI_Comm comm = Mpi::World();
   TridiagonalEigenTestOperator K(n), A(n, s);
@@ -211,6 +214,10 @@ TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, i
   eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
   eps.SetLinearSolver(ksp);
   eps.SetShiftInvert(s);
+  if (t > 0.0 && t != s)
+  {
+    eps.SetTarget(t);
+  }
   eps.SetInitialSpace(v0);
   eps.SetWarmStart(warm);
   const int num_conv = eps.Solve();
@@ -309,6 +316,87 @@ TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
   PalacePetscCall(RGDestroy(&rg));
 }
 
+TEST_CASE("Eigenmode shift apart from the target", "[eigenmode][Serial]")
+{
+  // The nev eigenvalues above the target t nearest to it, with the shift of the spectral
+  // transformation at the target or in the middle of the target and the farthest of them.
+  constexpr int n = 120, nev = 4, ncv = 12;
+  const double t = 1.5, tol = 1.0e-10, lin_tol = 1.0e-12;
+  ComplexVector v0(n);
+  linalg::SetRandom(Mpi::World(), v0);
+  const auto ref = SolveTridiagonalEigenTest(n, t, nev, ncv, tol, lin_tol, v0, false);
+  const double s = 0.5 * (t + ref.lambda[nev - 1].real());
+  const auto shifted =
+      SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0, false, t);
+  for (int i = 0; i < nev; i++)
+  {
+    CHECK(ref.lambda[i].real() >= t);
+    CHECK(std::abs(shifted.lambda[i] - ref.lambda[i]) <= 1.0e-8 * std::abs(ref.lambda[i]));
+  }
+}
+
 #endif
+
+TEST_CASE("Eigenmode shift from eigenvalue estimates", "[eigenmode][Serial]")
+{
+  // The shift is τ + f (ωₙ - τ), f <= 1/2, unless it is within a quarter of the interval
+  // between consecutive estimates (or τ) around it from one of them.
+  auto Mode = [](double w, double q)
+  { return std::complex<double>(-0.5 * w / q, w); };  // λ = iω, Q ≈ ω / (-2 Re{λ})
+
+  // Wanted modes ω = 4.15, 4.35, ..., 6.15 above the target 4 (Q = 1e5), then 6.35.
+  const double t = 4.0;
+  constexpr int n = 11;
+  std::vector<std::complex<double>> lambda;
+  for (int k = 0; k <= n; k++)
+  {
+    lambda.push_back(Mode(4.15 + 0.2 * k, 1.0e5));
+  }
+  CHECK(GetEigenvalueShift(t, lambda, n) == Catch::Approx(5.075));
+  CHECK(GetEigenvalueShift(t, lambda, n, 1.0) == Catch::Approx(5.075));
+  CHECK(GetEigenvalueShift(t, lambda, n, 0.3) == Catch::Approx(4.645));
+  CHECK(GetEigenvalueShift(t, lambda, n, 0.36) == Catch::Approx(4.65));  // Near 4.75
+  CHECK(GetEigenvalueShift(t, lambda, n, 0.03) == Catch::Approx(4.0645));
+  CHECK(GetEigenvalueShift(t, lambda, n, 0.01) == t);  // Near the target
+  CHECK(GetEigenvalueShift(t, lambda, n, 0.0) == t);
+
+  // A strongly damped estimate does not move the shift.
+  auto damped = lambda;
+  damped.push_back(Mode(5.08, 1.0));
+  CHECK(GetEigenvalueShift(t, damped, n) == Catch::Approx(5.075));
+
+  // Sparse spectra: the shift stays clear of the eigenvalues; a strongly damped wanted
+  // mode counts for ωₙ.
+  const std::vector<std::complex<double>> sparse = {Mode(5.2, 1.0e6), Mode(15.5, 1.0e6),
+                                                    Mode(25.7, 1.0e6), Mode(31.8, 0.7),
+                                                    Mode(35.9, 1.0e6)};
+  CHECK(GetEigenvalueShift(2.0, sparse, 3) == Catch::Approx(10.35));  // Near 15.5 (above)
+  CHECK(GetEigenvalueShift(2.0, sparse, 4) == Catch::Approx(10.35));  // Near 15.5 (below)
+  CHECK(GetEigenvalueShift(3.0, {Mode(5.36, 1.0e6), Mode(15.96, 1.0e6)}, 2) ==
+        Catch::Approx(9.48));
+  const std::vector<std::complex<double>> degenerate = {Mode(4.5, 1.0e6), Mode(4.5, 1.0e6),
+                                                        Mode(5.0, 1.0e6), Mode(6.0, 1.0e6)};
+  CHECK(GetEigenvalueShift(t, degenerate, 4, 0.3) == Catch::Approx(4.25));
+  const std::vector<std::complex<double>> cluster = {Mode(3.0, 1.0e6), Mode(3.05, 1.0e6),
+                                                     Mode(4.0, 1.0e6), Mode(5.0, 1.0e6)};
+  CHECK(GetEigenvalueShift(2.0, cluster, 4, 0.34) ==
+        Catch::Approx(2.5));  // Not in the pair
+  CHECK(GetEigenvalueShift(3.0, {Mode(5.36, 1.0e6), Mode(15.96, 1.0e6)}, 2, 0.3) == 3.0);
+
+  // Without estimates of every wanted mode, the shift is the target.
+  CHECK(GetEigenvalueShift(
+            t, std::vector<std::complex<double>>(lambda.begin(), lambda.begin() + n - 1),
+            n) == t);
+
+  // Check of a shifted solve: n converged and the shift at most in the middle of the target
+  // and the farthest requested eigenvalue.
+  CHECK(CheckEigenvalueShift(t, 5.075, lambda, n));
+  CHECK(!CheckEigenvalueShift(t, 5.08, lambda, n));
+  CHECK(!CheckEigenvalueShift(t, 5.0, lambda, n + 2));
+  auto entered = lambda;
+  entered.insert(entered.begin() + 3, Mode(4.7, 1.0e5));  // ωₙ = 5.95
+  CHECK(CheckEigenvalueShift(t, 4.975, entered, n));
+  CHECK(!CheckEigenvalueShift(t, 5.0, entered, n));
+}
 
 }  // namespace palace

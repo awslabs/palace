@@ -32,6 +32,13 @@ private:
   // Number of solves so far: the initial one, then one per adaptation iteration.
   mutable int num_solves = 0;
 
+  // Converged eigenvalues λ = iω of the previous adaptation iteration (the requested ones
+  // first), for the shift of the spectral transformation of the next one, the number of
+  // iterations (restarts) of its solve, and whether its shift was apart from the target.
+  mutable std::vector<std::complex<double>> prev_shift_eigenvalues;
+  mutable int prev_shift_its = -1;
+  mutable bool prev_shifted = false;
+
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 

@@ -118,6 +118,7 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
                          {"StartVectorConstant", eigenmode.init_v0_const},
                          {"WarmStart", eigenmode.warm_start},
                          {"MinQ", eigenmode.min_q},
+                         {"AdaptiveShift", eigenmode.adaptive_shift},
                          {"MassOrthogonal", eigenmode.mass_orthog},
                          {"NonlinearType", ToString(eigenmode.nonlinear_type)},
                          {"RefineNonlinear", eigenmode.refine_nonlinear},

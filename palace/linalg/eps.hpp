@@ -4,7 +4,9 @@
 #ifndef PALACE_LINALG_EPS_HPP
 #define PALACE_LINALG_EPS_HPP
 
+#include <algorithm>
 #include <complex>
+#include <vector>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -120,6 +122,17 @@ public:
   // Set shift-and-invert spectral transformation.
   virtual void SetShiftInvert(std::complex<double> s, bool precond = false) = 0;
 
+  // Set the target of the eigenvalue search (sorting criterion and search region) apart
+  // from the shift of the shift-and-invert spectral transformation (SetShiftInvert sets
+  // both). Only solvers for which SupportsTarget() is true support a target different from
+  // the shift.
+  virtual bool SupportsTarget() const { return false; }
+  virtual void SetTarget(std::complex<double> t) {}
+
+  // Set the initial space of the last call to SetInitialSpace or SetInitialSpaceBlocks
+  // again, to repeat a solve. Not all solvers support it.
+  virtual void ResetInitialSpace() {}
+
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;
 
@@ -168,6 +181,99 @@ public:
   // the new matrix, only normalization.
   virtual void RescaleEigenvectors(int num_eig) = 0;
 };
+
+// Shift s of the shift-and-invert spectral transformation for the search of the n
+// eigenvalues λ = iω above the target τ > 0 (Im{λ} >= τ, nearest to τ first), from
+// estimates λᵢ of them (the n wanted ones first, further ones may follow), for example the
+// converged eigenvalues of the previous adaptation iteration. With ωₙ the largest Im{λᵢ}
+// of the wanted estimates and s <= (τ + ωₙ) / 2, every mode with τ <= ω <= ωₙ is within
+// ωₙ - s of s, so the wanted modes are the dominant ones of the transformed operator as
+// with s = τ, while the modes below the target are farther from s than all of them. The
+// shift is s = τ + f (ωₙ - τ), f <= 1/2, kept clear of the estimates of modes with Q >= 10
+// (and of τ): within a quarter of the interval between consecutive ones from one of them,
+// it moves down to the middle of that interval, or of the one below, and it moves further
+// down to the first interval below at least half as wide as the mean spacing (ωₙ - τ) / n
+// of the wanted modes (clusters of close modes make the shifted linear systems harder).
+// Returns τ without estimates of every wanted mode, or without such an interval.
+inline double GetEigenvalueShift(double target,
+                                 const std::vector<std::complex<double>> &lambda, int n,
+                                 double f = 0.5)
+{
+  if (target <= 0.0 || n <= 0 || static_cast<int>(lambda.size()) < n)
+  {
+    return target;
+  }
+  double w_n = target;
+  for (int i = 0; i < n; i++)
+  {
+    w_n = std::max(w_n, lambda[i].imag());
+  }
+  std::vector<double> w = {target};
+  for (const auto &l : lambda)
+  {
+    // Q = |λ| / (-2 Re{λ}) for λ = iω.
+    if (l.imag() > target && std::abs(l) >= -20.0 * l.real())
+    {
+      w.push_back(l.imag());
+    }
+  }
+  std::sort(w.begin(), w.end());
+  w.erase(std::unique(w.begin(), w.end(),
+                      [](double x, double y) { return y - x <= 1.0e-9 * std::abs(y); }),
+          w.end());  // Degenerate modes
+  double s = target + std::clamp(f, 0.0, 0.5) * (w_n - target);
+  const auto it = std::upper_bound(w.begin(), w.end(), s);  // First estimate above s
+  if (it == w.end() || it == w.begin())
+  {
+    return target;
+  }
+  // Interval [w[j], w[j + 1]] of the shift.
+  auto j = static_cast<std::size_t>(it - w.begin()) - 1;
+  if (w[j + 1] - s < 0.25 * (w[j + 1] - w[j]))
+  {
+    s = 0.5 * (w[j] + w[j + 1]);
+  }
+  else if (s - w[j] < 0.25 * (w[j + 1] - w[j]))
+  {
+    if (j == 0)
+    {
+      return target;
+    }
+    j--;
+    s = 0.5 * (w[j] + w[j + 1]);
+  }
+  const double min_width = 0.5 * (w_n - target) / n;
+  while (w[j + 1] - w[j] < min_width)
+  {
+    if (j == 0)
+    {
+      return target;
+    }
+    j--;
+    s = 0.5 * (w[j] + w[j + 1]);
+  }
+  return s;
+}
+
+// Check of an eigenvalue solve with the shift s apart from the target τ (see
+// GetEigenvalueShift), from its eigenvalues λᵢ (the n requested ones first): at least n
+// converged, and s at most in the middle of τ and the farthest of the n requested ones, so
+// that every mode nearer to the target was at least as dominant in the transformed operator
+// as the accepted ones, as with the shift at the target.
+inline bool CheckEigenvalueShift(double target, double s,
+                                 const std::vector<std::complex<double>> &lambda, int n)
+{
+  if (static_cast<int>(lambda.size()) < n || n <= 0)
+  {
+    return false;
+  }
+  double w_n = target;
+  for (int i = 0; i < n; i++)
+  {
+    w_n = std::max(w_n, lambda[i].imag());
+  }
+  return s <= 0.5 * (target + w_n);
+}
 
 }  // namespace palace
 

@@ -20,7 +20,10 @@ eigenpair.
 
 With adaptive mesh refinement, the eigenvalue solver of each adaptation iteration starts
 from the eigenmodes of the previous one, transferred to the refined mesh
-([`config["Solver"]["Eigenmode"]["WarmStart"]`](../config/reference.md#config-solver-eigenmode-warmstart)).
+([`config["Solver"]["Eigenmode"]["WarmStart"]`](../config/reference.md#config-solver-eigenmode-warmstart)),
+with the shift of the shift-and-invert spectral transformation moved from the target into
+the band of their frequencies
+([`config["Solver"]["Eigenmode"]["AdaptiveShift"]`](../config/reference.md#config-solver-eigenmode-adaptiveshift)).
 Such a solve accepts an eigenmode only once its eigenvalue settled between restarts, since
 the error estimate of the eigenvalue solver does not see the error of the linear solves.
 

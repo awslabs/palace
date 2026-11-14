@@ -95,9 +95,10 @@ protected:
   // Variables for scaling, from Higham et al., IJNME 2008.
   PetscReal gamma, delta;
 
-  // Parameters defining the spectral transformation.
-  PetscScalar sigma;
-  bool sinvert, region;
+  // Parameters defining the spectral transformation: the shift σ, and the target τ of the
+  // eigenvalue search (sorting criterion and search region), which is σ unless set apart.
+  PetscScalar sigma, tau;
+  bool sinvert, region, has_tau, st_shift_set;
 
   // Storage for computed residual norms and eigenvector normalizations.
   std::unique_ptr<PetscReal[]> res, xscale;
@@ -177,6 +178,16 @@ public:
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
 
+  // Set the target of the eigenvalue search apart from the shift (after SetShiftInvert).
+  void SetTarget(std::complex<double> t) override;
+
+  // Factor converting the relative error estimate of a Ritz value θ of the transformed
+  // problem, a relative error of λ - σ = 1 / θ, into one for the eigenvalue λ, with a
+  // target apart from the shift: max(1, |λ - σ| / |λ|). An accepted eigenvalue then has a
+  // relative error estimate below the tolerance, as with σ = τ (|λ - τ| < |λ| for all λ in
+  // the search region).
+  PetscReal GetTargetErrorScale(PetscScalar theta) const;
+
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
 
@@ -236,6 +247,12 @@ protected:
   double first_cycle_tol, lin_tol;
   bool first_cycle_monitor, first_cycle;
 
+  // Copy of the initial space vector, for a repeated solve (see ResetInitialSpace).
+  Vec v_init;
+
+  // Keep a copy of the initial space vector.
+  void SaveInitialSpace(Vec v);
+
   // State of the convergence test of warm-started solves (see CheckRitzValue): the Ritz
   // values of the previous and current restarts, each with the number of restarts it was
   // held back, the current restart, whether an unconverged Ritz value was seen at it, and
@@ -271,6 +288,10 @@ public:
 
   void SetInitialSpace(const ComplexVector &v) override;
 
+  bool SupportsTarget() const override { return true; }
+
+  void ResetInitialSpace() override;
+
   void SetWarmStart(bool warm) override { warm_start = warm; }
 
   void SetFirstCycleLinearSolverTol(double tol) override { first_cycle_tol = tol; }
@@ -280,7 +301,8 @@ public:
   void EndFirstCycle();
 
   // Update the relative error estimate of the Ritz value theta of the transformed problem
-  // in a warm-started solve (called by its convergence test).
+  // in a warm-started solve, or after the first Krylov cycle of one with a target apart
+  // from the shift (called by the convergence test of such solves).
   void CheckRitzValue(PetscScalar theta, PetscReal *errest);
 
   int Solve() override;

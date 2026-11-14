@@ -1090,6 +1090,9 @@ TEST_CASE("Config Eigenmode warm start", "[config][Serial]")
   CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"MinQ", 0.0}}).min_q == 0.0);
   CHECK_FALSE(
       config::EigenSolverData(json{{"Target", 1.0}, {"WarmStart", false}}).warm_start);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}}).adaptive_shift);
+  CHECK_FALSE(config::EigenSolverData(json{{"Target", 1.0}, {"AdaptiveShift", false}})
+                  .adaptive_shift);
 }
 
 TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")

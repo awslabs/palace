@@ -173,11 +173,13 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
 PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
                                       PetscReal res, PetscReal *errest, void *ctx)
 {
-  // The relative error estimate (as EPS_CONV_REL), for a Ritz value which also settled
-  // since the previous restart.
+  // The relative error estimate (as EPS_CONV_REL; converted to the eigenvalue with a target
+  // apart from the shift), for a Ritz value which also settled since the previous restart.
   PetscFunctionBeginUser;
   PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
-  static_cast<SlepcEPSSolverBase *>(ctx)->CheckRitzValue(eigr, errest);
+  auto *solver = static_cast<SlepcEPSSolverBase *>(ctx);
+  *errest *= solver->GetTargetErrorScale(eigr);
+  solver->CheckRitzValue(eigr, errest);
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
@@ -265,7 +267,8 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 {
   sinvert = false;
   region = true;
-  sigma = 0.0;
+  sigma = tau = 0.0;
+  has_tau = st_shift_set = false;
   gamma = delta = 1.0;
 
   opInv = nullptr;
@@ -333,8 +336,30 @@ void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
   }
   PalacePetscCall(STSetTransform(st, PETSC_TRUE));
   PalacePetscCall(STSetMatMode(st, ST_MATMODE_SHELL));
-  sigma = s;  // Wait until solve time to call EPS/PEPSetTarget
+  sigma = tau = s;  // Wait until solve time to call EPS/PEPSetTarget
+  has_tau = false;
   sinvert = true;
+}
+
+void SlepcEigenvalueSolver::SetTarget(std::complex<double> t)
+{
+  MFEM_VERIFY(sinvert && SupportsTarget(),
+              "A target apart from the shift requires the shift-and-invert spectral "
+              "transformation of a solver which supports it!");
+  tau = t;
+  has_tau = (tau != sigma);
+}
+
+PetscReal SlepcEigenvalueSolver::GetTargetErrorScale(PetscScalar theta) const
+{
+  if (!has_tau || theta == 0.0)
+  {
+    return 1.0;
+  }
+  // λ - σ = 1 / θ in the scaled variables of the solver.
+  const PetscScalar l = sigma / gamma + 1.0 / theta;
+  const PetscReal a = PetscAbsScalar(l);
+  return (a > 0.0) ? std::max(PetscReal(1.0), 1.0 / (PetscAbsScalar(theta) * a)) : 1.0;
 }
 
 void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
@@ -411,9 +436,9 @@ void SlepcEigenvalueSolver::Customize()
   q_region = false;
   if (sinvert && region)
   {
-    if (PetscImaginaryPart(sigma) == 0.0)
+    if (PetscImaginaryPart(tau) == 0.0)
     {
-      PetscReal sr = PetscRealPart(sigma);
+      PetscReal sr = PetscRealPart(tau);
       if (sr > 0.0)
       {
         ConfigureRG(GetRG(), sr / gamma, mfem::infinity(), -mfem::infinity(),
@@ -425,9 +450,9 @@ void SlepcEigenvalueSolver::Customize()
                     mfem::infinity());
       }
     }
-    else if (PetscRealPart(sigma) == 0.0)
+    else if (PetscRealPart(tau) == 0.0)
     {
-      PetscReal si = PetscImaginaryPart(sigma);
+      PetscReal si = PetscImaginaryPart(tau);
       if (si > 0.0 && q_min > 0.5)
       {
         ConfigureQualityFactorRegion(GetRG(), si / gamma, q_min);
@@ -520,6 +545,7 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
   warm_start = ritz_test = false;
   first_cycle_tol = lin_tol = 0.0;
   first_cycle_monitor = first_cycle = false;
+  v_init = nullptr;
   ritz_its = -1;
   ritz_blocked = false;
   ritz_num_delayed = ritz_num_unsettled = 0;
@@ -530,6 +556,25 @@ SlepcEPSSolverBase::~SlepcEPSSolverBase()
   PalacePetscCall(EPSDestroy(&eps));
   PalacePetscCall(MatDestroy(&A0));
   PalacePetscCall(MatDestroy(&A1));
+  PalacePetscCall(VecDestroy(&v_init));
+}
+
+void SlepcEPSSolverBase::SaveInitialSpace(Vec v)
+{
+  if (!v_init)
+  {
+    PalacePetscCall(VecDuplicate(v, &v_init));
+  }
+  PalacePetscCall(VecCopy(v, v_init));
+}
+
+void SlepcEPSSolverBase::ResetInitialSpace()
+{
+  if (v_init)
+  {
+    Vec is[1] = {v_init};
+    PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  }
 }
 
 void SlepcEPSSolverBase::SetNumModes(int num_eig, int num_vec)
@@ -654,12 +699,19 @@ void SlepcEPSSolverBase::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(ToPetscVec(v, v0));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  SaveInitialSpace(v0);
 }
 
 void SlepcEPSSolverBase::Customize()
 {
   SlepcEigenvalueSolver::Customize();
-  PalacePetscCall(EPSSetTarget(eps, sigma / gamma));
+  PalacePetscCall(EPSSetTarget(eps, tau / gamma));
+  if (has_tau || st_shift_set)
+  {
+    // The target only sets the default shift of the spectral transformation.
+    PalacePetscCall(STSetShift(GetST(), sigma / gamma));
+    st_shift_set = true;
+  }
   if (!cl_custom)
   {
     PalacePetscCall(EPSSetFromOptions(eps));
@@ -696,7 +748,7 @@ void SlepcEPSSolverBase::CheckRitzValue(PetscScalar theta, PetscReal *errest)
   PetscReal tol;
   PalacePetscCall(EPSGetTolerances(eps, &tol, nullptr));
   int unsettled = 0;
-  if (*errest < tol)
+  if (*errest < tol && (its > 1 || warm_start))
   {
     PetscReal d1 = mfem::infinity(), d2 = mfem::infinity();
     int count = 0;
@@ -748,8 +800,9 @@ int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
 
-  // A warm-started solve accepts an eigenpair only once its Ritz value settled.
-  if (warm_start)
+  // A warm-started solve accepts an eigenpair only once its Ritz value settled, and one
+  // with a target apart from the shift converts the error estimates to the eigenvalues.
+  if (warm_start || has_tau)
   {
     PalacePetscCall(
         EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
@@ -758,7 +811,7 @@ int SlepcEPSSolverBase::Solve()
   {
     PalacePetscCall(EPSSetConvergenceTest(eps, EPS_CONV_REL));
   }
-  ritz_test = warm_start;
+  ritz_test = warm_start || has_tau;
   ritz_prev.clear();
   ritz_curr.clear();
   ritz_its = -1;
@@ -784,8 +837,8 @@ int SlepcEPSSolverBase::Solve()
     }
   }
 
-  // Solve the eigenvalue problem. The convergence test of warm-started solves and the count
-  // of Ritz values outside of the quality factor region see every Ritz value.
+  // Solve the eigenvalue problem. The custom convergence test and the count of Ritz values
+  // outside of the quality factor region see every Ritz value.
   PetscInt num_conv;
   Customize();
   if (q_region && print > 0 && !q_region_monitor)
@@ -793,7 +846,7 @@ int SlepcEPSSolverBase::Solve()
     PalacePetscCall(EPSMonitorSet(eps, __eps_region_monitor, (void *)this, nullptr));
     q_region_monitor = true;
   }
-  const bool track_all = warm_start || (q_region && q_region_monitor);
+  const bool track_all = ritz_test || (q_region && q_region_monitor);
   PalacePetscCall(EPSSetTrackAll(eps, track_all ? PETSC_TRUE : PETSC_FALSE));
   q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
   PalacePetscCall(EPSSolve(eps));
@@ -1068,6 +1121,7 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(ToPetscVec(v, v0, 0, 2));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  SaveInitialSpace(v0);
 }
 
 void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
@@ -1086,6 +1140,7 @@ void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
   PalacePetscCall(ToPetscVec(v, v2, v0));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  SaveInitialSpace(v0);
 }
 
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
@@ -1293,6 +1348,7 @@ void SlepcPEPSolverBase::SetInitialSpace(const ComplexVector &v)
 void SlepcPEPSolverBase::Customize()
 {
   SlepcEigenvalueSolver::Customize();
+  MFEM_VERIFY(!has_tau, "PEP solvers do not support a target apart from the shift!");
   PalacePetscCall(PEPSetTarget(pep, sigma / gamma));
   if (!cl_custom)
   {
@@ -1551,7 +1607,7 @@ void SlepcNEPSolverBase::SetMaxIter(int max_it)
 
 void SlepcNEPSolverBase::SetShiftInvert(std::complex<double> s, bool precond)
 {
-  sigma = s;  // Wait until solve time to call NEPSetTarget
+  sigma = tau = s;  // Wait until solve time to call NEPSetTarget
   sinvert = false;
 }
 
