@@ -66,6 +66,10 @@ generate_schema_compatibility_table()
 include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
 generate_coaxial_schematic()
 
+# Draw the Lorentz-filled cavity schematic used by examples/cylinder.md.
+include(joinpath(@__DIR__, "generate_cavity_schematic.jl"))
+generate_cavity_schematic()
+
 # Draw the dispersive microstrip schematic used by examples/microstrip.md.
 include(joinpath(@__DIR__, "generate_microstrip_schematic.jl"))
 generate_microstrip_schematic()
