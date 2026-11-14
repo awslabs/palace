@@ -14,7 +14,7 @@ namespace palace
 {
 
 //
-// One GMRES run of the probe: Arnoldi from a unit start vector with modified Gram-Schmidt
+// One GMRES run of the probe: Arnoldi from a unit start vector with classical Gram-Schmidt
 // applied twice, and the relative residual min ‖e₁ - H y‖. The run stops on breakdown
 // (M A v vanishes, or the new direction lies in the Krylov space to round-off) and fails
 // on non-finite values.
