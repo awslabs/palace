@@ -359,3 +359,139 @@ TEST_CASE("Linearized eigensolvers solve rational terms exactly",
   }
 #endif
 }
+
+// ARPACK reaching its iteration limit with fewer eigenvalues converged than requested
+// (pznaupd info = 1) is not an error: it returns the number converged and those
+// eigenpairs, as SLEPc does, and the caller decides whether that is enough. With enough
+// iterations the same solve converges all of them.
+TEST_CASE("ARPACK returns the eigenpairs converged within its iteration limit",
+          "[nleps][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_ARPACK)
+  SKIP("Requires the ARPACK eigensolver");
+#else
+  std::vector<double> k(60);
+  for (std::size_t j = 0; j < k.size(); j++)
+  {
+    k[j] = 1.0 + j + 0.37 * std::sin(1.0 + j);  // Distinct
+  }
+  const DiagonalLorentzProblem p(k);
+  const double sigma = 10.3;
+  std::vector<std::complex<double>> d(p.LocalSize());
+  ComplexVector start(p.LocalSize());
+  for (int i = 0; i < p.LocalSize(); i++)
+  {
+    d[i] = p.k.at(p.gid[i]) - sigma;
+    start.Real()(i) = 1.0 + 0.1 * p.gid[i];
+    start.Imag()(i) = 0.3 - 0.05 * p.gid[i];
+  }
+  const DiagonalComplexOperator A(std::move(d));
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-14);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  ksp.SetOperators(A, A);
+  constexpr int nev = 8;
+  auto Solve = [&](int max_it)
+  {
+    arpack::ArpackEPSSolver eigen(Mpi::World(), 0);
+    eigen.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+    eigen.SetLinearSolver(ksp);
+    eigen.SetShiftInvert(sigma);
+    eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+    eigen.SetNumModes(nev, nev + 2);
+    eigen.SetTol(1.0e-10);
+    eigen.SetMaxIter(max_it);
+    eigen.SetInitialSpace(start);
+    const int num = eigen.Solve();
+    for (int i = 0; i < std::min(num, nev); i++)
+    {
+      const auto l = eigen.GetEigenvalue(i);
+      CAPTURE(max_it, i, l);
+      CHECK(std::ranges::any_of(k, [l](double kj)
+                                { return std::abs(l - kj) <= 1.0e-8 * kj; }));
+      CHECK(eigen.GetError(i, EigenvalueSolver::ErrorType::BACKWARD) <= 1.0e-8);
+    }
+    return num;
+  };
+  int num = 0;
+  CHECK_NOTHROW(num = Solve(1));
+  CHECK(num < nev);
+  CHECK(Solve(300) >= nev);
+#endif
+}
+
+#if defined(PALACE_WITH_ARPACK)
+// ARPACK with the permutation of its eigenpairs set directly: the target-side compaction of
+// a TARGET_IMAGINARY solve keeps the eigenpairs at some of its raw indices, which a solve
+// cannot be made to produce in a given order.
+class ArpackEPSSolverKept : public arpack::ArpackEPSSolver
+{
+public:
+  using arpack::ArpackEPSSolver::ArpackEPSSolver;
+  void Keep(const std::vector<int> &raw) { std::ranges::copy(raw, perm.get()); }
+};
+#endif
+
+// After a target-side compaction which discards a raw index before a kept one (raw index 0
+// of 4 here), the kept eigenpair i is at a raw index perm[i] which can be past the number
+// kept. RescaleEigenvectors (as the driver calls it after SetBMat) must scale and measure
+// each kept eigenvector at its raw index.
+TEST_CASE("ARPACK rescales the eigenpairs kept at any raw index",
+          "[nleps][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_ARPACK)
+  SKIP("Requires the ARPACK eigensolver");
+#else
+  std::vector<double> k(60);
+  for (std::size_t j = 0; j < k.size(); j++)
+  {
+    k[j] = 1.0 + j + 0.37 * std::sin(1.0 + j);  // Distinct
+  }
+  const DiagonalLorentzProblem p(k);
+  const double sigma = 10.3;
+  std::vector<std::complex<double>> d(p.LocalSize());
+  Vector b(p.LocalSize());
+  b.UseDevice(true);
+  for (int i = 0; i < p.LocalSize(); i++)
+  {
+    d[i] = p.k.at(p.gid[i]) - sigma;
+    b(i) = 1.0 + 0.5 * p.gid[i];  // A B norm which is not that of ARPACK's basis
+  }
+  const DiagonalComplexOperator A(std::move(d));
+  const palace::DiagonalOperator B(b);
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-14);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  ksp.SetOperators(A, A);
+  constexpr int nev = 4;
+  ArpackEPSSolverKept eigen(Mpi::World(), 0);
+  eigen.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  eigen.SetLinearSolver(ksp);
+  eigen.SetShiftInvert(sigma);
+  eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+  eigen.SetNumModes(nev, 2 * nev + 2);
+  eigen.SetTol(1.0e-10);
+  eigen.SetMaxIter(300);
+  REQUIRE(eigen.Solve() >= nev);
+  eigen.SetBMat(B);
+  const std::vector<int> kept = {1, 2, 3};
+  eigen.Keep(kept);
+  eigen.RescaleEigenvectors(static_cast<int>(kept.size()));
+  ComplexVector x(p.LocalSize()), Bx(p.LocalSize());
+  x.UseDevice(true);
+  Bx.UseDevice(true);
+  for (std::size_t i = 0; i < kept.size(); i++)
+  {
+    const auto l = eigen.GetEigenvalue(static_cast<int>(i));
+    CAPTURE(i, l);
+    CHECK(
+        std::ranges::any_of(k, [l](double kj) { return std::abs(l - kj) <= 1.0e-8 * kj; }));
+    eigen.GetEigenvector(static_cast<int>(i), x);
+    CHECK(std::abs(linalg::Norml2(Mpi::World(), x, B, Bx) - 1.0) <= 1.0e-12);
+    CHECK(eigen.GetError(static_cast<int>(i), EigenvalueSolver::ErrorType::BACKWARD) <=
+          1.0e-8);
+  }
+#endif
+}

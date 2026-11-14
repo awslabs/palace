@@ -23,15 +23,14 @@ namespace
 
 void CheckInfoAUPD(a_int info)
 {
-  if (info != 0)
+  // info = 1 is not an error: the maximum number of iterations was taken, and iparam(5)
+  // of the requested eigenvalues have converged. They are extracted and their number
+  // returned, as SLEPc does; the caller decides whether it has the modes it needs.
+  if (info != 0 && info != 1)
   {
     std::string msg = "ARPACK pznaupd error: ";
     switch (info)
     {
-      case 1:
-        msg += "Maximum number of iterations taken, all possible eigenvalues "
-               "have been found!";
-        break;
       case 2:
         msg += "No longer an informational error (deprecated starting with "
                "release 2 of ARPACK)!";
@@ -364,6 +363,10 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
         comm, "ARPACK eigenvalue solver found only {:d} of requested {:d} eigenvalues!\n",
         num_conv, nev);
   }
+  if (num_conv == 0)
+  {
+    return 0;  // pzneupd extracts no eigenpair (info = -14)
+  }
 
   // Postprocess eigenvalues and eigenvectors.
   a_int rvec = 1;
@@ -428,10 +431,11 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
     eig[i] = eig[i] * gamma;
     perm[i] = i;
   }
+  // Only the first num_conv eigenvalues are set when fewer than nev converged.
+  const int num_extracted = std::min(num_conv, nev);
   if (which_type == WhichType::TARGET_IMAGINARY)
   {
-    std::sort(perm, perm + nev, CompareTargetImag);
-    const int num_extracted = std::min(num_conv, nev);
+    std::sort(perm, perm + num_extracted, CompareTargetImag);
     int num_target_side = 0;
     for (int i = 0; i < num_extracted; i++)
     {
@@ -455,16 +459,16 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
   else if (which_option == ::arpack::which::largest_real ||
            which_option == ::arpack::which::smallest_real)
   {
-    std::sort(perm, perm + nev, CompareReal);
+    std::sort(perm, perm + num_extracted, CompareReal);
   }
   else if (which_option == ::arpack::which::largest_imaginary ||
            which_option == ::arpack::which::smallest_imaginary)
   {
-    std::sort(perm, perm + nev, CompareImag);
+    std::sort(perm, perm + num_extracted, CompareImag);
   }
   else
   {
-    std::sort(perm, perm + nev, CompareAbs);
+    std::sort(perm, perm + num_extracted, CompareAbs);
   }
 
   return num_conv;
@@ -531,13 +535,17 @@ double ArpackEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type)
 
 void ArpackEigenvalueSolver::RescaleEigenvectors(int num_eig)
 {
-  res = std::make_unique<double[]>(num_eig);
-  xscale = std::make_unique<double[]>(num_eig);
-  for (int i = 0; i < num_eig; i++)
+  // The eigenpair i is at the index perm[i] of eig and V, which after the target-side
+  // compaction of SolveInternal can be num_eig or more: res and xscale are indexed as eig,
+  // for the eigenpairs i < num_eig.
+  res = std::make_unique<double[]>(nev);
+  xscale = std::make_unique<double[]>(nev);
+  for (int i = 0; i < std::min(num_eig, nev); i++)
   {
-    x1.Set(V.get() + i * n, n, false);
-    xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
-    res.get()[i] = GetResidualNorm(eig.get()[i], x1, y1) / linalg::Norml2(comm, x1);
+    const int j = perm.get()[i];
+    x1.Set(V.get() + j * n, n, false);
+    xscale.get()[j] = 1.0 / GetEigenvectorNorm(x1, y1);
+    res.get()[j] = GetResidualNorm(eig.get()[j], x1, y1) / linalg::Norml2(comm, x1);
   }
 }
 
@@ -621,7 +629,7 @@ int ArpackEPSSolver::Solve()
   int num_conv = SolveInternal(n, r.get(), V.get(), eig.get(), perm.get());
 
   // Compute the eigenpair residuals: || (K - λ M) x ||₂ for eigenvalue λ.
-  RescaleEigenvectors(nev);
+  RescaleEigenvectors(std::min(num_conv, nev));
 
   // Reset for next solve.
   info = 0;
@@ -823,7 +831,7 @@ int ArpackPEPSolver::Solve()
   {
     std::copy(W.get() + i * nl, W.get() + i * nl + n, V.get() + i * n);
   }
-  RescaleEigenvectors(nev);
+  RescaleEigenvectors(std::min(num_conv, nev));
 
   // Reset for next solve.
   info = 0;
