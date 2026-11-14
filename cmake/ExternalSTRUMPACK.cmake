@@ -318,6 +318,15 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://raw.githubusercontent.com/awslabs/palace/95d33a5d1c02a2ada11f2763a8cafa9e0dd73add/extern/patch/STRUMPACK/strumpack_pr169.diff"
   4bca6102f23e111f4353f9e57dd58f61dbee95b5030d08b80591a9f4e6eb8117
 )
+# Lower the memory of the distributed solver, whose row to front map and column scaling
+# were stored for the whole matrix on every process
+# (https://github.com/pghysels/STRUMPACK/pull/171), without its test, which needs test
+# infrastructure added after STRUMPACK 8.1.0
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr171.diff
+  "https://raw.githubusercontent.com/awslabs/palace/78947a1b0ab466d3de7d1b79d319fd1659c86ed6/extern/patch/STRUMPACK/strumpack_pr171.diff"
+  781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack
