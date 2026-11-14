@@ -10,6 +10,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "surfaceresponse-fixtures.hpp"
@@ -31,6 +32,7 @@ using palace::internal::BuildResponseCorrectedStiffnesses;
 using palace::internal::EigenvalueToAngularFrequency;
 using palace::internal::GetEigenvalueTarget;
 using palace::internal::MaximumWeightModeAssignment;
+using palace::internal::VerifySelfConsistentMagneticNonlinearSolver;
 
 TEST_CASE("Eigenmode response-corrected mass", "[eigensolver][surface-response][Serial]")
 {
@@ -108,6 +110,25 @@ TEST_CASE("Eigenmode response-corrected stiffness without a polynomial seed",
   hybrid.Kp.op->Real()->Mult(x, y);
   CHECK(y[0] == Catch::Approx(9.5));
   CHECK(y[1] == Catch::Approx(-7.75));
+}
+
+TEST_CASE("Eigenmode self-consistent magnetic defect refused under SLP",
+          "[eigensolver][surface-response][Serial]")
+{
+  // Electric-only libraries and the HYBRID seed keep the self-consistent corrected solve.
+  CHECK_NOTHROW(
+      VerifySelfConsistentMagneticNonlinearSolver(false, NonlinearEigenSolver::SLP));
+  CHECK_NOTHROW(
+      VerifySelfConsistentMagneticNonlinearSolver(false, NonlinearEigenSolver::HYBRID));
+  CHECK_NOTHROW(
+      VerifySelfConsistentMagneticNonlinearSolver(true, NonlinearEigenSolver::HYBRID));
+
+  // K + dK beside the exact A2 of the SLP solver is refused by name.
+  CHECK_THROWS_WITH(
+      VerifySelfConsistentMagneticNonlinearSolver(true, NonlinearEigenSolver::SLP),
+      Catch::Matchers::ContainsSubstring("NonlinearType \"SLP\"") &&
+          Catch::Matchers::ContainsSubstring("magnetic (inductive) defect") &&
+          Catch::Matchers::ContainsSubstring("OI-EIGEN-SLP-MAGNETIC-SELF-CONSISTENT"));
 }
 
 TEST_CASE("Eigenmode spectral conventions", "[eigensolver][surface-response][Serial]")

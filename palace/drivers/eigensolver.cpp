@@ -78,6 +78,19 @@ internal::BuildResponseCorrectedStiffnesses(const ComplexOperator &stiffness,
   return corrected;
 }
 
+void internal::VerifySelfConsistentMagneticNonlinearSolver(
+    bool magnetic_defect, NonlinearEigenSolver nonlinear_type)
+{
+  MFEM_VERIFY(!magnetic_defect || nonlinear_type != NonlinearEigenSolver::SLP,
+              "The self-consistent response-corrected eigenmode solve "
+              "(SurfaceResponseCorrection CorrectionMode \"SelfConsistent\" or \"Both\") "
+              "with the magnetic (inductive) defect of loaded magnetic leaves is not "
+              "supported with Solver.Eigenmode.NonlinearType \"SLP\" (wave ports or "
+              "absorbing boundaries); use NonlinearType \"Hybrid\", CorrectionMode "
+              "\"PostprocessOnly\", or SurfaceResponseCorrection \"Magnetic\": false "
+              "(OI-EIGEN-SLP-MAGNETIC-SELF-CONSISTENT)!");
+}
+
 internal::EigenvalueTarget
 internal::GetEigenvalueTarget(double target, bool lambda_eigenproblem,
                               EigenSolverBackend backend,
@@ -464,6 +477,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<EigenvalueSolver> corrected_eigen;
   if (self_consistent_response)
   {
+    internal::VerifySelfConsistentMagneticNonlinearSolver(
+        response_correction->HasMagneticModels(), nonlinear_type);
     Mpi::Print("Configuring self-consistent response-corrected eigenvalue solver:\n");
     response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
     corrected_M = internal::BuildResponseCorrectedMass(*M, *response_correction);
@@ -475,7 +490,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           std::make_unique<SurfaceResponseStiffnessOperator>(*response_correction);
       response_stiffness =
           std::make_unique<ComplexWrapperOperator>(response_stiffness_real.get(), nullptr);
-      // Kp exists only for the HYBRID polynomial seed (has_A2 and not SLP).
+      // Kp exists only for the HYBRID polynomial seed (has_A2; SLP is refused above).
       auto corrected_stiffnesses = internal::BuildResponseCorrectedStiffnesses(
           *K, Kp.get(), *response_stiffness_real);
       corrected_K = std::move(corrected_stiffnesses.K);

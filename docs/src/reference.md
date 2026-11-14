@@ -1340,6 +1340,10 @@ below); `false` runs the same library electric-only, byte-identical to the libra
 leaves. `AllowElectricOnlyFallback` (default `false`) lets a model whose magnetic leaf is
 refused by rule r1 / r2 / r3 continue electric-only by name instead of aborting the run.
 Both are ignored by a library without leaves.
+The self-consistent eigenmode solve (`CorrectionMode` `SelfConsistent` or `Both`) with
+loaded magnetic leaves is refused under `Solver.Eigenmode.NonlinearType: "SLP"` (wave ports
+or absorbing boundaries): no case exercises the magnetic defect beside the exact A2 term;
+use `"Hybrid"`, `PostprocessOnly`, or `"Magnetic": false` there.
 
 `GeometryFailurePolicy` (`"RecordRaw"` or `"FailClosed"`; absent = `RecordRaw` on a solve
 run and `FailClosed` on `--surface-response-preflight`) governs the former abort sites of
