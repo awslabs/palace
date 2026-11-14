@@ -293,7 +293,14 @@ the smallest refractive index ``n_r`` of the materials of the PML regions of the
 theoretical reflection at normal incidence of a layer of ``N`` elements is then
 ``e^{-1.6 p N}``, and ``e^{-1.6 p N \cos\theta}`` at the angle of incidence ``\theta``:
 for a given order, it is set by the number of elements across the layer, and not by its
-thickness. The thickness ``d`` still matters through the element size ``h = d / N``, which
+thickness. A guided mode reflects as a plane wave with ``\cos\theta = k_z / k``, for its
+wavenumber ``k_z`` along the guide and ``k`` at the reference frequency, so that its
+reflection grows toward cutoff: with the default `"SigmaMax"` and `"ReferenceFrequency"`,
+the waveguide of
+[`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide)
+reflects -65 dB at 6.7% above cutoff, -47 dB at 3.4%, and -22 dB at 0.7%, which the formula
+gives to 0.1 dB up to 3.4%.
+The thickness ``d`` still matters through the element size ``h = d / N``, which
 must resolve the fields in the layer like the mesh of the physical region does (for
 example, about ``\lambda / 10`` for second-order elements, for the wavelength
 ``\lambda`` in the materials of the PML regions at the highest frequency of interest): a
@@ -365,6 +372,19 @@ of the structures, which it distorts instead. The PML regions should therefore b
 a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
 lowest frequency of interest. Otherwise, a weaker absorption (a larger `"ReflectionTarget"`)
 reduces the spurious losses, at the cost of larger reflections of the propagating waves.
+
+The PML assumes that waves in the layer carry their phase and their energy the same way
+along the stretch direction, and amplifies a wave whose phase runs the other way, such as
+the backward wave of a guide of constant cross-section [[1]](#References), which *Palace*
+does not detect. A strongly anisotropic material whose axes are tilted from the normal of
+the layer also carries such a wave. The reflection of the continuous layer is then still
+right, but the field grows across the layer by ``R(0)^{-\lvert k_z \rvert / 2k}``, so near
+total reflection a strong layer gives a result which depends on the mesh and the linear
+solver: for TM waves at 47° from a relative permittivity of 9 into principal permittivities
+9, 1, and 9 on axes rotated by 45°, with `"ReflectionTarget": 1e-12` and the mesh of
+`examples/pml_oblique` refined once, 6.1 dB off the Fresnel reflection with STRUMPACK and
+0.7 dB with MUMPS. A larger `"ReflectionTarget"` avoids this, at the cost of a larger
+reflection of the layer.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
 frequency for driven simulations, or the target frequency for eigenmode simulations. This
@@ -790,3 +810,9 @@ The mesh must be topologically compatible with the flux loop geometry, with hole
 defined as boundary surfaces within the conducting region. Currently, only planar holes are
 supported; the hole axis is taken from the flux loop `"Direction"` and may point along any
 Cartesian direction. Both conformal and nonconformal adaptive mesh refinement are supported.
+
+## References
+
+[1] P.-R. Loh, A. F. Oskooi, M. Ibanescu, M. Skorobogatiy and S. G. Johnson, Fundamental
+relation between phase and group velocity, and application to the failure of perfectly
+matched layers in backward-wave structures, _Physical Review E_ 79 (2009) 065601.
