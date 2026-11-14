@@ -8179,7 +8179,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   // 2B on the operator: the unplaced cells are `unpatched` raw-partition portions (pass A:
   // the run is a recorded NoMatchedFeature raw fallback, which writes no cache), none when
-  // every cell is placed (pass B, whose cache carries the required empty leaf; version 24).
+  // every cell is placed (pass B, whose cache carries the required empty leaf; version 25).
   auto Operator = [&](const fs::path &library_path, const fs::path &cache_path)
   {
     IoData iodata(Config(library_path), false);
@@ -8236,18 +8236,27 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {7, "unpatched", 3, {0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}});
     const fs::path copy_path = temp.temp_dir / "r9-nodes-geometry-cache-copy.json";
     const fs::path stale_path = temp.temp_dir / "r9-nodes-geometry-cache-stale.json";
+    // The root writes and reads the copy; its observations are broadcast and asserted on
+    // every rank AFTER the barrier (a root-only REQUIRE before a barrier leaves the other
+    // ranks waiting when it fails: the race class of decision 1616).
+    int cache_observed[2] = {0, 0};  // {Version, UnpatchedPairPortions size}
     if (Mpi::Root(Mpi::World()))
     {
       WriteResponseGeometryCache(copy_path, with_portions);
       std::ifstream input(copy_path);
       json cache = json::parse(input);
-      REQUIRE(cache.at("Version").get<int>() == 24);
-      REQUIRE(cache.at("UnpatchedPairPortions").size() == 1);
+      cache_observed[0] = cache.value("Version", 0);
+      cache_observed[1] = cache.contains("UnpatchedPairPortions")
+                              ? static_cast<int>(cache.at("UnpatchedPairPortions").size())
+                              : -1;
       cache.erase("UnpatchedPairPortions");
       std::ofstream output(stale_path);
       output << cache.dump() << "\n";
     }
     Mpi::Barrier(Mpi::World());
+    Mpi::Broadcast(2, cache_observed, 0, Mpi::World());
+    REQUIRE(cache_observed[0] == 25);
+    REQUIRE(cache_observed[1] == 1);
     const auto copied = ReadResponseGeometryCache(copy_path, request);
     REQUIRE(copied.unpatched_pair_portions.size() == 1);
     CHECK(copied.unpatched_pair_portions[0].feature == 7);
@@ -10887,7 +10896,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 24);
+    CHECK(stale["Version"] == 25);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {

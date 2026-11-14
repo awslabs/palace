@@ -1773,13 +1773,13 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           coverage->value("MaxUncoveredShare", data.coverage.max_uncovered_share);
       data.coverage.build_target =
           coverage->value("BuildTarget", data.coverage.build_target);
-      MFEM_VERIFY(std::isfinite(data.coverage.max_uncovered_share) &&
-                      std::isfinite(data.coverage.build_target) &&
-                      data.coverage.build_target >= 0.0 &&
-                      data.coverage.build_target <= data.coverage.max_uncovered_share &&
-                      data.coverage.max_uncovered_share <= 1.0,
-                  "Response-correction \"Coverage\" requires 0 <= \"BuildTarget\" <= "
-                  "\"MaxUncoveredShare\" <= 1!");
+      // Ruling 1689 M-5: the interim bars are FIXED until the status validation rules
+      // otherwise (an OK must not be printable at any coverage by a config value).
+      MFEM_VERIFY(data.coverage.max_uncovered_share == 0.05 &&
+                      data.coverage.build_target == 0.02,
+                  "Response-correction \"Coverage\": the interim bars are fixed "
+                  "(\"MaxUncoveredShare\" 0.05, \"BuildTarget\" 0.02) until the status "
+                  "validation rules otherwise!");
       data.coverage.validated_regime = coverage->value("ValidatedRegime", std::string{});
       for (const auto &[key, value] : coverage->items())
       {

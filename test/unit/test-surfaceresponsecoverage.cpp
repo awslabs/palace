@@ -411,11 +411,17 @@ TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
   WriteCoverageRows(rows, "1,0", measurement, units);
   const std::string header = CoverageTableHeader("m,exc");
   CHECK(header.rfind("m,exc,Type,W within-R raw (J),", 0) == 0);
-  CHECK(header.find(",coverage status,regime status\n") != std::string::npos);
+  CHECK(header.find(",coverage status,regime status,partition within-R raw (J),untargeted "
+                    "raw energy of the Type (J),untargeted raw share of the Type interface "
+                    "energy,loop remainder unserved (J),loop remainder of excluded patches "
+                    "kept raw twice (J)\n") != std::string::npos);
   const std::string row = rows.str();
   CHECK(std::count(header.begin(), header.end(), ',') ==
         std::count(row.begin(), row.end(), ','));
-  CHECK(row.find(",nan,nan,NOT-ACHIEVABLE,NO-RANGE\n") != std::string::npos);
+  CHECK(row.find(fmt::format(
+            ",nan,nan,NOT-ACHIEVABLE,NO-RANGE,{:+.12e},+0.000000000000e+00,"
+            "+0.000000000000e+00,+0.000000000000e+00,+0.000000000000e+00\n",
+            units.Dimensionalize<Units::ValueType::ENERGY>(16.0))) != std::string::npos);
   WriteCoverageByKeyRows(keys, "1,0", measurement, {1},
                          {{3, {2, 0.5, false}}, {5, {1, 0.25, true}}}, units);
   const std::string by_key_header = CoverageByKeyTableHeader("m,exc", {1});
@@ -436,6 +442,90 @@ TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
   CHECK(parsed[2].rfind("1,0,0,hashB,Unboxable,MirrorFormed,1,5,1,", 0) == 0);
   CHECK(parsed[2].find(fmt::format(",{:+.12e},+3.125000000000e-02",
                                    units.Dimensionalize<Units::ValueType::ENERGY>(0.5))) !=
+        std::string::npos);
+}
+
+// Ruling 1694 (1) + review M-4 / m-6: the untargeted interfaces of a Type (their raw
+// energy and its share of the Type's raw interface energy; a NOT-TARGET cell for a Type
+// with untargeted interfaces only: W = 0, shares / factor nan, NO-MODEL, never the worst
+// cell, never flagged, named once), the loop-remainder terms summed per Type, the run
+// record's cell set with "Complete", a null factor in the banner, an empty record's line.
+TEST_CASE("Coverage untargeted interfaces, the cell set and the banner edge cases",
+          "[SurfaceResponseCoverage][Serial]")
+{
+  std::map<int, Partition> partitions;
+  partitions[1] = InterfaceOne();
+  partitions[1].loop_remainder_unserved = 0.5;
+  auto measurement =
+      ComputeCoverageMeasurement(partitions, {{1, "SA"}}, {{1, 16.0}}, {{1, 13.5}}, Keys(),
+                                 Models(), CoverageThresholds{}, CoverageValidatedRegime{},
+                                 CoverageExcitationClass::EIGENMODE, {{1, 0.25}});
+  AddCoverageUntargetedInterfaces(measurement, {{2, "SA"}, {3, "MS"}},
+                                  {{1, 24.0}, {2, 8.0}, {3, 4.0}});
+  REQUIRE(measurement.cells.size() == 2);
+  const auto &sa = measurement.cells[0];
+  CHECK(sa.type == "SA");
+  CHECK(sa.untargeted_raw == 8.0);
+  CHECK(sa.untargeted_share == 0.25);  // 8 / (24 + 8)
+  CHECK(sa.loop_remainder_unserved == 0.5);
+  CHECK(sa.loop_remainder_excluded == 0.25);
+  CHECK(sa.partition_within == 16.0);
+  CHECK(sa.status == CoverageStatus::NOT_ACHIEVABLE);
+  const auto &ms = measurement.cells[1];
+  CHECK(ms.type == "MS");
+  CHECK(ms.status == CoverageStatus::NOT_TARGET);
+  CHECK(ms.regime == RegimeStatus::NO_MODEL);
+  CHECK(ms.within == 0.0);
+  for (const double value :
+       {ms.uncovered_share, ms.missing_share, ms.method_gap_share, ms.pending_share,
+        ms.no_status_share, ms.factor, ms.validated_min, ms.validated_max})
+  {
+    CHECK(std::isnan(value));
+  }
+  CHECK(ms.untargeted_raw == 4.0);
+  CHECK(ms.untargeted_share == 1.0);
+  CHECK(measurement.untargeted.size() == 2);
+  CHECK(measurement.WorstCoverageCell() == &sa);
+  CHECK(measurement.WorstRegimeCell() == &sa);
+
+  CoverageRunRecord record;
+  record.Add({{"m", 1.0}}, measurement);
+  record.Add({{"m", 2.0}}, measurement);
+  const auto metadata =
+      CoverageRunMetadata(record, CoverageThresholds{}, CoverageValidatedRegime{}, 1.0);
+  CHECK(metadata.at("Complete") == true);
+  const auto &cell_set = metadata.at("CellSet");
+  CHECK(cell_set.at("Kind") == "m");
+  CHECK(cell_set.at("Measurements") == 2);
+  CHECK(cell_set.at("Cells") == 4);
+  CHECK(cell_set.at("Types") == nlohmann::json::array({"SA", "MS"}));
+  CHECK(metadata.at("StatusCounts").at("NOT-TARGET") == 2);
+  REQUIRE(metadata.at("UntargetedInterfaces").size() == 2);
+  CHECK(metadata.at("UntargetedInterfaces")[0].at("Interface") == 2);
+  CHECK(metadata.at("UntargetedInterfaces")[1].at("Type") == "MS");
+  REQUIRE(metadata.at("Flagged").size() == 2);
+  for (const auto &entry : metadata.at("Flagged"))
+  {
+    CHECK(entry.at("coverage status") == "NOT-ACHIEVABLE");
+    CHECK(entry.at("untargeted raw share of the Type interface energy") == 0.25);
+  }
+  const std::string banner = CoverageRunBanner(metadata);
+  CHECK(banner.find("2 untargeted postprocessing interface(s) 2 (SA), 3 (MS) carry their "
+                    "raw energy; not corrected") != std::string::npos);
+  // Review m-6: a null factor / range prints nan (never a JSON type error).
+  auto with_null = metadata;
+  with_null["Flagged"][0]["covered correction factor"] = nullptr;
+  with_null["Flagged"][0]["regime status"] = "OUT";
+  std::string null_banner;
+  CHECK_NOTHROW(null_banner = CoverageRunBanner(with_null));
+  CHECK(null_banner.find("covered factor nan (validated [nan, nan]: OUT)") !=
+        std::string::npos);
+  // Review m-6: an empty record is never silent.
+  const auto empty = CoverageRunMetadata(CoverageRunRecord{}, CoverageThresholds{},
+                                         CoverageValidatedRegime{}, 1.0);
+  CHECK(empty.at("Cells") == 0);
+  CHECK(empty.at("Complete") == true);
+  CHECK(CoverageRunBanner(empty).find("no coverage cell was measured") !=
         std::string::npos);
 }
 

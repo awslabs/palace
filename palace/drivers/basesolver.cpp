@@ -599,15 +599,13 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       meta["SurfaceResponse"][key] = std::move(value);
     }
     // Lane L1 (decision 1634 (4); DESIGN-v2 s4.5): the coverage of the run's cells (the
-    // writers' record, root only), when a correction measured any.
-    if (!response.GetCoverageRunRecord().entries.empty())
-    {
-      meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
-          response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
-          response.GetCoverageValidatedRegime(),
-          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
-      coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
-    }
+    // writers' record, root only); an empty record (no cell measured, e.g. a raw
+    // fallback) writes its block too, with Cells 0 (review m-6: never silent).
+    meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
+        response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
+        response.GetCoverageValidatedRegime(),
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+    coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.
     auto *spill = response.GetConductorConsistencyRecordsSpill();

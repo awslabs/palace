@@ -1624,15 +1624,34 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       within[target] =
           interface->second.energy - interface->second.edge_energies.back().energy_outside;
     }
-    return fabricated ? ComputeCoverageMeasurement(
-                            partition, types, within, *fabricated,
-                            response_correction->GetCoverageKeyRecords(),
-                            response_correction->GetCoverageModelQualifications(),
-                            response_correction->GetCoverageThresholds(),
-                            response_correction->GetCoverageValidatedRegime(),
-                            CoverageExcitationClass::ELECTROSTATIC_TERMINAL)
-                      : NotMeasuredCoverageMeasurement(
-                            types, CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+    auto measurement = fabricated
+                           ? ComputeCoverageMeasurement(
+                                 partition, types, within, *fabricated,
+                                 response_correction->GetCoverageKeyRecords(),
+                                 response_correction->GetCoverageModelQualifications(),
+                                 response_correction->GetCoverageThresholds(),
+                                 response_correction->GetCoverageValidatedRegime(),
+                                 CoverageExcitationClass::ELECTROSTATIC_TERMINAL)
+                           : NotMeasuredCoverageMeasurement(
+                                 types, CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+    // Ruling 1694 (1): the postprocessing interfaces no model targets carry their raw
+    // energy; their Types' untargeted raw energy and share (NOT-TARGET cells for a Type
+    // with untargeted interfaces only).
+    std::map<int, std::string> untargeted;
+    for (const auto &[interface, type] : post_op.GetInterfaceTypes())
+    {
+      if (targets.count(interface) == 0)
+      {
+        untargeted[interface] = type;
+      }
+    }
+    std::map<int, double> raw_energy;
+    for (const auto &[interface, data] : raw.interfaces)
+    {
+      raw_energy[interface] = data.energy;
+    }
+    AddCoverageUntargetedInterfaces(measurement, untargeted, raw_energy);
+    return measurement;
   };
   auto WriteSourceCoverage = [&](int source, const CoverageMeasurement &measurement)
   {
@@ -2540,8 +2559,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         (void)data;
         const auto summary = coverage.interfaces.find(interface);
-        const double within =
-            summary != coverage.interfaces.end() ? summary->second.within : nan;
+        // Ruling 1694 (A): an untargeted interface's within-R region is empty (W = 0).
+        const double within = summary != coverage.interfaces.end() ? summary->second.within
+                              : coverage_targets.count(interface) == 0 ? 0.0
+                                                                       : nan;
         output.table[fmt::format("coverage_within_{}", interface)]
             << iodata.units.Dimensionalize<VT::ENERGY>(within);
         output.table[fmt::format("coverage_uncovered_share_{}", interface)]

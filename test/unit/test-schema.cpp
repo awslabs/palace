@@ -1072,6 +1072,10 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     auto bar = electrostatic;
     bar["ResponseCorrection"]["Coverage"]["MaxUncoveredShare"] = 1.5;
     CHECK(!ValidateConfig(bar, "Electrostatic").empty());
+    // The bars are fixed (ruling 1689 M-5): a value inside [0, 1] is refused too.
+    auto settable = electrostatic;
+    settable["ResponseCorrection"]["Coverage"]["BuildTarget"] = 1.0;
+    CHECK(!ValidateConfig(settable, "Electrostatic").empty());
     auto unknown = electrostatic;
     unknown["ResponseCorrection"]["Coverage"]["Of"] = "E";
     CHECK(!ValidateConfig(unknown, "Electrostatic").empty());

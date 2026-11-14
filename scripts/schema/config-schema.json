@@ -3503,16 +3503,14 @@
                 },
                 "MaxUncoveredShare": {
                   "type": "number",
-                  "minimum": 0.0,
-                  "maximum": 1.0,
-                  "description": "INTERIM bar: a cell whose uncovered + pending-model share of W is above it is PARTIAL (LOW at or below it, above BuildTarget); a method-gap share above it alone makes the cell NOT-ACHIEVABLE.",
+                  "enum": [0.05],
+                  "description": "INTERIM bar (fixed at 0.05 until the status validation rules otherwise): a cell whose uncovered + pending-model share of W is above it is PARTIAL (LOW at or below it, above BuildTarget); a method-gap share above it alone makes the cell NOT-ACHIEVABLE.",
                   "default": 0.05
                 },
                 "BuildTarget": {
                   "type": "number",
-                  "minimum": 0.0,
-                  "maximum": 1.0,
-                  "description": "INTERIM bar: a cell whose uncovered + pending-model share of W is at or below it is OK.",
+                  "enum": [0.02],
+                  "description": "INTERIM bar (fixed at 0.02 until the status validation rules otherwise): a cell whose uncovered + pending-model share of W is at or below it is OK.",
                   "default": 0.02
                 },
                 "ValidatedRegime": {

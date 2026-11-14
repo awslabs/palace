@@ -396,6 +396,12 @@ protected:
     // lengths are recomputed by the printer (PrintSurfaceResponseLoopFit).
     std::map<int, std::map<std::string, double>> loop_remainder;
     std::map<int, std::map<std::string, double>> self_consistent_loop_remainder;
+    // Lane L1 (ruling 1694 (i); OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-OVERLAP): the part of
+    // `loop_remainder` on the conductor-consistency-EXCLUDED patches, by its own integral
+    // (the same weighted portion integral restricted to those patches' remainders): the
+    // corrected total keeps it raw twice. A coverage output only; no corrected value reads
+    // it.
+    std::map<int, std::map<std::string, double>> loop_remainder_excluded;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;

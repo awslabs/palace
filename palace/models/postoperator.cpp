@@ -1956,13 +1956,41 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     {
       // Lane L1 (decision 1634 (2) / (4)): the coverage per Type of this measurement, on
       // the root (the writers' rank), before any writer runs.
+      std::map<int, double> loop_remainder_excluded;
+      for (const auto &[target, rows] : result.loop_remainder_excluded)
+      {
+        for (const auto &[label, energy] : rows)
+        {
+          (void)label;
+          loop_remainder_excluded[target] += energy;
+        }
+      }
       return ComputeCoverageMeasurement(
           coverage, GetInterfaceTypes(&target_interfaces), within, fabricated,
           surface_response_op->GetCoverageKeyRecords(),
           surface_response_op->GetCoverageModelQualifications(),
           surface_response_op->GetCoverageThresholds(),
           surface_response_op->GetCoverageValidatedRegime(),
-          SurfaceResponseCoverageExcitation());
+          SurfaceResponseCoverageExcitation(), loop_remainder_excluded);
+    };
+    // Ruling 1694 (1): the untargeted postprocessing interfaces (their Types and raw
+    // interface energies) in every measurement of the root.
+    auto AddUntargeted = [&](CoverageMeasurement &measurement)
+    {
+      std::map<int, std::string> untargeted;
+      for (const auto &[interface, type] : GetInterfaceTypes())
+      {
+        if (target_interfaces.count(interface) == 0)
+        {
+          untargeted[interface] = type;
+        }
+      }
+      std::map<int, double> raw_energy;
+      for (const auto &raw : measurement_cache.interface_eps_i)
+      {
+        raw_energy[raw.idx] = raw.energy;
+      }
+      AddCoverageUntargetedInterfaces(measurement, untargeted, raw_energy);
     };
     if (surface_response_postprocess_enabled)
     {
@@ -2053,6 +2081,33 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // out of the coverage partition's served bins.
         SurfacePostOperator::MoveCoverageLoopRemainder(result.coverage,
                                                        result.loop_remainder);
+        // Ruling 1694 (i): the remainders of the conductor-consistency-EXCLUDED patches
+        // (global patch indices of the gate's portion record), integrated alone.
+        std::set<std::size_t> excluded_patches;
+        for (const auto &patches :
+             surface_response_op->GetConductorConsistencyPortionRecord().patches)
+        {
+          excluded_patches.insert(patches.begin(), patches.end());
+        }
+        std::vector<SurfaceResponseOperator::MaxwellResponse::LoopRemainder>
+            excluded_remainders;
+        for (const auto &remainder : result.confidence.loop_remainders)
+        {
+          if (remainder.patch >= 0 &&
+              excluded_patches.count(static_cast<std::size_t>(remainder.patch)) > 0)
+          {
+            excluded_remainders.push_back(remainder);
+          }
+        }
+        if (!excluded_remainders.empty())
+        {
+          const auto excluded_portions =
+              surface_response_op->GetLoopRemainderPortions(excluded_remainders);
+          result.loop_remainder_excluded =
+              surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+                  target_interfaces, *E, D_recovered.get(),
+                  RemainderPerimeter(excluded_portions), excluded_portions.weights);
+        }
       }
     }
     auto RemainderEnergy =
@@ -2163,64 +2218,19 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       {
         result.coverage_measurement =
             RootCoverageMeasurement(result.coverage, coverage_within, coverage_fabricated);
+        AddUntargeted(result.coverage_measurement);
       }
     }
     else
     {
-      // Ruling 1654 (III) Q2 (a): a SelfConsistent-only solve evaluates no response on the
-      // raw field; its coverage (on the RAW field, W of record) takes ONE raw response
-      // evaluation for the fabricated energy and the loop remainders, and the partition
-      // pass. Nothing of it enters another output (the response is a pure function of the
-      // field: no counter, cache or gate state moves).
-      BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
-      const auto raw_response =
-          surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq, false);
-      result.coverage = RawCoveragePartition();
-      if (!raw_response.loop_remainders.empty())
-      {
-        const auto remainder_portions =
-            surface_response_op->GetLoopRemainderPortions(raw_response.loop_remainders);
-        SurfacePostOperator::MoveCoverageLoopRemainder(
-            result.coverage,
-            surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
-                target_interfaces, *E, D_recovered.get(),
-                RemainderPerimeter(remainder_portions), remainder_portions.weights));
-      }
-      std::map<int, double> coverage_within, coverage_fabricated;
-      bool measured = true;
-      const double radius = surface_response_op->GetMatchingRadius();
-      for (const int target : target_interfaces)
-      {
-        const auto raw =
-            std::find_if(measurement_cache.interface_eps_i.begin(),
-                         measurement_cache.interface_eps_i.end(),
-                         [&](const auto &entry) { return entry.idx == target; });
-        auto outside = std::find_if(measurement_cache.interface_edge_i.begin(),
-                                    measurement_cache.interface_edge_i.end(),
-                                    [&](const auto &edge)
-                                    {
-                                      return edge.idx == target &&
-                                             std::abs(edge.distance - radius) <=
-                                                 1.0e-10 * std::max(edge.distance, radius);
-                                    });
-        const auto fabricated = raw_response.fabricated_surface_energy.find(target);
-        if (raw == measurement_cache.interface_eps_i.end() ||
-            outside == measurement_cache.interface_edge_i.end() ||
-            fabricated == raw_response.fabricated_surface_energy.end())
-        {
-          measured = false;  // no W of record for this interface: NOT-MEASURED (Q2 (b))
-          break;
-        }
-        coverage_within[target] = raw->energy - outside->energy_outside;
-        coverage_fabricated[target] = fabricated->second;
-      }
+      // Ruling 1689 M-6 (ruling 1654 (III) Q2 (b)): a SelfConsistent-only solve evaluates
+      // no response on the raw field; until a bitwise proof of an extra raw evaluation and
+      // its stated cost exist, its cells are NOT-MEASURED (no partition, no shares).
       if (Mpi::Root(fem_op->GetComm()))
       {
-        result.coverage_measurement =
-            measured ? RootCoverageMeasurement(result.coverage, coverage_within,
-                                               coverage_fabricated)
-                     : NotMeasuredCoverageMeasurement(GetInterfaceTypes(&target_interfaces),
-                                                      SurfaceResponseCoverageExcitation());
+        result.coverage_measurement = NotMeasuredCoverageMeasurement(
+            GetInterfaceTypes(&target_interfaces), SurfaceResponseCoverageExcitation());
+        AddUntargeted(result.coverage_measurement);
       }
     }
 
@@ -2469,6 +2479,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("coverage_type_factor", "Type covered correction factor");
     table.insert(Column::Text("coverage_status", "coverage status"));
     table.insert(Column::Text("regime_status", "regime status"));
+    // Rulings 1689 M-2 / 1694 (i): this interface's loop-remainder terms (J).
+    table.insert("coverage_loop_remainder_unserved", "loop remainder unserved (J)");
+    table.insert("coverage_loop_remainder_excluded",
+                 "loop remainder of excluded patches kept raw twice (J)");
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE ||
@@ -2654,7 +2668,23 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       const auto summary = coverage.interfaces.find(interface_index);
       const CoverageCell *cell =
           type != coverage_types.end() ? coverage.FindCell(type->second) : nullptr;
-      if (!interface.response_target || !cell)
+      if (!interface.response_target)
+      {
+        // Ruling 1694 (A): no target = no correction radius = an empty within-R region
+        // (W = 0); the shares and the factor nan; its raw energy stays in E_surf raw.
+        table["coverage_within"] << 0.0;
+        table["coverage_uncovered_share"] << nan;
+        table["coverage_type_uncovered_share"] << nan;
+        table["coverage_type_method_gap_share"] << nan;
+        table["coverage_type_pending_share"] << nan;
+        table["coverage_type_factor"] << nan;
+        table["coverage_status"]
+            << std::string(CoverageStatusName(CoverageStatus::NOT_TARGET));
+        table["regime_status"] << std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
+        table["coverage_loop_remainder_unserved"] << 0.0;
+        table["coverage_loop_remainder_excluded"] << 0.0;
+      }
+      else if (!cell)
       {
         table["coverage_within"] << nan;
         table["coverage_uncovered_share"] << nan;
@@ -2662,10 +2692,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         table["coverage_type_method_gap_share"] << nan;
         table["coverage_type_pending_share"] << nan;
         table["coverage_type_factor"] << nan;
-        table["coverage_status"] << std::string(
-            CoverageStatusName(interface.response_target ? CoverageStatus::NOT_MEASURED
-                                                         : CoverageStatus::NOT_TARGET));
+        table["coverage_status"]
+            << std::string(CoverageStatusName(CoverageStatus::NOT_MEASURED));
         table["regime_status"] << std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
+        table["coverage_loop_remainder_unserved"] << nan;
+        table["coverage_loop_remainder_excluded"] << nan;
       }
       else
       {
@@ -2681,6 +2712,14 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         table["coverage_type_factor"] << cell->factor;
         table["coverage_status"] << std::string(CoverageStatusName(cell->status));
         table["regime_status"] << std::string(RegimeStatusName(cell->regime));
+        table["coverage_loop_remainder_unserved"]
+            << (measured ? units.Dimensionalize<VT::ENERGY>(
+                               summary->second.loop_remainder_unserved)
+                         : nan);
+        table["coverage_loop_remainder_excluded"]
+            << (measured ? units.Dimensionalize<VT::ENERGY>(
+                               summary->second.loop_remainder_excluded)
+                         : nan);
       }
     }
   }
@@ -3402,7 +3441,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
   const auto &coverage = surface_response_measurement->coverage_measurement;
   const std::string keys =
       solver_t == ProblemType::DRIVEN
-          ? fmt::format("{:.8e},{}", output_index, excitation)
+          ? fmt::format("{:+.12e},{}", output_index, excitation)  // the other tables' form
           : fmt::format("{},{}", static_cast<int>(std::lround(output_index)), excitation);
   const std::string key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
   const auto target_interfaces = surface_response_op->GetTargetInterfaces();

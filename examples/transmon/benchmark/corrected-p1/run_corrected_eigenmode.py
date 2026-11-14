@@ -48,6 +48,8 @@ APPENDED_COVERAGE_COLUMNS = {
     "Type covered correction factor",
     "coverage status",
     "regime status",
+    "loop remainder unserved (J)",
+    "loop remainder of excluded patches kept raw twice (J)",
     "worst uncovered raw share of W",
     "worst coverage status",
     "worst regime status",

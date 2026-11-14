@@ -846,20 +846,28 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
   const auto library_path = temp.temp_dir / "fabrication-process-r0a-coverage-3d.json";
+  // The root writes the library copy; whether it could read the source is asserted on every
+  // rank AFTER the barrier (decision 1616: no root-only REQUIRE before a barrier).
+  int input_ok = 1;
   if (Mpi::Root(Mpi::World()))
   {
     std::ifstream input(convex_library_3d_path);
-    REQUIRE(input);
-    json library = json::parse(input);
-    library["Name"] = "unit-test-process-r0a-coverage-3d";
-    for (auto &model : library["Models"])
+    input_ok = input ? 1 : 0;
+    if (input_ok)
     {
-      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-r0a-coverage-3d";
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      }
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
     }
-    std::ofstream output(library_path);
-    output << library.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(1, &input_ok, 0, Mpi::World());
+  REQUIRE(input_ok == 1);
   json config = IslandConfig();
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");

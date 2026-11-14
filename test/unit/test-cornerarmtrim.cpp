@@ -2776,6 +2776,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(missing, WithinRel(uncovered_total / W, 1.0e-12));
   CHECK_THAT(U, WithinAbs(missing + method_gap, 1.0e-15));
   CHECK_THAT(W * (1.0 - U), WithinRel(W - uncovered_total, 1.0e-12));
+  // Ruling 1694 (i) (OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-OVERLAP): served = (W - kept raw)
+  // + the loop remainder of the conductor-consistency-excluded patches; this fixture has no
+  // exclusion, so that term is 0 EXACTLY (in the cell and on the interface's row).
+  constexpr auto excluded_column = "loop remainder of excluded patches kept raw twice (J)";
+  CHECK(std::stod(cell[coverage_table.Column(excluded_column)]) == 0.0);
+  CHECK(std::stod(corrected_row[corrected_table.Column(excluded_column)]) == 0.0);
+  CHECK(std::stod(cell[coverage_table.Column("untargeted raw energy of the Type (J)")]) ==
+        0.0);
   CHECK(U > 0.0);
   CHECK(cell[coverage_table.Column("regime status")] == "NO-RANGE");
   CHECK(std::stod(cell[coverage_table.Column("covered correction factor")]) > 0.0);
@@ -2805,6 +2813,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const auto basis_path = temp.temp_dir / "coverage-partition-basis-points.csv";
   const auto edge_library_path =
       temp.temp_dir / "fabrication-process-coverage-partition-edges.json";
+  // The root writes the inputs; its two checks are asserted on every rank AFTER the barrier
+  // (decision 1616: no root-only REQUIRE before a barrier).
+  int inputs_ok[2] = {1, 1};  // {library source readable, exactly one IsolatedEdge model}
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -2821,25 +2832,31 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
              << "-0.2,0.2,0.0\n";
     }
     std::ifstream input(convex_library_3d_path);
-    REQUIRE(input);
-    json library = json::parse(input);
-    library["Name"] = "unit-test-process-coverage-partition-edges";
-    json models = json::array();
-    for (auto &model : library["Models"])
+    inputs_ok[0] = input ? 1 : 0;
+    if (inputs_ok[0])
     {
-      if (model["Topology"] == "IsolatedEdge")
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-coverage-partition-edges";
+      json models = json::array();
+      for (auto &model : library["Models"])
       {
-        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
-        model["BasisPoints"] = basis_path.string();
-        models.push_back(model);
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+          model["BasisPoints"] = basis_path.string();
+          models.push_back(model);
+        }
       }
+      inputs_ok[1] = models.size() == 1 ? 1 : 0;
+      library["Models"] = std::move(models);
+      std::ofstream output(edge_library_path);
+      output << library.dump(2) << "\n";
     }
-    REQUIRE(models.size() == 1);
-    library["Models"] = std::move(models);
-    std::ofstream output(edge_library_path);
-    output << library.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(2, inputs_ok, 0, Mpi::World());
+  REQUIRE(inputs_ok[0] == 1);
+  REQUIRE(inputs_ok[1] == 1);
 
   const fs::path output_dir = temp.temp_dir / "coverage-partition";
   json config = IslandConfig();
@@ -4936,12 +4953,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   const TextCsv with = ReadTrimmedCsv(with_dir / "surface-Q-corrected.csv");
   const TextCsv without = ReadTrimmedCsv(without_dir / "surface-Q-corrected.csv");
-  // The flag column exists only with the untargeted interface; the other columns are the
-  // same set in the same order.
+  // The flag column exists only with the untargeted interface (after the existing columns,
+  // before lane L1's appended coverage columns); the other columns are the same set in the
+  // same order.
   REQUIRE(with.header.size() == without.header.size() + 1);
-  CHECK(with.header.back() == "response target");
-  CHECK(std::vector<std::string>(with.header.begin(), with.header.end() - 1) ==
-        without.header);
+  const auto flag = std::find(with.header.begin(), with.header.end(), "response target");
+  REQUIRE(flag != with.header.end());
+  REQUIRE(flag + 1 != with.header.end());
+  CHECK(*(flag + 1) == "coverage Type");
+  std::vector<std::string> with_without_flag(with.header.begin(), flag);
+  with_without_flag.insert(with_without_flag.end(), flag + 1, with.header.end());
+  CHECK(with_without_flag == without.header);
   REQUIRE(without.rows.size() == 1);
   REQUIRE(with.rows.size() == 2);
   auto Row = [&](const TextCsv &csv, int interface) -> const std::vector<std::string> &
@@ -4984,15 +5006,65 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(
       std::stod(untargeted[with.Column("p_surf corrected")]),
       WithinRel(raw / std::stod(untargeted[with.Column("E_norm corrected (J)")]), 1.0e-9));
-  for (const auto &name : with.header)
+  // Every OLD column finite (outside the self-consistent ones); lane L1's appended
+  // coverage columns (from "coverage Type" on) exactly as ruling 1694 (A) defines an
+  // untargeted row: its Type, W = 0 (no target = no correction radius = an empty within-R
+  // region), the shares and the factor nan, NOT-TARGET, NO-MODEL, no loop remainder.
+  const std::size_t first_coverage = with.Column("coverage Type");
+  for (std::size_t c = 0; c < first_coverage; c++)
   {
+    const auto &name = with.header[c];
     if (name.find("self-consistent") != std::string::npos)
     {
       continue;
     }
     INFO(name);
-    CHECK(!std::isnan(std::stod(untargeted[with.Column(name)])));
+    CHECK(!std::isnan(std::stod(untargeted[c])));
   }
+  CHECK(untargeted[with.Column("coverage Type")] == "SA");
+  CHECK(std::stod(untargeted[with.Column("W within-R raw (J)")]) == 0.0);
+  for (const auto &name :
+       {"uncovered raw share of W", "Type uncovered raw share of W",
+        "Type method-gap raw share of W", "Type pending-model share of W",
+        "Type covered correction factor"})
+  {
+    INFO(name);
+    CHECK(untargeted[with.Column(name)] == "nan");
+  }
+  CHECK(untargeted[with.Column("coverage status")] == "NOT-TARGET");
+  CHECK(untargeted[with.Column("regime status")] == "NO-MODEL");
+  CHECK(std::stod(untargeted[with.Column("loop remainder unserved (J)")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column(
+            "loop remainder of excluded patches kept raw twice (J)")]) == 0.0);
+  // Ruling 1694 (1): the SA cell of surface-response-coverage.csv carries the untargeted
+  // interface's raw energy and its share of the Type's raw interface energy; its shares are
+  // over the targeted interface only (the same text as without the untargeted interface).
+  const TextCsv coverage_with = ReadTrimmedCsv(with_dir / "surface-response-coverage.csv");
+  const TextCsv coverage_without =
+      ReadTrimmedCsv(without_dir / "surface-response-coverage.csv");
+  REQUIRE(coverage_with.rows.size() == 1);
+  REQUIRE(coverage_without.rows.size() == 1);
+  const auto &sa_with = coverage_with.rows.front();
+  const auto &sa_without = coverage_without.rows.front();
+  CHECK(sa_with[coverage_with.Column("Type")] == "SA");
+  for (const auto &name : {"W within-R raw (J)", "uncovered raw share of W",
+                           "method-gap raw share of W", "coverage status"})
+  {
+    INFO(name);
+    CHECK(sa_with[coverage_with.Column(name)] == sa_without[coverage_without.Column(name)]);
+  }
+  const double raw_target = std::stod(target_with[with.Column("E_surf raw (J)")]);
+  CHECK_THAT(
+      std::stod(sa_with[coverage_with.Column("untargeted raw energy of the Type (J)")]),
+      WithinRel(raw, 1.0e-12));
+  CHECK_THAT(std::stod(sa_with[coverage_with.Column(
+                 "untargeted raw share of the Type interface energy")]),
+             WithinRel(raw / (raw + raw_target), 1.0e-12));
+  CHECK(std::stod(
+            sa_without[coverage_without.Column("untargeted raw energy of the Type (J)")]) ==
+        0.0);
+  CHECK(std::stod(sa_without[coverage_without.Column(
+            "untargeted raw share of the Type interface energy")]) == 0.0);
 #endif
 }
 

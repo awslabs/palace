@@ -145,6 +145,12 @@ struct CoverageInterfaceSummary
   double partition_within = 0.0;  // the partition pass's own within-R total
   double served = 0.0, missing = 0.0, pending = 0.0, no_status = 0.0;
   double fabricated = 0.0;  // the correction's fabricated energy (evaluation 0)
+  // Ruling 1689 M-2: the loop remainder no served label held (the partition's
+  // loop_remainder_unserved). Ruling 1694 (i): the loop remainder of the conductor-
+  // consistency-EXCLUDED patches by its own integral (OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-
+  // OVERLAP: the corrected total keeps it raw twice, in the ConductorConsistency term and
+  // in the loop-remainder term). Maxwell only (0 on the electrostatic path).
+  double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
 };
 CoverageInterfaceSummary
 SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition &partition,
@@ -161,13 +167,24 @@ struct CoverageCell
   std::string type;
   double within = 0.0, uncovered = 0.0, missing = 0.0, method_gap = 0.0, pending = 0.0,
          no_status = 0.0, served = 0.0, fabricated = 0.0;
+  // The partition pass's own within-R total (its difference from W is the round-off of the
+  // two integrals; review m-3: printed, never used for a status).
+  double partition_within = 0.0;
   double uncovered_share = 0.0, missing_share = 0.0, method_gap_share = 0.0,
          pending_share = 0.0, no_status_share = 0.0;
   double factor = 0.0, validated_min = 0.0, validated_max = 0.0;
   CoverageStatus status = CoverageStatus::NOT_MEASURED;
   RegimeStatus regime = RegimeStatus::NO_MODEL;
+  // Ruling 1694 (1): the raw interface energy (whole interface, J) of this Type's
+  // UNTARGETED postprocessing interfaces (they carry their raw energy, not corrected) and
+  // its share of the Type's total raw interface energy (targeted + untargeted; nan when
+  // that total is 0). The shares above are over the TARGETED interfaces only. A Type with
+  // untargeted interfaces only is a NOT-TARGET cell (W = 0, shares nan, NO-MODEL).
+  double untargeted_raw = 0.0, untargeted_share = 0.0;
+  // The Type's sums of CoverageInterfaceSummary's two loop-remainder terms (J).
+  double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
   // Lane rescensus (decision 1637 (e)): its per-cell edge-resolution status is appended
-  // here and printed after `regime status`; its stage-0 line beside the Missing length
+  // here and printed after the last column; its stage-0 line beside the Missing length
   // share. Not part of this lane.
 };
 CoverageCell ComputeCoverageCell(const std::string &type,
@@ -212,15 +229,19 @@ struct CoverageMeasurement
   // The served models (runtime index) with served energy whose library record carries no
   // QualificationStatus (item (5): information) and the pending ones.
   std::set<int> served_no_status_models, served_pending_models;
+  // Ruling 1694 (1): the untargeted postprocessing interfaces and their Types
+  // (AddCoverageUntargetedInterfaces).
+  std::map<int, std::string> untargeted;
   const CoverageCell *FindCell(const std::string &type) const;
-  // The worst cell over Types (CoverageStatusRank / RegimeStatusRank); nullptr when no
-  // cell exists.
+  // The worst cell over Types (CoverageStatusRank / RegimeStatusRank); NOT-TARGET cells
+  // never enter; nullptr when no other cell exists.
   const CoverageCell *WorstCoverageCell() const;
   const CoverageCell *WorstRegimeCell() const;
 };
 // `within` (W) and `fabricated` per target interface (the corrected bookkeeping's raw -
 // outside at R and the correction's fabricated energy, evaluation 0); `types` the target
-// interfaces' Types.
+// interfaces' Types; `loop_remainder_excluded` per target interface (J; Maxwell; absent =
+// 0).
 CoverageMeasurement ComputeCoverageMeasurement(
     const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &partitions,
     const std::map<int, std::string> &types, const std::map<int, double> &within,
@@ -228,9 +249,18 @@ CoverageMeasurement ComputeCoverageMeasurement(
     const std::map<int, CoverageKeyRecord> &keys_by_feature,
     const std::map<int, CoverageModelQualification> &models,
     const CoverageThresholds &thresholds, const CoverageValidatedRegime &regime,
-    CoverageExcitationClass excitation);
+    CoverageExcitationClass excitation,
+    const std::map<int, double> &loop_remainder_excluded = {});
 CoverageMeasurement NotMeasuredCoverageMeasurement(const std::map<int, std::string> &types,
                                                    CoverageExcitationClass excitation);
+// Ruling 1694 (1): records the untargeted postprocessing interfaces (`untargeted`: index ->
+// Type) in the measurement and, per cell, its Type's untargeted raw energy and share from
+// `raw_energy` (the whole-interface raw energy of every postprocessing interface, J); a
+// Type with untargeted interfaces only gets a NOT-TARGET cell (W = 0, shares / factor /
+// range nan, NO-MODEL), after the target Types' cells.
+void AddCoverageUntargetedInterfaces(CoverageMeasurement &measurement,
+                                     const std::map<int, std::string> &untargeted,
+                                     const std::map<int, double> &raw_energy);
 
 struct CoverageFeaturePortions
 {
@@ -274,6 +304,7 @@ struct CoverageRunRecord
   };
   std::vector<Entry> entries;
   std::set<int> served_no_status_models, served_pending_models;
+  std::map<int, std::string> untargeted;  // ruling 1694 (1): named once in the banner
   void Add(const std::vector<std::pair<std::string, double>> &keys,
            const CoverageMeasurement &measurement);
 };
