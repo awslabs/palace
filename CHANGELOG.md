@@ -29,7 +29,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     default `0.54`), nor for growing modes with `|Q|` < 10, whose slowly converging Ritz
     values could stall the convergence of the others. With `config["Problem"]["Verbose"]`
     positive, the log reports how many Ritz values of the last iteration lie outside of the
-    search region. SchemaVer 4-4-0. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    search region. With the region, a warm-started solve with a starting vector from K
+    eigenvectors uses the tighter linear solver tolerance of its first Krylov cycle only for
+    its first K + 1 linear solves. SchemaVer 4-4-0.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with

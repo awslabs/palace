@@ -131,10 +131,11 @@ public:
     SetInitialSpace(v);
   }
 
-  // Relative tolerance of the linear solves of the first Krylov cycle of the next solve
-  // (none if tol <= 0): with a warm start, the Ritz values of that cycle are set by its
-  // first linear solves. Not all solvers support it.
-  virtual void SetFirstCycleLinearSolverTol(double tol) {}
+  // Relative tolerance of the first num_solves linear solves of the next solve, at most
+  // until its first restart (all of its first Krylov cycle if num_solves < 0, none if tol
+  // <= 0): with a warm start, the wanted Ritz pairs are set by these solves. Not all
+  // solvers support it.
+  virtual void SetFirstCycleLinearSolverTol(double tol, int num_solves) {}
 
   // Whether the initial vector of the next solve approximates the wanted eigenvectors (warm
   // start): an eigenpair then converges only once its Ritz value settled between restarts.

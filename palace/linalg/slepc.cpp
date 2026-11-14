@@ -519,6 +519,8 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
   A0 = A1 = nullptr;
   warm_start = ritz_test = false;
   first_cycle_tol = lin_tol = 0.0;
+  first_cycle_solves = -1;
+  first_cycle_count = 0;
   first_cycle_monitor = first_cycle = false;
   ritz_its = -1;
   ritz_blocked = false;
@@ -744,6 +746,14 @@ void SlepcEPSSolverBase::EndFirstCycle()
   }
 }
 
+void SlepcEPSSolverBase::CountFirstCycleSolve()
+{
+  if (first_cycle && ++first_cycle_count == first_cycle_solves)
+  {
+    EndFirstCycle();
+  }
+}
+
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
@@ -765,10 +775,12 @@ int SlepcEPSSolverBase::Solve()
   ritz_blocked = false;
   ritz_num_delayed = ritz_num_unsettled = 0;
 
-  // A tighter tolerance for the first Krylov cycle is restored by a monitor after the first
-  // restart.
+  // A tighter tolerance for the first linear solves is restored after them, or at the
+  // latest by a monitor after the first restart.
   lin_tol = opInv->GetRelTol();
-  first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol);
+  first_cycle_count = 0;
+  first_cycle =
+      (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol && first_cycle_solves != 0);
   if (first_cycle)
   {
     if (!first_cycle_monitor)
@@ -779,8 +791,10 @@ int SlepcEPSSolverBase::Solve()
     opInv->SetRelTol(first_cycle_tol);
     if (print > 0)
     {
-      Mpi::Print(GetComm(), " Linear solver tolerance {:.3e} for the first Krylov cycle\n",
-                 first_cycle_tol);
+      Mpi::Print(
+          GetComm(), " Linear solver tolerance {:.3e} for the first {}\n", first_cycle_tol,
+          (first_cycle_solves > 0) ? fmt::format("{:d} linear solves", first_cycle_solves)
+                                   : std::string("Krylov cycle"));
     }
   }
 
@@ -1957,6 +1971,7 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
+  ctx->CountFirstCycleSolve();
   if (!ctx->sinvert)
   {
     ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma);
@@ -2064,6 +2079,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
     }
 
     ctx->opInv->Mult(ctx->x2, ctx->y2);
+    ctx->CountFirstCycleSolve();
     ctx->y2 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
     if (ctx->opProj)
     {
@@ -2077,6 +2093,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opInv->Mult(ctx->y1, ctx->y2);
+    ctx->CountFirstCycleSolve();
     if (ctx->opProj)
     {
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));

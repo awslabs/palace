@@ -231,9 +231,12 @@ protected:
   // Whether the next solve is warm-started, and whether its convergence test is installed.
   bool warm_start, ritz_test;
 
-  // Linear solver tolerance of the first Krylov cycle and the one restored after it, and
-  // whether the monitor restoring it is installed and has yet to act in the current solve.
+  // Linear solver tolerance of the first linear solves and the one restored after them,
+  // their number (see SetFirstCycleLinearSolverTol) and the count of solves in the current
+  // solve, and whether the monitor restoring the tolerance at the first restart is
+  // installed and the tolerance has yet to be restored in the current solve.
   double first_cycle_tol, lin_tol;
+  int first_cycle_solves, first_cycle_count;
   bool first_cycle_monitor, first_cycle;
 
   // State of the convergence test of warm-started solves (see CheckRitzValue): the Ritz
@@ -273,11 +276,17 @@ public:
 
   void SetWarmStart(bool warm) override { warm_start = warm; }
 
-  void SetFirstCycleLinearSolverTol(double tol) override { first_cycle_tol = tol; }
+  void SetFirstCycleLinearSolverTol(double tol, int num_solves) override
+  {
+    first_cycle_tol = tol;
+    first_cycle_solves = num_solves;
+  }
 
-  // Restore the linear solver tolerance after the first Krylov cycle (called by the
-  // eigensolver monitor after each restart).
+  // Restore the linear solver tolerance after the first linear solves (called by the
+  // spectral transformation after each linear solve, and by the eigensolver monitor after
+  // each restart).
   void EndFirstCycle();
+  void CountFirstCycleSolve();
 
   // Update the relative error estimate of the Ritz value theta of the transformed problem
   // in a warm-started solve (called by its convergence test).

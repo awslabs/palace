@@ -372,8 +372,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // For problems with damping, exclude the strongly damped modes from the search, whose
   // slow convergence can stall the others.
-  if (type == EigenSolverBackend::SLEPC && nonlinear_type != NonlinearEigenSolver::SLP &&
-      (C || has_A2) && iodata.solver.eigenmode.min_q > 0.5)
+  const bool q_region = type == EigenSolverBackend::SLEPC &&
+                        nonlinear_type != NonlinearEigenSolver::SLP && (C || has_A2) &&
+                        iodata.solver.eigenmode.min_q > 0.5;
+  if (q_region)
   {
     Mpi::Print(" Eigenvalue search excludes modes with Q < {:.3g}\n",
                iodata.solver.eigenmode.min_q);
@@ -487,11 +489,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
         eigen->SetWarmStart(true);
 
-        // The Ritz values of the first Krylov cycle are set by its first linear solves:
-        // solve these with a 100 times smaller tolerance, not below 1e-12.
+        // The wanted Ritz pairs are set by the first num_warm + 1 linear solves, the error
+        // of a linear solve entering a pair with the pair's component along the Krylov
+        // vector solved for: solve these with a 100 times smaller tolerance, not below
+        // 1e-12. Looser solves excite the strongly damped modes, so without the quality
+        // factor region the whole first Krylov cycle uses this tolerance.
         const double lin_tol = iodata.solver.linear.tol;
         eigen->SetFirstCycleLinearSolverTol(
-            std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
+            std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)),
+            q_region ? num_warm + 1 : -1);
       }
     }
     if (num_warm == 0)
