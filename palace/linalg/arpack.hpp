@@ -8,6 +8,7 @@
 
 #include <array>
 #include <complex>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <mpi.h>
@@ -225,6 +226,9 @@ private:
   RationalTerms rational;
   mutable std::vector<ComplexVector> xa, ya;
 
+  // The complete A2(λ) for the residuals, if the rational terms are a fit of it.
+  std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2;
+
   void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
                         const ComplexOperator &M, ScaleType type);
 
@@ -253,6 +257,13 @@ public:
                        const std::array<std::complex<double>, 3> &poly,
                        const std::vector<std::complex<double>> &poles,
                        const std::vector<std::complex<double>> &residues) override;
+
+  // When the rational terms are a fit of A2(λ), the residuals use the complete A2(λ).
+  void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2) override
+  {
+    funcA2 = std::move(A2);
+  }
 
   int Solve() override;
 };

@@ -59,20 +59,26 @@ inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y1,
                                    palace::ComplexVector &y2,
                                    std::vector<palace::ComplexVector> *ya = nullptr)
 {
-  // Blocks [y1; y2; ya...] of equal size.
+  // Blocks [y1; y2; ya...] of the sizes of y1, y2, and ya (y1 and y2 of equal size).
   PetscInt n;
   const PetscScalar *px;
   PetscMemType mtype;
   PetscCall(VecGetLocalSize(x, &n));
-  const PetscInt nb = 2 + (ya ? static_cast<PetscInt>(ya->size()) : 0);
-  MFEM_ASSERT(y1.Size() == n / nb && y2.Size() == n / nb,
+  PetscInt m = y1.Size() + y2.Size();
+  for (std::size_t j = 0; ya && j < ya->size(); j++)
+  {
+    m += (*ya)[j].Size();
+  }
+  MFEM_ASSERT(m == n && y1.Size() == y2.Size(),
               "Invalid size mismatch for PETSc vector conversion!");
   PetscCall(VecGetArrayReadAndMemType(x, &px, &mtype));
-  y1.Set(px, n / nb, PetscMemTypeDevice(mtype));
-  y2.Set(px + n / nb, n / nb, PetscMemTypeDevice(mtype));
-  for (PetscInt j = 2; j < nb; j++)
+  y1.Set(px, y1.Size(), PetscMemTypeDevice(mtype));
+  y2.Set(px + y1.Size(), y2.Size(), PetscMemTypeDevice(mtype));
+  PetscInt offset = y1.Size() + y2.Size();
+  for (std::size_t j = 0; ya && j < ya->size(); j++)
   {
-    (*ya)[j - 2].Set(px + j * (n / nb), n / nb, PetscMemTypeDevice(mtype));
+    (*ya)[j].Set(px + offset, (*ya)[j].Size(), PetscMemTypeDevice(mtype));
+    offset += (*ya)[j].Size();
   }
   PetscCall(VecRestoreArrayReadAndMemType(x, &px));
   return PETSC_SUCCESS;
@@ -97,21 +103,27 @@ inline PetscErrorCode ToPetscVec(const palace::ComplexVector &x1,
                                  const palace::ComplexVector &x2, Vec y,
                                  const std::vector<palace::ComplexVector> *xa = nullptr)
 {
-  // Blocks [x1; x2; xa...] of equal size. Every block is written: with write access, the
-  // values not written are undefined.
+  // Blocks [x1; x2; xa...] of the sizes of x1, x2, and xa (x1 and x2 of equal size). Every
+  // block is written: with write access, the values not written are undefined.
   PetscInt n;
   PetscScalar *py;
   PetscMemType mtype;
   PetscCall(VecGetLocalSize(y, &n));
-  const PetscInt nb = 2 + (xa ? static_cast<PetscInt>(xa->size()) : 0);
-  MFEM_ASSERT(x1.Size() == n / nb && x2.Size() == n / nb,
+  PetscInt m = x1.Size() + x2.Size();
+  for (std::size_t j = 0; xa && j < xa->size(); j++)
+  {
+    m += (*xa)[j].Size();
+  }
+  MFEM_ASSERT(m == n && x1.Size() == x2.Size(),
               "Invalid size mismatch for PETSc vector conversion!");
   PetscCall(VecGetArrayWriteAndMemType(y, &py, &mtype));
-  x1.Get(py, n / nb, PetscMemTypeDevice(mtype));
-  x2.Get(py + n / nb, n / nb, PetscMemTypeDevice(mtype));
-  for (PetscInt j = 2; j < nb; j++)
+  x1.Get(py, x1.Size(), PetscMemTypeDevice(mtype));
+  x2.Get(py + x1.Size(), x2.Size(), PetscMemTypeDevice(mtype));
+  PetscInt offset = x1.Size() + x2.Size();
+  for (std::size_t j = 0; xa && j < xa->size(); j++)
   {
-    (*xa)[j - 2].Get(py + j * (n / nb), n / nb, PetscMemTypeDevice(mtype));
+    (*xa)[j].Get(py + offset, (*xa)[j].Size(), PetscMemTypeDevice(mtype));
+    offset += (*xa)[j].Size();
   }
   PetscCall(VecRestoreArrayWriteAndMemType(y, &py));
   return PETSC_SUCCESS;
@@ -756,10 +768,10 @@ void SlepcPEPLinearSolver::AddRationalTerm(
   MFEM_VERIFY(!opK, "The rational terms of SlepcPEPLinearSolver must be added before its "
                     "problem (SetOperators)!");
   rational.Add(GetComm(), B, poly, poles, residues);
-  for (std::size_t j = 0; j < poles.size(); j++)
+  for (std::size_t k = xa.size(); k < rational.NumPoles(); k++)
   {
-    xa.emplace_back(B.Height()).UseDevice(true);
-    ya.emplace_back(B.Height()).UseDevice(true);
+    xa.emplace_back(rational.BlockSize(k)).UseDevice(true);
+    ya.emplace_back(rational.BlockSize(k)).UseDevice(true);
   }
 }
 
@@ -789,7 +801,11 @@ void SlepcPEPLinearSolver::SetOperatorsImpl(const ComplexOperator &K,
   opM = &M;
   if (first)
   {
-    const PetscInt n = (2 + static_cast<PetscInt>(xa.size())) * opK->Height();
+    PetscInt n = 2 * opK->Height();
+    for (const auto &a : xa)
+    {
+      n += a.Size();
+    }
     PalacePetscCall(
         MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
     PalacePetscCall(
@@ -838,7 +854,11 @@ void SlepcPEPLinearSolver::SetBMat(const Operator &B)
 {
   SlepcEigenvalueSolver::SetBMat(B);
 
-  const PetscInt n = (2 + static_cast<PetscInt>(xa.size())) * B.Height();
+  PetscInt n = 2 * B.Height();
+  for (const auto &a : xa)
+  {
+    n += a.Size();
+  }
   PalacePetscCall(
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &B0));
   PalacePetscCall(
@@ -886,7 +906,8 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
       v0,
       "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
   PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));
-  PalacePetscCall(FromPetscVec(v0, x, 0, 2 + static_cast<int>(xa.size())));
+  PalacePetscCall(FromPetscVec(v0, x1, x2, &xa));
+  x = x1;
   if (xscale.get()[i] > 0.0)
   {
     x *= xscale.get()[i];
@@ -897,14 +918,22 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
                                                 ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || T(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
-  // eigenvalue λ, with every rational term f(λ) B x.
+  // eigenvalue λ, with every rational term f(λ) B x, or the complete A2(λ) x which they
+  // fit.
   opK->Mult(x, r);
   if (opC)
   {
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  rational.AddMult(x, [this, l](std::size_t t) { return rational.Value(t, l); }, r);
+  if (funcA2)
+  {
+    funcA2(l)->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
+  else
+  {
+    rational.AddMult(x, [this, l](std::size_t t) { return rational.Value(t, l); }, r);
+  }
   return linalg::Norml2(GetComm(), r);
 }
 

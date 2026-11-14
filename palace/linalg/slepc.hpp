@@ -14,6 +14,7 @@
 
 #include <array>
 #include <complex>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -307,6 +308,9 @@ public:
   mutable std::vector<ComplexVector> xa, ya;
 
 private:
+  // The complete A2(λ) for the residuals, if the rational terms are a fit of it.
+  std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2;
+
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
@@ -332,6 +336,13 @@ public:
                        const std::array<std::complex<double>, 3> &poly,
                        const std::vector<std::complex<double>> &poles,
                        const std::vector<std::complex<double>> &residues) override;
+
+  // When the rational terms are a fit of A2(λ), the residuals use the complete A2(λ).
+  void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2) override
+  {
+    funcA2 = std::move(A2);
+  }
 
   void SetBMat(const Operator &B) override;
 

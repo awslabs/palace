@@ -77,26 +77,28 @@ struct PoleTerms
 // Krylov vectors stay in the range of B. A block of x restricted to the support of B
 // would give the linearization the eigenvalue pⱼ for every vector of the kernel of B on
 // its support, with a zero x: the surface gradients for the boundary curl-curl matrix of
-// a second-order absorbing boundary, for example.
+// a second-order absorbing boundary, for example. A block is stored on the support of B
+// only, the true dofs where B has a nonzero row (for a boundary term, the boundary).
 //
 class RationalTerms
 {
 private:
   // The matrices B (not owned) with their polynomial coefficients {d₀, d₁, d₂}, scales β,
-  // and the range [begin, end) of their poles.
+  // the range [begin, end) of their poles, and their supports (local true dofs).
   struct Term
   {
     const ComplexOperator *B;
     std::array<std::complex<double>, 3> poly;
     double scale;
     std::size_t begin, end;
+    mfem::Array<int> rows;
   };
   std::vector<Term> terms;
   std::vector<std::size_t> term_of_pole;
   std::vector<std::complex<double>> poles, residues;
 
-  // Workspace vector.
-  mutable ComplexVector z;
+  // Workspace vectors.
+  mutable ComplexVector z, zs;
 
 public:
   // Add a term f(λ) B, f(λ) = poly[0] + poly[1] λ + poly[2] λ² + Σⱼ c[j] / (λ - p[j]),
@@ -119,20 +121,30 @@ public:
       term_of_pole.push_back(terms.size());
     }
 
-    // The scale β of the blocks: the largest diagonal entry of B.
+    // The support of B from its diagonal: B is a scalar times a positive semidefinite
+    // matrix (mass and curl-curl type), with a zero row where its diagonal entry is zero,
+    // and essential dofs are eliminated with a zero diagonal. The scale β of the blocks is
+    // the largest diagonal entry.
     ComplexVector diag(B.Height());
     diag.UseDevice(true);
     B.AssembleDiagonal(diag);
     double scale = 0.0;
+    mfem::Array<int> rows;
     const auto *dr = diag.Real().HostRead();
     const auto *di = diag.Imag().HostRead();
     for (int i = 0; i < B.Height(); i++)
     {
-      scale = std::max(scale, std::abs(std::complex<double>(dr[i], di[i])));
+      const double d = std::abs(std::complex<double>(dr[i], di[i]));
+      scale = std::max(scale, d);
+      if (d > 0.0)
+      {
+        rows.Append(i);
+      }
     }
     Mpi::GlobalMax(1, &scale, comm);
-    terms.push_back(
-        {&B, poly, (scale > 0.0) ? scale : 1.0, poles.size(), poles.size() + p.size()});
+    rows.UseDevice(true);
+    terms.push_back({&B, poly, (scale > 0.0) ? scale : 1.0, poles.size(),
+                     poles.size() + p.size(), std::move(rows)});
     poles.insert(poles.end(), p.begin(), p.end());
     residues.insert(residues.end(), c.begin(), c.end());
   }
@@ -142,6 +154,9 @@ public:
   std::size_t NumPoles() const { return poles.size(); }
   std::complex<double> Pole(std::size_t k) const { return poles[k]; }
   std::complex<double> Residue(std::size_t k) const { return residues[k]; }
+
+  // The local size of the auxiliary block of pole k (the support of its B).
+  int BlockSize(std::size_t k) const { return terms[term_of_pole[k]].rows.Size(); }
 
   // The polynomial coefficient dᵢ of term t.
   std::complex<double> Poly(std::size_t t, int i) const { return terms[t].poly[i]; }
@@ -195,9 +210,17 @@ public:
   void AddAuxiliary(const std::vector<ComplexVector> &w, Coefficient &&b,
                     ComplexVector &y) const
   {
-    for (std::size_t k = 0; k < poles.size(); k++)
+    for (const auto &term : terms)
     {
-      y.AXPY(b(k) * terms[term_of_pole[k]].scale, w[k]);
+      zs.SetSize(term.rows.Size());
+      zs.UseDevice(true);
+      zs = 0.0;
+      for (std::size_t k = term.begin; k < term.end; k++)
+      {
+        zs.AXPY(b(k) * term.scale, w[k]);
+      }
+      y.Real().AddElementVector(term.rows, zs.Real());
+      y.Imag().AddElementVector(term.rows, zs.Imag());
     }
   }
 
@@ -212,9 +235,13 @@ public:
       z.SetSize(x.Size());
       z.UseDevice(true);
       term.B->Mult(x, z);
+      zs.SetSize(term.rows.Size());
+      zs.UseDevice(true);
+      z.Real().GetSubVector(term.rows, zs.Real());
+      z.Imag().GetSubVector(term.rows, zs.Imag());
       for (std::size_t k = term.begin; k < term.end; k++)
       {
-        y[k].AXPBYPCZ(a(k) / term.scale, z, b(k), w[k], 0.0);
+        y[k].AXPBYPCZ(a(k) / term.scale, zs, b(k), w[k], 0.0);
       }
     }
   }

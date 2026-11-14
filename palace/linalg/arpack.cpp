@@ -714,10 +714,10 @@ void ArpackPEPSolver::AddRationalTerm(const ComplexOperator &B,
   MFEM_VERIFY(!opK, "The rational terms of ArpackPEPSolver must be added before its "
                     "problem (SetOperators)!");
   rational.Add(comm, B, poly, poles, residues);
-  for (std::size_t j = 0; j < poles.size(); j++)
+  for (std::size_t k = xa.size(); k < rational.NumPoles(); k++)
   {
-    xa.emplace_back(B.Height()).UseDevice(true);
-    ya.emplace_back(B.Height()).UseDevice(true);
+    xa.emplace_back(rational.BlockSize(k)).UseDevice(true);
+    ya.emplace_back(rational.BlockSize(k)).UseDevice(true);
   }
 }
 
@@ -775,18 +775,27 @@ int ArpackPEPSolver::Solve()
 {
   // Set some defaults (from SLEPc ARPACK interface). The problem size is the size of the
   // block linearized problem: two blocks, and one more for each pole of the rational
-  // terms.
+  // terms, on the support of its matrix.
   CheckParameters();
   rational.CheckShift(sinvert, sigma);
-  const int nb = 2 + static_cast<int>(xa.size());
-  HYPRE_BigInt N = linalg::GlobalSize(comm, z1);
-  if (ncv > nb * N)
+  int nl_local = 2 * n;
+  for (const auto &a : xa)
   {
-    ncv = mfem::internal::to_int(nb * N);
+    nl_local += a.Size();
+  }
+  HYPRE_BigInt NL = nl_local;
+  Mpi::GlobalSum(1, &NL, comm);
+  // PARPACK requires NCV ≤ the local size on every process, which the auxiliary blocks on
+  // the supports of their matrices can make smaller than on the others.
+  int nl_min = nl_local;
+  Mpi::GlobalMin(1, &nl_min, comm);
+  if (ncv > NL || ncv > nl_min)
+  {
+    ncv = std::min(mfem::internal::to_int(NL), nl_min);
   }
   if (arpack_it <= 0)
   {
-    arpack_it = std::max(300, mfem::internal::to_int(2 * nb * N / ncv));
+    arpack_it = std::max(300, mfem::internal::to_int(2 * NL / ncv));
   }
 
   // Initialize if user did not provide an initial space.
@@ -799,7 +808,7 @@ int ArpackPEPSolver::Solve()
   {
     std::fill(r.get(), r.get() + n, 0.0);
   }
-  const std::size_t nl = static_cast<std::size_t>(nb) * n;
+  const std::size_t nl = static_cast<std::size_t>(nl_local);
   auto s = std::make_unique<std::complex<double>[]>(nl);
   std::copy(r.get(), r.get() + n, s.get());
   std::fill(s.get() + n, s.get() + nl, 0.0);
@@ -819,7 +828,7 @@ int ArpackPEPSolver::Solve()
   }
 
   // Solve the linearized eigenvalue problem.
-  int num_conv = SolveInternal(nb * n, s.get(), W.get(), eig.get(), perm.get());
+  int num_conv = SolveInternal(nl_local, s.get(), W.get(), eig.get(), perm.get());
 
   // Extract the eigenvector from the linearized problem and compute the eigenpair
   // residuals: || T(λ) x ||₂ for eigenvalue λ. For the linearized problem, select the most
@@ -860,9 +869,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
   // The input pointers are always to host memory (ARPACK runs on host).
   x1.Set(px, n, false);
   x2.Set(px + n, n, false);
-  for (std::size_t k = 0; k < xa.size(); k++)
+  for (std::size_t k = 0, offset = 2 * n; k < xa.size(); offset += xa[k++].Size())
   {
-    xa[k].Set(px + (2 + k) * n, n, false);
+    xa[k].Set(px + offset, xa[k].Size(), false);
   }
   if (!sinvert)
   {
@@ -929,9 +938,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
   }
   y1.Get(py, n, false);
   y2.Get(py + n, n, false);
-  for (std::size_t k = 0; k < ya.size(); k++)
+  for (std::size_t k = 0, offset = 2 * n; k < ya.size(); offset += ya[k++].Size())
   {
-    ya[k].Get(py + (2 + k) * n, n, false);
+    ya[k].Get(py + offset, ya[k].Size(), false);
   }
 }
 
@@ -949,12 +958,12 @@ void ArpackPEPSolver::ApplyOpB(const std::complex<double> *px,
   y2 *= delta * gamma * gamma;
   y1.Get(py, n, false);
   y2.Get(py + n, n, false);
-  for (std::size_t k = 0; k < xa.size(); k++)
+  for (std::size_t k = 0, offset = 2 * n; k < ya.size(); offset += ya[k++].Size())
   {
     // The auxiliary blocks use the (scaled) Euclidean inner product.
-    ya[k].Set(px + (2 + k) * n, n, false);
+    ya[k].Set(px + offset, ya[k].Size(), false);
     ya[k] *= delta * gamma * gamma;
-    ya[k].Get(py + (2 + k) * n, n, false);
+    ya[k].Get(py + offset, ya[k].Size(), false);
   }
 }
 
@@ -962,14 +971,22 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
                                         ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || T(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
-  // eigenvalue λ, with every rational term f(λ) B x.
+  // eigenvalue λ, with every rational term f(λ) B x, or the complete A2(λ) x which they
+  // fit.
   opK->Mult(x, r);
   if (opC)
   {
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  rational.AddMult(x, [this, l](std::size_t t) { return rational.Value(t, l); }, r);
+  if (funcA2)
+  {
+    funcA2(l)->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
+  else
+  {
+    rational.AddMult(x, [this, l](std::size_t t) { return rational.Value(t, l); }, r);
+  }
   return linalg::Norml2(comm, r);
 }
 
