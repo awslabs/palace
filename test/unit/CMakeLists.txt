@@ -41,6 +41,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmode.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmodedriver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-frequencydependentpostpro.cpp
@@ -57,6 +58,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
