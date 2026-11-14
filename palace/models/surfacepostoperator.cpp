@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -225,19 +226,20 @@ struct UncoveredEdgeIntervals
   std::map<std::size_t, std::vector<Interval>> by_segment;
   std::vector<std::string> types;
 
-  UncoveredEdgeIntervals(
-      const EdgeDistanceTree &tree,
-      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions,
-      double tolerance)
+  UncoveredEdgeIntervals(const EdgeDistanceTree &tree,
+                         SurfacePostOperator::PerimeterPortionView portions,
+                         double tolerance)
   {
-    for (const auto &portion : portions)
+    for (std::size_t i = 0; i < portions.Size(); i++)
     {
+      const auto &portion_p0 = portions.P0(i), &portion_p1 = portions.P1(i);
+      const std::string &portion_type = portions.Label(i);
       mfem::Vector midpoint(3), p0(3), p1(3);
       for (int d = 0; d < 3; d++)
       {
-        p0(d) = portion.p0[d];
-        p1(d) = portion.p1[d];
-        midpoint(d) = 0.5 * (portion.p0[d] + portion.p1[d]);
+        p0(d) = portion_p0[d];
+        p1(d) = portion_p1[d];
+        midpoint(d) = 0.5 * (portion_p0[d] + portion_p1[d]);
       }
       const auto nearest = tree.Nearest(midpoint);
       if (std::sqrt(nearest.distance_squared) > tolerance)
@@ -267,16 +269,16 @@ struct UncoveredEdgeIntervals
       const auto [a1, off1] = Foot(p1);
       MFEM_VERIFY(off0 <= tolerance && off1 <= tolerance,
                   "An uncovered perimeter portion of feature "
-                      << portion.feature << " (" << portion.type
+                      << portions.Feature(i) << " (" << portion_type
                       << ") lies within the tolerance of a perimeter segment at its "
                          "midpoint but not at its ends (ends "
                       << off0 << " / " << off1
                       << " off the segment): the identification's perimeter differs from "
                          "the postprocessing perimeter!");
-      auto type = std::find(types.begin(), types.end(), portion.type);
+      auto type = std::find(types.begin(), types.end(), portion_type);
       if (type == types.end())
       {
-        types.push_back(portion.type);
+        types.push_back(portion_type);
         type = std::prev(types.end());
       }
       by_segment[nearest.segment].push_back(
@@ -1349,7 +1351,7 @@ SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies(
 std::map<int, std::map<std::string, double>>
 SurfacePostOperator::GetInterfacePartitionedEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
-    const std::vector<UncoveredPerimeterPortion> &portions) const
+    PerimeterPortionView portions) const
 {
   // PatchEnergy (decision 922 B-1): the physical tree, the remainder "unclaimed".
   return PartitionInterfaceEdgeEnergies(indices, E, D, portions, false, "unclaimed");
@@ -1368,7 +1370,7 @@ SurfacePostOperator::GetInterfaceClassifiedEdgeEnergies(
 std::map<int, std::map<std::string, double>>
 SurfacePostOperator::PartitionInterfaceEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
-    const std::vector<UncoveredPerimeterPortion> &portions, bool classified,
+    PerimeterPortionView portions, bool classified,
     const std::string &remainder_label) const
 {
   // One integral per (interface, group) and one for the remainder; the groups come from
@@ -1582,8 +1584,7 @@ SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
 std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
 SurfacePostOperator::GetInterfaceCoveragePartition(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
-    const std::vector<CoveragePartitionClass> &kept_classes,
-    const std::vector<UncoveredPerimeterPortion> &served,
+    const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
     const std::vector<CoveragePartitionClass> &remainder_classes) const
 {
   // Per interface the local bins in a fixed order (identical on every rank: the portion
@@ -1613,7 +1614,7 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     const double tolerance = kSignatureParameterToleranceOverRadius * radius;
     auto &interface = bins.emplace_back();
     interface.idx = idx;
-    auto AddPieces = [&](const std::vector<UncoveredPerimeterPortion> &portions)
+    auto AddPieces = [&](PerimeterPortionView portions)
     {
       interface.pieces.emplace_back(UncoveredEdgeIntervals(tree, portions, tolerance));
       interface.offsets.push_back(local_energies.size());
@@ -1827,6 +1828,149 @@ void SurfacePostOperator::MoveCoverageLoopRemainder(
       partition.loop_remainder_unserved += energy - taken;
     }
   }
+}
+
+namespace
+{
+
+// The three coordinates' bit patterns: the exact-point lookup's key (no tolerance; -0.0 and
+// +0.0 differ).
+std::array<std::uint64_t, 3> PointBits(const std::array<double, 3> &point)
+{
+  std::array<std::uint64_t, 3> bits;
+  static_assert(sizeof(bits) == sizeof(point));
+  std::memcpy(bits.data(), point.data(), sizeof(bits));
+  return bits;
+}
+
+std::uint64_t PointHash(const std::array<std::uint64_t, 3> &bits)
+{
+  // splitmix64 finalizer over the combined patterns.
+  std::uint64_t h = 0x9E3779B97F4A7C15ull;
+  for (const std::uint64_t b : bits)
+  {
+    std::uint64_t z = h ^ (b + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2));
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    h = z ^ (z >> 31);
+  }
+  return h;
+}
+
+}  // namespace
+
+std::uint32_t SurfacePostOperator::CompactPerimeterPortions::FindOrAddPoint(
+    const std::array<double, 3> &point)
+{
+  MFEM_VERIFY(!std::isnan(point[0]) && !std::isnan(point[1]) && !std::isnan(point[2]),
+              "A perimeter portion end point has a NaN coordinate!");
+  const auto bits = PointBits(point);
+  // Keep the table at most half full (power-of-two size); rebuilt after FinishAppending.
+  if (2 * (points.size() + 1) > point_slots.size())
+  {
+    std::size_t size = 16;
+    while (size < 4 * (points.size() + 1))
+    {
+      size *= 2;
+    }
+    point_slots.assign(size, kEmptySlot);
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      std::size_t slot = PointHash(PointBits(points[i])) & (size - 1);
+      while (point_slots[slot] != kEmptySlot)
+      {
+        slot = (slot + 1) & (size - 1);
+      }
+      point_slots[slot] = static_cast<std::uint32_t>(i);
+    }
+  }
+  const std::size_t mask = point_slots.size() - 1;
+  std::size_t slot = PointHash(bits) & mask;
+  while (point_slots[slot] != kEmptySlot)
+  {
+    if (PointBits(points[point_slots[slot]]) == bits)
+    {
+      return point_slots[slot];
+    }
+    slot = (slot + 1) & mask;
+  }
+  MFEM_VERIFY(points.size() < kEmptySlot, "Too many perimeter portion end points!");
+  point_slots[slot] = static_cast<std::uint32_t>(points.size());
+  points.push_back(point);
+  return point_slots[slot];
+}
+
+void SurfacePostOperator::CompactPerimeterPortions::Append(const std::array<double, 3> &p0,
+                                                           const std::array<double, 3> &p1,
+                                                           const std::string &label,
+                                                           int feature)
+{
+  if (label_lookup.empty() && !labels.empty())
+  {
+    for (std::size_t i = 0; i < labels.size(); i++)
+    {
+      label_lookup.emplace(labels[i], static_cast<std::int32_t>(i));
+    }
+  }
+  const auto [entry, added] =
+      label_lookup.emplace(label, static_cast<std::int32_t>(labels.size()));
+  if (added)
+  {
+    labels.push_back(label);
+  }
+  Portion portion;
+  portion.p0 = FindOrAddPoint(p0);
+  portion.p1 = FindOrAddPoint(p1);
+  portion.label = entry->second;
+  portion.feature = feature;
+  portions.push_back(portion);
+}
+
+void SurfacePostOperator::CompactPerimeterPortions::FinishAppending()
+{
+  std::vector<std::uint32_t>().swap(point_slots);
+  std::unordered_map<std::string, std::int32_t>().swap(label_lookup);
+  points.shrink_to_fit();
+  labels.shrink_to_fit();
+  portions.shrink_to_fit();
+}
+
+std::size_t SurfacePostOperator::CompactPerimeterPortions::HeapBytes() const
+{
+  std::size_t bytes = points.capacity() * sizeof(points[0]) +
+                      labels.capacity() * sizeof(std::string) +
+                      portions.capacity() * sizeof(Portion) +
+                      point_slots.capacity() * sizeof(std::uint32_t);
+  for (const auto &label : labels)
+  {
+    // A label beyond the small-string buffer holds its characters on the heap (the memory
+    // census's rule).
+    const char *data = label.data(), *self = reinterpret_cast<const char *>(&label);
+    if (!(data >= self && data < self + sizeof(label)))
+    {
+      bytes += label.capacity() + 1;
+    }
+  }
+  // The label lookup while appending: one node (key, value, link, cached hash) per label
+  // and the buckets.
+  if (!label_lookup.empty())
+  {
+    bytes += label_lookup.size() * (sizeof(std::string) + 4 * sizeof(void *)) +
+             label_lookup.bucket_count() * sizeof(void *);
+  }
+  return bytes;
+}
+
+std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+SurfacePostOperator::CompactPerimeterPortions::Expand() const
+{
+  std::vector<UncoveredPerimeterPortion> expanded;
+  expanded.reserve(portions.size());
+  for (std::size_t i = 0; i < portions.size(); i++)
+  {
+    expanded.push_back({P0(i), P1(i), Label(i), Feature(i)});
+  }
+  return expanded;
 }
 
 std::map<int, std::map<std::string, double>>

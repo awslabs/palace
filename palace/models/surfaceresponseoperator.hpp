@@ -160,9 +160,9 @@ struct SpatialClusterPriorityExclusions
 // own patches".
 struct ModelRawClaimPortions
 {
-  // The claims; `topology` carries the model-set label.
-  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
-      portions;
+  // The claims (label = the model-set label), in the compact exact form (lane L1, ruling
+  // 1682: the list is replicated on every rank and always built).
+  SurfacePostOperator::CompactPerimeterPortions portions;
   // Per label and model of that label: the patches of the model on the label's claims and
   // the sum over those claims of (patch weight x claim length, mesh units), the share the
   // diagnosis attributes a shared label's raw energy with.
@@ -1877,17 +1877,15 @@ public:
     return conductor_consistency_portions;
   }
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims labelled by model set
-  // (empty without PatchEnergy).
+  // (lane L1: always built, the coverage partition's served claims).
   const ModelRawClaimPortions &GetModelRawClaimPortions() const
   {
     return model_raw_claim_portions;
   }
   // Round 2b B1 (decision 1484): the claims' only reader after the construction is the
-  // driver's (or PostOperator's) conversion into the partition's portion list, made once;
-  // it takes the list out of the operator (the members and the length stay) so that the
-  // claims are held once per rank, not twice.
-  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
-  ReleaseModelRawClaimPortionList()
+  // driver's (or PostOperator's) partition, so the list is MOVED out of the operator (the
+  // members and the length stay): held once per rank, in its compact form (ruling 1682).
+  SurfacePostOperator::CompactPerimeterPortions ReleaseModelRawClaimPortionList()
   {
     return std::exchange(model_raw_claim_portions.portions, {});
   }

@@ -23676,6 +23676,10 @@ struct ResponseMemoryCensus
     return Heap(d.entries) + Heap(d.portions);
   }
   static double Heap(const ModelRawClaimPortions::GroupMember &d) { return Heap(d.label); }
+  static double Heap(const SurfacePostOperator::CompactPerimeterPortions &d)
+  {
+    return double(d.HeapBytes());
+  }
   static double Heap(const ModelRawClaimPortions &d)
   {
     return Heap(d.portions) + Heap(d.members);
@@ -23786,6 +23790,13 @@ struct ResponseMemoryCensus
     add("op.conductor_consistency_claims (I-11)", Heap(op.conductor_consistency_claims));
     add("op.conductor_consistency_portions", Heap(op.conductor_consistency_portions));
     add("op.model_raw_claim_portions (I-11b)", Heap(op.model_raw_claim_portions));
+    // Lane L1 (ruling 1682): the compact claim list's portion and distinct end-point counts
+    // (bytes per portion = the line above over the first; end-point sharing = 2 x portions
+    // over points).
+    add("op.model_raw_claim_portions count",
+        double(op.model_raw_claim_portions.portions.Size()));
+    add("op.model_raw_claim_portions distinct end points",
+        double(op.model_raw_claim_portions.portions.PointCount()));
     add("op.mirror_planes", Heap(op.mirror_planes));
   }
 
@@ -28886,7 +28897,7 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
   std::map<std::pair<std::string, int>, ModelRawClaimPortions::GroupMember> members;
   for (std::size_t i = 0; i < claims.portions.size(); i++)
   {
-    auto portion = claims.portions[i];
+    const auto &portion = claims.portions[i];
     std::map<int, std::pair<int, double>> by_model;  // model -> (patches, weight sum)
     for (const std::size_t patch_idx : claims.patches[i])
     {
@@ -28909,8 +28920,7 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
       member.patches += entry.first;
       member.weight_length += entry.second * length;
     }
-    portion.topology = label;
-    result.portions.push_back(std::move(portion));
+    result.portions.Append(portion.p0, portion.p1, label, portion.feature);
   }
   for (auto &[key, member] : members)
   {
@@ -31544,9 +31554,12 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         // existing label and the groups table unchanged).
         for (const auto &portion : config.unpatched_pair_portions)
         {
-          model_raw_claim_portions.portions.push_back(portion);
+          model_raw_claim_portions.portions.Append(portion.p0, portion.p1, portion.topology,
+                                                   portion.feature);
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
+        // Ruling 1682: the append lookups released, the buffers trimmed.
+        model_raw_claim_portions.portions.FinishAppending();
         PlacementStamp("model raw claim portions (PatchEnergy)");
       }
       // Decision 1475 (2): the memory census INSIDE the placement, at the end of its claims

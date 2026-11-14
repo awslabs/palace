@@ -892,7 +892,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     return portions;
   };
   // The served claims exist on every run since lane L1 (no PatchEnergy in this config).
-  const auto served = Portions(response.GetModelRawClaimPortions().portions);
+  const auto served = response.GetModelRawClaimPortions().portions.Expand();
   const auto excluded = Portions(response.GetConductorConsistencyPortions());
   REQUIRE_FALSE(served.empty());
   REQUIRE_FALSE(excluded.empty());

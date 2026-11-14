@@ -8196,9 +8196,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     double unpatched_length = 0.0;
     int unpatched_portions = 0;
     std::set<int> unpatched_features;
-    for (const auto &portion : response.GetModelRawClaimPortions().portions)
+    for (const auto &portion : response.GetModelRawClaimPortions().portions.Expand())
     {
-      if (portion.topology == "unpatched")
+      if (portion.type == "unpatched")
       {
         unpatched_portions++;
         unpatched_features.insert(portion.feature);

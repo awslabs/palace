@@ -1278,7 +1278,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
   // model set (empty without PatchEnergy) and, per source, the raw field's within-R energy
   // partitioned over them.
-  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> model_raw_portions;
+  SurfacePostOperator::CompactPerimeterPortions model_raw_portions;
   std::vector<std::pair<int, std::map<int, std::map<std::string, double>>>>
       raw_model_partitions;
   // Lane L1 (decision 1634 (1)): per source, the closed coverage partition of its raw
@@ -1308,13 +1308,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
-    // Round 2b B1 (decision 1484): converted once and released from the operator (the same
-    // portions in the same order; the operator reads them nowhere after the construction).
-    for (const auto &portion : response_correction->ReleaseModelRawClaimPortionList())
-    {
-      model_raw_portions.push_back(
-          {portion.p0, portion.p1, portion.topology, portion.feature});
-    }
+    // Round 2b B1 (decision 1484): moved out of the operator (the same portions in the
+    // same order; the operator reads them nowhere after the construction), held once, in
+    // the compact exact form (lane L1, ruling 1682).
+    model_raw_portions = response_correction->ReleaseModelRawClaimPortionList();
     if (response_correction->ExclusionEnergyRequested())
     {
       for (const auto &portion : response_correction->GetExclusionEnergyPortions())
@@ -1891,7 +1888,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         AppendClippedRows(idx, V[step], true, raw_whole, raw_outside);
       }
-      if (patch_energy_response && !model_raw_portions.empty())
+      if (patch_energy_response && !model_raw_portions.Empty())
       {
         // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set
         // (the claims exist on every run since lane L1; the table with PatchEnergy only).

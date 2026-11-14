@@ -387,14 +387,10 @@ PostOperator<solver_t>::PostOperator(
         surface_response_spatial_cluster_priority.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
       }
-      // Round 2b B1 (decision 1484): converted once and released from the operator (the
-      // same portions in the same order; the operator reads them nowhere after the
-      // construction).
-      for (const auto &portion : surface_response_op->ReleaseModelRawClaimPortionList())
-      {
-        surface_response_model_raw.push_back(
-            {portion.p0, portion.p1, portion.topology, portion.feature});
-      }
+      // Round 2b B1 (decision 1484): moved out of the operator (the same portions in the
+      // same order; the operator reads them nowhere after the construction), held once,
+      // in the compact exact form (lane L1, ruling 1682).
+      surface_response_model_raw = surface_response_op->ReleaseModelRawClaimPortionList();
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();
       surface_response_within_r_volume_energy_enabled =
@@ -1994,7 +1990,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.conductor_consistency = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
             target_interfaces, *E, D_recovered.get(), conductor_consistency_portions);
       }
-      if (surface_response_patch_energy_enabled && !surface_response_model_raw.empty())
+      if (surface_response_patch_energy_enabled && !surface_response_model_raw.Empty())
       {
         // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set
         // (the claims exist on every run since lane L1; the table with PatchEnergy only).

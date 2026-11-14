@@ -3450,11 +3450,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // of the model on it, the same portion count (the same placed patches).
   const auto &electrostatic_claims = electrostatic_response.GetModelRawClaimPortions();
   const auto &maxwell_claims = response->GetModelRawClaimPortions();
-  REQUIRE(!electrostatic_claims.portions.empty());
+  REQUIRE(!electrostatic_claims.portions.Empty());
   // Round 2b B1: the Maxwell operator's claims are taken into the PostOperator's list.
-  REQUIRE(maxwell_claims.portions.empty());
+  REQUIRE(maxwell_claims.portions.Empty());
   const auto &maxwell_portions = post_op.GetSurfaceResponseModelRawPortions();
-  REQUIRE(electrostatic_claims.portions.size() == maxwell_portions.size());
+  REQUIRE(electrostatic_claims.portions.Size() == maxwell_portions.Size());
   REQUIRE(electrostatic_claims.members.size() == 1);
   REQUIRE(maxwell_claims.members.size() == 1);
   const auto &member = electrostatic_claims.members.front();
@@ -3466,9 +3466,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(maxwell_claims.members.front().weight_length,
              WithinRel(member.weight_length, 1.0e-12));
   CHECK_THAT(maxwell_claims.length, WithinRel(electrostatic_claims.length, 1.0e-12));
-  for (const auto &portion : electrostatic_claims.portions)
+  for (const auto &portion : electrostatic_claims.portions.Expand())
   {
-    CHECK(portion.topology == label);
+    CHECK(portion.type == label);
   }
   auto Perimeter = [](const auto &portions)
   {
@@ -3513,7 +3513,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {4}, field, nullptr, Perimeter(response->GetUncoveredPortions()));
     std::map<std::string, double> reference;
     for (const auto &portions :
-         {Perimeter(electrostatic_claims.portions), maxwell_portions})
+         {electrostatic_claims.portions.Expand(), maxwell_portions.Expand()})
     {
       const auto partition =
           surf_post_op.GetInterfacePartitionedEdgeEnergies({4}, field, nullptr, portions);
@@ -3885,10 +3885,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
     REQUIRE(response);
     // Round 2b B1: the claims are taken from the operator into the PostOperator's list.
-    CHECK(response->GetModelRawClaimPortions().portions.empty());
+    CHECK(response->GetModelRawClaimPortions().portions.Empty());
     // Lane L1 (decision 1634 (1)): the served claims of the coverage partition exist with
     // PatchEnergy on or off.
-    CHECK(!post_op.GetSurfaceResponseModelRawPortions().empty());
+    CHECK(!post_op.GetSurfaceResponseModelRawPortions().Empty());
     mfem::FunctionCoefficient potential_coefficient(
         [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
     mfem::ParGridFunction potential(&space_op.GetH1Space().Get());

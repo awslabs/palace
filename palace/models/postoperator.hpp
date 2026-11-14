@@ -296,7 +296,7 @@ protected:
   // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
   // model set (empty without PatchEnergy), whose within-R raw energy is partitioned per
   // model set (surface-response-model-raw-energy.csv).
-  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> surface_response_model_raw;
+  SurfacePostOperator::CompactPerimeterPortions surface_response_model_raw;
   // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): the
   // excluded / unclaimed perimeter portions by class (empty without
   // Diagnostics.ExclusionEnergy), whose within-R raw energy is partitioned per class
@@ -691,7 +691,7 @@ public:
 
   // PatchEnergy: the applied patches' raw claims as the partition reads them (taken from
   // the operator at the construction, round 2b B1).
-  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &
+  const SurfacePostOperator::CompactPerimeterPortions &
   GetSurfaceResponseModelRawPortions() const
   {
     return surface_response_model_raw;
@@ -986,7 +986,7 @@ public:
   template <ProblemType U = solver_t>
   auto GetElectrostaticPartitionedEdgeEnergies(
       const std::set<int> &response_targets,
-      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions) const
+      SurfacePostOperator::PerimeterPortionView portions) const
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
                           std::map<int, std::map<std::string, double>>>
   {
@@ -999,7 +999,7 @@ public:
   auto GetElectrostaticCoveragePartition(
       const std::set<int> &response_targets,
       const std::vector<SurfacePostOperator::CoveragePartitionClass> &kept_classes,
-      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &served,
+      SurfacePostOperator::PerimeterPortionView served,
       const std::vector<SurfacePostOperator::CoveragePartitionClass> &remainder_classes)
       const
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,

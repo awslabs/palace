@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -434,6 +437,69 @@ TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
   CHECK(parsed[2].find(fmt::format(",{:+.12e},+3.125000000000e-02",
                                    units.Dimensionalize<Units::ValueType::ENERGY>(0.5))) !=
         std::string::npos);
+}
+
+// Ruling 1682: the compact claim list returns every appended value BIT FOR BIT in the
+// appended order; end points are shared only by exact bit equality (-0.0 and +0.0 are two
+// points; a value 1 ulp away is another point); each label is held once; appending after
+// FinishAppending continues the same tables; a NaN end is refused.
+TEST_CASE("Coverage compact claim list is exact", "[SurfaceResponseCoverage][Serial]")
+{
+  using Portion = SurfacePostOperator::UncoveredPerimeterPortion;
+  const double next = std::nextafter(0.3, 1.0);
+  const std::vector<Portion> plain = {
+      {{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}, "m1", 7},
+      {{0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}, "m1", 7},          // shares its first end
+      {{0.1, 0.2, next}, {0.0, 0.0, 0.0}, "m1+m2", 8},      // 1 ulp from the first point
+      {{-0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, "unpatched", 9},  // -0.0 kept apart from +0.0
+      {{0.7, 0.8, 0.9}, {0.1, 0.2, 0.3}, "m1", -1}};
+  SurfacePostOperator::CompactPerimeterPortions compact;
+  for (std::size_t i = 0; i < 3; i++)
+  {
+    compact.Append(plain[i].p0, plain[i].p1, plain[i].type, plain[i].feature);
+  }
+  compact.FinishAppending();
+  for (std::size_t i = 3; i < plain.size(); i++)
+  {
+    compact.Append(plain[i].p0, plain[i].p1, plain[i].type, plain[i].feature);
+  }
+  compact.FinishAppending();
+  REQUIRE(compact.Size() == plain.size());
+  CHECK(compact.LabelCount() == 3);
+  // Distinct points: (0.1,0.2,0.3), (0.4,0.5,0.6), (0.7,0.8,0.9), (0.1,0.2,next), (0,0,0),
+  // (-0,0,0).
+  CHECK(compact.PointCount() == 6);
+  auto Bits = [](const std::array<double, 3> &p)
+  {
+    std::array<std::uint64_t, 3> bits;
+    std::memcpy(bits.data(), p.data(), sizeof(bits));
+    return bits;
+  };
+  const auto expanded = compact.Expand();
+  const SurfacePostOperator::PerimeterPortionView view(compact), plain_view(plain);
+  REQUIRE(expanded.size() == plain.size());
+  for (std::size_t i = 0; i < plain.size(); i++)
+  {
+    INFO("portion " << i);
+    CHECK(Bits(compact.P0(i)) == Bits(plain[i].p0));
+    CHECK(Bits(compact.P1(i)) == Bits(plain[i].p1));
+    CHECK(compact.Label(i) == plain[i].type);
+    CHECK(compact.Feature(i) == plain[i].feature);
+    CHECK(Bits(expanded[i].p0) == Bits(plain[i].p0));
+    CHECK(Bits(expanded[i].p1) == Bits(plain[i].p1));
+    CHECK(expanded[i].type == plain[i].type);
+    CHECK(expanded[i].feature == plain[i].feature);
+    CHECK(Bits(view.P0(i)) == Bits(plain_view.P0(i)));
+    CHECK(Bits(view.P1(i)) == Bits(plain_view.P1(i)));
+    CHECK(view.Label(i) == plain_view.Label(i));
+    CHECK(view.Feature(i) == plain_view.Feature(i));
+  }
+  CHECK(std::signbit(compact.P0(3)[0]));
+  CHECK_FALSE(std::signbit(compact.P1(3)[0]));
+  // The trimmed buffers: 6 points x 24 B + 5 portions x 16 B + 3 labels (in the string
+  // objects' small buffers).
+  CHECK(compact.HeapBytes() == 6 * 24 + 5 * 16 + 3 * sizeof(std::string));
+  CHECK_THROWS(compact.Append({0.0, std::nan(""), 0.0}, {0.0, 0.0, 0.0}, "m1", 1));
 }
 
 }  // namespace palace
