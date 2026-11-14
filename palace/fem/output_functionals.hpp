@@ -302,7 +302,9 @@ public:
                     const mfem::Vector &x0, bool imag_permittivity = false);
 
   // Construct a Stratton-Chu far-field functional for the given observation directions
-  // (see AddStrattonChuIntegrandAtElement; external boundaries only).
+  // (see AddStrattonChuIntegrandAtElement). On an interior surface, each face is traced
+  // from one side, the inside: the side facing the center of the bounding box of the
+  // marked boundary elements.
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &nd_fespace,
                     const mfem::ParFiniteElementSpace &rt_fespace,
