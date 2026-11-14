@@ -1,12 +1,16 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
+#include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include "models/surfaceresponsecoverage.hpp"
@@ -297,6 +301,138 @@ TEST_CASE("Coverage model qualification from the library records",
   CHECK(qualifications.at("unqualified") == CoverageModelQualification::PENDING);
   CHECK(qualifications.at("plain") == CoverageModelQualification::NO_STATUS);
   fs::remove_all(dir);
+}
+
+}  // namespace palace
+
+namespace palace
+{
+
+TEST_CASE("Coverage measurement per Type and the run record",
+          "[SurfaceResponseCoverage][Serial]")
+{
+  // Interfaces 1 (SA) and 3 (SA) share a cell, 2 (MA) is its own; 4 is not a target.
+  std::map<int, SurfacePostOperator::InterfaceCoveragePartition> partitions;
+  partitions[1] = InterfaceOne();
+  partitions[3] = InterfaceOne();
+  partitions[2].within = 4.0;
+  partitions[2].served = {{"m0", 4.0}};
+  const std::map<int, std::string> types = {{1, "SA"}, {2, "MA"}, {3, "SA"}};
+  const std::map<int, double> within = {{1, 16.0}, {2, 4.0}, {3, 16.0}};
+  const std::map<int, double> fabricated = {{1, 13.5}, {2, 8.0}, {3, 13.5}};
+  const auto measurement = ComputeCoverageMeasurement(
+      partitions, types, within, fabricated, Keys(), Models(), CoverageThresholds{},
+      CoverageValidatedRegime{}, CoverageExcitationClass::EIGENMODE);
+  CHECK(measurement.measured);
+  REQUIRE(measurement.cells.size() == 2);
+  // First appearance over the ascending targets: SA (1), MA (2).
+  CHECK(measurement.cells[0].type == "SA");
+  CHECK(measurement.cells[1].type == "MA");
+  const auto *sa = measurement.FindCell("SA");
+  REQUIRE(sa);
+  CHECK(sa->within == 32.0);
+  CHECK(sa->served == 23.0);
+  CHECK(sa->uncovered == 9.0);
+  CHECK(sa->uncovered_share == 9.0 / 32.0);
+  CHECK(sa->missing == 2.5);
+  CHECK(sa->method_gap == 6.5);
+  CHECK(sa->factor == 27.0 / 23.0);
+  CHECK(sa->status == CoverageStatus::NOT_ACHIEVABLE);  // method gap 6.5 / 32 > 0.05
+  CHECK(sa->regime == RegimeStatus::NO_RANGE);
+  const auto *ma = measurement.FindCell("MA");
+  REQUIRE(ma);
+  CHECK(ma->uncovered_share == 0.0);
+  CHECK(ma->status == CoverageStatus::OK);
+  CHECK(ma->factor == 2.0);
+  CHECK(measurement.WorstCoverageCell() == sa);
+  CHECK(measurement.served_pending_models == std::set<int>{1});
+  CHECK(measurement.served_no_status_models == std::set<int>{2});
+  // The key rows: hashA (m3), hashB (m5, Unboxable), hashA+hashB (m3+m5), twice over.
+  REQUIRE(measurement.keys.size() == 3);
+  CHECK(measurement.keys[0].key == "hashA");
+  CHECK(measurement.keys[0].energy.at(1) == 1.0);
+  CHECK(measurement.keys[0].energy.at(3) == 1.0);
+
+  const auto unmeasured =
+      NotMeasuredCoverageMeasurement(types, CoverageExcitationClass::EIGENMODE);
+  CHECK(!unmeasured.measured);
+  REQUIRE(unmeasured.cells.size() == 2);
+  CHECK(unmeasured.cells[0].status == CoverageStatus::NOT_MEASURED);
+  CHECK(std::isnan(unmeasured.cells[0].uncovered_share));
+
+  // The run record: a flagged entry per non-OK or OUT cell; nan as null; the banner names
+  // the interim thresholds, every flagged cell and the status-less served models once.
+  CoverageRunRecord record;
+  record.Add({{"m", 1.0}}, measurement);
+  record.Add({{"m", 2.0}}, unmeasured);
+  const auto metadata =
+      CoverageRunMetadata(record, CoverageThresholds{}, CoverageValidatedRegime{}, 2.0);
+  CHECK(metadata.at("Policy") == "Warn");
+  CHECK(metadata.at("Thresholds").at("Interim") == true);
+  CHECK(metadata.at("ValidatedRegime").is_null());
+  CHECK(metadata.at("Cells") == 4);
+  CHECK(metadata.at("StatusCounts").at("OK") == 1);
+  CHECK(metadata.at("StatusCounts").at("NOT-ACHIEVABLE") == 1);
+  CHECK(metadata.at("StatusCounts").at("NOT-MEASURED") == 2);
+  CHECK(metadata.at("RegimeCounts").at("NO-RANGE") == 2);
+  CHECK(metadata.at("RegimeCounts").at("NO-MODEL") == 2);
+  const auto &flagged = metadata.at("Flagged");
+  REQUIRE(flagged.size() == 3);
+  CHECK(flagged[0].at("Cell").at("m") == 1.0);
+  CHECK(flagged[0].at("Type") == "SA");
+  CHECK(flagged[0].at("W within-R raw (J)") == 64.0);
+  CHECK(flagged[0].at("validated factor min").is_null());
+  CHECK(flagged[1].at("uncovered raw share of W").is_null());
+  CHECK(metadata.at("ServedPendingModels") == 1);
+  CHECK(metadata.at("ServedNoStatusModels") == 1);
+  const std::string banner = CoverageRunBanner(metadata);
+  CHECK(banner.find("interim thresholds") != std::string::npos);
+  CHECK(banner.find("*** COVERAGE NOT-ACHIEVABLE (interim thresholds): m = 1 SA: U = "
+                    "28.125 % of W") != std::string::npos);
+  CHECK(banner.find("*** COVERAGE NOT-MEASURED (interim thresholds): m = 2 SA") !=
+        std::string::npos);
+  CHECK(banner.find("2 of 4 cell(s) NO-RANGE") != std::string::npos);
+  CHECK(banner.find("1 served model(s) carry no QualificationStatus") != std::string::npos);
+  CHECK(banner.find("COVERAGE OK") == std::string::npos);
+}
+
+TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
+{
+  std::map<int, SurfacePostOperator::InterfaceCoveragePartition> partitions;
+  partitions[1] = InterfaceOne();
+  const auto measurement = ComputeCoverageMeasurement(
+      partitions, {{1, "SA"}}, {{1, 16.0}}, {{1, 13.5}}, Keys(), Models(),
+      CoverageThresholds{}, CoverageValidatedRegime{}, CoverageExcitationClass::DRIVEN);
+  const Units units(1.0, 1.0);
+  std::ostringstream rows, keys;
+  WriteCoverageRows(rows, "1,0", measurement, units);
+  const std::string header = CoverageTableHeader("m,exc");
+  CHECK(header.rfind("m,exc,Type,W within-R raw (J),", 0) == 0);
+  CHECK(header.find(",coverage status,regime status\n") != std::string::npos);
+  const std::string row = rows.str();
+  CHECK(std::count(header.begin(), header.end(), ',') ==
+        std::count(row.begin(), row.end(), ','));
+  CHECK(row.find(",nan,nan,NOT-ACHIEVABLE,NO-RANGE\n") != std::string::npos);
+  WriteCoverageByKeyRows(keys, "1,0", measurement, {1}, {{3, {2, 0.5}}, {5, {1, 0.25}}},
+                         units);
+  const std::string by_key_header = CoverageByKeyTableHeader("m,exc", {1});
+  CHECK(by_key_header ==
+        "m,exc,evaluation,key hash,class,reason,method gap,features,portions,length "
+        "(m),raw within-R energy[1] (J),raw share of W[1]\n");
+  std::istringstream lines(keys.str());
+  std::string line;
+  std::vector<std::string> parsed;
+  while (std::getline(lines, line))
+  {
+    parsed.push_back(line);
+  }
+  REQUIRE(parsed.size() == 3);
+  CHECK(parsed[0].rfind("1,0,0,hashA,Missing,-,0,3,2,", 0) == 0);
+  CHECK(parsed[1].rfind("1,0,0,hashA+hashB,Missing+Unboxable,-,0,3+5,3,", 0) == 0);
+  CHECK(parsed[2].rfind("1,0,0,hashB,Unboxable,-,1,5,1,", 0) == 0);
+  CHECK(parsed[2].find(fmt::format(",{:+.12e},+3.125000000000e-02",
+                                   units.Dimensionalize<Units::ValueType::ENERGY>(0.5))) !=
+        std::string::npos);
 }
 
 }  // namespace palace
