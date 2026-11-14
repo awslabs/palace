@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -281,7 +282,10 @@ public:
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 , solved via
-// linearization: L₀ y = λ L₁ y .
+// linearization: L₀ y = λ L₁ y . With rational terms (AddPoleTerms), the problem is
+//   T(λ) x = (P(λ) + Σₜ (Σⱼ cₜⱼ λ² / (λ - pₜⱼ)) Bₜ) x = 0 ,
+// and the linearization is still exact: each pole adds the auxiliary block
+// wₜⱼ = λ² x / (λ - pₜⱼ), which satisfies pₜⱼ wₜⱼ = λ (wₜⱼ - λ x) (see RationalTerms).
 class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 {
 public:
@@ -296,9 +300,17 @@ public:
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
 
+  // The rational terms of the eigenvalue problem, and workspace vectors for their
+  // auxiliary blocks (one for each pole).
+  RationalTerms rational;
+  mutable std::vector<ComplexVector> xa, ya;
+
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
+
+  void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                        const ComplexOperator &M, ScaleType type);
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -309,13 +321,21 @@ protected:
 public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
-  using SlepcEigenvalueSolver::SetOperators;
+  // Without C, the problem is still solved through the linearization (for rational terms).
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
+
+  void AddPoleTerms(const ComplexOperator &B,
+                    const std::vector<std::complex<double>> &poles,
+                    const std::vector<std::complex<double>> &coeffs) override;
 
   void SetBMat(const Operator &B) override;
 
   void SetInitialSpace(const ComplexVector &v) override;
+
+  int Solve() override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
 };
@@ -488,6 +508,12 @@ public:
   std::unique_ptr<ComplexOperator> opA2_jac, opA2p, opAJ, opJ;  // Jacobian T′(λ)
   std::unique_ptr<ComplexOperator> opA2_pc, opA_pc, opP_pc;     // Preconditioner
 
+  // Known poles of A2(λ): the Jacobian shell applies T′ + L(λ) T, the derivative of the
+  // pole-cleared d T (see nleps::PoleTerms). opA_jac is T at the Jacobian's λ.
+  nleps::PoleTerms poles;
+  std::unique_ptr<ComplexOperator> opA_jac;
+  std::complex<double> logd_J = 0.0;
+
   // Function to compute the A2 operator.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
       funcA2;
@@ -539,6 +565,12 @@ public:
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
                                    std::complex<double>, std::complex<double>)>) override;
+
+  // Set the known poles of A2(λ).
+  void SetExtraSystemPoles(const std::vector<std::complex<double>> &p) override
+  {
+    poles.poles = p;
+  }
 };
 
 }  // namespace slepc
