@@ -1193,6 +1193,10 @@ public:
   int strumpack_lossy_precision = 16;
   int strumpack_butterfly_l = 1;
 
+  // Store the fill-reducing permutation of the distributed STRUMPACK solver once per node
+  // in an MPI shared memory window, instead of on every process.
+  bool strumpack_shared_permutation = true;
+
   // Option to enable 3D process grid for SuperLU_DIST solver.
   bool superlu_3d = false;
 

@@ -327,6 +327,13 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://raw.githubusercontent.com/awslabs/palace/78947a1b0ab466d3de7d1b79d319fd1659c86ed6/extern/patch/STRUMPACK/strumpack_pr171.diff"
   781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a
 )
+# Node-shared permutation: an option, off by default, to store the fill-reducing
+# permutation of the distributed solver once per node in an MPI shared memory window
+# instead of on every process, without its tests, which need test infrastructure added
+# after STRUMPACK 8.1.0. Applied after the patches above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_shared_permutation.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

@@ -3,6 +3,9 @@
 
 #include "strumpack.hpp"
 
+#include <type_traits>
+#include <utility>
+
 #if defined(MFEM_USE_STRUMPACK)
 
 namespace palace
@@ -35,12 +38,39 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
   return strumpack::CompressionType::NONE;  // For compiler warning
 }
 
+// Detect if the STRUMPACK options have the node-shared permutation, which is a patch in
+// the STRUMPACK 8.1.0 builds of Palace (superbuild and Spack package). STRUMPACK defines
+// no macro for it, so this keeps Palace building with a STRUMPACK that lacks the option.
+template <typename OptionsType, typename = void>
+struct HasSharedPermutation : std::false_type
+{
+};
+
+template <typename OptionsType>
+struct HasSharedPermutation<
+    OptionsType,
+    std::void_t<decltype(std::declval<OptionsType &>().enable_shared_permutation())>>
+  : std::true_type
+{
+};
+
+// Enable the node-shared permutation if the STRUMPACK options have it.
+template <typename OptionsType>
+void EnableSharedPermutation(OptionsType &options)
+{
+  if constexpr (HasSharedPermutation<OptionsType>::value)
+  {
+    options.enable_shared_permutation();
+  }
+}
+
 }  // namespace
 
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse,
+    bool shared_permutation, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -111,6 +141,24 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // else
   {
     this->DisableGPU();
+  }
+
+  // Node-shared permutation: the fill-reducing permutation and its inverse (two integers
+  // per matrix row) are stored once per node in an MPI shared memory window instead of on
+  // every process. STRUMPACK does this after a sequential ordering (not ParMETIS or
+  // PT-Scotch) without compression, and falls back to a copy per process, with a warning,
+  // if the window cannot be allocated. The mixed precision solver computes the ordering in
+  // its single precision solver, which has its own options.
+  if (shared_permutation)
+  {
+    if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
+    {
+      EnableSharedPermutation(this->solver_->solver().options());
+    }
+    else
+    {
+      EnableSharedPermutation(this->solver_->options());
+    }
   }
 }
 

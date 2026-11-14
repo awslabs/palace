@@ -44,6 +44,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `config["Solver"]["Linear"]["STRUMPACKSharedPermutation"]` (default `true`) to
+    store the fill-reducing permutation of the STRUMPACK solver once per node instead of on
+    every process (see the performance improvements below). SchemaVer 4-3-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
     that far fields can be computed when the outer boundary is not a valid integration
     surface, or away from the truncation. The fields of each face are taken from the side
@@ -52,6 +56,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch with an option to store the fill-reducing permutation of the
+    distributed STRUMPACK solver and its inverse (two integers per coarse matrix row) once
+    per node, in an MPI shared memory window, instead of on every process. Palace uses it
+    by default, which lowers the memory of the STRUMPACK solver when many processes share
+    a node. It applies to the sequential column orderings (METIS, which is the default,
+    AMD, and RCM, not ParMETIS) without compression, and needs free space for the window
+    in `/dev/shm` on every node; otherwise all processes keep their own copy and STRUMPACK
+    prints a warning. Results are unchanged.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on

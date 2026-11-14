@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-3",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3091,6 +3091,12 @@
           "description": "Number of butterfly levels for STRUMPACK HODLR compression.",
           "minimum": 0,
           "default": 1,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKSharedPermutation": {
+          "type": "boolean",
+          "description": "Store the fill-reducing permutation of the distributed STRUMPACK solver and its inverse (two integers per matrix row) once per compute node, in an MPI shared memory window, instead of on every process. This lowers the memory of the solver when many processes share a node, and does not change the results. It needs an MPI library with shared memory windows (`MPI_Win_allocate_shared`) and, on every node, free space for the window in the shared memory file system (usually `/dev/shm`): two integers per matrix row, plus a margin of 10% and 1 MB. If the window cannot be allocated, or `/dev/shm` does not have this much free space, all processes keep their own copy as without this option, and STRUMPACK prints a warning. STRUMPACK shares the permutation only when it computes it with a sequential ordering (METIS, which is its default, AMD, RCM, or Scotch, not ParMETIS or PT-Scotch) and without compression (see `\"STRUMPACKCompressionType\"`). Has no effect when STRUMPACK is built without this option (the superbuild and the Spack package of Palace build STRUMPACK with it).",
+          "default": true,
           "x-palace-advanced": true
         },
         "SuperLU3DCommunicator": {
