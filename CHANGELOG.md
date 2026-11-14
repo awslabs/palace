@@ -19,6 +19,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `Solver.Electrostatic.ResponseArchive` (`Mode` `"None"` / `"Archive"` /
+    `"Reduce"` / `"Estimate"`, `Directory`, `BlockSize`, `SourceTiming`,
+    `RecycleInitialGuess`, `EstimateRequest`): the archived coupon-response generation
+    modes as configuration keys, so that a run launched with a configuration file only (a
+    container job) can select them (lane chainport; USER decision 1674 (2)). The
+    `PALACE_RESPONSE_ARCHIVE_ONLY` / `_REDUCE_ONLY` / `_ESTIMATE_ONLY` / `_ARCHIVE_DIR` /
+    `_BLOCK_SIZE` / `_SOURCE_TIMING` / `_RECYCLE_INITIAL_GUESS` / `_ESTIMATE_REQUEST`
+    variables stay as aliases with their meaning unchanged; a key and its variable that are
+    both set must agree. Results are unchanged.
   - Added the magnetic (inductive) defect of finite-thickness metal to the Maxwell
     self-consistent surface-response correction for the 2D translational model families
     (mx-sc-magnetic DESIGN-v2 option (C); USER decision 1221 D2-D8; decisions 1227 / 1229):

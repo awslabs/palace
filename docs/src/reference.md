@@ -895,6 +895,26 @@ When any participating interface sets `FluxRecovery`, the recovered normal flux 
 enters the response matrix. In that case `Solver.Linear.EstimatorTol` controls a physical
 postprocessing solve and must remain tight even if the simulation performs no AMR.
 
+Coupon libraries with many basis traces can split this work between runs with
+`Solver.Electrostatic.ResponseArchive`. `"Mode": "Archive"` solves every
+prescribed-potential source and writes its potential (and recovered flux) to `Directory`
+without postprocessing; `"Mode": "Reduce"` then assembles `surface-response-matrix.csv`
+and `domain-response-matrix.csv` from that archive without solving, streaming
+`BlockSize` sources at a time; `"Mode": "Estimate"` evaluates the error indicator of the
+archived fields for the excitations listed in `EstimateRequest`. Both archive modes
+require `ResponseMatrix` and `AggregateResponseMatrix`. The archive holds one file per
+source, rank and field, so the reduction runs at the rank count of the archiving run. A
+relative `Directory` is taken against the working directory of the process: a reduction in
+another run, or on more than one node, needs an absolute path on a shared file system.
+
+Each key has an alias environment variable, read on the root rank and broadcast:
+`PALACE_RESPONSE_ARCHIVE_ONLY=1`, `PALACE_RESPONSE_REDUCE_ONLY=1` and
+`PALACE_RESPONSE_ESTIMATE_ONLY=1` for the three modes, `PALACE_RESPONSE_ARCHIVE_DIR`,
+`PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING=1`,
+`PALACE_RESPONSE_RECYCLE_INITIAL_GUESS=1` and `PALACE_RESPONSE_ESTIMATE_REQUEST`. A setting
+given only by its key or only by its variable takes that value; a key and its variable that
+are both set must agree, otherwise Palace stops with an error naming both.
+
 ### Self-consistent thin-metal response correction
 
 The experimental `Solver.Electrostatic.ResponseCorrection` option uses matched

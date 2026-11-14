@@ -1588,6 +1588,65 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   response_matrix = electrostatic.value("ResponseMatrix", response_matrix);
   aggregate_response_matrix =
       electrostatic.value("AggregateResponseMatrix", aggregate_response_matrix);
+  if (auto it = electrostatic.find("ResponseArchive"); it != electrostatic.end())
+  {
+    const auto &archive = *it;
+    MFEM_VERIFY(archive.is_object(),
+                "Electrostatic \"ResponseArchive\" must be an object!");
+    ResponseArchiveData data;
+    if (auto mode = archive.find("Mode"); mode != archive.end())
+    {
+      const auto name = mode->get<std::string>();
+      if (name == "None")
+      {
+        data.mode = ResponseArchiveData::Mode::NONE;
+      }
+      else if (name == "Archive")
+      {
+        data.mode = ResponseArchiveData::Mode::ARCHIVE;
+      }
+      else if (name == "Reduce")
+      {
+        data.mode = ResponseArchiveData::Mode::REDUCE;
+      }
+      else if (name == "Estimate")
+      {
+        data.mode = ResponseArchiveData::Mode::ESTIMATE;
+      }
+      else
+      {
+        MFEM_ABORT("Electrostatic response-archive \"Mode\" must be \"None\", "
+                   "\"Archive\", \"Reduce\", or \"Estimate\"!");
+      }
+    }
+    if (auto directory = archive.find("Directory"); directory != archive.end())
+    {
+      data.directory = directory->get<std::string>();
+      MFEM_VERIFY(!data.directory->empty(),
+                  "Electrostatic response-archive \"Directory\" must not be empty!");
+    }
+    if (auto block_size = archive.find("BlockSize"); block_size != archive.end())
+    {
+      data.block_size = block_size->get<int>();
+      MFEM_VERIFY(*data.block_size > 0,
+                  "Electrostatic response-archive \"BlockSize\" must be positive!");
+    }
+    if (auto timing = archive.find("SourceTiming"); timing != archive.end())
+    {
+      data.source_timing = timing->get<bool>();
+    }
+    if (auto recycle = archive.find("RecycleInitialGuess"); recycle != archive.end())
+    {
+      data.recycle_initial_guess = recycle->get<bool>();
+    }
+    if (auto request = archive.find("EstimateRequest"); request != archive.end())
+    {
+      data.estimate_request = request->get<std::string>();
+      MFEM_VERIFY(!data.estimate_request->empty(),
+                  "Electrostatic response-archive \"EstimateRequest\" must not be empty!");
+    }
+    response_archive = std::move(data);
+  }
   if (auto it = electrostatic.find("ResponseCorrection"); it != electrostatic.end())
   {
     const auto &correction = *it;

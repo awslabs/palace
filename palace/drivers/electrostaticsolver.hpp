@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "linalg/operator.hpp"
@@ -23,6 +25,34 @@ class Array;
 
 namespace palace
 {
+
+// The response-archive run mode of coupon generation: Solver.Electrostatic.ResponseArchive
+// with its alias variables (Mode "Archive" / "Reduce" / "Estimate" =
+// PALACE_RESPONSE_ARCHIVE_ONLY / _REDUCE_ONLY / _ESTIMATE_ONLY = "1"; Directory =
+// PALACE_RESPONSE_ARCHIVE_DIR; BlockSize = PALACE_RESPONSE_BLOCK_SIZE; SourceTiming =
+// PALACE_RESPONSE_SOURCE_TIMING; RecycleInitialGuess =
+// PALACE_RESPONSE_RECYCLE_INITIAL_GUESS; EstimateRequest =
+// PALACE_RESPONSE_ESTIMATE_REQUEST). Per setting: the key when only the key is given, the
+// variable when only the variable is set (the job scripts of record keep their meaning),
+// and an error when both are given with different values. The variables are read
+// collectively (the root's value on every rank: utils/collectiveenvironment.hpp).
+struct ResponseArchiveSettings
+{
+  bool archive_only = false;
+  bool reduce_only = false;
+  bool estimate_only = false;
+  // Absolute and lexically normal; relative paths are taken against the working directory.
+  std::optional<std::filesystem::path> directory;
+  int block_size = 3;
+  bool source_timing = false;
+  bool recycle_initial_guess = false;
+  std::optional<std::string> estimate_request;
+  // The given settings an archive estimate refuses (an alias variable counts when it is
+  // set at all, as before the keys existed).
+  std::vector<std::string> estimate_conflicts;
+};
+ResponseArchiveSettings
+ResolveResponseArchive(const config::ElectrostaticSolverData &electrostatic, MPI_Comm comm);
 
 // Called before creating any output; the experimental reader must never reuse output.
 void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm,
@@ -107,7 +137,8 @@ private:
                                          int block_size) const;
 
   ErrorIndicator EstimateArchivedFields(LaplaceOperator &laplace_op, const Operator &K,
-                                        const std::filesystem::path &archive) const;
+                                        const std::filesystem::path &archive,
+                                        const std::string &estimate_request) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

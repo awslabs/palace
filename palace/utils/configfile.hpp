@@ -1949,6 +1949,27 @@ public:
   // Whether to sum response-matrix entries over physical edges before writing them.
   bool aggregate_response_matrix = false;
 
+  // The response-archive run mode of coupon generation (Solver.Electrostatic.
+  // ResponseArchive). Every field is optional: an absent key leaves its PALACE_RESPONSE_*
+  // alias variable in charge (ResolveResponseArchive, drivers/electrostaticsolver.hpp).
+  struct ResponseArchiveData
+  {
+    enum class Mode
+    {
+      NONE,
+      ARCHIVE,
+      REDUCE,
+      ESTIMATE
+    };
+    std::optional<Mode> mode = std::nullopt;
+    std::optional<std::string> directory = std::nullopt;
+    std::optional<int> block_size = std::nullopt;
+    std::optional<bool> source_timing = std::nullopt;
+    std::optional<bool> recycle_initial_guess = std::nullopt;
+    std::optional<std::string> estimate_request = std::nullopt;
+  };
+  std::optional<ResponseArchiveData> response_archive = std::nullopt;
+
   // Optional global Schur-complement correction assembled from a matched pair of local
   // fabricated- and thin-metal coupon response matrices.
   std::optional<ResponseCorrectionData> response_correction = std::nullopt;
