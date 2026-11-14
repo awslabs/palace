@@ -271,6 +271,8 @@ protected:
   // Synthesis-side fit configuration derived from AdaptiveTol. The AAA order and SVD rank
   // cutoff are internal guards so users only configure the adaptive sweep tolerance.
   double waveport_synthesis_tol = 0.0;
+  // The tolerance of the mode solve of each wave port ("EigenTol"), by port index.
+  std::map<int, double> waveport_mode_tol;
   std::size_t waveport_synthesis_order_max = 12;
   double waveport_synthesis_rank_tol = 1.0e-6;
 

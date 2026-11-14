@@ -3226,6 +3226,18 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CheckAdapterSynthesis(temp_dir, lorentz, 9.0, 10.0, 1.0e-6);
 }
 
+// A strongly lossy constant medium (loss tangent 0.95). The modes of the ports are real
+// after their phase normalization, up to the noise of the mode solve in one of them: as a
+// node of the circuit, that noise left the synthesized pencil numerically singular and its
+// S-parameters 3e-5 from the reduced model.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "adapter_driven_synth_lossy: circuit synthesis with lossy ports",
+                 "[Serial][Parallel][Regression]")
+{
+  CheckAdapterSynthesis(temp_dir, {{"Permittivity", 1.0}, {"LossTan", 0.95}}, 9.0, 10.0,
+                        1.0e-6);
+}
+
 // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the
 // default `ctest -L "^regression$"` sweep skips them (the regression
 // block uses TEST_SPEC `[Regression]~[Long]`); CI exercises them via

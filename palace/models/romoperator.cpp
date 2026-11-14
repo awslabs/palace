@@ -677,6 +677,10 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   waveport_synthesis_tol =
       std::max(iodata.solver.driven.adaptive_tol, WAVEPORT_SYNTHESIS_EIG_TOL);
   waveport_synthesis_order_max = WAVEPORT_AAA_ORDER_MAX;
+  for (const auto &[idx, data] : iodata.boundaries.waveport)
+  {
+    waveport_mode_tol[idx] = data.eig_tol;
+  }
   waveport_synthesis_rank_tol = std::clamp(
       waveport_synthesis_tol, WAVEPORT_SYNTHESIS_EIG_TOL, WAVEPORT_SYNTHESIS_RANK_TOL_MAX);
 
@@ -1106,6 +1110,16 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
       continue;
     }
     space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
+    // A mode whose imaginary part is below the tolerance of its mode solve is real (a TE or
+    // TEM mode of a homogeneous lossy medium, after the phase normalization of the mode),
+    // and that part is noise of the solve. As a basis vector it would be a node of the
+    // synthesized circuit, scaled by its Gram-Schmidt norm (of the size of the noise),
+    // which leaves the synthesized pencil numerically singular.
+    if (linalg::Norml2(space_op.GetComm(), vec.Imag()) <=
+        waveport_mode_tol.at(port_idx) * linalg::Norml2(space_op.GetComm(), vec.Real()))
+    {
+      vec.Imag() = 0.0;
+    }
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
   }
 }
