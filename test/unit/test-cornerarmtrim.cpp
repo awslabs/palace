@@ -2941,8 +2941,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(missing_energy > 0.0);
 
   // (a) The closed identity and the class identity.
+  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> no_claims;
   const auto plain = surf_post_op.GetInterfaceCoveragePartition(
-      {4}, field, nullptr, {{"Missing", &missing}}, {});
+      {4}, field, nullptr, {{"Missing", &missing}}, no_claims);
   REQUIRE(plain.count(4) == 1);
   const auto &a = plain.at(4);
   CHECK_THAT(BinSum(a), WithinRel(a.within, 1.0e-12));
@@ -2989,7 +2990,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // (c) A second kept class over the same portions comes after Missing: it takes nothing.
   const auto ordered = surf_post_op.GetInterfaceCoveragePartition(
       {4}, field, nullptr, {{"Missing", &missing}, {"ConductorConsistency", &perimeter}},
-      {});
+      no_claims);
   const auto &c = ordered.at(4);
   CHECK_THAT(BinSum(c), WithinRel(c.within, 1.0e-12));
   for (const auto &[key, energy] : c.classes)
