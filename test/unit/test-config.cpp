@@ -1086,6 +1086,8 @@ TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
 TEST_CASE("Config Eigenmode warm start", "[config][Serial]")
 {
   CHECK(config::EigenSolverData(json{{"Target", 1.0}}).warm_start);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}}).min_q == 0.54);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"MinQ", 0.0}}).min_q == 0.0);
   CHECK_FALSE(
       config::EigenSolverData(json{{"Target", 1.0}, {"WarmStart", false}}).warm_start);
 }

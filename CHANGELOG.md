@@ -24,6 +24,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - For problems with damping, the SLEPc eigenvalue solver no longer searches for strongly
+    damped modes with quality factor below `config["Solver"]["Eigenmode"]["MinQ"]` (new,
+    default `0.54`), nor for growing modes with `|Q|` < 10, whose slowly converging Ritz
+    values could stall the convergence of the others. With `config["Problem"]["Verbose"]`
+    positive, the log reports how many Ritz values of the last iteration lie outside of the
+    search region. SchemaVer 4-4-0. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with

@@ -370,6 +370,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
 
+  // For problems with damping, exclude the strongly damped modes from the search, whose
+  // slow convergence can stall the others.
+  if (type == EigenSolverBackend::SLEPC && nonlinear_type != NonlinearEigenSolver::SLP &&
+      (C || has_A2) && iodata.solver.eigenmode.min_q > 0.5)
+  {
+    Mpi::Print(" Eigenvalue search excludes modes with Q < {:.3g}\n",
+               iodata.solver.eigenmode.min_q);
+    eigen->SetMinQualityFactor(iodata.solver.eigenmode.min_q);
+  }
+
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
   // performed). Boundary conditions don't need to be eliminated here.

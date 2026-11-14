@@ -6,6 +6,7 @@
 #if defined(PALACE_WITH_SLEPC)
 
 #include <algorithm>
+#include <cmath>
 #include <petsc.h>
 #include <slepc.h>
 #include <mfem.hpp>
@@ -180,6 +181,30 @@ PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eig
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+PetscErrorCode __eps_region_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                    PetscScalar *eigr, PetscScalar *eigi, PetscReal *errest,
+                                    PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  PetscReal tol;
+  PetscCall(EPSGetTolerances(eps, &tol, nullptr));
+  static_cast<SlepcEigenvalueSolver *>(ctx)->CountRegionExcluded(tol, eigr, eigi, errest,
+                                                                 static_cast<int>(nest));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __pep_region_monitor(PEP pep, PetscInt its, PetscInt nconv,
+                                    PetscScalar *eigr, PetscScalar *eigi, PetscReal *errest,
+                                    PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  PetscReal tol;
+  PetscCall(PEPGetTolerances(pep, &tol, nullptr));
+  static_cast<SlepcEigenvalueSolver *>(ctx)->CountRegionExcluded(tol, eigr, eigi, errest,
+                                                                 static_cast<int>(nest));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
                                          PetscScalar *eigr, PetscScalar *eigi,
                                          PetscReal *errest, PetscInt nest, void *ctx)
@@ -190,6 +215,24 @@ PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
 }
 
 }  // namespace
+
+void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
+{
+  // For λ = iω, Q = |ω| / (2 Im{ω}) >= q_min for a damped mode if Re{ω} / (2 Im{ω}) =
+  // Im{λ} / (-2 Re{λ}) >= (q_min² - 1/4)^½. Growing modes (Re{λ} > 0) are kept for |Q| >=
+  // 10, which includes lossless modes computed with a small error of either sign. The
+  // region is a trapezoid from Im{λ} = s up to far above any eigenvalue near the target.
+  MFEM_VERIFY(s > 0.0 && q_min > 0.5,
+              "Invalid target or minimum quality factor for the eigenvalue region!");
+  constexpr double q_grow = 10.0;
+  const PetscReal a = 0.5 / std::sqrt(q_min * q_min - 0.25);
+  const PetscReal b = 0.5 / std::sqrt(q_grow * q_grow - 0.25);
+  const PetscReal h = 1.0e3 * std::max(PetscReal(1.0), s);
+  PetscScalar v[4] = {PetscScalar(-a * s, s), PetscScalar(b * s, s), PetscScalar(b * h, h),
+                      PetscScalar(-a * h, h)};
+  PalacePetscCall(RGSetType(rg, RGPOLYGON));
+  PalacePetscCall(RGPolygonSetVertices(rg, 4, v, nullptr));
+}
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
 {
@@ -233,6 +276,9 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
   v0 = nullptr;
 
   cl_custom = false;
+  q_min = 0.0;
+  q_region = q_region_monitor = false;
+  q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
 
   // SLEPc passes device arrays to the shell callbacks when the device is in use. SetSize
   // keeps the device flag, so the derived classes only need to size the workspace.
@@ -313,6 +359,40 @@ void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
   }
 }
 
+void SlepcEigenvalueSolver::CountRegionExcluded(PetscReal tol, const PetscScalar *eigr,
+                                                const PetscScalar *eigi,
+                                                const PetscReal *errest, int nest)
+{
+  // The region applies to the back-transformed eigenvalues, as in the sorting criterion.
+  ST st = GetST();
+  if (!st)
+  {
+    return;
+  }
+  q_region_count[0] = nest;
+  q_region_count[1] = q_region_count[2] = 0;
+  for (int i = 0; i < nest; i++)
+  {
+    PetscScalar er = eigr[i], ei = eigi[i];
+    PetscInt inside;
+    PalacePetscCall(STBackTransform(st, 1, &er, &ei));
+    PalacePetscCall(RGCheckInside(GetRG(), 1, &er, &ei, &inside));
+    if (inside < 0)
+    {
+      q_region_count[1]++;
+      q_region_count[2] += (errest[i] < tol);
+    }
+  }
+}
+
+void SlepcEigenvalueSolver::PrintRegionExcluded() const
+{
+  Mpi::Print(GetComm(),
+             " Search region Q >= {:.3g}: {:d} of {:d} Ritz values outside in the last "
+             "iteration ({:d} with error estimates below the tolerance)\n",
+             q_min, q_region_count[1], q_region_count[0], q_region_count[2]);
+}
+
 void SlepcEigenvalueSolver::Customize()
 {
   // Configure the KSP object for non-preconditioned spectral transformations.
@@ -328,6 +408,7 @@ void SlepcEigenvalueSolver::Customize()
   }
 
   // Configure the region based on the given target if necessary.
+  q_region = false;
   if (sinvert && region)
   {
     if (PetscImaginaryPart(sigma) == 0.0)
@@ -347,7 +428,12 @@ void SlepcEigenvalueSolver::Customize()
     else if (PetscRealPart(sigma) == 0.0)
     {
       PetscReal si = PetscImaginaryPart(sigma);
-      if (si > 0.0)
+      if (si > 0.0 && q_min > 0.5)
+      {
+        ConfigureQualityFactorRegion(GetRG(), si / gamma, q_min);
+        q_region = true;
+      }
+      else if (si > 0.0)
       {
         ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), si / gamma,
                     mfem::infinity());
@@ -667,12 +753,10 @@ int SlepcEPSSolverBase::Solve()
   {
     PalacePetscCall(
         EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
-    PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
   }
   else if (ritz_test)
   {
     PalacePetscCall(EPSSetConvergenceTest(eps, EPS_CONV_REL));
-    PalacePetscCall(EPSSetTrackAll(eps, PETSC_FALSE));
   }
   ritz_test = warm_start;
   ritz_prev.clear();
@@ -700,9 +784,18 @@ int SlepcEPSSolverBase::Solve()
     }
   }
 
-  // Solve the eigenvalue problem.
+  // Solve the eigenvalue problem. The convergence test of warm-started solves and the count
+  // of Ritz values outside of the quality factor region see every Ritz value.
   PetscInt num_conv;
   Customize();
+  if (q_region && print > 0 && !q_region_monitor)
+  {
+    PalacePetscCall(EPSMonitorSet(eps, __eps_region_monitor, (void *)this, nullptr));
+    q_region_monitor = true;
+  }
+  const bool track_all = warm_start || (q_region && q_region_monitor);
+  PalacePetscCall(EPSSetTrackAll(eps, track_all ? PETSC_TRUE : PETSC_FALSE));
+  q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
   PalacePetscCall(EPSSolve(eps));
   EndFirstCycle();
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
@@ -714,6 +807,10 @@ int SlepcEPSSolverBase::Solve()
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
                opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+    if (q_region && q_region_monitor)
+    {
+      PrintRegionExcluded();
+    }
     if (ritz_num_delayed > 0 || ritz_num_unsettled > 0)
     {
       Mpi::Print(GetComm(),
@@ -1216,6 +1313,13 @@ int SlepcPEPSolverBase::Solve()
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
+  if (q_region && print > 0 && !q_region_monitor)
+  {
+    PalacePetscCall(PEPMonitorSet(pep, __pep_region_monitor, (void *)this, nullptr));
+    PalacePetscCall(PEPSetTrackAll(pep, PETSC_TRUE));
+    q_region_monitor = true;
+  }
+  q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
   PalacePetscCall(PEPSolve(pep));
   PalacePetscCall(PEPGetConverged(pep, &num_conv));
   if (print > 0)
@@ -1226,6 +1330,10 @@ int SlepcPEPSolverBase::Solve()
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
                opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+    if (q_region && q_region_monitor)
+    {
+      PrintRegionExcluded();
+    }
   }
 
   // Compute and store the eigenpair residuals.

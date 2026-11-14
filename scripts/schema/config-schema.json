@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-3-0",
+  "$id": "urn:palace:schema:4-4-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2477,6 +2477,13 @@
           "type": "boolean",
           "description": "For adaptive mesh refinement, start the eigenvalue solver of each adaptation iteration from the eigenvectors of the previous one, transferred to the refined mesh. Only used with [`\"StartVector\"`](@ref config-solver-eigenmode-startvector), nonconformal refinement ([`/Model/Refinement/Nonconformal`](@ref config-model-refinement-nonconformal)), and the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
+          "x-palace-advanced": true
+        },
+        "MinQ": {
+          "type": "number",
+          "description": "Minimum quality factor `Q = |\u03c9| / (2 Im{\u03c9})` of the eigenmodes searched for in problems with damping: strongly damped modes with lower `Q`, and growing modes with `|Q|` < 10, are excluded from the search, so that their slowly converging Ritz values cannot stall the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver.",
+          "minimum": 0.0,
+          "default": 0.54,
           "x-palace-advanced": true
         },
         "MassOrthogonal": {

@@ -43,6 +43,11 @@ void Initialize(int &argc, char **&argv, const char rc_file[], const char help[]
 void Initialize();
 void Finalize();
 
+// Configure the region of the eigenvalues λ = iω (scaled) searched for above the target
+// λ = i s, s > 0: Im{λ} >= s, and quality factors Q = |ω| / (2 Im{ω}) >= q_min > 0.5 for
+// damped modes and |Q| >= 10 for growing ones.
+void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min);
+
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic
 // polynomial eigenvalue problems. Shift-and-invert spectral transformations can be used to
@@ -117,6 +122,17 @@ protected:
   // Boolean to handle SetFromOptions calls.
   mutable bool cl_custom;
 
+  // Minimum quality factor of the search (see SetMinQualityFactor), whether its region is
+  // configured and its monitor installed, and the Ritz values of the last iteration: their
+  // number, those outside of the region, and those among them with an error estimate below
+  // the tolerance.
+  double q_min;
+  bool q_region, q_region_monitor;
+  int q_region_count[3];
+
+  // Print the Ritz values counted outside of the quality factor region.
+  void PrintRegionExcluded() const;
+
   // Customize object with command line options set.
   virtual void Customize();
 
@@ -169,6 +185,14 @@ public:
 
   // Configure the basis vectors object associated with the eigenvalue solver.
   void SetOrthogonalization(bool mgs, bool cgs2);
+
+  void SetMinQualityFactor(double q) override { q_min = q; }
+
+  // Count the nest current Ritz values of the transformed problem outside of the search
+  // region, and those among them with an error estimate below tol (called by the
+  // eigensolver monitor after each iteration).
+  void CountRegionExcluded(PetscReal tol, const PetscScalar *eigr, const PetscScalar *eigi,
+                           const PetscReal *errest, int nest);
 
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;

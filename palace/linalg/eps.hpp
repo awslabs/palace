@@ -144,6 +144,12 @@ public:
   // Number of iterations (restarts) of the last solve, or -1 if not available.
   virtual int GetNumIterations() const { return -1; }
 
+  // Restrict the search to modes with quality factor Q = |ω| / (2 Im{ω}) >= q_min if
+  // damped, and |Q| >= 10 if growing (eigenvalues λ = iω of a quadratic problem), so that
+  // strongly damped Ritz values cannot stall the convergence of the others. A q_min <= 0.5
+  // disables the restriction. Not all solvers support it.
+  virtual void SetMinQualityFactor(double q_min) {}
+
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   virtual int Solve() = 0;
 

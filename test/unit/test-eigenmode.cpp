@@ -18,6 +18,10 @@
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
+#if defined(PALACE_WITH_SLEPC)
+#include <slepc.h>
+#endif
+
 namespace palace
 {
 
@@ -264,6 +268,45 @@ TEST_CASE("Eigenmode stable Ritz value convergence", "[eigenmode][Serial]")
     CHECK(std::abs(inexact.lambda[i] - exact.lambda[i]) <=
           1.0e-4 * std::abs(exact.lambda[i]));
   }
+}
+
+TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
+{
+  // Region for eigenvalues λ = iω above the target λ = i s, with Q = |ω| / (2 Im{ω}).
+  const double s = 0.5, q_min = 0.54;
+  RG rg;
+  PalacePetscCall(RGCreate(PETSC_COMM_SELF, &rg));
+  slepc::ConfigureQualityFactorRegion(rg, s, q_min);
+  auto Inside = [&rg](std::complex<double> omega)
+  {
+    PetscScalar lambda = std::complex<double>(0.0, 1.0) * omega;
+    PetscInt inside;
+    PalacePetscCall(RGCheckInside(rg, 1, &lambda, nullptr, &inside));
+    return inside > 0;
+  };
+  auto Damped = [](double re, double q)
+  { return std::complex<double>(re, re / std::sqrt(4.0 * q * q - 1.0)); };
+
+  // Damped modes above the target.
+  CHECK(Inside({1.0, 0.0}));
+  CHECK(Inside(Damped(1.0, 1.0e6)));
+  CHECK(Inside(Damped(1.0, 0.6)));
+  CHECK(Inside(Damped(1.0, 0.55)));
+  CHECK(Inside(Damped(100.0, 0.55)));
+  CHECK(!Inside(Damped(1.0, 0.53)));
+  CHECK(!Inside(Damped(1.0, 0.501)));
+  CHECK(!Inside(Damped(100.0, 0.53)));
+
+  // Modes below the target.
+  CHECK(!Inside({0.4, 0.0}));
+  CHECK(!Inside(Damped(0.4, 10.0)));
+
+  // Growing modes are kept for |Q| >= 10 only.
+  CHECK(Inside(std::conj(Damped(1.0, 1.0e6))));
+  CHECK(Inside(std::conj(Damped(1.0, 10.5))));
+  CHECK(!Inside(std::conj(Damped(1.0, 9.5))));
+  CHECK(!Inside(std::conj(Damped(1.0, 1.0))));
+  PalacePetscCall(RGDestroy(&rg));
 }
 
 #endif

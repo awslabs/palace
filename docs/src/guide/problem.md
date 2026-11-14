@@ -24,6 +24,11 @@ from the eigenmodes of the previous one, transferred to the refined mesh
 Such a solve accepts an eigenmode only once its eigenvalue settled between restarts, since
 the error estimate of the eigenvalue solver does not see the error of the linear solves.
 
+For problems with damping, the eigenvalue solver does not search for strongly damped modes,
+with quality factors below
+[`config["Solver"]["Eigenmode"]["MinQ"]`](../config/reference.md#config-solver-eigenmode-minq),
+whose slow convergence would delay the other modes.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the
