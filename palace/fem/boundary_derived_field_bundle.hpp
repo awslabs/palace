@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_BOUNDARY_DERIVED_FIELD_BUNDLE_HPP
 #define PALACE_FEM_BOUNDARY_DERIVED_FIELD_BUNDLE_HPP
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -69,13 +70,18 @@ public:
   // path. GetRegisteredPacked() evaluates (or returns the cached result for) the current
   // save generation. RegisteredSlice() gives exact scalar offsets/sizes for real or
   // imaginary linear fields and the shared combined quadratic fields.
+  //
+  // The evaluations take the real angular frequency ω > 0 of the fields for a
+  // frequency-dependent material: ε(iω) in the surface charge and the stored-energy
+  // permittivity in the electric energy density (unused otherwise). The packed results are
+  // cached for their ω; another ω reapplies the operators on the same physical traces.
   struct PackedSlice
   {
     int offset = 0;
     int size = 0;
     int num_comp = 0;
   };
-  const Vector &GetRegisteredPacked() const;
+  const Vector &GetRegisteredPacked(double omega) const;
   int RegisteredPackedSize() const;
   PackedSlice RegisteredSlice(PointFieldKind kind, bool imaginary_phase = false) const;
 
@@ -86,10 +92,10 @@ public:
 
   // Copy or accumulate a requested packed slice. The single-source overload identifies
   // a real/imaginary phase from either registered E or B source and obtains its partner.
-  void Copy(PointFieldKind kind, const Vector &source, Vector &buffer,
+  void Copy(PointFieldKind kind, const Vector &source, double omega, Vector &buffer,
             bool zero = true) const;
-  void Copy(PointFieldKind kind, const Vector &E, const Vector &B, Vector &buffer,
-            bool zero = true) const;
+  void Copy(PointFieldKind kind, const Vector &E, const Vector &B, double omega,
+            Vector &buffer, bool zero = true) const;
 
   static long long BundleCount();
   static long long FieldCount();
@@ -114,6 +120,8 @@ private:
     Vector packed;
     long generation = -1;
     bool batched_complex = false;
+    // Frequency of the material tables, for a frequency-dependent material.
+    double omega = 0.0;
   };
 
   const Mesh *mesh = nullptr;
@@ -126,15 +134,27 @@ private:
   std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache;
   bool valid = false;
   long generation = 0;
+  // Frequency-dependent material tables: whether any exists, and their offsets (Re{ε},
+  // Im{ε}, stored energy) in the retained route contexts.
+  bool material_frequency_dependent = false;
+  // Whether the electric energy slice is physical
+  // (MaterialOperator::HasStoredElectricEnergy). Otherwise its stored-energy table is a
+  // private placeholder: ENERGY_E is not supported, and it is neither registered nor copied
+  // (RequireSlice).
+  bool stored_electric_energy = true;
+  std::array<std::size_t, 3> material_ctx_offsets = {0, 0, 0};
   // Kept opaque in the header to avoid exposing libCEED implementation details at every
   // PointFieldEvaluator include site.
   struct Impl;
   std::unique_ptr<Impl> impl;
   mutable std::map<std::pair<const Vector *, const Vector *>, CachedPhase> phases;
 
-  const CachedPhase &Get(const Vector &E_source, const Vector &B_source) const;
+  const CachedPhase &Get(const Vector &E_source, const Vector &B_source,
+                         double omega) const;
   std::pair<const Vector *, const Vector *> PartnerSources(const Vector &source) const;
   static Slice ToSlice(PointFieldKind kind);
+  // Errors for the electric energy slice without a stored electric energy.
+  void RequireSlice(Slice slice) const;
   static int SliceOffset(Slice slice, int num_points, bool batched_complex,
                          bool imaginary_phase = false);
   static int SliceNumComp(Slice slice);
