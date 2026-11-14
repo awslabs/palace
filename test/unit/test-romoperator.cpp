@@ -1229,11 +1229,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK((scale == 0.0 || std::abs(x - y) <= 1.0e-10 * scale));
   };
 
-  CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
-          reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
-  REQUIRE(full.domain_E_field_energy_all > 0.0);
+  // Without a stored electric energy, both omit the electric energies alike.
+  const bool stored = space_op.GetMaterialOp().HasStoredElectricEnergy();
+  CHECK(full.domain_E_field_energy_all.has_value() == stored);
+  CHECK(reduced.domain_E_field_energy_all.has_value() == stored);
+  CAPTURE(reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+  if (stored)
+  {
+    CAPTURE(*reduced.domain_E_field_energy_all, *full.domain_E_field_energy_all);
+    REQUIRE(*full.domain_E_field_energy_all > 0.0);
+    CHECK(close(*reduced.domain_E_field_energy_all, *full.domain_E_field_energy_all));
+  }
+  CHECK(close(reduced.domain_E_field_energy_material, full.domain_E_field_energy_material));
   REQUIRE(full.domain_H_field_energy_all > 0.0);
-  CHECK(close(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all));
   CHECK(close(reduced.domain_H_field_energy_all, full.domain_H_field_energy_all));
   REQUIRE(full.domain_E_field_energy_i.size() == 1);
   REQUIRE(full.domain_H_field_energy_i.size() == 1);
@@ -1241,16 +1249,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(reduced.domain_H_field_energy_i.size() == full.domain_H_field_energy_i.size());
   for (std::size_t i = 0; i < full.domain_E_field_energy_i.size(); i++)
   {
-    CHECK(reduced.domain_E_field_energy_i[i].idx == full.domain_E_field_energy_i[i].idx);
-    CHECK(close(reduced.domain_E_field_energy_i[i].energy,
-                full.domain_E_field_energy_i[i].energy));
-    CHECK(close(reduced.domain_E_field_energy_i[i].participation_ratio,
-                full.domain_E_field_energy_i[i].participation_ratio));
+    const auto &r = reduced.domain_E_field_energy_i[i],
+               &f = full.domain_E_field_energy_i[i];
+    CHECK(r.idx == f.idx);
+    // The postprocessing domain contains the material.
+    CHECK(f.energy.has_value() == stored);
+    CHECK(r.energy.has_value() == stored);
+    CHECK(f.participation_ratio.has_value() == stored);
+    CHECK(r.participation_ratio.has_value() == stored);
+    if (stored)
+    {
+      CHECK(close(r.energy.value(), f.energy.value()));
+      CHECK(close(r.participation_ratio.value(), f.participation_ratio.value()));
+    }
     CHECK(reduced.domain_H_field_energy_i[i].idx == full.domain_H_field_energy_i[i].idx);
-    CHECK(close(reduced.domain_H_field_energy_i[i].energy,
-                full.domain_H_field_energy_i[i].energy));
-    CHECK(close(reduced.domain_H_field_energy_i[i].participation_ratio,
-                full.domain_H_field_energy_i[i].participation_ratio));
+    CHECK(close(reduced.domain_H_field_energy_i[i].energy.value(),
+                full.domain_H_field_energy_i[i].energy.value()));
+    CHECK(close(reduced.domain_H_field_energy_i[i].participation_ratio.value(),
+                full.domain_H_field_energy_i[i].participation_ratio.value()));
   }
 
   REQUIRE(full.lumped_port_vi.size() == 2);
@@ -1557,8 +1573,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                WithinRel(full.domain_H_field_energy_all, 1.0e-9));
     REQUIRE(reduced.domain_H_field_energy_i.size() == 1);
     REQUIRE(full.domain_H_field_energy_i.size() == 1);
-    CHECK_THAT(reduced.domain_H_field_energy_i[0].energy,
-               WithinRel(full.domain_H_field_energy_i[0].energy, 1.0e-9));
+    CHECK_THAT(reduced.domain_H_field_energy_i[0].energy.value(),
+               WithinRel(full.domain_H_field_energy_i[0].energy.value(), 1.0e-9));
   }
 
   SECTION("Zero curl")
@@ -1568,13 +1584,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     y << std::complex<double>(0.75, 0.5);
     const auto [reduced, full] = measure({g}, y);
 
-    CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
-            reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
-    REQUIRE(full.domain_E_field_energy_all > 0.0);
-    CHECK_THAT(reduced.domain_E_field_energy_all,
-               WithinRel(full.domain_E_field_energy_all, 1.0e-10));
+    CAPTURE(reduced.domain_E_field_energy_all.value(),
+            full.domain_E_field_energy_all.value(), reduced.domain_H_field_energy_all,
+            full.domain_H_field_energy_all);
+    REQUIRE(full.domain_E_field_energy_all.value() > 0.0);
+    CHECK_THAT(reduced.domain_E_field_energy_all.value(),
+               WithinRel(full.domain_E_field_energy_all.value(), 1.0e-10));
     CHECK(reduced.domain_H_field_energy_all == 0.0);
-    CHECK(full.domain_H_field_energy_all <= 1.0e-20 * full.domain_E_field_energy_all);
+    CHECK(full.domain_H_field_energy_all <=
+          1.0e-20 * full.domain_E_field_energy_all.value());
     REQUIRE(reduced.domain_H_field_energy_i.size() == 1);
     CHECK(reduced.domain_H_field_energy_i[0].energy == 0.0);
   }
@@ -1736,12 +1754,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       post_op.MeasureAndPrintAll(excitation_idx, step, E, B, omega);
       const Measurement &full = post_op.GetMeasurement();
 
-      CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
-              reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
-      REQUIRE(full.domain_E_field_energy_all > 0.0);
+      CAPTURE(reduced.domain_E_field_energy_all.value(),
+              full.domain_E_field_energy_all.value(), reduced.domain_H_field_energy_all,
+              full.domain_H_field_energy_all);
+      REQUIRE(full.domain_E_field_energy_all.value() > 0.0);
       REQUIRE(full.domain_H_field_energy_all > 0.0);
-      CHECK_THAT(reduced.domain_E_field_energy_all,
-                 WithinRel(full.domain_E_field_energy_all, 1.0e-8));
+      CHECK_THAT(reduced.domain_E_field_energy_all.value(),
+                 WithinRel(full.domain_E_field_energy_all.value(), 1.0e-8));
       CHECK_THAT(reduced.domain_H_field_energy_all,
                  WithinRel(full.domain_H_field_energy_all, 1.0e-8));
       REQUIRE(full.wave_port_vi.size() == 2);
