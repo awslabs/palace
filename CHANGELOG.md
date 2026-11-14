@@ -57,7 +57,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on
     each process: the row-to-front map and the column scaling were stored for the whole
     matrix on every process. Results are unchanged.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1198](https://github.com/awslabs/palace/pull/1198).
   - STRUMPACK is now built with a PBLAS block size of 128 instead of 32, which lowers the
     time of the STRUMPACK coarse solver by 4-17% and its memory. The STRUMPACK patch for
     [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169), which allows
