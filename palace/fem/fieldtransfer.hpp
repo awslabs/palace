@@ -13,12 +13,11 @@ namespace palace
 {
 
 //
-// Vector fields of a finite element space (for example, H(curl)) kept through refinement
-// and rebalancing of their mesh, for interpolation into a space on the modified mesh. The
-// fields are stored in a discontinuous vector L2 space of the same order, which represents
-// them exactly on affine elements and has no oriented degrees of freedom: MFEM's transfer
-// of H(curl) and H(div) grid functions through ParMesh::Rebalance does not account for the
-// signs of their degrees of freedom (mfem/mfem#5125).
+// Vector fields of a finite element space (for example, H(curl)) kept through the
+// refinement and rebalancing of their mesh. They are stored in a discontinuous vector L2
+// space of the same order, which represents them exactly on affine elements and has no
+// oriented degrees of freedom: MFEM's transfer of H(curl) and H(div) grid functions
+// through ParMesh::Rebalance mishandles their signs (mfem/mfem#5125).
 //
 class VectorFieldTransfer
 {

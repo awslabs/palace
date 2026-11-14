@@ -172,8 +172,8 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
 PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
                                       PetscReal res, PetscReal *errest, void *ctx)
 {
-  // The error estimate relative to the eigenvalue (as EPS_CONV_REL), for a Ritz value which
-  // also settled since the previous restart.
+  // The relative error estimate (as EPS_CONV_REL), for a Ritz value which also settled
+  // since the previous restart.
   PetscFunctionBeginUser;
   PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
   static_cast<SlepcEPSSolverBase *>(ctx)->CheckRitzValue(eigr, errest);
@@ -588,17 +588,14 @@ void SlepcEPSSolverBase::Customize()
 
 void SlepcEPSSolverBase::CheckRitzValue(PetscScalar theta, PetscReal *errest)
 {
-  // SLEPc's error estimate for a Ritz pair (θ, z) of the transformed problem assumes exact
-  // applications of the spectral transformation, so it does not see the error of iterative
-  // linear solves in the Ritz value. In the first Krylov cycle of a warm-started solve, an
-  // eigenpair can converge as its Ritz value appears, with an eigenvalue several times the
-  // tolerance off. A Ritz value with an error estimate below the tolerance converges only
-  // if the nearest Ritz value of the previous restart is the same eigenpair: within a
-  // relative distance max(Tol, min(1e-3, 0.1 d₂)) of it, for the relative distance d₂ of
-  // the second nearest one. Otherwise its error estimate becomes that relative distance,
-  // unless it was kept unconverged for that reason at the two previous restarts already.
-  // The test is called at each restart for every unconverged Ritz value, in order
-  // (EPSSetTrackAll), and only those before the first unconverged one converge.
+  // SLEPc's error estimate of a Ritz pair assumes exact linear solves, so a Ritz value
+  // which just appeared, as in the first Krylov cycle of a warm-started solve, can converge
+  // several times the tolerance off. A Ritz value with an error estimate below the
+  // tolerance converges only if the nearest Ritz value of the previous restart is within a
+  // relative distance max(Tol, min(1e-3, 0.1 d₂)), with d₂ that of the second nearest.
+  // Otherwise its error estimate becomes that distance, unless it was held back at the two
+  // previous restarts already. With EPSSetTrackAll, the test sees every Ritz value of each
+  // restart in order, and only those before the first unconverged one converge.
   constexpr double max_distance = 1.0e-3, max_fraction = 0.1;
   constexpr int max_unsettled = 2;
   PetscInt its;
@@ -665,8 +662,7 @@ int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
 
-  // A warm-started solve accepts an eigenpair only once its Ritz value settled since the
-  // previous restart (see CheckRitzValue).
+  // A warm-started solve accepts an eigenpair only once its Ritz value settled.
   if (warm_start)
   {
     PalacePetscCall(
@@ -685,8 +681,8 @@ int SlepcEPSSolverBase::Solve()
   ritz_blocked = false;
   ritz_num_delayed = ritz_num_unsettled = 0;
 
-  // With a tighter tolerance for the linear solves of the first Krylov cycle, a monitor
-  // restores the linear solver tolerance after the first restart.
+  // A tighter tolerance for the first Krylov cycle is restored by a monitor after the first
+  // restart.
   lin_tol = opInv->GetRelTol();
   first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol);
   if (first_cycle)

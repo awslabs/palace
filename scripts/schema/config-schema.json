@@ -2475,7 +2475,7 @@
         },
         "WarmStart": {
           "type": "boolean",
-          "description": "For adaptive mesh refinement, start the eigenvalue solver of each adaptation iteration from the eigenvectors of the previous one, transferred to the refined and rebalanced mesh, with a small component of the random (or constant) start vector. Only used with [`\"StartVector\"`](@ref config-solver-eigenmode-startvector), nonconformal refinement ([`/Model/Refinement/Nonconformal`](@ref config-model-refinement-nonconformal)), and the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver. The warm start is skipped when the previous solve converged within its first Krylov cycle.",
+          "description": "For adaptive mesh refinement, start the eigenvalue solver of each adaptation iteration from the eigenvectors of the previous one, transferred to the refined mesh. Only used with [`\"StartVector\"`](@ref config-solver-eigenmode-startvector), nonconformal refinement ([`/Model/Refinement/Nonconformal`](@ref config-model-refinement-nonconformal)), and the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
           "x-palace-advanced": true
         },

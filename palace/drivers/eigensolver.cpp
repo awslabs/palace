@@ -38,16 +38,15 @@ using namespace std::complex_literals;
 namespace
 {
 
-// Starting vector from the eigenpairs (λᵢ, xᵢ) of the previous adaptation iteration, with
-// xᵢ given as the real and imaginary parts of the stored fields 2i and 2i + 1: v = Σᵢ wᵢ xᵢ
-// and v_lambda = Σᵢ wᵢ λᵢ xᵢ, with weights of unit norm (for each xᵢ) and deterministic
-// phases, so that no eigenvector cancels from the combination, and a component of the
-// default starting vector r of relative weight eta in v for eigenvectors not found in the
-// previous iteration. Returns the number of eigenvectors used.
+// Starting vector v = Σᵢ wᵢ xᵢ from the eigenpairs (λᵢ, xᵢ) of the previous adaptation
+// iteration (the fields 2i and 2i + 1 hold the real and imaginary parts of xᵢ), and, if
+// v_lambda is given, v_lambda = Σᵢ wᵢ λᵢ xᵢ: the weights have unit norm and golden-ratio
+// phases, so that no eigenvector cancels, and v gets eta times the default starting vector
+// r, relative, for modes not found before. Returns the number of eigenvectors used.
 int GetWarmStartVector(const VectorFieldTransfer &prev_eigenvectors,
                        const std::vector<std::complex<double>> &prev_eigenvalues,
                        SpaceOperator &space_op, const ComplexVector &r, double eta,
-                       ComplexVector &v, ComplexVector &v_lambda)
+                       ComplexVector &v, ComplexVector *v_lambda)
 {
   auto &nd_fespace = space_op.GetNDSpace().Get();
   const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
@@ -56,10 +55,13 @@ int GetWarmStartVector(const VectorFieldTransfer &prev_eigenvectors,
   x.UseDevice(true);
   v.SetSize(n);
   v.UseDevice(true);
-  v_lambda.SetSize(n);
-  v_lambda.UseDevice(true);
   v = 0.0;
-  v_lambda = 0.0;
+  if (v_lambda)
+  {
+    v_lambda->SetSize(n);
+    v_lambda->UseDevice(true);
+    *v_lambda = 0.0;
+  }
   int num_used = 0;
   for (std::size_t i = 0; i < prev_eigenvalues.size(); i++)
   {
@@ -69,12 +71,14 @@ int GetWarmStartVector(const VectorFieldTransfer &prev_eigenvectors,
     const double norm = linalg::Norml2(space_op.GetComm(), x);
     if (norm > 0.0)
     {
-      // Phases from the golden ratio sequence.
       const double phase =
           2.0 * std::numbers::pi * std::fmod(0.5 * (std::sqrt(5.0) - 1.0) * i, 1.0);
       const std::complex<double> w = std::polar(1.0 / norm, phase);
       v.AXPY(w, x);
-      v_lambda.AXPY(w * prev_eigenvalues[i], x);
+      if (v_lambda)
+      {
+        v_lambda->AXPY(w * prev_eigenvalues[i], x);
+      }
       num_used++;
     }
   }
@@ -406,10 +410,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
-  // With adaptive mesh refinement, the solves after the first one start the SLEPc
-  // Krylov-Schur solver from the eigenvectors of the previous solve (warm start). The last
-  // solve, known in advance from Model.Refinement.MaxIts and MaxSize, keeps none for a next
-  // one.
+  // With adaptive mesh refinement, the SLEPc Krylov-Schur solver starts from the
+  // eigenvectors of the previous solve (warm start). The last solve, known from
+  // Model.Refinement.MaxIts and MaxSize, keeps none.
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
@@ -421,8 +424,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                  (!(C || has_A2) || eigenmode.pep_linear);
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
-  // projected appropriately. With adaptive mesh refinement, it combines the eigenvectors of
-  // the previous iteration, with a small component of the constant or random vector.
+  // projected appropriately.
   if (eigenmode.init_v0)
   {
     ComplexVector v0;
@@ -434,9 +436,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       space_op.GetRandomInitialVector(v0);
     }
-    // A warm start cannot save restarts when the previous solve converged within its first
-    // Krylov cycle, whose dimension does not depend on the start vector: keep the default
-    // start vector then.
+    // A warm start cannot shorten a solve which converges within its first Krylov cycle.
     int num_warm = 0;
     const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
                                                      space_op.GetNDSpace().GetParMesh());
@@ -447,10 +447,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else if (warm_start)
     {
+      // The linearization of a quadratic problem also takes the second block λ x.
       constexpr double eta = 1.0e-3;
+      const bool blocks = (C || has_A2);
       ComplexVector v, v_lambda;
       num_warm = GetWarmStartVector(*prev_eigenvectors, prev_eigenvalues, space_op, v0, eta,
-                                    v, v_lambda);
+                                    v, blocks ? &v_lambda : nullptr);
       if (num_warm > 0)
       {
         Mpi::Print(
@@ -460,15 +462,23 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         if (divfree)
         {
           divfree->Mult(v);
-          divfree->Mult(v_lambda);
+          if (blocks)
+          {
+            divfree->Mult(v_lambda);
+          }
         }
-        eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
+        if (blocks)
+        {
+          eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
+        }
+        else
+        {
+          eigen->SetInitialSpace(v);  // Copies the vector
+        }
         eigen->SetWarmStart(true);
 
-        // The eigenpairs converging in the first Krylov cycle have Ritz values dominated by
-        // the error of the first linear solves, applied to the start vector: solve these
-        // with a 100 times smaller tolerance (not below 1e-12, where that error is
-        // negligible).
+        // The Ritz values of the first Krylov cycle are set by its first linear solves:
+        // solve these with a 100 times smaller tolerance, not below 1e-12.
         const double lin_tol = iodata.solver.linear.tol;
         eigen->SetFirstCycleLinearSolverTol(
             std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
@@ -632,17 +642,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<std::complex<double>> eigenvalues(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
 
-  // Keep all converged eigenpairs for the starting vector of the next adaptation iteration.
-  // They follow the refinement and rebalancing of nonconforming meshes, which are modified
-  // in place.
+  // Keep the converged eigenpairs for the starting vector of the next adaptation iteration
+  // (nonconforming meshes are refined and rebalanced in place).
   const bool store_eigenpairs = !final_solve && eigenmode.warm_start && eigenmode.init_v0 &&
                                 warm_start_solver &&
                                 space_op.GetNDSpace().GetParMesh().Nonconforming();
   const bool stage_eigenvectors = post_op.WillWriteFields() || store_eigenpairs;
-  // Field output can construct large libCEED visualization operators, and the eigenpairs
-  // kept for the next adaptation iteration take memory as well. Only in those cases, stage
-  // the converged eigenvectors in host memory so the eigensolver and matrices can release
-  // their (device) allocations before postprocessing.
+  // Field output can construct large libCEED visualization operators, and the kept
+  // eigenpairs take memory as well. Only in those cases, stage the converged eigenvectors
+  // in host memory so the eigensolver and matrices can release their device allocations
+  // before postprocessing.
   std::vector<std::vector<std::complex<double>>> eigenvectors;
   if (stage_eigenvectors)
   {

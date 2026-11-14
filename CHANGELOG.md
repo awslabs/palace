@@ -53,13 +53,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Performance Improvements
 
   - With adaptive mesh refinement, the eigenvalue solve of each adaptation iteration starts
-    from the eigenvectors of the previous one, transferred to the refined and rebalanced
-    mesh (new `config["Solver"]["Eigenmode"]["WarmStart"]`, default `true`), for the SLEPc
-    Krylov-Schur solver with nonconformal refinement. The warm start is skipped when the
-    previous solve converged within its first Krylov cycle, and the first Krylov cycle of a
-    warm-started solve uses 1e-2 times the linear solver tolerance (not below 1e-12). A
-    warm-started solve accepts an eigenpair only once its eigenvalue settled since the
-    previous restart, which takes about one more restart. SchemaVer 4-3-0.
+    from the eigenvectors of the previous one, transferred to the refined mesh (new
+    `config["Solver"]["Eigenmode"]["WarmStart"]`, default `true`), for the SLEPc
+    Krylov-Schur solver with nonconformal refinement. The first Krylov cycle of a
+    warm-started solve uses 1e-2 times the linear solver tolerance, and the solve accepts an
+    eigenpair only once its eigenvalue settled between restarts. SchemaVer 4-3-0.
     [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers

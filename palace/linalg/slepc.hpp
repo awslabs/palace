@@ -204,21 +204,18 @@ protected:
   // Shell matrices for the generalized eigenvalue problem.
   Mat A0, A1;
 
-  // Whether the next solve is warm-started (see SetWarmStart), and whether the convergence
-  // test of warm-started solves is installed.
+  // Whether the next solve is warm-started, and whether its convergence test is installed.
   bool warm_start, ritz_test;
 
-  // Linear solver tolerance of the first Krylov cycle (see SetFirstCycleLinearSolverTol),
-  // the linear solver tolerance restored after it, and whether the monitor restoring it is
-  // installed and has yet to act in the current solve.
+  // Linear solver tolerance of the first Krylov cycle and the one restored after it, and
+  // whether the monitor restoring it is installed and has yet to act in the current solve.
   double first_cycle_tol, lin_tol;
   bool first_cycle_monitor, first_cycle;
 
-  // For the convergence test of warm-started solves (see CheckRitzValue): the Ritz values
-  // of the transformed problem at the previous and the current restart, each with the
-  // number of consecutive restarts at which it was kept unconverged, the iteration of the
-  // current restart, whether an unconverged Ritz value was already tested at it, and the
-  // numbers of convergences delayed and of eigenpairs accepted unsettled in the last solve.
+  // State of the convergence test of warm-started solves (see CheckRitzValue): the Ritz
+  // values of the previous and current restarts, each with the number of restarts it was
+  // held back, the current restart, whether an unconverged Ritz value was seen at it, and
+  // the numbers of delayed convergences and of eigenpairs accepted unsettled.
   std::vector<std::pair<PetscScalar, int>> ritz_prev, ritz_curr;
   PetscInt ritz_its;
   bool ritz_blocked;
@@ -259,7 +256,7 @@ public:
   void EndFirstCycle();
 
   // Update the relative error estimate of the Ritz value theta of the transformed problem
-  // at the current restart of a warm-started solve (called by its convergence test).
+  // in a warm-started solve (called by its convergence test).
   void CheckRitzValue(PetscScalar theta, PetscReal *errest);
 
   int Solve() override;
