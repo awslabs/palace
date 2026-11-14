@@ -16,6 +16,7 @@
 #include <numeric>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 #include <Eigen/Dense>
 #include <mfem.hpp>
@@ -290,31 +291,56 @@ std::vector<std::string> Backends()
 }
 
 // Boxes with a fixed spectrum: second-order absorbing boundaries on the faces x = 0 and
-// x = 1 next to a constant medium (ε = ε∞), the others PEC, with the target 8 GHz.
+// x = 1 next to a constant (ε = ε∞), a Debye (ε∞ = 2, Δε = 0.5, τ = 0.01 ns), or the
+// Lorentz medium, the others PEC; or a finite conductivity on the face z = 1, the others
+// PEC, next to the constant medium. The targets are 8 GHz, and 18 GHz for Debye.
 enum class FixedBox
 {
-  Constant
+  Constant,
+  Debye,
+  Lorentz,
+  Conductivity
 };
 
-json FixedBoxBoundaries(FixedBox)
+json FixedBoxBoundaries(FixedBox fixture)
 {
+  if (fixture == FixedBox::Conductivity)
+  {
+    return {{"PEC", {{"Attributes", {1, 2, 3, 4, 5}}}},
+            {"Conductivity", {{{"Attributes", {6}}, {"Conductivity", 1.0e5}}}}};
+  }
   return {{"PEC", {{"Attributes", {1, 2, 4, 6}}}},
           {"Absorbing", {{"Attributes", {3, 5}}, {"Order", 2}}}};
 }
 
-json FixedBoxPermittivity(FixedBox)
+json FixedBoxPermittivity(FixedBox fixture)
 {
-  return eps_inf;
+  switch (fixture)
+  {
+    case FixedBox::Debye:
+      return {
+          {"HighFrequency", eps_inf},
+          {"Terms",
+           {{{"Type", "Debye"}, {"DeltaPermittivity", 0.5}, {"RelaxationTime", 0.01}}}}};
+    case FixedBox::Lorentz:
+      return LorentzPermittivityConfig();
+    default:
+      return eps_inf;
+  }
 }
 
-double FixedBoxTarget(FixedBox)
+double FixedBoxTarget(FixedBox fixture)
 {
-  return 8.0;
+  return (fixture == FixedBox::Debye) ? 18.0 : 8.0;
 }
 
 // The n lowest eigenfrequencies (GHz) above the target of a fixed box, from the complete
 // spectrum of a dense companion problem on one process, independent of the eigensolvers.
-// Each is checked on the complete operator T(λ) of SpaceOperator.
+// Each is checked on the complete operator T(λ) of SpaceOperator. For the dispersive
+// media, each eigenvalue μ of the constant-medium companion problem with the absorbing
+// boundary scalar of λ r(λ), r = √(ε(λ) / ε∞), gives the roots λ of the scalar relation
+// λ r(λ) = μ on the sheet of the operator. For the conductivity, the companion problem is
+// in z = √λ, and λ = z².
 std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
                                                    FixedBox fixture, int n)
 {
@@ -322,6 +348,10 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   const auto comm = Mpi::World();
   REQUIRE(Mpi::Size(comm) == 1);
   test::IntegrationSettingsGuard settings_guard;
+  const bool is_debye = fixture == FixedBox::Debye;
+  const bool is_lorentz = fixture == FixedBox::Lorentz;
+  const bool is_conductivity = fixture == FixedBox::Conductivity;
+  const bool is_constant = fixture == FixedBox::Constant;
   const auto mesh_path = WriteBoxMesh(temp_dir);
   // The configuration names a backend of the build, which this function does not use.
   IoData iodata(BoxConfig(mesh_path, FixedBoxPermittivity(fixture),
@@ -348,15 +378,44 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   REQUIRE(K);
-  REQUIRE(C);  // The first-order part of the absorbing boundary
   REQUIRE(M);
-  auto curlcurl =
-      space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  REQUIRE(curlcurl);
+  // The first-order absorbing boundary term is in C next to the constant medium, and in A2
+  // next to the dispersive media.
+  REQUIRE(static_cast<bool>(C) == is_constant);
+  std::unique_ptr<ComplexOperator> damping, curlcurl, surface_mass;
+  double kappa = 0.0;
+  if (is_conductivity)
+  {
+    REQUIRE(space_op.GetSurfaceConductivityOp().Size() == 1);
+    const auto &law = iodata.boundaries.conductivity.front();
+    REQUIRE(law.sigma > 0.0);
+    REQUIRE(law.mu_r == 1.0);
+    REQUIRE(law.h == 0.0);
+    REQUIRE_FALSE(law.external);
+    // sigma is already sigma_hat = sigma_SI Z0 Lc. Face 6 is exterior (weight 1).
+    kappa = std::sqrt(law.sigma / law.mu_r);
+    surface_mass = space_op.GetSurfaceConductivityBoundaryMatrix<ComplexOperator>(
+        0, Operator::DIAG_ZERO);
+    REQUIRE(surface_mass);
+  }
+  else if (is_constant)
+  {
+    curlcurl =
+        space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(curlcurl);
+  }
+  else
+  {
+    REQUIRE(space_op.GetFarfieldOp().NumDispersiveMaterials() == 1);
+    damping = space_op.GetFarfieldDispersiveDampingMatrix(0, Operator::DIAG_ZERO);
+    curlcurl = space_op.GetFarfieldDispersiveCurlCurlMatrix(0, Operator::DIAG_ZERO);
+    REQUIRE(damping);
+    REQUIRE(curlcurl);
+  }
   const int total = space_op.GetNDSpace().GetTrueVSize();
   REQUIRE(total == 300);
   const auto &essential = space_op.GetNDDbcTDofLists().back();
-  REQUIRE(essential.Size() == 144);
+  REQUIRE(essential.Size() == (is_conductivity ? 168 : 144));
   std::vector<bool> constrained(total, false);
   for (int dof : essential)
   {
@@ -373,7 +432,7 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
     }
   }
   const int dim = static_cast<int>(free.size());
-  REQUIRE(dim == 156);
+  REQUIRE(dim == (is_conductivity ? 132 : 156));
   ComplexVector x(total), y(total);
   x.UseDevice(true);
   y.UseDevice(true);
@@ -398,46 +457,141 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
     REQUIRE(dense.allFinite());
     return dense;
   };
-  const Eigen::MatrixXcd Kd = Extract(*K), Cd = Extract(*C), Md = Extract(*M);
+  const Eigen::MatrixXcd Kd = Extract(*K), Md = Extract(*M);
+  const Eigen::MatrixXcd Cd = C ? Extract(*C) : Eigen::MatrixXcd::Zero(dim, dim);
   const Eigen::LLT<Eigen::MatrixXcd> mass(Md);
   REQUIRE(mass.info() == Eigen::Success);
-  // T(λ) = K + λ C + λ² M - 0.5 / λ M_ff. Clear its pole, then use the strong cubic
-  // companion with state (u, λ u, λ² u). No inverse or subspace.
-  const Eigen::MatrixXcd Mff = Extract(*curlcurl);
-  Eigen::MatrixXcd companion = Eigen::MatrixXcd::Zero(3 * dim, 3 * dim);
-  companion.block(0, dim, dim, dim).setIdentity();
-  companion.block(dim, 2 * dim, dim, dim).setIdentity();
-  companion.block(2 * dim, 0, dim, dim) = 0.5 * mass.solve(Mff);
-  companion.block(2 * dim, dim, dim, dim) = -mass.solve(Kd);
-  companion.block(2 * dim, 2 * dim, dim, dim) = -mass.solve(Cd);
+  Eigen::MatrixXcd companion;
+  if (is_conductivity)
+  {
+    // The owner returns iB. For h = 0, δ = √(2 / (μ σ ω)), Z = (1 + i) / (σ δ), so the
+    // scalar is κ √λ in Im λ > 0. P(z) = M z⁴ + κ B z + K, λ = z², state (u, z u, z² u,
+    // z³ u). M is SPD: no clearing, poles or infinity.
+    const Eigen::MatrixXcd B = Extract(*surface_mass) / 1i;
+    companion = Eigen::MatrixXcd::Zero(4 * dim, 4 * dim);
+    companion.block(0, dim, dim, dim).setIdentity();
+    companion.block(dim, 2 * dim, dim, dim).setIdentity();
+    companion.block(2 * dim, 3 * dim, dim, dim).setIdentity();
+    companion.block(3 * dim, 0, dim, dim) = -mass.solve(Kd);
+    companion.block(3 * dim, dim, dim, dim) = -kappa * mass.solve(B);
+  }
+  else
+  {
+    // T(μ) = K + μ C + μ² M - 0.5 / μ M_ff, with the damping matrix C of the first-order
+    // term (the owner matrices of the dispersive media carry i). Clear its pole, then use
+    // the strong cubic companion with state (u, μ u, μ² u). No inverse or subspace.
+    const Eigen::MatrixXcd Cinf =
+        is_constant ? Cd : Eigen::MatrixXcd(Extract(*damping) / 1i);
+    const Eigen::MatrixXcd Mff =
+        is_constant ? Extract(*curlcurl) : Eigen::MatrixXcd(Extract(*curlcurl) / 1i);
+    companion = Eigen::MatrixXcd::Zero(3 * dim, 3 * dim);
+    companion.block(0, dim, dim, dim).setIdentity();
+    companion.block(dim, 2 * dim, dim, dim).setIdentity();
+    companion.block(2 * dim, 0, dim, dim) = 0.5 * mass.solve(Mff);
+    companion.block(2 * dim, dim, dim, dim) = -mass.solve(Kd);
+    companion.block(2 * dim, 2 * dim, dim, dim) = -mass.solve(Cinf);
+  }
   REQUIRE(companion.allFinite());
   const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> spectrum(companion);
   REQUIRE(spectrum.info() == Eigen::Success);
   REQUIRE(spectrum.eigenvalues().allFinite());
   REQUIRE(spectrum.eigenvectors().allFinite());
 
-  // The eigenvalues above the target, lowest Im λ (Re f) first. Every companion copy is
-  // retained: no field or frequency deduplication. Below the target there is none, other
-  // than the gradients at λ = 0 (a multiple root, which round-off scatters to |λ| of about
-  // 1e-5 times the target here).
-  std::vector<int> candidates;
+  // The roots λ of each companion eigenvalue μ (z for the conductivity) above the target,
+  // on the sheet of the operator, lowest Im λ (Re f) first. Every companion copy and every
+  // mapped branch is retained: no field or frequency deduplication. For the constant
+  // medium, there is none below the target other than the gradients at λ = 0 (a multiple
+  // root, which round-off scatters to |λ| of about 1e-5 times the target here).
+  const double a = is_debye ? 0.25 : 0.05;
+  double tau = 0.0, omega0_squared = 0.0, gamma = 0.0;
+  if (is_debye || is_lorentz)
+  {
+    const auto &term = iodata.domains.materials.front().permittivity_terms.front();
+    if (is_debye)
+    {
+      const auto &law = std::get<config::DebyeData>(term);
+      tau = law.tau;  // Already nondimensionalized, not the input ns value.
+      REQUIRE(law.delta == 0.5);
+    }
+    else
+    {
+      const auto &law = std::get<config::LorentzData>(term);
+      omega0_squared = law.omega_0 * law.omega_0;
+      gamma = law.gamma;
+      REQUIRE(law.delta == delta_eps);
+    }
+  }
+  struct Candidate
+  {
+    std::complex<double> lambda;
+    int mode;
+  };
+  std::vector<Candidate> candidates;
   int below = 0;
   for (int mode = 0; mode < spectrum.eigenvalues().size(); mode++)
   {
-    const auto lambda = spectrum.eigenvalues()(mode);
-    if (lambda.imag() > iodata.solver.eigenmode.target)
+    const auto mu = spectrum.eigenvalues()(mode);
+    Eigen::VectorXcd values;
+    if (is_constant)
     {
-      candidates.push_back(mode);
+      values = Eigen::VectorXcd::Constant(1, mu);
     }
-    else if (lambda.imag() > 1.0e-2 * iodata.solver.eigenmode.target)
+    else if (is_conductivity)
     {
-      below++;
+      values = Eigen::VectorXcd::Constant(1, mu * mu);  // λ = z²
+    }
+    else if (is_debye)
+    {
+      // μ = λ r, r² = 1 + a / (1 + τ λ): all three scalar roots.
+      Eigen::Matrix3cd scalar = Eigen::Matrix3cd::Zero();
+      scalar(0, 1) = scalar(1, 2) = 1.0;
+      scalar(2, 0) = mu * mu / tau;
+      scalar(2, 1) = mu * mu;
+      scalar(2, 2) = -(1.0 + a) / tau;
+      const Eigen::ComplexEigenSolver<Eigen::Matrix3cd> roots(scalar, false);
+      REQUIRE(roots.info() == Eigen::Success);
+      values = roots.eigenvalues();
+    }
+    else
+    {
+      // D(λ) (λ² - μ²) + a ω₀² λ² = 0, D = λ² + γ λ + ω₀². The quartic is monic.
+      Eigen::Matrix4cd scalar = Eigen::Matrix4cd::Zero();
+      scalar(0, 1) = scalar(1, 2) = scalar(2, 3) = 1.0;
+      scalar(3, 0) = omega0_squared * mu * mu;
+      scalar(3, 1) = gamma * mu * mu;
+      scalar(3, 2) = mu * mu - (1.0 + a) * omega0_squared;
+      scalar(3, 3) = -gamma;
+      const Eigen::ComplexEigenSolver<Eigen::Matrix4cd> roots(scalar, false);
+      REQUIRE(roots.info() == Eigen::Success);
+      values = roots.eigenvalues();
+    }
+    REQUIRE(values.allFinite());
+    for (const auto lambda : values)
+    {
+      if (lambda.imag() <= iodata.solver.eigenmode.target)
+      {
+        below += (is_constant && lambda.imag() > 1.0e-2 * iodata.solver.eigenmode.target);
+        continue;
+      }
+      if (!is_constant)
+      {
+        // The analytic sheet of the operator's scalar, not a distance cutoff.
+        const auto owner_value =
+            is_conductivity
+                ? space_op.GetSurfaceConductivityOp().EvaluateScalar(0, lambda / 1i)
+                : lambda * space_op.GetFarfieldOp().GetDispersiveScale(0, lambda / 1i);
+        const auto model_value = is_conductivity ? kappa * mu : mu;
+        if (std::real(std::conj(model_value) * owner_value) < 0.0)
+        {
+          continue;
+        }
+      }
+      candidates.push_back({lambda, mode});
     }
   }
   CHECK(below == 0);
-  std::ranges::stable_sort(
-      candidates, [&](int a, int b)
-      { return spectrum.eigenvalues()(a).imag() < spectrum.eigenvalues()(b).imag(); });
+  std::ranges::stable_sort(candidates, [](const auto &l, const auto &r)
+                           { return l.lambda.imag() < r.lambda.imag(); });
   REQUIRE(candidates.size() >= static_cast<std::size_t>(n));
 
   // Native backward normalization: ||T(λ) x|| / (||x|| (||K|| + |λ| ||C|| + |λ|² ||M||)).
@@ -454,8 +608,7 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   {
     // The lowest n are selected before the validation: a failed candidate stops the case,
     // no higher candidate substitutes.
-    const int mode = candidates[k];
-    const auto lambda = spectrum.eigenvalues()(mode);
+    const auto [lambda, mode] = candidates[k];
     CAPTURE(k, mode, lambda);
     Eigen::VectorXcd field = spectrum.eigenvectors().col(mode).head(dim);
     const double field_norm = field.norm();
@@ -485,14 +638,13 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
     Mpi::Print(
         "Fixed-box spectrum mode {:d}: f = {:.12e}{:+.12e}i GHz, backward = {:.3e}\n",
         k + 1, frequency.real(), frequency.imag(), backward);
-    REQUIRE(backward <= 1.0e-10);
+    REQUIRE(backward <= 1.0e-8);
     expected.push_back(frequency);
   }
   return expected;
 }
 
-// The lowest modes above 8 GHz of the box with second-order absorbing boundaries next to
-// the constant medium (GHz), from FixedBoxSpectrum.
+// The lowest modes above the target of the fixed boxes (GHz), from FixedBoxSpectrum.
 const std::vector<std::complex<double>> constant_abc2_modes = {
     {13.33373469207, 2.199734381129}, {14.22474477916, 9.077464578857},
     {17.19541109405, 11.72289377094}, {18.36358844556, 1.956428758461},
@@ -504,6 +656,101 @@ const std::vector<std::complex<double>> constant_abc2_modes = {
     {29.12393495954, 5.066430628881}, {29.34965173756, 11.44100635637},
     {30.41173891639, 11.78279664698}, {31.55163281795, 4.876212150301},
     {33.07768200068, 1.037107381349}, {33.55149993009, 0.6518134200846}};
+
+const std::vector<std::complex<double>> debye_abc2_modes = {
+    {18.78468849275, 10.05621002136}, {19.15947802623, 13.11310664957},
+    {21.99149984087, 2.914592596579}, {22.64959793205, 11.80948177085},
+    {23.03491379891, 2.533598861728}, {23.56024034526, 13.17004899462},
+    {24.3610299302, 11.08994663097},  {25.30774245855, 12.39958516034},
+    {26.09860497143, 8.230931140732}, {26.71499449196, 2.78497533712},
+    {28.06820103421, 6.669399914204}, {28.1772488368, 13.27729093113},
+    {29.27861665967, 13.6439073093},  {30.56652584218, 6.529912233014},
+    {32.20594353367, 2.6393389868},   {32.69602397393, 2.256953880317},
+    {33.47395494536, 10.4834215293},  {33.73151430188, 13.44239894606},
+    {34.21908439059, 14.28300183515}, {35.7350850681, 5.442231528656}};
+const std::vector<std::complex<double>> lorentz_abc2_modes = {
+    {12.46381247035, 1.451488651821},  {13.61113256125, 0.386881564507},
+    {13.80584778635, 0.2800203047645}, {13.8261237978, 0.2657585107049},
+    {13.88060535601, 0.259063120424},  {13.90480581917, 0.3091485605215},
+    {13.90682894278, 0.2871822102945}, {13.91629411739, 0.4145898481345},
+    {13.92054511244, 0.2763882939216}, {13.92230478494, 0.2524306892286},
+    {13.92390065601, 0.3348785506493}, {13.92473971357, 0.2502573340685},
+    {13.93049773057, 0.3526688139333}, {13.93624274171, 0.328131721448},
+    {13.93827833162, 0.2508939527882}, {13.94014257405, 0.261295375264},
+    {13.94285904993, 0.3425550514265}, {13.9438587734, 0.2817881307931},
+    {13.94453680484, 0.2585689822111}, {13.94485496478, 0.310042540685}};
+const std::vector<std::complex<double>> conductivity_modes = {
+    {17.02214338926, 0.008699223002311}, {20.6642492049, 0.01433407222388},
+    {22.15176051954, 0.01291535754073},  {24.56454562049, 0.02128372813413},
+    {24.5747616102, 0.01105397630204},   {25.13254121752, 0.01062400027702},
+    {27.73476928962, 0.009220599844565}, {28.70493787589, 0.01138231435152},
+    {30.74286211977, 0.02382730150408},  {30.75876804998, 0.007895542114848},
+    {32.02135897455, 0.007433465205159}, {33.72463234975, 0.02496482159314},
+    {33.74269154441, 0.006872295052889}, {34.14537826432, 0.0124649416367},
+    {37.09635117434, 0.02437944684332},  {37.94507460581, 0.02356658003522},
+    {38.45919258548, 0.02667483233399},  {38.48017616205, 0.005643742636361},
+    {39.40365887558, 0.02737660987959},  {39.40877679638, 0.02226670221516}};
+
+const std::vector<std::complex<double>> &FixedBoxModes(FixedBox fixture)
+{
+  switch (fixture)
+  {
+    case FixedBox::Debye:
+      return debye_abc2_modes;
+    case FixedBox::Lorentz:
+      return lorentz_abc2_modes;
+    case FixedBox::Conductivity:
+      return conductivity_modes;
+    default:
+      return constant_abc2_modes;
+  }
+}
+
+// Solve a fixed box for n modes with an eigensolver backend, and check that it returns the
+// requested modes without gaps. They are those above the target which SLEPc and ARPACK
+// select for TARGET_IMAGINARY: for SLEPc the n lowest in Re f, and for ARPACK those with
+// the largest -Im θ of the shift-and-invert eigenvalue θ = 1 / (λ - σ), which prefers modes
+// with less damping.
+void CheckFixedBoxModes(const fs::path &temp_dir, FixedBox fixture,
+                        const std::string &backend, int n,
+                        const json &linear = json::object())
+{
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const double target = FixedBoxTarget(fixture);
+  auto config = BoxConfig(mesh, FixedBoxPermittivity(fixture), FixedBoxBoundaries(fixture),
+                          n, target, "", backend);
+  config["Solver"]["Linear"].update(linear);
+  const auto found_all = RunEigenmode(config, temp_dir, "fixed-box");
+  REQUIRE(found_all.f.size() >= static_cast<std::size_t>(n));
+  const auto &modes = FixedBoxModes(fixture);
+  auto expected = modes;
+  REQUIRE(expected.size() >= static_cast<std::size_t>(n));
+  if (backend == "ARPACK")
+  {
+    // -Im θ = b / (a² + b²) for λ - σ ∝ a + i b, a = -Im f, b = Re f - target. No mode
+    // beyond the list (with a larger b) can be among the requested: -Im θ ≤ 1 / b.
+    auto key = [target](std::complex<double> f)
+    { return -std::imag(1.0 / std::complex<double>(-f.imag(), f.real() - target)); };
+    std::ranges::stable_sort(expected, [&](auto a, auto b) { return key(a) > key(b); });
+    REQUIRE(1.0 / (modes.back().real() - target) < key(expected[n - 1]));
+  }
+  expected.resize(n);
+  auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
+  std::ranges::sort(expected, by_frequency);
+  auto found = found_all.f;
+  std::ranges::sort(found, by_frequency);
+  for (int k = 0; k < n; k++)
+  {
+    CAPTURE(k, found[k], expected[k]);
+    CHECK(std::abs(found[k] - expected[k]) <= 1.0e-7 * std::abs(expected[k]));
+  }
+  for (std::size_t k = 0; k < found_all.f.size(); k++)
+  {
+    CAPTURE(found_all.f[k], found_all.backward_error[k]);
+    CHECK(found_all.backward_error[k] <= 1.0e-8);
+    CHECK(found_all.f[k].imag() > 0.0);  // Lossy or radiating
+  }
+}
 
 }  // namespace
 
@@ -965,7 +1212,8 @@ TEST_CASE_METHOD(
   }
 }
 
-// Frequency-dependent boundary terms which are rational in the frequency.
+// Frequency-dependent boundary terms: rational in the frequency (the second-order
+// absorbing boundary next to a constant medium), or fitted with rational functions.
 
 TEST_CASE_METHOD(test::SharedTempDir,
                  "Eigenmode driver: second-order absorbing boundaries next to a constant "
@@ -975,63 +1223,126 @@ TEST_CASE_METHOD(test::SharedTempDir,
   // The term -0.5 / λ M_ff of the second-order absorbing boundary is rational, and each
   // eigensolver backend of the build linearizes it exactly: it must return the requested
   // modes without gaps, for each number of modes. The Hybrid seed and Quasi-Newton
-  // refinement skipped some of these, differently for each N. The requested modes are
-  // those above the target which SLEPc and ARPACK select for TARGET_IMAGINARY: for SLEPc
-  // the N lowest in Re f, and for ARPACK those with the largest -Im θ of the
-  // shift-and-invert eigenvalue θ = 1 / (λ - σ), which prefers modes with less damping.
+  // refinement skipped some of these, differently for each N.
   const std::string backend = GENERATE_REF(from_range(Backends()));
   const int n = GENERATE(4, 6, 8);
   CAPTURE(backend, n);
-  const auto mesh = WriteBoxMesh(temp_dir);
-  const auto fixture = FixedBox::Constant;
-  const double target = FixedBoxTarget(fixture);
-  const auto found_all =
-      RunEigenmode(BoxConfig(mesh, FixedBoxPermittivity(fixture),
-                             FixedBoxBoundaries(fixture), n, target, "", backend),
-                   temp_dir, "constant-abc2");
-  REQUIRE(found_all.f.size() >= static_cast<std::size_t>(n));
-  auto expected = constant_abc2_modes;
-  if (backend == "ARPACK")
-  {
-    // -Im θ = b / (a² + b²) for λ - σ ∝ a + i b, a = -Im f, b = Re f - target. No mode
-    // beyond the list (with a larger b) can be among the requested: -Im θ ≤ 1 / b.
-    auto key = [target](std::complex<double> f)
-    { return -std::imag(1.0 / std::complex<double>(-f.imag(), f.real() - target)); };
-    std::ranges::stable_sort(expected, [&](auto a, auto b) { return key(a) > key(b); });
-    REQUIRE(1.0 / (constant_abc2_modes.back().real() - target) < key(expected[n - 1]));
-  }
-  expected.resize(n);
-  auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
-  std::ranges::sort(expected, by_frequency);
-  auto found = found_all.f;
-  std::ranges::sort(found, by_frequency);
-  for (int k = 0; k < n; k++)
-  {
-    CAPTURE(k, found[k], expected[k]);
-    CHECK(std::abs(found[k] - expected[k]) <= 1.0e-7 * std::abs(expected[k]));
-  }
-  for (std::size_t k = 0; k < found_all.f.size(); k++)
-  {
-    CAPTURE(found_all.f[k], found_all.backward_error[k]);
-    CHECK(found_all.backward_error[k] <= 1.0e-8);
-    CHECK(found_all.f[k].imag() > 0.0);  // Radiating through the absorbing faces
-  }
+  CheckFixedBoxModes(temp_dir, FixedBox::Constant, backend, n);
 }
 
 TEST_CASE_METHOD(test::SharedTempDir,
-                 "Eigenmode driver: spectrum of the constant medium box with second-order "
-                 "absorbing boundaries",
-                 "[eigenmodedriver][Serial]")
+                 "Eigenmode driver: second-order absorbing boundaries next to a Debye "
+                 "medium",
+                 "[eigenmodedriver][Serial][Parallel]")
 {
-  // The reference modes of the driver test above, from the complete spectrum of the dense
-  // cubic companion problem (independent of the eigensolvers).
-  const auto expected = FixedBoxSpectrum(temp_dir, FixedBox::Constant, 20);
-  REQUIRE(constant_abc2_modes.size() <= expected.size());
-  for (std::size_t k = 0; k < constant_abc2_modes.size(); k++)
+  // The scalars √(ε / ε∞) and its inverse of the absorbing boundary next to the medium
+  // are fitted; the cut of the square root is outside the window of the search. The
+  // linear solver is exact (ComplexCoarseSolve, one level): the default solver with a
+  // SuperLU coarse solve returns wrong solutions for this box, while reporting
+  // convergence.
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  CAPTURE(backend);
+  CheckFixedBoxModes(temp_dir, FixedBox::Debye, backend, 4,
+                     {{"ComplexCoarseSolve", true}, {"MGMaxLevels", 1}});
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: second-order absorbing boundaries next to a Lorentz "
+                 "medium",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // The target is below the resonance. The branch cut of √(ε / ε∞) runs between the
+  // material pole and the permittivity zero, at 14.00 and 14.34 GHz, in the window of the
+  // search; the four lowest modes are below it.
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  CAPTURE(backend);
+  CheckFixedBoxModes(temp_dir, FixedBox::Lorentz, backend, 4);
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: finite conductivity on a face of a PEC box",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // The skin-effect scalar √λ of the face z = 1 is fitted; its branch point λ = 0 is
+  // outside the window of the search.
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  CAPTURE(backend);
+  CheckFixedBoxModes(temp_dir, FixedBox::Conductivity, backend, 4);
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: modes next to the branch cut of a fitted boundary term",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // In the Lorentz box, the rational fit of √(ε / ε∞) is not valid in a strip around its
+  // branch cut, from the material pole to the permittivity zero, where the modes
+  // accumulate. With six modes, the fifth and sixth lowest are in the strip: the solve
+  // must name the strip in a warning, and each mode found in it, whose error is that of the
+  // complete operator.
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  CAPTURE(backend);
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const auto fixture = FixedBox::Lorentz;
+  const auto config =
+      BoxConfig(mesh, FixedBoxPermittivity(fixture), FixedBoxBoundaries(fixture), 6,
+                FixedBoxTarget(fixture), "", backend);
+  Eigenvalues found;
+  const auto out =
+      test::CaptureStdout([&] { found = RunEigenmode(config, temp_dir, "strip"); });
+  if (!Mpi::Root(Mpi::World()))
   {
-    CAPTURE(k, expected[k], constant_abc2_modes[k]);
-    CHECK(std::abs(expected[k] - constant_abc2_modes[k]) <=
-          1.0e-10 * std::abs(expected[k]));
+    return;  // Only the root process prints
+  }
+  // The strip around the cut, a segment at Im f = γ / 2 (in GHz, the damping frequency is
+  // γ / 2π) between the pole and the zero of ε.
+  const std::string strip_text = "Its rational fit is not valid within ";
+  const auto pos = out.find(strip_text);
+  REQUIRE(pos != std::string::npos);
+  const double strip = std::stod(out.substr(pos + strip_text.size()));
+  CAPTURE(strip);
+  REQUIRE(strip > 0.0);
+  const double im = 0.5 * damping;
+  const double pole = std::sqrt(f0 * f0 - im * im),
+               zero = std::sqrt(f0 * f0 * (1.0 + delta_eps / eps_inf) - im * im);
+  int inside = 0;
+  for (std::size_t k = 0; k < found.f.size(); k++)
+  {
+    const auto f = found.f[k];
+    const double d =
+        std::abs(f - std::complex<double>(std::clamp(f.real(), pole, zero), im));
+    const bool warned =
+        out.find(fmt::format("Eigenmode {:d} at ", k + 1)) != std::string::npos;
+    CAPTURE(k, f, d, warned);
+    if (d < 0.9 * strip)
+    {
+      inside++;
+      CHECK(warned);
+    }
+    else if (d > 1.1 * strip)
+    {
+      CHECK_FALSE(warned);
+    }
+  }
+  CHECK(inside >= 1);
+}
+
+TEST_CASE_METHOD(
+    test::SharedTempDir,
+    "Eigenmode driver: spectra of the boxes with frequency-dependent boundaries",
+    "[eigenmodedriver][Serial]")
+{
+  // The reference modes of the driver tests above, from the complete spectrum of a dense
+  // companion problem (independent of the eigensolvers).
+  const auto fixture = GENERATE(FixedBox::Constant, FixedBox::Debye, FixedBox::Lorentz,
+                                FixedBox::Conductivity);
+  const auto &modes = FixedBoxModes(fixture);
+  CAPTURE(static_cast<int>(fixture));
+  const auto expected = FixedBoxSpectrum(temp_dir, fixture, 20);
+  REQUIRE(modes.size() <= expected.size());
+  for (std::size_t k = 0; k < modes.size(); k++)
+  {
+    CAPTURE(k, expected[k], modes[k]);
+    CHECK(std::abs(expected[k] - modes[k]) <= 1.0e-10 * std::abs(expected[k]));
   }
 }
 

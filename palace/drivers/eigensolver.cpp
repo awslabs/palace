@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <array>
 #include <complex>
+#include <functional>
 #include <numbers>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
@@ -28,6 +30,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/permittivitymodel.hpp"
+#include "utils/rationalfit.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -116,11 +119,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //  - frequency-dependent permittivity pole terms gₘ(λ) Bₘ, gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ),
   //  - second-order absorbing boundaries next to constant materials, -0.5 / λ M_ff,
   //  - rational impedance boundaries g(λ) M_b, g(λ) = λ D(λ) / N(λ).
-  // Djordjevic-Sarkar terms, wave ports, surface conductivity, and absorbing boundaries
-  // next to frequency-dependent materials are not rational, and keep the Hybrid seed and
-  // the Quasi-Newton refinement. RefineNonlinear has no effect here: the solution is exact
-  // and there is nothing to refine. With PEPLinear = false, SLEPc's polynomial eigensolver
-  // linearizes the problem itself, without the auxiliary blocks.
+  // The absorbing boundaries next to frequency-dependent materials (with √(ε(λ) / ε∞)) and
+  // the finite conductivity boundaries of zero thickness (with √λ) are fitted with
+  // rational functions in a window of the search (utils::FitScalar), valid outside a strip
+  // around their branch cuts. Their reported errors are those of the complete operator.
+  // Djordjevic-Sarkar terms and wave ports keep the Hybrid seed and the Quasi-Newton
+  // refinement. RefineNonlinear has no effect here: the terms are exact, or fitted to the
+  // tolerance of the eigensolver, and there is nothing to refine. With PEPLinear = false,
+  // SLEPc's polynomial eigensolver linearizes the problem itself, without the auxiliary
+  // blocks.
   struct RationalA2Term
   {
     std::unique_ptr<ComplexOperator> B;
@@ -135,8 +142,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       return f;
     }
+    // For a fitted term, its complete scalar function, a name, and its fit.
+    std::function<std::complex<double>(std::complex<double>)> f;
+    std::string name;
+    utils::ScalarFit fit;
   };
   std::vector<RationalA2Term> a2_terms;
+  const utils::FitWindow window = {target, iodata.solver.eigenmode.target_upper - target};
+  bool fitted = false;
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
       (iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK ||
        iodata.solver.eigenmode.pep_linear))
@@ -144,9 +157,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const auto &mat_op = space_op.GetMaterialOp();
     const auto &farfield_op = space_op.GetFarfieldOp();
     const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
-    bool rational = space_op.GetWavePortOp().Size() == 0 &&
-                    space_op.GetSurfaceConductivityOp().Size() == 0 &&
-                    farfield_op.NumDispersiveMaterials() == 0;
+    const auto &surf_sigma_op = space_op.GetSurfaceConductivityOp();
+    bool rational = space_op.GetWavePortOp().Size() == 0;
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
       if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
@@ -206,14 +218,117 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         a2_terms.push_back(std::move(term));
       }
     }
+
+    // The fitted terms f(λ) = α λᵐ g(λ), with g fitted, and the points of the branch cuts
+    // of g as ω = λ / i: of √(ε / ε∞) for the absorbing boundaries next to material, of √λ
+    // (λ = 0 and the negative real axis of ω) for the conductivity. The fit tolerance is
+    // that of the eigenvalue solve: a relative error ε of a term changes the backward
+    // error of the complete operator by at most about ε.
+    std::string unfitted;
+    const double fit_tol = std::clamp(iodata.solver.eigenmode.tol, 1.0e-12, 1.0e-6);
+    auto AddFitted = [&](std::unique_ptr<ComplexOperator> &&B, std::string name,
+                         std::function<std::complex<double>(std::complex<double>)> g,
+                         std::complex<double> alpha, int m,
+                         const std::vector<std::complex<double>> &cut)
+    {
+      if (!B || !rational)
+      {
+        return;
+      }
+      auto &term = a2_terms.emplace_back();
+      term.fit = utils::FitScalar(g, alpha, m, cut, window, fit_tol);
+      term.poly = term.fit.poly;
+      term.poles = term.fit.poles;
+      term.residues = term.fit.residues;
+      term.f = [g, alpha, m](std::complex<double> l)
+      { return alpha * std::pow(l, m) * g(l); };
+      term.name = std::move(name);
+      term.B = std::move(B);
+      rational = term.fit.success;
+      unfitted = rational ? unfitted : term.name;
+      fitted = true;
+    };
+    for (std::size_t k = 0; rational && k < farfield_op.NumDispersiveMaterials(); k++)
+    {
+      std::vector<std::complex<double>> p, r;
+      const auto m = farfield_op.GetDispersiveMaterial(k);
+      if (!mat_op.GetFrequencyDependentWavePermittivityPoles(m, p, r))
+      {
+        rational = false;  // Djordjevic-Sarkar
+        break;
+      }
+      {
+        // The pole-residue form is the wave permittivity of the material.
+        const std::complex<double> l(-0.1 * target, 1.3 * target);
+        std::complex<double> e = 1.0;
+        for (std::size_t j = 0; j < p.size(); j++)
+        {
+          e += r[j] / (l - p[j]);
+        }
+        const auto e_ref = mat_op.EvaluateFrequencyDependentWavePermittivity(m, l) /
+                           mat_op.GetFrequencyDependentPermittivityHighFrequency(m);
+        MFEM_VERIFY(std::abs(e - e_ref) <= 1.0e-10 * std::abs(e_ref),
+                    "The poles of the wave permittivity of material "
+                        << m << " do not reproduce it!");
+      }
+      const auto cut = utils::SquareRootCut(p, r, window.radius / 4096.0);
+      auto scale = [&farfield_op, k](std::complex<double> l)
+      { return farfield_op.GetDispersiveScale(k, l / 1i); };
+      auto inv_scale = [&farfield_op, k](std::complex<double> l)
+      { return 1.0 / farfield_op.GetDispersiveScale(k, l / 1i); };
+      const auto name = fmt::format("absorbing boundary next to material {:d}", m + 1);
+      // The scalars ω r, 0.5 / (ω r), ω / r, and 1 / r of the damping, curl-curl, and
+      // frequency-scaled Floquet matrices, with ω = -i λ.
+      AddFitted(space_op.GetFarfieldDispersiveDampingMatrix(k, Operator::DIAG_ZERO), name,
+                scale, -1i, 1, cut);
+      AddFitted(space_op.GetFarfieldDispersiveCurlCurlMatrix(k, Operator::DIAG_ZERO), name,
+                inv_scale, 0.5i, -1, cut);
+      AddFitted(space_op.GetFarfieldDispersiveDampingFloquetMatrix(k, Operator::DIAG_ZERO),
+                name, inv_scale, -1i, 1, cut);
+      AddFitted(
+          space_op.GetFarfieldDispersiveStiffnessFloquetMatrix(k, Operator::DIAG_ZERO),
+          name, inv_scale, 1.0, 0, cut);
+    }
+    for (std::size_t g = 0; rational && g < surf_sigma_op.Size(); g++)
+    {
+      if (!surf_sigma_op.IsActive(g))
+      {
+        continue;
+      }
+      if (surf_sigma_op.GetThickness(g) > 0.0)
+      {
+        rational = false;  // The thickness correction has other singularities
+        break;
+      }
+      std::vector<std::complex<double>> cut;
+      for (int k = 0; k <= 64; k++)
+      {
+        cut.push_back(-window.radius * k / 16.0);
+      }
+      // The matrix applies i A_σ, so the scalar of i ω / Z(ω) A_σ is fitted as λ g(λ).
+      AddFitted(
+          space_op.GetSurfaceConductivityBoundaryMatrix<ComplexOperator>(
+              static_cast<int>(g), Operator::DIAG_ZERO),
+          fmt::format("finite conductivity boundary {:d}", g + 1),
+          [&surf_sigma_op, g](std::complex<double> l)
+          { return surf_sigma_op.EvaluateScalar(g, l / 1i) / (1i * l); }, 1.0, 1, cut);
+    }
     if (!rational)
     {
+      if (!unfitted.empty())
+      {
+        Mpi::Print(" The {} has no rational fit with at most 24 poles in the window; using "
+                   "the Hybrid nonlinear eigensolver\n",
+                   unfitted);
+      }
       a2_terms.clear();
+      fitted = false;
     }
     if (!a2_terms.empty())
     {
       // The terms must be the complete A2(λ): any other contribution is an error here, not
-      // an approximation. Checked at one complex λ, off the interpolation points.
+      // an approximation. Checked at one complex λ, with the complete scalar functions of
+      // the fitted terms.
       const std::complex<double> l(-0.01 * target, 1.05 * target);
       ComplexVector v, r, r_terms;
       space_op.GetRandomInitialVector(v, 2);
@@ -225,7 +340,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       r_terms = 0.0;
       for (const auto &term : a2_terms)
       {
-        term.B->AddMult(v, r_terms, term.Eval(l));
+        term.B->AddMult(v, r_terms, term.f ? term.f(l) : term.Eval(l));
       }
       const double norm = linalg::Norml2(space_op.GetComm(), r);
       r_terms.AXPY(-1.0, r);
@@ -235,6 +350,63 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                   "(relative difference "
                       << err / norm << ")!");
     }
+  }
+  // The fits, and the rule where they are not valid: each strip around a branch cut in the
+  // window is named in a warning, and so is each mode found where a fit is not valid (see
+  // below). Modes in a strip may be missing, or wrong; the errors reported for them are
+  // those of the complete operator.
+  auto ToGHz = [this](std::complex<double> omega)
+  {
+    return iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+           (2.0 * std::numbers::pi);
+  };
+  for (std::size_t t = 0; t < a2_terms.size(); t++)
+  {
+    const auto &term = a2_terms[t];
+    if (!term.f)
+    {
+      continue;
+    }
+    const auto &fit = term.fit;
+    Mpi::Print(" Rational fit of the {}: {:d} poles from {:d} samples, error {:.2e} on "
+               "{:d} check points\n",
+               term.name, fit.poles.size(), fit.num_samples, fit.error, fit.num_checks);
+    if (fit.strip == 0.0 ||
+        std::ranges::any_of(a2_terms.begin() + t + 1, a2_terms.end(),
+                            [&](const auto &other) { return other.name == term.name; }))
+    {
+      continue;
+    }
+    // One warning for each boundary, with the widest strip of its fits.
+    double strip = 0.0;
+    for (const auto &other : a2_terms)
+    {
+      strip = (other.name == term.name) ? std::max(strip, other.fit.strip) : strip;
+    }
+    double re[2] = {mfem::infinity(), -mfem::infinity()}, im[2] = {re[0], re[1]};
+    for (const auto w : fit.singular)
+    {
+      if (window.Contains(w) ||
+          (window.Contains(w + strip) || window.Contains(w - strip) ||
+           window.Contains(w + 1i * strip) || window.Contains(w - 1i * strip)))
+      {
+        const auto f = ToGHz(w);
+        re[0] = std::min(re[0], f.real());
+        re[1] = std::max(re[1], f.real());
+        im[0] = std::min(im[0], f.imag());
+        im[1] = std::max(im[1], f.imag());
+      }
+    }
+    if (re[0] > re[1])
+    {
+      continue;  // The strip is outside the window
+    }
+    Mpi::Warning("The {} has a branch cut in the window of the eigenvalue search (Target "
+                 "to TargetUpper), at Re{{f}} = {:.4f} to {:.4f} GHz, Im{{f}} = {:.4f} to "
+                 "{:.4f} GHz. Its rational fit is not valid within {:.3e} GHz of the cut: "
+                 "modes there may be missing or wrong, and their errors are those of the "
+                 "complete operator.\n",
+                 term.name, re[0], re[1], im[0], im[1], ToGHz(strip).real());
   }
   const bool exact_poles = !a2_terms.empty();
   const bool hybrid_seed =
@@ -403,10 +575,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->AddRationalTerm(*term.B, term.poly, term.poles, term.residues);
       num_poles += term.poles.size();
     }
-    Mpi::Print(" Frequency-dependent terms linearized exactly ({:d} term{}, {:d} pole{}), "
+    Mpi::Print(" Frequency-dependent terms linearized {}({:d} term{}, {:d} pole{}), "
                "without nonlinear refinement\n",
-               a2_terms.size(), (a2_terms.size() > 1) ? "s" : "", num_poles,
-               (num_poles > 1) ? "s" : "");
+               fitted ? "with rational fits " : "exactly ", a2_terms.size(),
+               (a2_terms.size() > 1) ? "s" : "", num_poles, (num_poles > 1) ? "s" : "");
+    if (fitted)
+    {
+      // Report the errors of the complete operator, not of its rational model.
+      eigen->SetExtraSystemMatrix(funcA2_full);
+    }
   }
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
@@ -582,6 +759,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // permittivity poles, A2 at the target completes T(σ); linear problems have no A2.
     A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
                                                              : std::move(A2);
+    if (fitted)
+    {
+      // The linearization requires its own model at the shift, which differs from A2 by
+      // the fit error.
+      std::vector<std::complex<double>> coeff;
+      std::vector<const ComplexParOperator *> ops;
+      for (const auto &term : a2_terms)
+      {
+        coeff.push_back(term.Eval(1i * target));
+        ops.push_back(dynamic_cast<const ComplexParOperator *>(term.B.get()));
+        MFEM_VERIFY(ops.back(), "Unexpected operator type of a rational term!");
+      }
+      A2_shift = BuildParSumOperator(coeff, ops);
+    }
     A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
                                  C.get(), M.get(), A2_shift.get());
   }
@@ -708,6 +899,29 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                          (2.0 * std::numbers::pi),
                      m + 1);
       }
+    }
+  }
+
+  for (int i = 0; i < num_report; i++)
+  {
+    const std::complex<double> omega = eigenvalues[i] / 1i;
+    for (std::size_t t = 0; t < a2_terms.size(); t++)
+    {
+      const auto &term = a2_terms[t];
+      if (!term.f || term.fit.IsValid(window, omega) ||
+          std::ranges::any_of(a2_terms.begin(), a2_terms.begin() + t, [&](const auto &other)
+                              { return other.f && !other.fit.IsValid(window, omega); }))
+      {
+        continue;
+      }
+      const auto f = ToGHz(omega);
+      Mpi::Warning(
+          "Eigenmode {:d} at {:.6e}{:+.6e}i GHz lies where the rational fit of the "
+          "{} is not valid ({}): it solves the fitted problem, and its error is "
+          "that of the complete operator.\n",
+          i + 1, f.real(), f.imag(), term.name,
+          window.Contains(omega) ? "next to its branch cut"
+                                 : "outside the window of the fit");
     }
   }
 

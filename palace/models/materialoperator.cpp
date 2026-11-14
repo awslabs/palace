@@ -746,6 +746,41 @@ MaterialOperator::EvaluateFrequencyDependentWavePermittivity(std::size_t materia
   return EvaluateFrequencyDependentPermittivity(material_idx, s) + fd.sigma / s;
 }
 
+bool MaterialOperator::GetFrequencyDependentWavePermittivityPoles(
+    std::size_t m, std::vector<std::complex<double>> &p,
+    std::vector<std::complex<double>> &r) const
+{
+  const auto &fd = frequency_dependent_materials.at(m);
+  if (!fd.djordjevic_sarkar_terms.empty())
+  {
+    return false;
+  }
+  std::complex<double> r0 = fd.sigma;
+  p.clear();
+  r.clear();
+  for (const auto &term : permittivity::PoleTerms(fd.terms))
+  {
+    if (term.pole == std::complex<double>(0.0, 0.0))
+    {
+      r0 += term.residue;
+      continue;
+    }
+    p.push_back(term.pole);
+    r.push_back(term.residue / fd.eps_inf);
+    if (term.pole.imag() > 0.0)
+    {
+      p.push_back(std::conj(term.pole));
+      r.push_back(std::conj(term.residue) / fd.eps_inf);
+    }
+  }
+  if (r0 != 0.0)
+  {
+    p.push_back(0.0);
+    r.push_back(r0 / fd.eps_inf);
+  }
+  return true;
+}
+
 bool MaterialOperator::HasStoredElectricEnergy(std::size_t material_idx) const
 {
   return permittivity::HasStoredEnergy(

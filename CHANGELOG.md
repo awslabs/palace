@@ -40,12 +40,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     pole specifies no stored electric energy, so the electric energy outputs of a material
     with one are omitted. Existing constant-permittivity inputs are unchanged.
     SchemaVer 4-4-0 [PR 877](https://github.com/awslabs/palace/pull/877).
-  - With the default solver settings, eigenmode problems with second-order absorbing
-    boundaries next to constant materials or rational impedance boundaries, alone or with
-    the pole terms of the materials, are solved exactly as linear eigenvalue problems, with
-    SLEPc and ARPACK, as those with only the pole terms. Rational impedances with repeated
-    zeros or a Robin coefficient which grows faster than ω² keep the nonlinear
-    eigensolver. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+  - With the default solver settings, eigenmode problems with frequency-dependent boundary
+    terms are solved as linear eigenvalue problems, with SLEPc and ARPACK, as those with
+    only the pole terms of the materials: second-order absorbing boundaries next to
+    constant materials and rational impedance boundaries exactly, and absorbing boundaries
+    next to frequency-dependent materials and finite conductivity boundaries of zero
+    thickness with rational fits in the window of the search. *Palace* prints the error of
+    each fit, and warns of the modes found next to a branch cut, where a fit is not valid.
+    Wave ports, `DjordjevicSarkar` terms, conductivity boundaries with a thickness, and
+    rational impedances with repeated zeros or a Robin coefficient which grows faster than
+    ω² keep the nonlinear eigensolver.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
 
 #### Interface Changes
 

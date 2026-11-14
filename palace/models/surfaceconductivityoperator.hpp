@@ -97,6 +97,9 @@ public:
     return g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0;
   }
 
+  // The conductor thickness of group g (zero for the half-space limit).
+  double GetThickness(std::size_t g) const { return boundaries.at(g).h; }
+
   // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω.
   // Public wrapper so the circuit-synthesis path can sample the scalar for its dispersion
   // fit (the ω-independent boundary mass is factored out via

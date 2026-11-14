@@ -123,6 +123,12 @@ public:
   // coefficient, both with the high-frequency permittivity.
   std::size_t NumDispersiveMaterials() const { return ceed_attr_dispersive.size(); }
 
+  // The index of frequency-dependent material k among those of the MaterialOperator.
+  std::size_t GetDispersiveMaterial(std::size_t k) const
+  {
+    return ceed_attr_dispersive.at(k).first;
+  }
+
   // The extra system terms for a real-valued preconditioner, in one coefficient each: the
   // boundary curl-curl term next to constant materials as the negative sum of its real
   // and imaginary parts, and the terms next to frequency-dependent materials by their

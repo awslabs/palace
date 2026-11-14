@@ -153,7 +153,7 @@ frequency. The eigenmode divergence-free projection is disabled: its fixed
 high-frequency weighting does not impose the frequency-dependent interface condition, and
 longitudinal modes at permittivity zeros can be physical. With the default solver
 settings, eigenmode problems whose only frequency-dependent terms are the pole terms of the
-materials, or these and the rational boundary terms of
+materials, or these and the rational or fitted boundary terms of
 [Eigenmode problems](problem.md#Eigenmode-problems), are solved as linear eigenvalue
 problems, including the modes that accumulate near the resonance of a partially
 filled region. With other frequency-dependent terms the nonlinear eigensolver is used,

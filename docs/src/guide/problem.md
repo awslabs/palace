@@ -35,12 +35,25 @@ errors in `eig.csv` cannot be smaller than the accuracy of these solves: with a 
 [`config["Solver"]["Eigenmode"]["Tol"]`](../config/reference.md#config-solver-eigenmode),
 reduce [`config["Solver"]["Linear"]["Tol"]`](../config/reference.md#config-solver-linear)
 too. With `"NonlinearType": "SLP"`, or with SLEPc and `"PEPLinear": false`, the nonlinear
-eigensolver described next is used instead.
+eigensolver described below is used instead.
 
-Other frequency-dependent terms are not solved in this way: wave ports, finite
-conductivity boundaries, absorbing boundaries next to a frequency-dependent material,
-`DjordjevicSarkar` terms, and rational impedances with repeated zeros or a Robin
-coefficient ``i\omega / Z_s`` which grows faster than ``\omega^2``.
+Absorbing boundaries next to a frequency-dependent material (with the factor
+``\sqrt{\varepsilon(\omega) / \varepsilon_\infty}``) and finite conductivity boundaries
+of zero thickness (with ``\sqrt{\omega}``) are not rational. Their scalar functions are
+fitted with rational functions in the window of the search, the damped frequencies ``f``
+with ``\mathrm{Re}\,f \geq`` `Target` and ``|f - `` `Target` ``| \leq`` `TargetUpper` ``-``
+`Target`, and the problem is solved in the same way. *Palace* prints the number of poles of
+each fit and its error, checked on the boundary of the region where it is valid. No
+rational function follows a branch cut of a square root: next to a material resonance, the
+cut runs from the material pole to the permittivity zero, and the fit is not valid within a
+strip around it. *Palace* warns when such a strip lies in the window, and names each mode
+found in the strip or outside the window. The modes there may be missing or wrong; the
+errors in `eig.csv` are always those of the complete operator, not of its fit.
+
+Other frequency-dependent terms are not solved in this way: wave ports, `DjordjevicSarkar`
+terms (also next to an absorbing boundary), finite conductivity boundaries with a
+thickness, and rational impedances with repeated zeros or a Robin coefficient
+``i\omega / Z_s`` which grows faster than ``\omega^2``.
 With any of them, for constant and frequency-dependent materials alike, the nonlinear
 eigensolver of `"NonlinearType"` is used. It returns converged modes, but not always the
 ones nearest the target: a small error for a returned mode does not show that no lower mode

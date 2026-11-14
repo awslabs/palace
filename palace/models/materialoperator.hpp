@@ -268,6 +268,13 @@ public:
   // s ≠ 0, from its configured terms, including exact zero poles. Errors at a singularity.
   std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
                                                               std::complex<double> s) const;
+  // The wave permittivity ε(s) + σ/s of frequency-dependent material m in pole-residue
+  // form, ε∞ (1 + Σₖ r[k] / (s - p[k])), with every pole (the conjugates, and zero for the
+  // conductivity and the zero poles of the terms). False with a Djordjevic-Sarkar term.
+  bool
+  GetFrequencyDependentWavePermittivityPoles(std::size_t m,
+                                             std::vector<std::complex<double>> &p,
+                                             std::vector<std::complex<double>> &r) const;
   // The wave permittivity ε(s) + σ/s of a frequency-dependent material, with its user
   // Conductivity σ (a free current, not part of D or the stored energy), for the
   // propagation constant and impedance of an absorbing boundary or Floquet port. Unlike the
