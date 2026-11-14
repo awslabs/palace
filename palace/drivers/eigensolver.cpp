@@ -119,15 +119,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //  - frequency-dependent permittivity pole terms gₘ(λ) Bₘ, gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ),
   //  - second-order absorbing boundaries next to constant materials, -0.5 / λ M_ff,
   //  - rational impedance boundaries g(λ) M_b, g(λ) = λ D(λ) / N(λ).
-  // The absorbing boundaries next to frequency-dependent materials (with √(ε(λ) / ε∞)) and
-  // the finite conductivity boundaries of zero thickness (with √λ) are fitted with
-  // rational functions in a window of the search (utils::FitScalar), valid outside a strip
-  // around their branch cuts. Their reported errors are those of the complete operator.
-  // Djordjevic-Sarkar terms and wave ports keep the Hybrid seed and the Quasi-Newton
-  // refinement. RefineNonlinear has no effect here: the terms are exact, or fitted to the
-  // tolerance of the eigensolver, and there is nothing to refine. With PEPLinear = false,
-  // SLEPc's polynomial eigensolver linearizes the problem itself, without the auxiliary
-  // blocks.
+  // The absorbing boundaries next to frequency-dependent materials (with √(ε(λ) / ε∞)), the
+  // finite conductivity boundaries of zero thickness (with √λ), and the wave ports with a
+  // TE or TEM mode of a homogeneous port (below) are fitted with rational functions in a
+  // window of the search (utils::FitScalar), valid outside a strip around their branch
+  // cuts. Their reported errors are those of the complete operator. Djordjevic-Sarkar
+  // terms and other wave ports keep the Hybrid seed and the Quasi-Newton refinement.
+  // RefineNonlinear has no effect here: the terms are exact, or fitted to the tolerance of
+  // the eigensolver, and there is nothing to refine. With PEPLinear = false, SLEPc's
+  // polynomial eigensolver linearizes the problem itself, without the auxiliary blocks.
   struct RationalA2Term
   {
     std::unique_ptr<ComplexOperator> B;
@@ -158,7 +158,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const auto &farfield_op = space_op.GetFarfieldOp();
     const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
     const auto &surf_sigma_op = space_op.GetSurfaceConductivityOp();
-    bool rational = space_op.GetWavePortOp().Size() == 0;
+    auto &wave_port_op = space_op.GetWavePortOp();
+    bool rational = true;
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
       if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
@@ -229,7 +230,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto AddFitted = [&](std::unique_ptr<ComplexOperator> &&B, std::string name,
                          std::function<std::complex<double>(std::complex<double>)> g,
                          std::complex<double> alpha, int m,
-                         const std::vector<std::complex<double>> &cut)
+                         const std::vector<std::complex<double>> &cut,
+                         std::function<std::complex<double>(std::complex<double>)> f = {})
     {
       if (!B || !rational)
       {
@@ -240,12 +242,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       term.poly = term.fit.poly;
       term.poles = term.fit.poles;
       term.residues = term.fit.residues;
-      term.f = [g, alpha, m](std::complex<double> l)
+      term.f = f ? f : [g, alpha, m](std::complex<double> l)
       { return alpha * std::pow(l, m) * g(l); };
       term.name = std::move(name);
       term.B = std::move(B);
       rational = term.fit.success;
-      unfitted = rational ? unfitted : term.name;
+      unfitted = rational ? unfitted
+                          : fmt::format("{} has no rational fit with at most 24 poles in "
+                                        "the window",
+                                        term.name);
       fitted = true;
     };
     for (std::size_t k = 0; rational && k < farfield_op.NumDispersiveMaterials(); k++)
@@ -254,7 +259,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const auto m = farfield_op.GetDispersiveMaterial(k);
       if (!mat_op.GetFrequencyDependentWavePermittivityPoles(m, p, r))
       {
-        rational = false;  // Djordjevic-Sarkar
+        rational = false;
+        unfitted = fmt::format("absorbing boundary next to the Djordjevic-Sarkar material "
+                               "{:d} is not fitted",
+                               m + 1);
         break;
       }
       {
@@ -313,13 +321,95 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           [&surf_sigma_op, g](std::complex<double> l)
           { return surf_sigma_op.EvaluateScalar(g, l / 1i) / (1i * l); }, 1.0, 1, cut);
     }
+
+    // Wave ports whose mode has a shape which does not depend on the frequency: a TE or
+    // TEM mode (its modal correction W vanishes) of a homogeneous port with constant
+    // material, kₙ(ω)² = a ω² + b, above the cutoff in the window. Each sample of kₙ is a
+    // mode solve: a and b are from two, checked on two more, and the closed form is fitted
+    // with the cut of its square root, from the cutoff. The complete operator, with the
+    // mode solves, is in the reported errors.
+    double modal_correction = 0.0;
+    if (rational && wave_port_op.Size() > 0)
+    {
+      ComplexVector v, w;
+      space_op.GetRandomInitialVector(v, 3);
+      w.SetSize(v.Size());
+      w.UseDevice(true);
+      funcA2_full(1i * target)->Mult(v, w);
+      const double norm = linalg::Norml2(space_op.GetComm(), w);
+      funcA2(1i * target)->AddMult(v, w, -1.0);
+      modal_correction = linalg::Norml2(space_op.GetComm(), w) / norm;
+    }
+    for (const auto &[idx, data] : wave_port_op)
+    {
+      if (!rational || !data.active)
+      {
+        continue;
+      }
+      const std::complex<double> w[4] = {target,
+                                         target + std::polar(0.5 * window.radius, 1.0),
+                                         target + std::polar(0.8 * window.radius, 1.5),
+                                         target + std::polar(0.9 * window.radius, 0.05)};
+      std::complex<double> kn_w[4], k2[4];
+      for (int j = 0; j < 4; j++)
+      {
+        kn_w[j] = wave_port_op.GetWavePortKnComplex(idx, w[j]);
+        k2[j] = kn_w[j] * kn_w[j];
+      }
+      const auto a = (k2[0] - k2[1]) / (w[0] * w[0] - w[1] * w[1]);
+      const auto b = k2[0] - a * w[0] * w[0];
+      auto kn = [a, b](std::complex<double> omega)
+      { return std::sqrt(a * omega * omega + b); };
+      const double omega_min = target - window.radius * std::sin(window.margin);
+      bool uniform =
+          modal_correction <= 1.0e-10 && (a * omega_min * omega_min + b).real() > 0.0;
+      double deviation = 0.0;
+      for (int j = 0; j < 4; j++)
+      {
+        // The closed form, and the principal branch of the mode solve above cutoff.
+        deviation = std::max(deviation, std::abs(kn(w[j]) - kn_w[j]) / std::abs(kn_w[j]));
+        uniform =
+            uniform && std::abs(std::sqrt(k2[j]) - kn_w[j]) <= 1.0e-12 * std::abs(kn_w[j]);
+      }
+      uniform = uniform && deviation <= 1.0e-6;
+      Mpi::Print(" Wave port {:d}: modal correction |W v| / |A2 v| = {:.2e} at the target, "
+                 "kₙ against √(a ω² + b) of two mode solves in the window: {:.2e}\n",
+                 idx, modal_correction, deviation);
+      if (!uniform)
+      {
+        rational = false;
+        unfitted = fmt::format("wave port {:d} has a mode which depends on the frequency "
+                               "(kₙ² is not a ω² + b), or is below cutoff in the window",
+                               idx);
+        break;
+      }
+      // The cut of the principal square root, a ω² + b ≤ 0, from the branch points ±√(-b /
+      // a) to infinity.
+      std::vector<std::complex<double>> cut;
+      for (const double sign : {1.0, -1.0})
+      {
+        cut.push_back(sign * std::sqrt(-b / a));
+      }
+      for (int k = 1; k <= 2048; k++)
+      {
+        const double t = std::pow(16.0 * window.omega_t, 2) * std::abs(a) * k / 2048.0;
+        for (const double sign : {1.0, -1.0})
+        {
+          cut.push_back(sign * std::sqrt(-(b + t) / a));
+        }
+      }
+      AddFitted(
+          space_op.GetWavePortBoundaryMassMatrix<ComplexOperator>(idx, Operator::DIAG_ZERO),
+          fmt::format("wave port {:d}", idx),
+          [kn](std::complex<double> l) { return kn(l / 1i) / l; }, 1.0, 1, cut,
+          [&wave_port_op, idx](std::complex<double> l)
+          { return wave_port_op.GetWavePortKnComplex(idx, l / 1i); });
+    }
     if (!rational)
     {
       if (!unfitted.empty())
       {
-        Mpi::Print(" The {} has no rational fit with at most 24 poles in the window; using "
-                   "the Hybrid nonlinear eigensolver\n",
-                   unfitted);
+        Mpi::Print(" The {}: using the Hybrid nonlinear eigensolver\n", unfitted);
       }
       a2_terms.clear();
       fitted = false;

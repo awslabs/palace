@@ -293,13 +293,16 @@ std::vector<std::string> Backends()
 // Boxes with a fixed spectrum: second-order absorbing boundaries on the faces x = 0 and
 // x = 1 next to a constant (ε = ε∞), a Debye (ε∞ = 2, Δε = 0.5, τ = 0.01 ns), or the
 // Lorentz medium, the others PEC; or a finite conductivity on the face z = 1, the others
-// PEC, next to the constant medium. The targets are 8 GHz, and 18 GHz for Debye.
+// PEC, next to the constant medium; or a wave port on the face x = 1, the others PEC, next
+// to the constant medium. The targets are 8 GHz, and 18 GHz for Debye and the wave port
+// (above the cutoff of its TE mode, 13.26 GHz, in the window of the search).
 enum class FixedBox
 {
   Constant,
   Debye,
   Lorentz,
-  Conductivity
+  Conductivity,
+  WavePort
 };
 
 json FixedBoxBoundaries(FixedBox fixture)
@@ -308,6 +311,11 @@ json FixedBoxBoundaries(FixedBox fixture)
   {
     return {{"PEC", {{"Attributes", {1, 2, 3, 4, 5}}}},
             {"Conductivity", {{{"Attributes", {6}}, {"Conductivity", 1.0e5}}}}};
+  }
+  if (fixture == FixedBox::WavePort)
+  {
+    return {{"PEC", {{"Attributes", {1, 2, 4, 5, 6}}}},
+            {"WavePort", {{{"Index", 1}, {"Attributes", {3}}, {"Mode", 1}}}}};
   }
   return {{"PEC", {{"Attributes", {1, 2, 4, 6}}}},
           {"Absorbing", {{"Attributes", {3, 5}}, {"Order", 2}}}};
@@ -331,7 +339,7 @@ json FixedBoxPermittivity(FixedBox fixture)
 
 double FixedBoxTarget(FixedBox fixture)
 {
-  return (fixture == FixedBox::Debye) ? 18.0 : 8.0;
+  return (fixture == FixedBox::Debye || fixture == FixedBox::WavePort) ? 18.0 : 8.0;
 }
 
 // The n lowest eigenfrequencies (GHz) above the target of a fixed box, from the complete
@@ -351,6 +359,7 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   const bool is_debye = fixture == FixedBox::Debye;
   const bool is_lorentz = fixture == FixedBox::Lorentz;
   const bool is_conductivity = fixture == FixedBox::Conductivity;
+  const bool is_port = fixture == FixedBox::WavePort;
   const bool is_constant = fixture == FixedBox::Constant;
   const auto mesh_path = WriteBoxMesh(temp_dir);
   // The configuration names a backend of the build, which this function does not use.
@@ -384,7 +393,23 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   REQUIRE(static_cast<bool>(C) == is_constant);
   std::unique_ptr<ComplexOperator> damping, curlcurl, surface_mass;
   double kappa = 0.0;
-  if (is_conductivity)
+  std::complex<double> port_a, port_b;
+  if (is_port)
+  {
+    // kₙ² = a ω² + b for the TE mode of the homogeneous port, from two mode solves.
+    auto &port_op = space_op.GetWavePortOp();
+    REQUIRE(port_op.Size() == 1);
+    const std::complex<double> w1 = iodata.solver.eigenmode.target,
+                               w2 = std::complex<double>(1.3, 0.4) * w1;
+    const auto k1 = port_op.GetWavePortKnComplex(1, w1),
+               k2 = port_op.GetWavePortKnComplex(1, w2);
+    port_a = (k1 * k1 - k2 * k2) / (w1 * w1 - w2 * w2);
+    port_b = k1 * k1 - port_a * w1 * w1;
+    surface_mass =
+        space_op.GetWavePortBoundaryMassMatrix<ComplexOperator>(1, Operator::DIAG_ZERO);
+    REQUIRE(surface_mass);
+  }
+  else if (is_conductivity)
   {
     REQUIRE(space_op.GetSurfaceConductivityOp().Size() == 1);
     const auto &law = iodata.boundaries.conductivity.front();
@@ -415,7 +440,7 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   const int total = space_op.GetNDSpace().GetTrueVSize();
   REQUIRE(total == 300);
   const auto &essential = space_op.GetNDDbcTDofLists().back();
-  REQUIRE(essential.Size() == (is_conductivity ? 168 : 144));
+  REQUIRE(essential.Size() == ((is_conductivity || is_port) ? 168 : 144));
   std::vector<bool> constrained(total, false);
   for (int dof : essential)
   {
@@ -432,7 +457,7 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
     }
   }
   const int dim = static_cast<int>(free.size());
-  REQUIRE(dim == (is_conductivity ? 132 : 156));
+  REQUIRE(dim == ((is_conductivity || is_port) ? 132 : 156));
   ComplexVector x(total), y(total);
   x.UseDevice(true);
   y.UseDevice(true);
@@ -462,7 +487,27 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
   const Eigen::LLT<Eigen::MatrixXcd> mass(Md);
   REQUIRE(mass.info() == Eigen::Success);
   Eigen::MatrixXcd companion;
-  if (is_conductivity)
+  // For the wave port, ω = ω_c (z + 1 / z) / 2 with ω_c = √(-b / a) gives
+  // kₙ = κ (z - 1 / z) / 2 with κ = √(-b), and z² T is the quartic P(z) = A₄ z⁴ + A₃ z³ +
+  // A₂ z² + A₁ z + A₀, A₄ = A₀ = -ω_c² M / 4, A₃ = -A₁ = i κ B / 2, A₂ = K - ω_c² M / 2,
+  // with T = K - ω² M + kₙ (i B). A₄ is invertible.
+  const auto omega_c = std::sqrt(-port_b / port_a), port_kappa = std::sqrt(-port_b);
+  if (is_port)
+  {
+    const Eigen::MatrixXcd B = Extract(*surface_mass) / 1i;
+    const Eigen::MatrixXcd A0 = -0.25 * omega_c * omega_c * Md, A1 = -0.5i * port_kappa * B,
+                           A2 = Kd - 0.5 * omega_c * omega_c * Md, A3 = -A1;
+    const Eigen::PartialPivLU<Eigen::MatrixXcd> A4(A0);
+    companion = Eigen::MatrixXcd::Zero(4 * dim, 4 * dim);
+    companion.block(0, dim, dim, dim).setIdentity();
+    companion.block(dim, 2 * dim, dim, dim).setIdentity();
+    companion.block(2 * dim, 3 * dim, dim, dim).setIdentity();
+    companion.block(3 * dim, 0, dim, dim) = -A4.solve(A0);
+    companion.block(3 * dim, dim, dim, dim) = -A4.solve(A1);
+    companion.block(3 * dim, 2 * dim, dim, dim) = -A4.solve(A2);
+    companion.block(3 * dim, 3 * dim, dim, dim) = -A4.solve(A3);
+  }
+  else if (is_conductivity)
   {
     // The owner returns iB. For h = 0, δ = √(2 / (μ σ ω)), Z = (1 + i) / (σ δ), so the
     // scalar is κ √λ in Im λ > 0. P(z) = M z⁴ + κ B z + K, λ = z², state (u, z u, z² u,
@@ -536,6 +581,10 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
     {
       values = Eigen::VectorXcd::Constant(1, mu);
     }
+    else if (is_port)
+    {
+      values = Eigen::VectorXcd::Constant(1, 1i * omega_c * 0.5 * (mu + 1.0 / mu));
+    }
     else if (is_conductivity)
     {
       values = Eigen::VectorXcd::Constant(1, mu * mu);  // λ = z²
@@ -575,12 +624,15 @@ std::vector<std::complex<double>> FixedBoxSpectrum(const fs::path &temp_dir,
       }
       if (!is_constant)
       {
-        // The analytic sheet of the operator's scalar, not a distance cutoff.
+        // The analytic sheet of the operator's scalar, not a distance cutoff (for the
+        // port, the principal branch of the mode solve above cutoff).
         const auto owner_value =
-            is_conductivity
+            is_port ? std::sqrt(port_a * (lambda / 1i) * (lambda / 1i) + port_b)
+            : is_conductivity
                 ? space_op.GetSurfaceConductivityOp().EvaluateScalar(0, lambda / 1i)
                 : lambda * space_op.GetFarfieldOp().GetDispersiveScale(0, lambda / 1i);
-        const auto model_value = is_conductivity ? kappa * mu : mu;
+        const auto model_value = is_port ? port_kappa * 0.5 * (mu - 1.0 / mu)
+                                         : (is_conductivity ? kappa * mu : mu);
         if (std::real(std::conj(model_value) * owner_value) < 0.0)
         {
           continue;
@@ -691,10 +743,24 @@ const std::vector<std::complex<double>> conductivity_modes = {
     {38.45919258548, 0.02667483233399},  {38.48017616205, 0.005643742636361},
     {39.40365887558, 0.02737660987959},  {39.40877679638, 0.02226670221516}};
 
+const std::vector<std::complex<double>> port_modes = {
+    {20.22728097437, 1.324615207994},  {21.07028124916, 17.53138596809},
+    {22.7634754987, 0.1460073553815},  {23.76479990118, 4.443298161715},
+    {24.37976653405, 0.8047639785982}, {26.50062246315, 20.21400658566},
+    {26.84400497383, 2.89433991248},   {27.28412645392, 1.154932676494},
+    {28.6020853095, 0.548729187492},   {30.17285104432, 2.116133303104},
+    {31.35299652909, 21.8767847608},   {32.45296495185, 0.08130987675243},
+    {33.684719026, 0.3791674261044},   {33.75213495526, 1.612190237652},
+    {34.14091533231, 5.141706736529},  {35.80179936455, 0.6895016666602},
+    {36.77812381687, 23.24179739172},  {37.07363116921, 0.3074136646332},
+    {38.21641051792, 1.212922044704},  {38.32951558918, 0.06009000661027}};
+
 const std::vector<std::complex<double>> &FixedBoxModes(FixedBox fixture)
 {
   switch (fixture)
   {
+    case FixedBox::WavePort:
+      return port_modes;
     case FixedBox::Debye:
       return debye_abc2_modes;
     case FixedBox::Lorentz:
@@ -1270,6 +1336,20 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CheckFixedBoxModes(temp_dir, FixedBox::Conductivity, backend, 4);
 }
 
+TEST_CASE_METHOD(test::SharedTempDir, "Eigenmode driver: wave port on a face of a PEC box",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // The wave port has the TE mode of a homogeneous guide, whose shape does not depend on
+  // the frequency, with kₙ² = a ω² + b: its scalar kₙ is fitted, with the cut of the
+  // square root from the cutoff outside the window of the search. The linear solver is
+  // exact (ComplexCoarseSolve, one level), as for the Debye box: with the default solver
+  // and a SuperLU coarse solve, the modes found here have backward errors of 1e-4.
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  CAPTURE(backend);
+  CheckFixedBoxModes(temp_dir, FixedBox::WavePort, backend, 4,
+                     {{"ComplexCoarseSolve", true}, {"MGMaxLevels", 1}});
+}
+
 TEST_CASE_METHOD(test::SharedTempDir,
                  "Eigenmode driver: modes next to the branch cut of a fitted boundary term",
                  "[eigenmodedriver][Serial][Parallel]")
@@ -1334,7 +1414,7 @@ TEST_CASE_METHOD(
   // The reference modes of the driver tests above, from the complete spectrum of a dense
   // companion problem (independent of the eigensolvers).
   const auto fixture = GENERATE(FixedBox::Constant, FixedBox::Debye, FixedBox::Lorentz,
-                                FixedBox::Conductivity);
+                                FixedBox::Conductivity, FixedBox::WavePort);
   const auto &modes = FixedBoxModes(fixture);
   CAPTURE(static_cast<int>(fixture));
   const auto expected = FixedBoxSpectrum(temp_dir, fixture, 20);

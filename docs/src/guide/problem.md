@@ -50,10 +50,16 @@ strip around it. *Palace* warns when such a strip lies in the window, and names 
 found in the strip or outside the window. The modes there may be missing or wrong; the
 errors in `eig.csv` are always those of the complete operator, not of its fit.
 
-Other frequency-dependent terms are not solved in this way: wave ports, `DjordjevicSarkar`
-terms (also next to an absorbing boundary), finite conductivity boundaries with a
-thickness, and rational impedances with repeated zeros or a Robin coefficient
-``i\omega / Z_s`` which grows faster than ``\omega^2``.
+Wave ports whose mode has a shape which does not depend on the frequency, the TE and TEM
+modes of a port with one constant material, ``k_n^2 = a \omega^2 + b``, are fitted in the
+same way when the port is above its cutoff in the window: *Palace* checks the closed form
+on four mode solves, and the errors in `eig.csv` use the mode solves at each eigenvalue.
+
+Other frequency-dependent terms are not solved in this way: other wave ports (a mode with
+a longitudinal field, an inhomogeneous or frequency-dependent filling of the port, or a port
+below cutoff), `DjordjevicSarkar` terms (also next to an absorbing boundary), finite
+conductivity boundaries with a thickness, and rational impedances with repeated zeros or a
+Robin coefficient ``i\omega / Z_s`` which grows faster than ``\omega^2``.
 With any of them, for constant and frequency-dependent materials alike, the nonlinear
 eigensolver of `"NonlinearType"` is used. It returns converged modes, but not always the
 ones nearest the target: a small error for a returned mode does not show that no lower mode
