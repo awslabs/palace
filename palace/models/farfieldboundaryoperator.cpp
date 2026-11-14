@@ -32,6 +32,12 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(
     const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(farfield, problem_type, mesh))
 {
+  {
+    auto split =
+        mat_op.SplitCeedBdrAttributesByFrequencyDependentPermittivity(farfield_attr);
+    ceed_attr_other = std::move(split.other);
+    ceed_attr_dispersive = std::move(split.materials);
+  }
   // Print out BC info for all farfield attributes.
   if (farfield_attr.Size())
   {
@@ -84,7 +90,7 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coeff,
   {
     MaterialPropertyCoefficient invz0_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvImpedance());
-    invz0_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(farfield_attr));
+    invz0_func.RestrictCoefficient(ceed_attr_other);
     fb.AddCoefficient(invz0_func.GetAttributeToMaterial(),
                       invz0_func.GetMaterialProperties(), coeff);
   }
@@ -236,110 +242,246 @@ void FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients(
     MaterialPropertyCoefficient &fri, MaterialPropertyCoefficient *fpr,
     MaterialPropertyCoefficient *fpi) const
 {
-  // Contribution for second-order absorbing BC. See Jin Section 9.3 for reference. The β
-  // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature
-  // as infinity (plane wave scattering), the r-dependence vanishes and the contribution
-  // is purely imaginary: β = 1/(2ik) = -i/(2k). Multiplying through by μ⁻¹ we get the
-  // material coefficient to ω as 1 / (μ √(με)), and the weak form term is
-  // +β (μ⁻¹c₀ ∇ₛ×E, ∇ₛ×F), see docs/src/reference.md. Also, this implementation ignores the
-  // divergence term ∇⋅Eₜ, as COMSOL does as well. The ω-dependence enters only through the
-  // scalar a, so the real-ω, complex-ω, and ω-independent (M_ff) matrices share the
-  // material coefficient construction: the sign of β is in a = β = 0.5 / (iω) for the
-  // system matrix (AddExtraSystemBdrCoefficients), and in a = -1 for the matrix M_ff, whose
-  // term is i·(0.5/ω)·M_ff (SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
-  if (!farfield_attr.Size() || order < 2)
+  AddCurlCurlBdrCoefficients(ceed_attr_other, a,
+                             mat_op.HasFloquetFrequencyScaling() ? 0.0 : 1.0, dfr, dfi, frr,
+                             fri, fpr, fpi);
+}
+
+void FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients(
+    const mfem::Array<int> &attrs, std::complex<double> a,
+    std::complex<double> wave_vector_scale, MaterialPropertyCoefficient &dfr,
+    MaterialPropertyCoefficient &dfi, MaterialPropertyCoefficient &frr,
+    MaterialPropertyCoefficient &fri, MaterialPropertyCoefficient *fpr,
+    MaterialPropertyCoefficient *fpi) const
+{
+  // β = 1/(2ik) = -i/(2k). The form C + T + i(X - Xᵀ) uses the surface curl of
+  // E exp(-i k·x), as in docs/src/reference.md. Here k = wave_vector_scale k₀ for
+  // frequency scaling, or k₀ otherwise. The sign of β is in a for system stamping,
+  // and in a = -1 for M_ff, whose scalar is i·0.5/ω.
+  if (attrs.Size() == 0 || order < 2)
   {
     return;
   }
-
-  // a (C + T + i (X - Xᵀ)) = a_r (C + T) - a_i (X - Xᵀ) + i (a_i (C + T) + a_r (X - Xᵀ)),
-  // for the curl-curl term C, the rotated boundary mass term T, and the mixed boundary curl
-  // term X.
-  const auto &attr_mat = curlcurl_attr_mat;
-  if (a.real() != 0.0)
+  auto add =
+      [&](MaterialPropertyCoefficient &f, const mfem::DenseTensor &tensor, double coeff)
   {
-    dfr.AddCoefficient(attr_mat, curlcurl_mat, a.real());
-  }
-  if (a.imag() != 0.0)
-  {
-    dfi.AddCoefficient(attr_mat, curlcurl_mat, a.imag());
-  }
-
-  // Floquet periodicity, E = E_p exp(-i k·x): the surface curl of E is
-  // exp(-i k·x) (n·∇×E_p - i n·(k x E_p)), where n·(k x E_p) = -k·(n x E_p) only depends on
-  // the tangential trace of E_p. With a frequency dependent wave vector, these terms do not
-  // scale with 1/ω and are added to the damping and stiffness matrices instead.
-  if (!mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling())
+    if (coeff != 0.0)
+    {
+      MaterialPropertyCoefficient c(curlcurl_attr_mat, tensor);
+      c.RestrictCoefficient(attrs);
+      f.AddCoefficient(c.GetAttributeToMaterial(), c.GetMaterialProperties(), coeff);
+    }
+  };
+  add(dfr, curlcurl_mat, a.real());
+  add(dfi, curlcurl_mat, a.imag());
+  if (!mat_op.HasWaveVector() || wave_vector_scale == 0.0)
   {
     return;
   }
-  if (a.real() != 0.0)
+  const auto rotated = a * wave_vector_scale * wave_vector_scale;
+  const auto mixed = std::complex<double>(0.0, 1.0) * a * wave_vector_scale;
+  add(frr, curlcurl_kkT_mat, rotated.real());
+  add(fri, curlcurl_kkT_mat, rotated.imag());
+  if (fpr)
   {
-    frr.AddCoefficient(attr_mat, curlcurl_kkT_mat, a.real());
-    if (fpi)
-    {
-      fpi->AddCoefficient(attr_mat, curlcurl_kx_mat, a.real());
-    }
+    add(*fpr, curlcurl_kx_mat, mixed.real());
   }
-  if (a.imag() != 0.0)
+  if (fpi)
   {
-    fri.AddCoefficient(attr_mat, curlcurl_kkT_mat, a.imag());
-    if (fpr)
-    {
-      fpr->AddCoefficient(attr_mat, curlcurl_kx_mat, -a.imag());
-    }
+    add(*fpi, curlcurl_kx_mat, mixed.imag());
   }
 }
 
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
     MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
     MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi)
 {
-  // Real-ω second-order ABC: β = 1/(2iω) = -i·(0.5/ω) is imaginary, so the curl-curl and
-  // rotated boundary mass terms land on the imaginary part and the mixed boundary curl
-  // terms on the real part.
-  AddCurlCurlBdrCoefficients(0.5 / (std::complex<double>(0.0, 1.0) * omega), dfbr, dfbi,
-                             frbr, frbi, fpbr, fpbi);
+  AddExtraSystemBdrCoefficients(std::complex<double>(omega, 0.0), dfbr, dfbi, fbr, fbi,
+                                frbr, frbi, fpbr, fpbi);
 }
 
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
-    MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &frbr,
+    MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
+    MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
     MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
     MaterialPropertyCoefficient *fpbi)
 {
-  // Complex-ω second-order ABC for the eigenmode nonlinear solve: with ω complex,
-  // β = 1/(2iω) has a real and an imaginary part, so every term contributes to both parts.
-  // For real ω (imag = 0) this reduces to the double overload.
-  AddCurlCurlBdrCoefficients(0.5 / (std::complex<double>(0.0, 1.0) * omega), dfbr, dfbi,
-                             frbr, frbi, fpbr, fpbi);
+  constexpr std::complex<double> i(0.0, 1.0);
+  AddCurlCurlBdrCoefficients(0.5 / (i * omega), dfbr, dfbi, frbr, frbi, fpbr, fpbi);
+  for (std::size_t k = 0; k < ceed_attr_dispersive.size(); k++)
+  {
+    const auto r = GetDispersiveScale(k, omega);
+    const auto z1 = i * omega * r;
+    AddDispersiveDampingBdrCoefficients(k, z1.real(), fbr);
+    AddDispersiveDampingBdrCoefficients(k, z1.imag(), fbi);
+    // All three second-order terms carry 1/r. With k = ω k₀, none belongs to the
+    // frequency-independent damping or stiffness matrix on these attributes.
+    AddCurlCurlBdrCoefficients(ceed_attr_dispersive[k].second, 0.5 / (i * omega * r),
+                               mat_op.HasFloquetFrequencyScaling() ? omega : 1.0, dfbr,
+                               dfbi, frbr, frbi, fpbr, fpbi);
+  }
+}
+
+void FarfieldBoundaryOperator::AddPreconditionerBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &df,
+    MaterialPropertyCoefficient &f, MaterialPropertyCoefficient &fr) const
+{
+  // As in the upstream real-valued PC, make only the boundary curl-curl term
+  // positive semidefinite and drop the antisymmetric mixed terms. The rotated
+  // Floquet trace keeps its physical sign. Dispersive scalars use magnitudes.
+  const auto a = 0.5 / (std::complex<double>(0.0, 1.0) * omega);
+  MaterialPropertyCoefficient c(curlcurl_attr_mat, curlcurl_mat);
+  if (order > 1 && ceed_attr_other.Size())
+  {
+    c.RestrictCoefficient(ceed_attr_other);
+    df.AddCoefficient(c.GetAttributeToMaterial(), c.GetMaterialProperties(),
+                      -(a.real() + a.imag()));
+  }
+  if (order > 1 && ceed_attr_other.Size() && mat_op.HasWaveVector() &&
+      !mat_op.HasFloquetFrequencyScaling())
+  {
+    MaterialPropertyCoefficient t(curlcurl_attr_mat, curlcurl_kkT_mat);
+    t.RestrictCoefficient(ceed_attr_other);
+    fr.AddCoefficient(t.GetAttributeToMaterial(), t.GetMaterialProperties(),
+                      a.real() + a.imag());
+  }
+  constexpr std::complex<double> i(0.0, 1.0);
+  for (std::size_t k = 0; k < ceed_attr_dispersive.size(); k++)
+  {
+    const auto r = GetDispersiveScale(k, omega);
+    AddDispersiveDampingBdrCoefficients(k, std::abs(i * omega * r), f);
+    AddDispersiveCurlCurlBdrCoefficients(k, std::abs(0.5 / (omega * r)), df);
+    if (order > 1 && mat_op.HasWaveVector())
+    {
+      MaterialPropertyCoefficient t(curlcurl_attr_mat, curlcurl_kkT_mat);
+      t.RestrictCoefficient(ceed_attr_dispersive[k].second);
+      const auto scale = mat_op.HasFloquetFrequencyScaling() ? omega : 1.0;
+      fr.AddCoefficient(t.GetAttributeToMaterial(), t.GetMaterialProperties(),
+                        -std::abs(0.5 * scale * scale / (omega * r)));
+    }
+  }
+}
+
+std::complex<double>
+FarfieldBoundaryOperator::GetDispersiveScale(std::size_t k,
+                                             std::complex<double> omega) const
+{
+  // Take the passive lossy limit on the negative-real branch cut: the outgoing root
+  // decays below the plasma frequency. User conductivity is included once in ε_wave.
+  const auto m = ceed_attr_dispersive.at(k).first;
+  auto eps = mat_op.EvaluateFrequencyDependentWavePermittivity(
+                 m, std::complex<double>(0.0, 1.0) * omega) /
+             mat_op.GetFrequencyDependentPermittivityHighFrequency(m);
+  if (eps.imag() == 0.0)
+  {
+    eps.imag(-0.0);
+  }
+  return std::sqrt(eps);
+}
+
+void FarfieldBoundaryOperator::AddDispersiveDampingBdrCoefficients(
+    std::size_t k, double coeff, MaterialPropertyCoefficient &fb) const
+{
+  const auto &attrs = ceed_attr_dispersive.at(k).second;
+  if (coeff != 0.0 && attrs.Size())
+  {
+    MaterialPropertyCoefficient invz0_func(mat_op.GetBdrAttributeToMaterial(),
+                                           mat_op.GetInvImpedance());
+    invz0_func.RestrictCoefficient(attrs);
+    fb.AddCoefficient(invz0_func.GetAttributeToMaterial(),
+                      invz0_func.GetMaterialProperties(), coeff);
+  }
+}
+
+void FarfieldBoundaryOperator::AddDispersiveCurlCurlBdrCoefficients(
+    std::size_t k, double coeff, MaterialPropertyCoefficient &df) const
+{
+  const auto &attrs = ceed_attr_dispersive.at(k).second;
+  if (coeff != 0.0 && order > 1 && attrs.Size())
+  {
+    MaterialPropertyCoefficient c(curlcurl_attr_mat, curlcurl_mat);
+    c.RestrictCoefficient(attrs);
+    df.AddCoefficient(c.GetAttributeToMaterial(), c.GetMaterialProperties(), coeff);
+  }
+}
+
+void FarfieldBoundaryOperator::AddDispersiveCurlCurlBdrCoefficients(
+    std::size_t k, std::complex<double> a, MaterialPropertyCoefficient &dfr,
+    MaterialPropertyCoefficient &dfi, MaterialPropertyCoefficient &frr,
+    MaterialPropertyCoefficient &fri, MaterialPropertyCoefficient *fpr,
+    MaterialPropertyCoefficient *fpi) const
+{
+  AddCurlCurlBdrCoefficients(ceed_attr_dispersive.at(k).second, a,
+                             mat_op.HasFloquetFrequencyScaling() ? 0.0 : 1.0, dfr, dfi, frr,
+                             fri, fpr, fpi);
+}
+
+void FarfieldBoundaryOperator::AddDispersiveScalarDampingBdrCoefficients(
+    std::size_t k, double coeff, MaterialPropertyCoefficient &fb) const
+{
+  const auto &inv_z = mat_op.GetInvImpedance();
+  const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
+  for (auto ceed_attr : ceed_attr_dispersive.at(k).second)
+  {
+    const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
+    MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
+    fb.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), coeff);
+  }
+}
+
+void FarfieldBoundaryOperator::AddDispersiveDampingFloquetBdrCoefficients(
+    std::size_t k, double coeff, MaterialPropertyCoefficient &fr) const
+{
+  if (order < 2 || !mat_op.HasWaveVector() || !mat_op.HasFloquetFrequencyScaling())
+  {
+    return;
+  }
+  MaterialPropertyCoefficient t(curlcurl_attr_mat, curlcurl_kkT_mat);
+  t.RestrictCoefficient(ceed_attr_dispersive.at(k).second);
+  fr.AddCoefficient(t.GetAttributeToMaterial(), t.GetMaterialProperties(), -0.5 * coeff);
+}
+
+void FarfieldBoundaryOperator::AddDispersiveStiffnessFloquetBdrCoefficients(
+    std::size_t k, double coeff, MaterialPropertyCoefficient &fp) const
+{
+  if (order < 2 || !mat_op.HasWaveVector() || !mat_op.HasFloquetFrequencyScaling())
+  {
+    return;
+  }
+  MaterialPropertyCoefficient x(curlcurl_attr_mat, curlcurl_kx_mat);
+  x.RestrictCoefficient(ceed_attr_dispersive.at(k).second);
+  fp.AddCoefficient(x.GetAttributeToMaterial(), x.GetMaterialProperties(), 0.5 * coeff);
 }
 
 void FarfieldBoundaryOperator::AddDampingFloquetBdrCoefficients(
     double coeff, MaterialPropertyCoefficient &frb)
 {
-  // With k = ω k₀, the rotated boundary mass term of the second-order ABC is
-  // β ω² (μ⁻¹c₀ k₀ k₀ᵀ n x E, n x F) = iω (-0.5) (μ⁻¹c₀ k₀ k₀ᵀ n x E, n x F).
+  // The rotated trace scales as iω when k = ω k₀, on nondispersive attributes only.
   if (!farfield_attr.Size() || order < 2 || !mat_op.HasWaveVector() ||
       !mat_op.HasFloquetFrequencyScaling())
   {
     return;
   }
-  frb.AddCoefficient(curlcurl_attr_mat, curlcurl_kkT_mat, -0.5 * coeff);
+  MaterialPropertyCoefficient t(curlcurl_attr_mat, curlcurl_kkT_mat);
+  t.RestrictCoefficient(ceed_attr_other);
+  frb.AddCoefficient(t.GetAttributeToMaterial(), t.GetMaterialProperties(), -0.5 * coeff);
 }
 
 void FarfieldBoundaryOperator::AddStiffnessFloquetBdrCoefficients(
     double coeff, MaterialPropertyCoefficient &fpb)
 {
-  // With k = ω k₀, the mixed boundary curl terms of the second-order ABC are
-  // iβ ω [(μ⁻¹c₀ [k₀ x]ᵀ ∇×E, F) - (μ⁻¹c₀ [k₀ x] E, ∇×F)], with iβ ω = 0.5.
+  // The mixed boundary curl scales as 1 when k = ω k₀, on nondispersive attributes only.
   if (!farfield_attr.Size() || order < 2 || !mat_op.HasWaveVector() ||
       !mat_op.HasFloquetFrequencyScaling())
   {
     return;
   }
-  fpb.AddCoefficient(curlcurl_attr_mat, curlcurl_kx_mat, 0.5 * coeff);
+  MaterialPropertyCoefficient x(curlcurl_attr_mat, curlcurl_kx_mat);
+  x.RestrictCoefficient(ceed_attr_other);
+  fpb.AddCoefficient(x.GetAttributeToMaterial(), x.GetMaterialProperties(), 0.5 * coeff);
 }
 
 }  // namespace palace

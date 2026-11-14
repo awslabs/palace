@@ -577,6 +577,597 @@ TEST_CASE("Djordjevic-Sarkar real-axis and analytic evaluation",
         1.0e-14 * std::max(1.0, std::abs(expected_off_axis)));
 }
 
+TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Serial]")
+{
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+
+  config::MaterialData dispersive_material;
+  dispersive_material.attributes = {1};
+  dispersive_material.epsilon_r = config::SymmetricMatrixData<3>(1.0);
+
+  config::MaterialData reference_material;
+  reference_material.attributes = {1};
+  reference_material.epsilon_r = config::SymmetricMatrixData<3>(1.0);
+  config::DomainData reference_domains;
+  reference_domains.materials = {reference_material};
+
+  for (int threshold : {1, 2})
+  {
+    BilinearForm::pa_order_threshold = threshold;  // Partial, then full assembly.
+    for (bool distant_pole : {false, true})
+    {
+      if (distant_pole)
+      {
+        // This contribution is O(1) near s = i, while the obsolete long-division terms
+        // are O(1e16). Exercise the complete operator action, not only scalar evaluation.
+        dispersive_material.permittivity_terms = {
+            config::PermittivityPoleData{{-1.0e8, 0.0}, {1.0e8, 0.0}}};
+      }
+      else
+      {
+        // The complete nonzero-pole contribution cancels at s = i but not at s = 2i.
+        // This guards structural nonlinear detection against target-frequency sampling.
+        dispersive_material.permittivity_terms = {
+            config::PermittivityPoleData{{-1.0, 0.0}, {4.0, 0.0}},
+            config::PermittivityPoleData{{-2.0, 0.0}, {-20.0, 0.0}},
+            config::PermittivityPoleData{{-3.0, 0.0}, {20.0, 0.0}}};
+      }
+      config::DomainData dispersive_domains;
+      dispersive_domains.materials = {dispersive_material};
+
+      for (auto [pc_mat_real, pc_mat_shifted] :
+           {std::pair{false, false}, std::pair{true, false}, std::pair{false, true},
+            std::pair{true, true}})
+      {
+        solver.linear.pc_mat_real = pc_mat_real;
+        solver.linear.pc_mat_shifted = pc_mat_shifted;
+        auto dispersive_mesh = MakeMesh();
+        auto reference_mesh = MakeMesh();
+        SpaceOperator dispersive(solver, dispersive_domains, boundaries,
+                                 ProblemType::DRIVEN, units, dispersive_mesh);
+        SpaceOperator reference(solver, reference_domains, boundaries, ProblemType::DRIVEN,
+                                units, reference_mesh);
+
+        auto K = dispersive.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        auto C = dispersive.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        auto M = dispersive.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        const std::complex<double> omega{1.3, -0.4};
+        const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;
+        auto A2 = dispersive.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+        auto K0 = reference.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        auto B = reference.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        REQUIRE(K);
+        CHECK_FALSE(C);
+        REQUIRE(M);
+        REQUIRE(A2);
+        REQUIRE(K0);
+        REQUIRE(B);
+
+        ComplexVector x(K->Width()), y(K->Height()), expected(K->Height()),
+            tmp(K->Height());
+        x.UseDevice(true);
+        y.UseDevice(true);
+        expected.UseDevice(true);
+        tmp.UseDevice(true);
+        linalg::SetRandom(Mpi::World(), x);
+
+        auto CheckAction = [&](const ComplexOperator &op, std::complex<double> coeff,
+                               const ComplexOperator *base = nullptr)
+        {
+          op.Mult(x, y);
+          B->Mult(x, expected);
+          expected *= coeff;
+          if (base)
+          {
+            base->Mult(x, tmp);
+            expected += tmp;
+          }
+          y.Add(-1.0, expected);
+          CHECK(linalg::Norml2(Mpi::World(), y) <
+                1.0e-11 * std::max(1.0, linalg::Norml2(Mpi::World(), expected)));
+        };
+
+        const auto &mat = dispersive.GetMaterialOp();
+        CHECK(mat.HasFrequencyDependentPermittivityA2());
+        if (!distant_pole)
+        {
+          CHECK(std::abs(mat.EvaluateFrequencyDependentPermittivityA2(0, {0.0, 1.0})) <
+                1.0e-14);
+          CHECK(std::abs(mat.EvaluateFrequencyDependentPermittivityA2(0, {0.0, 2.0})) >
+                1.0e-3);
+          auto A2_cancelled =
+              dispersive.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO);
+          REQUIRE(A2_cancelled);
+          REQUIRE(A2_cancelled->Real());
+          REQUIRE(A2_cancelled->Imag());
+          A2_cancelled->Mult(x, y);
+          CHECK(linalg::Norml2(Mpi::World(), y) < 1.0e-12);
+          // The eigenmode solver selects its nonlinear path from this operator alone, so
+          // the complex-ω overload must also return it where the contribution cancels.
+          auto A2_cancelled_complex = dispersive.GetExtraSystemMatrix(
+              std::complex<double>{1.0, 0.0}, Operator::DIAG_ZERO);
+          REQUIRE(A2_cancelled_complex);
+          A2_cancelled_complex->Mult(x, y);
+          CHECK(linalg::Norml2(Mpi::World(), y) < 1.0e-12);
+        }
+        CheckAction(*K, 0.0, K0.get());  // No pole-derived stiffness contribution.
+        CheckAction(*M, 1.0);            // epsilon_inf remains in ordinary M.
+        std::complex<double> g = 0.0;
+        for (const auto &term :
+             permittivity::PoleTerms(dispersive_material.permittivity_terms))
+        {
+          g += term.residue * s * s / (s - term.pole);
+        }
+        CHECK(std::abs(mat.EvaluateFrequencyDependentPermittivityA2(0, s) - g) <
+              1.0e-14 * std::max(1.0, std::abs(g)));
+        CheckAction(*A2, g);
+
+        auto system = dispersive.GetSystemMatrix(std::complex<double>{1.0}, s, s * s,
+                                                 K.get(), C.get(), M.get(), A2.get());
+        K0->Mult(x, expected);
+        B->Mult(x, tmp);
+        tmp *= s * s + g;
+        expected += tmp;
+        system->Mult(x, y);
+        y.Add(-1.0, expected);
+        CHECK(linalg::Norml2(Mpi::World(), y) <
+              1.0e-11 * std::max(1.0, linalg::Norml2(Mpi::World(), expected)));
+
+        auto pc = dispersive.GetPreconditionerMatrix<ComplexOperator>(
+            std::complex<double>{1.0}, s, s * s, omega);
+        const auto *mg =
+            dynamic_cast<const BaseMultigridOperator<ComplexOperator> *>(pc.get());
+        REQUIRE(mg);
+        {
+          // The shifted preconditioner takes |Re| of the mass-like terms, ε∞ and the
+          // dispersive s²χ alike (both have Re < 0 here), and keeps the loss-like Im parts.
+          const std::complex<double> s2 = s * s;
+          const double mass_re = pc_mat_shifted ? std::abs(s2.real()) : s2.real();
+          const double disp_re = pc_mat_shifted ? std::abs(g.real()) : g.real();
+          K0->Mult(x, expected);
+          B->Mult(x, tmp);
+          if (pc_mat_real)
+          {
+            tmp *= mass_re + disp_re + g.imag();
+          }
+          else
+          {
+            tmp *= std::complex<double>(mass_re + disp_re, s2.imag() + g.imag());
+          }
+          expected += tmp;
+        }
+        mg->GetFinestOperator().Mult(x, y);
+        y.Add(-1.0, expected);
+        CHECK(linalg::Norml2(Mpi::World(), y) <
+              1.0e-11 * std::max(1.0, linalg::Norml2(Mpi::World(), expected)));
+      }
+    }
+  }
+}
+
+TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
+          "[materialoperator][Serial]")
+{
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+
+  constexpr double fp = 1.0, fg = 0.1;
+  const config::MaterialData named_material(
+      {{"Attributes", {1}},
+       {"Permittivity",
+        {{"HighFrequency", 2.08},
+         {"Terms",
+          {{{"Type", "Drude"}, {"PlasmaFrequency", fp}, {"CollisionFrequency", fg}}}}}}});
+  const double wp = 2.0 * std::numbers::pi * 1.0e9 * fp;
+  const double gamma = 2.0 * std::numbers::pi * 1.0e9 * fg;
+  config::MaterialData canonical_material;
+  canonical_material.attributes = {1};
+  canonical_material.epsilon_r = config::SymmetricMatrixData<3>(2.08);
+  canonical_material.permittivity_terms = {
+      config::PermittivityPoleData{{0.0, 0.0}, {wp * wp / gamma, 0.0}},
+      config::PermittivityPoleData{{-gamma, 0.0}, {-wp * wp / gamma, 0.0}}};
+
+  config::DomainData named_domains, canonical_domains;
+  named_domains.materials = {named_material};
+  canonical_domains.materials = {canonical_material};
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  BilinearForm::pa_order_threshold = 1;
+  auto named_mesh = MakeMesh();
+  auto canonical_mesh = MakeMesh();
+  SpaceOperator named(solver, named_domains, boundaries, ProblemType::DRIVEN, units,
+                      named_mesh);
+  SpaceOperator canonical(solver, canonical_domains, boundaries, ProblemType::DRIVEN, units,
+                          canonical_mesh);
+
+  auto C_named = named.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto C_canonical = canonical.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const double omega = 2.0 * std::numbers::pi * 1.0e9 * 2.5;
+  auto A2_named = named.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  auto A2_canonical =
+      canonical.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  REQUIRE(C_named);
+  REQUIRE(C_canonical);
+  REQUIRE(A2_named);
+  REQUIRE(A2_canonical);
+
+  ComplexVector x(C_named->Width()), named_y(C_named->Height()),
+      canonical_y(C_named->Height());
+  x.UseDevice(true);
+  named_y.UseDevice(true);
+  canonical_y.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  auto CheckSameAction =
+      [&](const ComplexOperator &named_op, const ComplexOperator &canonical_op)
+  {
+    named_op.Mult(x, named_y);
+    canonical_op.Mult(x, canonical_y);
+    named_y.Add(-1.0, canonical_y);
+    CHECK(linalg::Norml2(Mpi::World(), named_y) <
+          1.0e-12 * std::max(1.0, linalg::Norml2(Mpi::World(), canonical_y)));
+  };
+  CheckSameAction(*C_named, *C_canonical);
+  CheckSameAction(*A2_named, *A2_canonical);
+}
+
+TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
+          "[materialoperator][Serial]")
+{
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+
+  config::MaterialData pole_material;
+  pole_material.attributes = {1};
+  pole_material.epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  pole_material.sigma = config::SymmetricMatrixData<3>(1.0);
+  pole_material.permittivity_terms.push_back(
+      config::PermittivityPoleData{{0.0, 0.0}, {3.0, 0.0}});
+  config::DomainData pole_domains;
+  pole_domains.materials = {pole_material};
+
+  auto conductivity_material = pole_material;
+  conductivity_material.permittivity_terms.clear();
+  conductivity_material.sigma = config::SymmetricMatrixData<3>(4.0);
+  config::DomainData conductivity_domains;
+  conductivity_domains.materials = {conductivity_material};
+
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  BilinearForm::pa_order_threshold = 1;
+  auto pole_mesh = MakeMesh();
+  auto conductivity_mesh = MakeMesh();
+  SpaceOperator pole(solver, pole_domains, boundaries, ProblemType::DRIVEN, units,
+                     pole_mesh);
+  SpaceOperator conductivity(solver, conductivity_domains, boundaries, ProblemType::DRIVEN,
+                             units, conductivity_mesh);
+
+  const auto &mat = pole.GetMaterialOp();
+  CHECK(mat.HasFrequencyDependentPermittivity());
+  CHECK_FALSE(mat.HasFrequencyDependentPermittivityA2(0));
+  CHECK_FALSE(mat.HasFrequencyDependentPermittivityA2());
+  CHECK(mat.HasConductivity());
+  CHECK(mat.GetConductivity(1)(0, 0) == Approx(4.0));
+  CHECK_FALSE(pole.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO));
+
+  auto C = pole.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto C_ref = conductivity.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  REQUIRE(C_ref);
+  ComplexVector x(C->Width()), y(C->Height()), expected(C->Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  expected.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  C->Mult(x, y);
+  C_ref->Mult(x, expected);
+  y.Add(-1.0, expected);
+  CHECK(linalg::Norml2(Mpi::World(), y) <
+        1.0e-12 * std::max(1.0, linalg::Norml2(Mpi::World(), expected)));
+}
+
+TEST_CASE("SpaceOperator does not evaluate dispersive materials without mesh support",
+          "[materialoperator][Serial]")
+{
+  // Attribute 2 is not on the mesh. Its undamped pole at s = i must not be evaluated when
+  // assembling the system or preconditioner at that frequency.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+
+  config::MaterialData material, absent_material;
+  material.attributes = {1};
+  absent_material.attributes = {2};
+  absent_material.permittivity_terms.push_back(
+      config::PermittivityPoleData{{0.0, 1.0}, {0.0, -0.5}});
+  config::DomainData domains;
+  domains.materials = {material, absent_material};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+  REQUIRE_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivitySupport(1));
+  // The configured model on no element leaves the constant-material route (for example,
+  // the divergence-free projection of the eigenmode solver) unchanged.
+  CHECK_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivity());
+  CHECK_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivityModel(1));
+
+  const double omega = 1.0;  // s = iω at the pole
+  CHECK_NOTHROW(space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO));
+  CHECK_NOTHROW(space_op.GetPreconditionerMatrix<ComplexOperator>(
+      std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
+      std::complex<double>(-omega * omega, 0.0), std::complex<double>(omega, 0.0)));
+  CHECK_NOTHROW(
+      space_op.GetPreconditionerMatrix<Operator>(1.0, omega, -omega * omega, omega));
+}
+
+TEST_CASE("SpaceOperator dispersive mass action across partitioned material support",
+          "[materialoperator][Parallel]")
+{
+  const MPI_Comm comm = Mpi::World();
+  auto MakeMesh = [comm] { return MakePartitionedSupportMesh(comm); };
+
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  BilinearForm::pa_order_threshold = 1;  // Exercise the partially assembled cache path.
+
+  config::MaterialData material1;
+  material1.attributes = {1};
+  material1.epsilon_r = config::SymmetricMatrixData<3>(1.0);
+  config::MaterialData material2;
+  material2.attributes = {2};
+  material2.epsilon_r = config::SymmetricMatrixData<3>(1.0);
+  material2.permittivity_terms.push_back(
+      config::PermittivityPoleData{{-2.0, 0.0}, {3.0, 0.0}});
+  config::DomainData dispersive_domains;
+  dispersive_domains.materials = {material1, material2};
+
+  auto reference_material2 = material2;
+  reference_material2.permittivity_terms.clear();
+  config::DomainData reference_domains;
+  reference_domains.materials = {material1, reference_material2};
+  auto doubled_material2 = reference_material2;
+  doubled_material2.epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  config::DomainData doubled_domains;
+  doubled_domains.materials = {material1, doubled_material2};
+
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  auto dispersive_mesh = MakeMesh();
+  auto reference_mesh = MakeMesh();
+  auto doubled_mesh = MakeMesh();
+  SpaceOperator dispersive(solver, dispersive_domains, boundaries, ProblemType::DRIVEN,
+                           units, dispersive_mesh);
+  SpaceOperator reference(solver, reference_domains, boundaries, ProblemType::DRIVEN, units,
+                          reference_mesh);
+  SpaceOperator doubled(solver, doubled_domains, boundaries, ProblemType::DRIVEN, units,
+                        doubled_mesh);
+  CHECK((dispersive.GetMaterialOp().GetCeedAttributes(std::vector<int>{2}).Size() > 0) ==
+        (Mpi::Rank(comm) == 0));
+  CHECK(dispersive.GetMaterialOp().HasFrequencyDependentPermittivitySupport(1));
+  // Also on the processes without the material: the route is the same on every process.
+  CHECK(dispersive.GetMaterialOp().HasFrequencyDependentPermittivity());
+  CHECK_FALSE(reference.GetMaterialOp().HasFrequencyDependentPermittivity());
+
+  auto K = dispersive.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto C = dispersive.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = dispersive.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const std::complex<double> omega{1.3, -0.4};
+  auto A2 = dispersive.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+  auto K_ref = reference.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M_ref = reference.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M_doubled = doubled.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(K);
+  CHECK_FALSE(C);
+  REQUIRE(M);
+  REQUIRE(A2);
+  REQUIRE(K_ref);
+  REQUIRE(M_ref);
+  REQUIRE(M_doubled);
+
+  ComplexVector x(K->Width()), y(K->Height()), expected(K->Height()), tmp(K->Height()),
+      B2x(K->Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  expected.UseDevice(true);
+  tmp.UseDevice(true);
+  B2x.UseDevice(true);
+  linalg::SetRandom(comm, x);
+
+  auto ApplyB2 = [&]
+  {
+    M_doubled->Mult(x, B2x);
+    M_ref->Mult(x, tmp);
+    B2x.Add(-1.0, tmp);
+  };
+  auto CheckAction = [&](const ComplexOperator &op, std::complex<double> coeff,
+                         const ComplexOperator *base = nullptr)
+  {
+    ApplyB2();
+    expected = B2x;
+    expected *= coeff;
+    if (base)
+    {
+      base->Mult(x, tmp);
+      expected += tmp;
+    }
+    op.Mult(x, y);
+    y.Add(-1.0, expected);
+    CHECK(linalg::Norml2(comm, y) <
+          1.0e-11 * std::max(1.0, linalg::Norml2(comm, expected)));
+  };
+
+  const auto &mat = dispersive.GetMaterialOp();
+  const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;
+  CheckAction(*K, 0.0, K_ref.get());
+  M_ref->Mult(x, expected);
+  M->Mult(x, y);
+  y.Add(-1.0, expected);
+  CHECK(linalg::Norml2(comm, y) < 1.0e-11 * std::max(1.0, linalg::Norml2(comm, expected)));
+  CheckAction(*A2, mat.EvaluateFrequencyDependentPermittivityA2(1, s));
+
+  auto system = dispersive.GetSystemMatrix(std::complex<double>{1.0}, s, s * s, K.get(),
+                                           C.get(), M.get(), A2.get());
+  auto pc = dispersive.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>{1.0},
+                                                                s, s * s, omega);
+  const auto *mg = dynamic_cast<const BaseMultigridOperator<ComplexOperator> *>(pc.get());
+  REQUIRE(mg);
+  system->Mult(x, expected);
+  mg->GetFinestOperator().Mult(x, y);
+  y.Add(-1.0, expected);
+  CHECK(linalg::Norml2(comm, y) < 1.0e-11 * std::max(1.0, linalg::Norml2(comm, expected)));
+}
+
+TEST_CASE("SpaceOperator dispersive material forms on part of the mesh",
+          "[materialoperator][Serial][Parallel]")
+{
+  // A dispersive material with no loss tangent or conductivity, on part of the mesh: its
+  // support on the first process, none on the others.
+  const MPI_Comm comm = Mpi::World();
+  auto mesh = MakePartitionedSupportMesh(comm);
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  BilinearForm::pa_order_threshold = 1;
+  config::MaterialData vacuum, dispersive;
+  vacuum.attributes = {1};
+  dispersive.attributes = {2};
+  dispersive.permittivity_terms.push_back(config::DebyeData{1.5, 0.5});
+  config::DomainData domains;
+  domains.materials = {vacuum, dispersive};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+  const auto &mat_op = space_op.GetMaterialOp();
+  REQUIRE(mat_op.HasFrequencyDependentPermittivitySupport(1));
+  REQUIRE_FALSE(mat_op.HasLossTangent());
+  REQUIRE_FALSE(mat_op.HasConductivity());
+  const auto material_attr = mat_op.GetCeedAttributes(std::vector<int>{2});
+  REQUIRE((material_attr.Size() > 0) == (Mpi::Rank(comm) == 0));
+
+  // The shared lossy element set is the local support of the material.
+  CHECK(mesh.back()->GetCeedActiveAttributes(false) ==
+        std::vector<int>(material_attr.begin(), material_attr.end()));
+
+  // The partially assembled unit mass B_m of the material is assembled on its elements
+  // only, with the action of the mass assembled on all elements.
+  int num_material_elem = 0;
+  for (int i = 0; i < mesh.back()->GetNE(); i++)
+  {
+    num_material_elem += (mesh.back()->Get().GetAttribute(i) == 2);
+  }
+  auto B = space_op.GetFrequencyDependentPermittivityMassMatrix(1, Operator::DIAG_ZERO);
+  REQUIRE(B);
+  const auto *B_m = dynamic_cast<const ComplexParOperator &>(*B).LocalOperator().Imag();
+  REQUIRE(B_m);
+  CHECK(NumCeedOperatorElements(*B_m) == num_material_elem);
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+  BilinearForm a(space_op.GetNDSpace());
+  if (material_attr.Size() > 0)
+  {
+    f.AddMaterialProperty(material_attr, 1.0);
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
+  }
+  auto B_all = a.PartialAssemble();
+  Vector x(B_m->Width()), y(B_m->Height()), y_all(B_m->Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  y_all.UseDevice(true);
+  x.Randomize(1);
+  B_m->Mult(x, y);
+  B_all->Mult(x, y_all);
+  y.Add(-1.0, y_all);
+  CHECK(linalg::Norml2(comm, y) <= 1.0e-14 * linalg::Norml2(comm, y_all));
+
+  // Fully assembled (the order is below PartialAssemblyOrder), B_m stores no explicit zeros
+  // of the elements outside the material: no entry in the rows of their degrees of freedom.
+  // The action is the same. The mesh and its spaces are built the same, so the vectors are
+  // as above.
+  BilinearForm::pa_order_threshold = 2;
+  auto mesh_full = MakePartitionedSupportMesh(comm);
+  SpaceOperator space_op_full(solver, domains, boundaries, ProblemType::DRIVEN, units,
+                              mesh_full);
+  auto B_full =
+      space_op_full.GetFrequencyDependentPermittivityMassMatrix(1, Operator::DIAG_ZERO);
+  REQUIRE(B_full);
+  const auto *B_m_full = dynamic_cast<const hypre::HypreCSRMatrix *>(
+      dynamic_cast<const ComplexParOperator &>(*B_full).LocalOperator().Imag());
+  REQUIRE(B_m_full);
+  REQUIRE(B_m_full->Height() == B_m->Height());
+  std::vector<bool> material_dof(B_m_full->Height(), false);
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dof_trans;
+  for (int i = 0; i < mesh_full.back()->GetNE(); i++)
+  {
+    if (mesh_full.back()->Get().GetAttribute(i) == 2)
+    {
+      space_op_full.GetNDSpace().Get().GetElementVDofs(i, dofs, dof_trans);
+      for (auto dof : dofs)
+      {
+        material_dof[(dof >= 0) ? dof : -1 - dof] = true;
+      }
+    }
+  }
+  int outside_entries = 0;
+  for (int i = 0; i < B_m_full->Height(); i++)
+  {
+    outside_entries += material_dof[i] ? 0 : B_m_full->GetI()[i + 1] - B_m_full->GetI()[i];
+  }
+  CHECK(outside_entries == 0);
+  CHECK((B_m_full->NNZ() > 0) == (num_material_elem > 0));
+  B_m_full->Mult(x, y);
+  y.Add(-1.0, y_all);
+  CHECK(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, y_all));
+}
+
 TEST_CASE("MaterialOperator anisotropic wave-number bound", "[materialoperator][Serial]")
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
@@ -704,6 +1295,409 @@ TEST_CASE("MaterialOperator dispersive wave-number bound", "[materialoperator][S
     CHECK(mat_op.GetFrequencyDependentMaxMuEpsilon(omega) ==
           Approx(2.0 * (eps_inf + delta / (1.0 + omega * omega * tau * tau))));
   }
+}
+
+TEST_CASE("Absorbing boundaries next to dispersive materials",
+          "[materialoperator][Serial][Parallel]")
+{
+  // Two elements along x: a lossless Lorentz medium at x < 1 and vacuum at x > 1, with
+  // absorbing faces at x = 0 (attribute 5 in 3D, 4 in 2D, next to the medium) and x = 2
+  // (attribute 3 in 3D, 2 in 2D). At each frequency the medium is the constant ε(ω), whose
+  // absorbing boundary condition uses √(ε(ω)/μ) and c(ω), so the two give the same system
+  // K + iωC − ω²M + A2(ω), in 3D and in 2D.
+  const int dim = GENERATE(3, 2);
+  CAPTURE(dim);
+  auto MakeMesh = [dim]
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        (dim == 3)
+            ? mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0)
+            : mfem::Mesh::MakeCartesian2D(2, 1, mfem::Element::QUADRILATERAL, false, 2.0,
+                                          1.0));
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+
+  const double eps_inf = 2.0, w0 = 3.0, delta = 0.7, omega = 1.3;
+  config::MaterialData dispersive, vacuum;
+  dispersive.attributes = {1};
+  dispersive.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  dispersive.permittivity_terms.push_back(
+      config::LorentzData{delta, w0, 0.0});  // Δε ω₀²/(s² + ω₀²), undamped
+  vacuum.attributes = {2};
+  config::MaterialData constant = dispersive;
+  constant.permittivity_terms.clear();
+  const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
+  constant.epsilon_r.s = {eps, eps, eps};
+
+  // The second-order boundary curl-curl integrator does not support 2D meshes.
+  for (int order : (dim == 3) ? std::vector<int>{1, 2} : std::vector<int>{1})
+  {
+    CAPTURE(order);
+    config::BoundaryData boundaries;
+    boundaries.farfield.attributes =
+        (dim == 3) ? std::vector<int>{3, 5} : std::vector<int>{2, 4};
+    boundaries.farfield.order = order;
+    auto Apply =
+        [&](const config::MaterialData &material, const ComplexVector &x, ComplexVector &y)
+    {
+      config::DomainData domains;
+      domains.materials = {material, vacuum};
+      auto mesh = MakeMesh();
+      SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+      const bool dispersive_op = material.HasFrequencyDependentPermittivity();
+      CHECK(space_op.GetFarfieldOp().NumDispersiveMaterials() == (dispersive_op ? 1 : 0));
+      if (dispersive_op)
+      {
+        CHECK(space_op.GetMaterialOp()
+                  .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
+                  .real() == Approx(eps));
+      }
+      auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+      ComplexVector t(x.Size());
+      t.UseDevice(true);
+      y = 0.0;
+      for (auto [op, a] : {std::pair{K.get(), std::complex<double>(1.0, 0.0)},
+                           std::pair{C.get(), std::complex<double>(0.0, omega)},
+                           std::pair{M.get(), std::complex<double>(-omega * omega, 0.0)},
+                           std::pair{A2.get(), std::complex<double>(1.0, 0.0)}})
+      {
+        if (op)
+        {
+          op->Mult(x, t);
+          y.Add(a, t);
+        }
+      }
+    };
+    std::unique_ptr<ComplexVector> x;
+    {
+      config::DomainData domains;
+      domains.materials = {constant, vacuum};
+      auto mesh = MakeMesh();
+      SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+      x = std::make_unique<ComplexVector>(space_op.GetNDSpace().GetTrueVSize());
+      x->UseDevice(true);
+      linalg::SetRandom(Mpi::World(), *x);
+    }
+    ComplexVector y_dispersive(x->Size()), y_constant(x->Size());
+    y_dispersive.UseDevice(true);
+    y_constant.UseDevice(true);
+    Apply(dispersive, *x, y_dispersive);
+    Apply(constant, *x, y_constant);
+    const double norm = linalg::Norml2(Mpi::World(), y_constant);
+    y_dispersive -= y_constant;
+    CHECK(linalg::Norml2(Mpi::World(), y_dispersive) <= 1.0e-12 * norm);
+  }
+}
+
+TEST_CASE("Second-order absorbing boundary pole terms",
+          "[materialoperator][Serial][Parallel]")
+{
+  // The pole terms g(λ)·M which the NLEPS HYBRID seed freezes must be the whole
+  // second-order absorbing boundary term of A2(λ), next to a damped Lorentz medium (face
+  // x = 0) and next to vacuum (face x = 2): A2 with the second-order condition, less A2
+  // with the first-order one, at complex ω. Dropping the terms next to the medium, or
+  // using the law -0.5/λ of a constant material there, fails.
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+  config::MaterialData dispersive, vacuum;
+  dispersive.attributes = {1};
+  dispersive.epsilon_r.s = {2.0, 2.0, 2.0};
+  dispersive.permittivity_terms.push_back(config::LorentzData{0.7, 3.0, 0.4});
+  vacuum.attributes = {2};
+  config::DomainData domains;
+  domains.materials = {dispersive, vacuum};
+
+  const std::complex<double> omega(1.3, 0.2),
+      lambda = std::complex<double>(0.0, 1.0) * omega;
+  std::list<std::vector<std::unique_ptr<Mesh>>> meshes;
+  auto Operators = [&](int order)
+  {
+    config::BoundaryData boundaries;
+    boundaries.farfield.attributes = {3, 5};
+    boundaries.farfield.order = order;
+    // The operator references the mesh, which must outlive it.
+    auto &mesh = meshes.emplace_back(MakeMesh());
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries,
+                                           ProblemType::EIGENMODE, units, mesh);
+  };
+  auto first = Operators(1), second = Operators(2);
+  CHECK(first->GetFarfieldPoleTerms(Operator::DIAG_ZERO).empty());
+  auto terms = second->GetFarfieldPoleTerms(Operator::DIAG_ZERO);
+  REQUIRE(terms.size() == 2);
+
+  ComplexVector x(second->GetNDSpace().GetTrueVSize()), y(x.Size()), z(x.Size()),
+      t(x.Size());
+  for (auto *v : {&x, &y, &z, &t})
+  {
+    v->UseDevice(true);
+  }
+  linalg::SetRandom(Mpi::World(), x);
+  second->GetExtraSystemMatrix(omega, Operator::DIAG_ZERO)->Mult(x, y);
+  first->GetExtraSystemMatrix(omega, Operator::DIAG_ZERO)->AddMult(x, y, -1.0);
+  z = 0.0;
+  for (const auto &[M, g] : terms)
+  {
+    M->Mult(x, t);
+    z.Add(g(lambda), t);
+  }
+  const double norm = linalg::Norml2(Mpi::World(), y);
+  REQUIRE(norm > 0.0);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+
+  // The HYBRID seed pencil with the terms frozen at the target, as the eigenmode solver
+  // builds it: away from the interpolation nodes, it is the interpolant of A2 with the
+  // first-order condition plus the pole terms at the target, at any λ.
+  const double target = 1.0, target_max = 2.0;
+  auto Seed = [&](SpaceOperator &space_op, bool freeze)
+  {
+    auto interp = std::make_unique<NewtonInterpolationOperator>(
+        [&space_op](std::complex<double> l)
+        {
+          return space_op.GetExtraSystemMatrix(l / std::complex<double>(0.0, 1.0),
+                                               Operator::DIAG_ZERO);
+        },
+        static_cast<int>(x.Size()));
+    interp->Interpolate(std::complex<double>(0.0, target),
+                        std::complex<double>(0.0, target_max));
+    for (auto &[M, g] : freeze ? space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO)
+                               : std::vector<SpaceOperator::FarfieldPoleTerm>{})
+    {
+      interp->AddFrozenPole(std::move(M), g, std::complex<double>(0.0, target));
+    }
+    return interp;
+  };
+  auto ApplySeed = [&](const NewtonInterpolationOperator &interp, std::complex<double> l,
+                       ComplexVector &out)
+  {
+    out = 0.0;
+    std::complex<double> lk = 1.0;
+    for (int order = 0; order < 3; order++, lk *= l)
+    {
+      interp.AddMult(order, x, out, lk);
+    }
+  };
+  const auto seed1 = Seed(*first, false), seed2 = Seed(*second, true);
+  for (const std::complex<double> l :
+       {std::complex<double>(0.05, 1.37), std::complex<double>(-0.1, 2.6)})
+  {
+    CAPTURE(l);
+    ApplySeed(*seed2, l, y);
+    ApplySeed(*seed1, l, z);
+    for (const auto &[M, g] : terms)
+    {
+      M->Mult(x, t);
+      z.Add(g(std::complex<double>(0.0, target)), t);
+    }
+    const double seed_norm = linalg::Norml2(Mpi::World(), y);
+    REQUIRE(seed_norm > 0.0);
+    z -= y;
+    CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-10 * seed_norm);
+  }
+}
+
+TEST_CASE("Frequency-dependent terms of A2 next to absorbing boundaries",
+          "[materialoperator][Serial][Parallel]")
+{
+  // A damped Lorentz medium (x < 1) next to vacuum, with second-order absorbing boundaries
+  // on both ends. The volume term g_m(λ), the first-order boundary term ω r(ω) next to the
+  // medium, and the second-order terms are all of A2 here: A2(λ) less these terms must
+  // vanish (the scalar laws and the imaginary-slot matrices agree with A2).
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh)));
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+  config::MaterialData dispersive, vacuum;
+  dispersive.attributes = {1};
+  dispersive.epsilon_r.s = {2.0, 2.0, 2.0};
+  dispersive.permittivity_terms.push_back(config::LorentzData{0.7, 3.0, 0.4});
+  vacuum.attributes = {2};
+  config::DomainData domains;
+  domains.materials = {dispersive, vacuum};
+  config::BoundaryData boundaries;
+  boundaries.farfield.attributes = {3, 5};
+  boundaries.farfield.order = 2;
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::EIGENMODE, units, mesh);
+  const auto &mat_op = space_op.GetMaterialOp();
+  const auto &farfield_op = space_op.GetFarfieldOp();
+  // Material 0 is the Lorentz medium; the vacuum has no frequency-dependent term (and a
+  // null mass matrix).
+  REQUIRE(mat_op.NumFrequencyDependentPermittivityMaterials() == 2);
+  REQUIRE(!space_op.GetFrequencyDependentPermittivityMassMatrix(1, Operator::DIAG_ZERO));
+  REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
+  auto f_vol = [&mat_op](std::complex<double> l)
+  { return mat_op.EvaluateFrequencyDependentPermittivityA2(0, l) / 1i; };
+  auto f_damp = [&farfield_op](std::complex<double> l)
+  { return (l / 1i) * farfield_op.GetDispersiveScale(0, l / 1i); };
+
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector x(size), r(size), t(size);
+  for (auto *v : {&x, &r, &t})
+  {
+    v->UseDevice(true);
+  }
+  linalg::SetRandom(Mpi::World(), x);
+  const auto B =
+      space_op.GetFrequencyDependentPermittivityMassMatrix(0, Operator::DIAG_ZERO);
+  const auto D = space_op.GetFarfieldDispersiveDampingMatrix(0, Operator::DIAG_ZERO);
+  const auto poles = space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO);
+  REQUIRE(B);
+  REQUIRE(D);
+  REQUIRE(poles.size() == 2);
+  for (const std::complex<double> l :
+       {std::complex<double>(-0.2, 1.37), std::complex<double>(0.1, 2.6)})
+  {
+    CAPTURE(l);
+    // A2(λ) less its terms.
+    space_op.GetExtraSystemMatrix(l / 1i, Operator::DIAG_ZERO)->Mult(x, r);
+    const double a2_norm = linalg::Norml2(Mpi::World(), r);
+    REQUIRE(a2_norm > 0.0);
+    B->Mult(x, t);
+    r.Add(-f_vol(l), t);
+    D->Mult(x, t);
+    r.Add(-f_damp(l), t);
+    for (const auto &[M, g] : poles)
+    {
+      M->Mult(x, t);
+      r.Add(-g(l), t);
+    }
+    CHECK(linalg::Norml2(Mpi::World(), r) <= 1.0e-12 * a2_norm);
+  }
+}
+
+TEST_CASE("Real preconditioner of absorbing boundaries below the plasma frequency",
+          "[materialoperator][Serial][Parallel]")
+{
+  // Below its plasma frequency, a Drude medium has Re ε < 0 and r ≈ -i|r|. With the
+  // current ABC2 sign, 0.5/(iωr) is a positive curl-curl shift. The real preconditioner
+  // uses its magnitude and the positive vacuum coefficient 0.5/ω. Both factored owner
+  // getters below store the negative boundary form, so negate their actions here.
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+  config::MaterialData drude, vacuum;
+  drude.attributes = {1};
+  drude.epsilon_r.s = {2.0, 2.0, 2.0};
+  drude.permittivity_terms.push_back(config::DrudeData{3.0, 0.01});
+  vacuum.attributes = {2};
+  config::DomainData domains;
+  domains.materials = {drude, vacuum};
+  const double omega = 1.3;
+  std::list<std::vector<std::unique_ptr<Mesh>>> meshes;
+  auto Operators = [&](int order)
+  {
+    config::BoundaryData boundaries;
+    boundaries.farfield.attributes = {3, 5};
+    boundaries.farfield.order = order;
+    // The operator references the mesh, which must outlive it.
+    auto &mesh = meshes.emplace_back(MakeMesh());
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, mesh);
+  };
+  auto first = Operators(1), second = Operators(2);
+  const std::complex<double> r = second->GetFarfieldOp().GetDispersiveScale(0, omega),
+                             z2 = std::complex<double>(0.0, -0.5) / (omega * r);
+  CAPTURE(r, z2);
+  REQUIRE(z2.real() > 0.1 * std::abs(z2));
+
+  auto PC = [&](SpaceOperator &space_op)
+  { return space_op.GetPreconditionerMatrix<Operator>(1.0, omega, -omega * omega, omega); };
+  const auto pc1 = PC(*first), pc2 = PC(*second);
+  auto M_k = second->GetFarfieldDispersiveCurlCurlMatrix(0, Operator::DIAG_ZERO);
+  auto M_ff = second->GetFarfieldBoundaryCurlCurlMatrix<Operator>(Operator::DIAG_ZERO);
+  REQUIRE(M_k);
+  REQUIRE(M_ff);
+
+  Vector x(second->GetNDSpace().GetTrueVSize()), y(x.Size()), z(x.Size());
+  ComplexVector xc(x.Size()), t(x.Size());
+  for (auto *v : {&x, &y, &z})
+  {
+    v->UseDevice(true);
+  }
+  xc.UseDevice(true);
+  t.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  pc2->Mult(x, y);
+  pc1->AddMult(x, y, -1.0);
+  M_ff->Mult(x, z);
+  z *= -0.5 / omega;
+  xc = 0.0;
+  xc.Real() = x;
+  M_k->Mult(xc, t);  // i M_k x, with M_k the negative boundary form
+  z.Add(-std::abs(z2), t.Imag());
+  const double norm = linalg::Norml2(Mpi::World(), y);
+  REQUIRE(norm > 0.0);
+  CHECK(linalg::Dot(Mpi::World(), x, y) > 0.0);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
 }
 
 TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")

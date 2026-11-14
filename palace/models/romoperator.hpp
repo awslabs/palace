@@ -200,7 +200,7 @@ protected:
   //   - Rational surface impedance, per boundary: f = g(iω)/i for the Robin coefficient
   //     g(s) = s·D(s)/N(s).
   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
-  //     constant.
+  //     constant, complex in a lossy frequency-dependent port medium.
   enum class BoundaryTermKind
   {
     WavePort,
