@@ -1,0 +1,142 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/sic_reststrahlen"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/sic_halfspace.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [2],  // 6H-SiC, ordinary ray (E ⊥ c), Spitzer et al. (1959)
+        "Permittivity":
+        {
+          "HighFrequency": 6.7,
+          "Terms":
+          [
+            {
+              "Type": "Lorentz",
+              "DeltaPermittivity": 3.305,     // 4πρ
+              "ResonanceFrequency": 23800.0,  // GHz, the TO phonon (12.60 μm)
+              "DampingFrequency": 142.8       // GHz, 0.006 times the resonance frequency
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [1],
+          "ReceiverAttributes": [2]
+        },
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        }
+      ]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,  // In vacuum, 0.5 μm above the surface
+        "Attributes": [5],
+        "Excitation": true,
+        "IncidentPolarization": "TE",
+        "MaxOrder": 0
+      },
+      {
+        "Index": 2,  // In SiC, 0.25 μm below the surface, so it terminates the half-space
+        "Attributes": [6],
+        "MaxOrder": 0
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Linear",  // 22.0 to 13.1 μm
+          "MinFreq": 13600.0,
+          "MaxFreq": 22800.0,
+          "FreqStep": 200.0
+        },
+        {
+          "Type": "Linear",  // 13.1 to 12.6 μm, the edge at the TO phonon
+          "MinFreq": 22800.0,
+          "MaxFreq": 23800.0,
+          "FreqStep": 100.0
+        },
+        {
+          "Type": "Linear",  // 12.6 to 10.6 μm, the reststrahlen band
+          "MinFreq": 23800.0,
+          "MaxFreq": 28200.0,
+          "FreqStep": 400.0
+        },
+        {
+          "Type": "Linear",  // 10.6 to 10.0 μm, the edge at the LO phonon
+          "MinFreq": 28200.0,
+          "MaxFreq": 30000.0,
+          "FreqStep": 100.0
+        },
+        {
+          "Type": "Linear",  // 10.0 to 7.5 μm
+          "MinFreq": 30000.0,
+          "MaxFreq": 40000.0,
+          "FreqStep": 500.0
+        },
+        {
+          "Type": "Linear",  // 7.5 to 5.0 μm
+          "MinFreq": 40000.0,
+          "MaxFreq": 60000.0,
+          "FreqStep": 1000.0
+        },
+        {
+          "Type": "Linear",  // 5.0 to 3.3 μm
+          "MinFreq": 60000.0,
+          "MaxFreq": 90000.0,
+          "FreqStep": 2500.0
+        },
+        {
+          "Type": "Linear",  // 3.3 to 2.0 μm
+          "MinFreq": 90000.0,
+          "MaxFreq": 150000.0,
+          "FreqStep": 7500.0
+        },
+        {
+          "Type": "Point",  // Band center, LO phonon, and reflectance minimum
+          "Freq": [26178.6, 29083.6, 29917.86]
+        }
+      ],
+      "AdaptiveTol": 1.0e-8
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

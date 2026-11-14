@@ -2582,6 +2582,29 @@ TEST_CASE("floquet_lorentz_slab_adaptive", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("dielectric_slab", "adaptive.json", "adaptive", opts);
 }
 
+// Adaptive sweep of the silicon carbide half-space of the dielectric_grating example: the
+// Lorentz permittivity 6.7 + 3.305 f0^2 / (f0^2 - f^2 + i gamma f), f0 = 23.8 THz and gamma
+// = 142.8 GHz, of 6H-SiC (Spitzer et al., 1959) at normal incidence, from vacuum 0.5 um
+// above the surface. Port 2 lies 0.25 um deep in the silicon carbide, whose permittivity
+// its Floquet port uses, so it terminates the half-space. 149 frequencies from 2 to 22 um,
+// from 9 full solves, cross the reststrahlen band of negative real permittivity between the
+// TO and LO phonons, where |epsilon| reaches 550. The checks are those of the slab above.
+TEST_CASE("dielectric_grating_sic_reststrahlen", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(
+      [](double f)
+      {
+        return 6.7 + 3.305 * 23800.0 * 23800.0 /
+                         std::complex<double>(23800.0 * 23800.0 - f * f, 142.8 * f);
+      },
+      {.front = 0.5e-6, .thickness = 0.25e-6, .half_space = true});
+  palace::test::RunRegressionCase("dielectric_grating", "sic_reststrahlen.json",
+                                  "sic_reststrahlen", opts);
+}
+
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
