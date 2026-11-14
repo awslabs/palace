@@ -66,6 +66,10 @@ generate_schema_compatibility_table()
 include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
 generate_coaxial_schematic()
 
+# Draw the silicon carbide half-space schematic used by examples/dielectric_grating.md.
+include(joinpath(@__DIR__, "generate_sic_schematic.jl"))
+generate_sic_schematic()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
