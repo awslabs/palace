@@ -202,7 +202,7 @@ protected:
   //     finite conductivity group, then one per rational impedance boundary):
   //     f = scale_i(ω)/i (SurfaceTerms::GetExtraSystemBdrMassTermScale).
   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
-  //     constant.
+  //     constant, complex in a lossy frequency-dependent port medium.
   enum class BoundaryTermKind
   {
     WavePort,
