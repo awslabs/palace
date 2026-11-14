@@ -985,6 +985,7 @@ private:
   CoverageThresholds coverage_thresholds;
   CoverageValidatedRegime coverage_validated_regime;
   std::map<std::string, CoverageModelQualification> coverage_model_qualifications;
+  CoverageRunRecord coverage_run_record;  // root only: the writers' cells of the run
   void
   ConfigureCoverage(const config::ElectrostaticSolverData::ResponseCorrectionData &request,
                     MPI_Comm comm);
@@ -1742,6 +1743,10 @@ public:
   }
   // Lane L1 (decision 1634 (4)): the coverage outputs' inputs (ConfigureCoverage).
   const CoverageThresholds &GetCoverageThresholds() const { return coverage_thresholds; }
+  // The run's coverage cells as the writers printed them (root only), for the end-of-run
+  // banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata).
+  CoverageRunRecord &GetCoverageRunRecord() { return coverage_run_record; }
+  const CoverageRunRecord &GetCoverageRunRecord() const { return coverage_run_record; }
   const CoverageValidatedRegime &GetCoverageValidatedRegime() const
   {
     return coverage_validated_regime;

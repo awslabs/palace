@@ -270,9 +270,21 @@ Table::Table(std::string_view table_str,
         else
         {
           auto result = scn::scan<double>(entry_trim, "{}");
-          MFEM_VERIFY(result, fmt::format("Could not parse CSV entry \"{}\" as double",
-                                          entry_trim));
-          (*this)[col_i] << result->value();
+          auto &column = (*this)[col_i];
+          // A column whose FIRST cell is not a number is a text column (Column::Text:
+          // lane L1's Type and status columns); a text cell below a number is refused.
+          MFEM_VERIFY(
+              result || column.print_as_text || column.data.empty(),
+              fmt::format("Could not parse CSV entry \"{}\" as double", entry_trim));
+          if (!result || column.print_as_text)
+          {
+            column.print_as_text = true;
+            column << std::string(entry_trim);
+          }
+          else
+          {
+            column << result->value();
+          }
         }
         col_i++;
       }

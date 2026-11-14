@@ -1839,6 +1839,21 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 }
 
 template <ProblemType solver_t>
+std::map<int, std::string>
+PostOperator<solver_t>::GetInterfaceTypes(const std::set<int> *targets) const
+{
+  std::map<int, std::string> types;
+  for (const auto &[idx, data] : surf_post_op.eps_surfs)
+  {
+    if (!targets || targets->count(idx) > 0)
+    {
+      types[idx] = ToString(data.type);
+    }
+  }
+  return types;
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
 {
   surface_response_measurement.reset();
@@ -1915,6 +1930,44 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       }
       return perimeter;
     };
+    // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage partition of
+    // the RAW field (one pass per target interface), the served list's `unpatched` label
+    // alone (no model claim under the point) moved to the UnpatchedPairs class (fix round
+    // P2 2B); the loop remainder is moved by the caller.
+    auto RawCoveragePartition = [&]()
+    {
+      const auto missing_by_feature =
+          SurfacePostOperator::CoverageMissingByFeature(surface_response_uncovered);
+      std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+          {"Missing", &missing_by_feature},
+          {"DomainBoundary", &surface_response_domain_boundary},
+          {"SpatialClusterPriority", &surface_response_spatial_cluster_priority},
+          {"ConductorConsistency", &conductor_consistency_portions}};
+      std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+      if (surface_response_exclusion_energy_enabled)
+      {
+        remainder_classes.push_back({"Excluded", &surface_response_exclusion_energy});
+      }
+      auto coverage = surf_post_op.GetInterfaceCoveragePartition(
+          target_interfaces, *E, D_recovered.get(), kept_classes,
+          surface_response_model_raw, remainder_classes);
+      SurfacePostOperator::MoveCoverageServedLabel(coverage, "unpatched", "UnpatchedPairs");
+      return coverage;
+    };
+    auto RootCoverageMeasurement =
+        [&](const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &coverage,
+            const std::map<int, double> &within, const std::map<int, double> &fabricated)
+    {
+      // Lane L1 (decision 1634 (2) / (4)): the coverage per Type of this measurement, on
+      // the root (the writers' rank), before any writer runs.
+      return ComputeCoverageMeasurement(
+          coverage, GetInterfaceTypes(&target_interfaces), within, fabricated,
+          surface_response_op->GetCoverageKeyRecords(),
+          surface_response_op->GetCoverageModelQualifications(),
+          surface_response_op->GetCoverageThresholds(),
+          surface_response_op->GetCoverageValidatedRegime(),
+          SurfaceResponseCoverageExcitation());
+    };
     if (surface_response_postprocess_enabled)
     {
       BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
@@ -1989,25 +2042,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // partition, every point in ONE bin by the correction's ownership (the kept-raw
         // classes first: the corrected total keeps them raw whatever claim lies under
         // them, e.g. a conductor-consistency-excluded patch's claim, REPORT STEP 10).
-        const auto missing_by_feature =
-            SurfacePostOperator::CoverageMissingByFeature(surface_response_uncovered);
-        std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
-            {"Missing", &missing_by_feature},
-            {"DomainBoundary", &surface_response_domain_boundary},
-            {"SpatialClusterPriority", &surface_response_spatial_cluster_priority},
-            {"ConductorConsistency", &conductor_consistency_portions}};
-        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
-        if (surface_response_exclusion_energy_enabled)
-        {
-          remainder_classes.push_back({"Excluded", &surface_response_exclusion_energy});
-        }
-        result.coverage = surf_post_op.GetInterfaceCoveragePartition(
-            target_interfaces, *E, D_recovered.get(), kept_classes,
-            surface_response_model_raw, remainder_classes);
-        // The served list's `unpatched` label ALONE (no model claim under the point) is the
-        // UnpatchedPairs class (fix round P2 2B), not a served claim.
-        SurfacePostOperator::MoveCoverageServedLabel(result.coverage, "unpatched",
-                                                     "UnpatchedPairs");
+        result.coverage = RawCoveragePartition();
       }
       if (!result.confidence.loop_remainders.empty())
       {
@@ -2066,6 +2101,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       // Decision 1250: the matched energy share of the fixed-trace shift, accumulated over
       // the target interfaces from the same partition the electric correction uses.
       double shift_coverage_within_radius = 0.0, shift_coverage_kept_raw = 0.0;
+      // Lane L1: W and the fabricated energy per target, the coverage cells' inputs.
+      std::map<int, double> coverage_within, coverage_fabricated;
       for (const int target : target_interfaces)
       {
         auto interface = result.interfaces.find(target);
@@ -2114,6 +2151,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         shift_coverage_within_radius +=
             interface->second.raw_energy - outside->energy_outside;
         shift_coverage_kept_raw += kept_raw;
+        coverage_within[target] = interface->second.raw_energy - outside->energy_outside;
+        coverage_fabricated[target] = fabricated->second;
         const double closure_scale =
             std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
         if (closure_scale > 0.0)
@@ -2124,6 +2163,69 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       }
       result.fixed_trace_shift_coverage =
           FixedTraceShiftCoverage(shift_coverage_within_radius, shift_coverage_kept_raw);
+      if (Mpi::Root(fem_op->GetComm()))
+      {
+        result.coverage_measurement =
+            RootCoverageMeasurement(result.coverage, coverage_within, coverage_fabricated);
+      }
+    }
+    else
+    {
+      // Ruling 1654 (III) Q2 (a): a SelfConsistent-only solve evaluates no response on the
+      // raw field; its coverage (on the RAW field, W of record) takes ONE raw response
+      // evaluation for the fabricated energy and the loop remainders, and the partition
+      // pass. Nothing of it enters another output (the response is a pure function of the
+      // field: no counter, cache or gate state moves).
+      BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+      const auto raw_response =
+          surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq, false);
+      result.coverage = RawCoveragePartition();
+      if (!raw_response.loop_remainders.empty())
+      {
+        const auto remainder_portions =
+            surface_response_op->GetLoopRemainderPortions(raw_response.loop_remainders);
+        SurfacePostOperator::MoveCoverageLoopRemainder(
+            result.coverage,
+            surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+                target_interfaces, *E, D_recovered.get(),
+                RemainderPerimeter(remainder_portions), remainder_portions.weights));
+      }
+      std::map<int, double> coverage_within, coverage_fabricated;
+      bool measured = true;
+      const double radius = surface_response_op->GetMatchingRadius();
+      for (const int target : target_interfaces)
+      {
+        const auto raw =
+            std::find_if(measurement_cache.interface_eps_i.begin(),
+                         measurement_cache.interface_eps_i.end(),
+                         [&](const auto &entry) { return entry.idx == target; });
+        auto outside = std::find_if(measurement_cache.interface_edge_i.begin(),
+                                    measurement_cache.interface_edge_i.end(),
+                                    [&](const auto &edge)
+                                    {
+                                      return edge.idx == target &&
+                                             std::abs(edge.distance - radius) <=
+                                                 1.0e-10 * std::max(edge.distance, radius);
+                                    });
+        const auto fabricated = raw_response.fabricated_surface_energy.find(target);
+        if (raw == measurement_cache.interface_eps_i.end() ||
+            outside == measurement_cache.interface_edge_i.end() ||
+            fabricated == raw_response.fabricated_surface_energy.end())
+        {
+          measured = false;  // no W of record for this interface: NOT-MEASURED (Q2 (b))
+          break;
+        }
+        coverage_within[target] = raw->energy - outside->energy_outside;
+        coverage_fabricated[target] = fabricated->second;
+      }
+      if (Mpi::Root(fem_op->GetComm()))
+      {
+        result.coverage_measurement =
+            measured ? RootCoverageMeasurement(result.coverage, coverage_within,
+                                               coverage_fabricated)
+                     : NotMeasuredCoverageMeasurement(GetInterfaceTypes(&target_interfaces),
+                                                      SurfaceResponseCoverageExcitation());
+      }
     }
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
@@ -2359,6 +2461,18 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       table.insert("response_target", "response target");
       table["response_target"].print_as_int = true;
     }
+    // Lane L1 (DESIGN-v2 s4.3; decision 1636 (1)): the coverage columns, APPENDED (every
+    // column above keeps its position, name and value): this interface's Type, W and
+    // uncovered share, then its Type's cell (repeated on each of its interfaces).
+    table.insert(Column::Text("coverage_type", "coverage Type"));
+    table.insert("coverage_within", "W within-R raw (J)");
+    table.insert("coverage_uncovered_share", "uncovered raw share of W");
+    table.insert("coverage_type_uncovered_share", "Type uncovered raw share of W");
+    table.insert("coverage_type_method_gap_share", "Type method-gap raw share of W");
+    table.insert("coverage_type_pending_share", "Type pending-model share of W");
+    table.insert("coverage_type_factor", "Type covered correction factor");
+    table.insert(Column::Text("coverage_status", "coverage status"));
+    table.insert(Column::Text("regime_status", "regime status"));
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE ||
@@ -2447,10 +2561,16 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       table["magnetic_fallback_patches"].print_as_int = true;
       table["magnetic_term_applied"].print_as_int = true;
     }
+    // Lane L1 (DESIGN-v2 s4.3): the worst cell over Types, APPENDED last.
+    table.insert("coverage_worst_uncovered_share", "worst uncovered raw share of W");
+    table.insert(Column::Text("coverage_worst_status", "worst coverage status"));
+    table.insert(Column::Text("coverage_worst_regime", "worst regime status"));
   }
 
   using VT = Units::ValueType;
   const auto &result = *surface_response_measurement;
+  const auto &coverage = result.coverage_measurement;
+  const auto coverage_types = GetInterfaceTypes();
   const auto &confidence = result.confidence;
   for (const auto &[interface_index, interface] : result.interfaces)
   {
@@ -2529,6 +2649,43 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     if (surface_response_untargeted_interface)
     {
       table["response_target"] << (interface.response_target ? 1.0 : 0.0);
+    }
+    {
+      // Lane L1: an untargeted interface is in no Type (NOT-TARGET); a target of an
+      // unmeasured cell reads its cell's NOT-MEASURED row.
+      const auto type = coverage_types.find(interface_index);
+      table["coverage_type"] << (type != coverage_types.end() ? type->second : "Default");
+      const auto summary = coverage.interfaces.find(interface_index);
+      const CoverageCell *cell =
+          type != coverage_types.end() ? coverage.FindCell(type->second) : nullptr;
+      if (!interface.response_target || !cell)
+      {
+        table["coverage_within"] << nan;
+        table["coverage_uncovered_share"] << nan;
+        table["coverage_type_uncovered_share"] << nan;
+        table["coverage_type_method_gap_share"] << nan;
+        table["coverage_type_pending_share"] << nan;
+        table["coverage_type_factor"] << nan;
+        table["coverage_status"] << std::string(
+            CoverageStatusName(interface.response_target ? CoverageStatus::NOT_MEASURED
+                                                         : CoverageStatus::NOT_TARGET));
+        table["regime_status"] << std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
+      }
+      else
+      {
+        const bool measured = summary != coverage.interfaces.end();
+        const double within = measured ? summary->second.within : nan;
+        table["coverage_within"] << units.Dimensionalize<VT::ENERGY>(within);
+        table["coverage_uncovered_share"]
+            << (measured && within > 0.0 ? (within - summary->second.served) / within
+                                         : nan);
+        table["coverage_type_uncovered_share"] << cell->uncovered_share;
+        table["coverage_type_method_gap_share"] << cell->method_gap_share;
+        table["coverage_type_pending_share"] << cell->pending_share;
+        table["coverage_type_factor"] << cell->factor;
+        table["coverage_status"] << std::string(CoverageStatusName(cell->status));
+        table["regime_status"] << std::string(RegimeStatusName(cell->regime));
+      }
     }
   }
   surface_Q_corrected->WriteFullTableTrunc();
@@ -2650,6 +2807,27 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
                       (2 * M_PI)
                 : nan);
   }
+  {
+    // Lane L1: the worst cell over Types (the largest finite uncovered share; the worst
+    // statuses by CoverageStatusRank / RegimeStatusRank).
+    double worst_share = nan;
+    for (const auto &cell : coverage.cells)
+    {
+      if (std::isfinite(cell.uncovered_share) && !(cell.uncovered_share <= worst_share))
+      {
+        worst_share = cell.uncovered_share;
+      }
+    }
+    const auto *worst_status = coverage.WorstCoverageCell();
+    const auto *worst_regime = coverage.WorstRegimeCell();
+    table["coverage_worst_uncovered_share"] << worst_share;
+    table["coverage_worst_status"]
+        << std::string(worst_status ? CoverageStatusName(worst_status->status)
+                                    : CoverageStatusName(CoverageStatus::NOT_MEASURED));
+    table["coverage_worst_regime"]
+        << std::string(worst_regime ? RegimeStatusName(worst_regime->regime)
+                                    : RegimeStatusName(RegimeStatus::NO_MODEL));
+  }
   surface_response_confidence->WriteFullTableTrunc();
   if (surface_response_op->HasMagneticLeaves())
   {
@@ -2691,6 +2869,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   PrintSurfaceResponseExclusionEnergies(output_index, excitation);
   PrintSurfaceResponseUncoveredFeatureEnergies(output_index, excitation);
   PrintSurfaceResponseLoopFit(output_index, excitation);
+  PrintSurfaceResponseCoverage(output_index, excitation);
 }
 
 template <ProblemType solver_t>
@@ -3205,6 +3384,62 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
   {
     Write(2, result.self_consistent_confidence, result.self_consistent_loop_remainder);
   }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
+                                                          int excitation) const
+{
+  // Lane L1 (decision 1634 (2); DESIGN-v2 s4.2; rulings 1641 / 1649 / 1654 (III)). Root
+  // only (the caller returns on the other ranks). Plain text tables (the Type, key and
+  // status columns are text; WriteCoverageRows / WriteCoverageByKeyRows). Both files are
+  // removed at the first print whatever is written (a stale table of an earlier run never
+  // reads as this run's); each writes its header with its first rows.
+  const auto coverage_path = post_dir / "surface-response-coverage.csv";
+  const auto by_key_path = post_dir / "surface-response-uncovered-energy-by-key.csv";
+  if (!surface_response_coverage_started)
+  {
+    fs::remove(coverage_path);
+    fs::remove(by_key_path);
+    surface_response_coverage_started = true;
+  }
+  const auto &coverage = surface_response_measurement->coverage_measurement;
+  const std::string keys =
+      solver_t == ProblemType::DRIVEN
+          ? fmt::format("{:.8e},{}", output_index, excitation)
+          : fmt::format("{},{}", static_cast<int>(std::lround(output_index)), excitation);
+  const std::string key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
+  const auto target_interfaces = surface_response_op->GetTargetInterfaces();
+  for (const auto &path : {coverage_path, by_key_path})
+  {
+    const bool write_header =
+        surface_response_tables_with_header.insert(path.string()).second;
+    std::ofstream output(path, write_header ? std::ios::out | std::ios::trunc
+                                            : std::ios::out | std::ios::app);
+    MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
+    if (path == coverage_path)
+    {
+      output << (write_header ? CoverageTableHeader(key_header) : "");
+      WriteCoverageRows(output, keys, coverage, units);
+    }
+    else
+    {
+      output << (write_header ? CoverageByKeyTableHeader(key_header, target_interfaces)
+                              : "");
+      WriteCoverageByKeyRows(output, keys, coverage, target_interfaces,
+                             CoveragePortionsByFeature(surface_response_uncovered), units);
+    }
+  }
+  std::vector<std::pair<std::string, double>> cell_keys;
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    cell_keys = {{"f (GHz)", output_index}, {"exc", static_cast<double>(excitation)}};
+  }
+  else
+  {
+    cell_keys = {{"m", std::round(output_index)}};
+  }
+  surface_response_op->GetCoverageRunRecord().Add(cell_keys, coverage);
 }
 
 template <ProblemType solver_t>

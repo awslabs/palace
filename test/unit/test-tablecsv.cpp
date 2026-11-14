@@ -184,6 +184,33 @@ TEST_CASE("TableCSV text column", "[tablecsv][Serial]")
                                     Pad("+1.000000000000e+00") + "," + Pad("OK") + "\n");
 }
 
+// Lane L1: a printed table with text columns reads back (Table(std::string_view)): a column
+// whose first cell is not a number is a text column; a text cell below a number is refused.
+TEST_CASE("TableCSV text column round-trips", "[tablecsv][Serial]")
+{
+  Table table;
+  table.insert("value", "value");
+  table.insert(Column::Text("type", "coverage Type"));
+  table.insert(Column::Text("status", "coverage status"));
+  const std::vector<std::string> types = {"SA", "MS", "MA", "Default"};
+  const std::vector<std::string> statuses = {"IN", "NO-RANGE", "NOT-TARGET", "NO-ENERGY"};
+  for (std::size_t i = 0; i < types.size(); i++)
+  {
+    table["value"] << 0.25 * static_cast<double>(i);
+    table["type"] << types[i];
+    table["status"] << statuses[i];
+  }
+  Table parsed(table.format_table());
+  REQUIRE(parsed.n_cols() == 3);
+  CHECK(!parsed[0].print_as_text);
+  CHECK(parsed[1].print_as_text);
+  CHECK(parsed[2].print_as_text);
+  CHECK(parsed[1].text == types);
+  CHECK(parsed[2].text == statuses);
+  CHECK(parsed[0].data == std::vector<double>{0.0, 0.25, 0.5, 0.75});
+  CHECK(parsed.format_table() == table.format_table());
+}
+
 // OI-PATCH-ENERGY-CSV-INDEX-PRECISION (fix round P2, decision 1265): the former index idiom
 // Column(name, header, 0, 0, 2, "") printed an integer through the 3-significant-digit
 // float form, so an index beyond 999 collapsed ("1.24e+02" for 124 kept 3 digits; 1234 and

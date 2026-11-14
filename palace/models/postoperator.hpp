@@ -378,6 +378,14 @@ protected:
     // (`loop_remainder`) lies inside the served bins: the coverage shares move it out of
     // them.
     std::map<int, SurfacePostOperator::InterfaceCoveragePartition> coverage;
+    // Lane L1 (decision 1634 (2) / (4)): the coverage of this measurement per Type (W, U
+    // and its shares, the interim coverage status, the covered correction factor and the
+    // regime status) and the key rows, from `coverage` and the corrected bookkeeping's W
+    // and fabricated energy (ComputeCoverageMeasurement). ROOT ONLY (the writers' rank;
+    // the library's qualification records are read there): empty elsewhere. The writers of
+    // surface-Q-corrected.csv, surface-response-confidence.csv and the coverage tables read
+    // the per-cell status from here (a coverage policy's hook, lane L4).
+    CoverageMeasurement coverage_measurement;
     // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
     // placed patch the raw field's within-box volume energies (empty when off).
     std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;
@@ -501,6 +509,16 @@ protected:
   // removed at the first print before the writes (decision 473 MAJOR-3).
   void PrintSurfaceResponseLoopFit(double output_index, int excitation) const;
   mutable bool surface_response_loop_fit_started = false;
+  // Lane L1 (decision 1634 (2); DESIGN-v2 s4.2): surface-response-coverage.csv (one row
+  // per cell x Type: W, the uncovered / missing / method-gap / pending / no-status shares,
+  // the covered correction factor, the validated range, the coverage and regime statuses)
+  // and surface-response-uncovered-energy-by-key.csv (per Missing-class key: kind,
+  // reason, features, portions, length and the raw within-R energy and share of W per
+  // target interface), plain text tables appended per print (each measurement as it
+  // completes), root only; both removed at the first print. Records the cells for the
+  // end-of-run banner.
+  void PrintSurfaceResponseCoverage(double output_index, int excitation) const;
+  mutable bool surface_response_coverage_started = false;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -540,6 +558,14 @@ protected:
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;      // Depends: LumpedPorts
   void MeasureSurfaceResponseCorrection() const;  // Depends: Domain, ports, interfaces
+  // Lane L1: the excitation class of this solver's coverage cells (the validated-regime
+  // ranges' key).
+  static constexpr CoverageExcitationClass SurfaceResponseCoverageExcitation()
+  {
+    return solver_t == ProblemType::EIGENMODE ? CoverageExcitationClass::EIGENMODE
+           : solver_t == ProblemType::DRIVEN  ? CoverageExcitationClass::DRIVEN
+                                              : CoverageExcitationClass::NONE;
+  }
   void MeasureProbes() const;
   void PrintSurfaceResponseCorrection(double output_index, int excitation) const;
   void RegisterSurfaceResponseParaviewFields();
@@ -657,6 +683,11 @@ public:
       std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry = nullptr);
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
+
+  // Lane L1 (decision 1634 (2)): the configured Type of every postprocessing interface
+  // (only those in `targets` when given): the coverage cells' Types.
+  std::map<int, std::string>
+  GetInterfaceTypes(const std::set<int> *targets = nullptr) const;
 
   // PatchEnergy: the applied patches' raw claims as the partition reads them (taken from
   // the operator at the construction, round 2b B1).

@@ -580,6 +580,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   // The final write (round 2a R1, decision 1475 (1)): the operator's diagnostics record is
   // moved, not copied (ReleaseStatistics; the record is the same).
   auto statistics = response.ReleaseStatistics();
+  std::string coverage_banner;
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);
@@ -596,6 +597,16 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
         continue;
       }
       meta["SurfaceResponse"][key] = std::move(value);
+    }
+    // Lane L1 (decision 1634 (4); DESIGN-v2 s4.5): the coverage of the run's cells (the
+    // writers' record, root only), when a correction measured any.
+    if (!response.GetCoverageRunRecord().entries.empty())
+    {
+      meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
+          response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
+          response.GetCoverageValidatedRegime(),
+          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+      coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
     }
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.
@@ -664,6 +675,12 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
                         std::string(response.IsRawFallback()
                                         ? " (no correction applied: the thin solve)"
                                         : " and surface-response-geometry-fallbacks.csv")));
+  }
+  // Lane L1 (DESIGN-v2 s4.5): the coverage banner closes the run summary (a line per
+  // cell whose coverage status is not OK or whose regime is OUT; never silent).
+  if (!coverage_banner.empty())
+  {
+    Mpi::Print("{}", coverage_banner);
   }
 }
 

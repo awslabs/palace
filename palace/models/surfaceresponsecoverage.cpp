@@ -10,6 +10,7 @@
 #include <limits>
 #include <set>
 #include <sstream>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "models/surfaceresponseidentification.hpp"
@@ -489,6 +490,432 @@ CoverageKeyRows(const std::map<int, SurfacePostOperator::InterfaceCoveragePartit
     result.push_back(std::move(row));
   }
   return result;
+}
+
+namespace
+{
+
+// The Types of the target interfaces in order of first appearance (ascending targets).
+std::vector<std::string> CoverageTypeOrder(const std::map<int, std::string> &types)
+{
+  std::vector<std::string> order;
+  for (const auto &[interface, type] : types)
+  {
+    (void)interface;
+    if (std::find(order.begin(), order.end(), type) == order.end())
+    {
+      order.push_back(type);
+    }
+  }
+  return order;
+}
+
+}  // namespace
+
+const CoverageCell *CoverageMeasurement::FindCell(const std::string &type) const
+{
+  const auto cell = std::find_if(cells.begin(), cells.end(),
+                                 [&](const auto &entry) { return entry.type == type; });
+  return cell != cells.end() ? &*cell : nullptr;
+}
+
+const CoverageCell *CoverageMeasurement::WorstCoverageCell() const
+{
+  const CoverageCell *worst = nullptr;
+  for (const auto &cell : cells)
+  {
+    if (!worst || CoverageStatusRank(cell.status) > CoverageStatusRank(worst->status))
+    {
+      worst = &cell;
+    }
+  }
+  return worst;
+}
+
+const CoverageCell *CoverageMeasurement::WorstRegimeCell() const
+{
+  const CoverageCell *worst = nullptr;
+  for (const auto &cell : cells)
+  {
+    if (!worst || RegimeStatusRank(cell.regime) > RegimeStatusRank(worst->regime))
+    {
+      worst = &cell;
+    }
+  }
+  return worst;
+}
+
+CoverageMeasurement ComputeCoverageMeasurement(
+    const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &partitions,
+    const std::map<int, std::string> &types, const std::map<int, double> &within,
+    const std::map<int, double> &fabricated,
+    const std::map<int, CoverageKeyRecord> &keys_by_feature,
+    const std::map<int, CoverageModelQualification> &models,
+    const CoverageThresholds &thresholds, const CoverageValidatedRegime &regime,
+    CoverageExcitationClass excitation)
+{
+  CoverageMeasurement measurement;
+  measurement.measured = true;
+  measurement.excitation = excitation;
+  measurement.types = types;
+  const SurfacePostOperator::InterfaceCoveragePartition empty;
+  for (const auto &[interface, type] : types)
+  {
+    (void)type;
+    const auto partition = partitions.find(interface);
+    const auto w = within.find(interface);
+    const auto fab = fabricated.find(interface);
+    // An interface with no partition entry (no within-R point on any rank) has nothing
+    // served: it is uncovered by its W (fail-closed).
+    measurement.interfaces[interface] = SummarizeCoverageInterface(
+        partition != partitions.end() ? partition->second : empty,
+        w != within.end() ? w->second : 0.0, fab != fabricated.end() ? fab->second : 0.0,
+        keys_by_feature, models);
+  }
+  for (const auto &type : CoverageTypeOrder(types))
+  {
+    std::vector<CoverageInterfaceSummary> summaries;
+    for (const auto &[interface, interface_type] : types)
+    {
+      if (interface_type == type)
+      {
+        summaries.push_back(measurement.interfaces.at(interface));
+      }
+    }
+    measurement.cells.push_back(
+        ComputeCoverageCell(type, summaries, thresholds, regime, excitation));
+  }
+  measurement.keys = CoverageKeyRows(partitions, keys_by_feature);
+  for (const auto &[interface, partition] : partitions)
+  {
+    if (types.count(interface) == 0)
+    {
+      continue;
+    }
+    for (const auto &[label, energy] : partition.served)
+    {
+      if (!(energy > 0.0))
+      {
+        continue;
+      }
+      for (const auto &token : LabelTokens(label))
+      {
+        const auto model = models.find(TokenIndex(token));
+        if (model != models.end() && model->second == CoverageModelQualification::PENDING)
+        {
+          measurement.served_pending_models.insert(model->first);
+        }
+        else if (model != models.end() &&
+                 model->second == CoverageModelQualification::NO_STATUS)
+        {
+          measurement.served_no_status_models.insert(model->first);
+        }
+      }
+    }
+  }
+  return measurement;
+}
+
+CoverageMeasurement NotMeasuredCoverageMeasurement(const std::map<int, std::string> &types,
+                                                   CoverageExcitationClass excitation)
+{
+  CoverageMeasurement measurement;
+  measurement.excitation = excitation;
+  measurement.types = types;
+  for (const auto &type : CoverageTypeOrder(types))
+  {
+    measurement.cells.push_back(NotMeasuredCoverageCell(type));
+  }
+  return measurement;
+}
+
+namespace
+{
+
+std::string CoverageNumber(double value)
+{
+  return std::isnan(value) ? std::string("nan") : fmt::format("{:+.12e}", value);
+}
+
+}  // namespace
+
+std::string CoverageTableHeader(const std::string &key_header)
+{
+  return key_header + ",Type,W within-R raw (J),uncovered raw share of W,missing raw share "
+                      "of W,method-gap raw share of W,pending-model share of W,no-status-"
+                      "model share of W,covered correction factor,validated factor "
+                      "min,validated factor max,coverage status,regime status\n";
+}
+
+std::string CoverageByKeyTableHeader(const std::string &key_header,
+                                     const std::set<int> &targets)
+{
+  std::string header =
+      key_header +
+      ",evaluation,key hash,class,reason,method gap,features,portions,length (m)";
+  for (const int interface : targets)
+  {
+    header += fmt::format(",raw within-R energy[{}] (J),raw share of W[{}]", interface,
+                          interface);
+  }
+  return header + "\n";
+}
+
+void WriteCoverageRows(std::ostream &output, const std::string &keys,
+                       const CoverageMeasurement &measurement, const Units &units)
+{
+  using VT = Units::ValueType;
+  for (const auto &cell : measurement.cells)
+  {
+    output << keys << ',' << cell.type << ','
+           << CoverageNumber(units.Dimensionalize<VT::ENERGY>(cell.within)) << ','
+           << CoverageNumber(cell.uncovered_share) << ','
+           << CoverageNumber(cell.missing_share) << ','
+           << CoverageNumber(cell.method_gap_share) << ','
+           << CoverageNumber(cell.pending_share) << ','
+           << CoverageNumber(cell.no_status_share) << ',' << CoverageNumber(cell.factor)
+           << ',' << CoverageNumber(cell.validated_min) << ','
+           << CoverageNumber(cell.validated_max) << ',' << CoverageStatusName(cell.status)
+           << ',' << RegimeStatusName(cell.regime) << '\n';
+  }
+}
+
+void WriteCoverageByKeyRows(
+    std::ostream &output, const std::string &keys, const CoverageMeasurement &measurement,
+    const std::set<int> &targets,
+    const std::map<int, std::pair<int, double>> &portions_by_feature, const Units &units)
+{
+  using VT = Units::ValueType;
+  for (const auto &row : measurement.keys)
+  {
+    std::string features, reason = row.reason;
+    int portions = 0;
+    double length = 0.0;
+    for (const int feature : row.features)
+    {
+      features += (features.empty() ? "" : "+") + std::to_string(feature);
+      const auto entry = portions_by_feature.find(feature);
+      if (entry != portions_by_feature.end())
+      {
+        portions += entry->second.first;
+        length += entry->second.second;
+      }
+    }
+    std::replace(reason.begin(), reason.end(), ',', ';');
+    // Evaluation 0: the raw field (the partition's field; the fixed-trace evaluation's).
+    output << keys << ",0," << row.key << ',' << row.kind << ','
+           << (reason.empty() ? "-" : reason) << ',' << (row.method_gap ? 1 : 0) << ','
+           << features << ',' << portions << ','
+           << CoverageNumber(units.Dimensionalize<VT::LENGTH>(length));
+    for (const int interface : targets)
+    {
+      const auto energy = row.energy.find(interface);
+      const double value = energy != row.energy.end() ? energy->second : 0.0;
+      const auto summary = measurement.interfaces.find(interface);
+      const double within =
+          summary != measurement.interfaces.end() ? summary->second.within : 0.0;
+      output << ',' << CoverageNumber(units.Dimensionalize<VT::ENERGY>(value)) << ','
+             << CoverageNumber(within > 0.0 ? value / within
+                                            : std::numeric_limits<double>::quiet_NaN());
+    }
+    output << '\n';
+  }
+}
+
+std::map<int, std::pair<int, double>> CoveragePortionsByFeature(
+    const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &uncovered)
+{
+  std::map<int, std::pair<int, double>> portions_by_feature;
+  for (const auto &portion : uncovered)
+  {
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+    }
+    auto &entry = portions_by_feature[portion.feature];
+    entry.first++;
+    entry.second += std::sqrt(length2);
+  }
+  return portions_by_feature;
+}
+
+void CoverageRunRecord::Add(const std::vector<std::pair<std::string, double>> &keys,
+                            const CoverageMeasurement &measurement)
+{
+  for (const auto &cell : measurement.cells)
+  {
+    entries.push_back({keys, cell});
+  }
+  served_no_status_models.insert(measurement.served_no_status_models.begin(),
+                                 measurement.served_no_status_models.end());
+  served_pending_models.insert(measurement.served_pending_models.begin(),
+                               measurement.served_pending_models.end());
+}
+
+nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
+                                   const CoverageThresholds &thresholds,
+                                   const CoverageValidatedRegime &regime,
+                                   double energy_scale)
+{
+  auto Number = [](double value)
+  { return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr); };
+  nlohmann::json metadata = nlohmann::json::object();
+  metadata["Policy"] = "Warn";
+  metadata["Thresholds"] = {{"BuildTarget", thresholds.build_target},
+                            {"MaxUncoveredShare", thresholds.max_uncovered_share},
+                            {"Interim", true}};
+  metadata["ValidatedRegime"] =
+      regime.path.empty()
+          ? nlohmann::json(nullptr)
+          : nlohmann::json{{"Path", regime.path},
+                           {"LibraryName", regime.library_name},
+                           {"LibrarySha256", regime.library_sha256},
+                           {"Tolerance", regime.tolerance},
+                           {"Ranges", static_cast<int>(regime.ranges.size())}};
+  metadata["Cells"] = static_cast<int>(record.entries.size());
+  nlohmann::json status_counts = nlohmann::json::object(),
+                 regime_counts = nlohmann::json::object();
+  nlohmann::json flagged = nlohmann::json::array();
+  for (const auto &entry : record.entries)
+  {
+    const auto &cell = entry.cell;
+    const std::string status(CoverageStatusName(cell.status));
+    const std::string regime_status(RegimeStatusName(cell.regime));
+    status_counts[status] = status_counts.value(status, 0) + 1;
+    regime_counts[regime_status] = regime_counts.value(regime_status, 0) + 1;
+    if (cell.status == CoverageStatus::OK && cell.regime != RegimeStatus::OUT)
+    {
+      continue;
+    }
+    nlohmann::json keys = nlohmann::json::object();
+    for (const auto &[name, value] : entry.keys)
+    {
+      keys[name] = value;
+    }
+    flagged.push_back({{"Cell", std::move(keys)},
+                       {"Type", cell.type},
+                       {"W within-R raw (J)", Number(cell.within * energy_scale)},
+                       {"uncovered raw share of W", Number(cell.uncovered_share)},
+                       {"missing raw share of W", Number(cell.missing_share)},
+                       {"method-gap raw share of W", Number(cell.method_gap_share)},
+                       {"pending-model share of W", Number(cell.pending_share)},
+                       {"no-status-model share of W", Number(cell.no_status_share)},
+                       {"covered correction factor", Number(cell.factor)},
+                       {"validated factor min", Number(cell.validated_min)},
+                       {"validated factor max", Number(cell.validated_max)},
+                       {"coverage status", status},
+                       {"regime status", regime_status}});
+  }
+  metadata["StatusCounts"] = std::move(status_counts);
+  metadata["RegimeCounts"] = std::move(regime_counts);
+  metadata["Flagged"] = std::move(flagged);
+  metadata["ServedPendingModels"] = static_cast<int>(record.served_pending_models.size());
+  metadata["ServedNoStatusModels"] =
+      static_cast<int>(record.served_no_status_models.size());
+  return metadata;
+}
+
+std::string CoverageRunBanner(const nlohmann::json &metadata)
+{
+  constexpr int maximum_lines = 40;
+  auto Percent = [](const nlohmann::json &value)
+  {
+    return value.is_number() ? fmt::format("{:.3f} %", 100.0 * value.get<double>())
+                             : std::string("nan");
+  };
+  std::string banner;
+  const auto &thresholds = metadata.at("Thresholds");
+  banner += fmt::format(
+      "\nSurface-response coverage (interim thresholds: BuildTarget {:g}, "
+      "MaxUncoveredShare {:g}; a coverage status is about coverage only): {:d} cell(s);",
+      thresholds.at("BuildTarget").get<double>(),
+      thresholds.at("MaxUncoveredShare").get<double>(), metadata.at("Cells").get<int>());
+  for (const auto &[status, count] : metadata.at("StatusCounts").items())
+  {
+    banner += fmt::format(" {} {:d}", status, count.get<int>());
+  }
+  banner += "; regime";
+  for (const auto &[status, count] : metadata.at("RegimeCounts").items())
+  {
+    banner += fmt::format(" {} {:d}", status, count.get<int>());
+  }
+  banner += "\n";
+  int lines = 0;
+  const auto &flagged = metadata.at("Flagged");
+  for (const auto &entry : flagged)
+  {
+    if (lines == maximum_lines)
+    {
+      banner += fmt::format("*** COVERAGE: {:d} more flagged cell(s): see "
+                            "SurfaceResponse.Coverage.Flagged of palace.json ***\n",
+                            static_cast<int>(flagged.size()) - maximum_lines);
+      break;
+    }
+    std::string cell;
+    for (const auto &[name, value] : entry.at("Cell").items())
+    {
+      cell +=
+          fmt::format("{}{} = {:g}", cell.empty() ? "" : ", ", name, value.get<double>());
+    }
+    const std::string status = entry.at("coverage status").get<std::string>();
+    const std::string regime_status = entry.at("regime status").get<std::string>();
+    std::string factor;
+    if (regime_status == "NO-MODEL")
+    {
+      factor = "no covered part (regime NO-MODEL)";
+    }
+    else if (regime_status == "NO-RANGE")
+    {
+      factor = fmt::format("covered factor {:.4f} (no validated range: NO-RANGE)",
+                           entry.at("covered correction factor").get<double>());
+    }
+    else
+    {
+      factor = fmt::format("covered factor {:.4f} (validated [{:.4f}, {:.4f}]: {})",
+                           entry.at("covered correction factor").get<double>(),
+                           entry.at("validated factor min").get<double>(),
+                           entry.at("validated factor max").get<double>(), regime_status);
+    }
+    if (status == "NO-ENERGY" || status == "NOT-MEASURED")
+    {
+      banner += fmt::format("*** COVERAGE {} (interim thresholds): {} {}: {} ***\n", status,
+                            cell, entry.at("Type").get<std::string>(),
+                            status == "NO-ENERGY"
+                                ? "W = 0, nothing within R to cover (shares nan)"
+                                : "no coverage partition for this cell (shares nan)");
+    }
+    else
+    {
+      banner += fmt::format(
+          "*** COVERAGE {} (interim thresholds): {} {}: U = {} of W (Missing {}, method "
+          "gap {}, pending {}); {} ***\n",
+          status, cell, entry.at("Type").get<std::string>(),
+          Percent(entry.at("uncovered raw share of W")),
+          Percent(entry.at("missing raw share of W")),
+          Percent(entry.at("method-gap raw share of W")),
+          Percent(entry.at("pending-model share of W")), factor);
+    }
+    lines++;
+  }
+  const int no_range = metadata.at("RegimeCounts").value("NO-RANGE", 0);
+  if (no_range > 0)
+  {
+    banner +=
+        fmt::format("Coverage: {:d} of {:d} cell(s) NO-RANGE (no validated range of the "
+                    "covered correction factor for this library and excitation "
+                    "class)\n",
+                    no_range, metadata.at("Cells").get<int>());
+  }
+  const int no_status = metadata.at("ServedNoStatusModels").get<int>();
+  if (no_status > 0)
+  {
+    banner += fmt::format("Coverage: {:d} served model(s) carry no QualificationStatus "
+                          "record (information: the `no-status-model share of W` column of "
+                          "surface-response-coverage.csv)\n",
+                          no_status);
+  }
+  return banner;
 }
 
 }  // namespace palace

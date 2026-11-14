@@ -5,11 +5,15 @@
 #define PALACE_MODELS_SURFACE_RESPONSE_COVERAGE_HPP
 
 #include <map>
+#include <ostream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <nlohmann/json.hpp>
 #include "models/surfacepostoperator.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -189,6 +193,90 @@ struct CoverageKeyRow
 std::vector<CoverageKeyRow>
 CoverageKeyRows(const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &cell,
                 const std::map<int, CoverageKeyRecord> &keys_by_feature);
+
+// The coverage of ONE measurement (a Maxwell (m | f, exc), an electrostatic source): per
+// target interface its summary and its Type, the cells per Type (in order of first
+// appearance over the ascending target interfaces) and the key rows. Computed in the
+// measurement step BEFORE any corrected column or matrix is written; every writer reads
+// the cell status from it (the hook of a coverage policy: lane L4's MarkNotApplied reads
+// `cells` there, the accumulators never read a policy). `measured` false = the cells are
+// NOT-MEASURED (no partition: ruling 1654 (III) Q2 (b)).
+struct CoverageMeasurement
+{
+  bool measured = false;
+  CoverageExcitationClass excitation = CoverageExcitationClass::NONE;
+  std::map<int, CoverageInterfaceSummary> interfaces;
+  std::map<int, std::string> types;
+  std::vector<CoverageCell> cells;
+  std::vector<CoverageKeyRow> keys;
+  // The served models (runtime index) with served energy whose library record carries no
+  // QualificationStatus (item (5): information) and the pending ones.
+  std::set<int> served_no_status_models, served_pending_models;
+  const CoverageCell *FindCell(const std::string &type) const;
+  // The worst cell over Types (CoverageStatusRank / RegimeStatusRank); nullptr when no
+  // cell exists.
+  const CoverageCell *WorstCoverageCell() const;
+  const CoverageCell *WorstRegimeCell() const;
+};
+// `within` (W) and `fabricated` per target interface (the corrected bookkeeping's raw -
+// outside at R and the correction's fabricated energy, evaluation 0); `types` the target
+// interfaces' Types.
+CoverageMeasurement ComputeCoverageMeasurement(
+    const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &partitions,
+    const std::map<int, std::string> &types, const std::map<int, double> &within,
+    const std::map<int, double> &fabricated,
+    const std::map<int, CoverageKeyRecord> &keys_by_feature,
+    const std::map<int, CoverageModelQualification> &models,
+    const CoverageThresholds &thresholds, const CoverageValidatedRegime &regime,
+    CoverageExcitationClass excitation);
+CoverageMeasurement NotMeasuredCoverageMeasurement(const std::map<int, std::string> &types,
+                                                   CoverageExcitationClass excitation);
+
+// The plain-text rows of surface-response-coverage.csv and
+// surface-response-uncovered-energy-by-key.csv for one measurement (both solve families):
+// `keys` = the row's leading cells ("m,exc" | "f (GHz),exc" | "i" values, comma-joined),
+// `key_header` their header; energies in J and lengths in m through `units`; nan prints
+// "nan". `portions_by_feature` = per uncovered feature its portions' count and length (mesh
+// units). Lane rescensus (decision 1637 (e)) appends its per-cell edge-resolution status
+// column after `regime status`.
+std::string CoverageTableHeader(const std::string &key_header);
+std::string CoverageByKeyTableHeader(const std::string &key_header,
+                                     const std::set<int> &targets);
+void WriteCoverageRows(std::ostream &output, const std::string &keys,
+                       const CoverageMeasurement &measurement, const Units &units);
+void WriteCoverageByKeyRows(
+    std::ostream &output, const std::string &keys, const CoverageMeasurement &measurement,
+    const std::set<int> &targets,
+    const std::map<int, std::pair<int, double>> &portions_by_feature, const Units &units);
+// Per uncovered feature: its portions' count and summed length (the by-key rows' columns).
+std::map<int, std::pair<int, double>> CoveragePortionsByFeature(
+    const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &uncovered);
+
+// The run's coverage record (root only): the cells of every measurement, for the end-of-run
+// banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata). `keys` are
+// the cell's table keys ("m" | "f (GHz)", "exc" | "i").
+struct CoverageRunRecord
+{
+  struct Entry
+  {
+    std::vector<std::pair<std::string, double>> keys;
+    CoverageCell cell;
+  };
+  std::vector<Entry> entries;
+  std::set<int> served_no_status_models, served_pending_models;
+  void Add(const std::vector<std::pair<std::string, double>> &keys,
+           const CoverageMeasurement &measurement);
+};
+// palace.json SurfaceResponse.Coverage: the policy, the interim bars, the regime file, the
+// status counts and one entry per cell whose coverage status is not OK or whose regime is
+// OUT (energies in J by `energy_scale`; nan as null).
+nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
+                                   const CoverageThresholds &thresholds,
+                                   const CoverageValidatedRegime &regime,
+                                   double energy_scale);
+// The end-of-run banner of palace.json's block (a line per non-OK / OUT cell, capped; one
+// NO-RANGE summary line; one line naming the status-less served models).
+std::string CoverageRunBanner(const nlohmann::json &metadata);
 
 }  // namespace palace
 
