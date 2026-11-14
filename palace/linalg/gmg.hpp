@@ -61,7 +61,7 @@ private:
   // per iteration (too few iterations to save). The decision is reused for the later
   // operators whose levels raise the same orders.
   std::vector<int> probe_orders;
-  bool probe_keep = true, print_probe = true;
+  bool probe_keep = true, print_probe;
   void CheckSmootherOrders();
 
   // Internal function to perform a single V-cycle iteration.
@@ -73,7 +73,7 @@ public:
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
                            double cheby_sf_min, bool cheby_4th_kind,
-                           int cheby_max_order = 0);
+                           int cheby_max_order = 0, int print = 0);
   GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            const std::vector<const Operator *> &P,
@@ -83,7 +83,7 @@ public:
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
           iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
           iodata.solver.linear.mg_smooth_cheby_4th,
-          iodata.solver.linear.mg_smooth_order_max)
+          iodata.solver.linear.mg_smooth_order_max, iodata.problem.verbose)
   {
   }
 

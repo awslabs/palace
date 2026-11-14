@@ -221,7 +221,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             comm, std::move(pc), fespaces.GetProlongationOperators(), &G,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-            linear.mg_smooth_order_max);
+            linear.mg_smooth_order_max, verbose);
       }
       else
       {
@@ -229,7 +229,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-            linear.mg_smooth_order_max);
+            linear.mg_smooth_order_max, verbose);
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
