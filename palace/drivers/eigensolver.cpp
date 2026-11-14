@@ -25,6 +25,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -66,15 +67,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
+  // Known poles of A2(λ), which the SLP nonlinear eigensolver clears from its local model.
+  const auto a2_poles = space_op.GetMaterialOp().GetFrequencyDependentPermittivityPoles();
+  // A2 is non-null whenever a frequency-dependent material is present, even if its
+  // contribution cancels at the target, so it alone selects the nonlinear solver path.
   bool has_A2 = (A2 != nullptr);
-
-  // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
-  // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
-  // solves).
-  if (space_op.GetWavePortOp().Size() > 0)
-  {
-    space_op.GetWavePortOp().InitializeModalReference(target);
-  }
 
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
@@ -108,29 +105,114 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "absorbing boundaries), none found; using a linear eigensolver!\n");
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+
+  // Frequency-dependent permittivity pole terms as the only frequency-dependent terms:
+  // A2(λ) = Σₘ gₘ(λ) Bₘ with gₘ(λ) = Σₖ rₖ λ² / (λ - pₖ) is rational with known poles, and
+  // the linearized eigensolvers represent it exactly, with one auxiliary block per pole
+  // (EigenvalueSolver::AddPoleTerms). The problem is then a linear eigenvalue problem:
+  // there is no polynomial seed and no nonlinear refinement. Djordjevic-Sarkar terms and
+  // the frequency-dependent boundary terms are not of this form, and keep the Hybrid seed
+  // and the Quasi-Newton refinement. RefineNonlinear has no effect here: the solution is
+  // exact and there is nothing to refine. With PEPLinear = false, SLEPc's polynomial
+  // eigensolver linearizes the problem itself, without the auxiliary blocks.
+  std::vector<std::unique_ptr<ComplexOperator>> pole_ops;
+  std::vector<std::vector<std::complex<double>>> pole_p, pole_c;
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
+      (iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK ||
+       iodata.solver.eigenmode.pep_linear))
+  {
+    const auto &mat_op = space_op.GetMaterialOp();
+    const auto &farfield_op = space_op.GetFarfieldOp();
+    bool poles_only = space_op.GetWavePortOp().Size() == 0 &&
+                      space_op.GetSurfaceConductivityOp().Size() == 0 &&
+                      space_op.GetRationalImpedanceOp().GetNumBoundaries() == 0 &&
+                      farfield_op.NumDispersiveMaterials() == 0 &&
+                      (farfield_op.GetAttrList().Size() == 0 || farfield_op.GetOrder() < 2);
+    for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
+          mat_op.HasDjordjevicSarkarPermittivity(m))
+      {
+        poles_only = false;
+      }
+    }
+    for (std::size_t m = 0;
+         poles_only && m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      if (!mat_op.HasFrequencyDependentPermittivitySupport(m))
+      {
+        continue;  // No contribution (SpaceOperator::GetExtraSystemMatrix)
+      }
+      auto B = space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO);
+      if (!B)
+      {
+        continue;  // No nonzero pole (exact zero poles are in the conductivity of C)
+      }
+      // A2 holds gₘ(λ)·Bₘ, and the operator is on the imaginary slot: it applies i·Bₘ.
+      auto &p = pole_p.emplace_back();
+      auto &c = pole_c.emplace_back();
+      for (const auto &term : mat_op.GetPermittivityPoleTerms(m))
+      {
+        p.push_back(term.pole);
+        c.push_back(-1i * term.residue);
+      }
+      pole_ops.push_back(std::move(B));
+    }
+    if (!pole_ops.empty())
+    {
+      // The terms must be the complete A2(λ): any other contribution is an error here, not
+      // an approximation. Checked at one complex λ, off the interpolation points.
+      const std::complex<double> l(-0.01 * target, 1.05 * target);
+      ComplexVector v, r, r_poles;
+      space_op.GetRandomInitialVector(v, 2);
+      r.SetSize(v.Size());
+      r.UseDevice(true);
+      r_poles.SetSize(v.Size());
+      r_poles.UseDevice(true);
+      funcA2(l)->Mult(v, r);
+      r_poles = 0.0;
+      for (std::size_t t = 0; t < pole_ops.size(); t++)
+      {
+        std::complex<double> s = 0.0;
+        for (std::size_t j = 0; j < pole_p[t].size(); j++)
+        {
+          s += pole_c[t][j] * l * l / (l - pole_p[t][j]);
+        }
+        pole_ops[t]->AddMult(v, r_poles, s);
+      }
+      const double norm = linalg::Norml2(space_op.GetComm(), r);
+      r_poles.AXPY(-1.0, r);
+      const double err = linalg::Norml2(space_op.GetComm(), r_poles);
+      MFEM_VERIFY(err <= 1.0e-10 * norm,
+                  "The permittivity pole terms do not reproduce the frequency-dependent "
+                  "operator (relative difference "
+                      << err / norm << ")!");
+    }
+  }
+  const bool exact_poles = !pole_ops.empty();
+  const bool hybrid_seed =
+      has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID && !exact_poles;
+  if (hybrid_seed)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
     auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
     interp->Interpolate(1i * target, 1i * target_max);
     // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield
-    // ABC contributes a pole term f(λ)·M_ff to A2(λ), with f(λ) = -0.5/λ (λ = iω; the
-    // negative sign of β is inside M_ff, not in f), that a polynomial (K' + λC' + λ²M')
-    // seed cannot fit accurately. AddFrozenPole removes the pole's interpolated
-    // contribution and re-adds it frozen at the target into the K-block. The freeze is
-    // deliberately unconditional (no DetermineFrozen): the fit's pointwise window error is
-    // small (the pole at λ = 0 sits outside the window), but its curvature term injects a
-    // fictitious rank-deficient λ² contribution into the seed's M-block that displaces
-    // spurious roots into the unphysical half-plane — the failure mode is structural, not a
-    // pointwise approximation error, so the pointwise metric must not be allowed to choose
-    // the fit here.
-    auto M_ff =
-        space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    if (M_ff)
+    // ABC contributes pole terms g(λ)·M to A2(λ), with g(λ) = -0.5/λ next to constant
+    // materials (M includes the negative sign of β) and 0.5i/(λ r_k(-iλ)) next to
+    // frequency-dependent material k, that a polynomial (K' + λC' + λ²M') seed cannot fit
+    // accurately. AddFrozenPole removes each term's interpolated contribution and re-adds
+    // it frozen at the target into the K-block: next to a frequency-dependent material, the
+    // material factor 1/r_k is frozen with the pole, as the seed has no separate
+    // representation of it. The freeze is deliberately unconditional (no DetermineFrozen):
+    // the fit's pointwise window error is small (the pole at λ = 0 sits outside the
+    // window), but its curvature term injects a fictitious rank-deficient λ² contribution
+    // into the seed's M-block that displaces spurious roots into the unphysical half-plane
+    // — the failure mode is structural, not a pointwise approximation error, so the
+    // pointwise metric must not be allowed to choose the fit here.
+    for (auto &[M_ff, g] : space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO))
     {
-      interp->AddFrozenPole(
-          std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; },
-          1i * target);
+      interp->AddFrozenPole(std::move(M_ff), g, 1i * target);
     }
     // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
     // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part
@@ -243,6 +325,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen = std::move(slepc);
 #endif
   }
+  if (exact_poles)
+  {
+    std::size_t num_poles = 0;
+    for (std::size_t t = 0; t < pole_ops.size(); t++)
+    {
+      eigen->AddPoleTerms(*pole_ops[t], pole_p[t], pole_c[t]);
+      num_poles += pole_p[t].size();
+    }
+    Mpi::Print(" Frequency-dependent permittivity linearized exactly ({:d} pole{}), "
+               "without nonlinear refinement\n",
+               num_poles, (num_poles > 1) ? "s" : "");
+  }
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
@@ -257,11 +351,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     eigen->SetExtraSystemMatrix(funcA2_full);
+    eigen->SetExtraSystemPoles(a2_poles);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
   {
-    if (has_A2)
+    if (hybrid_seed)
     {
       eigen->SetOperators(*Kp, *Cp, *Mp, scale);
     }
@@ -275,9 +370,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
-  const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
-                         ? iodata.solver.eigenmode.linear_tol
-                         : iodata.solver.eigenmode.tol;
+  const double tol =
+      hybrid_seed ? iodata.solver.eigenmode.linear_tol : iodata.solver.eigenmode.tol;
   eigen->SetTol(tol);
   eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
@@ -303,7 +397,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
+      !space_op.GetMaterialOp().HasLondonDepth() &&
+      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
@@ -312,6 +407,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
+  }
+  else if (iodata.solver.linear.divfree_max_it > 0 &&
+           space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
+  {
+    Mpi::Print(" Skipping divergence-free projection for frequency-dependent permittivity: "
+               "the fixed ε∞ projector does not enforce ∇·(ε(ω)E) = 0 at material "
+               "interfaces.\n");
   }
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -397,7 +499,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // to the complex system matrix.
   std::unique_ptr<ComplexOperator> A;
   std::unique_ptr<ComplexOperator> A2_shift;
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  if (hybrid_seed)
   {
     // Invert the same W-aware polynomial used by the seed eigensolver.
     A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
@@ -405,7 +507,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
+    // SLP applies the exact nonlinear operator at the target; with exactly linearized
+    // permittivity poles, A2 at the target completes T(σ); linear problems have no A2.
     A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
                                                              : std::move(A2);
     A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
@@ -435,7 +538,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  if (hybrid_seed)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), std::move(eigen),
@@ -510,6 +613,33 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
 
+  // The target window is checked with the configuration; a mode may converge outside it.
+  for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+  {
+    const auto &material = iodata.domains.materials[m];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    for (int i = 0; i < num_report; i++)
+    {
+      const double omega = eigenvalues[i].imag();
+      if (permittivity::Contains(defects.gain, omega))
+      {
+        Mpi::Warning("Eigenmode {:d} at {:.6g} GHz lies where the frequency-dependent "
+                     "Permittivity of material {:d} has gain, a negative dissipated "
+                     "power!\nThe mode solves the model as given; a fit may only be meant "
+                     "for some frequencies.\n",
+                     i + 1,
+                     iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                         (2.0 * std::numbers::pi),
+                     m + 1);
+      }
+    }
+  }
+
   if (stage_eigenvectors)
   {
     eigen.reset();
@@ -575,7 +705,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
     if (i < num_requested)
     {
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      // Frequency-dependent materials use Re{ω} of the eigenvalue, as in postprocessing.
+      estimator.AddErrorIndicator(E, B, total_domain_energy, omega.real(), indicator);
     }
   }
   post_op.MeasureFinalize(indicator);

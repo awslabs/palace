@@ -335,42 +335,62 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
-  if (real_frequency && warm_start.Size() > 0)
+  // Solve from the given start and rank the converged modes by proximity to the shift
+  // target, so that mode ordering is consistent across eigensolver backends (ARPACK vs
+  // SLEPc sort eigenvalues differently). The shift sigma = -kn_target^2, so kn_target =
+  // sqrt(-sigma). Sorting by ascending complex distance |kn - kn_target|
+  // (mode_assembly::TargetDistance, shared with the reduced wave-port solve) puts the mode
+  // closest to the target first. Ranking on |Re{kn} - kn_target| alone would let a strongly
+  // evanescent mode of a lossy cross-section outrank the propagating mode. The stable sort
+  // keeps the backend order for exact ties.
+  const double kn_target = std::sqrt(-sigma);
+  auto solve_and_rank = [&](const ComplexVector *start)
   {
-    eigen->SetInitialSpace(warm_start);
-  }
-  else if (initial_space)
+    if (start)
+    {
+      eigen->SetInitialSpace(*start);
+    }
+    const int n = eigen->Solve();
+    std::vector<double> distance(n);
+    for (int i = 0; i < n; i++)
+    {
+      distance[i] = mode_assembly::TargetDistance(
+          mode_assembly::PropagationConstant(-sigma - 1.0 / eigen->GetEigenvalue(i), omega),
+          kn_target);
+    }
+    mode_perm.resize(n);
+    std::iota(mode_perm.begin(), mode_perm.end(), 0);
+    std::ranges::stable_sort(mode_perm, [&distance](int a, int b)
+                             { return distance[a] < distance[b]; });
+    return n;
+  };
+
+  // Start from the mode selected at the previous frequency, which keeps following one mode,
+  // including the polarization of a degenerate pair, between nearby frequencies. From that
+  // single vector the eigensolver can converge only one mode of a degenerate pair (TE11 of
+  // a circular guide) and fill the requested count with the next mode, so the requested
+  // index selects a different mode. Then the selected mode no longer resembles the start,
+  // and the solve is repeated from the fixed initial space.
+  const bool warm = real_frequency && warm_start.Size() > 0;
+  int num_conv = solve_and_rank(warm ? &warm_start : initial_space);
+  if (warm && num_conv > 0)
   {
-    eigen->SetInitialSpace(*initial_space);
+    ComplexVector v(nd_size + h1_size);
+    v.UseDevice(true);
+    eigen->GetEigenvector(mode_perm[std::min(num_modes - 1, num_conv - 1)], v);
+    const double overlap =
+        std::abs(linalg::Dot(solver_comm, v, warm_start)) / linalg::Norml2(solver_comm, v);
+    if (overlap < 0.5)
+    {
+      num_conv = solve_and_rank(initial_space);
+    }
   }
 
-  int num_conv = eigen->Solve();
+  // One logical exact solve, also when it was repeated from the fixed initial space.
   if (real_frequency)
   {
     reduced_model->RecordExactSolve();
   }
-
-  // Build a permutation sorted by proximity to the shift target so that mode ordering is
-  // consistent across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently).
-  // The shift sigma = -kn_target^2, so kn_target = sqrt(-sigma). Sorting by ascending
-  // complex distance |kn - kn_target| (mode_assembly::TargetDistance, shared with the
-  // reduced wave-port solve) puts the mode closest to the target first. Ranking on
-  // |Re{kn} - kn_target| alone would let a strongly evanescent mode of a lossy
-  // cross-section outrank the propagating mode. The stable sort keeps the backend order for
-  // exact ties.
-  const double kn_target = std::sqrt(-sigma);
-  std::vector<double> distance(num_conv);
-  for (int i = 0; i < num_conv; i++)
-  {
-    distance[i] = mode_assembly::TargetDistance(
-        mode_assembly::PropagationConstant(-sigma - 1.0 / eigen->GetEigenvalue(i), omega),
-        kn_target);
-  }
-  mode_perm.resize(num_conv);
-  std::iota(mode_perm.begin(), mode_perm.end(), 0);
-  std::ranges::stable_sort(mode_perm,
-                           [&distance](int a, int b) { return distance[a] < distance[b]; });
-
   if (real_frequency && num_conv > 0)
   {
     const int selected = std::min(num_modes - 1, num_conv - 1);
@@ -807,6 +827,24 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImag(), -omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: Re g is mass-like, shifted like the
+  // ε∞ mass; Im g is loss-like, treated as the other imaginary terms above.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, shifted ? std::abs(g.real()) : g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the losses of the resistive surface impedance, absorbing,
   // surface conductivity, and rational impedance boundaries in the same way (with the real
@@ -820,6 +858,11 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surf_z_op.AddMassBdrCoefficients(mass_coeff, fbr);
   surf_z_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
   farfield_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    farfield_op.AddDispersiveDampingBdrCoefficients(
+        k, damp_coeff * std::abs(farfield_op.GetDispersiveScale(k, omega)), fb_loss);
+  }
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
@@ -929,6 +972,24 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImagScalar(), omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: -g, with the opposite sign of the ND
+  // block in both real and imaginary slots.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, -g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, -g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the opposite sign of those of the ND block.
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -940,6 +1001,11 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   surf_z_op.AddDampingBdrCoefficients(-damp_coeff, fb_loss);
   mode_assembly::AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -damp_coeff,
                                                          fb_loss);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    farfield_op.AddDispersiveScalarDampingBdrCoefficients(
+        k, -damp_coeff * std::abs(farfield_op.GetDispersiveScale(k, omega)), fb_loss);
+  }
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;

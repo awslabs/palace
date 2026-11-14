@@ -6,7 +6,9 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -41,10 +43,26 @@ public:
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
+  // Unit mass forms of each frequency-dependent material (by material index), over the
+  // entire domain and over each postprocessing domain (only the materials in it). With
+  // M_elec weighted by ε∞, the electric field energy adds that of the polarization of each
+  // material, its unit mass energy times the stored-energy susceptibility wₘ(ω) of its
+  // model. A form on every attribute of a material is its unit mass, borrowed when given at
+  // construction; the others are owned by M_elec_fd_owned.
+  using FrequencyDependentForms = std::vector<std::pair<std::size_t, const Operator *>>;
+  FrequencyDependentForms M_elec_fd;
+  std::map<int, FrequencyDependentForms> M_elec_fd_i;
+  std::vector<std::unique_ptr<Operator>> M_elec_fd_owned;
+  const MaterialOperator *mat_op = nullptr;
+
   DomainPostOperator() = default;
+  // The unit masses of the frequency-dependent materials, by material index (null where not
+  // given), are borrowed instead of assembled: the unit masses B_m of SpaceOperator
+  // (GetFrequencyDependentPermittivityLocalMassMatrix), which must outlive this object.
   DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
-                     const FiniteElementSpace &rt_fespace);
+                     const FiniteElementSpace &rt_fespace,
+                     const std::vector<const Operator *> &unit_mass = {});
   DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
                      const FiniteElementSpace &fespace);
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
@@ -58,20 +76,67 @@ public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace, bool electric_energy_only);
 
+  // The electric energy of a frequency-dependent material at the real angular frequency ω
+  // (unused without one): STORED is that of its model, the field and the polarization;
+  // MATERIAL is the field energy at its permittivity Re ε(ω), which for a lossless mode
+  // equals the magnetic energy. They coincide for a constant material.
+  enum class ElectricEnergy
+  {
+    STORED,
+    MATERIAL
+  };
+
+  // Whether the STORED electric energy is available in the entire domain, or in the
+  // postprocessing domain idx: whether every frequency-dependent material in it has a
+  // stored electric energy (MaterialOperator::HasStoredElectricEnergy). This is fixed for
+  // the run and the same on every process. The MATERIAL energy, the magnetic energy, and
+  // the energies of static problems are always available.
+  bool HasStoredElectricFieldEnergy() const;
+  bool HasStoredDomainElectricFieldEnergy(int idx) const;
+
   // Get volume integrals computing the electric or magnetic field energy in the entire
-  // domain.
-  double GetElectricFieldEnergy(const GridFunction &E) const;
+  // domain. The STORED electric energy requires HasStoredElectricFieldEnergy() (or
+  // HasStoredDomainElectricFieldEnergy(idx) for a portion of the domain).
+  double GetElectricFieldEnergy(const GridFunction &E, double omega,
+                                ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetMagneticFieldEnergy(const GridFunction &B) const;
+
+  // The STORED (if HasStoredElectricFieldEnergy()) and MATERIAL electric energies in the
+  // entire domain, from one set of field products.
+  struct ElectricFieldEnergies
+  {
+    std::optional<double> stored;
+    double material;
+  };
+  ElectricFieldEnergies GetElectricFieldEnergies(const GridFunction &E, double omega) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
-  double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
+  double GetDomainElectricFieldEnergy(int idx, const GridFunction &E, double omega,
+                                      ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
 
   // The magnetic field energies from a real L-vector of the space of construction, for
   // spaces without MFEM grid functions (broken spaces).
   double GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const;
   double GetDomainMagneticFieldEnergy(int idx, const Vector &a_l, MPI_Comm comm) const;
+
+  // The susceptibility weighting the unit mass form of material m: wₘ(ω) for STORED (which
+  // requires MaterialOperator::HasStoredElectricEnergy(m)) and Re χₘ(iω) for MATERIAL.
+  // Errors at a singularity of the material (an exact lossless resonance), as do the
+  // energies with it: they are not finite there.
+  double GetFrequencyDependentEnergyWeight(std::size_t material_idx, double omega,
+                                           ElectricEnergy type) const;
+
+private:
+  void SetUpFrequencyDependentForms(const config::DomainPostData &postpro,
+                                    const MaterialOperator &mat_op,
+                                    const FiniteElementSpace &nd_fespace,
+                                    const std::vector<const Operator *> &unit_mass = {});
+  bool HasStoredEnergy(const FrequencyDependentForms &M_fd) const;
+  double ElectricFieldEnergy(const Operator &M, const FrequencyDependentForms &M_fd,
+                             const GridFunction &E, double omega,
+                             ElectricEnergy type) const;
 };
 
 }  // namespace palace

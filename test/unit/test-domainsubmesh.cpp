@@ -142,6 +142,77 @@ TEST_CASE("Gradient flux error estimator on a domain submesh with an empty proce
   CHECK_THAT(Estimate(true), WithinRel(ref, 1.0e-8));
 }
 
+TEST_CASE("Dispersive gradient flux estimator on a domain submesh with an empty process",
+          "[errorestimator][frequencydependent][Parallel]")
+{
+  // A frequency-dependent material on a domain submesh which has no elements at all on
+  // every process but the root (not only no elements of one material), next to a second
+  // frequency-dependent material whose attribute is not in the submesh. The global
+  // estimate must match that of an ordinary partition.
+  const auto comm = Mpi::World();
+  if (Mpi::Size(comm) < 2)
+  {
+    SKIP("Needs at least two processes");
+  }
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto Estimate = [&](bool attr2_on_root)
+  {
+    auto parent = MakeSplitCube(comm, 4, attr2_on_root, false);
+    auto mesh = MakeDomainSubMesh(*parent, mfem::Array<int>({2}));
+    if (attr2_on_root)
+    {
+      REQUIRE((mesh->GetNE() > 0) == (Mpi::Rank(comm) == 0));
+    }
+    config::MaterialData drude, absent;
+    drude.attributes = {2};
+    drude.epsilon_r.s = {2.0, 2.0, 2.0};
+    drude.permittivity_terms = {config::DrudeData{3.0, 0.5}};
+    absent.attributes = {1};
+    absent.epsilon_r.s = {1.5, 1.5, 1.5};
+    absent.permittivity_terms = {config::LorentzData{1.0, 1.0, 0.1}};
+    config::PeriodicBoundaryData periodic;
+    MaterialOperator mat_op({drude, absent}, periodic, ProblemType::DRIVEN, *mesh);
+    REQUIRE(mat_op.HasFrequencyDependentPermittivityModel(0));
+    REQUIRE_FALSE(mat_op.HasFrequencyDependentPermittivityModel(1));
+    mfem::ND_FECollection nd_fec(order, 3);
+    mfem::RT_FECollection rt_fec(order - 1, 3);
+    FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+    FiniteElementSpaceHierarchy rt_fespaces(
+        std::make_unique<FiniteElementSpace>(*mesh, &rt_fec));
+    GradFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespace, rt_fespaces,
+                                                    1.0e-14, 1000, 0, false);
+    mfem::VectorFunctionCoefficient fr(3,
+                                       [](const mfem::Vector &x, mfem::Vector &v)
+                                       {
+                                         v(0) = std::sin(x(0) + x(1));
+                                         v(1) = std::cos(x(1) * x(2));
+                                         v(2) = x(0) * x(2);
+                                       });
+    mfem::VectorFunctionCoefficient fi(3,
+                                       [](const mfem::Vector &x, mfem::Vector &v)
+                                       {
+                                         v(0) = x(1) - x(2);
+                                         v(1) = std::sin(x(0));
+                                         v(2) = 0.5 + x(0) * x(1);
+                                       });
+    mfem::ParGridFunction gr(&nd_fespace.Get()), gi(&nd_fespace.Get());
+    gr.ProjectCoefficient(fr);
+    gi.ProjectCoefficient(fi);
+    ComplexVector E(nd_fespace.GetTrueVSize());
+    E.UseDevice(true);
+    gr.GetTrueDofs(E.Real());
+    gi.GetTrueDofs(E.Imag());
+    ErrorIndicator indicator;
+    estimator.AddErrorIndicator(E, 1.0, 1.3, indicator);
+    REQUIRE(indicator.Local().Size() == mesh->GetNE());
+    return indicator.Norml2(comm);
+  };
+  const double ref = Estimate(false);
+  REQUIRE(ref > 0.0);
+  CHECK_THAT(Estimate(true), WithinRel(ref, 1.0e-8));
+}
+
 TEST_CASE("libCEED operators on a nonconforming domain submesh",
           "[libCEED][Serial][Parallel]")
 {

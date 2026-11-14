@@ -98,7 +98,8 @@ of the driven solver as well as the following additional files:
     amplitudes at the mesh boundary plane, $\bm{Y}_{\mathrm{syn}}$ is the exported L/R/C pencil, and
     $\bm{G}$/$\bm{H}$ are the frequency-dependent source/observation maps. A wave port's columns are
     its projected $\bm{n}\times\bm{H}$ vector (which rotates with frequency for a hybrid mode); a
-    lumped port's columns are a fixed selector on its terminal node. Aux rows are zero. `rom-coupled-G.csv`
+    lumped port's columns are its voltage functional on the basis vectors, almost all of it on its
+    terminal node. Aux rows are zero. `rom-coupled-G.csv`
     and `rom-coupled-H.csv` tabulate $\bm{G}$ and $\bm{H}$ over the sweep grid (columns keyed by node
     label and port). To reconstruct the S-parameters at a swept frequency $\omega$: (1) assemble
     $\bm{Y}_{\mathrm{syn}}(\omega) = \widehat{\bm{L}}^{-1}/s + \widehat{\bm{R}}^{-1} + s\,\widehat{\bm{C}}$
@@ -120,7 +121,9 @@ of the driven solver as well as the following additional files:
   - (When synthesized eigenvalue estimates are found): `rom-eigenvalues.csv`,
     `rom-eigenvectors-re.csv`, and `rom-eigenvectors-im.csv`. These contain estimates of the
     synthesized system's eigenfrequencies, quality factors, and HDM errors, together with the real
-    and imaginary parts of the corresponding eigenvectors in the synthesized node space.
+    and imaginary parts of the corresponding eigenvectors in the synthesized node space. An
+    HDM error is NaN when a wave port mode does not converge at the complex frequency of the
+    estimate, so that the error is not evaluated; *Palace* warns which estimates these are.
 
 There are several constraints and considerations for using this feature:
 
@@ -130,7 +133,14 @@ There are several constraints and considerations for using this feature:
     frequency dependence in the synthesized matrices, as described in [Synthesizing
     Frequency-Dependent Boundary Conditions](#Synthesizing-Frequency-Dependent-Boundary-Conditions)
     below. The fit accuracy is governed by `"AdaptiveTol"`; *Palace* prints the per-boundary fit
-    residual and warns if it cannot be met.
+    residual and warns if it cannot be met. The tolerance applies on the real frequency band of
+    the sweep: at complex frequencies off the band, for example next to a damped material
+    resonance, the synthesized circuit can differ from the reduced model by much more than
+    the tolerance, where the reduced model itself still agrees with the full model. Only the
+    rational volume-permittivity terms are realized exactly in the retained reduced
+    directions. Native `DjordjevicSarkar` terms and material-dependent port and absorbing
+    boundary responses are fits; real-band fit control does not certify complex-plane or
+    resonance accuracy.
   - All `LumpedPort` attributes must be orthogonal to each other, since these are separated out as
     individual rows and columns in the circuit matrix. For *Palace*'s Nédélec meshes, this means
     that lumped ports cannot share parallel edges, since the degree of freedom on the edge
@@ -356,7 +366,10 @@ bulk modes this corresponds to an orthogonalization according to the inner produ
 \langle \bm{E}_1, \bm{E}_2 \rangle_\Omega = \int_\Omega dV \bm{E}_1 \varepsilon \bm{E}_2,
 ```
 
-which is the electric domain energy, up to a factor of 2. An appealing aspect of this inner product is
+which is the electric domain energy, up to a factor of 2. (For a frequency-dependent material
+the coefficient is its high-frequency permittivity ``\varepsilon_\infty``, so this is a norm
+which does not depend on frequency, not the stored electric energy of the field and the
+polarization.) An appealing aspect of this inner product is
 that it corresponds to a sensible physical quantity and converges to stable values with changing
 finite element order or mesh refinement. We refer to this orthogonalization rule as `"Energy"`.
 
@@ -381,9 +394,13 @@ dispersion differs per boundary type:
     lossy dielectric, ``k_n`` is complex and its imaginary part, the attenuation of the mode, is
     fit along with its real part (unless it is below the fit tolerance), so the synthesized port
     load carries the attenuation of the port line like the driven solver.
-  - **Second-order absorbing (farfield) boundary.** Here ``f(\omega) = 0.5/\omega``, which is exactly
+  - **Second-order absorbing (farfield) boundary.** For a constant adjacent material,
+    ``f(\omega) = 0.5/\omega``, which is exactly
     a single pole at ``\omega = 0`` with residue ``0.5``. This is injected analytically — no fit is
-    needed.
+    needed. The projected boundary form carries the negative sign of the second-order
+    coefficient. Next to a frequency-dependent material, the first- and second-order
+    scalars ``\omega r(\omega)`` and ``0.5/(\omega r(\omega))`` are fitted instead, with
+    ``r = \sqrt{\epsilon_\mathrm{wave}/\epsilon_\infty}``; this response is generally not rational.
   - **Surface conductivity.** The boundary term is ``(i\omega / Z(\omega))\,\bm{M}_b`` with the
     skin-depth surface impedance ``Z(\omega)`` (and an optional finite-thickness correction). The
     leading ``i`` is carried by the (purely imaginary) projected boundary mass, so the scalar that is

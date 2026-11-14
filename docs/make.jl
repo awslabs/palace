@@ -66,6 +66,18 @@ generate_schema_compatibility_table()
 include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
 generate_coaxial_schematic()
 
+# Draw the Lorentz-filled cavity schematic used by examples/cylinder.md.
+include(joinpath(@__DIR__, "generate_cavity_schematic.jl"))
+generate_cavity_schematic()
+
+# Draw the dispersive microstrip schematic used by examples/microstrip.md.
+include(joinpath(@__DIR__, "generate_microstrip_schematic.jl"))
+generate_microstrip_schematic()
+
+# Draw the silicon carbide half-space schematic used by examples/dielectric_grating.md.
+include(joinpath(@__DIR__, "generate_sic_schematic.jl"))
+generate_sic_schematic()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
@@ -111,6 +123,7 @@ makedocs(
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md",
+            "examples/microstrip.md",
             "examples/cpw2d.md",
             "examples/dielectric_grating.md",
             "examples/circular_hole.md"

@@ -8,6 +8,7 @@
 
 #include <complex>
 #include <memory>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -200,12 +201,16 @@ public:
   int Solve() override;
 };
 
-// Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 .
+// Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 , solved via
+// linearization. With rational terms (AddPoleTerms), the problem is
+//   T(λ) x = (P(λ) + Σₜ (Σⱼ cₜⱼ λ² / (λ - pₜⱼ)) Bₜ) x = 0 ,
+// and the linearization is still exact, with one auxiliary block for each pole (see
+// RationalTerms).
 class ArpackPEPSolver : public ArpackEigenvalueSolver
 {
 private:
   // References to matrices defining the quadratic polynomial eigenvalue problem
-  // (not owned).
+  // (not owned). C can be nullptr.
   const ComplexOperator *opK, *opC, *opM;
 
   // Operator norms for scaling.
@@ -213,6 +218,14 @@ private:
 
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
+
+  // The rational terms of the eigenvalue problem, and workspace vectors for their
+  // auxiliary blocks (one for each pole).
+  RationalTerms rational;
+  mutable std::vector<ComplexVector> xa, ya;
+
+  void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                        const ComplexOperator &M, ScaleType type);
 
 protected:
   void ApplyOp(const std::complex<double> *px, std::complex<double> *py) const override;
@@ -229,8 +242,15 @@ public:
   ArpackPEPSolver(MPI_Comm comm, int print);
 
   using ArpackEigenvalueSolver::SetOperators;
+  // Without C, the problem is still solved through the linearization (for rational terms).
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
+
+  void AddPoleTerms(const ComplexOperator &B,
+                    const std::vector<std::complex<double>> &poles,
+                    const std::vector<std::complex<double>> &coeffs) override;
 
   int Solve() override;
 };

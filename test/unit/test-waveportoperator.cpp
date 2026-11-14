@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cmath>
 #include <complex>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <numbers>
+#include <string>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
@@ -361,7 +366,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
   mfem::Array<int> dbc;
   auto W_real = wp_op.GetModalCorrectionOperator(omega, nd_fespace, dbc);
   auto W_cplx =
-      wp_op.GetModalCorrectionOperator(std::complex<double>(omega, 0.0), nd_fespace, dbc);
+      wp_op.EvaluateComplex(std::complex<double>(omega, 0.0), true, nd_fespace, dbc).W;
   REQUIRE(W_real);
   REQUIRE(W_cplx);
 
@@ -440,6 +445,98 @@ TEST_CASE("WavePortOperator-LossyModeProjection", "[waveportoperator][Serial][Pa
     CAPTURE(S);
     CHECK(std::abs(S - 1.0) < 1.0e-8);
   }
+}
+
+// The complex-ω wave-port contribution comes from one owned evaluation per port. The full
+// operator is the same when built again (from the kept solve, or a new one after the
+// tolerance is set again through the public synthesis setter, which invalidates the kept
+// solves), the optional evaluation gives the strict operator, and once built an operator
+// does not change with later successful evaluations.
+TEST_CASE("WavePortOperator-ComplexPortContribution",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+  auto &nd_fespace = space_op.GetNDSpace();
+  const int n = nd_fespace.GetTrueVSize();
+  auto Omega = [&](double f_GHz)
+  {
+    return 2.0 * std::numbers::pi *
+           iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+  };
+  const std::complex<double> omega1(Omega(7.0), Omega(0.05)),
+      omega2(Omega(7.5), Omega(0.05));
+  // The tolerances of wave-port circuit synthesis (romoperator.cpp).
+  constexpr double eig_tol = 1.0e-11, ksp_tol = 1.0e-12;
+  wp_op.SetSynthesisEigTol(eig_tol, ksp_tol);
+
+  ComplexVector x(n);
+  x.UseDevice(true);
+  x.Real().Randomize(1);
+  x.Imag().Randomize(2);
+  auto Apply = [&](const ComplexOperator &A)
+  {
+    ComplexVector y(n);
+    y.UseDevice(true);
+    y = 0.0;
+    A.Mult(x, y);
+    return y;
+  };
+  auto RelDiff = [&](const ComplexVector &a, const ComplexVector &b)
+  {
+    ComplexVector d(a);
+    linalg::AXPY(std::complex<double>(-1.0, 0.0), b, d);
+    return linalg::Norml2(comm, d) / linalg::Norml2(comm, b);
+  };
+
+  auto A1 = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+  REQUIRE(A1);
+  const auto y1 = Apply(*A1);
+  REQUIRE(linalg::Norml2(comm, y1) > 0.0);
+  {
+    const auto contribution = wp_op.EvaluateComplex(omega1, true, nd_fespace,
+                                                    space_op.GetNDDbcTDofLists().back());
+    REQUIRE(contribution.available);
+    std::size_t active = 0;
+    for (const auto &[idx, data] : wp_op)
+    {
+      active += data.active;
+    }
+    CHECK(contribution.kn.size() == active);
+  }
+  // Built again from the kept solve, and from a new one.
+  {
+    auto A = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y1) <= 1.0e-12);
+  }
+  wp_op.SetSynthesisEigTol(eig_tol, ksp_tol);
+  {
+    auto A = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y1) <= 1.0e-8);
+  }
+
+  // The optional evaluation at another frequency.
+  auto result = space_op.TryGetExtraSystemOperator(omega2, Operator::DIAG_ZERO);
+  REQUIRE(result.available);
+  REQUIRE(result.A2);
+  const auto y2 = Apply(*result.A2);
+  {
+    auto A = space_op.GetExtraSystemOperator(omega2, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y2) <= 1.0e-12);
+  }
+  {
+    auto A = space_op.GetExtraSystemOperator(omega1, Operator::DIAG_ZERO);
+    REQUIRE(A);
+    CHECK(RelDiff(Apply(*A), y1) <= 1.0e-8);
+  }
+  CHECK(RelDiff(Apply(*A1), y1) == 0.0);
 }
 
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the
@@ -697,7 +794,7 @@ TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]"
     const double omega =
         2.0 * std::numbers::pi *
         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
-    wp_op.InitializeModalReference(omega);
+    wp_op.PrepareFrequency(omega);
     const double k0 =
         2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
     const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);
@@ -946,4 +1043,70 @@ TEST_CASE("WavePortOperator-InteriorPECOnNonconformingPorts",
   CHECK(counts[0] > 0);
   CHECK(counts[1] > 0);
   CHECK(counts[2] > 0);
+}
+
+// The TEM mode of a coaxial line filled with one material propagates with the wave number
+// of the material, kₙ = ω √(μ ε(ω)), also for a frequency-dependent ε(ω). The ports of the
+// uniform line of coaxial_wave_losstan, filled with a Debye or a Djordjevic-Sarkar material
+// instead, against this closed form, with ε(ω) from its configured parameters. The
+// discrete TEM mode of a homogeneous line is a gradient field, which the Nédélec space
+// represents exactly, so it agrees to the tolerance of the mode solve. The material is
+// passive, Im{ε} < 0, so the port mode must be the one which decays along the line,
+// exp(-i kₙ z) with Im{kₙ} < 0, not the growing one with the same kₙ².
+TEST_CASE("WavePortOperator-DispersiveCoaxialTEM", "[waveportoperator][Serial][Parallel]")
+{
+  const std::complex<double> i(0.0, 1.0);
+  const auto dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "coaxial";
+  auto config = IoData::ParseAndValidate((dir / "wave_losstan.json").string().c_str());
+  config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
+  config["Problem"]["Output"] = "";
+  config["Domains"]["Materials"][0].erase("LossTan");
+  for (auto &port : config["Boundaries"]["WavePort"])
+  {
+    port["EigenTol"] = 1.0e-10;
+    port["KSPTol"] = 1.0e-12;
+  }
+  // ε(f) with f in GHz: a Debye relaxation at 10 GHz, or a Djordjevic-Sarkar material
+  // between 10 MHz and 1 THz like an FR4 laminate.
+  constexpr double eps_debye = 2.0, delta_debye = 1.0, tau = 0.016;  // ns
+  constexpr double eps_ds = 3.8, strength = 0.1, f_lo = 0.01, f_hi = 1000.0;
+  const std::vector<std::pair<json, std::function<std::complex<double>(double)>>> media = {
+      {{{"HighFrequency", eps_debye},
+        {"Terms",
+         {{{"Type", "Debye"},
+           {"DeltaPermittivity", delta_debye},
+           {"RelaxationTime", tau}}}}},
+       [&](double f)
+       { return eps_debye + delta_debye / (1.0 + i * 2.0 * std::numbers::pi * f * tau); }},
+      {{{"HighFrequency", eps_ds},
+        {"Terms",
+         {{{"Type", "DjordjevicSarkar"},
+           {"Strength", strength},
+           {"LowerFrequency", f_lo},
+           {"UpperFrequency", f_hi}}}}},
+       [&](double f)
+       { return eps_ds + strength * std::log((i * f + f_hi) / (i * f + f_lo)); }}};
+  const auto &[permittivity, eps] = media[GENERATE(0, 1)];
+  CAPTURE(permittivity.dump());
+  config["Domains"]["Materials"][0]["Permittivity"] = permittivity;
+  IoData iodata(config, false);
+  auto mesh = LoadScaleParMesh(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh);
+  auto &wave_port_op = space_op.GetWavePortOp();
+  wave_port_op.SetSuppressOutput(true);
+  for (const double f : {2.0, 6.0, 10.0})
+  {
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+    const std::complex<double> kn_closed = omega * std::sqrt(eps(f));  // μ = 1
+    REQUIRE(kn_closed.imag() < 0.0);
+    for (const int port : {1, 2})
+    {
+      const auto kn = wave_port_op.GetWavePortKn(port, omega);
+      CAPTURE(f, port, kn, kn_closed);
+      CHECK(std::abs(kn - kn_closed) <= 1.0e-8 * std::abs(kn_closed));
+      CHECK(kn.real() > 0.0);
+      CHECK(kn.imag() < -1.0e-3 * kn.real());  // Decaying, and lossy enough to tell
+    }
+  }
 }

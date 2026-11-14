@@ -5,9 +5,12 @@
 
 #include <set>
 #include <fmt/ranges.h>
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -408,6 +411,52 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   }
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
+}
+
+void LumpedPortData::AddDampingBdrCoefficients(double coeff,
+                                               MaterialPropertyCoefficient &fb) const
+{
+  if (std::abs(R) > 0.0)
+  {
+    for (const auto &elem : elems)
+    {
+      const double Rs = R * GetToSquare(*elem);
+      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), coeff / Rs);
+    }
+  }
+}
+
+double LumpedPortData::GetResistorPower(const FiniteElementSpace &nd_fespace,
+                                        const GridFunction &E) const
+{
+  MFEM_VERIFY(E.ParFESpace() == &nd_fespace.Get(),
+              "Lumped port resistor power requires a field on the given ND space!");
+  if (std::abs(R) == 0.0)
+  {
+    return 0.0;
+  }
+  if (!resistor_op)
+  {
+    MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+    AddDampingBdrCoefficients(1.0, fb);
+    BilinearForm c(nd_fespace);
+    if (!fb.empty())  // Empty on a process without port boundary elements
+    {
+      c.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
+    }
+    resistor_op = c.PartialAssemble();
+  }
+  Vector CE(resistor_op->Height());
+  CE.UseDevice(true);
+  resistor_op->Mult(E.Real(), CE);
+  double dot = linalg::LocalDot(E.Real(), CE);
+  if (E.HasImag())
+  {
+    resistor_op->Mult(E.Imag(), CE);
+    dot += linalg::LocalDot(E.Imag(), CE);
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
+  return 0.5 * dot;
 }
 
 LumpedPortOperator::LumpedPortOperator(
@@ -893,15 +942,7 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
     {
       continue;
     }
-    if (std::abs(data.R) > 0.0)
-    {
-      for (const auto &elem : data.elems)
-      {
-        const double Rs = data.R * data.GetToSquare(*elem);
-        fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                               coeff / Rs);
-      }
-    }
+    data.AddDampingBdrCoefficients(coeff, fb);
   }
 }
 

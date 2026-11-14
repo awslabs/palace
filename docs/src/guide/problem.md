@@ -18,6 +18,45 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
+With a [frequency-dependent permittivity](model.md#Frequency-dependent-permittivity), the
+eigenvalue problem is nonlinear in the frequency. When the `Drude`, `Debye`, `Lorentz`, and
+`PoleResidue` terms of the materials are its only frequency-dependent terms, the default
+`"Hybrid"` setting of
+[`config["Solver"]["Eigenmode"]["NonlinearType"]`](../config/reference.md#config-solver-eigenmode)
+solves it as a linear eigenvalue problem, with SLEPc or ARPACK. The linearization that is
+used for problems with losses gets one more unknown for each pole of a material, on the
+region of that material [[13]](../reference.md#References). The modes are then those nearest above `Target`, as
+for constant materials, on both sides of a material resonance and where they accumulate at
+it. Each step of the eigenvalue solver solves one linear system at the target, so the
+errors in `eig.csv` cannot be smaller than the accuracy of these solves: with a small
+[`config["Solver"]["Eigenmode"]["Tol"]`](../config/reference.md#config-solver-eigenmode),
+reduce [`config["Solver"]["Linear"]["Tol"]`](../config/reference.md#config-solver-linear)
+too. With `"NonlinearType": "SLP"`, or with SLEPc and `"PEPLinear": false`, the nonlinear
+eigensolver described next is used instead.
+
+Other frequency-dependent terms are not solved in this way: wave ports, second-order
+absorbing boundaries, finite conductivity and rational impedance boundaries, absorbing
+boundaries next to a frequency-dependent material, and `DjordjevicSarkar` terms.
+With any of them, for constant and frequency-dependent materials alike, the nonlinear
+eigensolver of `"NonlinearType"` is used. It returns converged modes, but not always the
+ones nearest the target: a small error for a returned mode does not show that no lower mode
+was missed. Changing `Target`, `TargetUpper`, or the number of modes changes its starting
+values. It can also converge fewer modes than were requested, for example with a material
+resonance between `Target` and `TargetUpper`; the solve then stops with an error. A wave
+port mode solve at a complex frequency that does not converge is fatal.
+
+The divergence-free projection is disabled for frequency-dependent permittivity: a fixed
+high-frequency projector does not impose the frequency-dependent interface condition, and
+longitudinal modes at a permittivity zero can be physical. In a material with no
+conductivity and no London penetration depth, at the complex frequency where its
+permittivity is zero, every gradient field which vanishes outside that material solves the
+equations, with no magnetic field. (With a conductivity or a London response, the complete
+coefficient of the field in the material must vanish, not the permittivity alone.) This
+eigenvalue is infinitely degenerate in the continuous problem, and its multiplicity in the
+discrete problem grows with the mesh. A request for modes near it returns these fields, not
+the electromagnetic modes above them: place `Target` above the frequency of the zero to
+pass it.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the
@@ -30,7 +69,11 @@ The EPR framework can be used to characterize the dissipative elements in the mo
 In particular, lumped ports with nonzero resistance in the model will trigger coupling rate
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
-computed as ``Q_{ml} = \omega_m/\kappa_{ml}``. The output file `port-Q.csv` will be created
+computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
+rate ``\kappa_{ml}`` is the power dissipated in the resistive boundary of port ``l`` divided
+by the electric-side normalization ``U`` of mode ``m`` (see
+[Energy and postprocessing](model.md#Energy-and-postprocessing)), and its sign is the sign
+of the real part of the port current. The output file `port-Q.csv` will be created
 in the output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and

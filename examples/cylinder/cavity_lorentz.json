@@ -1,0 +1,52 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/cavity_lorentz"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity":
+        {
+          "HighFrequency": 2.08,
+          "Terms":
+          [
+            {
+              "Type": "Lorentz",
+              "DeltaPermittivity": 0.01,
+              "ResonanceFrequency": 2.903636,  // GHz, the TM010 frequency for HighFrequency
+              "DampingFrequency": 0.02         // GHz
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3, 4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Eigenmode":
+    {
+      "N": 4,
+      "Tol": 1.0e-8,
+      "Target": 2.8
+    }
+  }
+}

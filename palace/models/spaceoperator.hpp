@@ -6,11 +6,14 @@
 
 #include <array>
 #include <complex>
+#include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
@@ -72,6 +75,11 @@ private:
   // Operator for domain material properties.
   MaterialOperator mat_op;
 
+  // One unit vector mass B_m per globally indexed material support with a nonlinear
+  // permittivity term. These have no essential-DOF policy; returned A2 wrappers apply it
+  // after factorization.
+  std::vector<std::unique_ptr<ParOperator>> frequency_dependent_permittivity_mass;
+
   // Operators for boundary conditions and source excitations.
   CurrentDipoleOperator current_dipole_op;
   FarfieldBoundaryOperator farfield_op;
@@ -112,20 +120,77 @@ private:
       MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi,
       bool include_wave_ports = true);
   // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
-  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
-  // matching preconditioner. Reduces to the double overload for real ω.
+  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve, the wave
+  // ports with the given k_n of each port. Reduces to the double overload for real ω.
+  void AddExtraSystemBdrCoefficients(
+      std::complex<double> omega,
+      const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+      MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+      MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+      MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
+      MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi);
+  // As above, with each wave port's k_n from its own query, for the preconditioner.
   void AddExtraSystemBdrCoefficients(
       std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
       MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
       MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
       MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
       MaterialPropertyCoefficient *fpbi);
+  // The complex-ω sparse operator of GetExtraSystemMatrix, with the given wave-port k_n,
+  // and the full operator of GetExtraSystemOperator from a computed port contribution.
+  std::unique_ptr<ComplexOperator>
+  BuildExtraSystemMatrix(std::complex<double> omega,
+                         const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+                         Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  BuildExtraSystemOperator(std::complex<double> omega,
+                           WavePortOperator::ComplexPortContribution &&ports,
+                           Operator::DiagonalPolicy diag_policy);
+  // The same for a real-valued preconditioner, in one coefficient each: the sum of the
+  // real and imaginary parts of each term, except next to frequency-dependent materials at
+  // absorbing boundaries, which use the magnitudes of their terms (see
+  // FarfieldBoundaryOperator::AddPreconditionerBdrCoefficients).
+  void AddRealPreconditionerExtraSystemBdrCoefficients(double omega,
+                                                       MaterialPropertyCoefficient &dfb,
+                                                       MaterialPropertyCoefficient &fb,
+                                                       MaterialPropertyCoefficient &frb);
+  void AddRealPreconditionerExtraSystemBdrCoefficients(std::complex<double> omega,
+                                                       MaterialPropertyCoefficient &dfb,
+                                                       MaterialPropertyCoefficient &fb,
+                                                       MaterialPropertyCoefficient &frb);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   // Floquet terms of second-order farfield boundaries, with a frequency dependent Floquet
   // wave vector: rotated boundary mass (frb) and mixed boundary curl (fpb) coefficients.
   void AddDampingPeriodicBdrCoefficients(double coeff, MaterialPropertyCoefficient &frb);
   void AddStiffnessPeriodicBdrCoefficients(double coeff, MaterialPropertyCoefficient &fpb);
+
+  void SetUpFrequencyDependentPermittivityMassOperators();
+  std::unique_ptr<Operator>
+  BuildFrequencyDependentPermittivityA2Operator(std::unique_ptr<Operator> &&base,
+                                                const std::vector<double> &coeff) const;
+  void AddFrequencyDependentPermittivityA2Coefficient(std::size_t material_idx,
+                                                      double coeff,
+                                                      MaterialPropertyCoefficient &f) const;
+  void GetFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                       std::vector<double> &real,
+                                                       std::vector<double> &imag) const;
+  void AssembleFrequencyDependentPermittivityA2Operators(
+      std::complex<double> omega, const MaterialPropertyCoefficient &dfbr,
+      const MaterialPropertyCoefficient &dfbi, const MaterialPropertyCoefficient &fbr,
+      const MaterialPropertyCoefficient &fbi, const MaterialPropertyCoefficient &frbr,
+      const MaterialPropertyCoefficient &frbi, const MaterialPropertyCoefficient &fpbr,
+      const MaterialPropertyCoefficient &fpbi, std::unique_ptr<Operator> &ar,
+      std::unique_ptr<Operator> &ai);
+  // Preconditioner coefficients for the volume A2 terms. With pc_mat_shifted, the
+  // mass-like real part is shifted like the ε∞ mass.
+  void
+  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &fr,
+                                                  MaterialPropertyCoefficient &fi) const;
+  void
+  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &f) const;
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
@@ -199,18 +264,30 @@ public:
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
-  // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
-  // operator can be passed directly to GetSystemMatrix as the A2 argument. If no
+  // sparse domain/boundary operator and F is the low-rank Floquet DtN correction. The
+  // returned operator can be passed directly to GetSystemMatrix as the A2 argument. If no
   // frequency-dependent terms exist, returns nullptr.
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
 
   // Complex-ω overload for the eigenmode nonlinear solve: the sparse local wave-port mass
-  // i·k_n(ω)·M evaluated at the complex ω plus the matrix-free modal correction W frozen at
-  // the last WavePortOperator::Initialize (the caller must Initialize the wave ports at the
-  // real target once beforehand). No Floquet DtN term.
+  // i·k_n(ω)·M plus the matrix-free modal correction W, both from the port modes solved at
+  // ω (WavePortOperator::EvaluateComplex). An error on every rank if a port mode did not
+  // converge. No Floquet DtN term.
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+
+  // As above, for an optional evaluation where a wave port mode may not converge at ω: then
+  // available is false, with the port and its counts, and there is no operator. Otherwise
+  // A2 is the operator above (null if there are no terms).
+  struct ExtraSystemOperatorResult
+  {
+    bool available = true;
+    int port_idx = -1, num_converged = 0, requested = 0;
+    std::unique_ptr<ComplexOperator> A2;
+  };
+  ExtraSystemOperatorResult TryGetExtraSystemOperator(std::complex<double> omega,
+                                                      Operator::DiagonalPolicy diag_policy);
 
   // Get the rank-1 terms of the wave-port modal correction W = Σ_k g_k s_k s_kᵀ at ω, for
   // callers that project onto a reduced basis (the PROM / adaptive sweep) rather than
@@ -258,6 +335,10 @@ public:
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+  // The frequency-dependent part A2(ω) of the system matrix, or null when there is none.
+  // With frequency-dependent material permittivity the result is never null, even at a
+  // frequency where that contribution cancels, so callers can select the nonlinear or
+  // per-frequency path from the returned operator alone.
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
@@ -272,8 +353,9 @@ public:
                                                  bool include_wave_ports);
 
   // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
-  // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
-  // impedance, numeric wave ports) evaluated at the genuinely complex frequency
+  // frequency-dependent domain and boundary terms (including material permittivity models,
+  // 2nd-order ABC, surface conductivity, rational impedance, and numeric wave ports)
+  // evaluated at the genuinely complex frequency
   // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
   // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
   // up to the Floquet port term.
@@ -323,6 +405,44 @@ public:
   std::unique_ptr<OperType>
   GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
 
+  // The ω-independent first-order damping mass and second-order curl-curl matrix of the
+  // absorbing boundaries next to frequency-dependent material k of the farfield operator,
+  // with the high-frequency permittivity. The returned matrices carry i: damping mass
+  // on the imaginary slot, and i times the signed second-order form (Hermitian with an
+  // unscaled Floquet wave vector). Their A2 scalars at ω are ω·r_k(ω) and
+  // (0.5/ω)/r_k(ω). The two additional getters below return the scaled Floquet trace forms.
+  // Null if they contribute no DoFs on any rank, or, for the second-order form, if order
+  // < 2.
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveDampingMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveCurlCurlMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
+  // Additional ω-independent forms when k = ω k₀: i times the rotated trace and the
+  // real antisymmetric mixed curl. Their A2 scalars are ω/r_k(ω) and 1/r_k(ω). Null
+  // without frequency-scaled Floquet periodicity, second-order ABC, or global support.
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveDampingFloquetMatrix(std::size_t k,
+                                            Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveStiffnessFloquetMatrix(std::size_t k,
+                                              Operator::DiagonalPolicy diag_policy);
+
+  // The terms g(λ)·M of A2(λ), λ = iω, of the second-order absorbing boundaries, which have
+  // a pole at λ = 0: g(λ) = -0.5/λ on the real slot for the boundaries next to no
+  // frequency-dependent material, and g(λ) = 0.5i/(λ r_k(-iλ)) on the imaginary slot for
+  // those next to frequency-dependent material k (see GetFarfieldDispersiveCurlCurlMatrix).
+  // With a frequency-scaled Floquet wave vector, the dispersive rotated trace and mixed
+  // curl are separate terms with scalars ω/r_k(ω) and 1/r_k(ω). Together these are the
+  // whole second-order A2 contribution, and none for a first-order boundary condition.
+  // Used by the NLEPS HYBRID seed, whose polynomial pencil cannot represent the pole.
+  struct FarfieldPoleTerm
+  {
+    std::unique_ptr<ComplexOperator> M;
+    std::function<std::complex<double>(std::complex<double>)> g;
+  };
+  std::vector<FarfieldPoleTerm> GetFarfieldPoleTerms(Operator::DiagonalPolicy diag_policy);
+  const auto &GetFarfieldOp() const { return farfield_op; }
+
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
   // idx, with unit coefficient (including crack scaling), stored on the real slot. The
   // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
@@ -343,6 +463,28 @@ public:
   template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
+  // Return the ω-independent unit-coefficient volume mass B_m of frequency-dependent
+  // permittivity material `material_idx`, placed on the IMAGINARY slot (matching the
+  // wave-port convention). The full A2 contribution at frequency ω is g_m(iω)·B_m =
+  // f_m(ω)·(i·B_m) with g_m(s) from
+  // GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(material_idx, s) and
+  // f_m(ω) = g_m(iω)/i. The returned operator borrows the B_m cached by this SpaceOperator
+  // (no assembly), so it must not outlive it. Returns null if the material has no nonlinear
+  // term or no support on any rank (rank-uniform). Used by the PROM factored online phase.
+  std::unique_ptr<ComplexOperator>
+  GetFrequencyDependentPermittivityMassMatrix(std::size_t material_idx,
+                                              Operator::DiagonalPolicy diag_policy) const;
+
+  // The same cached unit mass B_m on the local (L-vector) space, without essential boundary
+  // conditions, for the domain energy postprocessing. Null as above, and owned by this
+  // SpaceOperator.
+  const Operator *
+  GetFrequencyDependentPermittivityLocalMassMatrix(std::size_t material_idx) const
+  {
+    const auto &B = frequency_dependent_permittivity_mass.at(material_idx);
+    return B ? &B->LocalOperator() : nullptr;
+  }
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
@@ -455,7 +597,7 @@ public:
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.
-  void GetRandomInitialVector(ComplexVector &v);
+  void GetRandomInitialVector(ComplexVector &v, int seed = 0);
   void GetConstantInitialVector(ComplexVector &v);
 
   // Get the associated MPI communicator.

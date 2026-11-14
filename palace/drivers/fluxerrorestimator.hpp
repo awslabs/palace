@@ -5,6 +5,7 @@
 #define PALACE_DRIVERS_FLUX_ERROR_ESTIMATOR_HPP
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include "linalg/errorestimator.hpp"
 #include "models/spaceoperator.hpp"
@@ -46,8 +47,10 @@ public:
     }
   }
 
+  // Real (transient) fields only; complex fields require their frequency, below.
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>)
   {
     if (estimator_2d)
     {
@@ -56,6 +59,22 @@ public:
     else
     {
       estimator_3d->AddErrorIndicator(E, B, Et, indicator);
+    }
+  }
+
+  // The same for complex fields at their required real angular frequency ω. Et is empty
+  // without a total field energy; the estimator then uses a numerical flux norm.
+  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
+                         double omega, ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>
+  {
+    if (estimator_2d)
+    {
+      estimator_2d->AddErrorIndicator(E, B, Et, omega, indicator);
+    }
+    else
+    {
+      estimator_3d->AddErrorIndicator(E, B, Et, omega, indicator);
     }
   }
 };

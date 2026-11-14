@@ -49,6 +49,15 @@ private:
   // Whether the evaluator could be assembled.
   bool valid = true;
 
+  // Material operator (not owned), and the frequency-dependent material table of ENERGY_E:
+  // its offset in the retained group contexts (-1 without a frequency-dependent material),
+  // coefficient dimension, and current real angular frequency (0 before SetFrequency).
+  const MaterialOperator *mat_op;
+  std::ptrdiff_t material_ctx_offset = -1;
+  int material_ctx_dim = 0;
+  mutable double material_omega = 0.0;
+  void CheckFrequency() const;
+
   // Per-geometry assembled libCEED operators, evaluating at the target space nodal
   // points and scattering directly into the output grid function or into a point-major
   // ParaView point buffer. The element attribute vectors are operator inputs and must
@@ -92,6 +101,12 @@ public:
   int BufferSize() const { return buffer_size; }
   int BufferNumComp() const { return buffer_num_comp; }
   const std::vector<int> &BufferBases() const { return buffer_bases; }
+
+  // ENERGY_E: evaluate the stored-energy permittivity of a frequency-dependent material at
+  // the real angular frequency ω > 0 of the fields, updating the retained contexts only
+  // when ω changes. Required before evaluation when such a material exists, a no-op
+  // otherwise (and for other kinds).
+  void SetFrequency(double omega) const;
 
   // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
   // the pointwise quantity. Real and imaginary field contributions add. Local

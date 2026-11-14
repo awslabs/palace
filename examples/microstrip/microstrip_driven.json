@@ -1,0 +1,69 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/microstrip.msh",
+    "L0": 1.0e-4
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {"Attributes": [1]},
+      {
+        "Attributes": [2],
+        "Permittivity":
+        {
+          "HighFrequency": 4.0,
+          "Terms":
+          [
+            {
+              "Type": "DjordjevicSarkar",
+              "Strength": 0.056,
+              "LowerFrequency": 1.0e-3,
+              "UpperFrequency": 1.0e3
+            }
+          ]
+        }
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy": [{"Index": 1, "Attributes": [2]}],
+      "Probe": [{"Index": 1, "Center": [0.0, 20.0, 0.0]}]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC": {"Attributes": [3, 4]},
+    "Absorbing": {"Attributes": [2], "Order": 1},
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5, 7],
+        "Mode": 1,
+        "Excitation": true,
+        "VoltagePath": [[-50.0, 20.0, 1.0], [-50.0, 20.0, -1.0]]
+      },
+      {
+        "Index": 2,
+        "Attributes": [6, 8],
+        "Mode": 1,
+        "VoltagePath": [[50.0, 20.0, 1.0], [50.0, 20.0, -1.0]]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {"MinFreq": 2.0, "MaxFreq": 14.0, "FreqStep": 2.0, "SaveStep": 3},
+    "Linear": {"Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-9, "MaxIts": 200}
+  }
+}
