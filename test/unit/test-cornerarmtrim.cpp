@@ -2692,34 +2692,56 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(raw_rows == 2);
 
   // (d) Lane L1 (decision 1634 (1) / (2); ruling 1641 (5)): the coverage tables of the same
-  // measurement, always written. The by-key rows (one per Missing corner key, class
-  // Missing) sum to the uncovered table's raw-field Total row and their key set is the
-  // uncovered features' key records; the coverage row's W is surface-Q-corrected.csv's;
-  // U = the Missing share + the method gap; and the served energy W (1 - U) is the raw
-  // within-R energy the corrected total replaces (W minus the kept-raw uncovered energy:
-  // every other point of this fixture lies under the model's claims).
+  // measurement, always written. The by-key rows (one per Missing corner KEY HASH, class
+  // Missing: the two corners of this fixture are congruent, so they may share one key and
+  // then one row holds both features and their 8 portions) sum to the uncovered table's
+  // raw-field Total row and their key set is the uncovered features' key records; the
+  // coverage row's W is surface-Q-corrected.csv's; U = the Missing share + the method gap;
+  // and the served energy W (1 - U) is the raw within-R energy the corrected total replaces
+  // (W minus the kept-raw uncovered energy: every other point of this fixture lies under
+  // the model's claims).
+  std::map<std::string, std::set<int>> key_features;
+  for (const auto &key : response->GetUncoveredKeys())
+  {
+    key_features[key.hash].insert(key.feature);
+  }
+  REQUIRE(!key_features.empty());
   const TextCsv by_key_table =
       ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy-by-key.csv");
-  REQUIRE(by_key_table.rows.size() == 2);
+  REQUIRE(by_key_table.rows.size() == key_features.size());
   std::set<std::string> hashes, record_hashes;
+  std::set<int> by_key_features;
   double by_key_sum = 0.0, by_key_share = 0.0;
   for (const auto &row : by_key_table.rows)
   {
+    const std::string hash = row[by_key_table.Column("key hash")];
+    INFO("key " << hash);
     CHECK(std::stoi(row[by_key_table.Column("m")]) == 1);
     CHECK(std::stoi(row[by_key_table.Column("evaluation")]) == 0);
     CHECK(row[by_key_table.Column("class")] == "Missing");
     CHECK(std::stoi(row[by_key_table.Column("method gap")]) == 0);
-    CHECK(features.count(std::stoi(row[by_key_table.Column("features")])) == 1);
-    CHECK(std::stoi(row[by_key_table.Column("portions")]) == 4);
-    hashes.insert(row[by_key_table.Column("key hash")]);
+    REQUIRE(key_features.count(hash) == 1);
+    std::string expected_features;
+    for (const int feature : key_features.at(hash))
+    {
+      CHECK(features.count(feature) == 1);
+      by_key_features.insert(feature);
+      expected_features += (expected_features.empty() ? "" : "+") + std::to_string(feature);
+    }
+    CHECK(row[by_key_table.Column("features")] == expected_features);
+    CHECK(std::stoi(row[by_key_table.Column("portions")]) ==
+          4 * static_cast<int>(key_features.at(hash).size()));
+    hashes.insert(hash);
     by_key_sum += std::stod(row[by_key_table.Column("raw within-R energy[4] (J)")]);
     by_key_share += std::stod(row[by_key_table.Column("raw share of W[4]")]);
   }
-  for (const auto &key : response->GetUncoveredKeys())
+  for (const auto &[hash, key_feature_set] : key_features)
   {
-    record_hashes.insert(key.hash);
+    (void)key_feature_set;
+    record_hashes.insert(hash);
   }
   CHECK(hashes == record_hashes);
+  CHECK(by_key_features == features);
   double uncovered_total = 0.0;
   for (const auto &row : uncovered_table.rows)
   {

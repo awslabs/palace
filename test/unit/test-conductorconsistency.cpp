@@ -68,7 +68,12 @@ namespace
 // to the edge (fail-before: excluded). The CHORD-OFFSET-SNAPPED variant is the same coupon
 // whose placed patch carries the probe snaps of those two knots (displacement -0.02 along
 // AxisV = -x, as BuildFeaturePatches records them for an arc chord): the probes are read
-// on the device edge, the reading is the Dirichlet value, the snaps are recorded.
+// on the device edge, the reading is the Dirichlet value, the snaps are recorded. The
+// SWAPPED-CONDUCTOR variant (lane L1, the corrected-matrix coverage case) declares the
+// island-2 metal corner (u, v) = (-0.2, 0.25) a conductor-1 vertex: the gate reads island
+// 2's potential against island 1's reference, so the coupon is consistent (deviation 0) in
+// an excitation holding both islands at the same potential and excluded in one that does
+// not.
 enum class CouponVariant
 {
   CONSISTENT,
@@ -76,7 +81,8 @@ enum class CouponVariant
   CONDUCTOR_OFF_PLANE,
   NO_CONDUCTOR,
   CHORD_OFFSET,
-  CHORD_OFFSET_SNAPPED
+  CHORD_OFFSET_SNAPPED,
+  SWAPPED_CONDUCTOR
 };
 
 struct CouponFiles
@@ -158,6 +164,7 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
                           : variant == CouponVariant::CONDUCTOR_OFF_PLANE ? "off-plane"
                           : variant == CouponVariant::NO_CONDUCTOR        ? "no-conductor"
                           : variant == CouponVariant::CHORD_OFFSET        ? "chord-offset"
+                          : variant == CouponVariant::SWAPPED_CONDUCTOR   ? "swapped"
                                                                           : "chord-snapped";
   const bool chord_offset = variant == CouponVariant::CHORD_OFFSET ||
                             variant == CouponVariant::CHORD_OFFSET_SNAPPED;
@@ -227,8 +234,11 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     }
     else if (v >= kMetalEdgeV - 1.0e-12)
     {
-      plane[i] = AddConductor(
-          {u, v, variant == CouponVariant::CONDUCTOR_OFF_PLANE ? 0.1 : 0.0}, 2);
+      const bool swapped = variant == CouponVariant::SWAPPED_CONDUCTOR && u < 0.0 &&
+                           v > kMetalEdgeV + 1.0e-12;
+      plane[i] =
+          AddConductor({u, v, variant == CouponVariant::CONDUCTOR_OFF_PLANE ? 0.1 : 0.0},
+                       swapped ? 1 : 2);
     }
     else if (variant == CouponVariant::INCONSISTENT && u < 0.0)
     {
@@ -1376,8 +1386,11 @@ TEST_CASE_METHOD(
 // Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed with the FINAL patch
 // weights, so the matrix coverage re-measures a source whose own measurement came BEFORE a
 // later conductor-consistency exclusion. The islands fixture with the box walls as terminal
-// 1 (both islands at 0 V in source 1: the INCONSISTENT coupon's conductor claim is not
-// tested there) and the islands as terminals 2 and 3: the coupon is excluded at source 2.
+// 1 and the islands as terminals 2 and 3, and the SWAPPED-CONDUCTOR coupon (an island-2
+// metal vertex held at island 1's potential): consistent in source 1 (both islands at 0 V:
+// deviation 0), excluded at source 2 (island 1 at 1 V, island 2 at 0 V). (An INCONSISTENT
+// coupon is excluded at source 1 already: its fictitious gap vertex reads the gap
+// potential the walls raise.)
 // Source 1's own coverage row keeps its measurement (the coupon served); its matrix row is
 // re-measured with the final portions (the coupon kept raw: a larger uncovered share);
 // sources 2 and 3 were measured with the final portions already.
@@ -1398,7 +1411,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     serial.Print(output);
   }
   Mpi::Barrier(Mpi::World());
-  const auto inconsistent = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
+  const auto swapped = WriteCoupon(temp.temp_dir, CouponVariant::SWAPPED_CONDUCTOR);
   json config = HighOrderSpatialConfig();
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
@@ -1415,7 +1428,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   const fs::path output_dir = temp.temp_dir / "coverage-matrix";
   {
-    test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
+    test::GeometryCacheEnvGuard cache_env(swapped.cache.string(), false);
     config["Problem"]["Output"] = output_dir.string();
     test::RunElectrostatic(config);
   }
