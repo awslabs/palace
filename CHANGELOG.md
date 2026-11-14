@@ -298,6 +298,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Added the microstrip patch antenna example of Sheen et al. (1990), whose substrate and
+    ground plane run through the truncation of the domain, comparing the extruded PML with
+    the second-order absorbing boundary against the published measured and computed
+    reflection coefficient, and a section on the extruded PML to the dipole antenna
+    example, with the input impedance for several layers and the far-field pattern and
+    directivity against the half-wave dipole. The guide shows the shapes of the extruded PML
+    and the reflection of the PML and of the absorbing boundaries against the angle of
+    incidence. [PR 1048](https://github.com/awslabs/palace/pull/1048).
   - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
     listed frequency-dependent boundary conditions it supports as unsupported, and of the
     absorbing boundary `"Order"`, and documented the limitations of the second-order

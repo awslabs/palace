@@ -30,6 +30,13 @@
                 "Layers": 4
             }
         ],
+        "Postprocessing": {
+            "FarField": {
+                "Attributes": [4],
+                "NSample": 100,
+                "ThetaPhis": [[35, 20]]
+            }
+        },
         "PEC":
         {
           "Attributes": [1, 2]
