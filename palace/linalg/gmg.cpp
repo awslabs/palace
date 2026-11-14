@@ -84,6 +84,11 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       mg_op->GetNumLevels() == n_levels &&
           (!mg_op->HasAuxiliaryOperators() || mg_op->GetNumAuxiliaryLevels() == n_levels),
       "Invalid number of levels for operators in multigrid solver setup!");
+
+  // Factor the subdomain matrix before the coarse-level matrix, so that the memory peak of
+  // the (typically larger) subdomain factorization does not add to the coarse-level
+  // factors.
+  SetUpSubdomainCorrection(*mg_op);
   for (std::size_t l = 0; l < n_levels; l++)
   {
     A[l] = &mg_op->GetOperatorAtLevel(l);
@@ -139,7 +144,6 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     Y[l].UseDevice(true);
     R[l].UseDevice(true);
   }
-  SetUpSubdomainCorrection(*mg_op);
 
   this->height = op.Height();
   this->width = op.Width();
