@@ -168,7 +168,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+          linear.strumpack_lossy_precision, linear.reorder_reuse,
+          linear.strumpack_selective_inversion > 0, print);
 #endif
       break;
     case LinearSolver::STRUMPACK_MP:
@@ -176,7 +177,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+          linear.strumpack_lossy_precision, linear.reorder_reuse,
+          linear.strumpack_selective_inversion > 0, print);
 #endif
       break;
     case LinearSolver::MUMPS:

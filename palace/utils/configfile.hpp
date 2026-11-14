@@ -1193,6 +1193,10 @@ public:
   int strumpack_lossy_precision = 16;
   int strumpack_butterfly_l = 1;
 
+  // Selective inversion of the distributed fronts of STRUMPACK: faster solves with a
+  // factorization, slower factorizations (default depends on the problem type).
+  int strumpack_selective_inversion = -1;
+
   // Option to enable 3D process grid for SuperLU_DIST solver.
   bool superlu_3d = false;
 

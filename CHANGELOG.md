@@ -44,6 +44,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"]` to turn the selective
+    inversion of the STRUMPACK solver on or off (see the performance improvements below).
+    When omitted, it is on for eigenmode and transient simulations, and off for driven,
+    electrostatic, magnetostatic, and boundary mode simulations. The eigenvalue solver of
+    boundary mode simulations and wave ports never uses it. SchemaVer 4-3-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
     that far fields can be computed when the outer boundary is not a valid integration
     surface, or away from the truncation. The fields of each face are taken from the side
@@ -52,6 +58,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#173](https://github.com/pghysels/STRUMPACK/pull/173), selective
+    inversion: after each factorization, the triangular factors of the fronts distributed
+    over several processes are replaced by their inverses where this is accurate (condition
+    number of the factors at most 1e8), and the solves use matrix products instead of
+    distributed triangular solves. This is used by default for eigenmode and transient
+    simulations, where a factorization serves many solves. It lowers the time of the
+    STRUMPACK coarse solver by 20% for an eigenmode problem with a 5.7M-row coarse matrix on
+    1536 processes (5% of the total time), by 11% for an eigenmode problem with 69k rows on
+    384 processes, and by 16% for a transient problem with 428k rows on 192 processes, for
+    up to 0.4 GiB more peak memory per node. It is off by default for the other simulation
+    types (it makes the coarse solver of driven simulations 3 to 7% slower) and is never
+    used by the eigenvalue solver of boundary mode simulations and wave ports. Results
+    change at the level of the solver tolerances, by at most 1.8e-7 on a nearly singular
+    low-frequency driven problem with the option forced on.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on

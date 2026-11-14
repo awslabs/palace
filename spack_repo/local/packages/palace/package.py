@@ -180,10 +180,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # solves with a few right-hand sides, the source and CMake changes of
     # https://github.com/pghysels/STRUMPACK/pull/169, which allow setting the PBLAS block
     # size (see the local strumpack package) and use these solves only for the block sizes
-    # they handle, and the source changes of
+    # they handle, the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
-    # distributed solver. Kept off the `with` blocks so the Palace variants are not folded
-    # into the patch condition.
+    # distributed solver, and the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/173 (strumpack_selective_inversion.diff, a
+    # copy of the file in extern/patch/STRUMPACK), which add the selective inversion option
+    # of the distributed fronts. Kept off the `with` blocks so the Palace variants are not
+    # folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -221,6 +224,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
                 when="@8.1.0",
             ),
+            patch("strumpack_selective_inversion.diff", when="@8.1.0"),
         ],
     )
 

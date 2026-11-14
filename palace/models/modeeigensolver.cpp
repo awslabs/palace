@@ -575,10 +575,13 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
                  pc_type == LinearSolver::STRUMPACK_MP)
         {
 #if defined(MFEM_USE_STRUMPACK)
+          // Never with selective inversion, whatever the configuration says: these 2D
+          // matrices have nearly singular fronts, to which the modes are sensitive, and a
+          // factorization serves few solves, so there is no gain.
           return std::make_unique<StrumpackSolver>(
               comm, linear.sym_factorization, linear.strumpack_compression_type,
               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-              linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);
+              linear.strumpack_lossy_precision, reorder_reuse, false, verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::MUMPS)
@@ -663,11 +666,12 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       case LinearSolver::STRUMPACK:
       case LinearSolver::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
+        // Never with selective inversion, as in SetUpLinearSolver.
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<StrumpackSolver>(
                 comm, linear.sym_factorization, linear.strumpack_compression_type,
                 linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-                linear.strumpack_lossy_precision, true, print),
+                linear.strumpack_lossy_precision, true, false, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
 #else

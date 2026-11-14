@@ -636,6 +636,17 @@ void IoData::CheckConfiguration()
       solver.linear.initial_guess = 0;
     }
   }
+  if (solver.linear.strumpack_selective_inversion < 0)
+  {
+    // The inverses add to the time of each factorization and save time in each solve with
+    // it, so default true only for eigenmode and transient problems, where a factorization
+    // serves hundreds to thousands of solves, not for the Krylov solve of one frequency or
+    // source. The boundary mode and wave port solver never uses it (see ModeEigenSolver).
+    solver.linear.strumpack_selective_inversion =
+        (problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::TRANSIENT)
+            ? 1
+            : 0;
+  }
   if (solver.linear.mg_max_levels < 0)
   {
     if (problem.type == ProblemType::BOUNDARYMODE)

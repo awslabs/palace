@@ -3,6 +3,9 @@
 
 #include "strumpack.hpp"
 
+#include <type_traits>
+#include <utility>
+
 #if defined(MFEM_USE_STRUMPACK)
 
 namespace palace
@@ -35,12 +38,52 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
   return strumpack::CompressionType::NONE;  // For compiler warning
 }
 
+// Largest condition number || |T⁻¹| |T| ||_∞ of the triangular factors T of a distributed
+// front for which STRUMPACK replaces them by their inverses (selective inversion); the
+// other fronts keep the triangular solves. A solve with the inverted factors of a front
+// can lose backward accuracy up to about this factor. On a nearly singular low-frequency
+// driven problem, the results were accurate to 2e-7 with limits of 1e8 and 1e10 and wrong
+// with 1e12, and 1e8 inverts every front of the eigenmode problems the option was
+// measured on (the STRUMPACK default of 1e3 keeps the triangular solves in their largest
+// fronts, where most of the solve time is spent).
+constexpr double SELECTIVE_INVERSION_MAX_COND = 1.0e8;
+
+// Detect if the STRUMPACK options have the selective inversion of
+// https://github.com/pghysels/STRUMPACK/pull/173, which is a patch in the STRUMPACK 8.1.0
+// builds of Palace (superbuild and Spack package). STRUMPACK defines no macro for it, so
+// this keeps Palace building with a STRUMPACK that lacks the option.
+template <typename OptionsType, typename = void>
+struct HasSelectiveInversion : std::false_type
+{
+};
+
+template <typename OptionsType>
+struct HasSelectiveInversion<
+    OptionsType, std::void_t<decltype(std::declval<OptionsType &>()
+                                          .set_selective_inversion_max_cond(1.0))>>
+  : std::true_type
+{
+};
+
+// Enable the selective inversion if the STRUMPACK options have it (STRUMPACK ignores it
+// when built with SLATE).
+template <typename OptionsType>
+void EnableSelectiveInversion(OptionsType &options)
+{
+  if constexpr (HasSelectiveInversion<OptionsType>::value)
+  {
+    options.enable_selective_inversion();
+    options.set_selective_inversion_max_cond(SELECTIVE_INVERSION_MAX_COND);
+  }
+}
+
 }  // namespace
 
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse,
+    bool selective_inversion, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -111,6 +154,18 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // else
   {
     this->DisableGPU();
+  }
+
+  // Selective inversion: the solves with a factorization use matrix products instead of
+  // distributed triangular solves in the distributed fronts which are not compressed. Not
+  // for the mixed precision solver, which factors in single precision, where the inverted
+  // factors would not be accurate enough with the limit above.
+  if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
+  {
+    if (selective_inversion)
+    {
+      EnableSelectiveInversion(this->solver_->options());
+    }
   }
 }
 
