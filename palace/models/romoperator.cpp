@@ -2453,18 +2453,26 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       // pencil.
       const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
 
+      // The pole part of an active port is realized on the kept directions of its mass
+      // (AddAuxBlockDirections). Its polynomial part is realized on the same directions, as
+      // for a Djordjevic-Sarkar material, so that the port load is kₙ(ω) times one matrix,
+      // the fit whose residual is reported: on the full mass, the dropped directions carry
+      // the complement of the pole part, which can exceed kₙ by orders of magnitude where
+      // the two parts cancel (a resonant port material).
+      const Eigen::MatrixXcd Mp_fit =
+          (port_data.active && fit.aux) ? KeptDirectionsMass(*fit.aux, Mp_r.rows()) : Mp_r;
       PendingPortLoad port_load;
       port_load.label = fmt::format("waveport_{:d}_re", port_idx);
       port_load.Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-      ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r,
+      ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_fit,
                                            port_load.Kr_corr, port_load.Cr_corr,
                                            port_load.Mr_corr);
       if (port_data.active)
       {
         // Active ports also load the total pencil and carry their dispersion aux states.
-        ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r,
+        ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_fit,
                                              Kr_total_corr, Cr_total_corr, Mr_total_corr);
         if (fit.aux)
         {

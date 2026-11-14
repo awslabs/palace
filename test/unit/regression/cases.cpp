@@ -3207,6 +3207,25 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CheckAdapterSynthesis(temp_dir, lorentz, 8.0, 11.0, 1.0e-3);
 }
 
+// A weaker resonance (Δε 0.005), on a band around it (9 to 10 GHz) where the fits of the
+// port propagation constants meet AdaptiveTol 1e-6. Their pole part, realized on the
+// directions of the port mass above the rank tolerance, cancels most of their polynomial
+// part: realized on the full mass instead, the polynomial part left the circuit 5e-6 from
+// the reduced model.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "adapter_driven_synth_lorentz_band: circuit synthesis at a resonance",
+                 "[Serial][Parallel][Regression]")
+{
+  const nlohmann::json lorentz = {{"Permittivity",
+                                   {{"HighFrequency", 1.0},
+                                    {"Terms",
+                                     {{{"Type", "Lorentz"},
+                                       {"DeltaPermittivity", 0.005},
+                                       {"ResonanceFrequency", 9.5},
+                                       {"DampingFrequency", 0.2}}}}}}};
+  CheckAdapterSynthesis(temp_dir, lorentz, 9.0, 10.0, 1.0e-6);
+}
+
 // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the
 // default `ctest -L "^regression$"` sweep skips them (the regression
 // block uses TEST_SPEC `[Regression]~[Long]`); CI exercises them via
