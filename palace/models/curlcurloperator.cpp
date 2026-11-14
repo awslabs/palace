@@ -140,7 +140,7 @@ CurlCurlOperator::AssemblyRestriction::AssemblyRestriction(
 
 void CurlCurlOperator::RestrictToAssemblyDomains(
     std::initializer_list<MaterialPropertyCoefficient *> f,
-    std::initializer_list<MaterialPropertyCoefficient *> fb)
+    std::initializer_list<MaterialPropertyCoefficient *> fb) const
 {
   if (!assembly_domains)
   {
@@ -370,9 +370,28 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   }
 }
 
+void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient &df,
+                             const MaterialPropertyCoefficient &f,
+                             const MaterialPropertyCoefficient &fb)
+{
+  if (f.empty())
+  {
+    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
+  }
+  else
+  {
+    k.AddDomainIntegrator<CurlCurlMassIntegrator>(df, f);
+  }
+  if (!fb.empty())
+  {
+    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
+  }
+}
+
 }  // namespace
 
 void CurlCurlOperator::AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+                                                MaterialPropertyCoefficient &f,
                                                 MaterialPropertyCoefficient &fb) const
 {
   // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
@@ -398,17 +417,9 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
 
   constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, fb);
-  BilinearForm k(GetSolutionNDSpace());
-  k.AddDomainIntegrator<CurlCurlIntegrator>(df);
-  if (!fb.empty())
-  {
-    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
-  }
-  // k.AssembleQuadratureData();
-  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  const auto form = GetStiffnessForm();
+  // form->k.AssembleQuadratureData();
+  auto k_vec = form->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
@@ -438,28 +449,41 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
+std::unique_ptr<CurlCurlOperator::StiffnessForm>
+CurlCurlOperator::GetStiffnessForm(bool volume, bool sheets) const
+{
+  // The integrators keep pointers to the coefficients, which the form owns.
+  std::unique_ptr<StiffnessForm> form(
+      new StiffnessForm{MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
+                        MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
+                        MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute()),
+                        BilinearForm(GetSolutionNDSpace())});
+  AddStiffnessCoefficients(form->df, form->f, form->fb);
+  RestrictToAssemblyDomains({&form->df, &form->f}, {&form->fb});
+  if (!volume)
+  {
+    // Zero coefficients on every element.
+    form->df.RestrictCoefficient(mfem::Array<int>());
+    form->f.RestrictCoefficient(mfem::Array<int>());
+  }
+  if (!sheets)
+  {
+    form->fb = MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute());
+  }
+  AddStiffnessIntegrators(form->k, form->df, form->f, form->fb);
+  return form;
+}
+
 std::unique_ptr<ParOperator>
 CurlCurlOperator::GetUnconstrainedStiffnessMatrix(bool volume, bool sheets, bool assemble)
 {
   // Restricted, the (exactly zero) entries of the elements outside the assembly domains are
   // not stored.
   const bool skip_zeros = assembly_domains.has_value();
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, fb);
-  RestrictToAssemblyDomains({&df}, {&fb});
-  BilinearForm k(GetSolutionNDSpace());
-  if (volume)
-  {
-    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
-  }
-  if (sheets && !fb.empty())
-  {
-    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
-  }
+  const auto form = GetStiffnessForm(volume, sheets);
   auto K = std::make_unique<ParOperator>(
-      assemble ? std::unique_ptr<Operator>(k.FullAssemble(skip_zeros))
-               : k.PartialAssemble(),
+      assemble ? std::unique_ptr<Operator>(form->k.FullAssemble(skip_zeros))
+               : form->k.PartialAssemble(),
       GetSolutionNDSpace());
   if (sheets && IsBroken())
   {
@@ -488,19 +512,12 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
   // first two terms track the true stiffness; the volume mass is a reluctance-weighted
   // regularization lifting the film-constant gradient mode so GᵀK̃_pcG is SPD for AMS.
   constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, fb);
-  BilinearForm k(GetSolutionNDSpace());
-  k.AddDomainIntegrator<CurlCurlIntegrator>(df);
+  const auto form = GetStiffnessForm();
+  const auto &fb = form->fb;
   MaterialPropertyCoefficient mass_func(mat_op.GetAttributeToMaterial(),
                                         mat_op.GetInvPermeability(), london_pc_shift_);
-  k.AddDomainIntegrator<VectorFEMassIntegrator>(mass_func);
-  if (!fb.empty())
-  {
-    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
-  }
-  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  form->k.AddDomainIntegrator<VectorFEMassIntegrator>(mass_func);
+  auto k_vec = form->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
@@ -613,16 +630,7 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   // Same terms as the base stiffness matrix, so shorted-port assemblies carry the same
   // kinetic inductance.
   constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, fb);
-  BilinearForm k(GetSolutionNDSpace());
-  k.AddDomainIntegrator<CurlCurlIntegrator>(df);
-  if (!fb.empty())
-  {
-    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
-  }
-  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  auto k_vec = GetStiffnessForm()->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
 
   // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
   // shallow reference to the tdof list and that list must stay put. Drop the older entry

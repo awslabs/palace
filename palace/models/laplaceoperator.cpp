@@ -66,7 +66,7 @@ LaplaceOperator::AssemblyRestriction::AssemblyRestriction(
 
 void LaplaceOperator::RestrictToAssemblyDomains(
     std::initializer_list<MaterialPropertyCoefficient *> f,
-    std::initializer_list<MaterialPropertyCoefficient *> fb)
+    std::initializer_list<MaterialPropertyCoefficient *> fb) const
 {
   if (!assembly_domains)
   {
@@ -215,12 +215,9 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
 
   constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal());
-  BilinearForm k(GetH1Space());
-  k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-  // k.AssembleQuadratureData();
-  auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);
+  const auto form = GetStiffnessForm();
+  // form->k.AssembleQuadratureData();
+  auto k_vec = form->k.Assemble(GetH1Spaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
@@ -249,19 +246,27 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   return K;
 }
 
+std::unique_ptr<LaplaceOperator::StiffnessForm> LaplaceOperator::GetStiffnessForm() const
+{
+  // The integrator keeps a pointer to the coefficient, which the form owns.
+  std::unique_ptr<StiffnessForm> form(
+      new StiffnessForm{MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
+                                                    mat_op.GetPermittivityReal()),
+                        BilinearForm(GetH1Space())});
+  RestrictToAssemblyDomains({&form->epsilon}, {});
+  form->k.AddDomainIntegrator<DiffusionIntegrator>(form->epsilon);
+  return form;
+}
+
 std::unique_ptr<ParOperator> LaplaceOperator::GetUnconstrainedStiffnessMatrix(bool assemble)
 {
   // Restricted, the (exactly zero) entries of the elements outside the assembly domains are
   // not stored.
   const bool skip_zeros = assembly_domains.has_value();
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal());
-  RestrictToAssemblyDomains({&epsilon_func}, {});
-  BilinearForm k(GetH1Space());
-  k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+  const auto form = GetStiffnessForm();
   return std::make_unique<ParOperator>(
-      assemble ? std::unique_ptr<Operator>(k.FullAssemble(skip_zeros))
-               : k.PartialAssemble(),
+      assemble ? std::unique_ptr<Operator>(form->k.FullAssemble(skip_zeros))
+               : form->k.PartialAssemble(),
       GetH1Space());
 }
 

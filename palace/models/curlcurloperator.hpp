@@ -12,6 +12,7 @@
 #include <set>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
@@ -152,9 +153,10 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
-  // Add the stiffness coefficients: curl-curl (μ⁻¹) and the kinetic sheet term (1/L_ksq,
-  // unbroken spaces only).
+  // Add the stiffness coefficients: curl-curl (μ⁻¹), volume mass (none from these
+  // materials), and the kinetic sheet term (1/L_ksq, unbroken spaces only).
   void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &f,
                                 MaterialPropertyCoefficient &fb) const;
 
   // True if a superconductor film is present and the shift is positive.
@@ -178,8 +180,21 @@ private:
     std::vector<int> attrs;
   };
   std::optional<AssemblyDomains> assembly_domains;
-  void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
-                                 std::initializer_list<MaterialPropertyCoefficient *> fb);
+  void
+  RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
+                            std::initializer_list<MaterialPropertyCoefficient *> fb) const;
+
+  // The stiffness form on the finest solution space, with the coefficients its integrators
+  // point to (AddStiffnessCoefficients, restricted to the assembly domains if set): the
+  // volume terms if volume, the sheet terms of an unbroken space if sheets (the broken
+  // sheet matrix is added to the assembled operators, see AddBrokenSheetMatrix).
+  struct StiffnessForm
+  {
+    MaterialPropertyCoefficient df, f, fb;
+    BilinearForm k;
+  };
+  std::unique_ptr<StiffnessForm> GetStiffnessForm(bool volume = true,
+                                                  bool sheets = true) const;
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -195,7 +210,8 @@ public:
                    const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  // Restricts GetUnconstrainedStiffnessMatrix to the elements with the given domain
+  // Restricts the stiffness form (GetUnconstrainedStiffnessMatrix) to the elements with the
+  // given domain
   // attributes and the boundary elements bounding them while in scope (the previous
   // restriction is restored).
   class AssemblyRestriction

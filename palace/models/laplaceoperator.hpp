@@ -10,6 +10,7 @@
 #include <optional>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
@@ -67,8 +68,18 @@ private:
   // Optional restriction of the assembled operators to a set of domain attributes:
   // libCEED domain attributes and boundary attributes (by neighboring domain) kept.
   std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> assembly_domains;
-  void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
-                                 std::initializer_list<MaterialPropertyCoefficient *> fb);
+  void
+  RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
+                            std::initializer_list<MaterialPropertyCoefficient *> fb) const;
+
+  // The stiffness form (permittivity) on the finest space, with the coefficient its
+  // integrator points to, restricted to the assembly domains if set.
+  struct StiffnessForm
+  {
+    MaterialPropertyCoefficient epsilon;
+    BilinearForm k;
+  };
+  std::unique_ptr<StiffnessForm> GetStiffnessForm() const;
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -83,7 +94,8 @@ public:
                   ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh);
   LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  // Restricts GetUnconstrainedStiffnessMatrix to the elements with the given domain
+  // Restricts the stiffness form (GetUnconstrainedStiffnessMatrix) to the elements with the
+  // given domain
   // attributes and the boundary elements bounding them while in scope (the previous
   // restriction is restored).
   class AssemblyRestriction
