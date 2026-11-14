@@ -405,6 +405,192 @@ TEST_CASE("Floquet propagation constants in lossy and gain media", "[floquetport
   CHECK(std::abs(tm - omega * omega * mu_eps / lossy) < 1.0e-14);
 }
 
+namespace
+{
+
+// Access to the factored-term self-check of the PROM online assembly.
+class FloquetRomOperator : public RomOperator
+{
+public:
+  using RomOperator::RomOperator;
+  bool SelfChecked() const { return other_A2_self_checked; }
+  bool FactoredOk() const { return other_A2_factored_ok; }
+};
+
+}  // namespace
+
+TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-dependent medium",
+                 "[floquetport][frequencydependent][Serial][Parallel]")
+{
+  // A plane wave at normal incidence through a short slab between two Floquet ports at
+  // z = 0 (excited) and z = L in a homogeneous medium, periodic in x and y. The ports use
+  // the complete ε(iω) of the medium in γ₀ = ω √(μ ε) (the outgoing root), in their Robin
+  // term, and in the excitation, so the driven port is matched, S11 = 0, and the
+  // transmission is S21 = e^{−iγ₀ L}. This holds for a lossless constant medium
+  // (|S21| = 1), a lossy Drude medium with Re ε > 0, and a Drude medium below its plasma
+  // frequency with Re ε < 0 and Re γ₀² < 0, whose (0,0) mode still carries power,
+  // Re γ₀ > 0. With a user conductivity σ the wave uses ε_w = ε + σ/(iω) (the volume
+  // includes σ, so the ports must too, once: Debye with ε = 3 − i and ε_w = 3 − 2i, and
+  // Drude below its plasma frequency, whose folded zero pole must not be counted again).
+  // The PROM, with the solution in its basis, reproduces it through its factored Floquet
+  // Robin term.
+  using json = nlohmann::json;
+  enum class Medium
+  {
+    LOSSLESS,
+    LOSSY,
+    NEGATIVE,
+    DEBYE_SIGMA,
+    NEGATIVE_SIGMA
+  };
+  const auto medium = GENERATE(Medium::LOSSLESS, Medium::LOSSY, Medium::NEGATIVE,
+                               Medium::DEBYE_SIGMA, Medium::NEGATIVE_SIGMA);
+  CAPTURE(static_cast<int>(medium));
+  MPI_Comm comm = Mpi::World();
+  IoData iodata{Units(1.0e-3, 1.0e-3)};
+  iodata.model.L0 = 1.0e-3;
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.order = 3;
+  iodata.solver.driven.sample_f = {100.0};  // GHz
+  // Drude ε = 2 + (fp/f)² / (i (i + fγ/f)) at f = 100 GHz: fp = 100 GHz, fγ = 50 GHz gives
+  // 1.2 − 0.4i, and fp = 300 GHz gives −5.2 − 3.6i.
+  // Debye Δε = 2 with ωτ = 1 at 100 GHz gives ε = 3 − i. The user conductivity
+  // σ = ω ε₀ adds −i to the wave permittivity.
+  json permittivity = 2.0;
+  std::complex<double> eps = 2.0;
+  const bool with_sigma =
+      (medium == Medium::DEBYE_SIGMA || medium == Medium::NEGATIVE_SIGMA);
+  if (medium == Medium::DEBYE_SIGMA)
+  {
+    permittivity = {
+        {"HighFrequency", 2.0},
+        {"Terms",
+         json::array({{{"Type", "Debye"},
+                       {"DeltaPermittivity", 2.0},
+                       {"RelaxationTime", 1.0e9 / (2.0 * std::numbers::pi * 1.0e11)}}})}};
+    eps = {3.0, -1.0};
+  }
+  else if (medium != Medium::LOSSLESS)
+  {
+    const double fp = (medium == Medium::LOSSY) ? 100.0 : 300.0;
+    permittivity = {{"HighFrequency", 2.0},
+                    {"Terms", json::array({{{"Type", "Drude"},
+                                            {"PlasmaFrequency", fp},
+                                            {"CollisionFrequency", 50.0}}})}};
+    eps = (medium == Medium::LOSSY) ? std::complex<double>(1.2, -0.4)
+                                    : std::complex<double>(-5.2, -3.6);
+  }
+  json material = {{"Attributes", json::array({1})}, {"Permittivity", permittivity}};
+  if (with_sigma)
+  {
+    material["Conductivity"] =
+        2.0 * std::numbers::pi * 1.0e11 * electromagnetics::epsilon0_;
+    eps -= 1i;
+  }
+  iodata.domains = config::DomainData(json{{"Materials", json::array({material})}});
+  // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = L), 5 and 3 (x faces), 2 and
+  // 4 (y faces).
+  iodata.boundaries = config::BoundaryData(json{
+      {"Periodic",
+       {{"BoundaryPairs", json::array({{{"DonorAttributes", json::array({5})},
+                                        {"ReceiverAttributes", json::array({3})}},
+                                       {{"DonorAttributes", json::array({2})},
+                                        {"ReceiverAttributes", json::array({4})}}})}}},
+      {"FloquetPort",
+       json::array({{{"Index", 1}, {"Attributes", json::array({1})}, {"Excitation", 1}},
+                    {{"Index", 2}, {"Attributes", json::array({6})}}})}});
+  iodata.CheckConfiguration();
+  constexpr double a = 0.5, L = 0.25;
+  // The periodic mesh is made by the mesh loading path from the boundary pairs.
+  iodata.model.mesh = (temp_dir / "floquet_box.mesh").string();
+  if (Mpi::Root(comm))
+  {
+    auto box = mfem::Mesh::MakeCartesian3D(3, 3, 6, mfem::Element::HEXAHEDRON, a, a, L);
+    std::ofstream ofs(iodata.model.mesh);
+    box.Print(ofs);
+  }
+  Mpi::Barrier(comm);
+  auto smesh = mesh::Load(iodata, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  SpaceOperator space_op(iodata, mesh);
+
+  const double omega = iodata.solver.driven.sample_f.front();
+  const std::complex<double> gamma = omega * std::sqrt(eps);
+  REQUIRE(gamma.real() > 0.0);
+  if (medium == Medium::NEGATIVE || medium == Medium::NEGATIVE_SIGMA)
+  {
+    REQUIRE((gamma * gamma).real() < 0.0);
+  }
+  auto &floquet_op = space_op.GetFloquetPortOp();
+  floquet_op.Initialize(omega);
+  const auto gamma0 = floquet_op.GetPort(1).GetGamma0();
+  CHECK_THAT(gamma0.real(), WithinRel(gamma.real(), 1.0e-10));
+  CHECK_THAT(gamma0.imag(), WithinAbs(gamma.imag(), 1.0e-10));
+
+  const std::complex<double> S21_expected = std::exp(-1i * gamma * L);
+  auto CheckS = [&](const ComplexVector &E, const char *path)
+  {
+    INFO(path);
+    GridFunction E_gf(space_op.GetNDSpace(), true);
+    E_gf.Real().SetFromTrueDofs(E.Real());
+    E_gf.Imag().SetFromTrueDofs(E.Imag());
+    const auto key = std::make_tuple(0, 0, true);
+    const auto S1 = floquet_op.GetPort(1).GetAllSParameters(E_gf, true);
+    const auto S2 = floquet_op.GetPort(2).GetAllSParameters(E_gf);
+    REQUIRE(S1.contains(key));
+    REQUIRE(S2.contains(key));
+    const auto S11 = S1.at(key), S21 = S2.at(key);
+    CAPTURE(S11, S21, S21_expected);
+    CHECK(std::abs(S11) < 1.0e-3);
+    CHECK(std::abs(S21 - S21_expected) < 1.0e-3);
+  };
+
+  // HDM: (K + iωC − ω²M + A2(ω)) E = RHS.
+  ComplexVector E;
+  {
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                      K.get(), C.get(), M.get(), A2.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+    ksp.SetOperators(*A, *P);
+    ComplexVector RHS;
+    RHS.UseDevice(true);
+    E.UseDevice(true);
+    REQUIRE(space_op.GetExcitationVector(1, omega, RHS));
+    E.SetSize(RHS.Size());
+    E = 0.0;
+    ksp.Mult(RHS, E);
+  }
+  CheckS(E, "HDM");
+  if (medium != Medium::LOSSLESS)
+  {
+    CHECK(std::abs(S21_expected) < 0.95);
+  }
+
+  // PROM with the HDM solution in its basis.
+  FloquetRomOperator prom_op(iodata, space_op, 4);
+  prom_op.SetExcitationIndex(1);
+  ComplexVector E_hdm(E.Size()), E_rom(E.Size());
+  E_hdm = 0.0;
+  E_rom = 0.0;
+  E_hdm.UseDevice(true);
+  E_rom.UseDevice(true);
+  prom_op.SolveHDM(1, omega, E_hdm);
+  prom_op.UpdatePROM(E_hdm, "sample");
+  prom_op.SolvePROM(1, omega, E_rom);
+  CHECK(prom_op.SelfChecked());
+  CHECK(prom_op.FactoredOk());
+  CheckS(E_rom, "PROM");
+}
+
 TEST_CASE_METHOD(test::SharedTempDir,
                  "Floquet port orders capped by the largest element stretch",
                  "[floquetport][Serial][Parallel]")
