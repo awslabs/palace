@@ -394,6 +394,18 @@ remain linear, while the absorption in the layer grows with frequency. With
 frequency, for an absorption independent of frequency, and a complex frequency shift
 `"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency.
 
+With the static stretch, the absorption across each element of the layer grows with
+frequency, so over a wide sweep the layer becomes too coarse for the wave at the upper
+frequencies, and reflects more of it. For a vacuum cell at normal incidence, swept from 0.3
+to 3 GHz, a layer of 8 third-order elements that is ``\lambda / 10`` thick at 0.3 GHz
+reflects -109 dB at 0.3 GHz and -70 dB at 3 GHz, while 16 elements in the same thickness
+stay below -110 dB. With `"FrequencyDependent": true`, the 8 elements stay below -109 dB.
+An adaptive sweep of a waveguide over 1001 frequencies then takes 4% longer with 186,820
+unknowns and 25% longer with 25,252, where a rational fit of the PML terms in frequency
+passes its accuracy check. Where the fit fails, as on this cell, *Palace* assembles and
+projects the PML terms at every output frequency, and an adaptive sweep over 301
+frequencies takes 30% longer, with 4.5 s instead of 0.2 s spent at the output frequencies.
+
 ### Eigenmode simulations and postprocessing with PML regions
 
 In eigenmode simulations, the PML adds modes which are not those of the physical problem:
