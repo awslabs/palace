@@ -1,0 +1,534 @@
+diff --git a/src/StrumpackOptions.cpp b/src/StrumpackOptions.cpp
+index 1f9cee5b..67613286 100644
+--- a/src/StrumpackOptions.cpp
++++ b/src/StrumpackOptions.cpp
+@@ -185,6 +185,9 @@ namespace strumpack {
+        {"sp_proportional_mapping",      required_argument, 0, 50},
+        {"sp_enable_openmp_tree",        no_argument, 0, 51},
+        {"sp_disable_openmp_tree",       no_argument, 0, 52},
++       {"sp_enable_selective_inversion",  no_argument, 0, 53},
++       {"sp_disable_selective_inversion", no_argument, 0, 54},
++       {"sp_selective_inversion_max_cond", required_argument, 0, 55},
+        {"sp_verbose",                   no_argument, 0, 'v'},
+        {"sp_quiet",                     no_argument, 0, 'q'},
+        {"help",                         no_argument, 0, 'h'},
+@@ -428,6 +431,14 @@ namespace strumpack {
+       } break;
+       case 51: enable_openmp_tree(); break;
+       case 52: disable_openmp_tree(); break;
++      case 53: enable_selective_inversion(); break;
++      case 54: disable_selective_inversion(); break;
++      case 55: {
++        std::istringstream iss(optarg);
++        double c;
++        iss >> c;
++        set_selective_inversion_max_cond(c);
++      } break;
+       case 'h': { describe_options(); } break;
+       case 'v': set_verbose(true); break;
+       case 'q': set_verbose(false); break;
+@@ -569,6 +580,17 @@ namespace strumpack {
+               << std::boolalpha << !use_openmp_tree_ << ")" << std::endl
+               << "#          uses less more memory, but scales worse with OpenMP threads"
+               << std::endl;
++    std::cout << "#   --sp_enable_selective_inversion (default "
++              << std::boolalpha << selective_inversion_ << ")" << std::endl
++              << "#          invert the triangular factors of the distributed fronts:"
++              << std::endl
++              << "#          faster solves, slower factorization" << std::endl;
++    std::cout << "#   --sp_disable_selective_inversion (default "
++              << std::boolalpha << !selective_inversion_ << ")" << std::endl;
++    std::cout << "#   --sp_selective_inversion_max_cond (default "
++              << si_max_cond_ << ")" << std::endl
++              << "#          invert only the fronts whose triangular factors have"
++              << " a condition number || |T^-1| |T| || below this" << std::endl;
+     std::cout << "#   --sp_lossy_precision [1-64] (default "
+               << lossy_precision() << ")" << std::endl
+               << "#          lossy compression precision" << std::endl
+diff --git a/src/StrumpackOptions.hpp b/src/StrumpackOptions.hpp
+index d190efb1..88d72ccc 100644
+--- a/src/StrumpackOptions.hpp
++++ b/src/StrumpackOptions.hpp
+@@ -789,6 +789,57 @@ namespace strumpack {
+      */
+     void disable_openmp_tree() { use_openmp_tree_ = false; }
+ 
++    /**
++     * Enable selective inversion of the distributed (MPI) dense
++     * fronts: after the LU factorization of the separator block F11 =
++     * L11 U11 of a front distributed over several processes, L11 and
++     * U11 are replaced by their inverses. The triangular solves with
++     * L11 and U11 of the distributed fronts in the solve phase then
++     * become triangular matrix products, which need a constant number
++     * of messages instead of one message per block row of F11. This
++     * lowers the latency of each solve, at the cost of extra flops
++     * (about 2/3 dim_sep^3 per distributed front) in the
++     * factorization, and of a temporary copy of F11 while a front is
++     * factored: dim_sep^2 / P entries per process of a front, which
++     * doubles the memory of the root front (no F12, F21) during its
++     * factorization. The factors keep their size. A front is only
++     * inverted if its triangular factors are well enough conditioned,
++     * see set_selective_inversion_max_cond(). For inverted fronts,
++     * the subnormal and zero counts of the factors (subnormals())
++     * count the entries of the inverses. Sequential fronts are not
++     * changed. The option is ignored with SLATE.
++     *
++     * \see disable_selective_inversion()
++     */
++    void enable_selective_inversion() { selective_inversion_ = true; }
++
++    /**
++     * Disable selective inversion of the distributed fronts
++     * (default).
++     *
++     * \see enable_selective_inversion()
++     */
++    void disable_selective_inversion() { selective_inversion_ = false; }
++
++    /**
++     * Set the largest condition number || |T^{-1}| |T| ||_inf of the
++     * triangular factors T = L11, U11 of a distributed front for which
++     * selective inversion is applied to that front; the other fronts
++     * keep the triangular solves. Multiplying by the computed inverse
++     * of T can lose backward accuracy up to about this factor compared
++     * to a triangular solve with T. L11 and U11 of a front are
++     * inverted together, if both are at most the limit. The condition
++     * numbers are computed in double precision for all scalar types.
++     * The default is 1e3. A value below 1 disables the inversion of
++     * every front.
++     *
++     * \see enable_selective_inversion()
++     */
++    void set_selective_inversion_max_cond(double c) {
++      assert(c >= 0);
++      si_max_cond_ = c;
++    }
++
+     /**
+      * Set the precision for lossy compression. Preferred mode is
+      * accuracy. To use precision mode, set the accuracy to a negative
+@@ -937,6 +988,18 @@ namespace strumpack {
+      */
+     bool use_agg_amalg() const { return use_agg_amalg_; }
+ 
++    /**
++     * Is selective inversion of the distributed fronts enabled?
++     * \see enable_selective_inversion()
++     */
++    bool selective_inversion() const { return selective_inversion_; }
++
++    /**
++     * Get the condition number limit for selective inversion.
++     * \see set_selective_inversion_max_cond()
++     */
++    double selective_inversion_max_cond() const { return si_max_cond_; }
++
+     /**
+      * Get the matching job to use for numerical stability reordering.
+      * \see set_matching()
+@@ -1327,6 +1390,8 @@ namespace strumpack {
+     bool print_comp_front_stats_ = false;
+     ProportionalMapping prop_map_ = ProportionalMapping::FLOPS;
+     bool use_openmp_tree_ = true;
++    bool selective_inversion_ = false;
++    double si_max_cond_ = 1e3;
+     bool use_symmetric_ = false;
+     bool use_positive_definite_ = false;
+ 
+diff --git a/src/dense/DistributedMatrix.cpp b/src/dense/DistributedMatrix.cpp
+index 00a5b57a..7213c098 100644
+--- a/src/dense/DistributedMatrix.cpp
++++ b/src/dense/DistributedMatrix.cpp
+@@ -1262,6 +1262,20 @@ namespace strumpack {
+     STRUMPACK_FLOPS(trsm_flops(s, alpha, A, B));
+   }
+ 
++  template<typename scalar_t> void trmm
++  (Side s, UpLo u, Trans ta, Diag d, scalar_t alpha,
++   const DistributedMatrix<scalar_t>& A, DistributedMatrix<scalar_t>& B) {
++    if (!A.active()) return;
++    assert(A.rows()==A.cols());
++    assert(s!=Side::L || A.cols()==B.rows());
++    assert(s!=Side::R || A.rows()==B.cols());
++    scalapack::ptrmm
++      (char(s), char(u), char(ta), char(d), B.rows(), B.cols(),
++       alpha, A.data(), A.I(), A.J(), A.desc(),
++       B.data(), B.I(), B.J(), B.desc());
++    STRUMPACK_FLOPS(trmm_flops(s, alpha, A, B));
++  }
++
+   template<typename scalar_t> void trsv
+   (UpLo ul, Trans ta, Diag d, const DistributedMatrix<scalar_t>& A,
+    DistributedMatrix<scalar_t>& B) {
+@@ -1490,6 +1504,19 @@ namespace strumpack {
+    const DistributedMatrix<std::complex<double>>& A,
+    DistributedMatrix<std::complex<double>>& B);
+ 
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, float alpha,
++   const DistributedMatrix<float>& A, DistributedMatrix<float>& B);
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, double alpha,
++   const DistributedMatrix<double>& A, DistributedMatrix<double>& B);
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, std::complex<float> alpha,
++   const DistributedMatrix<std::complex<float>>& A, DistributedMatrix<std::complex<float>>& B);
++  template void trmm
++  (Side s, UpLo u, Trans ta, Diag d, std::complex<double> alpha,
++   const DistributedMatrix<std::complex<double>>& A, DistributedMatrix<std::complex<double>>& B);
++
+   template void trsv
+   (UpLo ul, Trans ta, Diag d, const DistributedMatrix<float>& A,
+    DistributedMatrix<float>& B);
+diff --git a/src/dense/DistributedMatrix.hpp b/src/dense/DistributedMatrix.hpp
+index 292c6814..43e449a7 100644
+--- a/src/dense/DistributedMatrix.hpp
++++ b/src/dense/DistributedMatrix.hpp
+@@ -877,6 +877,15 @@ namespace strumpack {
+       a.npactives();
+   }
+ 
++  template<typename scalar_t> long long int
++  trmm_flops(Side s, scalar_t alpha, const DistributedMatrix<scalar_t>& a,
++             const DistributedMatrix<scalar_t>& b) {
++    if (!a.active()) return 0;
++    return (is_complex<scalar_t>() ? 4:1) *
++      blas::trmm_flops(b.rows(), b.cols(), alpha, char(s)) /
++      a.npactives();
++  }
++
+   template<typename scalar_t> long long int
+   gemm_flops(Trans ta, Trans tb, scalar_t alpha,
+              const DistributedMatrix<scalar_t>& a,
+@@ -935,6 +944,10 @@ namespace strumpack {
+   (Side s, UpLo u, Trans ta, Diag d, scalar_t alpha,
+    const DistributedMatrix<scalar_t>& A, DistributedMatrix<scalar_t>& B);
+ 
++  template<typename scalar_t> void trmm
++  (Side s, UpLo u, Trans ta, Diag d, scalar_t alpha,
++   const DistributedMatrix<scalar_t>& A, DistributedMatrix<scalar_t>& B);
++
+   template<typename scalar_t> void trsv
+   (UpLo ul, Trans ta, Diag d, const DistributedMatrix<scalar_t>& A,
+    DistributedMatrix<scalar_t>& B);
+diff --git a/src/dense/ScaLAPACKWrapper.cpp b/src/dense/ScaLAPACKWrapper.cpp
+index 8fd558cc..e5268db4 100644
+--- a/src/dense/ScaLAPACKWrapper.cpp
++++ b/src/dense/ScaLAPACKWrapper.cpp
+@@ -287,6 +287,31 @@ namespace strumpack {
+          const std::complex<double> *, int *, int *, const int *,
+          std::complex<double> *, int *, int *, const int *);
+ 
++      void STRUMPACK_FC_GLOBAL(pstrmm,PSTRMM)
++        (char *, char *, char *, char *, int *, int *, float *,
++         const float *, int *, int *, const int *,
++         float *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pdtrmm,PDTRMM)
++        (char *, char *, char *, char *, int *, int *, double *,
++         const double *, int *, int *, const int *,
++         double *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pctrmm,PCTRMM)
++        (char *, char *, char *, char *, int *, int *, std::complex<float> *,
++         const std::complex<float> *, int *, int *, const int *,
++         std::complex<float> *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pztrmm,PZTRMM)
++        (char *, char *, char *, char *, int *, int *, std::complex<double> *,
++         const std::complex<double> *, int *, int *, const int *,
++         std::complex<double> *, int *, int *, const int *);
++      void STRUMPACK_FC_GLOBAL(pstrtri,PSTRTRI)
++        (char *, char *, int *, float *, int *, int *, const int *, int *);
++      void STRUMPACK_FC_GLOBAL(pdtrtri,PDTRTRI)
++        (char *, char *, int *, double *, int *, int *, const int *, int *);
++      void STRUMPACK_FC_GLOBAL(pctrtri,PCTRTRI)
++        (char *, char *, int *, std::complex<float> *, int *, int *, const int *, int *);
++      void STRUMPACK_FC_GLOBAL(pztrtri,PZTRTRI)
++        (char *, char *, int *, std::complex<double> *, int *, int *, const int *, int *);
++
+       void STRUMPACK_FC_GLOBAL(pstrsv,PSTRSV)
+         (char *, char *, char *, int *,
+          const float *, int *, int *, const int *,
+@@ -969,6 +994,71 @@ namespace strumpack {
+          a, &ia, &ja, desca, b, &ib, &jb, descb);
+     }
+ 
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     float alpha, const float* a, int ia, int ja, const int *desca,
++     float* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pstrmm,PSTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     double alpha, const double* a, int ia, int ja, const int *desca,
++     double* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pdtrmm,PDTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     std::complex<float> alpha, const std::complex<float>* a, int ia, int ja, const int *desca,
++     std::complex<float>* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pctrmm,PCTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    void ptrmm
++    (char side, char uplo, char trans, char diag, int m, int n,
++     std::complex<double> alpha, const std::complex<double>* a, int ia, int ja, const int *desca,
++     std::complex<double>* b, int ib, int jb, const int *descb) {
++      STRUMPACK_FC_GLOBAL(pztrmm,PZTRMM)
++        (&side, &uplo, &trans, &diag, &m, &n, &alpha,
++         a, &ia, &ja, desca, b, &ib, &jb, descb);
++    }
++    int ptrtri
++    (char uplo, char diag, int n, float* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pstrtri,PSTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++    int ptrtri
++    (char uplo, char diag, int n, double* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pdtrtri,PDTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++    int ptrtri
++    (char uplo, char diag, int n, std::complex<float>* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pctrtri,PCTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++    int ptrtri
++    (char uplo, char diag, int n, std::complex<double>* a, int ia, int ja,
++     const int *desca) {
++      int info;
++      STRUMPACK_FC_GLOBAL(pztrtri,PZTRTRI)
++        (&uplo, &diag, &n, a, &ia, &ja, desca, &info);
++      return info;
++    }
++
+     void ptrsv
+     (char uplo, char trans, char diag, int m,
+      const float* a, int ia, int ja, const int *desca,
+diff --git a/src/dense/ScaLAPACKWrapper.hpp b/src/dense/ScaLAPACKWrapper.hpp
+index 0a19996b..661c85f4 100644
+--- a/src/dense/ScaLAPACKWrapper.hpp
++++ b/src/dense/ScaLAPACKWrapper.hpp
+@@ -274,6 +274,31 @@ namespace strumpack {
+                int ia, int ja, const int *desca,
+                std::complex<double>* b, int ib, int jb, const int *descb);
+ 
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               float alpha, const float* a, int ia, int ja,
++               const int *desca, float* b, int ib, int jb,
++               const int *descb);
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               double alpha, const double* a, int ia, int ja,
++               const int *desca, double* b, int ib, int jb,
++               const int *descb);
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               std::complex<float> alpha, const std::complex<float>* a, int ia, int ja,
++               const int *desca, std::complex<float>* b, int ib, int jb,
++               const int *descb);
++    void ptrmm(char side, char uplo, char trans, char diag, int m, int n,
++               std::complex<double> alpha, const std::complex<double>* a, int ia, int ja,
++               const int *desca, std::complex<double>* b, int ib, int jb,
++               const int *descb);
++    int ptrtri(char uplo, char diag, int n, float* a, int ia, int ja,
++               const int *desca);
++    int ptrtri(char uplo, char diag, int n, double* a, int ia, int ja,
++               const int *desca);
++    int ptrtri(char uplo, char diag, int n, std::complex<float>* a, int ia, int ja,
++               const int *desca);
++    int ptrtri(char uplo, char diag, int n, std::complex<double>* a, int ia, int ja,
++               const int *desca);
++
+     void ptrsv(char uplo, char trans, char diag, int m,
+                const float* a, int ia, int ja, const int *desca,
+                float* b, int ib, int jb, const int *descb, int incb);
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index ebc936d1..63f0dd1c 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -27,6 +27,8 @@
+  *
+  */
+ #include <fstream>
++#include <limits>
++#include <cmath>
+ 
+ #include <type_traits>
+ #include <memory>
+@@ -149,6 +151,74 @@ namespace strumpack {
+     extend_add();
+   }
+ 
++#if !defined(STRUMPACK_USE_SLATE_SCALAPACK)
++  // t = [|L| sL; |U| sU], with L the strictly lower part of A plus the
++  // unit diagonal and U the upper triangle of A, sL, sU and t replicated
++  // on all processes of the grid of A
++  template<typename scalar_t> static std::vector<double>
++  abs_tri_mv(const DistributedMatrix<scalar_t>& A,
++             const std::vector<double>& sL, const std::vector<double>& sU) {
++    const int n = A.rows();
++    std::vector<double> t(2 * std::size_t(n), 0.);
++    for (int c=0; c<A.lcols(); c++) {
++      const int gc = A.coll2g(c);
++      for (int r=0; r<A.lrows(); r++) {
++        const int gr = A.rowl2g(r);
++        const double a = std::abs(A(r,c));
++        if (gr > gc) t[gr] += a * sL[gc];
++        else t[n + gr] += a * sU[gc];
++      }
++    }
++    for (int i=0; i<n; i++)
++      if (A.rowg2p(i) == A.prow() && A.colg2p(i) == A.pcol())
++        t[i] += sL[i];
++    A.grid()->Comm_active().all_reduce(t, MPI_SUM);
++    return t;
++  }
++
++  template<typename scalar_t,typename integer_t> long long
++  FrontDenseMPI<scalar_t,integer_t>::invert_factors
++  (const SPOptions<scalar_t>& opts, double& cond) {
++    // Multiplying by the computed inverse of a triangular factor T has a
++    // backward error of about u || |T^{-1}| |T| ||_inf, compared to u for
++    // the triangular solve. The inverses are kept only if this condition
++    // number is at most opts.selective_inversion_max_cond() for L11 and
++    // for U11, which bounds the loss of backward accuracy of the solve
++    // phase in this front to about that factor. The inverses are
++    // computed in a copy of F11. A limit below 1 (the condition number
++    // is at least 1) skips the inversion.
++    cond = 0.;
++    if (opts.selective_inversion_max_cond() < 1) return 0;
++    const int n = F11_.rows();
++    std::vector<double> e(n, 1.);
++    // s = [|L11| e; |U11| e], then t = [|L11^-1| sL; |U11^-1| sU]
++    auto s = abs_tri_mv(F11_, e, e);
++    DistM_t Finv(F11_);
++    int info = scalapack::ptrtri
++      ('U', 'N', n, Finv.data(), Finv.I(), Finv.J(), Finv.desc());
++    cond = std::numeric_limits<double>::infinity();
++    if (!info) {
++      scalapack::ptrtri
++        ('L', 'U', n, Finv.data(), Finv.I(), Finv.J(), Finv.desc());
++      std::vector<double> sL(s.begin(), s.begin() + n),
++        sU(s.begin() + n, s.end());
++      auto t = abs_tri_mv(Finv, sL, sU);
++      // max over t, a NaN (inverse with a NaN or Inf) gives infinity
++      cond = 0.;
++      for (auto v : t)
++        if (!(v <= cond))
++          cond = std::isnan(v) ? std::numeric_limits<double>::infinity() : v;
++    }
++    // the same choice on all processes of the front
++    inverted_ = grid()->Comm_active().all_reduce
++      (int(cond <= opts.selective_inversion_max_cond()), MPI_MIN);
++    if (inverted_) F11_ = std::move(Finv);
++    // PxTRTRI: n^3 / 3 for each triangle
++    return (is_complex<scalar_t>() ? 4 : 1) * 2 * (long long)n * n * n / 3 /
++      F11_.npactives();
++  }
++#endif
++
+   template<typename scalar_t,typename integer_t> ReturnCode
+   FrontDenseMPI<scalar_t,integer_t>::partial_factorization
+   (const SPOptions<scalar_t>& opts) {
+@@ -156,6 +226,7 @@ namespace strumpack {
+     laswp_plan_ = LaswpPlan(); // pivots change with every factorization
+     trsm_cache_[0].reset();
+     trsm_cache_[1].reset();
++    inverted_ = false;
+     if (!this->dim_sep() || !grid()->active())
+       return err_code;
+     TaskTimer pf("FrontDenseMPI_factor");
+@@ -206,6 +277,11 @@ namespace strumpack {
+         trsm_flops(Side::L, scalar_t(1.), F11_, F12_) +
+         trsm_flops(Side::R, scalar_t(1.), F11_, F21_);
+     }
++#if !defined(STRUMPACK_USE_SLATE_SCALAPACK)
++    double si_cond = 0.;
++    if (opts.selective_inversion() && err_code == ReturnCode::SUCCESS)
++      flops += invert_factors(opts, si_cond);
++#endif
+     if (Comm().is_root() && opts.verbose()) {
+       auto time = pf.elapsed();
+       std::cout << "# DenseMPI factorization complete, "
+@@ -219,7 +295,16 @@ namespace strumpack {
+                 << flops*F11_.npactives() / 1.e9  << " GFLOPS, "
+                 << (float(flops)*F11_.npactives() / time) / 1.e9 << " GFLOP/s, "
+                 << " ds=" << this->dim_sep()
+-                << ", du=" << this->dim_upd() << std::endl;
++                << ", du=" << this->dim_upd();
++#if defined(STRUMPACK_USE_SLATE_SCALAPACK)
++      if (opts.selective_inversion())
++        std::cout << ", no selective inversion with SLATE";
++#else
++      if (opts.selective_inversion())
++        std::cout << ", inversion cond=" << si_cond
++                  << (inverted_ ? " (inverted)" : " (not inverted)");
++#endif
++      std::cout << std::endl;
+     }
+     STRUMPACK_FULL_RANK_FLOPS(flops);
+ #if defined(STRUMPACK_USE_SLATE_SCALAPACK)
+@@ -371,7 +456,11 @@ namespace strumpack {
+     if (this->dim_sep()) {
+       if (!laswp_plan_.ready()) laswp_plan_ = F11.laswp_plan(piv);
+       b.laswp(laswp_plan_);
+-      if (b.cols() == 1) {
++      if (inverted_) {
++        trmm(Side::L, UpLo::L, Trans::N, Diag::U, scalar_t(1.), F11, b);
++        if (this->dim_upd())
++          gemm(Trans::N, Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
++      } else if (b.cols() == 1) {
+         trsv(UpLo::L, Trans::N, Diag::U, F11, b);
+         if (this->dim_upd())
+           gemv(Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
+@@ -440,7 +529,11 @@ namespace strumpack {
+ #else
+     if (this->dim_sep()) {
+       TIMER_TIME(TaskType::SOLVE_UPPER, 0, t_s);
+-      if (y.cols() == 1) {
++      if (inverted_) {
++        if (this->dim_upd())
++          gemm(Trans::N, Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
++        trmm(Side::L, UpLo::U, Trans::N, Diag::N, scalar_t(1.), F11, y);
++      } else if (y.cols() == 1) {
+         if (this->dim_upd())
+           gemv(Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
+         trsv(UpLo::U, Trans::N, Diag::N, F11, y);
+@@ -552,6 +645,7 @@ namespace strumpack {
+     laswp_plan_ = LaswpPlan();
+     trsm_cache_[0].reset();
+     trsm_cache_[1].reset();
++    inverted_ = false;
+     F11_ = DistM_t();
+     F12_ = DistM_t();
+     F21_ = DistM_t();
+diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
+index 8b5e1650..68cc9a3d 100644
+--- a/src/sparse/fronts/FrontDenseMPI.hpp
++++ b/src/sparse/fronts/FrontDenseMPI.hpp
+@@ -127,6 +127,12 @@ namespace strumpack {
+   private:
+     DistM_t F11_, F12_, F21_, F22_;
+     std::vector<int> piv;
++    // F11_ holds the inverses of L11 (strictly lower part) and U11
++    // instead of the factors (see SPOptions::enable_selective_inversion)
++    bool inverted_ = false;
++#if !defined(STRUMPACK_USE_SLATE_SCALAPACK)
++    long long invert_factors(const SPOptions<scalar_t>& opts, double& cond);
++#endif
+ 
+     // row interchanges (piv) as one permutation, applied to the
+     // right-hand side in the forward solve, built at the first solve

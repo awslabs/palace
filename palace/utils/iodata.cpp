@@ -636,6 +636,18 @@ void IoData::CheckConfiguration()
       solver.linear.initial_guess = 0;
     }
   }
+  if (solver.linear.strumpack_selective_inversion < 0)
+  {
+    // The inverses add to the time of each factorization and save time in each solve with
+    // it, so default true only for the problem types with many solves per factorization:
+    // eigenvalue solves and time stepping, not the Krylov solve of one frequency or source.
+    solver.linear.strumpack_selective_inversion =
+        (problem.type == ProblemType::EIGENMODE ||
+         problem.type == ProblemType::BOUNDARYMODE ||
+         problem.type == ProblemType::TRANSIENT)
+            ? 1
+            : 0;
+  }
   if (solver.linear.mg_max_levels < 0)
   {
     if (problem.type == ProblemType::BOUNDARYMODE)

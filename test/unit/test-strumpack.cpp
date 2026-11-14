@@ -6,6 +6,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "linalg/strumpack.hpp"
 #include "utils/communication.hpp"
 
@@ -153,8 +154,12 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   }
   A.Mult(x_ex, b);
 
+  // With and without selective inversion of the distributed fronts, which has no effect
+  // when STRUMPACK is built without that option.
+  const bool selective_inversion = GENERATE(false, true);
+  CAPTURE(selective_inversion);
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                            0.0, 0, 0, false, 0);
+                            0.0, 0, 0, false, selective_inversion, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);

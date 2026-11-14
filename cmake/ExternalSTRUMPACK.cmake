@@ -327,6 +327,14 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://raw.githubusercontent.com/awslabs/palace/78947a1b0ab466d3de7d1b79d319fd1659c86ed6/extern/patch/STRUMPACK/strumpack_pr171.diff"
   781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a
 )
+# Selective inversion: an option, off by default, to replace the triangular factors of the
+# distributed fronts by their inverses, so that the solves use matrix products instead of
+# distributed triangular solves (https://github.com/pghysels/STRUMPACK/pull/173), without
+# its test, which needs test infrastructure added after STRUMPACK 8.1.0. Applied after the
+# patches above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_selective_inversion.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

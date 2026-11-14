@@ -1652,6 +1652,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   strumpack_lossy_precision =
       linear.value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
   strumpack_butterfly_l = linear.value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
+  strumpack_selective_inversion =
+      linear.value("STRUMPACKSelectiveInversion", strumpack_selective_inversion);
   superlu_3d = linear.value("SuperLU3DCommunicator", superlu_3d);
   ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
   ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);

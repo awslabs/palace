@@ -578,7 +578,8 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
           return std::make_unique<StrumpackSolver>(
               comm, linear.sym_factorization, linear.strumpack_compression_type,
               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-              linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);
+              linear.strumpack_lossy_precision, reorder_reuse,
+              linear.strumpack_selective_inversion > 0, verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::MUMPS)
@@ -667,7 +668,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
             std::make_unique<StrumpackSolver>(
                 comm, linear.sym_factorization, linear.strumpack_compression_type,
                 linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-                linear.strumpack_lossy_precision, true, print),
+                linear.strumpack_lossy_precision, true,
+                linear.strumpack_selective_inversion > 0, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
 #else

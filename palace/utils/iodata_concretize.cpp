@@ -89,6 +89,8 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"STRUMPACKCompressionTol", linear.strumpack_lr_tol},
                 {"STRUMPACKLossyPrecision", linear.strumpack_lossy_precision},
                 {"STRUMPACKButterflyLevels", linear.strumpack_butterfly_l},
+                {"STRUMPACKSelectiveInversion",
+                 static_cast<bool>(linear.strumpack_selective_inversion)},
                 {"SuperLU3DCommunicator", linear.superlu_3d},
                 {"AMSVectorInterpolation", linear.ams_vector_interp},
                 {"AMSSingularOperator", static_cast<bool>(linear.ams_singular_op)},
