@@ -680,10 +680,11 @@ void WriteCoverageRows(std::ostream &output, const std::string &keys,
   }
 }
 
-void WriteCoverageByKeyRows(
-    std::ostream &output, const std::string &keys, const CoverageMeasurement &measurement,
-    const std::set<int> &targets,
-    const std::map<int, std::pair<int, double>> &portions_by_feature, const Units &units)
+void WriteCoverageByKeyRows(std::ostream &output, const std::string &keys,
+                            const CoverageMeasurement &measurement,
+                            const std::set<int> &targets,
+                            const CoverageFeaturePortionsMap &portions_by_feature,
+                            const Units &units)
 {
   using VT = Units::ValueType;
   for (const auto &row : measurement.keys)
@@ -691,15 +692,21 @@ void WriteCoverageByKeyRows(
     std::string features, reason = row.reason;
     int portions = 0;
     double length = 0.0;
+    bool mirror_formed = false;
     for (const int feature : row.features)
     {
       features += (features.empty() ? "" : "+") + std::to_string(feature);
       const auto entry = portions_by_feature.find(feature);
       if (entry != portions_by_feature.end())
       {
-        portions += entry->second.first;
-        length += entry->second.second;
+        portions += entry->second.portions;
+        length += entry->second.length;
+        mirror_formed = mirror_formed || entry->second.mirror_formed;
       }
+    }
+    if (mirror_formed)
+    {
+      reason += (reason.empty() ? "" : "+") + std::string("MirrorFormed");
     }
     std::replace(reason.begin(), reason.end(), ',', ';');
     // Evaluation 0: the raw field (the partition's field; the fixed-trace evaluation's).
@@ -722,10 +729,11 @@ void WriteCoverageByKeyRows(
   }
 }
 
-std::map<int, std::pair<int, double>> CoveragePortionsByFeature(
+CoverageFeaturePortionsMap CoveragePortionsByFeature(
     const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &uncovered)
 {
-  std::map<int, std::pair<int, double>> portions_by_feature;
+  constexpr std::string_view mirror = ":MirrorFormed";
+  CoverageFeaturePortionsMap portions_by_feature;
   for (const auto &portion : uncovered)
   {
     double length2 = 0.0;
@@ -734,8 +742,12 @@ std::map<int, std::pair<int, double>> CoveragePortionsByFeature(
       length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
     }
     auto &entry = portions_by_feature[portion.feature];
-    entry.first++;
-    entry.second += std::sqrt(length2);
+    entry.portions++;
+    entry.length += std::sqrt(length2);
+    entry.mirror_formed =
+        entry.mirror_formed || (portion.type.size() >= mirror.size() &&
+                                portion.type.compare(portion.type.size() - mirror.size(),
+                                                     mirror.size(), mirror) == 0);
   }
   return portions_by_feature;
 }

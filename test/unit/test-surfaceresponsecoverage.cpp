@@ -413,8 +413,8 @@ TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
   CHECK(std::count(header.begin(), header.end(), ',') ==
         std::count(row.begin(), row.end(), ','));
   CHECK(row.find(",nan,nan,NOT-ACHIEVABLE,NO-RANGE\n") != std::string::npos);
-  WriteCoverageByKeyRows(keys, "1,0", measurement, {1}, {{3, {2, 0.5}}, {5, {1, 0.25}}},
-                         units);
+  WriteCoverageByKeyRows(keys, "1,0", measurement, {1},
+                         {{3, {2, 0.5, false}}, {5, {1, 0.25, true}}}, units);
   const std::string by_key_header = CoverageByKeyTableHeader("m,exc", {1});
   CHECK(by_key_header ==
         "m,exc,evaluation,key hash,class,reason,method gap,features,portions,length "
@@ -428,8 +428,9 @@ TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
   }
   REQUIRE(parsed.size() == 3);
   CHECK(parsed[0].rfind("1,0,0,hashA,Missing,-,0,3,2,", 0) == 0);
-  CHECK(parsed[1].rfind("1,0,0,hashA+hashB,Missing+Unboxable,-,0,3+5,3,", 0) == 0);
-  CHECK(parsed[2].rfind("1,0,0,hashB,Unboxable,-,1,5,1,", 0) == 0);
+  CHECK(parsed[1].rfind("1,0,0,hashA+hashB,Missing+Unboxable,MirrorFormed,0,3+5,3,", 0) ==
+        0);
+  CHECK(parsed[2].rfind("1,0,0,hashB,Unboxable,MirrorFormed,1,5,1,", 0) == 0);
   CHECK(parsed[2].find(fmt::format(",{:+.12e},+3.125000000000e-02",
                                    units.Dimensionalize<Units::ValueType::ENERGY>(0.5))) !=
         std::string::npos);

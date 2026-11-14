@@ -2568,6 +2568,102 @@ fraction, not a statistical confidence interval.
 The implementation and validation work required for production use is tracked in the
 [thin-metal surface-response roadmap](developer/surface_response_roadmap.md).
 
+### Coverage of the response correction
+
+Every corrected run (both solve families) measures how much of the surface energy the
+correction actually covers. The definitions are energies of the RAW field:
+
+  - ``W`` is the raw within-``R`` surface energy of an interface: its raw energy minus its
+    energy outside the matching radius ``R`` (the corrected energies' own split). A cell
+    (an eigenmode, a driven frequency and excitation, or an electrostatic source) sums
+    ``W`` over the target interfaces of one interface `Type`.
+  - ``U`` is the part of ``W`` where NO correction is applied in that cell (fail-closed:
+    whatever is not served by an applied patch is uncovered, whatever diagnostic switch is
+    on or off). ``U`` = missing + method gap: the missing share lies on uncovered features
+    whose key the identification reports `Missing` (a library could hold a model for it);
+    the method gap is everything else left raw (DomainBoundary, SpatialClusterPriority and
+    conductor-consistency-excluded claims, the circulating loop remainder, unpatched pairs,
+    the Unboxable and placement-rejected keys, the unclaimed remainder). The method gap is a
+    LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is conservative.
+  - The pending-model share is the served energy on model-set labels that hold a model
+    admitted with a non-`Qualified` `QualificationStatus` (or `LibraryQualified` false and no
+    status), counted whole; the no-status-model share is the served energy on labels that
+    hold a model whose record carries no `QualificationStatus` (information only: most 2D
+    families of a library carry no qualification record today).
+  - The covered correction factor is the corrected (fabricated) energy of the covered part
+    divided by its raw energy.
+
+The files (plain text, the cell keys of the run's other tables; written as each mode,
+frequency or source completes; under AMR in every iteration's directory; `nan` where a
+value does not exist):
+
+  - `surface-response-coverage.csv`: one row per cell and `Type`: `W within-R raw (J)`,
+    `uncovered raw share of W`, `missing raw share of W`, `method-gap raw share of W`,
+    `pending-model share of W`, `no-status-model share of W`, `covered correction factor`,
+    `validated factor min`, `validated factor max`, `coverage status`, `regime status`.
+  - `surface-response-uncovered-energy-by-key.csv`: one row per Missing-class key (the
+    identification's feature `Hash`): `class` (`Missing`, `Unboxable`, `PlacementRejected`),
+    `reason` (the placement rejection's class), `method gap` (1 for Unboxable and
+    placement-rejected keys), `features`, `portions`, `length (m)`, then per target
+    interface `raw within-R energy[k] (J)` and `raw share of W[k]`. Where portions of
+    several keys cover one perimeter piece, the row's key joins their hashes with `+`: such
+    a row cannot be attributed to one key. A Missing key is a model to build; a
+    PlacementRejected key has a model whose placement the geometry refused (its reason says
+    why: the model or the layout must change); an Unboxable key has a signature no coupon box
+    can hold (the chain cannot build it today).
+  - `terminal-C-corrected-coverage.csv` (electrostatic terminals): entry (i, j) is the worse
+    coverage status of sources i and j. The corrected matrix is formed with the FINAL patch
+    weights, so a source measured before a later conductor-consistency exclusion is
+    re-measured with the final exclusions for this file; each row also carries the source's
+    final worst status, its largest uncovered share and whether it was re-measured. Its own
+    rows in `surface-response-coverage.csv` keep the measurement that matches what they
+    print.
+  - Appended columns (every existing column keeps its position, name and value): the
+    Maxwell `surface-Q-corrected.csv` gains `coverage Type`, `W within-R raw (J)`,
+    `uncovered raw share of W` of the row's interface and `Type uncovered raw share of W`,
+    `Type method-gap raw share of W`, `Type pending-model share of W`, `Type covered
+    correction factor`, `coverage status`, `regime status` of its cell (`NOT-TARGET` for an
+    interface in no target); the electrostatic `surface-Q-corrected.csv` gains per
+    interface `W within-R raw[k] (J)` and `uncovered raw share of W[k]`, then per `Type` the
+    six columns suffixed with the `Type`; `surface-response-confidence.csv` gains `worst
+    uncovered raw share of W`, `worst coverage status` and `worst regime status`.
+
+The coverage status of a cell, on ``(U + U_{pending}) / W`` with the INTERIM bars of
+`"Coverage"`: `OK` at or below `BuildTarget`, `LOW` at or below `MaxUncoveredShare`,
+`PARTIAL` above; `NOT-ACHIEVABLE` when the method-gap share alone exceeds
+`MaxUncoveredShare`; `NO-ENERGY` when ``W = 0`` (its shares print `nan`, never 0);
+`NOT-MEASURED` when no partition exists for the cell (an electrostatic SelfConsistent-only
+run, which evaluates no response on the raw field); `NOT-TARGET` for an interface in no
+`Type`. Every status but `OK` is listed by the end-of-run banner, which names the bars as
+interim thresholds, and in `SurfaceResponse.Coverage` of `palace.json` (the status
+counts, the regime counts, every flagged cell, the counts of served pending and
+status-less models). A SelfConsistent-only Maxwell run evaluates the raw-field response
+once per cell for these outputs only.
+
+The regime status says whether the covered correction factor lies in the range validated
+for this library and excitation class (`ElectrostaticTerminal`, `Eigenmode`, `Driven`):
+`IN`, `OUT` (the covered part is corrected by a factor outside what was validated for this
+library and excitation class; its physical cause is not established: it does not say that
+the value is wrong, nor by how much), `NO-RANGE` (no validated range for the `Type` and
+class) or `NO-MODEL` (nothing served: the factor prints `nan`). A regime status is a status,
+never a correction: no value depends on it. The ranges are data, not code: an optional
+sidecar file named by `"Coverage": {"ValidatedRegime": <path>}` (`Version` 1; `Library`
+with the `Sha256` of the loaded library file, refused when it does not match; `Tolerance`
+``\tau``; `Ranges` of `Type`, `ExcitationClass`, `FactorMin`, `FactorMax`, `N` and
+`Provenance`); `IN` when ``F_{min}/(1+\tau) \leq F \leq F_{max}(1+\tau)``. Without the file
+every cell reads `NO-RANGE`.
+
+The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
+`Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` accepts `"Warn"` only (any
+other value is an error until a policy is ruled), `"MaxUncoveredShare"` (default 0.05) and
+`"BuildTarget"` (default 0.02), both interim placeholders with ``0 \leq`` `BuildTarget`
+``\leq`` `MaxUncoveredShare` ``\leq 1``, and `"ValidatedRegime"`.
+
+A coverage status is about coverage only; the regime status says whether the covered
+part's correction factor lies in the range validated for this library and excitation
+class; NEITHER says that the mesh of the solve resolves the field at the correction
+radius.
+
 ## Lumped parameter extraction
 
 For electrostatic simulations, the Maxwell capacitance matrix is computed in the following

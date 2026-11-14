@@ -1054,6 +1054,29 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(!ValidateConfig(maxwell_config).empty());
   }
 
+  SECTION("Response correction Coverage block (lane L1)")
+  {
+    // The interim bars, the validated-regime sidecar and Policy "Warn" only (any other
+    // policy waits for the USER's ruling D4); the same leaf on both solve families.
+    json electrostatic = {{"ResponseCorrection",
+                           {{"Library", "library.json"},
+                            {"Coverage",
+                             {{"Policy", "Warn"},
+                              {"MaxUncoveredShare", 0.05},
+                              {"BuildTarget", 0.02},
+                              {"ValidatedRegime", "validated-regime.json"}}}}}};
+    CHECK(ValidateConfig(electrostatic, "Electrostatic").empty());
+    auto policy = electrostatic;
+    policy["ResponseCorrection"]["Coverage"]["Policy"] = "MarkNotApplied";
+    CHECK(!ValidateConfig(policy, "Electrostatic").empty());
+    auto bar = electrostatic;
+    bar["ResponseCorrection"]["Coverage"]["MaxUncoveredShare"] = 1.5;
+    CHECK(!ValidateConfig(bar, "Electrostatic").empty());
+    auto unknown = electrostatic;
+    unknown["ResponseCorrection"]["Coverage"]["Of"] = "E";
+    CHECK(!ValidateConfig(unknown, "Electrostatic").empty());
+  }
+
   SECTION("Numeric bounds - Linear.MaxIts")
   {
     CHECK(!ValidateConfig(json{{"MaxIts", 0}}, "Linear").empty());

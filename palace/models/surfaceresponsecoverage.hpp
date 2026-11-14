@@ -232,24 +232,34 @@ CoverageMeasurement ComputeCoverageMeasurement(
 CoverageMeasurement NotMeasuredCoverageMeasurement(const std::map<int, std::string> &types,
                                                    CoverageExcitationClass excitation);
 
+struct CoverageFeaturePortions
+{
+  int portions = 0;
+  double length = 0.0;
+  bool mirror_formed = false;
+};
+using CoverageFeaturePortionsMap = std::map<int, CoverageFeaturePortions>;
+
 // The plain-text rows of surface-response-coverage.csv and
 // surface-response-uncovered-energy-by-key.csv for one measurement (both solve families):
 // `keys` = the row's leading cells ("m,exc" | "f (GHz),exc" | "i" values, comma-joined),
 // `key_header` their header; energies in J and lengths in m through `units`; nan prints
-// "nan". `portions_by_feature` = per uncovered feature its portions' count and length (mesh
-// units). Lane rescensus (decision 1637 (e)) appends its per-cell edge-resolution status
-// column after `regime status`.
+// "nan". `portions_by_feature`: CoveragePortionsByFeature. Lane rescensus (decision 1637
+// (e)) appends its per-cell edge-resolution status column after `regime status`.
 std::string CoverageTableHeader(const std::string &key_header);
 std::string CoverageByKeyTableHeader(const std::string &key_header,
                                      const std::set<int> &targets);
 void WriteCoverageRows(std::ostream &output, const std::string &keys,
                        const CoverageMeasurement &measurement, const Units &units);
-void WriteCoverageByKeyRows(
-    std::ostream &output, const std::string &keys, const CoverageMeasurement &measurement,
-    const std::set<int> &targets,
-    const std::map<int, std::pair<int, double>> &portions_by_feature, const Units &units);
-// Per uncovered feature: its portions' count and summed length (the by-key rows' columns).
-std::map<int, std::pair<int, double>> CoveragePortionsByFeature(
+void WriteCoverageByKeyRows(std::ostream &output, const std::string &keys,
+                            const CoverageMeasurement &measurement,
+                            const std::set<int> &targets,
+                            const CoverageFeaturePortionsMap &portions_by_feature,
+                            const Units &units);
+// Per uncovered feature: its portions' count and summed length (the by-key rows' columns)
+// and whether the identification formed it by the mirror rule (its portions' type carries
+// ":MirrorFormed"; ruling 1649 Q2: such a key stays class Missing, the reason printed).
+CoverageFeaturePortionsMap CoveragePortionsByFeature(
     const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &uncovered);
 
 // The run's coverage record (root only): the cells of every measurement, for the end-of-run

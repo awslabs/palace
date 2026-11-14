@@ -19,6 +19,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added the coverage outputs of the surface-response correction, on every corrected run of
+    both solve families (lane L1, decisions 1634 / 1636; rulings 1641 / 1649 / 1654): the
+    closed partition of the raw within-`R` energy `W` by the correction's ownership, one
+    quadrature pass per target interface; `surface-response-coverage.csv` (per cell and
+    interface `Type`: `W`, the uncovered / missing / method-gap / pending-model /
+    no-status-model shares of `W`, the covered correction factor, its validated range, an
+    INTERIM coverage status and a regime status), `surface-response-uncovered-energy-by-key.csv`
+    (per Missing-class key) and `terminal-C-corrected-coverage.csv`; the coverage columns
+    APPENDED to `surface-Q-corrected.csv` (both families) and
+    `surface-response-confidence.csv`; `SurfaceResponse.Coverage` in `palace.json` and an
+    end-of-run banner per cell that is not `OK`; the config block `Coverage` (`Policy`
+    `"Warn"` only, `MaxUncoveredShare`, `BuildTarget`, an optional `ValidatedRegime`
+    sidecar checked against the library's SHA-256). Every existing column keeps its
+    position, name and value. The geometry cache is version 25 (the uncovered features' key
+    records; an older cache is refused by name).
+
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the
     uncovered requirements (`surface-response-uncovered-energy.csv`) split per type by
@@ -289,6 +305,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - The Maxwell `surface-Q-corrected.csv` and `surface-response-confidence.csv` column
+    `matched edge fraction` is renamed `matched edge length fraction` (a length figure, not
+    an energy coverage; values unchanged).
+
   - AMR now checks `config["Model"]["Refinement"]["MaxSize"]` against the predicted size
     of each refined mesh (the last solved number of degrees of freedom scaled by the
     element-count growth of the refinement step) and stops before the solve when the
@@ -377,6 +397,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the round size (lane fix-response-memory round 3; decision 1501; results bitwise).
 
 #### Bug Fixes
+
+  - The per-type portion tables and the loop-fit tables of the Maxwell correction write
+    their header with their first rows whatever print that is (a table first written at a
+    later mode or frequency, such as the conductor-consistency table, was appended without
+    a header).
 
   - `Mpi::BroadcastLarge` now bounds every single `MPI_Bcast` it issues IN BYTES, by the
     compile-time constant `mpi::BROADCAST_LARGE_CHUNK_BYTES` = 2^28 bytes (the element count

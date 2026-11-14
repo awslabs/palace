@@ -159,6 +159,22 @@ file. These include:
     boundary-law metadata. See
     [Postprocessing-only Maxwell response correction](../reference.md#postprocessing-only-maxwell-response-correction)
     for the supported geometry and confidence limits.
+    Every corrected run (both solve families) also reports its coverage: ``W`` is the
+    raw surface energy within the matching radius of an interface and ``U`` the part of
+    it where no correction is applied. `surface-response-coverage.csv` gives per cell
+    (mode, frequency and excitation, or source) and interface `Type` the uncovered share
+    ``U/W`` split into the missing share (features whose library model is `Missing`) and
+    the method gap, the pending-model and no-status-model shares, the covered correction
+    factor, an interim coverage status and a regime status;
+    `surface-response-uncovered-energy-by-key.csv` lists the uncovered energy per missing
+    key, and `terminal-C-corrected-coverage.csv` the status of each corrected capacitance
+    entry. The same columns are appended to `surface-Q-corrected.csv` and
+    `surface-response-confidence.csv`, and every cell that is not `OK` is named by the
+    end-of-run banner and in `palace.json`. A coverage status is about coverage only; the
+    regime status says whether the covered part's correction factor lies in the range
+    validated for this library and excitation class; NEITHER says that the mesh of the
+    solve resolves the field at the correction radius. See
+    [Coverage of the response correction](../reference.md#Coverage-of-the-response-correction).
 
 ## Visualization
 
