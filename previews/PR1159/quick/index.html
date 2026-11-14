@@ -180,7 +180,7 @@ curl -o mesh/spheres.msh https://raw.githubusercontent.com/awslabs/palace/refs/h
 │   └── spheres.msh
 └── spheres.json</code></pre><div class="admonition is-info" id="Do-not-have-the-files?-e60e6b6e23ba3904"><header class="admonition-header">Do not have the files?<a class="admonition-anchor" href="#Do-not-have-the-files?-e60e6b6e23ba3904" title="Permalink"></a></header><div class="admonition-body"><p>If you need to download the files, run:</p><pre><code class="language-bash hljs">mkdir -p mesh
 curl -o mesh/spheres.msh https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/spheres.msh
-curl -O https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/spheres.json</code></pre></div></div><p>Before running your simulation, it&#39;s a good idea to validate the configuration:</p><pre><code class="language-bash hljs">palace --dry-run spheres.json</code></pre><p>This checks for syntax errors and basic configuration issues. The validator should return:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&gt;&gt; /opt/spack/linux-x86_64_v4/openmpi-5.0.10-zap56e6qmz3csvzh3c4ddsovlpfskfnl/bin/mpirun -n 1 /opt/spack/linux-x86_64_v4/palace-git.simlapointe-ams-smooth-its_develop-3aobccjtoe7ljz7voss2qcgcuddc54ew/bin/palace-x86_64.bin --dry-run spheres.json
+curl -O https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/spheres.json</code></pre></div></div><p>Before running your simulation, it&#39;s a good idea to validate the configuration:</p><pre><code class="language-bash hljs">palace --dry-run spheres.json</code></pre><p>This checks for syntax errors and basic configuration issues. The validator should return:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&gt;&gt; /opt/spack/linux-x86_64_v4/openmpi-5.0.10-zap56e6qmz3csvzh3c4ddsovlpfskfnl/bin/mpirun -n 1 /opt/spack/linux-x86_64_v4/palace-git.simlapointe-ams-smooth-its_develop-dzgri765kx22qlvsgi2uiiipha4ofik7/bin/palace-x86_64.bin --dry-run spheres.json
 
 
 Resolved configuration:
@@ -349,7 +349,7 @@ Resolved configuration:
     &quot;QuadratureOrderJacobian&quot;: false
   }
 }
-Dry-run: No errors detected in configuration file &quot;spheres.json&quot;</code></pre><p>Finally, we are ready to run the simulation:</p><pre><code class="language-bash hljs">palace -np 1 spheres.json</code></pre><p><code>-np 1</code> instruct <em>Palace</em> to run with a single MPI process.</p><p>You&#39;ll see output including mesh details, solver progress, and timing information. The amount of information can be controlled with the <code>Verbose</code> configuration option in the JSON file.</p><div style="max-height: 300px; overflow-y: auto;"><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&gt;&gt; /opt/spack/linux-x86_64_v4/openmpi-5.0.10-zap56e6qmz3csvzh3c4ddsovlpfskfnl/bin/mpirun -n 1 /opt/spack/linux-x86_64_v4/palace-git.simlapointe-ams-smooth-its_develop-3aobccjtoe7ljz7voss2qcgcuddc54ew/bin/palace-x86_64.bin spheres.json
+Dry-run: No errors detected in configuration file &quot;spheres.json&quot;</code></pre><p>Finally, we are ready to run the simulation:</p><pre><code class="language-bash hljs">palace -np 1 spheres.json</code></pre><p><code>-np 1</code> instruct <em>Palace</em> to run with a single MPI process.</p><p>You&#39;ll see output including mesh details, solver progress, and timing information. The amount of information can be controlled with the <code>Verbose</code> configuration option in the JSON file.</p><div style="max-height: 300px; overflow-y: auto;"><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&gt;&gt; /opt/spack/linux-x86_64_v4/openmpi-5.0.10-zap56e6qmz3csvzh3c4ddsovlpfskfnl/bin/mpirun -n 1 /opt/spack/linux-x86_64_v4/palace-git.simlapointe-ams-smooth-its_develop-dzgri765kx22qlvsgi2uiiipha4ofik7/bin/palace-x86_64.bin spheres.json
 
 _____________     _______
 _____   __   \____ __   /____ ____________
@@ -357,7 +357,7 @@ ____   /_/  /  __ ` /  /  __ ` /  ___/  _ \
 ___   _____/  /_/  /  /  /_/  /  /__/  ___/
   /__/     \___,__/__/\___,__/\_____\_____/
 
-Git changeset ID: 676827a
+Git changeset ID: 86d5a43
 Running with 1 MPI process
 Device configuration: cpu
 Memory configuration: host-std
@@ -393,8 +393,8 @@ Parallel Mesh Stats:
  h       0.00223266    0.164618
  kappa      1.03541     8.77894
 
-Estimated current per-rank memory usage is: Min. 66.5M, Max. 66.5M, Avg. 66.5M, Total 66.5M
-Estimated current per-node memory usage is: Min. 66.5M, Max. 66.5M, Avg. 66.5M, Total 66.5M
+Estimated current per-rank memory usage is: Min. 67.0M, Max. 67.0M, Avg. 67.0M, Total 67.0M
+Estimated current per-node memory usage is: Min. 67.0M, Max. 67.0M, Avg. 67.0M, Total 67.0M
 
 Configuring Dirichlet BC at attributes:
  2-4
@@ -412,7 +412,7 @@ Assembling multigrid hierarchy:
 
 Computing electrostatic fields for 2 terminal boundaries
 
-It 1/2: Index = 1 (elapsed time = 6.31e-07 s)
+It 1/2: Index = 1 (elapsed time = 1.70e-07 s)
 
   Residual norms for PCG solve
   0 KSP residual norm ||r||_B = 8.395189e-01
@@ -433,7 +433,7 @@ PCG solver converged in 8 iterations (avg. reduction factor: 9.738e-02)
  Wrote fields to disk (grid function) for source 1
  Updating solution error estimates
 
-It 2/2: Index = 2 (elapsed time = 2.20e+00 s)
+It 2/2: Index = 2 (elapsed time = 3.41e+00 s)
 
   Residual norms for PCG solve
   0 KSP residual norm ||r||_B = 1.201470e+00
@@ -459,46 +459,46 @@ Completed 0 iterations of adaptive mesh refinement (AMR):
  Indicator norm = 6.910e-03, global unknowns = 66328
  Max. iterations = 0, tol. = 1.000e-02
 
-Estimated peak per-rank memory usage is: Min. 777.0M, Max. 777.0M, Avg. 777.0M, Total 777.0M
-Estimated peak per-node memory usage is: Min. 777.0M, Max. 777.0M, Avg. 777.0M, Total 777.0M
+Estimated peak per-rank memory usage is: Min. 777.4M, Max. 777.4M, Avg. 777.4M, Total 777.4M
+Estimated peak per-node memory usage is: Min. 777.4M, Max. 777.4M, Avg. 777.4M, Total 777.4M
 
 Elapsed Time Report (s)           Min.        Max.        Avg.
 ==============================================================
-Initialization                   0.162       0.162       0.162
-  Mesh Preprocessing             0.261       0.261       0.261
-Operator Construction            2.793       2.793       2.793
-Linear Solve                     0.085       0.085       0.085
-  Setup                          0.346       0.346       0.346
-  Preconditioner                 2.071       2.071       2.071
-  Coarse Solve                   0.006       0.006       0.006
-Estimation                       0.035       0.035       0.035
-  Construction                   0.126       0.126       0.126
-  Solve                          1.097       1.097       1.097
-Postprocessing                   0.075       0.075       0.075
-  Paraview                       0.598       0.598       0.598
-  Grid function                  0.241       0.241       0.241
-Disk IO                          0.189       0.189       0.189
+Initialization                   0.220       0.220       0.220
+  Mesh Preprocessing             0.351       0.351       0.351
+Operator Construction            3.791       3.791       3.791
+Linear Solve                     0.132       0.132       0.132
+  Setup                          0.492       0.492       0.492
+  Preconditioner                 3.199       3.199       3.199
+  Coarse Solve                   0.008       0.008       0.008
+Estimation                       0.045       0.045       0.045
+  Construction                   0.167       0.167       0.167
+  Solve                          1.888       1.888       1.888
+Postprocessing                   0.098       0.098       0.098
+  Paraview                       0.821       0.821       0.821
+  Grid function                  0.328       0.328       0.328
+Disk IO                          0.255       0.255       0.255
 --------------------------------------------------------------
-Total                            8.101       8.101       8.101
+Total                           11.813      11.813      11.813
 
 Peak Memory                   Per-Node       Total   Total HWM
 ==============================================================
-Initialization                    2.3M        2.3M        2.3M
-  Mesh Preprocessing             11.3M       11.3M       13.5M
-Operator Construction           247.5M      247.5M      261.1M
-Linear Solve                      0.0K        0.0K      261.1M
-  Setup                         116.3M      116.3M      377.4M
-  Preconditioner                  0.0K        0.0K      377.4M
-  Coarse Solve                  896.0K      896.0K      378.3M
-Estimation                       38.0M       38.0M      416.3M
-  Construction                   59.4M       59.4M      475.6M
-  Solve                          41.4M       41.4M      517.0M
-Postprocessing                   59.1M       59.1M      576.1M
-  Paraview                      123.2M      123.2M      699.4M
-  Grid function                  20.4M       20.4M      719.8M
-Disk IO                          22.0M       22.0M      741.8M
+Initialization                    2.4M        2.4M        2.4M
+  Mesh Preprocessing             11.4M       11.4M       13.8M
+Operator Construction           248.0M      248.0M      261.8M
+Linear Solve                    128.0K      128.0K      261.9M
+  Setup                         116.1M      116.1M      378.0M
+  Preconditioner                  0.0K        0.0K      378.0M
+  Coarse Solve                  896.0K      896.0K      378.8M
+Estimation                       38.0M       38.0M      416.8M
+  Construction                   59.2M       59.2M      476.1M
+  Solve                          41.5M       41.5M      517.6M
+Postprocessing                   59.1M       59.1M      576.7M
+  Paraview                      123.4M      123.4M      700.1M
+  Grid function                  20.1M       20.1M      720.2M
+Disk IO                          21.9M       21.9M      742.1M
 --------------------------------------------------------------
-Total                           752.4M      752.4M      752.4M</code></pre></div><p>Notice that <em>Palace</em> ran two iterations, one for each <code>Terminal</code>. Different problem types will have different iteration patterns (e.g., <code>Driven</code> iterating over frequencies or <code>Transient</code> over time steps) and many of the output CSV files are organized along these iterations.</p><h3 id="Understanding-the-output"><a class="docs-heading-anchor" href="#Understanding-the-output">Understanding the output</a><a id="Understanding-the-output-1"></a><a class="docs-heading-anchor-permalink" href="#Understanding-the-output" title="Permalink"></a></h3><p>Once the simulation is completed, you&#39;ll find a <code>postpro</code> directory containing:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">postpro:
+Total                           752.6M      752.6M      752.6M</code></pre></div><p>Notice that <em>Palace</em> ran two iterations, one for each <code>Terminal</code>. Different problem types will have different iteration patterns (e.g., <code>Driven</code> iterating over frequencies or <code>Transient</code> over time steps) and many of the output CSV files are organized along these iterations.</p><h3 id="Understanding-the-output"><a class="docs-heading-anchor" href="#Understanding-the-output">Understanding the output</a><a id="Understanding-the-output-1"></a><a class="docs-heading-anchor-permalink" href="#Understanding-the-output" title="Permalink"></a></h3><p>Once the simulation is completed, you&#39;ll find a <code>postpro</code> directory containing:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">postpro:
 domain-E.csv
 error-indicators.csv
 gridfunction
@@ -595,4 +595,4 @@ proc000000.vtu</code></pre><p>In addition to the <code>palace.json</code>, which
       console.error('Failed to load GLVis data:', e);
     });
   });
-</script><h2 id="Where-to-go-next"><a class="docs-heading-anchor" href="#Where-to-go-next">Where to go next</a><a id="Where-to-go-next-1"></a><a class="docs-heading-anchor-permalink" href="#Where-to-go-next" title="Permalink"></a></h2><p>Congratulations! You&#39;ve completed your first <em>Palace</em> simulation. To continue learning:</p><ol><li>Try looking at the other output files in this simulation</li><li>Try modifying this example with different materials or boundary conditions</li><li>Explore the <a href="../examples/examples/">examples</a> to see different problem types and more complex geometries</li><li>Read the <a href="../config/config/">configuration reference</a> to understand all available options</li></ol><p>If you encounter any issues or have questions, please report them to our <a href="https://github.com/awslabs/palace/issues">GitHub issue tracker</a>.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../install/">Installation »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.20.0 on <span class="colophon-date" title="Friday 6 November 2026 23:33">Friday 6 November 2026</span>. Using Julia version 1.13.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</script><h2 id="Where-to-go-next"><a class="docs-heading-anchor" href="#Where-to-go-next">Where to go next</a><a id="Where-to-go-next-1"></a><a class="docs-heading-anchor-permalink" href="#Where-to-go-next" title="Permalink"></a></h2><p>Congratulations! You&#39;ve completed your first <em>Palace</em> simulation. To continue learning:</p><ol><li>Try looking at the other output files in this simulation</li><li>Try modifying this example with different materials or boundary conditions</li><li>Explore the <a href="../examples/examples/">examples</a> to see different problem types and more complex geometries</li><li>Read the <a href="../config/config/">configuration reference</a> to understand all available options</li></ol><p>If you encounter any issues or have questions, please report them to our <a href="https://github.com/awslabs/palace/issues">GitHub issue tracker</a>.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../install/">Installation »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.20.0 on <span class="colophon-date" title="Saturday 14 November 2026 00:31">Saturday 14 November 2026</span>. Using Julia version 1.13.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
