@@ -21,6 +21,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - Added scalar frequency-dependent `Permittivity` objects with additive Drude, Debye,
+    Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Frequency-domain operators,
+    ports, postprocessing, energy/error estimates, adaptive sweeps, and circuit synthesis
+    use the material model at the solution frequency. Compatible static limits are supported;
+    transient problems are not. With the default solver settings, eigenmode problems whose
+    only frequency-dependent terms are Drude, Debye, Lorentz, or PoleResidue terms are solved
+    as linear eigenvalue problems, with SLEPc and ARPACK. General PoleResidue models remain usable with gain
+    warnings; a PoleResidue term with a nonzero pole specifies no stored electric energy, so
+    the electric energy outputs of a material with one are omitted. Existing
+    constant-permittivity inputs are unchanged.
+    SchemaVer 4-3-0
+    [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
 
@@ -154,6 +166,27 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
+  - Fixed wave port frequency sweeps selecting the wrong port mode for `Mode` above a
+    degenerate pair: starting each mode solve from the previous frequency's mode could miss
+    one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
+    `rom-*` files, when a wave port mode did not converge at the complex frequency of a
+    synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
+    NaN, with a warning, and the other outputs are written as before. For this, an ARPACK
+    eigenvalue solve which reaches its iteration limit now returns the eigenpairs which have
+    converged, as SLEPc does, instead of aborting.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed errors of up to 1e-4 in the S-parameters of a synthesized circuit with wave ports
+    in a lossy or frequency-dependent material, relative to the reduced-order model the
+    circuit is made from, while the reported fit residuals were below `AdaptiveTol`. The two
+    parts of a wave port fit were realized on different sets of port directions, and the
+    rounding-level imaginary part of a real wave port mode was kept as a circuit node.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled

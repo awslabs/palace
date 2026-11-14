@@ -67,7 +67,8 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations. It neglects the term depending on the divergence of the tangential field (see
+simulations; its boundary curl operator requires a 3D mesh. It neglects the term depending
+on the divergence of the tangential field (see
 [Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
 improves on the first-order condition for TE fields, with the electric field tangential to
 the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
@@ -77,6 +78,15 @@ of Floquet periodic structures. *Palace* warns when the part of the
 [Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
 tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
 simulation.
+
+Next to a frequency-dependent material, the wave impedance and both orders' coefficients use
+``\epsilon_{r,\mathrm{wave}}(s)=\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)``
+at the current frequency, where ``\epsilon_0`` is the vacuum permittivity.
+The additive user `Conductivity` must be isotropic on such a boundary; the analytic
+impedance does not model a tensor conductivity. Constant-material boundaries retain their
+existing lossless-material approximation. In eigenmode simulations, this frequency
+dependence can make the existing nonlinear solver fail or omit lower modes near a material
+pole or permittivity zero; see [Eigenmode problems](problem.md#Eigenmode-problems).
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -312,7 +322,10 @@ for implementation details.
     wave vector is defined. The wave vector then scales linearly with frequency according
     to ``\bm{k}_F(f) = \bm{k}_{F,\mathrm{ref}} f / f_\mathrm{ref}``, where
     ``\bm{k}_{F,\mathrm{ref}}`` is `"FloquetWaveVector"` and ``f_\mathrm{ref}`` is
-    `"FloquetReferenceFrequency"`, maintaining a constant incidence angle across the sweep.
+    `"FloquetReferenceFrequency"`. This maintains a constant incidence angle across the
+    sweep when the medium of incidence does not depend on frequency. In a
+    frequency-dependent medium it keeps ``\bm{k}_F/\omega`` fixed, and the angle changes
+    with the refractive index.
 
     The incident field is a plane wave in the specular (0,0) diffraction order with
     user-specified polarization (TE, TM, or circular RHC/LHC). S-parameters are extracted
@@ -324,7 +337,12 @@ for implementation details.
     modes.
 
     The port boundary must be planar and on the true boundary of the computational domain.
-    The medium adjacent to the port must be homogeneous and isotropic.
+    The medium adjacent to the port must be homogeneous and isotropic. For a
+    frequency-dependent material, the port uses the complete complex wave response
+    ``\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)`` and real-power normalization, including lossy
+    diffraction orders. Its additive user `Conductivity` must also be isotropic. Constant
+    materials retain the existing lossless-port approximation: their `LossTan` and
+    `Conductivity` are not used in the port coefficients.
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface. Lumped ports with reactive elements (`"L"` and/or `"C"`, or the surface-parameter

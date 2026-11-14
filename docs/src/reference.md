@@ -1042,4 +1042,5 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] Y. Su and Z. Bai, Solving rational eigenvalue problems via linearization, *SIAM Journal on Matrix Analysis and Applications* 32 (2011) 201-216.
