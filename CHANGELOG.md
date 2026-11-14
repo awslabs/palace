@@ -391,6 +391,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     postprocessing with a warning if they differ by more than a tenth of `"AdaptiveTol"`
     (or about 10⁻⁹ for tighter tolerances).
     [PR 1188](https://github.com/awslabs/palace/pull/1188).
+  - Fixed the coupling of a lumped port in the circuit of adaptive circuit synthesis
+    (`rom-coupled-G.csv`, `rom-coupled-H.csv`, and `rom-coupled-S.csv`). The port was
+    coupled through a unit selector on its terminal row, but the basis vector of that row,
+    the projection of the port mode normalized in the W norm, does not have a unit voltage,
+    and the other basis vectors carry small voltages. It is now coupled through its voltage
+    on every basis vector. The S-parameters of the circuit of a shorted coaxial line driven
+    by a lumped port match those of the reduced-order model to 1e-6 instead of 2e-2, and
+    those of the `coaxial_lumped_wave_synth` regression case to 7e-13 instead of about
+    6e-4. These files change for every circuit synthesis with lumped ports.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled

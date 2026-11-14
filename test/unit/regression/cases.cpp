@@ -21,12 +21,19 @@
 
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "driver.hpp"
+#include "fixtures.hpp"
 
 #include "regression_helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
+#include "utils/iodata.hpp"
+#include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 
 namespace
 {
@@ -1162,7 +1169,12 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
 // to the real modal reference y_ref via a Kurokawa power-wave transform, and checks the
 // resulting |S| against Palace's field-derived port-S. Agreement validates that the
 // exported circuit reproduces the solver's own S-parameters. Frequencies and per-port
-// y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
+// y_ref are read from the sibling rom-port-reference.csv (same sweep grid). It assumes
+// that each terminal coordinate is the port's modal amplitude and that the load on its
+// diagonal is y_ref. That does not hold for a lumped port: in the exported matrices its
+// terminal coordinate carries a voltage of α² and a load of α²/R, α = orth_R(row, row),
+// not 1 and 1/R. Use it for wave-port networks only; TestWavePortCoupledRoundTrip covers
+// lumped ports.
 palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
 {
   return [atol_lin](palace::Table &actual, palace::Table &,
@@ -2481,8 +2493,9 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
   opts.excluded_files = {"rom-eigenvectors",    "rom-port-reference", "port-I.csv",
                          "port-V.csv",          "port-Z.csv",         "domain-E.csv",
                          "error-indicators.csv"};
-  // Full mixed 2x2 round-trip: synthesized-vs-field S to ~6e-4 here, so 2e-3 clears
-  // cross-backend noise while catching a broken cross-type coupling map.
+  // Full mixed 2x2 round-trip: synthesized-vs-field S to 7e-13 here at 16 processes, with
+  // the lumped port coupled through its voltage functional; 2e-3 is the tolerance set for
+  // the earlier unit terminal selector, kept unchanged.
   opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-3);
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
@@ -2490,6 +2503,60 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("coaxial", "lumped_wave_synth.json", "lumped_wave_synth",
                                   opts);
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "coaxial_lumped_pec_synth: lumped-port coupling of the synthesized circuit",
+    "[Serial][Parallel][Regression]")
+{
+  // A lossless coaxial line, shorted at its far end and driven by a 50 Ω lumped port, at
+  // Order 2. The L2 projection of the coaxial port mode onto this coarse mesh has a W norm
+  // of about 0.995 of the continuum mode, so its basis vector has a voltage of about 0.995,
+  // not 1. The synthesized circuit with its exported source and observation maps must
+  // reproduce the field S-parameters of the reduced model (S = V/√R - 1) at every swept
+  // frequency, much more tightly than the 2e-2 error of a unit terminal selector.
+  const std::string mesh =
+      std::string(PALACE_TEST_DATA_DIR) + "/regression/input/coaxial/mesh/coaxial.msh";
+  nlohmann::json config = {
+      {"Problem", {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir.string()}}},
+      {"Model", {{"Mesh", mesh}, {"L0", 1.0e-3}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 2.08}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 4}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"Attributes", {3}},
+           {"R", 50.0},
+           {"Direction", "+R"},
+           {"Excitation", 1}}}}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Device", "CPU"},
+        {"Driven",
+         {{"MinFreq", 0.5},
+          {"MaxFreq", 20.0},
+          {"FreqStep", 0.5},
+          {"AdaptiveTol", 1.0e-4},
+          {"AdaptiveCircuitSynthesis", true},
+          {"SaveStep", 0}}},
+        {"Linear",
+         {{"Type", "Default"}, {"KSPType", "GMRES"}, {"Tol", 1.0e-10}, {"MaxIts", 400}}}}}};
+  MPI_Comm comm = palace::Mpi::World();
+  palace::IoData iodata(config, false);
+  palace::MakeOutputFolder(iodata, comm);
+  palace::BlockTimer::Reset();
+  palace::Run(iodata, comm, palace::utils::ConfigureOmp());
+  palace::Mpi::Barrier(comm);
+  if (palace::Mpi::Root(comm))
+  {
+    const auto port_s = temp_dir / "port-S.csv";
+    palace::TableWithCSVFile field(port_s.string(), /*load_existing_file=*/true);
+    REQUIRE(field.table.n_rows() == 40);
+    TestWavePortCoupledRoundTrip(1.0e-6)(field.table, field.table, port_s);
+  }
 }
 
 TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
