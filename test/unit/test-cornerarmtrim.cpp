@@ -2690,6 +2690,74 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
   CHECK(raw_rows == 2);
+
+  // (d) Lane L1 (decision 1634 (1) / (2); ruling 1641 (5)): the coverage tables of the same
+  // measurement, always written. The by-key rows (one per Missing corner key, class
+  // Missing) sum to the uncovered table's raw-field Total row and their key set is the
+  // uncovered features' key records; the coverage row's W is surface-Q-corrected.csv's;
+  // U = the Missing share + the method gap; and the served energy W (1 - U) is the raw
+  // within-R energy the corrected total replaces (W minus the kept-raw uncovered energy:
+  // every other point of this fixture lies under the model's claims).
+  const TextCsv by_key_table =
+      ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy-by-key.csv");
+  REQUIRE(by_key_table.rows.size() == 2);
+  std::set<std::string> hashes, record_hashes;
+  double by_key_sum = 0.0, by_key_share = 0.0;
+  for (const auto &row : by_key_table.rows)
+  {
+    CHECK(std::stoi(row[by_key_table.Column("m")]) == 1);
+    CHECK(std::stoi(row[by_key_table.Column("evaluation")]) == 0);
+    CHECK(row[by_key_table.Column("class")] == "Missing");
+    CHECK(std::stoi(row[by_key_table.Column("method gap")]) == 0);
+    CHECK(features.count(std::stoi(row[by_key_table.Column("features")])) == 1);
+    CHECK(std::stoi(row[by_key_table.Column("portions")]) == 4);
+    hashes.insert(row[by_key_table.Column("key hash")]);
+    by_key_sum += std::stod(row[by_key_table.Column("raw within-R energy[4] (J)")]);
+    by_key_share += std::stod(row[by_key_table.Column("raw share of W[4]")]);
+  }
+  for (const auto &key : response->GetUncoveredKeys())
+  {
+    record_hashes.insert(key.hash);
+  }
+  CHECK(hashes == record_hashes);
+  double uncovered_total = 0.0;
+  for (const auto &row : uncovered_table.rows)
+  {
+    if (std::stoi(row[uncovered_table.Column("evaluation")]) == 0 &&
+        row[uncovered_table.Column("type")] == "Total")
+    {
+      uncovered_total =
+          std::stod(row[uncovered_table.Column("uncovered raw energy[4] (J)")]);
+    }
+  }
+  CHECK_THAT(by_key_sum, WithinRel(uncovered_total, 1.0e-12));
+  const TextCsv coverage_table =
+      ReadTrimmedCsv(output_dir / "surface-response-coverage.csv");
+  const TextCsv corrected_table = ReadTrimmedCsv(output_dir / "surface-Q-corrected.csv");
+  REQUIRE(coverage_table.rows.size() == 1);
+  const auto corrected_it = std::find_if(
+      corrected_table.rows.begin(), corrected_table.rows.end(), [&](const auto &row)
+      { return std::stoi(row[corrected_table.Column("interface")]) == 4; });
+  REQUIRE(corrected_it != corrected_table.rows.end());
+  const auto &cell = coverage_table.rows[0];
+  const auto &corrected_row = *corrected_it;
+  CHECK(cell[coverage_table.Column("Type")] ==
+        corrected_row[corrected_table.Column("coverage Type")]);
+  CHECK(cell[coverage_table.Column("W within-R raw (J)")] ==
+        corrected_row[corrected_table.Column("W within-R raw (J)")]);
+  const double W = std::stod(cell[coverage_table.Column("W within-R raw (J)")]);
+  const double U = std::stod(cell[coverage_table.Column("uncovered raw share of W")]);
+  const double missing = std::stod(cell[coverage_table.Column("missing raw share of W")]);
+  const double method_gap =
+      std::stod(cell[coverage_table.Column("method-gap raw share of W")]);
+  CHECK_THAT(missing, WithinRel(by_key_share, 1.0e-12));
+  CHECK_THAT(missing, WithinRel(uncovered_total / W, 1.0e-12));
+  CHECK_THAT(U, WithinAbs(missing + method_gap, 1.0e-15));
+  CHECK_THAT(W * (1.0 - U), WithinRel(W - uncovered_total, 1.0e-12));
+  CHECK(U > 0.0);
+  CHECK(cell[coverage_table.Column("regime status")] == "NO-RANGE");
+  CHECK(std::stod(cell[coverage_table.Column("covered correction factor")]) > 0.0);
+  CHECK(cell[coverage_table.Column("validated factor min")] == "nan");
 #endif
 }
 
