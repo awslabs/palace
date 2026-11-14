@@ -186,6 +186,21 @@ if rest == ["env"]:
     for key, value in sorted(inner.items()):
         print(key + "=" + value)
     sys.exit(0)
+if os.environ.get("FAKE_SLEEP_STAGE") == rest[-1]:
+    time.sleep(30)
+if os.environ.get("FAKE_FI_DOMAIN_STAGE") == rest[-1]:
+    counter = os.environ["FAKE_FI_DOMAIN_COUNT"]
+    count = int(open(counter).read()) if os.path.exists(counter) else 0
+    if count < int(os.environ["FAKE_FI_DOMAIN_TIMES"]):
+        open(counter, "w").write(str(count + 1))
+        if os.environ.get("FAKE_RESULT_FILE"):
+            os.makedirs(os.path.dirname(os.environ["FAKE_RESULT_FILE"]), exist_ok=True)
+            open(os.environ["FAKE_RESULT_FILE"], "w").write("partial\\n")
+        if os.environ.get("FAKE_PALACE_STARTED"):
+            print("Running with 4 MPI processes")
+        print("Open MPI failed an OFI Libfabric library call (fi_domain).  This is highly")
+        print("  Error: Cannot allocate memory (1)")
+        sys.exit(14)
 if os.environ.get("FAKE_FLAG"):
     open(os.environ["FAKE_FLAG"], "w").close()
     time.sleep(30)
@@ -351,6 +366,139 @@ class RunStagesLauncherTest(unittest.TestCase):
         self.assertEqual(stop["BarBytes"], int(0.85 * (100 << 30)))
         self.assertGreater(stop["UsedBytes"], stop["BarBytes"])
         self.assertTrue(stop["Samples"])
+        self.assertFalse(self.record.exists())
+
+    # Decision 1710: OI-AMRFORM-EFA-AFTER-KILL under form X (PBS 118751): the wait after a killed
+    # stage, its 300-s stop, and the ONE retry of a stage that failed at MPI start in fi_domain.
+    FI_DOMAIN_LOG = ("Open MPI failed an OFI Libfabric library call (fi_domain).  This is highly\n"
+                     "  Error: Cannot allocate memory (98011153694732)\n")
+
+    def test_session_processes_reads_the_session_field(self):
+        proc = self.root / "proc"
+        for pid, stat in (("10", "10 (a b) S 1 10 42 0"), ("11", "11 (palace) R 10 11 42 0"),
+                          ("12", "12 (x)) y) S 1 12 7 0"), ("self", "13 (s) S 1 13 42 0")):
+            (proc / pid).mkdir(parents=True)
+            (proc / pid / "stat").write_text(stat + "\n")
+        (proc / "14").mkdir()  # exited while the table was read: no stat file
+        self.assertEqual(run_stages.session_processes(42, proc), [10, 11])
+        self.assertEqual(run_stages.session_processes(7, proc), [12])
+
+    def test_wait_for_session_exit_and_its_300_s_stop(self):
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        answers = [[5, 6], [5], []]
+        exited = run_stages.wait_for_session_exit(42, processes=lambda session: answers.pop(0), sleep=sleep,
+                                                  clock=lambda: now[0])
+        self.assertEqual(exited, {"Session": 42, "ExitWaitSeconds": 2.0, "Remaining": []})
+        now[0] = 0.0
+        stuck = run_stages.wait_for_session_exit(42, processes=lambda session: [5], sleep=sleep, clock=lambda: now[0])
+        self.assertEqual((stuck["Remaining"], stuck["ExitWaitSeconds"]), ([5], 300.0))
+        self.assertEqual((run_stages.AFTER_KILL_EXIT_SECONDS, run_stages.AFTER_KILL_PAUSE_SECONDS), (300, 90))
+
+    def test_retry_conditions_one_by_one(self):
+        log = "PRTE has detected that the head of the session directory tree\n" + self.FI_DOMAIN_LOG
+        self.assertIn("fi_domain", run_stages.retry_reason(14, log, []))
+        self.assertIsNone(run_stages.retry_reason(0, log, []))  # rc 0
+        self.assertIsNone(run_stages.retry_reason(124, log, []))  # ended by its cap
+        self.assertIsNone(run_stages.retry_reason(14, self.FI_DOMAIN_LOG.splitlines()[1] + "\n", []))  # no fi_domain line
+        self.assertIsNone(run_stages.retry_reason(14, self.FI_DOMAIN_LOG.splitlines()[0] + "\n", []))  # no allocation line
+        self.assertIsNone(run_stages.retry_reason(14, "Running with 192 MPI processes\n" + log, []))  # Palace had started
+        self.assertIsNone(run_stages.retry_reason(14, log, ["/out/palace.json"]))  # a result file exists
+
+    def test_stage_result_files(self):
+        out, archive, config = self.root / "out", self.root / "archive", self.root / "stage.json"
+        config.write_text(json.dumps({"Problem": {"Output": str(out)}}))
+        (out / "sub").mkdir(parents=True)
+        (out / "sub" / "a.csv").write_text("x")
+        archive.mkdir()
+        (archive / "source-000001-rank-000000-V.bin").write_bytes(b"1")
+        writer = {"Config": str(config), "Environment": {"PALACE_RESPONSE_ARCHIVE_ONLY": "1",
+                                                         "PALACE_RESPONSE_ARCHIVE_DIR": str(archive)}}
+        reader = {"Config": str(config), "Environment": {"PALACE_RESPONSE_REDUCE_ONLY": "1",
+                                                         "PALACE_RESPONSE_ARCHIVE_DIR": str(archive)}}
+        self.assertEqual(len(run_stages.stage_result_files(writer)), 2)
+        self.assertEqual(run_stages.stage_result_files(reader), [str(out / "sub" / "a.csv")])
+
+    def fi_domain_plan(self, times, **extra):
+        plan_path = self.plan()
+        worker_config = json.loads(plan_path.read_text())["Stages"][0]["Config"]
+        os.environ.update(FAKE_FI_DOMAIN_STAGE=worker_config, FAKE_FI_DOMAIN_COUNT=str(self.root / "fi-count"),
+                          FAKE_FI_DOMAIN_TIMES=str(times), **extra)
+        return plan_path
+
+    def status_of(self, plan_path):
+        return json.loads((plan_path.parent / "status.json").read_text())
+
+    def test_one_retry_after_a_fi_domain_failure_at_mpi_start(self):
+        plan_path = self.fi_domain_plan(1)
+        with mock.patch.object(run_stages, "AFTER_KILL_PAUSE_SECONDS", 0):
+            self.assertEqual(self.run_plan(plan_path), 0)
+        status = self.status_of(plan_path)
+        worker = status["Stages"][0]
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["complete", "complete"])
+        self.assertEqual((worker["Attempts"], worker["Attempt1"]["ReturnCode"]), (2, 14))
+        self.assertIn("fi_domain", worker["RetryReason"])
+        self.assertEqual(worker["Attempt1"]["Exit"]["Remaining"], [])
+        log, kept = plan_path.parent / "p3-worker.log", plan_path.parent / "p3-worker-attempt1.log"
+        self.assertEqual(worker["Attempt1"]["Kept"][str(log)], str(kept))
+        self.assertIn("fi_domain", kept.read_text())
+        self.assertNotIn("fi_domain", log.read_text())
+        self.assertNotIn("Attempts", status["Stages"][1])
+        self.assertEqual(len(self.record.read_text().splitlines()), 2)
+
+    def test_a_second_fi_domain_failure_is_final(self):
+        plan_path = self.fi_domain_plan(5)
+        with mock.patch.object(run_stages, "AFTER_KILL_PAUSE_SECONDS", 0):
+            self.assertEqual(self.run_plan(plan_path), 1)
+        status = self.status_of(plan_path)
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["failed", "skipped-dependency"])
+        self.assertEqual(status["Stages"][0]["Attempts"], 2)
+        self.assertEqual((self.root / "fi-count").read_text(), "2")
+
+    def assert_no_retry(self, plan_path):
+        with mock.patch.object(run_stages, "AFTER_KILL_PAUSE_SECONDS", 0):
+            self.assertEqual(self.run_plan(plan_path), 1)
+        status = self.status_of(plan_path)
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["failed", "skipped-dependency"])
+        self.assertNotIn("Attempts", status["Stages"][0])
+        self.assertEqual((self.root / "fi-count").read_text(), "1")
+
+    def test_no_retry_when_palace_had_started(self):
+        self.assert_no_retry(self.fi_domain_plan(1, FAKE_PALACE_STARTED="1"))
+
+    def test_no_retry_when_a_result_file_exists(self):
+        self.assert_no_retry(self.fi_domain_plan(1, FAKE_RESULT_FILE=str(self.root / "out-p3-worker" / "palace.json")))
+
+    def capped_plan(self):
+        plan_path = self.plan()
+        plan = json.loads(plan_path.read_text())
+        plan["Stages"][0]["CapSeconds"] = 2
+        plan["Stages"][1]["Requires"] = []
+        plan_path.write_text(json.dumps(plan))
+        os.environ["FAKE_SLEEP_STAGE"] = plan["Stages"][0]["Config"]
+        return plan_path
+
+    def test_after_a_cap_kill_the_session_is_empty_and_the_next_launch_waits(self):
+        plan_path = self.capped_plan()
+        with mock.patch.object(run_stages, "AFTER_KILL_PAUSE_SECONDS", 1):
+            self.assertEqual(self.run_plan(plan_path), 1)
+        worker, reducer = self.status_of(plan_path)["Stages"]
+        self.assertEqual((worker["State"], worker["ReturnCode"], worker["AfterKill"]["Remaining"]), ("timed-out", 124, []))
+        self.assertNotIn("Attempts", worker)
+        self.assertEqual((reducer["State"], reducer["AfterKillPauseSeconds"]), ("complete", 1))
+        self.assertEqual(len(self.record.read_text().splitlines()), 1)
+
+    def test_processes_left_after_a_kill_stop_the_job(self):
+        plan_path = self.capped_plan()
+        with mock.patch.object(run_stages, "AFTER_KILL_EXIT_SECONDS", 1), \
+                mock.patch.object(run_stages, "session_processes", return_value=[99999]):
+            self.assertEqual(self.run_plan(plan_path), 4)
+        status = self.status_of(plan_path)
+        self.assertEqual((status["State"], status["AfterKillStop"]["Remaining"]), ("after-kill-stop", [99999]))
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["timed-out"])
         self.assertFalse(self.record.exists())
 
 

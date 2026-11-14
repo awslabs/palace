@@ -27,7 +27,10 @@ sha256 of the executable inside it (apptainer exec IMAGE sha256sum BINARY); each
 `apptainer exec --bind ... IMAGE <image mpirun> <MPIExecArguments> -x ... -n R <image palace>
 CONFIG` with the PBS_* variables dropped from its environment (the image's PRTE must not read
 the host's node file) and the stage's PALACE_RESPONSE_* variables set and forwarded with -x.
-More than one node, or a stage naming its own executable, is refused.  A plan without the
+More than one node, or a stage naming its own executable, is refused.  After a stage killed by
+its cap or by the memory stop, no process of its session may remain (<= 300 s, else the job
+stops: exit 4) and the next launch waits 90 s; a stage that failed at MPI start in libfabric
+fi_domain with no result file is retried ONCE (decision 1710).  A plan without the
 block runs exactly as before.
 
 usage: run_stages.py PLAN.json
@@ -197,6 +200,15 @@ def conflicting_processes(processes_text):
 
 LAUNCHER_MEMORY_STOP_FRACTION = 0.85  # the default bar: MEASURED node use above 0.85 x MemTotal stops the job
 LAUNCHER_PASSED_PATTERN = re.compile(r"^(OMP_[A-Z_]+|[A-Z0-9_]+_NUM_THREADS|TMPDIR)$")
+# Form X only (decision 1710): OI-AMRFORM-EFA-AFTER-KILL reproduced under form X (PBS 118751): a stage started at once
+# after a killed stage failed at MPI start in libfabric fi_domain ('Cannot allocate memory').  After a stage that ended
+# by its cap or by the memory stop: wait until no process of its session remains (<= AFTER_KILL_EXIT_SECONDS, else the
+# job STOPS), then AFTER_KILL_PAUSE_SECONDS before anything else starts; ONE retry of a stage that failed that way.
+AFTER_KILL_EXIT_SECONDS = 300
+AFTER_KILL_PAUSE_SECONDS = 90
+FI_DOMAIN_PATTERN = re.compile(r"failed an OFI Libfabric library call \(fi_domain\)")
+ALLOCATION_PATTERN = re.compile(r"Cannot allocate memory")
+PALACE_STARTED_PATTERN = re.compile(r"^Running with \d+ MPI process", re.M)  # Palace's first line after MPI_Init
 
 
 def launcher_preflight(launcher, plan, *, digest=None, run=None, environment=None):
@@ -285,6 +297,87 @@ def memory_stop_index(used_bytes, bar_bytes):
         if used > bar_bytes:
             return index
     return None
+
+
+def session_processes(session, proc_root="/proc"):
+    """The pids whose session id (/proc/<pid>/stat field 6) is `session`: what is left of a
+    stage started with start_new_session (its session id = the stage process's pid)."""
+    pids = []
+    for entry in Path(proc_root).iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rpartition(")")[2].split()
+        except OSError:
+            continue
+        if len(fields) > 3 and fields[3] == str(session):
+            pids.append(int(entry.name))
+    return sorted(pids)
+
+
+def wait_for_session_exit(session, *, processes=None, sleep=time.sleep, clock=time.monotonic, exit_seconds=None):
+    """Form X: poll (every second, at most exit_seconds, default AFTER_KILL_EXIT_SECONDS) until no
+    process of the session remains (processes: default session_processes).  Returns {"Session",
+    "ExitWaitSeconds", "Remaining"}: a non-empty Remaining = the job must STOP."""
+    processes = processes or session_processes
+    exit_seconds = AFTER_KILL_EXIT_SECONDS if exit_seconds is None else exit_seconds
+    started = clock()
+    remaining = processes(session)
+    while remaining and clock() - started < exit_seconds:
+        sleep(1.0)
+        remaining = processes(session)
+    return {"Session": session, "ExitWaitSeconds": round(clock() - started, 1), "Remaining": remaining}
+
+
+def stage_result_files(stage):
+    """Form X: the files a stage has written: under its config's Problem.Output and, for an archive
+    writer (PALACE_RESPONSE_ARCHIVE_ONLY), under its PALACE_RESPONSE_ARCHIVE_DIR."""
+    roots = []
+    try:
+        roots.append(Path(json.loads(Path(stage["Config"]).read_text())["Problem"]["Output"]))
+    except (OSError, KeyError, TypeError, ValueError):
+        pass
+    environment = stage["Environment"]
+    if environment.get("PALACE_RESPONSE_ARCHIVE_ONLY") == "1" and environment.get("PALACE_RESPONSE_ARCHIVE_DIR"):
+        roots.append(Path(environment["PALACE_RESPONSE_ARCHIVE_DIR"]))
+    return sorted(str(path) for root in roots if root.is_dir() for path in root.rglob("*") if path.is_file())
+
+
+def retry_reason(code, log_text, result_files):
+    """Form X (decision 1710): the reason line for ONE retry of a failed stage, or None.  ALL must
+    hold: rc != 0 and not the cap's 124; the log has the libfabric fi_domain allocation failure;
+    the failure is at MPI start (no PALACE_STARTED_PATTERN line, hence no solver line); the stage
+    wrote no result file.  A memory-stop stage is never retried (the job ends there)."""
+    if code in (0, 124) or result_files:
+        return None
+    if not (FI_DOMAIN_PATTERN.search(log_text) and ALLOCATION_PATTERN.search(log_text)):
+        return None
+    if PALACE_STARTED_PATTERN.search(log_text):
+        return None
+    return next(line for line in log_text.splitlines() if FI_DOMAIN_PATTERN.search(line)).strip()[:200]
+
+
+def keep_failed_attempt(stage, log, timefile):
+    """Form X: move the failed attempt's log / time file and its (result-free) stage directories to
+    attempt-1 names, so that the retry starts from a clean stage directory.  Returns the moves."""
+    moves = {}
+    candidates = [log, timefile]
+    try:
+        candidates.append(Path(json.loads(Path(stage["Config"]).read_text())["Problem"]["Output"]))
+    except (OSError, KeyError, TypeError, ValueError):
+        pass
+    environment = stage["Environment"]
+    if environment.get("PALACE_RESPONSE_ARCHIVE_ONLY") == "1" and environment.get("PALACE_RESPONSE_ARCHIVE_DIR"):
+        candidates.append(Path(environment["PALACE_RESPONSE_ARCHIVE_DIR"]))
+    for path in candidates:
+        if path.exists():
+            target = path.with_name(f"{path.stem}-attempt1{path.suffix}") if path.is_file() else \
+                path.with_name(f"{path.name}-attempt1")
+            if target.exists():
+                raise SystemExit(f"Cannot keep the failed attempt: {target} exists")
+            path.rename(target)
+            moves[str(path)] = str(target)
+    return moves
 
 
 def per_node_peaks(sample_paths, start_epoch, end_epoch):
@@ -485,6 +578,9 @@ def main(argv):
             node_samplers.append(node_shell.spawn(host, script, base / f"node-sampler-{host}.log"))
 
     completed = set()
+    # Form X only (decision 1710): the pause owed before the next launch after a killed stage, and
+    # the after-kill STOP (processes of a killed stage left after AFTER_KILL_EXIT_SECONDS).
+    pending_pause, after_kill_stop = 0, None
     for stage in plan["Stages"]:
         if memory_stop:
             break
@@ -495,6 +591,10 @@ def main(argv):
             status["Stages"].append(record)
             save()
             continue
+        if pending_pause:
+            current_stage[0] = "after-kill-pause"
+            time.sleep(pending_pause)
+            record["AfterKillPauseSeconds"], pending_pause = pending_pause, 0
         remaining = deadline - time.monotonic() - plan["DeadlineMarginSeconds"]
         cap = min(stage["CapSeconds"], remaining)
         if cap < stage["MinimumSeconds"]:
@@ -522,18 +622,49 @@ def main(argv):
                                        config=stage["Config"])
         record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()),
                       Binary=str(stage_binary), BinarySHA256=stage.get("BinarySHA256") or binary_sha256)
-        current_stage[0] = name
-        started = time.monotonic()
-        started_epoch = time.time()
-        with log.open("w") as stream:
-            process = subprocess.Popen(command, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
-            current_process[0] = process
-            try:
-                code = process.wait()
-            except KeyboardInterrupt:
-                os.killpg(process.pid, signal.SIGTERM)
-                code = process.wait()
-        wall = time.monotonic() - started
+
+        def launch(command):
+            current_stage[0] = name
+            started = time.monotonic()
+            started_epoch = time.time()
+            with log.open("w") as stream:
+                process = subprocess.Popen(command, env=environment, stdout=stream, stderr=subprocess.STDOUT,
+                                           start_new_session=True)
+                current_process[0] = process
+                try:
+                    code = process.wait()
+                except KeyboardInterrupt:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    code = process.wait()
+            return process, code, time.monotonic() - started, started_epoch
+
+        process, code, wall, started_epoch = launch(command)
+        reason = None
+        if launcher is not None and not memory_stop:
+            reason = retry_reason(code, log.read_text(errors="replace"), stage_result_files(stage))
+        if reason:
+            # Form X (decision 1710): ONE retry of a stage that failed at MPI start in fi_domain.
+            current_process[0] = None
+            current_stage[0] = "after-kill-wait"
+            attempt = {"ReturnCode": code, "WallSeconds": wall, "StartUTC": record["StartUTC"], "Reason": reason,
+                       "Exit": wait_for_session_exit(process.pid)}
+            attempt["Kept"] = keep_failed_attempt(stage, log, timefile)
+            record.update(Attempts=2, RetryReason=reason, Attempt1=attempt)
+            if attempt["Exit"]["Remaining"]:
+                after_kill_stop = {"Stage": name, **attempt["Exit"]}
+            else:
+                current_stage[0] = "after-kill-pause"
+                time.sleep(AFTER_KILL_PAUSE_SECONDS)
+                attempt["PauseSeconds"] = AFTER_KILL_PAUSE_SECONDS
+                remaining = deadline - time.monotonic() - plan["DeadlineMarginSeconds"]
+                cap = min(stage["CapSeconds"], remaining)
+                if cap < stage["MinimumSeconds"]:
+                    attempt["Retry"] = "skipped-no-time"
+                else:
+                    command = launcher_command(launcher, cap=cap, timefile=timefile, exports=exports, ranks=plan["Ranks"],
+                                               config=stage["Config"])
+                    record.update(Command=command, CapSeconds=cap, StartUTC=time.strftime("%FT%TZ", time.gmtime()))
+                    process, code, wall, started_epoch = launch(command)
         parsed = parse_log(log.read_text(errors="replace"))
         time_text = timefile.read_text() if timefile.exists() else ""
         match = re.search(r"Maximum resident set size \(kbytes\): (\d+)", time_text)
@@ -555,12 +686,21 @@ def main(argv):
             ok = False
             record["State"] = "memory-stop"
             record["MemoryStop"] = {key: value for key, value in memory_stop.items() if key != "Samples"}
+        if launcher is not None and record["State"] in ("timed-out", "memory-stop"):
+            # Form X (decision 1710): no process of the killed stage may remain; then the pause before
+            # anything else starts (after a memory stop nothing else starts).
+            current_stage[0] = "after-kill-wait"
+            record["AfterKill"] = wait_for_session_exit(process.pid)
+            if record["AfterKill"]["Remaining"]:
+                after_kill_stop = {"Stage": name, **record["AfterKill"]}
+            elif not memory_stop:
+                pending_pause = AFTER_KILL_PAUSE_SECONDS
         if ok:
             completed.add(name)
         status["Stages"].append(record)
         save()
         current_stage[0] = "between-stages"
-        if memory_stop:
+        if memory_stop or after_kill_stop:
             break
 
     stop_sampling.set()
@@ -573,6 +713,9 @@ def main(argv):
             except subprocess.TimeoutExpired:
                 process.kill()
     state = "complete" if all(s["State"] == "complete" for s in status["Stages"]) else "incomplete"
+    if after_kill_stop:
+        state = "after-kill-stop"
+        status["AfterKillStop"] = after_kill_stop
     status.update(State="memory-stop" if memory_stop else state,
                   EndUTC=time.strftime("%FT%TZ", time.gmtime()), TotalSeconds=time.monotonic() - job_start,
                   StagePeakUsedBytesSampled=stage_peaks)
@@ -584,7 +727,7 @@ def main(argv):
     for record in status["Stages"]:
         print(record["Name"], record["State"], record.get("WallSeconds"), record.get("Parsed", {}).get("H1"),
               record.get("Parsed", {}).get("PCG"))
-    return 0 if status["State"] == "complete" else (3 if memory_stop else 1)
+    return 0 if status["State"] == "complete" else (3 if memory_stop else (4 if after_kill_stop else 1))
 
 
 if __name__ == "__main__":
