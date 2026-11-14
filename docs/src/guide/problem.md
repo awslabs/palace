@@ -38,8 +38,9 @@ too. With `"NonlinearType": "SLP"`, or with SLEPc and `"PEPLinear": false`, the 
 eigensolver described below is used instead.
 
 Absorbing boundaries next to a frequency-dependent material (with the factor
-``\sqrt{\varepsilon(\omega) / \varepsilon_\infty}``) and finite conductivity boundaries
-of zero thickness (with ``\sqrt{\omega}``) are not rational. Their scalar functions are
+``\sqrt{\varepsilon(\omega) / \varepsilon_\infty}``), finite conductivity boundaries
+of zero thickness (with ``\sqrt{\omega}``), and `DjordjevicSarkar` terms (with a
+logarithm, whose cut is on the imaginary frequency axis) are not rational. Their scalar functions are
 fitted with rational functions in the window of the search, the damped frequencies ``f``
 with ``\mathrm{Re}\,f \geq`` `Target` and ``|f - `` `Target` ``| \leq`` `TargetUpper` ``-``
 `Target`, and the problem is solved in the same way. *Palace* prints the number of poles of
@@ -57,7 +58,7 @@ on four mode solves, and the errors in `eig.csv` use the mode solves at each eig
 
 Other frequency-dependent terms are not solved in this way: other wave ports (a mode with
 a longitudinal field, an inhomogeneous or frequency-dependent filling of the port, or a port
-below cutoff), `DjordjevicSarkar` terms (also next to an absorbing boundary), finite
+below cutoff), absorbing boundaries next to a `DjordjevicSarkar` material, finite
 conductivity boundaries with a thickness, and rational impedances with repeated zeros or a
 Robin coefficient ``i\omega / Z_s`` which grows faster than ``\omega^2``.
 With any of them, for constant and frequency-dependent materials alike, the nonlinear

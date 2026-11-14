@@ -185,6 +185,27 @@ TEST_CASE("Rational fit of functions analytic in the window", "[rationalfit][Ser
              "independent error {:.2e}\n",
              fit.poles.size(), fit.num_samples, fit.num_checks, fit.error, err_debye);
 
+  // The Djordjevic-Sarkar term λ² S log((λ + ω_u) / (λ + ω_l)), fitted as λ² g(λ): the cut
+  // of the logarithm is on the imaginary axis of ω, from i ω_l to i ω_u.
+  constexpr double strength = 0.05, w_lo = two_pi * 0.1, w_hi = two_pi * 100.0;
+  auto ds = [=](Complex l) { return strength * std::log((l + w_hi) / (l + w_lo)); };
+  std::vector<Complex> ds_cut = {i * w_lo, i * w_hi};
+  for (int k = 1; k < 4096; k++)
+  {
+    ds_cut.push_back(i * (w_lo + (w_hi - w_lo) * k / 4096.0));
+  }
+  const auto ds_fit = utils::FitScalar(ds, 1.0, 2, ds_cut, window, tol);
+  REQUIRE(ds_fit.success);
+  CHECK(ds_fit.strip == 0.0);
+  const double err_ds = ValidError(
+      ds_fit, window, [&](Complex l) { return l * l * ds(l); }, num_valid, num_invalid);
+  CHECK(err_ds <= 10.0 * tol);
+  CHECK(num_invalid == 0);
+  Mpi::Print("Djordjevic-Sarkar fit: {:d} poles, {:d} samples, {:d} check points, error "
+             "{:.2e}; independent error {:.2e}\n",
+             ds_fit.poles.size(), ds_fit.num_samples, ds_fit.num_checks, ds_fit.error,
+             err_ds);
+
   // The skin effect term √λ of a finite conductivity boundary, fitted as λ · λ^(-1/2): its
   // branch point is at λ = 0, and its cut on the negative real axis of f.
   std::vector<Complex> ray;

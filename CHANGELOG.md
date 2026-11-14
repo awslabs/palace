@@ -45,10 +45,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only the pole terms of the materials: second-order absorbing boundaries next to
     constant materials and rational impedance boundaries exactly, and absorbing boundaries
     next to frequency-dependent materials, finite conductivity boundaries of zero
-    thickness, and wave ports with a TE or TEM mode of a port with one constant material
-    with rational fits in the window of the search. *Palace* prints the error of each fit,
-    and warns of the modes found next to a branch cut, where a fit is not valid. Other wave
-    ports, `DjordjevicSarkar` terms, conductivity boundaries with a thickness, and rational
+    thickness, wave ports with a TE or TEM mode of a port with one constant material, and
+    `DjordjevicSarkar` terms with rational fits in the window of the search. *Palace*
+    prints the error of each fit, and warns of the modes found next to a branch cut, where
+    a fit is not valid. Other wave ports, absorbing boundaries next to a
+    `DjordjevicSarkar` material, conductivity boundaries with a thickness, and rational
     impedances with repeated zeros or a Robin coefficient which grows faster than ω² keep
     the nonlinear eigensolver.
     [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).

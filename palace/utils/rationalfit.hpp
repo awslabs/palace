@@ -49,7 +49,7 @@ struct ScalarFit
   bool IsValid(const FitWindow &window, std::complex<double> omega) const;
 };
 
-// Fit f(λ) = α λᵐ g(λ), m = -1, 0, or 1, in the window. g is analytic away from the
+// Fit f(λ) = α λᵐ g(λ), m = -1, 0, 1, or 2, in the window. g is analytic away from the
 // singular points (values of ω, the branch points first, then dense along each branch
 // cut). The fit error is analytic in the window outside a strip around the singular points
 // when no pole of the fit is there, so its largest value there is on the boundary of that

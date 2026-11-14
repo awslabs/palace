@@ -120,14 +120,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //  - second-order absorbing boundaries next to constant materials, -0.5 / λ M_ff,
   //  - rational impedance boundaries g(λ) M_b, g(λ) = λ D(λ) / N(λ).
   // The absorbing boundaries next to frequency-dependent materials (with √(ε(λ) / ε∞)), the
-  // finite conductivity boundaries of zero thickness (with √λ), and the wave ports with a
-  // TE or TEM mode of a homogeneous port (below) are fitted with rational functions in a
-  // window of the search (utils::FitScalar), valid outside a strip around their branch
-  // cuts. Their reported errors are those of the complete operator. Djordjevic-Sarkar
-  // terms and other wave ports keep the Hybrid seed and the Quasi-Newton refinement.
-  // RefineNonlinear has no effect here: the terms are exact, or fitted to the tolerance of
-  // the eigensolver, and there is nothing to refine. With PEPLinear = false, SLEPc's
-  // polynomial eigensolver linearizes the problem itself, without the auxiliary blocks.
+  // finite conductivity boundaries of zero thickness (with √λ), the Djordjevic-Sarkar
+  // terms (with a logarithm), and the wave ports with a TE or TEM mode of a homogeneous
+  // port (below) are fitted with rational functions in a window of the search
+  // (utils::FitScalar), valid outside a strip around their branch cuts. Their reported
+  // errors are those of the complete operator. Other wave ports, and absorbing boundaries
+  // next to Djordjevic-Sarkar materials, keep the Hybrid seed and the Quasi-Newton
+  // refinement. RefineNonlinear has no effect here: the terms are exact, or fitted to the
+  // tolerance of the eigensolver, and there is nothing to refine. With PEPLinear = false,
+  // SLEPc's polynomial eigensolver linearizes the problem itself, without the auxiliary
+  // blocks.
   struct RationalA2Term
   {
     std::unique_ptr<ComplexOperator> B;
@@ -162,21 +164,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     bool rational = true;
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
-      if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
-          mat_op.HasDjordjevicSarkarPermittivity(m))
-      {
-        rational = false;
-      }
-    }
-    for (std::size_t m = 0;
-         rational && m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
-    {
       if (!mat_op.HasFrequencyDependentPermittivitySupport(m))
       {
         continue;  // No contribution (SpaceOperator::GetExtraSystemMatrix)
       }
       auto B = space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO);
-      if (!B)
+      if (!B || mat_op.GetPermittivityPoleTerms(m).empty())
       {
         continue;  // No nonzero pole (exact zero poles are in the conductivity of C)
       }
@@ -253,6 +246,37 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                         term.name);
       fitted = true;
     };
+    // The Djordjevic-Sarkar terms Σ S λ² log((λ + ω_u) / (λ + ω_l)) Bₘ, with the cut of
+    // each logarithm from λ = -ω_l to -ω_u.
+    for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      if (!mat_op.HasFrequencyDependentPermittivitySupport(m) ||
+          !mat_op.HasDjordjevicSarkarPermittivity(m))
+      {
+        continue;
+      }
+      std::vector<std::complex<double>> cut;
+      for (const auto &term : mat_op.GetDjordjevicSarkarTerms(m))
+      {
+        cut.push_back(1i * term.omega_lower);
+        cut.push_back(1i * term.omega_upper);
+      }
+      for (const auto &term : mat_op.GetDjordjevicSarkarTerms(m))
+      {
+        for (int k = 1; k < 4096; k++)
+        {
+          cut.push_back(
+              1i * (term.omega_lower + (term.omega_upper - term.omega_lower) * k / 4096.0));
+        }
+      }
+      // The matrix applies i Bₘ.
+      AddFitted(
+          space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO),
+          fmt::format("Djordjevic-Sarkar permittivity of material {:d}", m + 1),
+          [&mat_op, m](std::complex<double> l)
+          { return mat_op.EvaluateDjordjevicSarkarPermittivityA2(m, l) / (1i * l * l); },
+          1.0, 2, cut);
+    }
     for (std::size_t k = 0; rational && k < farfield_op.NumDispersiveMaterials(); k++)
     {
       std::vector<std::complex<double>> p, r;

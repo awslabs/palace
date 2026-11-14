@@ -224,45 +224,50 @@ ScalarFit FitScalar(const std::function<std::complex<double>(std::complex<double
           }
         }
       }
-      Eigen::MatrixXcd A(n, pg.size() + 2);
+      // Without the linear part for m = 2, where λ² b₁ λ would be cubic.
+      const int np = (m == 2) ? 1 : 2;
+      Eigen::MatrixXcd A(n, pg.size() + np);
       for (long k = 0; k < n; k++)
       {
         A(k, 0) = 1.0;
-        A(k, 1) = z(k) / R;
+        if (np == 2)
+        {
+          A(k, 1) = z(k) / R;
+        }
         for (std::size_t j = 0; j < pg.size(); j++)
         {
-          A(k, j + 2) = 1.0 / (z(k) - pg[j]);
+          A(k, j + np) = 1.0 / (z(k) - pg[j]);
         }
       }
       const Eigen::VectorXcd coef =
           A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(F);
 
-      // The term α λᵐ g(λ): λ c / (λ - p) = c + c p / (λ - p), and c / (λ (λ - p)) =
-      // (c / p) (1 / (λ - p) - 1 / λ).
-      const Complex b0 = coef(0), b1 = coef(1) / R;
-      std::vector<Complex> poly(3, 0.0), poles, residues;
+      // The term α λᵐ g(λ): for m ≥ 0, λᵐ / (λ - p) = Σⱼ₌₀ᵐ⁻¹ pᵐ⁻¹⁻ʲ λʲ + pᵐ / (λ - p), and
+      // 1 / (λ (λ - p)) = (1 / p) (1 / (λ - p) - 1 / λ).
+      const Complex b[2] = {coef(0), (np == 2) ? coef(1) / R : 0.0};
+      std::vector<Complex> poly(4, 0.0), poles, residues;
       bool valid = true;
       if (m == -1)
       {
         poles.push_back(0.0);
-        residues.push_back(alpha * b0);
-        poly[0] = alpha * b1;
+        residues.push_back(alpha * b[0]);
+        poly[0] = alpha * b[1];
       }
       else
       {
-        poly[m] = alpha * b0;
-        poly[m + 1] = alpha * b1;
+        poly[m] = alpha * b[0];
+        poly[m + 1] = alpha * b[1];
       }
       for (std::size_t j = 0; j < pg.size(); j++)
       {
-        const Complex p = pg[j], c = coef(j + 2);
+        const Complex p = pg[j], c = coef(j + np);
         valid = valid && (m >= 0 || p != 0.0);
-        if (m == 1)
+        for (int k = 0; k < m; k++)
         {
-          poly[0] += alpha * c;
+          poly[k] += alpha * c * std::pow(p, m - 1 - k);
         }
         poles.push_back(p);
-        residues.push_back(alpha * ((m == 1) ? c * p : (m == -1) ? c / p : c));
+        residues.push_back(alpha * c * std::pow(p, m));
         if (m == -1)
         {
           residues[0] -= alpha * c / p;

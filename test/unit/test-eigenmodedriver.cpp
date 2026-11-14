@@ -993,36 +993,55 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "[eigenmodedriver][Serial][Parallel]")
 {
   // A weak Lorentz term in the PEC box, from 8 to 20 GHz (Target to TargetUpper). With a
-  // Djordjevic-Sarkar term in the same material, the problem goes to the nonlinear
-  // eigensolver, which warns of a resonance within 3 half-widths of the window: at 21 GHz,
-  // 2 half-widths above it, and not at 22 GHz, 4 half-widths above it. Without the
-  // Djordjevic-Sarkar term the pole terms are linearized exactly, and a resonance inside
-  // the window is not warned of.
+  // finite conductivity boundary with a thickness on one face, which the linearized
+  // eigensolvers do not represent, the problem goes to the nonlinear eigensolver, which
+  // warns of a resonance within 3 half-widths of the window: at 21 GHz, 2 half-widths
+  // above it, and not at 22 GHz, 4 half-widths above it. A linearized problem has no such
+  // warning: with the pole terms only, linearized exactly, for a resonance inside the
+  // window, and with a Djordjevic-Sarkar term in the same material, linearized with its
+  // rational fit, for the resonance at 21 GHz.
   constexpr double gamma = 1.0;  // GHz, the half-width is 0.5 GHz
   const auto mesh = WriteBoxMesh(temp_dir);
   const json pec = {{"PEC", {{"Attributes", {1, 2, 3, 4, 5, 6}}}}};
+  const json thick = {{"PEC", {{"Attributes", {1, 2, 3, 4, 5}}}},
+                      {"Conductivity",
+                       {{{"Attributes", {6}},
+                         {"Conductivity", 5.8e7},
+                         {"Thickness", 0.01},
+                         {"External", true}}}}};
   const json ds = {{"Type", "DjordjevicSarkar"},
                    {"Strength", 0.05},
                    {"LowerFrequency", 0.1},
                    {"UpperFrequency", 100.0}};
-  for (const auto &[f_res, with_ds, warned] : std::vector<std::tuple<double, bool, bool>>{
-           {21.0, true, true}, {22.0, true, false}, {14.0, false, false}})
+  enum class Route
   {
-    CAPTURE(f_res, with_ds);
+    Exact,
+    Fitted,
+    Nonlinear
+  };
+  for (const auto &[f_res, route, warned] :
+       std::vector<std::tuple<double, Route, bool>>{{21.0, Route::Nonlinear, true},
+                                                    {22.0, Route::Nonlinear, false},
+                                                    {14.0, Route::Exact, false},
+                                                    {21.0, Route::Fitted, false}})
+  {
+    CAPTURE(f_res, static_cast<int>(route));
     // The pole is at Im p = √(f₀² − γ²/4).
     json terms = {{{"Type", "Lorentz"},
                    {"DeltaPermittivity", 1.0e-3},
                    {"ResonanceFrequency", std::sqrt(f_res * f_res + 0.25 * gamma * gamma)},
                    {"DampingFrequency", gamma}}};
-    if (with_ds)
+    if (route == Route::Fitted)
     {
       terms.push_back(ds);
     }
-    auto config = BoxConfig(mesh, {{"HighFrequency", eps_inf}, {"Terms", terms}}, pec, 2,
-                            8.0, "", "Default");
+    auto config =
+        BoxConfig(mesh, {{"HighFrequency", eps_inf}, {"Terms", terms}},
+                  (route == Route::Nonlinear) ? thick : pec, 2, 8.0, "", "Default");
     config["Solver"]["Eigenmode"]["TargetUpper"] = 20.0;
     // A name, not the structured binding, in the lambda (as in the slab cavity test).
-    const auto name = "resonance_" + std::to_string(static_cast<int>(f_res));
+    const auto name = "resonance_" + std::to_string(static_cast<int>(f_res)) + "_" +
+                      std::to_string(static_cast<int>(route));
     Eigenvalues modes;
     const auto out =
         test::CaptureStdout([&] { modes = RunEigenmode(config, temp_dir, name); });
@@ -1030,7 +1049,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
     if (Mpi::Root(Mpi::World()))
     {
       CAPTURE(out);
-      CHECK((out.find("linearized exactly") == std::string::npos) == with_ds);
+      const std::string route_text =
+          (route == Route::Exact)    ? "Frequency-dependent terms linearized exactly"
+          : (route == Route::Fitted) ? "Frequency-dependent terms linearized with rational "
+                                       "fits"
+                                     : "Refining eigenvalues with Quasi-Newton solver";
+      CHECK(out.find(route_text) != std::string::npos);
       CHECK((out.find("has a resonance at") != std::string::npos) == warned);
       CHECK((out.find("The frequency-dependent Permittivity of material 1 has a resonance "
                       "at 21 GHz, within 3 half-widths of the search window from Target "
@@ -1201,16 +1225,16 @@ TEST_CASE_METHOD(
     "Eigenmode driver: Djordjevic-Sarkar-filled PEC box from the constant modes",
     "[eigenmodedriver][Serial][Parallel]")
 {
-#if !defined(PALACE_WITH_SLEPC)
-  SKIP("Requires the SLEPc eigensolver");
-#endif
+  const std::string backend = GENERATE_REF(from_range(Backends()));
+  CAPTURE(backend);
   // As the Lorentz-filled box: in a PEC box filled with one material, the discrete modes of
   // ε(f) are those of the constant ε∞ rescaled, f² ε(f) = f_h² ε∞, with the
   // Djordjevic-Sarkar ε(f) = ε∞ + S log((i f + f_u) / (i f + f_l)) (the factors 2π cancel).
   // The oracle is one scalar Newton solve per constant mode f_h (independent of the
   // eigensolver). The check is that every root up to the last mode found is among the modes
-  // found, without the multiplicity of a root: as for the Lorentz-filled box, the linear
-  // eigensolver of the seed can return one mode only of an exactly degenerate pair.
+  // found, without the multiplicity of a root: the fitted problem is solved as a linear
+  // eigenvalue problem, and a Krylov eigensolver from one start vector can return one mode
+  // only of an exactly degenerate pair (the second only through round-off).
   constexpr double strength = 0.05, f_lo = 0.1, f_hi = 100.0;
   const std::complex<double> i(0.0, 1.0);
   auto Eps = [&](std::complex<double> f)
@@ -1226,9 +1250,10 @@ TEST_CASE_METHOD(
                       {"LowerFrequency", f_lo},
                       {"UpperFrequency", f_hi}}}}};
   constexpr int n = 6;
-  const auto constant =
-      RunEigenmode(BoxConfig(mesh, eps_inf, pec, 16, 8.0, ""), temp_dir, "constant");
-  const auto found_all = RunEigenmode(BoxConfig(mesh, ds, pec, n, 8.0, ""), temp_dir, "ds");
+  const auto constant = RunEigenmode(BoxConfig(mesh, eps_inf, pec, 16, 8.0, "", backend),
+                                     temp_dir, "constant");
+  const auto found_all =
+      RunEigenmode(BoxConfig(mesh, ds, pec, n, 8.0, "", backend), temp_dir, "ds");
   REQUIRE(constant.f.size() >= 16);
   REQUIRE(found_all.f.size() >= n);
   std::vector<std::complex<double>> expected;

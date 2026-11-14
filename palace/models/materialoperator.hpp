@@ -380,6 +380,10 @@ public:
   {
     return !frequency_dependent_materials.at(material_idx).djordjevic_sarkar_terms.empty();
   }
+  const auto &GetDjordjevicSarkarTerms(std::size_t material_idx) const
+  {
+    return frequency_dependent_materials.at(material_idx).djordjevic_sarkar_terms;
+  }
   // True when a globally supported material has a nonlinear permittivity term. This is
   // deliberately frequency independent: valid additive contributions can cancel at an
   // interpolation or ROM probe frequency without ceasing to be nonlinear.
