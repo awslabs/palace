@@ -2576,7 +2576,11 @@ correction actually covers. The definitions are energies of the RAW field:
   - ``W`` is the raw within-``R`` surface energy of an interface: its raw energy minus its
     energy outside the matching radius ``R`` (the corrected energies' own split). A cell
     (an eigenmode, a driven frequency and excitation, or an electrostatic source) sums
-    ``W`` over the target interfaces of one interface `Type`.
+    ``W`` over the target interfaces of one interface `Type`. By definition, a
+    postprocessing interface that no model targets has no correction radius, so its
+    within-``R`` region is empty and its ``W`` is 0: it carries its raw energy, not
+    corrected. Every share of a cell is over the TARGETED interfaces of its `Type` only; the
+    raw energy on the `Type`'s untargeted interfaces is printed beside them.
   - ``U`` is the part of ``W`` where NO correction is applied in that cell (fail-closed:
     whatever is not served by an applied patch is uncovered, whatever diagnostic switch is
     on or off). ``U`` = missing + method gap: the missing share lies on uncovered features
@@ -2600,7 +2604,14 @@ value does not exist):
   - `surface-response-coverage.csv`: one row per cell and `Type`: `W within-R raw (J)`,
     `uncovered raw share of W`, `missing raw share of W`, `method-gap raw share of W`,
     `pending-model share of W`, `no-status-model share of W`, `covered correction factor`,
-    `validated factor min`, `validated factor max`, `coverage status`, `regime status`.
+    `validated factor min`, `validated factor max`, `coverage status`, `regime status`,
+    `partition within-R raw (J)` (the partition pass's own within-``R`` total: it differs
+    from ``W`` by round-off only), `untargeted raw energy of the Type (J)` and `untargeted
+    raw share of the Type interface energy` (over the targeted plus untargeted raw interface
+    energy of the `Type`; `nan` when that total is 0), `loop remainder unserved (J)` (the
+    circulating loop remainder that lies on no served claim) and `loop remainder of
+    excluded patches kept raw twice (J)` (see below). A `Type` whose interfaces are all
+    untargeted has a `NOT-TARGET` row: ``W = 0``, shares and factor `nan`.
   - `surface-response-uncovered-energy-by-key.csv`: one row per Missing-class key (the
     identification's feature `Hash`): `class` (`Missing`, `Unboxable`, `PlacementRejected`),
     `reason` (the placement rejection's class), `method gap` (1 for Unboxable and
@@ -2622,8 +2633,10 @@ value does not exist):
     Maxwell `surface-Q-corrected.csv` gains `coverage Type`, `W within-R raw (J)`,
     `uncovered raw share of W` of the row's interface and `Type uncovered raw share of W`,
     `Type method-gap raw share of W`, `Type pending-model share of W`, `Type covered
-    correction factor`, `coverage status`, `regime status` of its cell (`NOT-TARGET` for an
-    interface in no target); the electrostatic `surface-Q-corrected.csv` gains per
+    correction factor`, `coverage status`, `regime status` of its cell, then the row's
+    `loop remainder unserved (J)` and `loop remainder of excluded patches kept raw twice
+    (J)`; an untargeted interface's row reads its `Type`, ``W = 0``, `nan` shares and factor,
+    `NOT-TARGET` and `NO-MODEL`; the electrostatic `surface-Q-corrected.csv` gains per
     interface `W within-R raw[k] (J)` and `uncovered raw share of W[k]`, then per `Type` the
     six columns suffixed with the `Type`; `surface-response-confidence.csv` gains `worst
     uncovered raw share of W`, `worst coverage status` and `worst regime status`.
@@ -2632,20 +2645,29 @@ The coverage status of a cell, on ``(U + U_{pending}) / W`` with the INTERIM bar
 `"Coverage"`: `OK` at or below `BuildTarget`, `LOW` at or below `MaxUncoveredShare`,
 `PARTIAL` above; `NOT-ACHIEVABLE` when the method-gap share alone exceeds
 `MaxUncoveredShare`; `NO-ENERGY` when ``W = 0`` (its shares print `nan`, never 0);
-`NOT-MEASURED` when no partition exists for the cell (an electrostatic SelfConsistent-only
-run, which evaluates no response on the raw field); `NOT-TARGET` for an interface in no
-`Type`. Every status but `OK` is listed by the end-of-run banner, which names the bars as
-interim thresholds, and in `SurfaceResponse.Coverage` of `palace.json` (the status
-counts, the regime counts, every flagged cell, the counts of served pending and
-status-less models). A SelfConsistent-only Maxwell run evaluates the raw-field response
-once per cell for these outputs only.
+`NOT-MEASURED` when no partition exists for the cell (a SelfConsistent-only run of either
+solve family, which evaluates no response on the raw field); `NOT-TARGET` for an untargeted
+interface and for a `Type` with untargeted interfaces only (never counted as a covered
+cell). Every status but `OK` and `NOT-TARGET` is listed by the end-of-run banner, which
+names the bars as interim thresholds and the untargeted interfaces once, and in
+`SurfaceResponse.Coverage` of `palace.json`: the status counts, the regime counts, every
+flagged cell, the counts of served pending and status-less models, `UntargetedInterfaces`,
+`CellSet` (the kind of cell key, the number of measurements, the `Type`s and the number of
+cells: the rows of `surface-response-coverage.csv`) and `"Complete": true`. That block is
+written at the END of a run (also when no cell was measured: `Cells` 0 and a banner line),
+so a killed run has none: its tables hold the finished cells only and cannot be read as
+complete. The expected cell set of a design (the cells a run should have measured) and a
+coverage certificate are not written by this version.
 
 The regime status says whether the covered correction factor lies in the range validated
 for this library and excitation class (`ElectrostaticTerminal`, `Eigenmode`, `Driven`):
-`IN`, `OUT` (the covered part is corrected by a factor outside what was validated for this
-library and excitation class; its physical cause is not established: it does not say that
-the value is wrong, nor by how much), `NO-RANGE` (no validated range for the `Type` and
-class) or `NO-MODEL` (nothing served: the factor prints `nan`). A regime status is a status,
+`IN` (the factor lies in the validated range; it does not say that the corrected value is
+right), `OUT` (the covered part is corrected by a factor outside what was validated for
+this library and excitation class; its physical cause is not established: it does not say
+that the value is wrong, nor by how much), `NO-RANGE` (the factor is computed but NOT
+VALIDATED in this regime: no validated range for the `Type` and class; every eigenmode and
+driven cell reads `NO-RANGE` today, since the ranges of record are electrostatic only) or
+`NO-MODEL` (nothing served: the factor prints `nan`). A regime status is a status,
 never a correction: no value depends on it. The ranges are data, not code: an optional
 sidecar file named by `"Coverage": {"ValidatedRegime": <path>}` (`Version` 1; `Library`
 with the `Sha256` of the loaded library file, refused when it does not match; `Tolerance`
@@ -2655,9 +2677,18 @@ every cell reads `NO-RANGE`.
 
 The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
 `Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` accepts `"Warn"` only (any
-other value is an error until a policy is ruled), `"MaxUncoveredShare"` (default 0.05) and
-`"BuildTarget"` (default 0.02), both interim placeholders with ``0 \leq`` `BuildTarget`
-``\leq`` `MaxUncoveredShare` ``\leq 1``, and `"ValidatedRegime"`.
+other value is an error until a policy is ruled), `"MaxUncoveredShare"` 0.05 and
+`"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
+validation rules otherwise), and `"ValidatedRegime"`.
+
+The corrected surface energy of a Maxwell run keeps raw the energy of the
+conductor-consistency-excluded patches' claims and, separately, the circulating loop
+remainder of every patch with a remainder, the excluded ones included: where an excluded
+patch has a loop remainder, that part of its raw energy is counted twice and the printed
+corrected energy is overstated by it (a known open item of the corrected bookkeeping; the
+coverage outputs do not change it). The column `loop remainder of excluded patches kept raw
+twice (J)` prints that amount, integrated on its own; the coverage partition counts every
+point once.
 
 A coverage status is about coverage only; the regime status says whether the covered
 part's correction factor lies in the range validated for this library and excitation

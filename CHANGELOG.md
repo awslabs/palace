@@ -20,18 +20,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### New Features
 
   - Added the coverage outputs of the surface-response correction, on every corrected run of
-    both solve families (lane L1, decisions 1634 / 1636; rulings 1641 / 1649 / 1654): the
+    both solve families: the
     closed partition of the raw within-`R` energy `W` by the correction's ownership, one
     quadrature pass per target interface; `surface-response-coverage.csv` (per cell and
     interface `Type`: `W`, the uncovered / missing / method-gap / pending-model /
     no-status-model shares of `W`, the covered correction factor, its validated range, an
-    INTERIM coverage status and a regime status), `surface-response-uncovered-energy-by-key.csv`
+    INTERIM coverage status and a regime status, the untargeted raw energy of the `Type` and
+    the loop-remainder terms), `surface-response-uncovered-energy-by-key.csv`
     (per Missing-class key) and `terminal-C-corrected-coverage.csv`; the coverage columns
     APPENDED to `surface-Q-corrected.csv` (both families) and
     `surface-response-confidence.csv`; `SurfaceResponse.Coverage` in `palace.json` and an
     end-of-run banner per cell that is not `OK`; the config block `Coverage` (`Policy`
-    `"Warn"` only, `MaxUncoveredShare`, `BuildTarget`, an optional `ValidatedRegime`
-    sidecar checked against the library's SHA-256). Every existing column keeps its
+    `"Warn"` only, `MaxUncoveredShare` 0.05 and `BuildTarget` 0.02 fixed interim bars, an
+    optional `ValidatedRegime` sidecar checked against the library's SHA-256). Every existing column keeps its
     position, name and value. The geometry cache is version 25 (the uncovered features' key
     records; an older cache is refused by name).
 
