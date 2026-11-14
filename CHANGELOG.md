@@ -19,6 +19,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `Diagnostics.Directory` and `Diagnostics.ConductorConsistencyRecords` to the
+    surface-response correction (`Solver.Electrostatic.ResponseCorrection` and
+    `Solver.SurfaceResponseCorrection`; decision 1685): with a directory name set, the
+    per-patch tables `surface-response-patches.csv`, `surface-response-patch-energy.csv`,
+    `surface-response-traces.csv` and `surface-response-patch-loops.csv` are written into
+    that sub-directory of `Problem.Output` (the same names and bytes; each AMR
+    `iterationNN/` gets its own), and `"ConductorConsistencyRecords": "Directory"` moves
+    the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` out of
+    `palace.json` into `surface-response-conductor-consistency-records.json` there (the
+    same array text; `palace.json` lacks only that member). Defaults: absent and
+    `"Metadata"`, every output as before.
+
   - Added the magnetic (inductive) defect of finite-thickness metal to the Maxwell
     self-consistent surface-response correction for the 2D translational model families
     (mx-sc-magnetic DESIGN-v2 option (C); USER decision 1221 D2-D8; decisions 1227 / 1229):

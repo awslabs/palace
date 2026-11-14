@@ -29408,6 +29408,23 @@ void SurfaceResponseOperator::CheckReferencedModelMatricesAgainstRoot() const
 }
 #endif
 
+std::filesystem::path
+SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
+                                         const std::string &name) const
+{
+  if (diagnostics_directory.empty())
+  {
+    return post_dir / name;
+  }
+  const auto directory = post_dir / diagnostics_directory;
+  if (std::filesystem::is_symlink(std::filesystem::symlink_status(directory)))
+  {
+    std::filesystem::remove(directory);
+  }
+  std::filesystem::create_directories(directory);
+  return directory / name;
+}
+
 void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
 {
   MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
@@ -31810,6 +31827,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  diagnostics_directory = request->diagnostics_directory;
+  conductor_consistency_records_in_directory =
+      request->conductor_consistency_records ==
+      config::ElectrostaticSolverData::ResponseCorrectionData::
+          ConductorConsistencyRecordsOutput::DIRECTORY;
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -33338,6 +33360,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  diagnostics_directory = request->diagnostics_directory;
+  conductor_consistency_records_in_directory =
+      request->conductor_consistency_records ==
+      config::ElectrostaticSolverData::ResponseCorrectionData::
+          ConductorConsistencyRecordsOutput::DIRECTORY;
   within_r_volume_energy = request->within_r_volume_energy;
   if (conductor_consistency_record_only)
   {

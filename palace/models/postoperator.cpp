@@ -411,7 +411,8 @@ PostOperator<solver_t>::PostOperator(
       {
         // PatchEnergy (decision 922 B): the applied patch table at construction, the
         // electrostatic driver's column form (no solve-time gate rewrites it here).
-        TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
+        TableWithCSVFile patches(
+            surface_response_op->DiagnosticsPath(post_dir, "surface-response-patches.csv"));
         patches.table.insert(Column::Integer("model", "model"));
         for (const char *coordinate : {"x", "y", "z"})
         {
@@ -3140,7 +3141,8 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
   if (!surface_response_patch_energy)
   {
     surface_response_patch_energy =
-        std::make_unique<TableWithCSVFile>(post_dir / "surface-response-patch-energy.csv");
+        std::make_unique<TableWithCSVFile>(surface_response_op->DiagnosticsPath(
+            post_dir, "surface-response-patch-energy.csv"));
     auto &table = surface_response_patch_energy->table;
     table.insert(Column::Integer("source", "source"));
     table.insert(Column::Integer("evaluation", "evaluation"));
@@ -3287,8 +3289,8 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
   {
     if (!surface_response_traces)
     {
-      surface_response_traces =
-          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
+      surface_response_traces = std::make_unique<TableWithCSVFile>(
+          surface_response_op->DiagnosticsPath(post_dir, "surface-response-traces.csv"));
       auto &table = surface_response_traces->table;
       table.insert(Column::Integer("source", "i"));
       table.insert(Column::Integer("patch", "patch"));
@@ -3330,7 +3332,8 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
     if (!surface_response_patch_loops)
     {
       surface_response_patch_loops =
-          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-patch-loops.csv");
+          std::make_unique<TableWithCSVFile>(surface_response_op->DiagnosticsPath(
+              post_dir, "surface-response-patch-loops.csv"));
       auto &table = surface_response_patch_loops->table;
       table.insert(Column::Integer("source", "source"));
       table.insert(Column::Integer("patch", "patch"));
