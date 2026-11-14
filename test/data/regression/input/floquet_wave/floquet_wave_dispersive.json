@@ -1,0 +1,97 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/floquet_wave_dispersive"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/floquet_wave.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1, 2],
+        "Permeability": 1.0,
+        "Permittivity":
+        {
+          // Lossless: Re ε ≈ 1.22 over the sweep, the port medium of both ports
+          "HighFrequency": 1.0,
+          "Terms":
+          [
+            {
+              "Type": "Lorentz",
+              "DeltaPermittivity": 0.2,
+              "ResonanceFrequency": 30.0,  // GHz
+              "DampingFrequency": 0.0      // GHz
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.1, 0.0, 0.0],  // Oblique incidence in x
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [1],
+          "ReceiverAttributes": [2]
+        },
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        }
+      ]
+    },
+    "PEC":
+    {
+      "Attributes": [7]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Excitation": 1,
+        "IncidentPolarization": "TE",
+        "MaxOrder": 1
+      }
+    ],
+    "WavePort":
+    [
+      {
+        "Index": 2,
+        "Attributes": [6],
+        "Excitation": 2,
+        "Mode": 1,
+        "Offset": 0.0
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "MinFreq": 8.0,
+      "MaxFreq": 11.0,
+      "FreqStep": 1.5
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

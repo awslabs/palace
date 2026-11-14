@@ -1,0 +1,79 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_absorbing"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity":
+        {
+          "HighFrequency": 2.08,
+          "Terms":
+          [
+            {
+              // Lossless: Re ε = 2.08 + 1/(1 − (f/f₀)²) is about 3.09 over the sweep, more
+              // than the margin of the port mode shift above the high-frequency value
+              "Type": "Lorentz",
+              "DeltaPermittivity": 1.0,
+              "ResonanceFrequency": 30.0,  // GHz
+              "DampingFrequency": 0.0      // GHz
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "Absorbing":
+    {
+      "Attributes": [3],
+      "Order": 2
+    },
+    "PEC":
+    {
+      "Attributes": [4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 3.0,  // GHz
+      "MaxFreq": 3.8,  // GHz
+      "FreqStep": 0.4,  // GHz
+      "SaveStep": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}
