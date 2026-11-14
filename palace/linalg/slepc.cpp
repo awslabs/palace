@@ -895,6 +895,16 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
 int SlepcPEPLinearSolver::Solve()
 {
   rational.CheckShift(sinvert, sigma);
+  if (!rational.Empty())
+  {
+    PetscInt N;
+    PalacePetscCall(MatGetSize(A0, &N, nullptr));
+    const auto n1 = linalg::GlobalSize(GetComm(), x1);
+    Mpi::Print(
+        GetComm(),
+        " Linearized problem with {:d} auxiliary blocks: size {:d} = 2 × {:d} + {:d}\n",
+        xa.size(), N, n1, N - 2 * n1);
+  }
   return SlepcEPSSolverBase::Solve();
 }
 

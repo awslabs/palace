@@ -793,6 +793,13 @@ int ArpackPEPSolver::Solve()
   {
     ncv = std::min(mfem::internal::to_int(NL), nl_min);
   }
+  if (!rational.Empty())
+  {
+    Mpi::Print(
+        comm,
+        " Linearized problem with {:d} auxiliary blocks: size {:d} = 2 × {:d} + {:d}\n",
+        xa.size(), NL, linalg::GlobalSize(comm, z1), NL - 2 * linalg::GlobalSize(comm, z1));
+  }
   if (arpack_it <= 0)
   {
     arpack_it = std::max(300, mfem::internal::to_int(2 * NL / ncv));
