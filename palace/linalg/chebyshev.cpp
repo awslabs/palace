@@ -3,7 +3,11 @@
 
 #include "chebyshev.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <utility>
+#include <vector>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -89,6 +93,110 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
   return linalg::SpectralNorm(comm, DinvA, false, &x0);
+}
+
+// Smallest and largest eigenvalues of the symmetric tridiagonal matrix with diagonal a and
+// off-diagonal b, by bisection on Sturm sequence counts.
+std::pair<double, double> TridiagonalExtremeEigenvalues(const std::vector<double> &a,
+                                                        const std::vector<double> &b)
+{
+  const int n = static_cast<int>(a.size());
+  double lo = a[0], hi = a[0], bmax = 0.0;
+  for (int i = 0; i < n; i++)
+  {
+    const double bl = (i > 0) ? std::abs(b[i - 1]) : 0.0;
+    const double br = (i < n - 1) ? std::abs(b[i]) : 0.0;
+    lo = std::min(lo, a[i] - bl - br);
+    hi = std::max(hi, a[i] + bl + br);
+    bmax = std::max(bmax, br);
+  }
+  const double pivmin = std::numeric_limits<double>::min() * std::max(1.0, bmax * bmax);
+  const double tol = 1.0e-8 * std::max(std::abs(lo), std::abs(hi));
+  auto Bisect = [&](int k)
+  {
+    // Smallest x with at least k eigenvalues less than x (the k-th smallest eigenvalue).
+    double l = lo, h = hi;
+    for (int it = 0; it < 200 && h - l > tol; it++)
+    {
+      const double x = 0.5 * (l + h);
+      int count = 0;
+      double q = 1.0;
+      for (int i = 0; i < n; i++)
+      {
+        q = a[i] - x - ((i > 0) ? b[i - 1] * b[i - 1] / q : 0.0);
+        if (std::abs(q) < pivmin)
+        {
+          q = -pivmin;
+        }
+        count += (q < 0.0);
+      }
+      (count >= k ? h : l) = x;
+    }
+    return 0.5 * (l + h);
+  };
+  return {Bisect(1), Bisect(n)};
+}
+
+// Estimate the indefiniteness ratio ρ = -λₘᵢₙ(S) / λₘₐₓ(S) of S = |D|⁻¹ᐟ² A |D|⁻¹ᐟ² for a
+// symmetric operator A, given |D|⁻¹, with at most max_it Lanczos iterations. The Ritz
+// values lie inside the spectrum of S, so the estimate grows with the iterations, which
+// stop once it exceeds rho_max.
+double EstimateIndefiniteness(MPI_Comm comm, const Operator &A, const Vector &dinv_abs,
+                              double rho_max, int max_it)
+{
+  Vector dinv_sqrt(dinv_abs);
+  linalg::Sqrt(dinv_sqrt);
+  DiagonalOperator DinvSqrt(dinv_sqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
+  Vector v(A.Height()), v0(A.Height()), w(A.Height());
+  v.UseDevice(true);
+  v0.UseDevice(true);
+  w.UseDevice(true);
+  linalg::SetRandom(comm, v);
+  linalg::Normalize(comm, v);
+  std::vector<double> alpha, beta;
+  double rho = 0.0;
+  for (int it = 0; it < max_it; it++)
+  {
+    S.Mult(v, w);
+    alpha.push_back(linalg::Dot(comm, w, v));
+    linalg::AXPBYPCZ(-alpha.back(), v, (it > 0) ? -beta.back() : 0.0, v0, 1.0, w);
+    const auto [lambda_min, lambda_max] = TridiagonalExtremeEigenvalues(alpha, beta);
+    rho = (lambda_max > 0.0) ? -lambda_min / lambda_max
+                             : std::numeric_limits<double>::infinity();
+    const double norm = linalg::Norml2(comm, w);
+    if (!(rho <= rho_max) || norm <= 1.0e-12 * std::abs(lambda_max))
+    {
+      break;
+    }
+    beta.push_back(norm);
+    v0 = v;
+    v.Set(1.0 / norm, w);
+  }
+  return rho;
+}
+
+double GetIndefiniteness(MPI_Comm comm, const Operator &A, const Vector &dinv,
+                         double rho_max, int max_it)
+{
+  Vector dinv_abs(dinv);
+  dinv_abs.Abs();
+  return EstimateIndefiniteness(comm, A, dinv_abs, rho_max, max_it);
+}
+
+double GetIndefiniteness(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                         double rho_max, int max_it)
+{
+  // Use the Hermitian part of A (the real part for complex symmetric A), scaled with the
+  // magnitude of the complex diagonal.
+  if (!A.Real())
+  {
+    return std::numeric_limits<double>::infinity();
+  }
+  ComplexVector dinv_abs(dinv);
+  dinv_abs.Abs();
+  return EstimateIndefiniteness(comm, *A.Real(), dinv_abs.Real(), rho_max, max_it);
 }
 
 template <bool Transpose = false>
@@ -223,8 +331,9 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
 
 template <OperatorType OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
-                                               double sf_max)
-  : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
+                                               double sf_max, int max_poly_order)
+  : Solver<OperType>(), comm(comm), pc_it(smooth_it), min_order(poly_order),
+    max_order(std::max(poly_order, max_poly_order)), order(poly_order), A(nullptr),
     lambda_max(0.0), sf_max(sf_max)
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
@@ -249,8 +358,26 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
+  // Use the maximum order only when the operator is nearly positive semi-definite: a
+  // smoothing step of order k amplifies the error at the most negative eigenvalue -ρ λₘₐₓ
+  // of D⁻¹ A by about cosh(k √(2ρ)).
+  if (max_order > min_order)
+  {
+    constexpr double max_rho = 1.0e-2;
+    constexpr int max_it = 30;
+    order = (GetIndefiniteness(comm, op, dinv, max_rho, max_it) <= max_rho) ? max_order
+                                                                            : min_order;
+  }
+
   this->height = op.Height();
   this->width = op.Width();
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother<OperType>::SetOrder(int poly_order)
+{
+  MFEM_VERIFY(poly_order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+  order = poly_order;
 }
 
 template <OperatorType OperType>
