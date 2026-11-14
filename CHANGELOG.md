@@ -59,7 +59,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     order 4 if order 8 is predicted to need more than 25% more linear solver iterations, as
     with Floquet periodic and absorbing boundaries, or if order 4 already reduces the
     residual by more than a factor 5 per iteration, as for small problems. SchemaVer 4-2-4.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1201](https://github.com/awslabs/palace/pull/1201).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
