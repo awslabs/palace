@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <limits>
+#include <type_traits>
 #include <mfem.hpp>
+#include "linalg/orthog.hpp"
 
 namespace palace
 {
@@ -25,19 +28,18 @@ void ProbeGmres<VecType>::Step(const std::function<void(const VecType &, VecType
 {
   MFEM_VERIFY(its + 1 < static_cast<int>(V.size()) && !Stopped(),
               "No more iterations for the GMRES probe run!");
+  using ScalarType = std::conditional_t<std::is_same_v<VecType, ComplexVector>,
+                                        std::complex<double>, double>;
   const int k = its;
   auto &w = V[k + 1];
   w.SetSize(V[k].Size());
   w.UseDevice(true);
   apply(V[k], w);
-  for (int pass = 0; pass < 2; pass++)
+  std::vector<ScalarType> h(k + 1);
+  linalg::OrthogonalizeColumnCGS(comm, V, w, h.data(), k + 1, true);
+  for (int i = 0; i <= k; i++)
   {
-    for (int i = 0; i <= k; i++)
-    {
-      const auto h = linalg::Dot(comm, w, V[i]);
-      H(i, k) += h;
-      linalg::AXPY(-h, V[i], w);
-    }
+    H(i, k) = h[i];
   }
   const double norm = linalg::Norml2(comm, w);
   H(k + 1, k) = norm;
