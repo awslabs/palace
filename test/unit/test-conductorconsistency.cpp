@@ -1373,6 +1373,125 @@ TEST_CASE_METHOD(
 #endif
 }
 
+// Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed with the FINAL patch
+// weights, so the matrix coverage re-measures a source whose own measurement came BEFORE a
+// later conductor-consistency exclusion. The islands fixture with the box walls as terminal
+// 1 (both islands at 0 V in source 1: the INCONSISTENT coupon's conductor claim is not
+// tested there) and the islands as terminals 2 and 3: the coupon is excluded at source 2.
+// Source 1's own coverage row keeps its measurement (the coupon served); its matrix row is
+// re-measured with the final portions (the coupon kept raw: a larger uncovered share);
+// sources 2 and 3 were measured with the final portions already.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic corrected-matrix coverage is re-measured after a later "
+                 "conductor-consistency exclusion",
+                 "[electrostaticsolver][surfaceresponseoperator][conductorconsistency][3d]"
+                 "[coverage][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "coverage-matrix-islands.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto inconsistent = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
+  json config = HighOrderSpatialConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Boundaries"].erase("Ground");
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {1, 2, 3, 4, 5, 6}}},
+                                      {{"Index", 2}, {"Attributes", {9}}},
+                                      {{"Index", 3}, {"Attributes", {10}}}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path output_dir = temp.temp_dir / "coverage-matrix";
+  {
+    test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
+    config["Problem"]["Output"] = output_dir.string();
+    test::RunElectrostatic(config);
+  }
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  // The premise: nothing kept as ConductorConsistency at source 1, the exclusion at 2.
+  auto ReadTrimmedTextCsv = [](const fs::path &path) { return test::ReadTextCsv(path); };
+  const test::TextCsv cc =
+      ReadTrimmedTextCsv(output_dir / "surface-response-conductor-consistency-energy.csv");
+  std::map<int, double> cc_energy;
+  for (const auto &row : cc.rows)
+  {
+    if (std::stoi(row[cc.Column("evaluation")]) == 0 && row[cc.Column("type")] == "Total")
+    {
+      cc_energy[std::stoi(row[cc.Column("source")])] =
+          std::stod(row[cc.Column("conductorconsistency raw energy[4] (J)")]);
+    }
+  }
+  REQUIRE(cc_energy.size() == 3);
+  REQUIRE(cc_energy.at(1) == 0.0);
+  REQUIRE(cc_energy.at(2) > 0.0);
+  // The per-source rows (their own measurement) and the matrix rows (the final one).
+  const test::TextCsv coverage =
+      ReadTrimmedTextCsv(output_dir / "surface-response-coverage.csv");
+  std::map<int, double> own_share;
+  for (const auto &row : coverage.rows)
+  {
+    const int source = std::stoi(row[coverage.Column("i")]);
+    const double share = std::stod(row[coverage.Column("uncovered raw share of W")]);
+    own_share[source] =
+        own_share.count(source) ? std::max(own_share[source], share) : share;
+  }
+  REQUIRE(own_share.size() == 3);
+  const test::TextCsv matrix =
+      ReadTrimmedTextCsv(output_dir / "terminal-C-corrected-coverage.csv");
+  REQUIRE(matrix.rows.size() == 3);
+  std::map<int, std::string> final_status;
+  for (const auto &row : matrix.rows)
+  {
+    const int source = std::stoi(row[matrix.Column("i")]);
+    INFO("source " << source);
+    const double final_share =
+        std::stod(row[matrix.Column("source final worst uncovered raw share of W")]);
+    final_status[source] = row[matrix.Column("source final worst coverage status")];
+    if (source == 1)
+    {
+      CHECK(std::stoi(row[matrix.Column("source re-measured")]) == 1);
+      CHECK(final_share > own_share.at(1));
+    }
+    else
+    {
+      CHECK(std::stoi(row[matrix.Column("source re-measured")]) == 0);
+      CHECK_THAT(final_share, WithinRel(own_share.at(source), 1.0e-12));
+    }
+  }
+  // Entry (i, j) = the worse of the two sources' final statuses.
+  const std::vector<std::string> order = {
+      "OK", "LOW", "PARTIAL", "NOT-ACHIEVABLE", "NO-ENERGY", "NOT-MEASURED"};
+  auto Rank = [&](const std::string &status)
+  { return std::find(order.begin(), order.end(), status) - order.begin(); };
+  for (const auto &row : matrix.rows)
+  {
+    const int i = std::stoi(row[matrix.Column("i")]);
+    for (int j = 1; j <= 3; j++)
+    {
+      const std::string &entry =
+          row[matrix.Column(fmt::format("coverage status[i][{}]", j))];
+      CHECK(Rank(entry) == std::max(Rank(final_status.at(i)), Rank(final_status.at(j))));
+    }
+  }
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator conductor-consistency placement without readable "
                  "trace data",

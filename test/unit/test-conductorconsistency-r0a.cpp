@@ -2671,6 +2671,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     compared++;
   }
   CHECK(compared > 0);
+  // Lane L1 (ruling 1641 (b)): the coverage tables are among them: U and every share are
+  // the same bytes with the export on and off (the Excluded classes only label points of
+  // the unserved remainder), on a case WITH excluded energy (the NonManifold rim below).
+  CHECK(fs::exists(off_dir / "surface-response-coverage.csv"));
+  CHECK(fs::exists(off_dir / "surface-response-uncovered-energy-by-key.csv"));
   // The table: the header of record, one row per class x type for the single source; the
   // NonManifold class (the plane's rim on the grounded walls) reads > 0 against the
   // classified tree (decision 1076); every energy non-negative; P == S: the classes and

@@ -1662,17 +1662,34 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                     measurement);
   };
   auto WriteMatrixCoverage = [&](const std::map<int, mfem::Array<int>> &terminal_sources,
-                                 const std::vector<CoverageMeasurement> &final_coverage)
+                                 const std::vector<CoverageMeasurement> &final_coverage,
+                                 const std::vector<bool> &remeasured)
   {
     // terminal-C-corrected-coverage.csv: the matrix shape of terminal-C-corrected.csv
     // (rows i, a column per j); entry (i, j) = the worse coverage status over the Types of
-    // sources i and j (CoverageStatusRank). A text table, root only.
-    MFEM_VERIFY(final_coverage.size() == terminal_sources.size(),
+    // sources i and j (CoverageStatusRank) on their FINAL measurement; then, per row,
+    // source i's final measurement (its worst status and largest uncovered share over
+    // Types, and whether a conductor-consistency exclusion after it made it differ from its
+    // own row of surface-response-coverage.csv). A text table, root only.
+    MFEM_VERIFY(final_coverage.size() == terminal_sources.size() &&
+                    remeasured.size() == terminal_sources.size(),
                 "The corrected-matrix coverage needs one measurement per terminal source!");
     auto Worst = [](const CoverageMeasurement &measurement)
     {
       const auto *cell = measurement.WorstCoverageCell();
       return cell ? cell->status : CoverageStatus::NOT_MEASURED;
+    };
+    auto WorstShare = [](const CoverageMeasurement &measurement)
+    {
+      double worst = std::numeric_limits<double>::quiet_NaN();
+      for (const auto &cell : measurement.cells)
+      {
+        if (std::isfinite(cell.uncovered_share) && !(cell.uncovered_share <= worst))
+        {
+          worst = cell.uncovered_share;
+        }
+      }
+      return std::isnan(worst) ? std::string("nan") : fmt::format("{:+.12e}", worst);
     };
     std::ofstream output(post_dir / "terminal-C-corrected-coverage.csv");
     MFEM_VERIFY(output, "Unable to open terminal-C-corrected-coverage.csv for writing!");
@@ -1682,7 +1699,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       (void)data2;
       output << fmt::format(",coverage status[i][{}]", idx2);
     }
-    output << '\n';
+    output << ",source final worst coverage status,source final worst uncovered raw share "
+              "of W,source re-measured\n";
     std::size_t i = 0;
     for (const auto &[idx, data] : terminal_sources)
     {
@@ -1695,7 +1713,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                << CoverageStatusName(CoverageStatusRank(a) >= CoverageStatusRank(b) ? a
                                                                                     : b);
       }
-      output << '\n';
+      output << ',' << CoverageStatusName(Worst(final_coverage[i])) << ','
+             << WorstShare(final_coverage[i]) << ',' << (remeasured[i] ? 1 : 0) << '\n';
       i++;
     }
   };
@@ -2277,6 +2296,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const std::size_t final_count =
           response_correction->GetConductorConsistencyPortions().size();
       std::vector<CoverageMeasurement> final_coverage;
+      std::vector<bool> remeasured;
       std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
           final_conductor_consistency;
       for (const auto &portion : response_correction->GetConductorConsistencyPortions())
@@ -2291,6 +2311,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           if (root)
           {
             final_coverage.push_back(coverage_measurements.at(i).second);
+            remeasured.push_back(false);
           }
           continue;
         }
@@ -2332,11 +2353,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           }
           final_coverage.push_back(
               own.measured ? MeasureSourceCoverage(partition, raw, &fabricated) : own);
+          remeasured.push_back(own.measured);
         }
       }
       if (root && final_coverage.size() == laplace_op.GetSources().size())
       {
-        WriteMatrixCoverage(laplace_op.GetSources(), final_coverage);
+        WriteMatrixCoverage(laplace_op.GetSources(), final_coverage, remeasured);
       }
     }
   }
