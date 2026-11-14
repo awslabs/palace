@@ -73,7 +73,6 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"MGUseMesh", linear.mg_use_mesh},
                 {"MGCycleIts", linear.mg_cycle_it},
                 {"MGSmoothIts", linear.mg_smooth_it},
-                {"MGSmoothOrder", linear.mg_smooth_order},
                 {"MGSmoothEigScaleMax", linear.mg_smooth_sf_max},
                 {"MGSmoothEigScaleMin", linear.mg_smooth_sf_min},
                 {"MGSmoothChebyshev4th", linear.mg_smooth_cheby_4th},
@@ -101,6 +100,11 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});
+  if (linear.mg_smooth_order_max == linear.mg_smooth_order)
+  {
+    // Otherwise, the order is chosen at runtime and stays unspecified.
+    ApplyEntries(j_linear, {{"MGSmoothOrder", linear.mg_smooth_order}});
+  }
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)

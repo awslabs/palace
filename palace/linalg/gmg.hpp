@@ -53,6 +53,17 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // The Chebyshev smoothers may raise their order at setup (see ChebyshevSmoother). A short
+  // GMRES probe with the whole cycle (see CompareWithGmresProbe) then keeps the base orders
+  // if the raised ones are predicted to need more than 25% more iterations (an inaccurate
+  // coarse-grid correction, for example the real-valued coarse solve of a complex
+  // operator), or if the base orders already reduce the residual by more than a factor 5
+  // per iteration (too few iterations to save). The decision is reused for the later
+  // operators whose levels raise the same orders.
+  std::vector<int> probe_orders;
+  bool probe_keep = true, print_probe = true;
+  void CheckSmootherOrders();
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -61,7 +72,8 @@ public:
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
-                           double cheby_sf_min, bool cheby_4th_kind);
+                           double cheby_sf_min, bool cheby_4th_kind,
+                           int cheby_max_order = 0);
   GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            const std::vector<const Operator *> &P,
@@ -70,7 +82,8 @@ public:
           comm, std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
           iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
-          iodata.solver.linear.mg_smooth_cheby_4th)
+          iodata.solver.linear.mg_smooth_cheby_4th,
+          iodata.solver.linear.mg_smooth_order_max)
   {
   }
 

@@ -1150,6 +1150,10 @@ public:
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = -1;
 
+  // Maximum order of polynomial smoothing for geometric multigrid. If larger than
+  // mg_smooth_order, it is used on levels whose operator is nearly positive semi-definite.
+  int mg_smooth_order_max = -1;
+
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
   // geometric multigrid.
   double mg_smooth_sf_max = 1.0;

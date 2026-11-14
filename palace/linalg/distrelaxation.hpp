@@ -52,7 +52,7 @@ private:
 public:
   DistRelaxationSmoother(MPI_Comm comm, const Operator &G, int smooth_it,
                          int cheby_smooth_it, int cheby_order, double cheby_sf_max,
-                         double cheby_sf_min, bool cheby_4th_kind);
+                         double cheby_sf_min, bool cheby_4th_kind, int cheby_max_order = 0);
 
   void SetOperator(const OperType &op) override
   {
@@ -61,6 +61,12 @@ public:
   }
 
   void SetOperators(const OperType &op, const OperType &op_G);
+
+  // Primary space smoother.
+  const Solver<OperType> *GetSmoother() const { return B.get(); }
+
+  // Set the order of the Chebyshev smoothers of the primary and auxiliary spaces.
+  void SetSmootherOrder(int order);
 
   void Mult(const VecType &x, VecType &y) const override
   {
