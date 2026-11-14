@@ -271,4 +271,32 @@ TEST_CASE("Coverage validated-regime file", "[SurfaceResponseCoverage][Serial]")
   fs::remove_all(dir);
 }
 
+TEST_CASE("Coverage model qualification from the library records",
+          "[SurfaceResponseCoverage][Serial]")
+{
+  // Note 1642: the library of record carries QualificationStatus / LibraryQualified only
+  // on SpatialEdgeCluster records; LibraryQualified false with no status is PENDING.
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() / "palace-test-coverage-qualification";
+  fs::create_directories(dir);
+  const auto library = dir / "library.json";
+  const nlohmann::json data = {{"Models",
+                                {{{"Name", "qualified"},
+                                  {"QualificationStatus", "Qualified"},
+                                  {"LibraryQualified", true}},
+                                 {{"Name", "pending"},
+                                  {"QualificationStatus", "PendingQualification"},
+                                  {"LibraryQualified", false}},
+                                 {{"Name", "unqualified"}, {"LibraryQualified", false}},
+                                 {{"Name", "plain"}, {"Topology", "ConvexCorner"}}}}};
+  std::ofstream(library) << data.dump();
+  const auto qualifications = ReadCoverageModelQualifications(library.string());
+  REQUIRE(qualifications.size() == 4);
+  CHECK(qualifications.at("qualified") == CoverageModelQualification::QUALIFIED);
+  CHECK(qualifications.at("pending") == CoverageModelQualification::PENDING);
+  CHECK(qualifications.at("unqualified") == CoverageModelQualification::PENDING);
+  CHECK(qualifications.at("plain") == CoverageModelQualification::NO_STATUS);
+  fs::remove_all(dir);
+}
+
 }  // namespace palace

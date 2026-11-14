@@ -31723,6 +31723,29 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   return placement;
 }
 
+void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &request,
+                                                MPI_Comm comm)
+{
+  // Lane L1 (decision 1634 (4)): the interim bars; the validated-regime sidecar, checked
+  // against the library file at setup on every rank (a mismatch is a config error before
+  // the solve); the models' qualification read on the root only (the coverage writers'
+  // rank; the library's load is unchanged).
+  coverage_thresholds.build_target = request.coverage.build_target;
+  coverage_thresholds.max_uncovered_share = request.coverage.max_uncovered_share;
+  if (!request.coverage.validated_regime.empty())
+  {
+    MFEM_VERIFY(request.IsAutomatic(),
+                "Response-correction \"Coverage.ValidatedRegime\" requires a Library!");
+    coverage_validated_regime =
+        ReadCoverageValidatedRegime(request.coverage.validated_regime, request.library);
+  }
+  coverage_model_qualifications.clear();
+  if (request.IsAutomatic() && Mpi::Root(comm))
+  {
+    coverage_model_qualifications = ReadCoverageModelQualifications(request.library);
+  }
+}
+
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
     std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
@@ -31860,6 +31883,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  ConfigureCoverage(*request, fespace.GetComm());
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -33389,6 +33413,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
   within_r_volume_energy = request->within_r_volume_energy;
+  ConfigureCoverage(*request, fespace.GetComm());
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;

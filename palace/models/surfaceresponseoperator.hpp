@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
 #include "utils/configfile.hpp"
@@ -978,6 +979,15 @@ private:
   ExcludedPatchPortions unprobed_model_portions;
   bool within_r_volume_energy = false;  // COL-3 (R-MAG-15), from the request
   bool exclusion_energy = false;
+  // Lane L1 (decision 1634 (4); decision 1636 (1)): the coverage outputs' interim bars, the
+  // validated-regime sidecar (empty: every cell NO-RANGE) and, on the root (the coverage
+  // writers' rank), the library models' qualification by Name (item (5)).
+  CoverageThresholds coverage_thresholds;
+  CoverageValidatedRegime coverage_validated_regime;
+  std::map<std::string, CoverageModelQualification> coverage_model_qualifications;
+  void
+  ConfigureCoverage(const config::ElectrostaticSolverData::ResponseCorrectionData &request,
+                    MPI_Comm comm);
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
   // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
@@ -1729,6 +1739,39 @@ public:
   GetUncoveredPortions() const
   {
     return uncovered_portions;
+  }
+  // Lane L1 (decision 1634 (4)): the coverage outputs' inputs (ConfigureCoverage).
+  const CoverageThresholds &GetCoverageThresholds() const { return coverage_thresholds; }
+  const CoverageValidatedRegime &GetCoverageValidatedRegime() const
+  {
+    return coverage_validated_regime;
+  }
+  // Runtime model index -> qualification (root only: empty elsewhere); a model the library
+  // read does not name counts NO_STATUS.
+  std::map<int, CoverageModelQualification> GetCoverageModelQualifications() const
+  {
+    std::map<int, CoverageModelQualification> qualifications;
+    for (const auto &model : models)
+    {
+      const auto found = coverage_model_qualifications.find(model.name);
+      qualifications[model.idx] = found != coverage_model_qualifications.end()
+                                      ? found->second
+                                      : CoverageModelQualification::NO_STATUS;
+    }
+    return coverage_model_qualifications.empty()
+               ? std::map<int, CoverageModelQualification>{}
+               : qualifications;
+  }
+  // The uncovered features' key records by feature id, classified (ruling 1649 Q2).
+  std::map<int, CoverageKeyRecord> GetCoverageKeyRecords() const
+  {
+    std::map<int, CoverageKeyRecord> records;
+    for (const auto &key : uncovered_keys)
+    {
+      records[key.feature] = ClassifyCoverageKey(key.hash, key.matched,
+                                                 key.placement_rejection, key.unboxable);
+    }
+    return records;
   }
   // Lane L1 (ruling 1649 Q1): the key records of the uncovered features.
   const std::vector<

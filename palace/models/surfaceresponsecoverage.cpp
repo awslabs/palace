@@ -225,6 +225,40 @@ CoverageValidatedRegime ReadCoverageValidatedRegime(const std::string &path,
   return regime;
 }
 
+std::map<std::string, CoverageModelQualification>
+ReadCoverageModelQualifications(const std::string &library_path)
+{
+  std::ifstream input(library_path);
+  MFEM_VERIFY(input,
+              "Unable to open the surface-response library \"" << library_path << "\"!");
+  nlohmann::json data;
+  input >> data;
+  std::map<std::string, CoverageModelQualification> qualifications;
+  for (const auto &entry : data.value("Models", nlohmann::json::array()))
+  {
+    if (!entry.is_object() || !entry.contains("Name") || !entry.at("Name").is_string())
+    {
+      continue;  // the load refuses such a record by name
+    }
+    auto qualification = CoverageModelQualification::NO_STATUS;
+    const auto status = entry.find("QualificationStatus");
+    const auto library_qualified = entry.find("LibraryQualified");
+    if (status != entry.end() && status->is_string())
+    {
+      qualification = status->get<std::string>() == "Qualified"
+                          ? CoverageModelQualification::QUALIFIED
+                          : CoverageModelQualification::PENDING;
+    }
+    else if (library_qualified != entry.end() && library_qualified->is_boolean() &&
+             !library_qualified->get<bool>())
+    {
+      qualification = CoverageModelQualification::PENDING;
+    }
+    qualifications[entry.at("Name").get<std::string>()] = qualification;
+  }
+  return qualifications;
+}
+
 CoverageKeyRecord ClassifyCoverageKey(const std::string &hash, bool matched,
                                       const std::string &placement_rejection,
                                       bool unboxable)

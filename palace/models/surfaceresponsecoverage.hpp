@@ -114,6 +114,14 @@ struct CoverageValidatedRegime
 CoverageValidatedRegime ReadCoverageValidatedRegime(const std::string &path,
                                                     const std::string &library_path);
 
+// The qualification of every model of a library file by Name, read from the model records
+// top-level fields (item (5); note 1642): QualificationStatus "Qualified" = QUALIFIED,
+// another QualificationStatus = PENDING (admitted by AllowPendingModels at load), none with
+// LibraryQualified false = PENDING, none otherwise = NO_STATUS. A read only: the library's
+// load (ReadProcessLibrary) is unchanged.
+std::map<std::string, CoverageModelQualification>
+ReadCoverageModelQualifications(const std::string &library_path);
+
 // The classification of an uncovered feature's key record (ruling 1649 Q2).
 struct CoverageKeyRecord
 {
