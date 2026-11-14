@@ -1,0 +1,46 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 900 400' width='900' height='400' font-family='"STIX Two Text", "Latin Modern Roman", "Times New Roman", Times, serif' role='img' aria-labelledby='title desc'>
+<title id='title'>Silicon carbide half-space between Floquet ports</title>
+<desc id='desc'>Section of the periodic unit cell along the normal of the ports: Floquet port 1 in vacuum half a micrometer above the surface of the silicon carbide, and Floquet port 2 a quarter of a micrometer below it, inside the silicon carbide, which continues beyond port 2 as a half-space. A plane wave is incident on the surface at normal incidence, and is reflected to port 1 and transmitted to port 2.</desc>
+<defs>
+<marker id='head-ink' viewBox='0 0 10 10' refX='8.5' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto'><path d='M0,0.5 L10,5 L0,9.5 L2.8,5 z' fill='#1a1a1a'/></marker>
+<marker id='head-red' viewBox='0 0 10 10' refX='8.5' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto'><path d='M0,0.5 L10,5 L0,9.5 L2.8,5 z' fill='#c0392b'/></marker>
+<marker id='dim-end' viewBox='0 0 10 10' refX='10' refY='5' markerWidth='8' markerHeight='8' orient='auto'><path d='M0,1.8 L10,5 L0,8.2 z' fill='#1a1a1a'/></marker>
+<marker id='dim-start' viewBox='0 0 10 10' refX='0' refY='5' markerWidth='8' markerHeight='8' orient='auto'><path d='M10,1.8 L0,5 L10,8.2 z' fill='#1a1a1a'/></marker>
+<pattern id='sic' width='7' height='7' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'><rect width='7' height='7' fill='#f3ece2'/><line x1='0' y1='0' x2='0' y2='7' stroke='#8c7b67' stroke-width='1.0'/></pattern>
+<linearGradient id='fade' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='white' stop-opacity='0'/><stop offset='1' stop-color='white' stop-opacity='1'/></linearGradient>
+</defs>
+<rect width='900' height='400' fill='white'/>
+<rect x='440.0' y='80.0' width='320.0' height='220.0' fill='url(#sic)' stroke='none' stroke-width='1.4' />
+<rect x='630.0' y='79.0' width='131.0' height='222.0' fill='url(#fade)' stroke='none' stroke-width='1.4' />
+<line x1='440.0' y1='80.0' x2='440.0' y2='300.0' stroke='#1a1a1a' stroke-width='1.6' />
+<line x1='140.0' y1='80.0' x2='590.0' y2='80.0' stroke='#666666' stroke-width='1.0' stroke-dasharray='12 4 3 4'/>
+<line x1='140.0' y1='300.0' x2='590.0' y2='300.0' stroke='#666666' stroke-width='1.0' stroke-dasharray='12 4 3 4'/>
+<line x1='140.0' y1='62.0' x2='140.0' y2='318.0' stroke='#1a1a1a' stroke-width='2.6' />
+<text x='140.0' y='52.0' font-size='17' text-anchor='middle' fill='#1a1a1a' >Floquet port 1</text>
+<line x1='590.0' y1='62.0' x2='590.0' y2='318.0' stroke='#1a1a1a' stroke-width='2.6' />
+<text x='590.0' y='52.0' font-size='17' text-anchor='middle' fill='#1a1a1a' >Floquet port 2</text>
+<line x1='170.0' y1='146.0' x2='410.0' y2='146.0' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<text x='290.0' y='134.0' font-size='16' text-anchor='middle' fill='#c0392b' >incident</text>
+<line x1='410.0' y1='234.0' x2='170.0' y2='234.0' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<text x='290.0' y='262.0' font-size='17' text-anchor='middle' fill='#c0392b' ><tspan font-style='italic'>S</tspan><tspan dy='5' font-size='0.7em'>11</tspan><tspan dy='-5' dx='4'>= <tspan font-style='italic'>r e</tspan></tspan><tspan dy='-8' font-size='0.7em'>−2<tspan font-style='italic'>ik</tspan></tspan><tspan dy='3' font-size='0.5em'>0</tspan><tspan dy='-3' font-size='0.7em'><tspan font-style='italic'>d</tspan></tspan><tspan dy='3' font-size='0.5em'>1</tspan></text>
+<line x1='458.0' y1='190.0' x2='572.0' y2='190.0' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<text x='515.0' y='178.0' font-size='17' text-anchor='middle' fill='#c0392b' ><tspan font-style='italic'>S</tspan><tspan dy='5' font-size='0.7em'>21</tspan></text>
+<line x1='608.0' y1='190.0' x2='700.0' y2='190.0' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)' opacity='0.35'/>
+<text x='290.0' y='106.0' font-size='16' text-anchor='middle' fill='#666666' >vacuum, <tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>r</tspan><tspan dy='-5' dx='4'>= 1</tspan></text>
+<text x='604.0' y='106.0' font-size='16' text-anchor='start' fill='#666666' >6H-SiC, <tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>r</tspan><tspan dy='-5'>(<tspan font-style='italic'>iω</tspan>)</tspan></text>
+<text x='604.0' y='286.0' font-size='16' text-anchor='start' fill='#666666' >half-space</text>
+<line x1='140.0' y1='322.0' x2='140.0' y2='356.0' stroke='#1a1a1a' stroke-width='0.8' />
+<line x1='440.0' y1='322.0' x2='440.0' y2='356.0' stroke='#1a1a1a' stroke-width='0.8' />
+<line x1='590.0' y1='322.0' x2='590.0' y2='356.0' stroke='#1a1a1a' stroke-width='0.8' />
+<line x1='141.0' y1='348.0' x2='439.0' y2='348.0' stroke='#1a1a1a' stroke-width='1.0' marker-start='url(#dim-start)' marker-end='url(#dim-end)'/>
+<text x='290.0' y='372.0' font-size='17' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>d</tspan><tspan dy='5' font-size='0.7em'>1</tspan><tspan dy='-5' dx='4'>= 0.5 μm</tspan></text>
+<line x1='441.0' y1='348.0' x2='589.0' y2='348.0' stroke='#1a1a1a' stroke-width='1.0' marker-start='url(#dim-start)' marker-end='url(#dim-end)'/>
+<text x='515.0' y='372.0' font-size='17' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>d</tspan><tspan dy='5' font-size='0.7em'>2</tspan><tspan dy='-5' dx='4'>= 0.25 μm</tspan></text>
+<line x1='106.0' y1='81.0' x2='106.0' y2='299.0' stroke='#1a1a1a' stroke-width='1.0' marker-start='url(#dim-start)' marker-end='url(#dim-end)'/>
+<text x='96.0' y='196.0' font-size='17' text-anchor='end' fill='#1a1a1a' ><tspan font-style='italic'>a</tspan> = 1 μm</text>
+<text x='440.0' y='70.0' font-size='15' text-anchor='middle' fill='#666666' ><tspan font-style='italic'>z</tspan> = 0</text>
+<line x1='800.0' y1='362.0' x2='860.0' y2='362.0' stroke='#1a1a1a' stroke-width='1.2' marker-end='url(#head-ink)'/>
+<line x1='800.0' y1='362.0' x2='800.0' y2='302.0' stroke='#1a1a1a' stroke-width='1.2' marker-end='url(#head-ink)'/>
+<text x='870.0' y='368.0' font-size='17' text-anchor='start' fill='#1a1a1a' ><tspan font-style='italic'>z</tspan></text>
+<text x='800.0' y='292.0' font-size='17' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>x</tspan></text>
+</svg>
