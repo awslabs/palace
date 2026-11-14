@@ -22,6 +22,13 @@ the largest estimated PER-NODE node-used peak of its stages (estimate_stages.
 select_instance_for_nodes) and the admission guard the runner checks on EVERY node;
 its job script selects Nodes chunks.  A one-node job's plan and script are byte-identical
 to the recorded campaigns' (no multi-node key is written).
+
+Form X (USER decision 1674 (2); the interim route while the paladin form is built): a
+cluster profile with a `Launcher` block runs every stage INSIDE a published Palace
+container image through apptainer on ONE node (launcher_of).  The plan then carries the
+block, names the executable and the MPI launcher INSIDE the image, and the job script
+loads no module (the image carries its MPI and libraries).  Without the block the plans
+and job scripts are byte-identical to the PBS form of record.
 """
 import math
 
@@ -68,6 +75,50 @@ FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the
 
 
 GIB = 1024 ** 3
+# Form X: the keys of a cluster profile's Launcher block (launcher_of).  Image = the SIF file on
+# the shared filesystem, pinned by ImageSHA256; ImageBinary / ImageMPIExec = paths INSIDE the
+# image, ImageBinarySHA256 = the digest of record of the executable; Binds = the host paths the
+# stages read and write; MPIExecArguments = the in-image launcher's arguments before `-n`;
+# Environment = variables set for every stage and forwarded to the ranks with `-x`.
+LAUNCHER_KEYS = ("Kind", "Apptainer", "Image", "ImageSHA256", "Binds", "ImageMPIExec", "ImageBinary",
+                 "ImageBinarySHA256", "MPIExecArguments", "Environment")
+LAUNCHER_SINGLE_NODE_RULE = ("form X (a cluster profile with a Launcher block) runs Palace inside the image on ONE node: a "
+                             "stage that needs more than one node is refused (it waits for the paladin form)")
+
+
+def launcher_of(profile):
+    """The cluster profile's Launcher block (form X), checked: exactly LAUNCHER_KEYS, Kind
+    "apptainer"; None when the profile has none (the PBS form of record)."""
+    launcher = profile.get("Launcher")
+    if launcher is None:
+        return None
+    if sorted(launcher) != sorted(LAUNCHER_KEYS):
+        raise ValueError(f"the cluster profile's Launcher block must have exactly the keys {list(LAUNCHER_KEYS)}: "
+                         f"it has {sorted(launcher)}")
+    if launcher["Kind"] != "apptainer":
+        raise ValueError(f"Launcher Kind {launcher['Kind']!r} is not supported (only 'apptainer')")
+    if not isinstance(launcher["Binds"], list) or not isinstance(launcher["MPIExecArguments"], list) \
+            or not isinstance(launcher["Environment"], dict):
+        raise ValueError("Launcher Binds and MPIExecArguments must be lists and Environment an object")
+    return launcher
+
+
+def launcher_plan_fields(profile, *, binary, binary_sha256, mpiexec, nodes):
+    """{"Launcher": block} for a plan of a form-X profile ({} otherwise): fail closed on more
+    than one node (LAUNCHER_SINGLE_NODE_RULE) and unless the plan names the image's executable,
+    its digest of record and the image's MPI launcher."""
+    launcher = launcher_of(profile)
+    if launcher is None:
+        return {}
+    if int(nodes) > 1:
+        raise ValueError(f"{nodes} nodes: {LAUNCHER_SINGLE_NODE_RULE}")
+    expected = (launcher["ImageBinary"], launcher["ImageBinarySHA256"], launcher["ImageMPIExec"])
+    if (binary, binary_sha256, mpiexec) != expected:
+        raise ValueError(f"a form-X plan must name the image's executable, its digest and MPI launcher {expected}: "
+                         f"got {(binary, binary_sha256, mpiexec)}")
+    return {"Launcher": launcher}
+
+
 # Decisions 466 / 468 / 482 / 490: the sentence every multi-node plan's Purpose and the library
 # record of a multi-node-qualified coupon carry, the MEASURED cross-partition floor of record:
 # the pair-5 fab coupon at 1 vs 2 nodes on the library's column Q_ij (J) of the whole-interface
@@ -234,6 +285,7 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
                                 "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
                                 "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"],
                                 "FitsOneJob": estimate["FitsOneJob"], "Decision": estimate["Decision"]}}
+    plan.update(launcher_plan_fields(profile, binary=binary, binary_sha256=binary_sha256, mpiexec=mpiexec, nodes=nodes))
     if int(nodes) > 1:
         plan.update(multi_node_fields(profile, nodes, instance))
         plan["Purpose"] = f"{purpose}; {MULTI_NODE_REDUCTION_NOTE}"
@@ -323,6 +375,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                         f"block's source count"),
             "EstimateSummary": {"JobSecondsEstimateWithPreflightAndMargin": split_job["SecondsEstimateWithPreflightAndMargin"],
                                 "Fits": split_job["Fits"]}}
+    plan.update(launcher_plan_fields(profile, binary=binary, binary_sha256=binary_sha256, mpiexec=mpiexec, nodes=nodes))
     if nodes > 1:
         plan.update(multi_node_fields(profile, nodes, instance))
         plan["Purpose"] = f"{purpose}; {MULTI_NODE_REDUCTION_NOTE}"
@@ -344,13 +397,22 @@ def render_job_script(*, profile, remote_root, remote_case_root, runner, job_nam
                       job_directory=None, nodes=1):
     """The PBS job script of one coupon job (`nodes` exclusive nodes of `instance_type`, the
     plan's chosen instance; the runner reads the plan of `job_directory`, default
-    <case>/main - the single job of a coupon)."""
+    <case>/main - the single job of a coupon).  A form-X profile (launcher_of): one node only,
+    and no module is loaded (the stages run inside the image)."""
     if instance_type not in {item["Type"] for item in profile["Instances"]}:
         raise ValueError(f"{instance_type!r} is not an instance of the cluster profile")
+    launcher = launcher_of(profile)
+    if launcher is not None and int(nodes) > 1:
+        raise ValueError(f"{nodes} nodes: {LAUNCHER_SINGLE_NODE_RULE}")
     job_directory = job_directory or f"{remote_case_root}/main"
     hours, rest = divmod(int(walltime_seconds), 3600)
     minutes, seconds = divmod(rest, 60)
     modules = " ".join(profile["Modules"])
+    if launcher is None:
+        environment_setup = ["source /etc/profile.d/modules.sh", f"module load {modules}"]
+    else:
+        environment_setup = [f"# form X: every stage runs inside {launcher['Image']} (sha256 {launcher['ImageSHA256']}) "
+                             f"through {launcher['Apptainer']}; no module is loaded"]
     lines = ["#!/bin/bash",
              "# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
              "# SPDX-License-Identifier: Apache-2.0",
@@ -367,8 +429,7 @@ def render_job_script(*, profile, remote_root, remote_case_root, runner, job_nam
              f"#PBS -o {job_directory}/pbs.log",
              "set -euo pipefail",
              "unset PYTHONOPTIMIZE",
-             "source /etc/profile.d/modules.sh",
-             f"module load {modules}",
+             *environment_setup,
              "export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 ARMPL_NUM_THREADS=1 "
              "VECLIB_MAXIMUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1",
              'for name in ${!PALACE_RESPONSE_@}; do unset "$name"; done',

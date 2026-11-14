@@ -21,6 +21,15 @@ checks the conflicting processes and MemAvailable >= the admission guard on EVER
 the plan's MPI arguments (the hostfile, RanksPerNode ranks per node).  A one-node plan
 runs exactly as before.
 
+A form-X plan (a "Launcher" block; USER decision 1674 (2)) runs every stage INSIDE the
+published container image on ONE node: the preflight pins the image file's sha256 and the
+sha256 of the executable inside it (apptainer exec IMAGE sha256sum BINARY); each stage runs
+`apptainer exec --bind ... IMAGE <image mpirun> <MPIExecArguments> -x ... -n R <image palace>
+CONFIG` with the PBS_* variables dropped from its environment (the image's PRTE must not read
+the host's node file) and the stage's PALACE_RESPONSE_* variables set and forwarded with -x.
+More than one node, or a stage naming its own executable, is refused.  A plan without the
+block runs exactly as before.
+
 usage: run_stages.py PLAN.json
        run_stages.py --node-sampler CSV STOPFILE   (the per-node sampler, launched by the runner)
 """
@@ -186,6 +195,48 @@ def conflicting_processes(processes_text):
             and (line.split()[-1].startswith(("palace", "bridge-")) or line.split()[-1] in ("mpirun", "mpiexec", "prterun", "prted"))]
 
 
+def launcher_preflight(launcher, plan, *, digest=None, run=None):
+    """Form X: the image file's sha256 = Launcher ImageSHA256 and the sha256 of the executable
+    inside it = the plan's BinarySHA256 (= ImageBinarySHA256); the plan's Binary / MPIExec = the
+    image's.  Returns the preflight record; SystemExit otherwise."""
+    digest = digest or sha
+    run = run or (lambda command: subprocess.check_output(command, text=True))
+    if (plan["Binary"], plan["MPIExec"]) != (launcher["ImageBinary"], launcher["ImageMPIExec"]):
+        raise SystemExit(f"Form-X plan names Binary {plan['Binary']} / MPIExec {plan['MPIExec']}, not the image's "
+                         f"{launcher['ImageBinary']} / {launcher['ImageMPIExec']}")
+    image_sha256 = digest(launcher["Image"])
+    if image_sha256 != launcher["ImageSHA256"]:
+        raise SystemExit(f"Image hash mismatch: {launcher['Image']} {image_sha256} != {launcher['ImageSHA256']}")
+    output = run([launcher["Apptainer"], "exec", launcher["Image"], "sha256sum", launcher["ImageBinary"]])
+    inner, _, path = output.strip().partition("  ")
+    if path.strip() != launcher["ImageBinary"]:
+        raise SystemExit(f"No sha256 of {launcher['ImageBinary']} inside the image: {output.strip()[:200]!r}")
+    return {"Image": launcher["Image"], "ImageSHA256": image_sha256, "Apptainer": launcher["Apptainer"],
+            "BinarySHA256": inner.strip()}
+
+
+def launcher_environment(environment, launcher):
+    """Form X: a stage's environment without the PBS_* variables, with the Launcher's Environment."""
+    stage_environment = {key: value for key, value in environment.items() if not key.startswith("PBS_")}
+    stage_environment.update(launcher["Environment"])
+    return stage_environment
+
+
+def launcher_launch(launcher, *, exports, ranks, arguments):
+    """Form X: apptainer exec (binds) IMAGE <image MPI launcher> <MPIExecArguments> -x <Launcher
+    Environment> <exports> -n RANKS <image executable> ARGUMENTS."""
+    binds = [part for path in launcher["Binds"] for part in ("--bind", path)]
+    forwarded = [part for key in launcher["Environment"] for part in ("-x", key)]
+    return [launcher["Apptainer"], "exec", *binds, launcher["Image"], launcher["ImageMPIExec"], *launcher["MPIExecArguments"],
+            *forwarded, *exports, "-n", str(ranks), launcher["ImageBinary"], *arguments]
+
+
+def launcher_command(launcher, *, cap, timefile, exports, ranks, config):
+    """Form X: the capped stage command (timeout + /usr/bin/time -v around launcher_launch)."""
+    return ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
+            *launcher_launch(launcher, exports=exports, ranks=ranks, arguments=[config])]
+
+
 def per_node_peaks(sample_paths, start_epoch, end_epoch):
     """host -> the largest sampled used bytes between the two epochs (the per-node peaks of a
     stage, read from the node samplers' CSVs)."""
@@ -252,6 +303,7 @@ def main(argv):
     if status_path.exists():
         raise SystemExit("status.json exists: refusing to reuse this plan directory")
     binary, binary_sha256, mpiexec = Path(plan["Binary"]), plan["BinarySHA256"], plan["MPIExec"]
+    launcher = plan.get("Launcher")
     job_start = time.monotonic()
     deadline = job_start + plan["DeadlineSeconds"]
     status = {"Version": 2, "Plan": str(plan_path), "Case": plan.get("Case"), "PBSJobID": os.environ.get("PBS_JOBID"),
@@ -274,10 +326,20 @@ def main(argv):
     conflicts = conflicting_processes(processes)
     if conflicts:
         raise SystemExit("Conflicting native processes: " + repr(conflicts))
+    image = None
+    if launcher is not None:
+        if nodes > 1:
+            raise SystemExit(f"Form-X plan with {nodes} nodes: the Launcher runs on one node only")
+        if any(stage.get("Binary") for stage in plan["Stages"]):
+            raise SystemExit("Form-X plan with a stage naming its own executable: not supported")
+        image = launcher_preflight(launcher, plan)
     memory0 = meminfo()
     preflight = {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
                  "MinimumMemAvailableBytes": plan["MinimumMemAvailableBytes"], "Instance": plan.get("Instance"),
-                 "Binary": str(binary), "BinarySHA256": sha(binary), "Pinned": {}, "UTC": time.strftime("%FT%TZ", time.gmtime())}
+                 "Binary": str(binary), "BinarySHA256": sha(binary) if image is None else image["BinarySHA256"], "Pinned": {},
+                 "UTC": time.strftime("%FT%TZ", time.gmtime())}
+    if image is not None:
+        preflight["Launcher"] = image
     other_hosts = [host for host in ordered_hosts if host != status["Host"]]
     node_shell = None
     if nodes > 1:
@@ -376,13 +438,19 @@ def main(argv):
             if key.startswith("PALACE_RESPONSE_"):
                 environment.pop(key)
         environment.update(stage["Environment"])
+        if launcher is not None:
+            environment = launcher_environment(environment, launcher)
         exports = [part for key in stage["Environment"] for part in ("-x", key)]
         log = base / f"{name}.log"
         timefile = base / f"{name}.time"
         stage_binary = Path(stage["Binary"]) if stage.get("Binary") else binary
         node_arguments = [os.path.expandvars(argument) for argument in plan.get("MPIExecArguments", [])]
-        command = ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
-                   str(mpiexec), *node_arguments, *exports, "-n", str(plan["Ranks"]), str(stage_binary), stage["Config"]]
+        if launcher is None:
+            command = ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
+                       str(mpiexec), *node_arguments, *exports, "-n", str(plan["Ranks"]), str(stage_binary), stage["Config"]]
+        else:
+            command = launcher_command(launcher, cap=cap, timefile=timefile, exports=exports, ranks=plan["Ranks"],
+                                       config=stage["Config"])
         record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()),
                       Binary=str(stage_binary), BinarySHA256=stage.get("BinarySHA256") or binary_sha256)
         current_stage[0] = name
