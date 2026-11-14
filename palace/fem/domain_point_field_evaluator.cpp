@@ -35,7 +35,7 @@ DomainPointFieldEvaluator::DomainPointFieldEvaluator(
     const mfem::ParFiniteElementSpace *rt_fespace,
     const mfem::ParFiniteElementSpace &target_fespace, double scaling,
     bool build_gridfunction, bool build_buffer)
-  : kind(kind), nd_fespace(nd_fespace), rt_fespace(rt_fespace)
+  : kind(kind), nd_fespace(nd_fespace), rt_fespace(rt_fespace), mat_op(&mat_op)
 {
   const bool needs_nd = kind == Kind::FIELD_E || kind == Kind::FIELD_H1 ||
                         kind == Kind::ENERGY_E || kind == Kind::POYNTING ||
@@ -107,16 +107,22 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   {
     ctx.resize(1);
     ctx[0].second = scaling;
+    // The electric energy density of a frequency-dependent material is that of its model,
+    // with the stored-energy permittivity at the frequency of the fields (Eval).
+    if (kind == Kind::ENERGY_E && mat_op.HasFrequencyDependentPermittivity())
+    {
+      material_ctx_offset = 1;
+    }
     const auto &coeff = (kind == Kind::ENERGY_E)
                             ? mat_op.GetPermittivityReal()
                             : ((scalar_magnetic_field || kind == Kind::MODE_SN)
                                    ? mat_op.GetCurlCurlInvPermeability()
                                    : mat_op.GetInvPermeability());
     MaterialPropertyCoefficient coeff_func(mat_op.GetAttributeToMaterial(), coeff);
-    auto mat_ctx = ceed::PopulateCoefficientContext(
+    material_ctx_dim =
         ((scalar_magnetic_field && kind != Kind::ENERGY_E) || kind == Kind::MODE_SN) ? 1
-                                                                                     : dim,
-        &coeff_func);
+                                                                                     : dim;
+    auto mat_ctx = ceed::PopulateCoefficientContext(material_ctx_dim, &coeff_func);
     ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
 
@@ -280,10 +286,12 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       scratch.restrictions.push_back(out_restr);
 
       CeedOperator op;
+      CeedQFunctionContext op_ctx = nullptr;
       ceed::AssembleCeedPointEvaluator(info, ctx.empty() ? nullptr : ctx.data(),
                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
-                                       target_fespace.GetVDim(), out_restr, &op);
-      groups.push_back({ceed, op, std::move(field_sources)});
+                                       target_fespace.GetVDim(), out_restr, &op,
+                                       (material_ctx_offset >= 0) ? &op_ctx : nullptr);
+      groups.push_back({ceed, op, std::move(field_sources), op_ctx});
       groups.back().mesh_nodes = pmesh.GetNodes();
       groups.back().mesh_node_fields = {"grad_x"};
       fem::CacheGroupOperatorFieldVectors(groups.back());
@@ -385,10 +393,13 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       }
       scratch.restrictions.push_back(buffer_out_restr);
       CeedOperator buffer_op;
+      CeedQFunctionContext buffer_ctx = nullptr;
       ceed::AssembleCeedPointEvaluator(
           info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-          ceed, buffer_inputs, buffer_num_comp, buffer_out_restr, &buffer_op);
-      buffer_groups.push_back({ceed, buffer_op, std::move(buffer_field_sources)});
+          ceed, buffer_inputs, buffer_num_comp, buffer_out_restr, &buffer_op,
+          (material_ctx_offset >= 0) ? &buffer_ctx : nullptr);
+      buffer_groups.push_back(
+          {ceed, buffer_op, std::move(buffer_field_sources), buffer_ctx});
       buffer_groups.back().mesh_nodes = pmesh.GetNodes();
       buffer_groups.back().mesh_node_fields = {"grad_x"};
       fem::CacheGroupOperatorFieldVectors(buffer_groups.back());
@@ -408,14 +419,31 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   }
 }
 
+void DomainPointFieldEvaluator::UpdateMaterialTable(
+    const std::vector<fem::CeedGroupOperator> &op_groups, double omega) const
+{
+  if (material_ctx_offset < 0)
+  {
+    return;
+  }
+  MFEM_VERIFY(omega > 0.0, "The electric energy density of a frequency-dependent material "
+                           "requires a positive frequency!");
+  MaterialPropertyCoefficient func(mat_op->GetAttributeToMaterial(),
+                                   mat_op->EvaluateStoredEnergyPermittivity(omega));
+  fem::UpdateGroupOperatorContexts(
+      op_groups, material_ctx_offset,
+      ceed::PopulateCoefficientContext(material_ctx_dim, &func));
+}
+
 void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
-                                     Vector &out) const
+                                     double omega, Vector &out) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainPointFieldEvaluator!");
   MFEM_VERIFY(
       (E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
           (B || kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E),
       "Missing field grid function for domain field evaluator!");
+  UpdateMaterialTable(groups, omega);
   out = 0.0;
   fem::ApplyAddGroupOperators(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr},
                               out);
@@ -443,7 +471,7 @@ void DomainPointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) cons
 }
 
 void DomainPointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
-                                           Vector &buffer) const
+                                           double omega, Vector &buffer) const
 {
   MFEM_VERIFY(valid,
               "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
@@ -453,6 +481,7 @@ void DomainPointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunc
       "Missing field grid function for domain field evaluator!");
   MFEM_ASSERT(buffer.Size() == buffer_size,
               "Invalid buffer size for DomainPointFieldEvaluator::EvalBuffer!");
+  UpdateMaterialTable(buffer_groups, omega);
   buffer = 0.0;
   fem::ApplyAddGroupOperators(buffer_groups,
                               {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr}, buffer);
