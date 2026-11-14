@@ -47,6 +47,10 @@ namespace palace
 {
   auto width_ = width.value_or(col_width(defaults));
   // If data available format double.
+  if (print_as_text && i < text.size())
+  {
+    return fmt::format("{:>{}}", text[i], width_);
+  }
   if ((i >= 0) && (i < data.size()))
   {
     auto val = data[i];
@@ -347,6 +351,7 @@ void TableWithCSVFile::AppendRowsAndClear()
   for (auto &col : table)
   {
     col.data.clear();
+    col.text.clear();
   }
 }
 

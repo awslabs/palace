@@ -1759,6 +1759,39 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                            "UncoveredFeatureEnergy are the only keys)!");
       }
     }
+    if (auto coverage = correction.find("Coverage"); coverage != correction.end())
+    {
+      // Lane L1 (decision 1634 (4)): the coverage outputs' block (interim bars).
+      MFEM_VERIFY(coverage->is_object(),
+                  "Response-correction \"Coverage\" must be an object!");
+      const std::string policy = coverage->value("Policy", "Warn");
+      MFEM_VERIFY(
+          policy == "Warn",
+          "Response-correction \"Coverage\": \"Policy\" accepts \"Warn\" only (another "
+          "policy awaits the USER's ruling D4)!");
+      data.coverage.max_uncovered_share =
+          coverage->value("MaxUncoveredShare", data.coverage.max_uncovered_share);
+      data.coverage.build_target =
+          coverage->value("BuildTarget", data.coverage.build_target);
+      MFEM_VERIFY(std::isfinite(data.coverage.max_uncovered_share) &&
+                      std::isfinite(data.coverage.build_target) &&
+                      data.coverage.build_target >= 0.0 &&
+                      data.coverage.build_target <= data.coverage.max_uncovered_share &&
+                      data.coverage.max_uncovered_share <= 1.0,
+                  "Response-correction \"Coverage\" requires 0 <= \"BuildTarget\" <= "
+                  "\"MaxUncoveredShare\" <= 1!");
+      data.coverage.validated_regime = coverage->value("ValidatedRegime", std::string{});
+      for (const auto &[key, value] : coverage->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "Policy" || key == "MaxUncoveredShare" || key == "BuildTarget" ||
+                        key == "ValidatedRegime",
+                    "Response-correction \"Coverage\" has an unknown key \""
+                        << key
+                        << "\" (Policy, MaxUncoveredShare, BuildTarget and ValidatedRegime "
+                           "are the only keys)!");
+      }
+    }
     if (auto domain_boundary = correction.find("DomainBoundary");
         domain_boundary != correction.end())
     {

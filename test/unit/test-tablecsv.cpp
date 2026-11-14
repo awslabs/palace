@@ -162,6 +162,28 @@ TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
   CHECK(formatted.find("nan") == std::string::npos);
 }
 
+// Lane L1 (decision 1634 (3)): a text column (the coverage / regime status columns) prints
+// its strings right-aligned at the numeric column width; a numeric column beside it is
+// unchanged.
+TEST_CASE("TableCSV text column", "[tablecsv][Serial]")
+{
+  Table table;
+  table.insert("value", "value");
+  table.insert(Column::Text("status", "coverage status"));
+  table["value"] << 0.5;
+  table["status"] << std::string("NOT-ACHIEVABLE");
+  table["value"] << 1.0;
+  table["status"] << std::string("OK");
+  CHECK(table.n_rows() == 2);
+  // Every column is 27 wide (8 + 12 + 7, the header shorter): right-aligned cells.
+  auto Pad = [](const std::string &cell)
+  { return std::string(27 - cell.size(), ' ') + cell; };
+  CHECK(table.format_table() == Pad("value") + "," + Pad("coverage status") + "\n" +
+                                    Pad("+5.000000000000e-01") + "," +
+                                    Pad("NOT-ACHIEVABLE") + "\n" +
+                                    Pad("+1.000000000000e+00") + "," + Pad("OK") + "\n");
+}
+
 // OI-PATCH-ENERGY-CSV-INDEX-PRECISION (fix round P2, decision 1265): the former index idiom
 // Column(name, header, 0, 0, 2, "") printed an integer through the 3-significant-digit
 // float form, so an index beyond 999 collapsed ("1.24e+02" for 124 kept 3 digits; 1234 and

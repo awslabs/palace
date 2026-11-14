@@ -5,6 +5,7 @@
 #define PALACE_UTILS_TABLECSV_HPP
 
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -65,6 +66,20 @@ public:
   // a templated & type erased solution).
   bool print_as_int = false;
 
+  // A text column (lane L1: the coverage and regime status columns; a value holds no
+  // comma): the cells are `text`; `data` holds a NaN per row, so that the row count is
+  // the numeric columns'.
+  bool print_as_text = false;
+  std::vector<std::string> text;
+
+  static Column Text(std::string name, std::string header_text = "",
+                     long column_group_idx = 0)
+  {
+    Column column(std::move(name), std::move(header_text), column_group_idx);
+    column.print_as_text = true;
+    return column;
+  }
+
   // An INTEGER index / count column (OI-PATCH-ENERGY-CSV-INDEX-PRECISION, fix round P2,
   // decision 1265): printed as an integer, exactly, whatever its size. The former idiom
   // Column(name, header, 0, 0, 2, "") printed an index through the 3-significant-digit
@@ -83,6 +98,13 @@ public:
   inline auto &operator<<(double val)
   {
     data.emplace_back(val);
+    return *this;
+  }
+
+  inline auto &operator<<(std::string val)
+  {
+    text.emplace_back(std::move(val));
+    data.emplace_back(std::numeric_limits<double>::quiet_NaN());
     return *this;
   }
 };

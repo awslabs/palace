@@ -987,6 +987,38 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
       json{{"Electrostatic", {{"ResponseCorrection", uncovered_feature}}}}));
   uncovered_feature["Diagnostics"] = {{"UncoveredFeatureEnergies", true}};
   CHECK_THROWS(config::SolverData(json{{"SurfaceResponseCorrection", uncovered_feature}}));
+  // Coverage (lane L1, decision 1634 (4)): the interim bars by default; Policy "Warn"
+  // only; the bars ordered; no unknown key; the same block on both paths.
+  CHECK(maxwell_patch_energy.surface_response_correction->coverage.max_uncovered_share ==
+        0.05);
+  CHECK(maxwell_patch_energy.surface_response_correction->coverage.build_target == 0.02);
+  CHECK(
+      maxwell_patch_energy.surface_response_correction->coverage.validated_regime.empty());
+  auto coverage = automatic_correction;
+  coverage["Coverage"] = {{"Policy", "Warn"},
+                          {"MaxUncoveredShare", 0.1},
+                          {"BuildTarget", 0.01},
+                          {"ValidatedRegime", "validated-regime.json"}};
+  const config::SolverData maxwell_coverage(json{{"SurfaceResponseCorrection", coverage}});
+  REQUIRE(maxwell_coverage.surface_response_correction);
+  CHECK(maxwell_coverage.surface_response_correction->coverage.max_uncovered_share == 0.1);
+  CHECK(maxwell_coverage.surface_response_correction->coverage.build_target == 0.01);
+  CHECK(maxwell_coverage.surface_response_correction->coverage.validated_regime ==
+        "validated-regime.json");
+  const config::ElectrostaticSolverData electrostatic_coverage(
+      json{{"ResponseCorrection", coverage}});
+  REQUIRE(electrostatic_coverage.response_correction);
+  CHECK(electrostatic_coverage.response_correction->coverage.build_target == 0.01);
+  for (const auto &[key, value] :
+       std::vector<std::pair<std::string, json>>{{"Policy", "MarkNotApplied"},
+                                                 {"BuildTarget", 0.2},
+                                                 {"MaxUncoveredShare", 1.5},
+                                                 {"MaxMissingLengthShare", 0.01}})
+  {
+    auto invalid_coverage = coverage;
+    invalid_coverage["Coverage"][key] = value;
+    CHECK_THROWS(config::SolverData(json{{"SurfaceResponseCorrection", invalid_coverage}}));
+  }
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;

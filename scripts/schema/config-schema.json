@@ -3490,6 +3490,37 @@
                 }
               }
             },
+            "Coverage": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The coverage outputs of the correction (lane L1; written on every corrected run: `surface-response-coverage.csv`, `surface-response-uncovered-energy-by-key.csv`, the appended coverage columns, the end-of-run coverage banner and the palace.json block). A coverage status is about coverage only; the regime status says whether the covered part's correction factor lies in the range validated for this library and excitation class; neither says that the mesh of the solve resolves the field at the correction radius.",
+              "properties": {
+                "Policy": {
+                  "type": "string",
+                  "enum": ["Warn"],
+                  "description": "What a cell with poor coverage does: \"Warn\" (the banner; every corrected value unchanged) is the only value accepted today.",
+                  "default": "Warn"
+                },
+                "MaxUncoveredShare": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0,
+                  "description": "INTERIM bar: a cell whose uncovered + pending-model share of W is above it is PARTIAL (LOW at or below it, above BuildTarget); a method-gap share above it alone makes the cell NOT-ACHIEVABLE.",
+                  "default": 0.05
+                },
+                "BuildTarget": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0,
+                  "description": "INTERIM bar: a cell whose uncovered + pending-model share of W is at or below it is OK.",
+                  "default": 0.02
+                },
+                "ValidatedRegime": {
+                  "type": "string",
+                  "description": "Optional sidecar file of the validated ranges of the covered correction factor per interface Type and excitation class (ElectrostaticTerminal / Eigenmode / Driven), with the SHA-256 of the library it was validated for (a mismatch is a config error). Absent: every cell reads regime NO-RANGE."
+                }
+              }
+            },
             "ConductorConsistency": {
               "type": "object",
               "additionalProperties": false,

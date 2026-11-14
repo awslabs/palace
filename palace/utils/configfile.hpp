@@ -1658,6 +1658,27 @@ public:
     // quadrature pass per interface and measurement when on).
     bool uncovered_feature_energy = false;
 
+    // Coverage (lane L1, decision 1634 (4); DESIGN-v2 s4.5): the coverage outputs' config
+    // block. The two bars are INTERIM placeholders (the coverage gate in force's
+    // BuildTarget and MaxUncoveredShare; validation track, PREREG-L1B). Policy accepts
+    // "Warn" only until the USER rules D4 (lane L4 adds the mark-not-applied policy on top:
+    // the writers of the corrected columns read the per-cell status, the accumulators never
+    // read the policy). ValidatedRegime = the optional sidecar file of the validated
+    // correction-factor ranges per Type and excitation class (absent: every cell reads
+    // regime NO-RANGE).
+    struct CoverageData
+    {
+      enum class Policy : char
+      {
+        WARN
+      };
+      Policy policy = Policy::WARN;
+      double max_uncovered_share = 0.05;
+      double build_target = 0.02;
+      std::string validated_regime;
+    };
+    CoverageData coverage;
+
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
     // identification / placement (a valid config and library). RecordRaw: the affected
