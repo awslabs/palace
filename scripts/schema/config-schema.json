@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-3",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2471,6 +2471,12 @@
           "type": "boolean",
           "description": "Use a constant start vector instead of a random one.",
           "default": false,
+          "x-palace-advanced": true
+        },
+        "WarmStart": {
+          "type": "boolean",
+          "description": "For adaptive mesh refinement, start the eigenvalue solver of each adaptation iteration from the eigenvectors of the previous one, transferred to the refined and rebalanced mesh, with a small component of the random (or constant) start vector. Only used with [`\"StartVector\"`](@ref config-solver-eigenmode-startvector), nonconformal refinement ([`/Model/Refinement/Nonconformal`](@ref config-model-refinement-nonconformal)), and the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver. The warm start is skipped when the previous solve converged within its first Krylov cycle.",
+          "default": true,
           "x-palace-advanced": true
         },
         "MassOrthogonal": {

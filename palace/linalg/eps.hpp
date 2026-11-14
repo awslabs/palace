@@ -123,6 +123,22 @@ public:
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;
 
+  // Set an initial vector for the solution subspace of a quadratic eigenvalue problem
+  // solved by linearization, whose eigenvectors are [x; λ x]: v is a combination of
+  // eigenvector approximations xᵢ and v_lambda the same combination of λᵢ xᵢ. Solvers
+  // which do not work on a linearization use v only.
+  virtual void SetInitialSpaceBlocks(const ComplexVector &v, const ComplexVector &v_lambda)
+  {
+    SetInitialSpace(v);
+  }
+
+  // Relative tolerance of the linear solves of the first Krylov cycle of the next solve (a
+  // tol <= 0 keeps the linear solver tolerance). With an initial vector which already
+  // approximates the wanted eigenvectors closely (warm start), the eigenpairs which
+  // converge in the first cycle have Ritz values set by the first linear solves, whose
+  // error is then of the order of their tolerance. Not all solvers support it.
+  virtual void SetFirstCycleLinearSolverTol(double tol) {}
+
   // Whether the initial vector of the next solve already approximates the wanted
   // eigenvectors (warm start). An eigenpair which converges as its Ritz value appears, for
   // example in the first Krylov cycle, is then accepted only once that Ritz value settled

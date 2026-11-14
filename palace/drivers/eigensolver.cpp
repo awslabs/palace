@@ -3,12 +3,15 @@
 
 #include "eigensolver.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <complex>
 #include <numbers>
 #include <vector>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/fieldtransfer.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
@@ -31,6 +34,86 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// Starting vector from the eigenpairs (λᵢ, xᵢ) of the previous adaptation iteration, with
+// xᵢ given as the real and imaginary parts of the stored fields 2i and 2i + 1: v = Σᵢ wᵢ xᵢ
+// and v_lambda = Σᵢ wᵢ λᵢ xᵢ, with weights of unit norm (for each xᵢ) and deterministic
+// phases, so that no eigenvector cancels from the combination, and a component of the
+// default starting vector r of relative weight eta in v for eigenvectors not found in the
+// previous iteration. Returns the number of eigenvectors used.
+int GetWarmStartVector(const VectorFieldTransfer &prev_eigenvectors,
+                       const std::vector<std::complex<double>> &prev_eigenvalues,
+                       SpaceOperator &space_op, const ComplexVector &r, double eta,
+                       ComplexVector &v, ComplexVector &v_lambda)
+{
+  auto &nd_fespace = space_op.GetNDSpace().Get();
+  const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector x(n);
+  x.UseDevice(true);
+  v.SetSize(n);
+  v.UseDevice(true);
+  v_lambda.SetSize(n);
+  v_lambda.UseDevice(true);
+  v = 0.0;
+  v_lambda = 0.0;
+  int num_used = 0;
+  for (std::size_t i = 0; i < prev_eigenvalues.size(); i++)
+  {
+    prev_eigenvectors.GetField(2 * i, nd_fespace, x.Real());
+    prev_eigenvectors.GetField(2 * i + 1, nd_fespace, x.Imag());
+    linalg::SetSubVector(x, dbc_tdof_list, 0.0);
+    const double norm = linalg::Norml2(space_op.GetComm(), x);
+    if (norm > 0.0)
+    {
+      // Phases from the golden ratio sequence.
+      const double phase =
+          2.0 * std::numbers::pi * std::fmod(0.5 * (std::sqrt(5.0) - 1.0) * i, 1.0);
+      const std::complex<double> w = std::polar(1.0 / norm, phase);
+      v.AXPY(w, x);
+      v_lambda.AXPY(w * prev_eigenvalues[i], x);
+      num_used++;
+    }
+  }
+  if (eta > 0.0 && num_used > 0)
+  {
+    const double norm_r = linalg::Norml2(space_op.GetComm(), r);
+    if (norm_r > 0.0)
+    {
+      v.AXPY(eta * linalg::Norml2(space_op.GetComm(), v) / norm_r, r);
+    }
+  }
+  return num_used;
+}
+
+}  // namespace
+
+EigenSolver::EigenSolver(const IoData &iodata, bool root, int size, int num_thread,
+                         const char *git_tag)
+  : BaseSolver(iodata, root, size, num_thread, git_tag)
+{
+}
+
+EigenSolver::~EigenSolver() = default;
+
+void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
+{
+  if (!prev_eigenvectors)
+  {
+    return;
+  }
+  if (prev_eigenvectors->GetParMesh() != &mesh.Get())
+  {
+    // The mesh object was replaced.
+    prev_eigenvectors.reset();
+    prev_eigenvalues.clear();
+    return;
+  }
+  prev_eigenvectors->Update();
+}
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -323,26 +406,84 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
+  // With adaptive mesh refinement, the solves after the first one start the SLEPc
+  // Krylov-Schur solver from the eigenvectors of the previous solve (warm start). The last
+  // solve, known in advance from Model.Refinement.MaxIts and MaxSize, keeps none for a next
+  // one.
+  const auto &eigenmode = iodata.solver.eigenmode;
+  const auto &refinement = iodata.model.refinement;
+  const int adapt_it = num_solves++;
+  const bool final_solve =
+      refinement.max_it <= 0 || adapt_it >= refinement.max_it ||
+      (refinement.max_size > 0 && space_op.GlobalTrueVSize() > refinement.max_size);
+  const bool warm_start_solver = type == EigenSolverBackend::SLEPC &&
+                                 nonlinear_type != NonlinearEigenSolver::SLP &&
+                                 (!(C || has_A2) || eigenmode.pep_linear);
+
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
-  // projected appropriately.
-  if (iodata.solver.eigenmode.init_v0)
+  // projected appropriately. With adaptive mesh refinement, it combines the eigenvectors of
+  // the previous iteration, with a small component of the constant or random vector.
+  if (eigenmode.init_v0)
   {
     ComplexVector v0;
-    if (iodata.solver.eigenmode.init_v0_const)
+    if (eigenmode.init_v0_const)
     {
-      Mpi::Print(" Using constant starting vector\n");
       space_op.GetConstantInitialVector(v0);
     }
     else
     {
-      Mpi::Print(" Using random starting vector\n");
       space_op.GetRandomInitialVector(v0);
     }
-    if (divfree)
+    // A warm start cannot save restarts when the previous solve converged within its first
+    // Krylov cycle, whose dimension does not depend on the start vector: keep the default
+    // start vector then.
+    int num_warm = 0;
+    const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
+                                                     space_op.GetNDSpace().GetParMesh());
+    if (warm_start && prev_num_its == 1)
     {
-      divfree->Mult(v0);
+      Mpi::Print(" Previous adaptation iteration converged within one Krylov cycle: no "
+                 "warm start\n");
     }
-    eigen->SetInitialSpace(v0);  // Copies the vector
+    else if (warm_start)
+    {
+      constexpr double eta = 1.0e-3;
+      ComplexVector v, v_lambda;
+      num_warm = GetWarmStartVector(*prev_eigenvectors, prev_eigenvalues, space_op, v0, eta,
+                                    v, v_lambda);
+      if (num_warm > 0)
+      {
+        Mpi::Print(
+            " Using starting vector from {:d} eigenvectors of the previous adaptation "
+            "iteration\n",
+            num_warm);
+        if (divfree)
+        {
+          divfree->Mult(v);
+          divfree->Mult(v_lambda);
+        }
+        eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
+        eigen->SetWarmStart(true);
+
+        // The eigenpairs converging in the first Krylov cycle have Ritz values dominated by
+        // the error of the first linear solves, applied to the start vector: solve these
+        // with a 100 times smaller tolerance (not below 1e-12, where that error is
+        // negligible).
+        const double lin_tol = iodata.solver.linear.tol;
+        eigen->SetFirstCycleLinearSolverTol(
+            std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
+      }
+    }
+    if (num_warm == 0)
+    {
+      Mpi::Print(" Using {} starting vector\n",
+                 eigenmode.init_v0_const ? "constant" : "random");
+      if (divfree)
+      {
+        divfree->Mult(v0);
+      }
+      eigen->SetInitialSpace(v0);  // Copies the vector
+    }
 
     // Debug
     // const auto &Grad = space_op.GetGradMatrix();
@@ -352,6 +493,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();
   }
+  prev_eigenvectors.reset();
+  prev_eigenvalues.clear();
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
@@ -426,6 +569,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
+  const int num_its = eigen->GetNumIterations();
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
@@ -487,10 +631,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   std::vector<std::complex<double>> eigenvalues(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
-  const bool stage_eigenvectors = post_op.WillWriteFields();
-  // Field output can construct large libCEED visualization operators. Only in that case,
-  // stage the converged eigenvectors in host memory so the eigensolver and matrices can
-  // release their device allocations before postprocessing.
+
+  // Keep all converged eigenpairs for the starting vector of the next adaptation iteration.
+  // They follow the refinement and rebalancing of nonconforming meshes, which are modified
+  // in place.
+  const bool store_eigenpairs = !final_solve && eigenmode.warm_start && eigenmode.init_v0 &&
+                                warm_start_solver &&
+                                space_op.GetNDSpace().GetParMesh().Nonconforming();
+  const bool stage_eigenvectors = post_op.WillWriteFields() || store_eigenpairs;
+  // Field output can construct large libCEED visualization operators, and the eigenpairs
+  // kept for the next adaptation iteration take memory as well. Only in those cases, stage
+  // the converged eigenvectors in host memory so the eigensolver and matrices can release
+  // their (device) allocations before postprocessing.
   std::vector<std::vector<std::complex<double>>> eigenvectors;
   if (stage_eigenvectors)
   {
@@ -532,6 +684,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
+  if (store_eigenpairs)
+  {
+    prev_eigenvectors = std::make_unique<VectorFieldTransfer>(
+        space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
+    prev_eigenvalues = eigenvalues;
+    prev_num_its = num_its;
+  }
+
   for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
@@ -560,6 +720,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->GetEigenvector(i, E);
     }
     linalg::NormalizePhase(space_op.GetComm(), E);
+    if (store_eigenpairs)
+    {
+      prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), E.Real());
+      prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), E.Imag());
+    }
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());

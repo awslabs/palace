@@ -18,6 +18,13 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
+With adaptive mesh refinement, the eigenvalue solver of each adaptation iteration starts
+from the eigenmodes of the previous one, transferred to the refined mesh
+([`config["Solver"]["Eigenmode"]["WarmStart"]`](../config/reference.md#config-solver-eigenmode-warmstart)).
+The eigenmodes which converge within the first Krylov cycle of such a solve are then only
+accepted once their eigenvalue settled between restarts, since the error estimate of the
+eigenvalue solver does not account for the error of the linear solves.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the

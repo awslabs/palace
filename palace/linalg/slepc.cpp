@@ -180,6 +180,15 @@ PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eig
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                         PetscScalar *eigr, PetscScalar *eigi,
+                                         PetscReal *errest, PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  static_cast<SlepcEPSSolverBase *>(ctx)->EndFirstCycle();
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
@@ -423,6 +432,8 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
   }
   A0 = A1 = nullptr;
   warm_start = ritz_test = false;
+  first_cycle_tol = lin_tol = 0.0;
+  first_cycle_monitor = first_cycle = false;
   ritz_its = -1;
   ritz_blocked = false;
   ritz_num_delayed = ritz_num_unsettled = 0;
@@ -641,6 +652,15 @@ void SlepcEPSSolverBase::CheckRitzValue(PetscScalar theta, PetscReal *errest)
   ritz_curr.emplace_back(theta, unsettled);
 }
 
+void SlepcEPSSolverBase::EndFirstCycle()
+{
+  if (first_cycle)
+  {
+    opInv->SetRelTol(lin_tol);
+    first_cycle = false;
+  }
+}
+
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
@@ -665,10 +685,30 @@ int SlepcEPSSolverBase::Solve()
   ritz_blocked = false;
   ritz_num_delayed = ritz_num_unsettled = 0;
 
+  // With a tighter tolerance for the linear solves of the first Krylov cycle, a monitor
+  // restores the linear solver tolerance after the first restart.
+  lin_tol = opInv->GetRelTol();
+  first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol);
+  if (first_cycle)
+  {
+    if (!first_cycle_monitor)
+    {
+      PalacePetscCall(EPSMonitorSet(eps, __eps_first_cycle_monitor, (void *)this, nullptr));
+      first_cycle_monitor = true;
+    }
+    opInv->SetRelTol(first_cycle_tol);
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), " Linear solver tolerance {:.3e} for the first Krylov cycle\n",
+                 first_cycle_tol);
+    }
+  }
+
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
   PalacePetscCall(EPSSolve(eps));
+  EndFirstCycle();
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
   if (print > 0)
   {
@@ -933,6 +973,24 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
   PalacePetscCall(ToPetscVec(v, v0, 0, 2));
+  Vec is[1] = {v0};
+  PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+}
+
+void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
+                                                 const ComplexVector &v_lambda)
+{
+  MFEM_VERIFY(
+      A0 && A1,
+      "Must call SetOperators before using SetInitialSpace for SLEPc eigenvalue solver!");
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  // The second block of the eigenvectors of the linearization is (λ / γ) x.
+  ComplexVector v2(v_lambda);
+  v2 *= 1.0 / gamma;
+  PalacePetscCall(ToPetscVec(v, v2, v0));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
 }

@@ -54,6 +54,10 @@ protected:
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
 
+  // Called after each modification (refinement, rebalancing) of the finest mesh during
+  // adaptation, for example to transfer solution data to the modified mesh.
+  virtual void UpdateAfterMeshChange(Mesh &mesh) const {}
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);

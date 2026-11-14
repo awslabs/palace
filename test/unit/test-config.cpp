@@ -1083,6 +1083,13 @@ TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
   CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", -1}}).n_post == 0);
 }
 
+TEST_CASE("Config Eigenmode warm start", "[config][Serial]")
+{
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}}).warm_start);
+  CHECK_FALSE(
+      config::EigenSolverData(json{{"Target", 1.0}, {"WarmStart", false}}).warm_start);
+}
+
 TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
 {
   // The quasi-Newton iterations of the hybrid nonlinear eigenvalue solver have their own

@@ -7,6 +7,8 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
+#include "fem/fieldtransfer.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -18,6 +20,89 @@
 
 namespace palace
 {
+
+TEST_CASE("Vector field transfer through refinement and rebalancing",
+          "[eigenmode][Serial][Parallel]")
+{
+  // H(curl) fields of a space of order p, linear in the coordinates, are kept exactly
+  // through nonconforming refinement and rebalancing of their mesh.
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE(1, 2);
+  MPI_Comm comm = Mpi::World();
+  auto smesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, type, 1.0, 1.0, 1.0);
+  smesh.EnsureNCMesh(true);
+  mfem::ParMesh pmesh(comm, smesh);
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+
+  // Two fields: a constant one, exact for every order, and a linear one for order 2.
+  auto Field = [order](const mfem::Vector &x, int k, mfem::Vector &E)
+  {
+    E.SetSize(3);
+    E(0) = 1.0 + ((order > 1) ? 2.0 * x(1) - x(2) : 0.0);
+    E(1) = -0.5 + ((order > 1) ? 3.0 * x(0) + x(2) : 0.0);
+    E(2) = 2.0 + ((order > 1) ? x(0) - 4.0 * x(1) : 0.0);
+    if (k == 1)
+    {
+      E *= -0.25;
+      E(0) += 1.0;
+    }
+  };
+  auto TrueDofs = [&](mfem::ParFiniteElementSpace &fespace, int k)
+  {
+    mfem::VectorFunctionCoefficient coeff(
+        3, [&Field, k](const mfem::Vector &x, mfem::Vector &E) { Field(x, k, E); });
+    mfem::ParGridFunction gf(&fespace);
+    gf.ProjectCoefficient(coeff);
+    Vector tv(fespace.GetTrueVSize());
+    gf.GetTrueDofs(tv);
+    return tv;
+  };
+
+  VectorFieldTransfer transfer(pmesh, order);
+  {
+    mfem::ParFiniteElementSpace nd_fespace(&pmesh, &nd_fec);
+    for (int k = 0; k < 2; k++)
+    {
+      transfer.AddField(nd_fespace, TrueDofs(nd_fespace, k));
+    }
+  }
+  CHECK(transfer.Size() == 2u);
+  CHECK(transfer.IsCurrent(pmesh));
+
+  // Refine the elements in a corner, twice, then rebalance.
+  for (int it = 0; it < 2; it++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      mfem::Vector c;
+      pmesh.GetElementCenter(e, c);
+      if (c(0) < 0.5 && c(1) < 0.5)
+      {
+        marked.Append(e);
+      }
+    }
+    pmesh.GeneralRefinement(marked, 1, 0);
+    CHECK(!transfer.IsCurrent(pmesh));
+    transfer.Update();
+    CHECK(transfer.IsCurrent(pmesh));
+  }
+  pmesh.Rebalance();
+  transfer.Update();
+  CHECK(transfer.IsCurrent(pmesh));
+
+  mfem::ParFiniteElementSpace nd_fespace(&pmesh, &nd_fec);
+  for (int k = 0; k < 2; k++)
+  {
+    const auto ref = TrueDofs(nd_fespace, k);
+    Vector tv;
+    transfer.GetField(k, nd_fespace, tv);
+    REQUIRE(tv.Size() == ref.Size());
+    tv -= ref;
+    const double err = linalg::Norml2(comm, tv), norm = linalg::Norml2(comm, ref);
+    CHECK(err <= 1.0e-12 * norm);
+  }
+}
 
 #if defined(PALACE_WITH_SLEPC)
 

@@ -309,6 +309,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      UpdateAfterMeshChange(*mesh.back());
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
@@ -331,6 +332,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
       }
       mesh.back()->Update();
+      UpdateAfterMeshChange(*mesh.back());
     }
 
     // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
