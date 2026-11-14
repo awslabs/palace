@@ -195,12 +195,17 @@ def conflicting_processes(processes_text):
             and (line.split()[-1].startswith(("palace", "bridge-")) or line.split()[-1] in ("mpirun", "mpiexec", "prterun", "prted"))]
 
 
-def launcher_preflight(launcher, plan, *, digest=None, run=None):
-    """Form X: the image file's sha256 = Launcher ImageSHA256 and the sha256 of the executable
-    inside it = the plan's BinarySHA256 (= ImageBinarySHA256); the plan's Binary / MPIExec = the
-    image's.  Returns the preflight record; SystemExit otherwise."""
+LAUNCHER_MEMORY_STOP_FRACTION = 0.85  # the default bar: MEASURED node use above 0.85 x MemTotal stops the job
+LAUNCHER_PASSED_PATTERN = re.compile(r"^(OMP_[A-Z_]+|[A-Z0-9_]+_NUM_THREADS|TMPDIR)$")
+
+
+def launcher_preflight(launcher, plan, *, digest=None, run=None, environment=None):
+    """Form X: the image file's sha256 = Launcher ImageSHA256; the sha256 of the executable inside
+    it = the block's own pin ImageBinarySHA256 AND the plan's BinarySHA256; the plan's Binary /
+    MPIExec = the image's.  Records the apptainer path and version and the environment the image
+    sees under --cleanenv (image_environment).  Returns the preflight record; SystemExit otherwise."""
     digest = digest or sha
-    run = run or (lambda command: subprocess.check_output(command, text=True))
+    run = run or (lambda command, env=None: subprocess.check_output(command, text=True, env=env))
     if (plan["Binary"], plan["MPIExec"]) != (launcher["ImageBinary"], launcher["ImageMPIExec"]):
         raise SystemExit(f"Form-X plan names Binary {plan['Binary']} / MPIExec {plan['MPIExec']}, not the image's "
                          f"{launcher['ImageBinary']} / {launcher['ImageMPIExec']}")
@@ -211,23 +216,51 @@ def launcher_preflight(launcher, plan, *, digest=None, run=None):
     inner, _, path = output.strip().partition("  ")
     if path.strip() != launcher["ImageBinary"]:
         raise SystemExit(f"No sha256 of {launcher['ImageBinary']} inside the image: {output.strip()[:200]!r}")
-    return {"Image": launcher["Image"], "ImageSHA256": image_sha256, "Apptainer": launcher["Apptainer"],
-            "BinarySHA256": inner.strip()}
+    if inner.strip() != launcher["ImageBinarySHA256"]:
+        raise SystemExit(f"Executable hash mismatch inside the image: {inner.strip()} != the Launcher pin "
+                         f"{launcher['ImageBinarySHA256']}")
+    record = {"Image": launcher["Image"], "ImageSHA256": image_sha256, "Apptainer": launcher["Apptainer"],
+              "BinarySHA256": inner.strip(),
+              "ApptainerVersion": run([launcher["Apptainer"], "--version"]).strip()}
+    if environment is not None:
+        probe = launcher_launch_prefix(launcher) + ["env"]
+        record["ImageEnvironment"] = dict(line.split("=", 1) for line in
+                                          run(probe, env=launcher_environment(environment, launcher)).splitlines()
+                                          if "=" in line)
+    return record
+
+
+def launcher_passed(environment, launcher):
+    """Form X: the variables the image receives under --cleanenv: the Launcher's Environment, the
+    stage's PALACE_RESPONSE_* variables and the thread-count / TMPDIR variables of the job."""
+    passed = {key: value for key, value in environment.items()
+              if key.startswith("PALACE_RESPONSE_") or LAUNCHER_PASSED_PATTERN.match(key)}
+    passed.update(launcher["Environment"])
+    return passed
 
 
 def launcher_environment(environment, launcher):
-    """Form X: a stage's environment without the PBS_* variables, with the Launcher's Environment."""
-    stage_environment = {key: value for key, value in environment.items() if not key.startswith("PBS_")}
+    """Form X: apptainer's own environment (the job's without PBS_*) plus APPTAINERENV_<name> for every
+    variable of launcher_passed (apptainer --cleanenv passes only those into the image)."""
+    stage_environment = {key: value for key, value in environment.items()
+                         if not key.startswith(("PBS_", "APPTAINERENV_", "SINGULARITYENV_"))}
     stage_environment.update(launcher["Environment"])
+    stage_environment.update({f"APPTAINERENV_{key}": value for key, value in launcher_passed(environment, launcher).items()})
     return stage_environment
 
 
-def launcher_launch(launcher, *, exports, ranks, arguments):
-    """Form X: apptainer exec (binds) IMAGE <image MPI launcher> <MPIExecArguments> -x <Launcher
-    Environment> <exports> -n RANKS <image executable> ARGUMENTS."""
+def launcher_launch_prefix(launcher):
+    """apptainer exec --cleanenv --no-home, the read-write Binds and the ReadOnlyBinds (':ro'), IMAGE."""
     binds = [part for path in launcher["Binds"] for part in ("--bind", path)]
+    binds += [part for path in launcher.get("ReadOnlyBinds", []) for part in ("--bind", f"{path}:{path}:ro")]
+    return [launcher["Apptainer"], "exec", "--cleanenv", "--no-home", *binds, launcher["Image"]]
+
+
+def launcher_launch(launcher, *, exports, ranks, arguments):
+    """Form X: launcher_launch_prefix <image MPI launcher> <MPIExecArguments> -x <Launcher
+    Environment> <exports> -n RANKS <image executable> ARGUMENTS."""
     forwarded = [part for key in launcher["Environment"] for part in ("-x", key)]
-    return [launcher["Apptainer"], "exec", *binds, launcher["Image"], launcher["ImageMPIExec"], *launcher["MPIExecArguments"],
+    return [*launcher_launch_prefix(launcher), launcher["ImageMPIExec"], *launcher["MPIExecArguments"],
             *forwarded, *exports, "-n", str(ranks), launcher["ImageBinary"], *arguments]
 
 
@@ -235,6 +268,23 @@ def launcher_command(launcher, *, cap, timefile, exports, ranks, config):
     """Form X: the capped stage command (timeout + /usr/bin/time -v around launcher_launch)."""
     return ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
             *launcher_launch(launcher, exports=exports, ranks=ranks, arguments=[config])]
+
+
+def memory_stop_bar(launcher, mem_total_bytes):
+    """Form X: the memory-stop bar in bytes (Launcher MemoryStopFraction, default 0.85, x MemTotal)."""
+    fraction = float(launcher.get("MemoryStopFraction", LAUNCHER_MEMORY_STOP_FRACTION))
+    if not 0.0 < fraction < 1.0:
+        raise SystemExit(f"Launcher MemoryStopFraction {fraction} must lie in (0, 1)")
+    return int(fraction * mem_total_bytes)
+
+
+def memory_stop_index(used_bytes, bar_bytes):
+    """The index of the first MEASURED node-use sample above the bar (None: no stop).  The live
+    sampler and the replay of recorded sample blocks (HANDBOOK s18) use this one rule."""
+    for index, used in enumerate(used_bytes):
+        if used > bar_bytes:
+            return index
+    return None
 
 
 def per_node_peaks(sample_paths, start_epoch, end_epoch):
@@ -332,7 +382,8 @@ def main(argv):
             raise SystemExit(f"Form-X plan with {nodes} nodes: the Launcher runs on one node only")
         if any(stage.get("Binary") for stage in plan["Stages"]):
             raise SystemExit("Form-X plan with a stage naming its own executable: not supported")
-        image = launcher_preflight(launcher, plan)
+        image = launcher_preflight(launcher, plan, environment={key: value for key, value in os.environ.items()
+                                                                 if not key.startswith("PALACE_RESPONSE_")})
     memory0 = meminfo()
     preflight = {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
                  "MinimumMemAvailableBytes": plan["MinimumMemAvailableBytes"], "Instance": plan.get("Instance"),
@@ -340,6 +391,7 @@ def main(argv):
                  "UTC": time.strftime("%FT%TZ", time.gmtime())}
     if image is not None:
         preflight["Launcher"] = image
+        preflight["MemoryStopBarBytes"] = memory_stop_bar(launcher, memory0["MemTotal"])
     other_hosts = [host for host in ordered_hosts if host != status["Host"]]
     node_shell = None
     if nodes > 1:
@@ -391,6 +443,9 @@ def main(argv):
     stop_sampling = threading.Event()
     current_stage = ["preflight"]
     stage_peaks = {}
+    # Form X only (E-3 (a), decision 1702): the memory STOP on the MEASURED node use of these samples.
+    current_process, memory_stop, stage_samples = [None], {}, []
+    memory_bar = preflight.get("MemoryStopBarBytes")
 
     def sampler():
         with samples_path.open("w") as stream:
@@ -401,6 +456,18 @@ def main(argv):
                 stage_peaks[current_stage[0]] = max(stage_peaks.get(current_stage[0], 0), used)
                 stream.write(f"{time.time():.0f},{current_stage[0]},{used}\n")
                 stream.flush()
+                if memory_bar is not None:
+                    stage_samples.append((round(time.time()), current_stage[0], used))
+                    if not memory_stop and memory_stop_index([used], memory_bar) is not None:
+                        memory_stop.update(Stage=current_stage[0], UsedBytes=used, BarBytes=memory_bar,
+                                           MemTotalBytes=values["MemTotal"], UTC=time.strftime("%FT%TZ", time.gmtime()),
+                                           Samples=[list(sample) for sample in stage_samples])
+                        (base / "memory-stop.json").write_text(json.dumps(memory_stop, indent=1) + "\n")
+                        process = current_process[0]
+                        if process is not None and process.poll() is None:
+                            os.killpg(process.pid, signal.SIGTERM)
+                            if stop_sampling.wait(10.0) is False and process.poll() is None:
+                                os.killpg(process.pid, signal.SIGKILL)
                 stop_sampling.wait(5.0)
 
     threading.Thread(target=sampler, daemon=True).start()
@@ -419,6 +486,8 @@ def main(argv):
 
     completed = set()
     for stage in plan["Stages"]:
+        if memory_stop:
+            break
         name = stage["Name"]
         record = {"Name": name, "Config": stage["Config"], "Environment": stage["Environment"]}
         if any(required not in completed for required in stage.get("Requires", [])):
@@ -458,6 +527,7 @@ def main(argv):
         started_epoch = time.time()
         with log.open("w") as stream:
             process = subprocess.Popen(command, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+            current_process[0] = process
             try:
                 code = process.wait()
             except KeyboardInterrupt:
@@ -479,11 +549,19 @@ def main(argv):
             record["Nodes"] = nodes
         ok = code == 0 and not parsed["Nonconvergence"]
         record["State"] = "complete" if ok else ("timed-out" if code == 124 else "failed")
+        current_process[0] = None
+        if memory_stop:
+            # No partial output of a stopped job is a result: this stage and the job end here.
+            ok = False
+            record["State"] = "memory-stop"
+            record["MemoryStop"] = {key: value for key, value in memory_stop.items() if key != "Samples"}
         if ok:
             completed.add(name)
         status["Stages"].append(record)
         save()
         current_stage[0] = "between-stages"
+        if memory_stop:
+            break
 
     stop_sampling.set()
     time.sleep(0.2)
@@ -494,7 +572,8 @@ def main(argv):
                 process.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 process.kill()
-    status.update(State="complete" if all(s["State"] == "complete" for s in status["Stages"]) else "incomplete",
+    state = "complete" if all(s["State"] == "complete" for s in status["Stages"]) else "incomplete"
+    status.update(State="memory-stop" if memory_stop else state,
                   EndUTC=time.strftime("%FT%TZ", time.gmtime()), TotalSeconds=time.monotonic() - job_start,
                   StagePeakUsedBytesSampled=stage_peaks)
     if nodes > 1:
@@ -505,7 +584,7 @@ def main(argv):
     for record in status["Stages"]:
         print(record["Name"], record["State"], record.get("WallSeconds"), record.get("Parsed", {}).get("H1"),
               record.get("Parsed", {}).get("PCG"))
-    return 0 if status["State"] == "complete" else 1
+    return 0 if status["State"] == "complete" else (3 if memory_stop else 1)
 
 
 if __name__ == "__main__":

@@ -82,19 +82,25 @@ GIB = 1024 ** 3
 # Environment = variables set for every stage and forwarded to the ranks with `-x`.
 LAUNCHER_KEYS = ("Kind", "Apptainer", "Image", "ImageSHA256", "Binds", "ImageMPIExec", "ImageBinary",
                  "ImageBinarySHA256", "MPIExecArguments", "Environment")
+# Optional (decision 1702): read-only input binds; the memory-stop bar as a fraction of MemTotal (run_stages).
+LAUNCHER_OPTIONAL_KEYS = ("ReadOnlyBinds", "MemoryStopFraction")
 LAUNCHER_SINGLE_NODE_RULE = ("form X (a cluster profile with a Launcher block) runs Palace inside the image on ONE node: a "
                              "stage that needs more than one node is refused (it waits for the paladin form)")
 
 
 def launcher_of(profile):
-    """The cluster profile's Launcher block (form X), checked: exactly LAUNCHER_KEYS, Kind
-    "apptainer"; None when the profile has none (the PBS form of record)."""
+    """The cluster profile's Launcher block (form X), checked: LAUNCHER_KEYS (+ optional
+    LAUNCHER_OPTIONAL_KEYS), Kind "apptainer"; None when the profile has none (the PBS form of record)."""
     launcher = profile.get("Launcher")
     if launcher is None:
         return None
-    if sorted(launcher) != sorted(LAUNCHER_KEYS):
-        raise ValueError(f"the cluster profile's Launcher block must have exactly the keys {list(LAUNCHER_KEYS)}: "
-                         f"it has {sorted(launcher)}")
+    if not set(LAUNCHER_KEYS) <= set(launcher) <= set(LAUNCHER_KEYS + LAUNCHER_OPTIONAL_KEYS):
+        raise ValueError(f"the cluster profile's Launcher block must have the keys {list(LAUNCHER_KEYS)} and at most "
+                         f"{list(LAUNCHER_OPTIONAL_KEYS)}: it has {sorted(launcher)}")
+    if not isinstance(launcher.get("ReadOnlyBinds", []), list):
+        raise ValueError("Launcher ReadOnlyBinds must be a list")
+    if not 0.0 < float(launcher.get("MemoryStopFraction", 0.85)) < 1.0:
+        raise ValueError("Launcher MemoryStopFraction must lie in (0, 1)")
     if launcher["Kind"] != "apptainer":
         raise ValueError(f"Launcher Kind {launcher['Kind']!r} is not supported (only 'apptainer')")
     if not isinstance(launcher["Binds"], list) or not isinstance(launcher["MPIExecArguments"], list) \

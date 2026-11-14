@@ -16,6 +16,7 @@ from pathlib import Path
 import socket
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -64,12 +65,18 @@ class LauncherBlockTest(unittest.TestCase):
         self.assertEqual(build_plan.launcher_of(profile_x())["Image"], "/data/sif/palace.sif")
         broken = profile_x()
         del broken["Launcher"]["Binds"]
-        with self.assertRaisesRegex(ValueError, "exactly the keys"):
+        with self.assertRaisesRegex(ValueError, "must have the keys"):
             build_plan.launcher_of(broken)
         extra = profile_x()
         extra["Launcher"]["Modules"] = []
-        with self.assertRaisesRegex(ValueError, "exactly the keys"):
+        with self.assertRaisesRegex(ValueError, "must have the keys"):
             build_plan.launcher_of(extra)
+        optional = build_plan.launcher_of(profile_x(ReadOnlyBinds=["/data/in"], MemoryStopFraction=0.8))
+        self.assertEqual(optional["ReadOnlyBinds"], ["/data/in"])
+        with self.assertRaisesRegex(ValueError, "MemoryStopFraction"):
+            build_plan.launcher_of(profile_x(MemoryStopFraction=1.5))
+        with self.assertRaisesRegex(ValueError, "ReadOnlyBinds"):
+            build_plan.launcher_of(profile_x(ReadOnlyBinds="/data/in"))
         with self.assertRaisesRegex(ValueError, "not supported"):
             build_plan.launcher_of(profile_x(Kind="docker"))
         with self.assertRaisesRegex(ValueError, "must be lists"):
@@ -154,20 +161,36 @@ class DriverExecutablesTest(unittest.TestCase):
 
 
 FAKE_APPTAINER = '''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 args = sys.argv[1:]
+if args == ["--version"]:
+    print("apptainer version 0.0-fake")
+    sys.exit(0)
 assert args[0] == "exec", args
-index, binds = 1, []
-while args[index] == "--bind":
-    binds.append(args[index + 1])
-    index += 2
+index, binds, flags = 1, [], []
+while args[index].startswith("--"):
+    if args[index] == "--bind":
+        binds.append(args[index + 1])
+        index += 2
+    else:
+        flags.append(args[index])
+        index += 1
 image, rest = args[index], args[index + 1:]
+# --cleanenv: the image sees only the APPTAINERENV_* variables (prefix removed).
+inner = ({key[len("APPTAINERENV_"):]: value for key, value in os.environ.items() if key.startswith("APPTAINERENV_")}
+         if "--cleanenv" in flags else dict(os.environ))
 if rest[:1] == ["sha256sum"]:
     print(os.environ.get("FAKE_INNER_DIGEST", "%s") + "  " + rest[1])
     sys.exit(0)
+if rest == ["env"]:
+    for key, value in sorted(inner.items()):
+        print(key + "=" + value)
+    sys.exit(0)
+if os.environ.get("FAKE_FLAG"):
+    open(os.environ["FAKE_FLAG"], "w").close()
+    time.sleep(30)
 with open(os.environ["FAKE_RECORD"], "a") as stream:
-    stream.write(json.dumps({"argv": args, "env": {key: value for key, value in os.environ.items()
-                                                   if key.startswith(("PALACE_RESPONSE_", "PBS_", "GLIBC_TUNABLES"))}}) + "\\n")
+    stream.write(json.dumps({"argv": args, "env": inner}) + "\\n")
 print("H1 (p = 3): 1,000, ND (p = 3): 2,000, RT (p = 3): 3,000")
 ''' % DIGEST_BINARY
 
@@ -251,12 +274,17 @@ class RunStagesLauncherTest(unittest.TestCase):
         self.assertEqual(len(launches), 2)
         worker, reducer = launches
         block = json.loads(plan_path.read_text())["Launcher"]
-        self.assertEqual(worker["argv"], ["exec", "--bind", "/data/home/simlap", str(self.image), "/opt/view/bin/mpirun",
+        self.assertEqual(worker["argv"], ["exec", "--cleanenv", "--no-home", "--bind", "/data/home/simlap", str(self.image),
+                                          "/opt/view/bin/mpirun",
                                           *block["MPIExecArguments"], "-x", "GLIBC_TUNABLES",
                                           "-x", "PALACE_RESPONSE_ARCHIVE_ONLY", "-x", "PALACE_RESPONSE_ARCHIVE_DIR",
                                           "-n", "4", "/opt/view/bin/palace-arm64.bin", str(self.root / "p3-worker.json")])
+        passed = {key: value for key, value in self.saved.items() if run_stages.LAUNCHER_PASSED_PATTERN.match(key)}
         self.assertEqual(worker["env"], {"PALACE_RESPONSE_ARCHIVE_ONLY": "1", "PALACE_RESPONSE_ARCHIVE_DIR": str(self.root / "archive"),
-                                         "GLIBC_TUNABLES": "glibc.malloc.hugetlb=1"})
+                                         "GLIBC_TUNABLES": "glibc.malloc.hugetlb=1", **passed})
+        self.assertEqual(status["Preflight"]["Launcher"]["ApptainerVersion"], "apptainer version 0.0-fake")
+        self.assertEqual(status["Preflight"]["Launcher"]["ImageEnvironment"], {"GLIBC_TUNABLES": "glibc.malloc.hugetlb=1", **passed})
+        self.assertEqual(status["Preflight"]["MemoryStopBarBytes"], int(0.85 * status["Preflight"]["MemTotalBytes"]))
         self.assertEqual(reducer["env"]["PALACE_RESPONSE_REDUCE_ONLY"], "1")
         self.assertNotIn("PALACE_RESPONSE_ARCHIVE_ONLY", reducer["env"])
         self.assertEqual(status["Stages"][0]["Parsed"]["H1"], 1000)
@@ -281,18 +309,75 @@ class RunStagesLauncherTest(unittest.TestCase):
         self.assertFalse(self.record.exists())
 
 
+    def test_in_image_digest_is_checked_against_the_launcher_pin(self):
+        plan_path = self.plan()
+        plan = json.loads(plan_path.read_text())
+        plan["Launcher"]["ImageBinarySHA256"] = "5" * 64
+        plan_path.write_text(json.dumps(plan))
+        with self.assertRaisesRegex(SystemExit, "the Launcher pin"):
+            self.run_plan(plan_path)
+        self.assertFalse(self.record.exists())
+
+    def test_read_only_binds(self):
+        prefix = run_stages.launcher_launch_prefix(launcher(ReadOnlyBinds=["/data/in"]))
+        self.assertEqual(prefix, ["/bin/apptainer", "exec", "--cleanenv", "--no-home", "--bind", "/data/home/simlap",
+                                  "--bind", "/data/in:/data/in:ro", "/data/sif/palace.sif"])
+
+    def test_memory_stop_rule(self):
+        block = launcher()
+        self.assertEqual(run_stages.memory_stop_bar(block, 1000), 850)
+        self.assertEqual(run_stages.memory_stop_bar(launcher(MemoryStopFraction=0.5), 1000), 500)
+        self.assertIsNone(run_stages.memory_stop_index([100, 850, 200], 850))
+        self.assertEqual(run_stages.memory_stop_index([100, 851, 900], 850), 1)
+
+    def fake_meminfo(self, flag):
+        total = 100 << 30
+        return lambda: {"MemTotal": total, "MemAvailable": total - ((90 << 30) if flag.exists() else (1 << 30))}
+
+    def test_memory_stop_ends_the_running_stage_and_the_job(self):
+        flag = self.root / "stage-started"
+        os.environ["FAKE_FLAG"] = str(flag)
+        plan_path = self.plan()
+        with mock.patch.object(run_stages, "meminfo", side_effect=self.fake_meminfo(flag)):
+            started = time.monotonic()
+            self.assertEqual(self.run_plan(plan_path), 3)
+            self.assertLess(time.monotonic() - started, 25)
+        status = json.loads((plan_path.parent / "status.json").read_text())
+        self.assertEqual(status["State"], "memory-stop")
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["memory-stop"])
+        self.assertNotEqual(status["Stages"][0]["ReturnCode"], 0)
+        stop = json.loads((plan_path.parent / "memory-stop.json").read_text())
+        self.assertEqual(stop["Stage"], "p3-worker")
+        self.assertEqual(stop["BarBytes"], int(0.85 * (100 << 30)))
+        self.assertGreater(stop["UsedBytes"], stop["BarBytes"])
+        self.assertTrue(stop["Samples"])
+        self.assertFalse(self.record.exists())
+
+
 class PalaceInImageTest(unittest.TestCase):
+    def test_more_than_one_node_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            nodefile = Path(root) / "nodes"
+            nodefile.write_text("node-a\nnode-a\nnode-b\n")
+            with self.assertRaisesRegex(SystemExit, "2 nodes in PBS_NODEFILE"):
+                palace_in_image.image_launch(profile_x(), 96, ["c.json"], {"PBS_NODEFILE": str(nodefile)},
+                                             digest=lambda path: DIGEST_IMAGE,
+                                             run=lambda command: f"{DIGEST_BINARY}  {command[-1]}\n")
+
     def test_launch_command_and_environment(self):
         profile = profile_x()
         command, environment, check = palace_in_image.image_launch(
             profile, 96, ["--surface-response-preflight", "c0-p4.json"],
             {"PBS_JOBID": "1.fake", "PALACE_RESPONSE_ARCHIVE_DIR": "/a", "HOME": "/h"},
             digest=lambda path: DIGEST_IMAGE, run=lambda command: f"{DIGEST_BINARY}  {command[-1]}\n")
-        self.assertEqual(command, ["/bin/apptainer", "exec", "--bind", "/data/home/simlap", "/data/sif/palace.sif",
+        self.assertEqual(command, ["/bin/apptainer", "exec", "--cleanenv", "--no-home", "--bind", "/data/home/simlap",
+                                   "/data/sif/palace.sif",
                                    "/opt/view/bin/mpirun", *profile["Launcher"]["MPIExecArguments"], "-x", "GLIBC_TUNABLES",
                                    "-x", "PALACE_RESPONSE_ARCHIVE_DIR", "-n", "96", "/opt/view/bin/palace-arm64.bin",
                                    "--surface-response-preflight", "c0-p4.json"])
-        self.assertEqual(environment, {"PALACE_RESPONSE_ARCHIVE_DIR": "/a", "HOME": "/h", "GLIBC_TUNABLES": "glibc.malloc.hugetlb=1"})
+        self.assertEqual(environment, {"PALACE_RESPONSE_ARCHIVE_DIR": "/a", "HOME": "/h", "GLIBC_TUNABLES": "glibc.malloc.hugetlb=1",
+                                       "APPTAINERENV_PALACE_RESPONSE_ARCHIVE_DIR": "/a",
+                                       "APPTAINERENV_GLIBC_TUNABLES": "glibc.malloc.hugetlb=1"})
         self.assertEqual(check["BinarySHA256"], DIGEST_BINARY)
         with self.assertRaisesRegex(SystemExit, "Executable hash mismatch"):
             palace_in_image.image_launch(profile, 96, ["c.json"], {}, digest=lambda path: DIGEST_IMAGE,

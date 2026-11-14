@@ -7,8 +7,10 @@ window solves, load checks, preflights: `mpiexec_bound.sh -n N $BIN ARGS`): run 
 the image of a cluster profile's Launcher block on this node, as run_stages.py does for a plan.
 
 Checks the image file's sha256 (ImageSHA256) and the sha256 of the executable inside it
-(ImageBinarySHA256), drops the PBS_* variables, forwards the Launcher Environment and every
-PALACE_RESPONSE_* variable of the caller with -x, prints the check and the command on stderr,
+(ImageBinarySHA256), refuses a job of more than one node (PBS_NODEFILE), drops the PBS_*
+variables, passes into the image (apptainer --cleanenv) only the Launcher Environment, every
+PALACE_RESPONSE_* variable of the caller and the thread-count / TMPDIR variables (forwarded
+to the ranks with -x), prints the check and the command on stderr,
 then replaces itself with `apptainer exec ... IMAGE <image mpirun> ... -n RANKS <image palace>
 PALACE-ARGUMENTS`.  Exit 2 on a check failure (nothing started).
 
@@ -32,6 +34,10 @@ def image_launch(profile, ranks, arguments, environment, *, digest=None, run=Non
     launcher = build_plan.launcher_of(profile)
     if launcher is None:
         raise SystemExit("the cluster profile has no Launcher block (form X)")
+    if environment.get("PBS_NODEFILE"):
+        hosts = run_stages.unique_hosts(Path(environment["PBS_NODEFILE"]).read_text())
+        if len(hosts) > 1:
+            raise SystemExit(f"{len(hosts)} nodes in PBS_NODEFILE: {build_plan.LAUNCHER_SINGLE_NODE_RULE}")
     check = run_stages.launcher_preflight(launcher, {"Binary": launcher["ImageBinary"], "MPIExec": launcher["ImageMPIExec"]},
                                           digest=digest, run=run)
     if check["BinarySHA256"] != launcher["ImageBinarySHA256"]:
