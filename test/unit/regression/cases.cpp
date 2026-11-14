@@ -3043,6 +3043,10 @@ TEST_CASE("cpw_wave_eigen", "[Serial][Parallel][GPU][Regression]")
 
 // --- adapter: same reltol / atol as the cpw eigen block above ---
 
+// The mode nearest above the target is 10.498 GHz with Q 3.5, which the Hybrid seed and
+// Quasi-Newton refinement missed (they returned the next, 10.526 GHz with Q 30.5), and
+// which SLP finds from a target of 10.45 GHz. The wave ports carry TE modes of homogeneous
+// guides, so the problem is solved with a rational fit of kₙ(ω).
 TEST_CASE("adapter_hybrid", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -3060,8 +3064,8 @@ TEST_CASE("adapter_hybrid", "[Serial][Parallel][GPU][Regression]")
 // depend on the orthogonalized basis, so runs that represent the same physical system
 // can differ freely. The physically meaningful regression signal is
 // rom-eigenvalues.csv — the eigenvalues of the synthesized L⁻¹/R⁻¹/C system inside the
-// trained band (the adapter resonance at 10.526 GHz, Q 30.5, matches the eigenmode
-// reference of adapter_hybrid) — together with the end-to-end S-parameter round-trip.
+// trained band (the adapter resonance at 10.526 GHz, Q 30.5, matches the second eigenmode
+// of adapter_hybrid) — together with the end-to-end S-parameter round-trip.
 TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
