@@ -7,6 +7,8 @@
 #include <fstream>
 #include <iterator>
 #include <numbers>
+#include <string>
+#include <vector>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -18,6 +20,7 @@
 #include "fem/integrator.hpp"
 #include "fixtures.hpp"
 #include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
@@ -43,6 +46,22 @@ public:
   }
 };
 
+class EigenPostOperatorTest : public PostOperator<ProblemType::EIGENMODE>
+{
+public:
+  using PostOperator<ProblemType::EIGENMODE>::PostOperator;
+
+  Measurement MeasureForTest(const ComplexVector &e, const ComplexVector &b, double omega)
+  {
+    measurement_cache = {};
+    measurement_cache.freq = omega;
+    SetEGridFunction(e);
+    SetBGridFunction(b);
+    MeasureAllImpl();
+    return measurement_cache;
+  }
+};
+
 // random integer between 0 and n as a double.
 auto randd(int n)
 {
@@ -53,25 +72,28 @@ auto randd(int n)
 auto RandomMeasurement(int ndomain = 5)
 {
   Measurement cache;
-  cache.domain_E_field_energy_all = 0.0;
+  double E_all = 0.0;
   cache.domain_H_field_energy_all = 0.0;
   for (int i = 0; i < ndomain; i++)
   {
     cache.domain_H_field_energy_i.emplace_back(
         Measurement::DomainData{i, 1 + randd(100), 0});
-    cache.domain_H_field_energy_all += cache.domain_H_field_energy_i.back().energy;
+    cache.domain_H_field_energy_all += *cache.domain_H_field_energy_i.back().energy;
     cache.domain_E_field_energy_i.emplace_back(
         Measurement::DomainData{i, 1 + randd(100), 0});
-    cache.domain_E_field_energy_all += cache.domain_H_field_energy_i.back().energy;
+    E_all += *cache.domain_H_field_energy_i.back().energy;
   }
+  cache.domain_E_field_energy_all = E_all;
   for (auto &H : cache.domain_H_field_energy_i)
   {
-    H.participation_ratio = H.energy / cache.domain_H_field_energy_all;
+    H.participation_ratio = *H.energy / cache.domain_H_field_energy_all;
   }
   for (auto &E : cache.domain_E_field_energy_i)
   {
-    E.participation_ratio = E.energy / cache.domain_E_field_energy_all;
+    E.participation_ratio = *E.energy / E_all;
   }
+
+  cache.domain_E_field_energy_material = 1 + randd(100);
 
   cache.freq = std::complex(1 + randd(99), randd(100));
   cache.eigenmode_Q = 5e6 * (randd(99) + 1);
@@ -195,14 +217,18 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   Units units(1e-6, 152 * 1e-6);  // μm, 152μm
   auto dim_cache = Measurement::Dimensionalize(units, cache);
   auto non_dim_cache = Measurement::Nondimensionalize(units, dim_cache);
-  CHECK_THAT(cache.domain_E_field_energy_all,
-             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all));
-  CHECK_THAT(cache.domain_E_field_energy_all,
-             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_all.value(),
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all.value()));
+  CHECK_THAT(cache.domain_E_field_energy_all.value(),
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all.value()));
   CHECK_THAT(cache.domain_H_field_energy_all,
              Catch::Matchers::WithinRel(non_dim_cache.domain_H_field_energy_all));
   CHECK_THAT(cache.domain_H_field_energy_all,
              !Catch::Matchers::WithinRel(dim_cache.domain_H_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_material,
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_material));
+  CHECK_THAT(cache.domain_E_field_energy_material,
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_material));
 
   for (std::size_t i = 0; i < cache.domain_E_field_energy_i.size(); i++)
   {
@@ -210,27 +236,50 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
       const auto &c = cache.domain_E_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
-      CHECK_THAT(c.participation_ratio,
-                 Catch::Matchers::WithinRel(ndc.participation_ratio));
+      CHECK_THAT(c.energy.value(), Catch::Matchers::WithinRel(ndc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(ndc.participation_ratio.value()));
 
       const auto &dc = dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
-      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
+      CHECK_THAT(c.energy.value(), !Catch::Matchers::WithinRel(dc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(dc.participation_ratio.value()));
     }
     {
       const auto &c = cache.domain_H_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
-      CHECK_THAT(c.participation_ratio,
-                 Catch::Matchers::WithinRel(ndc.participation_ratio));
+      CHECK_THAT(c.energy.value(), Catch::Matchers::WithinRel(ndc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(ndc.participation_ratio.value()));
 
       const auto &dc = dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
-      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
+      CHECK_THAT(c.energy.value(), !Catch::Matchers::WithinRel(dc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(dc.participation_ratio.value()));
+    }
+  }
+  // Omitted electric energies (no stored electric energy) stay omitted through the unit
+  // conversions, and so do the energies normalized by them.
+  {
+    Measurement omitted;
+    omitted.domain_E_field_energy_material = 1.0;
+    omitted.domain_E_field_energy_i.push_back({0, std::nullopt, std::nullopt});
+    omitted.lumped_port_vi[1];
+    const auto dim = Measurement::Dimensionalize(units, omitted);
+    const auto back = Measurement::Nondimensionalize(units, dim);
+    for (const auto *m : {&dim, &back})
+    {
+      CHECK_FALSE(m->domain_E_field_energy_all);
+      CHECK_FALSE(m->TotalEnergyNormalization());
+      CHECK_FALSE(m->TotalFieldEnergy());
+      CHECK_FALSE(m->domain_E_field_energy_i.at(0).energy);
+      CHECK_FALSE(m->domain_E_field_energy_i.at(0).participation_ratio);
+      CHECK_FALSE(m->lumped_port_vi.at(1).mode_port_kappa);
+      CHECK_FALSE(m->lumped_port_vi.at(1).quality_factor);
+      CHECK_FALSE(m->lumped_port_vi.at(1).inductive_energy_participation);
     }
   }
   auto check_port_data = [&](const auto &c, const auto &dc, const auto &ndc)
@@ -260,9 +309,18 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
 
     CHECK_THAT(c.inductor_energy, Catch::Matchers::WithinRel(ndc.inductor_energy));
     CHECK_THAT(c.capacitor_energy, Catch::Matchers::WithinRel(ndc.capacitor_energy));
-    CHECK_THAT(c.mode_port_kappa, Catch::Matchers::WithinRel(ndc.mode_port_kappa));
-    CHECK_THAT(c.inductive_energy_participation,
-               Catch::Matchers::WithinRel(ndc.inductive_energy_participation));
+    // The energy-normalized port data are present together, in both unit systems.
+    REQUIRE(c.mode_port_kappa.has_value() == ndc.mode_port_kappa.has_value());
+    REQUIRE(c.mode_port_kappa.has_value() == dc.mode_port_kappa.has_value());
+    REQUIRE(c.quality_factor.has_value() == dc.quality_factor.has_value());
+    REQUIRE(c.inductive_energy_participation.has_value() ==
+            dc.inductive_energy_participation.has_value());
+    if (c.mode_port_kappa)
+    {
+      CHECK_THAT(*c.mode_port_kappa, Catch::Matchers::WithinRel(*ndc.mode_port_kappa));
+      CHECK_THAT(*c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(*ndc.inductive_energy_participation));
+    }
 
     // Dimensional
     REQUIRE_THAT(units.GetScaleFactor<Units::ValueType::POWER>(),
@@ -303,9 +361,9 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
 
       CHECK_THAT(c.inductor_energy, !Catch::Matchers::WithinRel(dc.inductor_energy));
       CHECK_THAT(c.capacitor_energy, !Catch::Matchers::WithinRel(dc.capacitor_energy));
-      CHECK_THAT(c.mode_port_kappa, !Catch::Matchers::WithinRel(dc.mode_port_kappa));
-      CHECK_THAT(c.inductive_energy_participation,
-                 Catch::Matchers::WithinRel(dc.inductive_energy_participation));
+      CHECK_THAT(*c.mode_port_kappa, !Catch::Matchers::WithinRel(*dc.mode_port_kappa));
+      CHECK_THAT(*c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(*dc.inductive_energy_participation));
     }
   };
   for (const auto &[k, v] : cache.lumped_port_vi)
@@ -448,6 +506,155 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(std::abs(dm.impedance.at(idx).Z_VI - Z_VI),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(Z_VI)));
   }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normalization",
+                 "[postoperator][Serial][Parallel]")
+{
+  // Exercise the real measurement consumers, not only the normalization helper. The
+  // electric field is uniform, so its volume energies and the port voltage are analytic;
+  // B = 0 deliberately ensures that normalization uses only the electric-side forms. A
+  // material without a stored electric energy (a RAW −0.5/(s + 1) compensated by a typed
+  // Debye 1/(1 + s)) has no total energy: κ, the participations, and the interface
+  // outputs are omitted, and so are their CSV files, also when an earlier run left them
+  // in the output folder. The other files there are kept.
+  enum class Model
+  {
+    CONSTANT,
+    LORENTZ,
+    COMPENSATED
+  };
+  const auto model = GENERATE(Model::CONSTANT, Model::LORENTZ, Model::COMPENSATED);
+  CAPTURE(static_cast<int>(model));
+  const bool dispersive = (model == Model::LORENTZ);
+  const bool stored = (model != Model::COMPENSATED);
+  const auto output = temp_dir / fmt::format("participation_{}", static_cast<int>(model));
+  const std::vector<std::string> omitted = {"port-Q.csv", "port-EPR.csv", "surface-Q.csv"};
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    fs::remove_all(output);
+    fs::create_directories(output);
+    for (const auto &name : omitted)
+    {
+      std::ofstream(output / name) << "stale\n";
+    }
+    std::ofstream(output / "unrelated.txt") << "kept\n";
+  }
+  Mpi::Barrier(comm);
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.problem.output = output.string();
+  iodata.solver.order = 1;
+  iodata.solver.linear.mg_max_levels = 1;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  if (dispersive)
+  {
+    material.permittivity_terms = {config::LorentzData{1.0, 3.0, 0.0}};
+  }
+  else if (!stored)
+  {
+    material.permittivity_terms = {config::DebyeData{1.0, 1.0},
+                                   config::PermittivityPoleData{-1.0, -0.5}};
+  }
+  iodata.domains.materials = {material};
+  json boundaries;
+  boundaries["LumpedPort"] = {{{"Index", 1},
+                               {"Attributes", {1}},
+                               {"Direction", "+X"},
+                               {"R", 3.0},
+                               {"L", 2.0},
+                               {"C", 0.4}}};
+  boundaries["Postprocessing"]["Dielectric"] = {{{"Index", 1},
+                                                 {"Attributes", {5}},
+                                                 {"Thickness", 0.01},
+                                                 {"Permittivity", 1.0},
+                                                 {"LossTan", 0.02}}};
+  iodata.boundaries = config::BoundaryData(boundaries);
+  iodata.CheckConfiguration();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON));
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh)));
+  SpaceOperator space(iodata, meshes);
+  EigenPostOperatorTest post(iodata, space);
+
+  GridFunction E(space.GetNDSpace(), true);
+  mfem::Vector field({1.0, 0.0, 0.0});
+  mfem::VectorConstantCoefficient real_field(field);
+  E.Real().ProjectCoefficient(real_field);
+  field(0) = 0.5;
+  mfem::VectorConstantCoefficient imag_field(field);
+  E.Imag().ProjectCoefficient(imag_field);
+  ComplexVector e(space.GetNDSpace().GetTrueVSize()),
+      b(space.GetCurlSpace().GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.Real().GetTrueDofs(e.Real());
+  E.Imag().GetTrueDofs(e.Imag());
+  b = 0.0;
+  const auto measured = post.MeasureForTest(e, b, 1.0);
+
+  // At ω = 1, χ = 9/8 and w = 90/64 for this lossless Lorentz oscillator, and
+  // Re χ = Re 0.5/(1 + i) = 1/4 for the compensated Debye.
+  constexpr double norm_E2 = 1.25;
+  const double re_chi = dispersive ? 9.0 / 8.0 : (stored ? 0.0 : 0.25);
+  const double at_material = 0.5 * norm_E2 * (2.0 + re_chi);
+  CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
+  const auto &port = measured.lumped_port_vi.at(1);
+  CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
+  if (Mpi::Root(comm))
+  {
+    for (const auto &name : omitted)
+    {
+      CAPTURE(name);
+      REQUIRE(fs::exists(output / name) == stored);
+      if (stored && name != "surface-Q.csv")
+      {
+        // Written by this run at setup, not left from the earlier one (surface-Q.csv is
+        // written at the first printed measurement, which this test does not make).
+        std::ifstream file(output / name);
+        std::string header;
+        std::getline(file, header);
+        CHECK(header != "stale");
+      }
+    }
+    CHECK(fs::exists(output / "unrelated.txt"));
+  }
+  if (!stored)
+  {
+    // No total energy, so no normalized output, and not a placeholder value.
+    CHECK_FALSE(measured.domain_E_field_energy_all);
+    CHECK_FALSE(measured.TotalEnergyNormalization());
+    CHECK_FALSE(port.mode_port_kappa);
+    CHECK_FALSE(port.quality_factor);
+    CHECK_FALSE(port.inductive_energy_participation);
+    CHECK(measured.interface_eps_i.empty());
+    return;
+  }
+  const double stored_E = 0.5 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
+  const double capacitor = 0.5 * 0.4 * norm_E2;
+  const double total = 0.5 * (stored_E + at_material) + capacitor;
+  // The typed models have a stored electric energy, so every normalized output exists.
+  REQUIRE(measured.domain_E_field_energy_all);
+  REQUIRE(measured.TotalEnergyNormalization());
+  CHECK_THAT(*measured.domain_E_field_energy_all, WithinRel(stored_E, 1.0e-12));
+  CHECK_THAT(*measured.TotalEnergyNormalization(), WithinRel(total, 1.0e-12));
+  REQUIRE(port.mode_port_kappa);
+  REQUIRE(port.inductive_energy_participation);
+  CHECK_THAT(std::abs(*port.mode_port_kappa),
+             WithinRel(0.5 * norm_E2 / 3.0 / total, 1.0e-12));
+  CHECK_THAT(std::abs(*port.inductive_energy_participation),
+             WithinRel(0.5 * norm_E2 / 2.0 / total, 1.0e-12));
+  REQUIRE(measured.interface_eps_i.size() == 1);
+  const auto &interface = measured.interface_eps_i.front();
+  REQUIRE(interface.energy > 0.0);
+  CHECK_THAT(interface.energy_participation, WithinRel(interface.energy / total, 1.0e-12));
+  CHECK_THAT(interface.quality_factor,
+             WithinRel(total / (interface.energy * 0.02), 1.0e-12));
 }
 
 TEST_CASE_METHOD(test::SharedTempDir, "Field export",

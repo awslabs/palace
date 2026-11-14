@@ -74,11 +74,14 @@ using fem_op_t = typename fem_op_map_type<solver_t>::type;
 struct Measurement
 {
   // Mini storage structs for data measurements.
+  // An electric energy, and its participation ratio, is empty where the stored electric
+  // energy is not available (DomainPostOperator::HasStoredDomainElectricFieldEnergy);
+  // magnetic energies are always present.
   struct DomainData
   {
     int idx;
-    double energy;
-    double participation_ratio;
+    std::optional<double> energy;
+    std::optional<double> participation_ratio;
   };
 
   struct FluxData
@@ -129,12 +132,13 @@ struct Measurement
     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
     double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².
 
-    // Resistive lumped port (only eigenmode).
-    double mode_port_kappa = 0.0;
-    double quality_factor = mfem::infinity();
+    // Resistive lumped port (only eigenmode), normalized by the total energy, so empty
+    // without one (Measurement::TotalEnergyNormalization).
+    std::optional<double> mode_port_kappa;
+    std::optional<double> quality_factor;
 
-    // Inductive lumped port (only eigenmode).
-    double inductive_energy_participation = 0.0;
+    // Inductive lumped port (only eigenmode), empty without a total energy.
+    std::optional<double> inductive_energy_participation;
   };
 
   // Mode analysis impedance result for a single configuration entry.
@@ -186,8 +190,40 @@ struct Measurement
 
   // "Actual measurements".
 
-  double domain_E_field_energy_all = 0.0;
+  // The stored electric field energy, empty without the stored electric energy of every
+  // frequency-dependent material (DomainPostOperator::HasStoredElectricFieldEnergy).
+  std::optional<double> domain_E_field_energy_all;
   double domain_H_field_energy_all = 0.0;
+  // The electric field energy at the permittivity ε(ω) of frequency-dependent materials,
+  // without their polarization energy, which equals the magnetic energy of a lossless mode.
+  // Equal to domain_E_field_energy_all without such materials.
+  double domain_E_field_energy_material = 0.0;
+
+  // The total stored energy a mode's participation ratios and coupling rates are normalized
+  // by, from electric-side quantities only (they converge faster than the magnetic ones):
+  // (E_elec + E_elec_material)/2 + E_cap, which is E_elec + E_cap for constant materials
+  // and the mean of the electric and magnetic energies for a lossless mode in general.
+  // Empty without the stored electric field energy.
+  std::optional<double> TotalEnergyNormalization() const
+  {
+    if (!domain_E_field_energy_all)
+    {
+      return std::nullopt;
+    }
+    return 0.5 * (*domain_E_field_energy_all + domain_E_field_energy_material) +
+           lumped_port_capacitor_energy;
+  }
+
+  // The total field energy E_elec + E_mag which normalizes the error indicators, empty
+  // without the stored electric field energy.
+  std::optional<double> TotalFieldEnergy() const
+  {
+    if (!domain_E_field_energy_all)
+    {
+      return std::nullopt;
+    }
+    return *domain_E_field_energy_all + domain_H_field_energy_all;
+  }
 
   std::vector<DomainData> domain_E_field_energy_i;
   std::vector<DomainData> domain_H_field_energy_i;
@@ -207,6 +243,7 @@ struct Measurement
   std::vector<std::complex<double>> probe_B_field;
 
   std::vector<FluxData> surface_flux_i;
+  // Interface participations, normalized by the total energy, so empty without one.
   std::vector<InterfaceData> interface_eps_i;
   FarFieldData farfield;
 
@@ -253,6 +290,12 @@ protected:
   bool defer_table_writes = false;
   std::chrono::steady_clock::time_point last_deferred_flush;
   void FlushDeferredTables();
+
+  // Remove the file of a configured table which this run omits (it is normalized by an
+  // energy which is not available), so that a fresh run does not leave the file of an
+  // earlier run beside its other outputs. A restart (reload_table) keeps existing files.
+  // Called on the root process, like the table writes.
+  void RemoveOmittedTable(const fs::path &file_name) const;
 
   // Flush deferred tables if the flush interval has elapsed. Call only at a step boundary,
   // once every table holds this step's row.
@@ -309,7 +352,7 @@ protected:
   void PrintSurfaceF();
 
   std::optional<TableWithCSVFile> surface_Q;
-  void InitializeSurfaceQ(const SurfacePostOperator &surf_post_op);
+  void InitializeSurfaceQ(const SurfacePostOperator &surf_post_op, bool total_energy);
   void PrintSurfaceQ();
 
   std::optional<TableWithCSVFile> probe_E;
@@ -421,14 +464,14 @@ protected:
   std::vector<int> ports_with_R;
   std::optional<TableWithCSVFile> port_EPR;
 
-  void InitializeEigPortEPR(const LumpedPortOperator &lumped_port_op)
+  void InitializeEigPortEPR(const LumpedPortOperator &lumped_port_op, bool total_energy)
     requires(solver_t == ProblemType::EIGENMODE);
   void PrintEigPortEPR()
     requires(solver_t == ProblemType::EIGENMODE);
 
   std::optional<TableWithCSVFile> port_Q;
 
-  void InitializeEigPortQ(const LumpedPortOperator &lumped_port_op)
+  void InitializeEigPortQ(const LumpedPortOperator &lumped_port_op, bool total_energy)
     requires(solver_t == ProblemType::EIGENMODE);
   void PrintEigPortQ()
     requires(solver_t == ProblemType::EIGENMODE);

@@ -4,7 +4,10 @@
 #ifndef PALACE_LINALG_ERROR_ESTIMATOR_HPP
 #define PALACE_LINALG_ERROR_ESTIMATOR_HPP
 
+#include <complex>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
@@ -31,6 +34,11 @@ class TimeDependentFluxErrorEstimator;
 // This solver computes a smooth recovery of a discontinuous flux. The difference between
 // this resulting smooth flux and the original non-smooth flux provides a localizable error
 // estimate.
+//
+// The projection of a frequency-dependent flux, F(ω) = F₀ + Σₖ wₖ(ω) Fₖ, uses the
+// frequency-independent mass matrix, solver, and preconditioner of the smooth space, with
+// the constant flux F₀ and material-restricted flux operators Fₖ assembled once and only
+// their complex scalar weights wₖ given at each frequency.
 template <typename VecType>
 class FluxProjector
 {
@@ -41,6 +49,9 @@ private:
   // Operator for the mass matrix inversion.
   std::unique_ptr<OperType> Flux, M;
 
+  // Flux operators Fₖ for the weighted terms.
+  std::vector<std::unique_ptr<OperType>> Flux_k;
+
   // Linear solver and preconditioner for the projected linear system.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
@@ -48,12 +59,48 @@ private:
   mutable VecType rhs;
 
 public:
+  // The constant flux F₀ only, and with the weighted terms Fₖ. Not a default argument: the
+  // coefficient type is incomplete here.
   FluxProjector(const MaterialPropertyCoefficient &coeff,
                 const FiniteElementSpaceHierarchy &smooth_fespaces,
                 const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
                 bool use_mg);
+  FluxProjector(const MaterialPropertyCoefficient &coeff,
+                const FiniteElementSpaceHierarchy &smooth_fespaces,
+                const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
+                bool use_mg, const std::vector<MaterialPropertyCoefficient> &coeff_k);
 
+  // y = M⁻¹ F₀ x.
   void Mult(const VecType &x, VecType &y) const;
+
+  // y = M⁻¹ (F₀ + Σₖ wₖ Fₖ) x, with one weight per term.
+  void Mult(const VecType &x, VecType &y, const std::vector<std::complex<double>> &w) const
+    requires std::is_same_v<VecType, ComplexVector>;
+};
+
+// Retained libCEED QFunction contexts (one per element geometry sub-operator and libCEED
+// context), owned for in-place updates of their values.
+class CeedContextList
+{
+private:
+  std::vector<std::pair<Ceed, CeedQFunctionContext>> ctx;
+
+public:
+  CeedContextList() = default;
+  CeedContextList(CeedContextList &&other) noexcept : ctx(std::move(other.ctx))
+  {
+    other.ctx.clear();
+  }
+  CeedContextList &operator=(CeedContextList &&) = delete;
+  CeedContextList(const CeedContextList &) = delete;
+  CeedContextList &operator=(const CeedContextList &) = delete;
+  ~CeedContextList();
+
+  void Append(Ceed ceed, CeedQFunctionContext c);
+  bool Empty() const { return ctx.empty(); }
+
+  // Overwrite the values of every context, all of the given size.
+  void Update(const void *data, std::size_t size) const;
 };
 
 // Forward declarations for friend access.
@@ -61,7 +108,19 @@ template <typename VecType>
 class BoundaryModeFluxErrorEstimator;
 
 // Class used for computing gradient flux error estimate, η_K = || ε Eₕ - D ||_K, where D
-// denotes a smooth reconstruction of ε Eₕ = ε ∇Vₕ with continuous normal component.
+// denotes a smooth reconstruction of ε Eₕ = ε ∇Vₕ with continuous normal component, in
+// the energy norm || F ||²_K = ∫_K Fᴴ ε⁻¹ F dx.
+//
+// With a frequency-dependent material (complex fields only), the discontinuous flux is
+// the complete constitutive Dₕ = ε(iω) Eₕ, with the complex permittivity of every
+// material, including the loss tangent of a constant one, and the recovered D its
+// projection. The indicator is η²_K = ∫_K (Dₕ - D)ᴴ W⁻¹ (Dₕ - D) dx, with the positive
+// stored-energy permittivity W(ω) of each model (Re{ε} for a constant material): a
+// positive, energy-scaled recovery indicator, not a stored-energy error bound. W E is not a
+// displacement (εE, not WE, has a continuous normal component), so it is not recovered.
+// A material without a stored electric energy (MaterialOperator::HasStoredElectricEnergy)
+// uses ε∞ instead, a numerical weight, with a warning. Without a frequency-dependent
+// material, the established indicator above with Re{ε} is unchanged.
 template <typename VecType = Vector>
 class GradFluxErrorEstimator
 {
@@ -75,14 +134,34 @@ private:
   // Finite element spaces used to represent E and the recovered D.
   const FiniteElementSpace &nd_fespace, &rt_fespace;
 
+  // Material properties (not owned), and the globally supported frequency-dependent
+  // materials (configured models), which select the complex constitutive route. With a
+  // loss tangent, that route also projects Im{ε} of the constant materials.
+  const MaterialOperator &mat_op;
+  std::vector<std::size_t> fd_materials;
+  bool fd_loss_tangent = false;
+
   // Global L2 projection solver.
   FluxProjector<VecType> projector;
 
-  // Operator which performs the integration of the flux error on each element.
+  // Operator which performs the integration of the flux error on each element, and its
+  // retained contexts (ε', ε'', W⁻¹ tables) on the complex constitutive route, at the
+  // real angular frequency fd_omega.
   ceed::Operator integ_op;
+  CeedContextList integ_ctx;
+  mutable double fd_omega = 0.0;
 
   // Temporary vectors for error estimation.
   mutable VecType E_gf, D, D_gf;
+
+  // Squared elemental indicators, and the squared elemental energy norms of the recovered
+  // flux of the last estimate (for a fallback normalization).
+  Vector ComputeEstimates(const VecType &E) const;
+  Vector ComputeEstimates(const VecType &E, double omega) const
+    requires std::is_same_v<VecType, ComplexVector>;
+  Vector RecoveredFluxNorms() const;
+  void SetFrequency(double omega) const
+    requires std::is_same_v<VecType, ComplexVector>;
 
 public:
   // The recovered D is allowed to be discontinuous across the interior boundaries formed
@@ -96,8 +175,18 @@ public:
 
   // Compute elemental error indicators given the electric field as a vector of true dofs,
   // and fold into an existing indicator. The indicators are nondimensionalized using the
-  // total field energy.
-  void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
+  // total field energy. For real (static or transient) fields only, which do not see a
+  // frequency-dependent material.
+  void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
+
+  // The same for complex fields at their required real angular frequency ω. A constant
+  // material does not depend on ω. Et is empty exactly when the total field energy is not
+  // available (MaterialOperator::HasStoredElectricEnergy); the indicators are then
+  // normalized by the energy norm of the recovered flux, a numerical norm.
+  void AddErrorIndicator(const VecType &E, std::optional<double> Et, double omega,
+                         ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>;
 };
 
 // Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H
@@ -124,6 +213,9 @@ private:
 
   // Temporary vectors for error estimation.
   mutable VecType B_gf, H, H_gf;
+
+  Vector ComputeEstimates(const VecType &B) const;
+  Vector RecoveredFluxNorms() const;
 
 public:
   // The recovered H is allowed to be discontinuous across the interior boundaries formed
@@ -157,8 +249,16 @@ public:
                                   int max_it, int print, bool use_mg,
                                   const std::vector<int> &crack_attr_list = {});
 
+  // Real fields only; complex fields require their frequency, below.
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
-                         ErrorIndicator &indicator) const;
+                         ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
+
+  // The same for complex fields at their required real angular frequency ω, with Et empty
+  // without a total field energy (see GradFluxErrorEstimator).
+  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
+                         double omega, ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>;
 };
 
 // 2D boundary mode error estimator. Owns its own single-level FE spaces for flux
@@ -180,8 +280,16 @@ public:
                                  int max_it, int print, bool use_mg,
                                  const std::vector<int> &crack_attr_list = {});
 
+  // Real (transient) fields only; complex fields require their frequency, below.
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
-                         ErrorIndicator &indicator) const;
+                         ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
+
+  // The same for complex fields at their required real angular frequency ω, with Et empty
+  // without a total field energy (see GradFluxErrorEstimator).
+  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
+                         double omega, ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>;
 };
 
 }  // namespace palace

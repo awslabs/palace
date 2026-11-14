@@ -6,6 +6,7 @@
 #include <numbers>
 
 #include "fem/coefficient.hpp"
+#include "linalg/densematrix.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
@@ -45,14 +46,12 @@ namespace palace
 // reason for this is so that we can ensure that memory layout is simple (and
 // contiguous), ensuring that we can perform one single MPI reduction for all
 // the points in integrand_*.
-void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction &B,
-                                      const MaterialOperator &mat_op, double omega_re,
-                                      double omega_im,
-                                      std::vector<std::array<double, 3>> &r_naughts,
-                                      mfem::ElementTransformation &T,
-                                      const mfem::IntegrationRule &ir,
-                                      std::vector<std::array<double, 3>> &integrand_r,
-                                      std::vector<std::array<double, 3>> &integrand_i)
+void AddStrattonChuIntegrandAtElement(
+    const GridFunction &E, const GridFunction &B, const MaterialOperator &mat_op,
+    const mfem::DenseTensor &c0, double omega_re, double omega_im,
+    std::vector<std::array<double, 3>> &r_naughts, mfem::ElementTransformation &T,
+    const mfem::IntegrationRule &ir, std::vector<std::array<double, 3>> &integrand_r,
+    std::vector<std::array<double, 3>> &integrand_i)
 {
   MFEM_VERIFY(E.VectorDim() == 3,
               "Stratton-Chu far-field computation is only available for 3D simulations!");
@@ -99,7 +98,8 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
     B.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_imag);
 
     // We assume that the material is isotropic, so the wave speed is a scalar.
-    double wave_speed = mat_op.GetLightSpeedMax(FET.Elem1->Attribute);
+    const auto c0_loc = mat_op.GetMaterialEntry(c0, FET.Elem1->Attribute);
+    double wave_speed = linalg::SingularValueMax(c0_loc);
     double k_re = omega_re / wave_speed;
     double k_im = omega_im / wave_speed;
     double quadrature_weight = ip.weight * T.Weight();
@@ -109,8 +109,8 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
     double prefactor_im = quadrature_weight * k_re / (4 * std::numbers::pi);
 
     // Z * H = c0 * B.
-    mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_real, ZH_real);
-    mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_imag, ZH_imag);
+    c0_loc.Mult(B_real, ZH_real);
+    c0_loc.Mult(B_imag, ZH_imag);
     BdrGridFunctionCoefficient::GetNormal(T, normal, invert);
 
     // n̂ × E.

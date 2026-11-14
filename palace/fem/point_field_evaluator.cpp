@@ -230,6 +230,22 @@ const FaceSamplingPlan *PointFieldEvaluator::SamplingPlan() const
                         : boundary_eval->sampling_plan.get();
 }
 
+void PointFieldEvaluator::SetFrequency(double omega) const
+{
+  if (domain_eval)
+  {
+    domain_eval->SetFrequency(omega);
+  }
+  if (boundary_eval)
+  {
+    boundary_eval->SetFrequency(omega);
+  }
+  if (derived_bundle)
+  {
+    derived_bundle->SetFrequency(omega);
+  }
+}
+
 void PointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
                                Vector &out) const
 {

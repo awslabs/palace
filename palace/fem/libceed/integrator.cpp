@@ -616,4 +616,72 @@ void AssembleCeedElementErrorIntegrator(
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_elem_basis));
 }
 
+void AssembleCeedElementErrorIntegrator(const CeedQFunctionInfo &info, void *ctx,
+                                        std::size_t ctx_size, Ceed ceed,
+                                        const std::vector<CeedErrorIntegratorInput> &inputs,
+                                        CeedElemRestriction mesh_elem_restr,
+                                        CeedVector geom_data,
+                                        CeedElemRestriction geom_data_restr,
+                                        CeedOperator *op, CeedQFunctionContext *ctx_out)
+{
+  MFEM_VERIFY(!info.assemble_q_data,
+              "Quadrature interpolator does not support quadrature data assembly!");
+  MFEM_VERIFY(!inputs.empty(), "Element error integrator requires an input!");
+
+  // Basis summing the contributions of all quadrature points on the element.
+  CeedInt num_qpts;
+  PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(inputs[0].basis, &num_qpts));
+  CeedBasis mesh_elem_basis;
+  InitConstantLineBasis(ceed, 1, num_qpts, &mesh_elem_basis);
+
+  CeedQFunction apply_qf;
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
+                                                   info.apply_qf_path.c_str(), &apply_qf));
+  CeedQFunctionContext apply_ctx;
+  PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
+                                                   CEED_COPY_VALUES, ctx_size, ctx));
+  PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+  if (ctx_out)
+  {
+    *ctx_out = apply_ctx;
+  }
+  else
+  {
+    PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+  }
+
+  {
+    CeedInt geom_data_size;
+    PalaceCeedCall(ceed,
+                   CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
+    PalaceCeedCall(
+        ceed, CeedQFunctionAddInput(apply_qf, "geom_data", geom_data_size, CEED_EVAL_NONE));
+  }
+  MFEM_VERIFY(!(info.trial_ops & EvalMode::Weight),
+              "Element error integrator does not support quadrature weight inputs!");
+  for (std::size_t k = 0; k < inputs.size(); k++)
+  {
+    AddQFunctionActiveInputs(info.trial_ops, ceed, inputs[k].basis, apply_qf,
+                             "u_" + std::to_string(k + 1));
+  }
+  PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v", 1, CEED_EVAL_INTERP));
+
+  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
+  PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
+
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "geom_data", geom_data_restr,
+                                            CEED_BASIS_NONE, geom_data));
+  for (std::size_t k = 0; k < inputs.size(); k++)
+  {
+    AddOperatorActiveInputFields(info.trial_ops, ceed, inputs[k].restr, inputs[k].basis,
+                                 *op, "u_" + std::to_string(k + 1), inputs[k].vec);
+  }
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "v", mesh_elem_restr, mesh_elem_basis,
+                                            CEED_VECTOR_ACTIVE));
+
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_elem_basis));
+}
+
 }  // namespace palace::ceed

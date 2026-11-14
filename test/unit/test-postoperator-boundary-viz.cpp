@@ -22,6 +22,8 @@
 #include <zlib.h>
 #endif
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -37,6 +39,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/labels.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -1031,10 +1034,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
                                                              true, unused_x0, eps_scaling);
   BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(&E.Imag(), nullptr, mat_op,
                                                              true, unused_x0, eps_scaling);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
-      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
-      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(&E.Real(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(&E.Imag(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
   mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
   mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
@@ -1179,10 +1184,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
                                                              true, unused_x0, eps_scaling);
   BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(&E.Imag(), nullptr, mat_op,
                                                              true, unused_x0, eps_scaling);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
-      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
-      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(&E.Real(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(&E.Imag(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
   mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
   mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   // Q_s carries the factor eps_scaling relative to the E fields atol was sized for.
@@ -1283,6 +1290,216 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CHECK(ReadFloatDataArray(domain_vtu, "B").size() == static_cast<std::size_t>(num_points));
   CHECK(ReadFloatDataArray(domain_vtu, "U_m").size() ==
         static_cast<std::size_t>(num_points));
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "PostOperator field output of a frequency-dependent material follows the "
+                 "frequency",
+                 "[postoperator][boundary-viz][frequencydependent][Serial]")
+{
+  // Fixed fields written at Re ω_a, Re ω_b, Re ω_a by the solver entry point: Q_s and U_e
+  // on the boundary (3D fused bundle, 2D independent kernels), U_e in the domain (ParaView
+  // and grid function) use ε(iω) and the stored-energy permittivity W(ω) of the damped
+  // Lorentz upper material at each write, next to the constant lossy lower material. The
+  // same Lorentz written as RAW PoleResidue terms has the same response, but PoleResidue
+  // terms specify no stored electric energy, as for a negative relaxation compensated by
+  // a typed Debye term: U_e is omitted, at every frequency, while Q_s is written as
+  // before.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  REQUIRE(Mpi::Size(comm) == 1);
+  const int dim = GENERATE(3, 2);
+  enum class Model
+  {
+    TYPED,
+    RAW,
+    COMPENSATED
+  };
+  const auto model = GENERATE(Model::TYPED, Model::RAW, Model::COMPENSATED);
+  CAPTURE(dim, static_cast<int>(model));
+  constexpr int order = 2;
+  constexpr double rtol = 5.0e-5;
+  constexpr double atol = 5.0e-7;
+
+  auto serial_mesh =
+      (dim == 3) ? MakeSmallTetInterfaceSerialMesh() : MakeSmallTriInterfaceSerialMesh();
+  IoData iodata(Units(1.0e-4, 2.5e-4));
+  iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.problem.verbose = 0;
+  iodata.problem.output = temp_dir.string();
+  iodata.problem.output_formats.paraview = true;
+  iodata.problem.output_formats.gridfunction = true;
+  iodata.model.L0 = 1.0e-4;
+  iodata.model.Lc = 2.5;
+  iodata.domains.materials = MakeTwoMaterials();
+  auto &upper = iodata.domains.materials[1];
+  upper.epsilon_r.s = {2.5, 2.5, 2.5};
+  upper.tandelta.s = {0.0, 0.0, 0.0};
+  upper.permittivity_terms = {config::LorentzData{1.5, 1.0e12, 0.2e12}};
+  iodata.boundaries.pec.attributes =
+      (dim == 3) ? std::vector<int>{1, 2, 3, 4, 5, 6} : std::vector<int>{1, 2, 3, 4};
+  iodata.solver.order = order;
+  iodata.solver.eigenmode.n_post = 1;
+  iodata.CheckConfiguration();
+  iodata.NondimensionalizeInputs(serial_mesh);
+  // Nondimensional Lorentz ω₀ = 1, γ = 0.2, so the frequencies below lie on either side
+  // of the resonance, its RAW pole-residue form, or a Debye 1/(1 + s) with a RAW
+  // −0.5/(s + 1).
+  const std::vector<config::PermittivityTermData> lorentz = {
+      config::LorentzData{1.5, 1.0, 0.2}};
+  switch (model)
+  {
+    case Model::TYPED:
+      upper.permittivity_terms = lorentz;
+      break;
+    case Model::RAW:
+      upper.permittivity_terms.clear();
+      for (const auto &t : permittivity::PoleTerms(lorentz))
+      {
+        upper.permittivity_terms.push_back(t);
+      }
+      break;
+    case Model::COMPENSATED:
+      upper.permittivity_terms = {config::DebyeData{1.0, 1.0},
+                                  config::PermittivityPoleData{-1.0, -0.5}};
+      break;
+  }
+  const bool stored = (model == Model::TYPED);
+
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  auto &pmesh = mesh.front()->Get();
+  SpaceOperator space_op(iodata, mesh);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  const auto &mat_op = space_op.GetMaterialOp();
+  REQUIRE(mat_op.HasFrequencyDependentPermittivityModel(1));
+  REQUIRE(mat_op.HasStoredElectricEnergy(1) == stored);
+
+  GridFunction E(space_op.GetNDSpace(), true), B(space_op.GetCurlSpace(), true);
+  auto Project = [&]()
+  { (dim == 3) ? ProjectTestFields3D(E, B) : ProjectTestFields2D(E, B); };
+  Project();
+  ComplexVector e_true(space_op.GetNDSpace().GetTrueVSize());
+  ComplexVector b_true(space_op.GetCurlSpace().GetTrueVSize());
+  GetTrueDofs(E, e_true);
+  GetTrueDofs(B, b_true);
+
+  const double eps_scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+                             iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  const double q_atol = atol * eps_scaling;
+  const int lod = order;
+  const auto out = fs::path(iodata.problem.output);
+  std::vector<double> Ue_first, Q_first;
+  for (std::complex<double> omega :
+       {std::complex<double>(0.4, 0.05), {3.0, 0.1}, {0.4, 0.05}})
+  {
+    CAPTURE(omega);
+    const auto total = post_op.MeasureAndPrintAll(0, e_true, b_true, omega, 0.0, 0.0, 1);
+    CHECK(total.has_value() == stored);
+    const auto domain_vtu =
+        ReadFile(out / "paraview" / "eigenmode" / "Cycle000001" / "proc000000.vtu");
+    const auto boundary_vtu = ReadFile(out / "paraview" / "eigenmode_boundary" /
+                                       "Cycle000001" / "proc000000.vtu");
+
+    // References from the legacy coefficients with the material tables at Re ω.
+    const double w = omega.real();
+    if (model == Model::TYPED)
+    {
+      const double w2 = w * w;
+      CHECK_THAT(mat_op.GetFrequencyDependentStoredEnergyPermittivity(1, w),
+                 Catch::Matchers::WithinRel(2.5 + 1.5 * (w2 + 1.0) /
+                                                      ((1.0 - w2) * (1.0 - w2) + 0.04 * w2),
+                                            1.0e-10));
+    }
+    const auto eps_r = mat_op.EvaluatePermittivityReal(w);
+    const auto eps_i = mat_op.EvaluatePermittivityImag(w);
+    DimensionalizeForPostOperatorOutput(iodata.units, E, B);
+    mfem::Vector unused_x0;
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_re(
+        &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, &eps_r);
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(
+        &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, &eps_r);
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
+        &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, &eps_i);
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
+        &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, &eps_i);
+    mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
+    mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
+    const auto Q_real = ReadFloatDataArray(boundary_vtu, "Q_s_real");
+    CheckStats("Q_s_real",
+               CompareScalarField(Q_real, pmesh, lod, Q_real_legacy, rtol, q_atol));
+    CheckStats("Q_s_imag", CompareScalarField(ReadFloatDataArray(boundary_vtu, "Q_s_imag"),
+                                              pmesh, lod, Q_imag_legacy, rtol, q_atol));
+    if (Q_first.empty())
+    {
+      Q_first = Q_real;
+    }
+    else
+    {
+      double diff = 0.0, ref = 0.0;
+      for (std::size_t i = 0; i < Q_real.size(); i++)
+      {
+        diff = std::max(diff, std::abs(Q_real[i] - Q_first[i]));
+        ref = std::max(ref, std::abs(Q_first[i]));
+      }
+      CHECK((w == 0.4) == (diff <= rtol * ref));
+    }
+
+    const auto Ue_gf_path = out / "gridfunction" / "eigenmode" / "U_e_000001.gf.000000";
+    if (!stored)
+    {
+      // Omitted, not a placeholder: no U_e array in either collection, nor a grid function.
+      CHECK(domain_vtu.find("Name=\"U_e\"") == std::string::npos);
+      CHECK(boundary_vtu.find("Name=\"U_e\"") == std::string::npos);
+      CHECK_FALSE(fs::exists(Ue_gf_path));
+      CHECK_THROWS(mat_op.EvaluateStoredEnergyPermittivity(w));
+    }
+    else
+    {
+      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op,
+                                                                      eps_scaling);
+      Ue_legacy.SetStoredEnergyPermittivity(mat_op.EvaluateStoredEnergyPermittivity(w));
+      CheckStats("U_e boundary", CompareScalarField(ReadFloatDataArray(boundary_vtu, "U_e"),
+                                                    pmesh, lod, Ue_legacy, rtol, atol));
+      const auto Ue_domain = ReadFloatDataArray(domain_vtu, "U_e");
+      CheckStats("U_e domain",
+                 CompareScalarDomainField(Ue_domain, pmesh, lod, Ue_legacy, rtol, atol));
+      {
+        // The grid function output on its own (nodal L2) space, written as text with the
+        // default stream precision.
+        std::ifstream file(Ue_gf_path);
+        REQUIRE(file.good());
+        mfem::GridFunction Ue_gf(&pmesh, file);
+        mfem::GridFunction Ue_ref(Ue_gf.FESpace());
+        Ue_ref.ProjectCoefficient(Ue_legacy);
+        ErrorStats stats;
+        for (int i = 0; i < Ue_gf.Size(); i++)
+        {
+          stats.Add(Ue_gf(i), Ue_ref(i), rtol, rtol * Ue_ref.Normlinf());
+        }
+        CheckStats("U_e grid function", stats);
+      }
+      // The outputs change with the frequency and return with it.
+      if (Ue_first.empty())
+      {
+        Ue_first = Ue_domain;
+      }
+      else
+      {
+        double diff = 0.0, ref = 0.0;
+        for (std::size_t i = 0; i < Ue_domain.size(); i++)
+        {
+          diff = std::max(diff, std::abs(Ue_domain[i] - Ue_first[i]));
+          ref = std::max(ref, std::abs(Ue_first[i]));
+        }
+        CHECK((w == 0.4) == (diff <= rtol * ref));
+      }
+    }
+
+    // Restore the nondimensional mesh and fields for the next write.
+    mesh::NondimensionalizeMesh(pmesh, iodata.units.GetMeshLengthRelativeScale());
+    Project();
+  }
 }
 
 }  // namespace palace

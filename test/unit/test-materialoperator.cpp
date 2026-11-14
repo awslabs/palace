@@ -1168,6 +1168,140 @@ TEST_CASE("SpaceOperator dispersive material forms on part of the mesh",
   CHECK(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, y_all));
 }
 
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Domain postprocessing shares the dispersive unit masses",
+                 "[materialoperator][postoperator][Serial][Parallel]")
+{
+  // The domain energy postprocessing of a SpaceOperator borrows the unit mass B_m of a
+  // dispersive material on part of the mesh, for the entire domain and for each energy
+  // domain which contains the material, rather than assembling it again. Without B_m, the
+  // form is assembled on the material elements only.
+  const MPI_Comm comm = Mpi::World();
+  auto mesh = MakePartitionedSupportMesh(comm);
+  config::ProblemData problem;
+  problem.type = ProblemType::EIGENMODE;
+  problem.output = temp_dir.string();
+  problem.output_formats.paraview = false;
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  BilinearForm::pa_order_threshold = 1;
+  config::MaterialData vacuum, dispersive;
+  vacuum.attributes = {1};
+  dispersive.attributes = {2};
+  dispersive.permittivity_terms.push_back(config::DebyeData{1.5, 0.5});
+  config::DomainData domains;
+  domains.materials = {vacuum, dispersive};
+  domains.postpro.energy[1].attributes = {2};
+  domains.postpro.energy[2].attributes = {1, 2};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::EIGENMODE, units, mesh);
+  PostOperator<ProblemType::EIGENMODE> post_op(problem, solver, domains, boundaries, units,
+                                               space_op);
+  auto B = space_op.GetFrequencyDependentPermittivityMassMatrix(1, Operator::DIAG_ZERO);
+  REQUIRE(B);
+  const auto *B_m = dynamic_cast<const ComplexParOperator &>(*B).LocalOperator().Imag();
+  REQUIRE(B_m);
+  const auto &dom_post_op = post_op.GetDomainPostOp();
+  REQUIRE(dom_post_op.M_elec_fd.size() == 1);
+  CHECK(dom_post_op.M_elec_fd[0].first == 1);
+  CHECK(&*dom_post_op.M_elec_fd[0].second == B_m);
+  for (int idx : {1, 2})
+  {
+    const auto &forms = dom_post_op.M_elec_fd_i.at(idx);
+    REQUIRE(forms.size() == 1);
+    CHECK(&*forms[0].second == B_m);
+  }
+
+  int num_material_elem = 0;
+  for (int i = 0; i < mesh.back()->GetNE(); i++)
+  {
+    num_material_elem += (mesh.back()->Get().GetAttribute(i) == 2);
+  }
+  DomainPostOperator own_post_op(domains.postpro, space_op.GetMaterialOp(),
+                                 space_op.GetNDSpace(), space_op.GetCurlSpace());
+  REQUIRE(own_post_op.M_elec_fd.size() == 1);
+  CHECK(&*own_post_op.M_elec_fd[0].second != B_m);
+  CHECK(NumCeedOperatorElements(*own_post_op.M_elec_fd[0].second) == num_material_elem);
+}
+
+TEST_CASE("Flux recovery of a dispersive material on part of the mesh",
+          "[materialoperator][errorestimator][Serial][Parallel]")
+{
+  // The recovered flux term of a dispersive material on part of the mesh (the unit flux of
+  // GradFluxErrorEstimator) does not read the field outside the material: the field there
+  // NaN gives the flux of the field zero there. The constant flux term is zero here.
+  const MPI_Comm comm = Mpi::World();
+  auto mesh = MakePartitionedSupportMesh(comm);
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  BilinearForm::pa_order_threshold = 1;
+  config::MaterialData vacuum, dispersive;
+  vacuum.attributes = {1};
+  dispersive.attributes = {2};
+  dispersive.permittivity_terms.push_back(config::DebyeData{1.5, 0.5});
+  config::DomainData domains;
+  domains.materials = {vacuum, dispersive};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+  const auto &mat_op = space_op.GetMaterialOp();
+  const auto &nd_fespace = space_op.GetNDSpace();
+  const auto material_attr = mat_op.GetCeedAttributes(std::vector<int>{2});
+  std::vector<MaterialPropertyCoefficient> coeff_k;
+  auto &f = coeff_k.emplace_back(mat_op.MaxCeedAttribute());
+  if (material_attr.Size() > 0)
+  {
+    f.AddMaterialProperty(material_attr, 1.0);
+  }
+  FluxProjector<ComplexVector> projector(
+      MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()), space_op.GetRTSpaces(),
+      nd_fespace, 1.0e-12, 1000, 0, false, coeff_k);
+
+  std::vector<bool> material_dof(nd_fespace.GetVSize(), false);
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dof_trans;
+  for (int i = 0; i < mesh.back()->GetNE(); i++)
+  {
+    if (mesh.back()->Get().GetAttribute(i) == 2)
+    {
+      nd_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      for (auto dof : dofs)
+      {
+        material_dof[(dof >= 0) ? dof : -1 - dof] = true;
+      }
+    }
+  }
+  ComplexVector x(nd_fespace.GetTrueVSize()), x_nan(nd_fespace.GetTrueVSize());
+  linalg::SetRandom(comm, x);
+  x_nan = x;
+  int num_outside = 0;
+  for (int i = 0; i < nd_fespace.GetVSize(); i++)
+  {
+    const int tdof = nd_fespace.Get().GetLocalTDofNumber(i);
+    if (!material_dof[i] && tdof >= 0)
+    {
+      x.Real()(tdof) = x.Imag()(tdof) = 0.0;
+      x_nan.Real()(tdof) = x_nan.Imag()(tdof) = std::numeric_limits<double>::quiet_NaN();
+      num_outside++;
+    }
+  }
+  Mpi::GlobalSum(1, &num_outside, comm);
+  REQUIRE(num_outside > 0);
+  ComplexVector y(space_op.GetRTSpace().GetTrueVSize()),
+      y_nan(space_op.GetRTSpace().GetTrueVSize());
+  projector.Mult(x, y, {1.0});
+  projector.Mult(x_nan, y_nan, {1.0});
+  const double norm = linalg::Norml2(comm, y);
+  REQUIRE(norm > 0.0);
+  y_nan -= y;
+  CHECK(linalg::Norml2(comm, y_nan) <= 1.0e-14 * norm);
+}
+
 TEST_CASE("MaterialOperator anisotropic wave-number bound", "[materialoperator][Serial]")
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
