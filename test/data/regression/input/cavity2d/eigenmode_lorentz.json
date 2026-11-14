@@ -1,0 +1,73 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/eigenmode_lorentz"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cavity2d.msh",
+    "L0": 1.0  // m
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity":
+        {
+          // ε(0) = 2.08, Re ε rising from 2.10 to 2.34 over the modes
+          "HighFrequency": 1.5,
+          "Terms":
+          [
+            {
+              "Type": "Lorentz",
+              "DeltaPermittivity": 0.58,
+              "ResonanceFrequency": 0.5,  // GHz
+              "DampingFrequency": 0.005   // GHz
+            }
+          ]
+        }
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 7,
+      "Tol": 1.0e-9,
+      "Target": 0.1,  // GHz
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100
+    }
+  }
+}
