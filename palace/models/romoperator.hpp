@@ -187,9 +187,9 @@ protected:
   std::vector<bool> has_RHS1;  // The same on every process
   ComplexVector r;
 
-  // The sparse frequency-dependent boundary terms of A(ω), each a scalar f(ω) times an
-  // ω-independent operator i·M stored with the boundary form M on the imaginary slot, so
-  // that the PROM gets f(ω)·Vᵀ(i·M)V without any HDM-size work online and circuit
+  // The sparse frequency-dependent terms of A(ω), each a scalar f(ω) times an
+  // ω-independent operator i·M stored with the boundary or volume form M on the imaginary
+  // slot, so that the PROM gets f(ω)·Vᵀ(i·M)V without any HDM-size work online and circuit
   // synthesis can fit f(ω) on the sweep band:
   //   - Wave port p: f = kₙ,ₚ(ω) and the µ⁻¹ boundary mass. Inactive ports included in
   //     synthesis are unloaded nodes: kept for their node scaling and reference data, they
@@ -201,25 +201,40 @@ protected:
   //     g(s) = s·D(s)/N(s).
   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
   //     constant, complex in a lossy frequency-dependent port medium.
+  //   - Frequency-dependent permittivity, per material m: f = g_m(iω)/i with
+  //     g_m(s) = s²χ_m(s) for the nonlinear part of its susceptibility, and the unit
+  //     volume mass B_m of the material (SpaceOperator::
+  //     GetFrequencyDependentPermittivityMassMatrix).
+  //   - Absorbing boundaries next to frequency-dependent material k of the farfield
+  //     operator, with r_k(ω) its wave permittivity scale (FarfieldBoundaryOperator::
+  //     GetDispersiveScale): the first-order damping mass with f = ω r_k, the second-order
+  //     curl-curl form with f = 0.5/(ω r_k), and with a frequency-scaled Floquet wave
+  //     vector the rotated trace with f = ω/r_k and the nonsymmetric mixed curl with
+  //     f = 1/r_k. The signs and factors of i are in the forms.
   enum class BoundaryTermKind
   {
     WavePort,
     Farfield,
     SurfaceConductivity,
     RationalImpedance,
-    FloquetPort
+    FloquetPort,
+    FarfieldPermittivityDamping,
+    FarfieldPermittivityCurlCurl,
+    FarfieldPermittivityRotatedTrace,
+    FarfieldPermittivityMixedCurl,
+    Permittivity
   };
   struct BoundaryTerm
   {
     BoundaryTermKind kind;
-    int idx;  // Port, group, or boundary index
+    int idx;  // Port, group, boundary, or material index
     std::unique_ptr<ComplexOperator> op;
     bool symmetric;
     Eigen::MatrixXcd Ar;  // Vᵀ op V
   };
   std::vector<BoundaryTerm> bdr_terms;
 
-  // Return f(ω) of a boundary term, zero if it does not contribute to A(ω).
+  // Return f(ω) of a factored term, zero if it does not contribute to A(ω).
   std::complex<double> GetBoundaryTermCoefficient(const BoundaryTerm &term,
                                                   double omega) const;
 
@@ -353,6 +368,10 @@ protected:
     std::vector<Eigen::VectorXd> u_dirs;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
+    // If true, poles and residues are p_k, r_k in s = iω of r_k s²/(s - p_k) M_proj,
+    // realized with frequency-linear couplings (see BuildAugmentedPencil); otherwise they
+    // are in ω, as for the fitted boundary terms.
+    bool frequency_coupled = false;
   };
 
   // Result of fitting k_n,p(omega) (or the scalar dispersion f(ω) of another frequency-
@@ -445,6 +464,24 @@ protected:
                                                        const Eigen::MatrixXcd &Mp_r,
                                                        int idx) const;
 
+  // Synthesis of frequency-dependent permittivity material `material_idx`, with `Mp_r` its
+  // projected volume mass on the imaginary slot: adds polynomial corrections to the pencil
+  // and appends aux blocks. Pole terms are realized exactly, without sampling; a
+  // Djordjevic-Sarkar term is fit by poly+AAA (see the definition).
+  void AddFrequencyDependentPermittivitySynthesis(
+      const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t material_idx,
+      Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+      std::vector<WavePortAuxBlock> &aux) const;
+
+  // Synthesis of the absorbing boundary next to frequency-dependent material k of the
+  // farfield operator, with `Mp_r` its projected damping mass (or, if `curl_curl`, its
+  // curl-curl matrix) on the imaginary slot: the scalar ω·r_k(ω) (or (0.5/ω)/r_k(ω))
+  // involves √ε(iω), so it is fit by poly+AAA like surface conductivity.
+  void AddFarfieldFrequencyDependentPermittivitySynthesis(
+      const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t k, bool curl_curl,
+      Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+      std::vector<WavePortAuxBlock> &aux) const;
+
   // Accumulate the polynomial-fit corrections of one frequency-dependent BC (a wave port,
   // or another BC) into the running Kr_corr, Cr_corr, Mr_corr buffers: folds α₀·Mp_r into
   // Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with complex α. With Mp_r = i·M_proj this
@@ -465,6 +502,7 @@ protected:
   MakeAuxBlock(std::string label, const Eigen::MatrixXcd &Mp_r,
                const std::vector<std::complex<double>> &poles,
                const std::vector<std::complex<double>> &residues, double rank_tol);
+  static Eigen::MatrixXcd KeptDirectionsMass(const WavePortAuxBlock &blk, long n);
   static bool AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
                                     double rank_tol);
 
@@ -579,6 +617,9 @@ public:
     // operator at the complex eigenfrequency.
     double error_abs = -1.0;   // ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂
     double error_bkwd = -1.0;  // error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂)
+    // False when a wave port mode did not converge at ω: the errors are then NaN, not
+    // evaluated.
+    bool errors_available = true;
   };
   static std::vector<EigenvalueEstimate>
   ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv,
