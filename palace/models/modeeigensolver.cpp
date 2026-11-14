@@ -809,6 +809,24 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImag(), -omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: Re g is mass-like, shifted like the
+  // ε∞ mass; Im g is loss-like, treated as the other imaginary terms above.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, shifted ? std::abs(g.real()) : g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the losses of the resistive surface impedance, absorbing,
   // surface conductivity, and rational impedance boundaries in the same way (with the real
@@ -822,6 +840,11 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surf_z_op.AddMassBdrCoefficients(mass_coeff, fbr);
   surf_z_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
   farfield_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    farfield_op.AddDispersiveDampingBdrCoefficients(
+        k, damp_coeff * std::abs(farfield_op.GetDispersiveScale(k, omega)), fb_loss);
+  }
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
@@ -931,6 +954,24 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImagScalar(), omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: -g, with the opposite sign of the ND
+  // block in both real and imaginary slots.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, -g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, -g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the opposite sign of those of the ND block.
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -942,6 +983,11 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   surf_z_op.AddDampingBdrCoefficients(-damp_coeff, fb_loss);
   mode_assembly::AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -damp_coeff,
                                                          fb_loss);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    farfield_op.AddDispersiveScalarDampingBdrCoefficients(
+        k, -damp_coeff * std::abs(farfield_op.GetDispersiveScale(k, omega)), fb_loss);
+  }
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;
