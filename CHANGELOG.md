@@ -58,7 +58,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Krylov-Schur solver with nonconformal refinement. The first Krylov cycle of a
     warm-started solve uses 1e-2 times the linear solver tolerance, and the solve accepts an
     eigenpair only once its eigenvalue settled between restarts. SchemaVer 4-3-0.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1203](https://github.com/awslabs/palace/pull/1203).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
