@@ -123,6 +123,15 @@ public:
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;
 
+  // Whether the initial vector of the next solve already approximates the wanted
+  // eigenvectors (warm start). An eigenpair which converges as its Ritz value appears, for
+  // example in the first Krylov cycle, is then accepted only once that Ritz value settled
+  // between restarts. Not all solvers support it.
+  virtual void SetWarmStart(bool warm) {}
+
+  // Number of iterations (restarts) of the last solve, or -1 if not available.
+  virtual int GetNumIterations() const { return -1; }
+
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   virtual int Solve() = 0;
 

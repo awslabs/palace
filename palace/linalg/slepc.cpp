@@ -169,6 +169,17 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
   }
 }
 
+PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
+                                      PetscReal res, PetscReal *errest, void *ctx)
+{
+  // The error estimate relative to the eigenvalue (as EPS_CONV_REL), for a Ritz value which
+  // also settled since the previous restart.
+  PetscFunctionBeginUser;
+  PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
+  static_cast<SlepcEPSSolverBase *>(ctx)->CheckRitzValue(eigr, errest);
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
@@ -411,6 +422,10 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
     }
   }
   A0 = A1 = nullptr;
+  warm_start = ritz_test = false;
+  ritz_its = -1;
+  ritz_blocked = false;
+  ritz_num_delayed = ritz_num_unsettled = 0;
 }
 
 SlepcEPSSolverBase::~SlepcEPSSolverBase()
@@ -560,9 +575,95 @@ void SlepcEPSSolverBase::Customize()
   }
 }
 
+void SlepcEPSSolverBase::CheckRitzValue(PetscScalar theta, PetscReal *errest)
+{
+  // SLEPc's error estimate for a Ritz pair (θ, z) of the transformed problem assumes exact
+  // applications of the spectral transformation, so it does not see the error of iterative
+  // linear solves in the Ritz value. In the first Krylov cycle of a warm-started solve, an
+  // eigenpair can converge as its Ritz value appears, with an eigenvalue several times the
+  // tolerance off. A Ritz value with an error estimate below the tolerance converges only
+  // if the nearest Ritz value of the previous restart is the same eigenpair: within a
+  // relative distance max(Tol, min(1e-3, 0.1 d₂)) of it, for the relative distance d₂ of
+  // the second nearest one. Otherwise its error estimate becomes that relative distance,
+  // unless it was kept unconverged for that reason at the two previous restarts already.
+  // The test is called at each restart for every unconverged Ritz value, in order
+  // (EPSSetTrackAll), and only those before the first unconverged one converge.
+  constexpr double max_distance = 1.0e-3, max_fraction = 0.1;
+  constexpr int max_unsettled = 2;
+  PetscInt its;
+  PalacePetscCall(EPSGetIterationNumber(eps, &its));
+  if (its != ritz_its)
+  {
+    ritz_its = its;
+    ritz_prev.swap(ritz_curr);
+    ritz_curr.clear();
+    ritz_blocked = false;
+  }
+  PetscReal tol;
+  PalacePetscCall(EPSGetTolerances(eps, &tol, nullptr));
+  int unsettled = 0;
+  if (*errest < tol)
+  {
+    PetscReal d1 = mfem::infinity(), d2 = mfem::infinity();
+    int count = 0;
+    for (const auto &[theta_prev, count_prev] : ritz_prev)
+    {
+      const PetscReal d = PetscAbsScalar(theta - theta_prev);
+      if (d < d1)
+      {
+        d2 = d1;
+        d1 = d;
+        count = count_prev;
+      }
+      else if (d < d2)
+      {
+        d2 = d;
+      }
+    }
+    const PetscReal a = PetscAbsScalar(theta);
+    d1 /= a;
+    d2 /= a;
+    if (d1 > std::max(static_cast<double>(tol), std::min(max_distance, max_fraction * d2)))
+    {
+      if (count < max_unsettled)
+      {
+        *errest = std::min(d1, PetscReal(1.0));
+        unsettled = count + 1;
+        ritz_num_delayed += !ritz_blocked;
+      }
+      else
+      {
+        ritz_num_unsettled += !ritz_blocked;
+      }
+    }
+  }
+  ritz_blocked = ritz_blocked || !(*errest < tol);
+  ritz_curr.emplace_back(theta, unsettled);
+}
+
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
+
+  // A warm-started solve accepts an eigenpair only once its Ritz value settled since the
+  // previous restart (see CheckRitzValue).
+  if (warm_start)
+  {
+    PalacePetscCall(
+        EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
+  }
+  else if (ritz_test)
+  {
+    PalacePetscCall(EPSSetConvergenceTest(eps, EPS_CONV_REL));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_FALSE));
+  }
+  ritz_test = warm_start;
+  ritz_prev.clear();
+  ritz_curr.clear();
+  ritz_its = -1;
+  ritz_blocked = false;
+  ritz_num_delayed = ritz_num_unsettled = 0;
 
   // Solve the eigenvalue problem.
   PetscInt num_conv;
@@ -577,11 +678,28 @@ int SlepcEPSSolverBase::Solve()
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
                opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+    if (ritz_num_delayed > 0 || ritz_num_unsettled > 0)
+    {
+      Mpi::Print(GetComm(),
+                 " Convergence delayed {:d} time{} for Ritz values not settled since the "
+                 "previous restart{}\n",
+                 ritz_num_delayed, (ritz_num_delayed == 1) ? "" : "s",
+                 (ritz_num_unsettled > 0)
+                     ? fmt::format(" ({:d} accepted unsettled)", ritz_num_unsettled)
+                     : "");
+    }
   }
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
   return static_cast<int>(num_conv);
+}
+
+int SlepcEPSSolverBase::GetNumIterations() const
+{
+  PetscInt num_it;
+  PalacePetscCall(EPSGetIterationNumber(eps, &num_it));
+  return static_cast<int>(num_it);
 }
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const

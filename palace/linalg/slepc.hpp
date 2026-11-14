@@ -16,6 +16,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -202,6 +204,20 @@ protected:
   // Shell matrices for the generalized eigenvalue problem.
   Mat A0, A1;
 
+  // Whether the next solve is warm-started (see SetWarmStart), and whether the convergence
+  // test of warm-started solves is installed.
+  bool warm_start, ritz_test;
+
+  // For the convergence test of warm-started solves (see CheckRitzValue): the Ritz values
+  // of the transformed problem at the previous and the current restart, each with the
+  // number of consecutive restarts at which it was kept unconverged, the iteration of the
+  // current restart, whether an unconverged Ritz value was already tested at it, and the
+  // numbers of convergences delayed and of eigenpairs accepted unsettled in the last solve.
+  std::vector<std::pair<PetscScalar, int>> ritz_prev, ritz_curr;
+  PetscInt ritz_its;
+  bool ritz_blocked;
+  int ritz_num_delayed, ritz_num_unsettled;
+
   void Customize() override;
 
 public:
@@ -228,7 +244,15 @@ public:
 
   void SetInitialSpace(const ComplexVector &v) override;
 
+  void SetWarmStart(bool warm) override { warm_start = warm; }
+
+  // Update the relative error estimate of the Ritz value theta of the transformed problem
+  // at the current restart of a warm-started solve (called by its convergence test).
+  void CheckRitzValue(PetscScalar theta, PetscReal *errest);
+
   int Solve() override;
+
+  int GetNumIterations() const override;
 
   std::complex<double> GetEigenvalue(int i) const override;
 
