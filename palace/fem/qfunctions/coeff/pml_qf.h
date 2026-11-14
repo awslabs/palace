@@ -31,9 +31,8 @@
 //   Header (PALACE_PML_HEADER_SIZE entries):
 //     [0]       number of (1-based) libCEED attributes, num_attr
 //     [1]       output part of the scaled tensor c T: 0 → Re{c T}, 1 → Im{c T},
-//               3 → Re{c T̂}, 4 → Im{c T̂} for the tensor T̂ with the stretch factors
-//               replaced by their magnitudes (exact for a unit stretch),
-//               2 → Re{c} |T| (entrywise magnitude, for real-valued approximations)
+//               2 → Re{c T̂}, 3 → Im{c T̂} for the tensor T̂ with the stretch factors
+//               replaced by their magnitudes (exact for a unit stretch)
 //     [2, 3]    (Re, Im) of the prefactor c for μ̃⁻¹ terms (curl-curl, Floquet)
 //     [4, 5]    (Re, Im) of the prefactor c for ε̃ terms (mass, diffusion)
 //     [6, 7]    (Re, Im) of the frequency ω of the stretch: the solve frequency for a
@@ -83,9 +82,8 @@ enum
 {
   PALACE_PML_PART_RE = 0,
   PALACE_PML_PART_IM = 1,
-  PALACE_PML_PART_ABS = 2,
-  PALACE_PML_PART_MAG_RE = 3,
-  PALACE_PML_PART_MAG_IM = 4
+  PALACE_PML_PART_MAG_RE = 2,
+  PALACE_PML_PART_MAG_IM = 3
 };
 
 CEED_QFUNCTION_HELPER CeedInt PMLNumAttr(const CeedIntScalar *ctx)
@@ -202,22 +200,15 @@ CEED_QFUNCTION_HELPER void PMLStretch(const CeedIntScalar *ctx, const CeedScalar
   }
 }
 
-// Requested part of the complex prefactor c times a complex tensor entry t: Re{c t},
-// Im{c t}, or the real-valued approximation Re{c} |t|.
+// Requested part of the complex prefactor c times a complex tensor entry t: Re{c t} or
+// Im{c t} (also for the real tensor entries with the magnitudes of the stretch factors).
 CEED_QFUNCTION_HELPER CeedScalar PMLScaledPart(CeedInt part, CeedScalar c_re,
                                                CeedScalar c_im, CeedScalar t_re,
                                                CeedScalar t_im)
 {
-  switch (part)
-  {
-    case PALACE_PML_PART_IM:
-    case PALACE_PML_PART_MAG_IM:
-      return c_re * t_im + c_im * t_re;
-    case PALACE_PML_PART_ABS:
-      return c_re * sqrt(t_re * t_re + t_im * t_im);
-    default:
-      return c_re * t_re - c_im * t_im;
-  }
+  return (part == PALACE_PML_PART_IM || part == PALACE_PML_PART_MAG_IM)
+             ? c_re * t_im + c_im * t_re
+             : c_re * t_re - c_im * t_im;
 }
 
 // Stretch factor f = f_re + i f_im of a tensor entry, replaced by its magnitude for the

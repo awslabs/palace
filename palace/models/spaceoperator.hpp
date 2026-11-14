@@ -400,9 +400,9 @@ public:
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
-  // returned operator. With PML regions, the matrix is instead assembled using the
-  // entrywise magnitudes of the PML material tensors (with a frequency-dependent stretch
-  // evaluated at omega, if positive).
+  // returned operator. With PML regions, the matrix is instead assembled using the PML
+  // material tensors of the magnitudes of the stretch factors (with a frequency-dependent
+  // stretch evaluated at omega, if positive).
   std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
                                                   const ComplexOperator *K,
                                                   const ComplexOperator *M,

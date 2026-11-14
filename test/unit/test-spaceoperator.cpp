@@ -521,10 +521,9 @@ TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
   B_real.Real()->Mult(x, y_real);
 
   // With a real-valued coarse solve, the coarse-level operator of the complex
-  // preconditioner has the real-valued approximation Re{c} |T| of the PML terms as its real
-  // part, and no PML terms in its imaginary part (zero for this lossless problem): the sum
-  // of the two parts factored by the coarse solver is the coarse-level operator of the
-  // real-valued approximation.
+  // preconditioner has the PML terms Re{c T̂} and Im{c T̂} of the magnitudes of the stretch
+  // factors (Im{c T̂} = 0 for this lossless problem): the sum of the two parts factored by
+  // the coarse solver is the coarse-level operator of the real-valued approximation.
   for (bool complex_coarse_solve : {false, true})
   {
     auto space_op = MakeSpaceOperator(false, complex_coarse_solve);
@@ -828,8 +827,10 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
     serial_mesh.SetAttribute(i, (center(0) > 2.0 / 3.0 || center(2) > 2.0 / 3.0) ? 2 : 1);
   }
   serial_mesh.SetAttributes();
-  std::vector<std::unique_ptr<Mesh>> mesh;
+  // The lossy and lossless layers have different libCEED element sets, so separate meshes.
+  std::vector<std::unique_ptr<Mesh>> mesh, mesh_lossless;
   mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+  mesh_lossless.push_back(std::make_unique<Mesh>(comm, serial_mesh));
 
   IntegrationSettingsGuard settings_guard;
   config::SolverData solver;
@@ -846,6 +847,7 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
 
   const bool isotropic = GENERATE(false, true);
   const bool scaled = GENERATE(false, true);
+  bool lossy = true;
   auto MakeSpaceOperator = [&](bool with_pml)
   {
     config::MaterialData vacuum, layer;
@@ -870,6 +872,10 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
       layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
       layer.tandelta.v = axes;
     }
+    if (!lossy)
+    {
+      layer.tandelta.s = {0.0, 0.0, 0.0};
+    }
     config::DomainData domains;
     domains.attributes = {1, 2};
     domains.materials = {vacuum, layer};
@@ -889,7 +895,7 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
     Units units(1.0, 1.0);
     return std::make_unique<SpaceOperator>(
         solver, domains, boundaries, scaled ? ProblemType::DRIVEN : ProblemType::EIGENMODE,
-        units, mesh);
+        units, lossy ? mesh : mesh_lossless);
   };
   auto pml_op = MakeSpaceOperator(true), ref_op = MakeSpaceOperator(false);
   REQUIRE(pml_op->GetMaterialOp().HasPML());
@@ -947,15 +953,13 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
 
   SECTION("Preconditioner")
   {
-    // The real-valued approximation uses the entrywise magnitudes of the PML tensors, which
-    // matches the bulk approximation for isotropic materials.
+    // The real-valued approximation uses the PML tensors of the magnitudes of the stretch
+    // factors with Re{ε}, which matches the bulk approximation with |ε| for a lossless
+    // background.
     for (bool pc_mat_real : {false, true})
     {
-      if (pc_mat_real && !isotropic)
-      {
-        continue;
-      }
       solver.linear.pc_mat_real = pc_mat_real;
+      lossy = !pc_mat_real;
       auto pml_pc_op = MakeSpaceOperator(true), ref_pc_op = MakeSpaceOperator(false);
       const std::complex<double> omega = {2.0, 0.1}, lambda = 1i * omega;
       auto P1 = pml_pc_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, lambda,
@@ -1298,7 +1302,7 @@ TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tenso
   const std::array<double, 3> k = {0.3, -0.2, 0.5};
   header.wave_vector_cross = {0.0, k[2], -k[1], -k[2], 0.0, k[0], k[1], -k[0], 0.0};
   for (auto part :
-       {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
+       {pml::TensorPart::REAL, pml::TensorPart::IMAG,
         pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG})
   {
     header.part = part;

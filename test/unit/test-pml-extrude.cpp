@@ -540,8 +540,6 @@ double ExpectedPart(pml::TensorPart part, std::complex<double> c, std::complex<d
       return (c * t).real();
     case pml::TensorPart::IMAG:
       return (c * t).imag();
-    case pml::TensorPart::ABS:
-      return c.real() * std::abs(t);
     case pml::TensorPart::STRETCH_MAGNITUDE_REAL:
       return (c * t_mag).real();
     case pml::TensorPart::STRETCH_MAGNITUDE_IMAG:
@@ -550,9 +548,9 @@ double ExpectedPart(pml::TensorPart part, std::complex<double> c, std::complex<d
   return 0.0;
 }
 
-constexpr std::array<pml::TensorPart, 5> all_parts = {
-    pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
-    pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG};
+constexpr std::array<pml::TensorPart, 4> all_parts = {
+    pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::STRETCH_MAGNITUDE_REAL,
+    pml::TensorPart::STRETCH_MAGNITUDE_IMAG};
 
 }  // namespace
 

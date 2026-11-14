@@ -164,7 +164,7 @@ void CheckCoeff(const pml::Stretch &p, const pml::Background &b, std::complex<do
     const auto T_mag =
         muinv ? ReferenceMuInv(p, b, x, omega, true) : ReferenceEps(p, b, x, omega, true);
     for (auto part :
-         {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
+         {pml::TensorPart::REAL, pml::TensorPart::IMAG,
           pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG})
     {
       pml::ContextHeader header;
@@ -177,7 +177,6 @@ void CheckCoeff(const pml::Stretch &p, const pml::Background &b, std::complex<do
       {
         const double expected = (part == pml::TensorPart::REAL)   ? (c * T[k]).real()
                                 : (part == pml::TensorPart::IMAG) ? (c * T[k]).imag()
-                                : (part == pml::TensorPart::ABS) ? c.real() * std::abs(T[k])
                                 : (part == pml::TensorPart::STRETCH_MAGNITUDE_REAL)
                                     ? (c * T_mag[k]).real()
                                     : (c * T_mag[k]).imag();

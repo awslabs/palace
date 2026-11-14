@@ -791,16 +791,14 @@ enum class PMLFilter : char
 // Append the PML integrator(s) for the complex terms c_muinv μ̃⁻¹ and/or c_eps ε̃ of the
 // given kind (the prefactor not used by the kind is ignored), for each PML block whose
 // stretch is selected by filter, with a frequency-dependent stretch evaluated at omega. The
-// real part is appended to re and the imaginary part to im. For a real-valued operator
-// (null im), re_part selects the part assembled into re. With stretch_magnitude, the
-// tensors use the magnitudes of the stretch factors (see pml::TensorPart). Nothing is
-// appended if the terms are identically zero.
+// real part is appended to re and the imaginary part to im. For a real-valued
+// approximation (null im), or with stretch_magnitude, the tensors use the magnitudes of the
+// stretch factors (see pml::TensorPart). Nothing is appended if the terms are identically
+// zero.
 void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
                const MaterialOperator &mat_op, PMLIntegKind kind,
                std::complex<double> c_muinv, std::complex<double> c_eps, PMLFilter filter,
-               std::complex<double> omega = 0.0,
-               pml::TensorPart re_part = pml::TensorPart::REAL,
-               bool stretch_magnitude = false)
+               std::complex<double> omega = 0.0, bool stretch_magnitude = false)
 {
   const bool floquet =
       (kind == PMLIntegKind::FLOQUET_MASS || kind == PMLIntegKind::FLOQUET_CROSS ||
@@ -840,12 +838,12 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
     {
       continue;
     }
-    const auto real_part = stretch_magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_REAL
-                                             : pml::TensorPart::REAL,
-               imag_part = stretch_magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_IMAG
-                                             : pml::TensorPart::IMAG;
+    const bool magnitude = stretch_magnitude || !im;
     for (auto [dst, part] :
-         {std::pair{&re, im ? real_part : re_part}, std::pair{im, imag_part}})
+         {std::pair{&re, magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_REAL
+                                   : pml::TensorPart::REAL},
+          std::pair{im, magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_IMAG
+                                  : pml::TensorPart::IMAG}})
     {
       if (!dst)
       {
@@ -883,9 +881,10 @@ struct PMLPencil
 // Append the PML integrators for the pencil terms if the stretch is selected by filter,
 // with the stretch evaluated at omega (frequency-dependent stretch) or at its reference
 // frequency (static stretch). The auxiliary space terms are the gradient subspace
-// projections of the mass terms. For a real-valued approximation (null im), re_part selects
-// the part assembled into re and the Floquet cross terms are dropped. With
-// stretch_magnitude, the tensors use the magnitudes of the stretch factors.
+// projections of the mass terms. For a real-valued approximation (null im), the tensors use
+// the magnitudes of the stretch factors and the Floquet cross terms are dropped. With
+// stretch_magnitude, the complex-valued terms use the magnitudes of the stretch factors
+// too.
 //
 // For a frequency-dependent stretch, A2(ω) = K_pml(ω) + iω C_pml(ω) - ω² M_pml(ω). The
 // stretch factors s(ω) = κ + σ / (α + iω) and therefore the PML tensors are analytic in ω,
@@ -896,31 +895,29 @@ void AppendPMLPencil(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> 
                      std::vector<PMLIntegrator> *aux_re, std::vector<PMLIntegrator> *aux_im,
                      const MaterialOperator &mat_op, PMLFilter filter,
                      std::complex<double> omega, const PMLPencil &c,
-                     pml::TensorPart re_part = pml::TensorPart::REAL,
                      bool stretch_magnitude = false)
 {
   AppendPML(re, im, mat_op, PMLIntegKind::CURL_CURL_MASS, c.a0, c.a2, filter, omega,
-            re_part, stretch_magnitude);
+            stretch_magnitude);
   if (aux_re)
   {
-    AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::DIFFUSION, 0.0, c.a2, filter, omega,
-              re_part);
+    AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::DIFFUSION, 0.0, c.a2, filter, omega);
   }
   if (mat_op.HasWaveVector())
   {
     const bool scaled = mat_op.HasFloquetFrequencyScaling();
     const auto c_mass = scaled ? -c.a2_floquet : c.a0, c_cross = scaled ? c.a1 : 1i * c.a0;
     AppendPML(re, im, mat_op, PMLIntegKind::FLOQUET_MASS, c_mass, 0.0, filter, omega,
-              re_part, stretch_magnitude);
+              stretch_magnitude);
     if (im)
     {
       AppendPML(re, im, mat_op, PMLIntegKind::FLOQUET_CROSS, c_cross, 0.0, filter, omega,
-                pml::TensorPart::REAL, stretch_magnitude);
+                stretch_magnitude);
     }
     if (aux_re)
     {
       AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::FLOQUET_DIFFUSION, c_mass, 0.0,
-                filter, omega, re_part);
+                filter, omega);
     }
   }
 }
@@ -1632,8 +1629,9 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
   {
     // The real parts of the PML tensors are not positive definite (multiple stretched
     // directions in the edge and corner regions of the layer), and the frequency-dependent
-    // PML terms are not in K or M. Instead, assemble the matrix with the entrywise
-    // magnitudes of the PML tensors, as for the real-valued preconditioner approximation.
+    // PML terms are not in K or M. Instead, assemble the matrix with the PML tensors of the
+    // magnitudes of the stretch factors, as for the real-valued preconditioner
+    // approximation.
     MFEM_VERIFY(a0 >= 0.0 && a2 >= 0.0,
                 "Invalid coefficients for the inner product matrix with PML!");
     MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
@@ -1659,12 +1657,11 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
     }
     std::vector<PMLIntegrator> pml;
     const PMLPencil c = {.a0 = c0, .a2 = c2, .a2_floquet = c2};
-    AppendPMLPencil(pml, nullptr, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0, c,
-                    pml::TensorPart::ABS);
+    AppendPMLPencil(pml, nullptr, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0, c);
     if (omega > 0.0)
     {
       AppendPMLPencil(pml, nullptr, nullptr, nullptr, mat_op,
-                      PMLFilter::FREQUENCY_DEPENDENT, omega, c, pml::TensorPart::ABS);
+                      PMLFilter::FREQUENCY_DEPENDENT, omega, c);
     }
     constexpr bool skip_zeros = false;
     auto b =
@@ -1892,11 +1889,10 @@ void SpaceOperator::AssemblePreconditioner(
   {
     auto &[coarse_re, coarse_im] = coarse_pml.emplace();
     AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0,
-                    {a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2},
-                    pml::TensorPart::REAL, true);
+                    {a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2}, true);
     AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op,
                     PMLFilter::FREQUENCY_DEPENDENT, a3,
-                    ExtraSystemPMLPencil(a3, pc_mat_shifted), pml::TensorPart::REAL, true);
+                    ExtraSystemPMLPencil(a3, pc_mat_shifted), true);
   }
 
   int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
@@ -1978,17 +1974,16 @@ void SpaceOperator::AssemblePreconditioner(
     AddRealPeriodicCoefficients(a0.real(), fr);
   }
 
-  // Real-valued approximation of the PML terms: Re{c} |T| with the entrywise magnitudes of
-  // the PML tensors T, which are positive like the bulk material properties, and the
-  // prefactors of the corresponding bulk terms above.
+  // Real-valued approximation of the PML terms: Re{c} T̂ with the tensors T̂ of the
+  // magnitudes of the stretch factors, which are positive definite like the bulk material
+  // properties, and the prefactors of the corresponding bulk terms above.
   std::vector<PMLIntegrator> pml, aux_pml;
   {
-    constexpr auto abs = pml::TensorPart::ABS;
     const double a2r = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
     AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::STATIC, 0.0,
-                    {a0.real(), 0.0, a2r, a2r}, abs);
+                    {a0.real(), 0.0, a2r, a2r});
     AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
-                    a3, ExtraSystemPMLPencil(a3, pc_mat_shifted, pc_mat_shifted), abs);
+                    a3, ExtraSystemPMLPencil(a3, pc_mat_shifted, pc_mat_shifted));
   }
 
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty() &&
