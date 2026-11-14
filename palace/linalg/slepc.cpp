@@ -56,17 +56,24 @@ inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y, int block = 
 }
 
 inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y1,
-                                   palace::ComplexVector &y2)
+                                   palace::ComplexVector &y2,
+                                   std::vector<palace::ComplexVector> *ya = nullptr)
 {
+  // Blocks [y1; y2; ya...] of equal size.
   PetscInt n;
   const PetscScalar *px;
   PetscMemType mtype;
   PetscCall(VecGetLocalSize(x, &n));
-  MFEM_ASSERT(y1.Size() == n / 2 && y2.Size() == n / 2,
+  const PetscInt nb = 2 + (ya ? static_cast<PetscInt>(ya->size()) : 0);
+  MFEM_ASSERT(y1.Size() == n / nb && y2.Size() == n / nb,
               "Invalid size mismatch for PETSc vector conversion!");
   PetscCall(VecGetArrayReadAndMemType(x, &px, &mtype));
-  y1.Set(px, n / 2, PetscMemTypeDevice(mtype));
-  y2.Set(px + n / 2, n / 2, PetscMemTypeDevice(mtype));
+  y1.Set(px, n / nb, PetscMemTypeDevice(mtype));
+  y2.Set(px + n / nb, n / nb, PetscMemTypeDevice(mtype));
+  for (PetscInt j = 2; j < nb; j++)
+  {
+    (*ya)[j - 2].Set(px + j * (n / nb), n / nb, PetscMemTypeDevice(mtype));
+  }
   PetscCall(VecRestoreArrayReadAndMemType(x, &px));
   return PETSC_SUCCESS;
 }
@@ -87,17 +94,25 @@ inline PetscErrorCode ToPetscVec(const palace::ComplexVector &x, Vec y, int bloc
 }
 
 inline PetscErrorCode ToPetscVec(const palace::ComplexVector &x1,
-                                 const palace::ComplexVector &x2, Vec y)
+                                 const palace::ComplexVector &x2, Vec y,
+                                 const std::vector<palace::ComplexVector> *xa = nullptr)
 {
+  // Blocks [x1; x2; xa...] of equal size. Every block is written: with write access, the
+  // values not written are undefined.
   PetscInt n;
   PetscScalar *py;
   PetscMemType mtype;
   PetscCall(VecGetLocalSize(y, &n));
-  MFEM_ASSERT(x1.Size() == n / 2 && x2.Size() == n / 2,
+  const PetscInt nb = 2 + (xa ? static_cast<PetscInt>(xa->size()) : 0);
+  MFEM_ASSERT(x1.Size() == n / nb && x2.Size() == n / nb,
               "Invalid size mismatch for PETSc vector conversion!");
   PetscCall(VecGetArrayWriteAndMemType(y, &py, &mtype));
-  x1.Get(py, n / 2, PetscMemTypeDevice(mtype));
-  x2.Get(py + n / 2, n / 2, PetscMemTypeDevice(mtype));
+  x1.Get(py, n / nb, PetscMemTypeDevice(mtype));
+  x2.Get(py + n / nb, n / nb, PetscMemTypeDevice(mtype));
+  for (PetscInt j = 2; j < nb; j++)
+  {
+    (*xa)[j - 2].Get(py + j * (n / nb), n / nb, PetscMemTypeDevice(mtype));
+  }
   PetscCall(VecRestoreArrayWriteAndMemType(y, &py));
   return PETSC_SUCCESS;
 }
@@ -733,23 +748,51 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
   y2.UseDevice(true);
 }
 
+void SlepcPEPLinearSolver::AddPoleTerms(const ComplexOperator &B,
+                                        const std::vector<std::complex<double>> &poles,
+                                        const std::vector<std::complex<double>> &coeffs)
+{
+  MFEM_VERIFY(!opK, "The rational terms of SlepcPEPLinearSolver must be added before its "
+                    "problem (SetOperators)!");
+  rational.Add(B, poles, coeffs);
+  for (std::size_t j = 0; j < poles.size(); j++)
+  {
+    xa.emplace_back(B.Height()).UseDevice(true);
+    ya.emplace_back(B.Height()).UseDevice(true);
+  }
+}
+
+void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                                        EigenvalueSolver::ScaleType type)
+{
+  SetOperatorsImpl(K, nullptr, M, type);
+}
+
 void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                                         const ComplexOperator &M,
                                         EigenvalueSolver::ScaleType type)
 {
-  // Construct shell matrices for the scaled linearized operators which define the block 2x2
-  // eigenvalue problem.
+  SetOperatorsImpl(K, &C, M, type);
+}
+
+void SlepcPEPLinearSolver::SetOperatorsImpl(const ComplexOperator &K,
+                                            const ComplexOperator *C,
+                                            const ComplexOperator &M,
+                                            EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled linearized operators which define the block
+  // eigenvalue problem: two blocks, and one more for each pole of the rational terms.
   const bool first = (opK == nullptr);
   opK = &K;
-  opC = &C;
+  opC = C;
   opM = &M;
   if (first)
   {
-    const PetscInt n = opK->Height();
-    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                   (void *)this, &A0));
-    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                   (void *)this, &A1));
+    const PetscInt n = (2 + static_cast<PetscInt>(xa.size())) * opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
     PalacePetscCall(
         MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
     PalacePetscCall(
@@ -762,7 +805,7 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    normC = opC ? linalg::SpectralNorm(GetComm(), *opC, opC->IsReal()) : 0.0;
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
@@ -794,9 +837,9 @@ void SlepcPEPLinearSolver::SetBMat(const Operator &B)
 {
   SlepcEigenvalueSolver::SetBMat(B);
 
-  const PetscInt n = B.Height();
-  PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                 (void *)this, &B0));
+  const PetscInt n = (2 + static_cast<PetscInt>(xa.size())) * B.Height();
+  PalacePetscCall(
+      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &B0));
   PalacePetscCall(
       MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_B));
   PalacePetscCall(MatShellSetVecType(B0, PetscVecType()));
@@ -814,9 +857,24 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
-  PalacePetscCall(ToPetscVec(v, v0, 0, 2));
+  // The start is y = [v; 0; 0 ...]: v0 also holds the last extracted eigenvector, so every
+  // block is written (with write access, the values not written are undefined).
+  ComplexVector zero(v.Size());
+  zero.UseDevice(true);
+  zero = 0.0;
+  for (auto &a : ya)
+  {
+    a = 0.0;
+  }
+  PalacePetscCall(ToPetscVec(v, zero, v0, &ya));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+}
+
+int SlepcPEPLinearSolver::Solve()
+{
+  rational.CheckShift(sinvert, sigma);
+  return SlepcEPSSolverBase::Solve();
 }
 
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
@@ -827,7 +885,7 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
       v0,
       "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
   PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));
-  PalacePetscCall(FromPetscVec(v0, x, 0, 2));
+  PalacePetscCall(FromPetscVec(v0, x, 0, 2 + static_cast<int>(xa.size())));
   if (xscale.get()[i] > 0.0)
   {
     x *= xscale.get()[i];
@@ -837,14 +895,17 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
 PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
                                                 ComplexVector &r) const
 {
-  // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
-  // eigenvalue λ.
+  // Compute the i-th eigenpair residual: || T(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
+  // eigenvalue λ, with every rational term (Σⱼ cⱼ λ² / (λ - pⱼ)) B x.
   opK->Mult(x, r);
   if (opC)
   {
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
+  rational.AddMult(
+      x, [l](std::complex<double> c, std::complex<double> p)
+      { return c * l * l / (l - p); }, r);
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -1699,12 +1760,16 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
 PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
 {
   // Apply the linearized operator L₀ = [  0  I ]
-  //                                    [ -K -C ] .
+  //                                    [ -K -C ] ,
+  // or with rational terms (auxiliary blocks uⱼ = wⱼ / γ, scaled poles qⱼ = pⱼ / γ):
+  //                               L₀ = [  0  I   0     ]
+  //                                    [ -K -C  -cⱼ Bⱼ ]
+  //                                    [  0  0   qⱼ I  ] .
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2, &ctx->xa));
   ctx->y1 = ctx->x2;
   if (ctx->opC)
   {
@@ -1714,10 +1779,17 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   {
     ctx->y2 = 0.0;
   }
+  ctx->rational.AddMult(
+      ctx->xa, [](std::complex<double> c, std::complex<double>) { return c; }, ctx->y2);
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
   ctx->y2 *= -ctx->delta;
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  for (std::size_t k = 0; k < ctx->xa.size(); k++)
+  {
+    ctx->ya[k].AXPBY(ctx->rational.Pole(k) / ctx->gamma, ctx->xa[k], 0.0);
+  }
+  ctx->rational.Mask(ctx->ya);
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1725,17 +1797,25 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
 PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
 {
   // Apply the linearized operator L₁ = [ I  0 ]
-  //                                    [ 0  M ] .
+  //                                    [ 0  M ] ,
+  // or with rational terms:       L₁ = [ I  0  0 ]
+  //                                    [ 0  M  0 ]
+  //                                    [ 0 -I  I ] .
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2, &ctx->xa));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
   ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  for (std::size_t k = 0; k < ctx->xa.size(); k++)
+  {
+    ctx->ya[k].AXPBYPCZ(1.0, ctx->xa[k], -1.0, ctx->x2, 0.0);
+  }
+  ctx->rational.Mask(ctx->ya);
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1747,14 +1827,19 @@ PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2, &ctx->xa));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
   ctx->opB->Mult(ctx->x2.Real(), ctx->y2.Real());
   ctx->opB->Mult(ctx->x2.Imag(), ctx->y2.Imag());
   ctx->y1 *= ctx->delta * ctx->gamma * ctx->gamma;
   ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  for (std::size_t k = 0; k < ctx->xa.size(); k++)
+  {
+    // The auxiliary blocks use the (scaled) Euclidean inner product.
+    ctx->ya[k].AXPBY(ctx->delta * ctx->gamma * ctx->gamma, ctx->xa[k], 0.0);
+  }
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1767,14 +1852,21 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   //               L₀ = [  0  I ]    L₁ = [ I  0 ]
   //                    [ -K -C ] ,       [ 0  M ] .
   // Enforces the divergence-free constraint using the supplied projector.
+  // With rational terms, block elimination of the auxiliary rows (right-hand sides bⱼ)
+  // leaves one solve with T(σ) = K + σ C + σ² M + Σⱼ cⱼ σ² / (σ - pⱼ) Bⱼ, the operator of
+  // the linear solver, for the second block y₂:
+  //   T(σ) y₂ = K x₁ - σ / (δ γ) x₂ + Σⱼ cⱼ σ γ / (σ - pⱼ) Bⱼ bⱼ ,
+  //   y₁ = γ / σ (y₂ - x₁) ,   uⱼ = (σ y₂ - γ bⱼ) / (σ - pⱼ) .
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2, &ctx->xa));
   if (!ctx->sinvert)
   {
+    MFEM_VERIFY(ctx->xa.empty(),
+                "SlepcPEPLinearSolver with rational terms requires shift-and-invert!");
     ctx->y1 = ctx->x1;
     if (ctx->opProj)
     {
@@ -1796,6 +1888,9 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->rational.AddMult(
+        ctx->xa, [ctx](std::complex<double> c, std::complex<double> p)
+        { return c * ctx->sigma * ctx->gamma / (ctx->sigma - p); }, ctx->y1);
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
@@ -1803,6 +1898,12 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
       ctx->opProj->Mult(ctx->y2);
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
     }
+    for (std::size_t k = 0; k < ctx->xa.size(); k++)
+    {
+      const std::complex<double> d = ctx->sigma - ctx->rational.Pole(k);
+      ctx->ya[k].AXPBYPCZ(ctx->sigma / d, ctx->y2, -ctx->gamma / d, ctx->xa[k], 0.0);
+    }
+    ctx->rational.Mask(ctx->ya);
 
     ctx->y1.AXPBYPCZ(ctx->gamma / ctx->sigma, ctx->y2, -ctx->gamma / ctx->sigma, ctx->x1,
                      0.0);
@@ -1815,7 +1916,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
       ctx->opProj->Mult(ctx->y1, 1.0e-3);
     }
   }
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y, &ctx->ya));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1943,6 +2044,10 @@ PetscErrorCode __mat_apply_NEP_J(Mat J, Vec x, Vec y)
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opJ->Mult(ctx->x1, ctx->y1);
+  if (ctx->opA_jac)
+  {
+    ctx->opA_jac->AddMult(ctx->x1, ctx->y1, ctx->logd_J);
+  }
   PetscCall(ToPetscVec(ctx->y1, y));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -2034,6 +2139,13 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   ctxF->opJ =
       palace::BuildOperatorWithA2({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda},
                                   {ctxF->opK, ctxF->opC, ctxF->opM}, ctxF->opAJ.get());
+  if (!ctxF->poles.Empty())
+  {
+    ctxF->opA_jac = palace::BuildOperatorWithA2({1.0 + 0.0i, lambda, lambda * lambda},
+                                                {ctxF->opK, ctxF->opC, ctxF->opM},
+                                                ctxF->opA2_jac.get());
+    ctxF->logd_J = ctxF->poles.LogDerivative(lambda);
+  }
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
