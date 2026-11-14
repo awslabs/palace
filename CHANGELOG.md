@@ -21,23 +21,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Added substructuring for electrostatic and magnetostatic simulations
     (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
-    condensed exactly onto their shared interface, and the region is solved against it. A
-    saved environment model is reused across runs, including after the region is re-meshed,
-    and the capacitance or inductance matrix of a reused model needs no environment solve.
-    The offline run also writes a mesh of the region, on which online runs read and
-    partition the region only, and in which `remesh_region.py` re-meshes a redesign. Online
-    runs can refine the region adaptively. Runs on CPUs and GPUs, with the direct
-    factorizations on the CPU. Includes optional block low-rank environment factorization
-    with MUMPS (`"FactorizationTol"`). The factorizations use the sparse direct solver that
-    `config["Solver"]["Linear"]["Type"]` names, if any, and Palace must be built with one.
-    The domain and surface postprocessing of a regular simulation, which substructuring does
-    not compute, is rejected. Magnetostatic substructuring supports `"FluxLoop"` and
-    `"SurfaceCurrent"` excitations, alone or together (flux loops also grouped or held at
-    zero fluxoid), with the films and `"Superconductor"` boundaries as London sheets
-    (kinetic inductance included, also of `"TwoSided"` films crossing the interface). Adds
-    substructuring examples in `examples/transmon` and `examples/substructuring` (5 x 5
-    lattices of qubits and of flux loops, on separate rings and on one plate). SchemaVer
-    4-3-0.
+    condensed exactly onto their shared interface, and the region is solved against it. The
+    operators of the region and of the environment are those of the regular simulation,
+    restricted to their domains. A saved environment model is reused across runs, including
+    after the region is re-meshed, and the capacitance or inductance matrix of a reused
+    model needs no environment solve. The offline run also writes a mesh of the region, on
+    which online runs read and partition the region only, and in which `remesh_region.py`
+    re-meshes a redesign. Online runs can refine the region adaptively. Runs on CPUs and
+    GPUs, with the direct factorizations on the CPU. Includes optional block low-rank
+    environment factorization with MUMPS (`"FactorizationTol"`). The factorizations use the
+    sparse direct solver that `config["Solver"]["Linear"]["Type"]` names, if any, and Palace
+    must be built with one. The domain and surface postprocessing of a regular simulation,
+    which substructuring does not compute, is rejected. Magnetostatic substructuring
+    supports `"FluxLoop"` and `"SurfaceCurrent"` excitations, alone or together (flux loops
+    also grouped or held at zero fluxoid), with the films and `"Superconductor"` boundaries
+    as London sheets (kinetic inductance included, also of `"TwoSided"` films crossing the
+    interface). Adds substructuring examples in `examples/transmon` and
+    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
+    and on one plate). SchemaVer 4-3-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).

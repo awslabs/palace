@@ -56,6 +56,32 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
 {
 }
 
+LaplaceOperator::AssemblyRestriction::AssemblyRestriction(
+    LaplaceOperator &op, const std::vector<int> &domain_attrs)
+  : op(op), previous(std::move(op.assembly_domains))
+{
+  op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
+                              op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
+}
+
+void LaplaceOperator::RestrictToAssemblyDomains(
+    std::initializer_list<MaterialPropertyCoefficient *> f,
+    std::initializer_list<MaterialPropertyCoefficient *> fb)
+{
+  if (!assembly_domains)
+  {
+    return;
+  }
+  for (auto *c : f)
+  {
+    c->RestrictCoefficient(assembly_domains->first);
+  }
+  for (auto *c : fb)
+  {
+    c->RestrictCoefficient(assembly_domains->second);
+  }
+}
+
 mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
     const config::PecBoundaryData &pec, const std::map<int, config::TerminalData> &terminal,
     const mfem::ParMesh &mesh)
@@ -119,8 +145,6 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
       dbc_bcs.Append(attr);
     }
   }
-  MFEM_VERIFY(dbc_bcs.Size() > 0,
-              "Electrostatic problem is ill-posed without any Dirichlet boundaries!");
   return dbc_bcs;
 }
 
@@ -180,6 +204,12 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 
 std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
+  // The operator of the regular solve needs a Dirichlet boundary (the unconstrained
+  // stiffness matrix of substructuring, whose Dirichlet boundaries may all be in the
+  // environment, does not).
+  MFEM_VERIFY(dbc_attr.Size() > 0,
+              "Electrostatic problem is ill-posed without any Dirichlet boundaries!");
+
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
@@ -217,6 +247,22 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 
   print_hdr = false;
   return K;
+}
+
+std::unique_ptr<ParOperator> LaplaceOperator::GetUnconstrainedStiffnessMatrix(bool assemble)
+{
+  // Restricted, the (exactly zero) entries of the elements outside the assembly domains are
+  // not stored.
+  const bool skip_zeros = assembly_domains.has_value();
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
+  RestrictToAssemblyDomains({&epsilon_func}, {});
+  BilinearForm k(GetH1Space());
+  k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+  return std::make_unique<ParOperator>(
+      assemble ? std::unique_ptr<Operator>(k.FullAssemble(skip_zeros))
+               : k.PartialAssemble(),
+      GetH1Space());
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

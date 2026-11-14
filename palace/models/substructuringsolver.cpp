@@ -36,26 +36,54 @@ private:
   std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
 };
 
+// The solver configuration of the native operator of the substructuring: the finest mesh
+// and space only (the factorizations need no multigrid hierarchy).
+config::SolverData SingleLevel(const config::SolverData &solver)
+{
+  config::SolverData single(solver);
+  single.linear.mg_max_levels = 1;
+  return single;
+}
+
+std::unique_ptr<LaplaceOperator>
+MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
+{
+  // The terminals of the environment are not on the mesh of the region (their modes are in
+  // the model), which the operator would reject.
+  config::BoundaryData boundaries(iodata.boundaries);
+  const auto &bdr_attributes = mesh.back()->Get().bdr_attributes;
+  for (auto it = boundaries.terminal.begin(); it != boundaries.terminal.end();)
+  {
+    std::erase_if(it->second.attributes, [&](int a) { return bdr_attributes.Find(a) < 0; });
+    it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
+  }
+  return std::make_unique<LaplaceOperator>(boundaries, SingleLevel(iodata.solver),
+                                           iodata.domains.materials, iodata.problem.type,
+                                           mesh);
+}
+
 }  // namespace
 
-SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
-  : iodata(iodata), mesh(mesh), parent(mesh.Get()),
+SubstructuringSolver::Impl::Impl(const IoData &iodata,
+                                 const std::vector<std::unique_ptr<Mesh>> &mesh_)
+  : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
-    fec(magnetostatic
-            ? std::unique_ptr<mfem::FiniteElementCollection>(
-                  new mfem::ND_FECollection(iodata.solver.order, parent.Dimension()))
-            : std::unique_ptr<mfem::FiniteElementCollection>(
-                  new mfem::H1_FECollection(iodata.solver.order, parent.Dimension()))),
-    parent_space(mesh, fec.get()), parent_fes(parent_space.Get())
+    laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_)),
+    curlcurl_op(magnetostatic ? std::make_unique<CurlCurlOperator>(
+                                    iodata.boundaries, SingleLevel(iodata.solver),
+                                    iodata.domains.materials, iodata.problem.type,
+                                    iodata.units, mesh_)
+                              : nullptr),
+    parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
+    parent_fes(parent_space.Get())
 {
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
   const auto &sub = *iodata.solver.substructuring;
   CheckSubstructuringAttributes(parent, sub.region_attributes, sub.environment_attributes);
-  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided;
   if (magnetostatic)
   {
-    two_sided = SetUpBrokenSpace();
+    SetUpBrokenSpace();
   }
   nt = SolutionSpace().GetTrueVSize();
   for (int a : sub.region_attributes)
@@ -229,71 +257,14 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
     }
   }
 
-  // Domain-restricted material coefficients (zero outside the subdomain).
-  const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-  const int dim = parent.Dimension();
-  // Material tensor from its eigendecomposition, M_ij = sum_k s[k] v[k]_i v[k]_j
-  // (inverted for the curl-curl inverse permeability).
-  auto tensor = [dim](const config::SymmetricMatrixData<3> &prop, bool invert)
-  {
-    mfem::DenseMatrix e(dim);
-    e = 0.0;
-    for (int k = 0; k < 3; k++)
-    {
-      for (int i = 0; i < dim; i++)
-      {
-        for (int j = 0; j < dim; j++)
-        {
-          e(i, j) += prop.s[k] * prop.v[k][i] * prop.v[k][j];
-        }
-      }
-    }
-    if (invert)
-    {
-      e.Invert();
-    }
-    return e;
-  };
-  for (const auto &mat : iodata.domains.materials)
-  {
-    for (int a : mat.attributes)
-    {
-      if (a < 1 || a > max_attr)
-      {
-        continue;
-      }
-      if (ra_arr.Find(a) >= 0)
-      {
-        region_eps[a] = tensor(magnetostatic ? mat.mu_r : mat.epsilon_r, magnetostatic);
-      }
-      else if (ea_arr.Find(a) >= 0)
-      {
-        env_eps[a] = tensor(magnetostatic ? mat.mu_r : mat.epsilon_r, magnetostatic);
-      }
-    }
-  }
   if (magnetostatic)
   {
-    SetUpSheets(ra_arr, std::move(two_sided));
+    CheckSheets();
     mag_eps = (model_eps > 0.0) ? model_eps
               : has_sheets      ? kMagRegularizationSheets
                                 : kMagRegularization;
   }
-  A_region = AssembleParent(region_eps, magnetostatic, true, &sheet_region);
-  if (magnetostatic)
-  {
-    // Energy operator: the pure curl-curl (see SourceEnergyMatrix for the London sheets).
-    A_region_energy = AssembleParent(region_eps, false);
-    K_region_e = A_region_energy.get();
-    if (has_sheets)
-    {
-      M_sheet_region = AssembleParent({}, false, false, &sheet_region);
-    }
-  }
-  else
-  {
-    K_region_e = A_region.get();
-  }
+  AssembleRegion();
 }
 
 void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
@@ -421,7 +392,7 @@ std::string SubstructuringSolver::Impl::SetUpRegionSolver()
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : impl(std::make_unique<Impl>(iodata, *mesh.back()))
+  : impl(std::make_unique<Impl>(iodata, mesh))
 {
 }
 

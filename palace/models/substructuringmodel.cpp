@@ -240,6 +240,9 @@ SubstructuringSolver::Impl::WrittenEnvTrueDofs(const std::vector<char> &keep) co
     t(i) = keep[i] ? 1.0 : 0.0;
   }
   P.Mult(t, l);
+  // On a GPU, P lives on the device and its products are only valid there: read the
+  // results with HostRead (an element access l(i) reads the host copy as it is).
+  const double *ll = l.HostRead();
   lw = 0.0;
   mfem::Array<int> dofs;
   auto index = [](int d) { return (d >= 0) ? d : -1 - d; };
@@ -250,7 +253,7 @@ SubstructuringSolver::Impl::WrittenEnvTrueDofs(const std::vector<char> &keep) co
       continue;
     }
     parent_fes.GetElementDofs(e, dofs);
-    if (std::any_of(dofs.begin(), dofs.end(), [&](int d) { return l(index(d)) != 0.0; }))
+    if (std::any_of(dofs.begin(), dofs.end(), [&](int d) { return ll[index(d)] != 0.0; }))
     {
       for (int d : dofs)
       {
@@ -259,10 +262,11 @@ SubstructuringSolver::Impl::WrittenEnvTrueDofs(const std::vector<char> &keep) co
     }
   }
   P.AbsMultTranspose(1.0, lw, 0.0, t);
+  const double *tw = t.HostRead();
   std::vector<char> written(t.Size());
   for (int i = 0; i < t.Size(); i++)
   {
-    written[i] = (t(i) > 0.0);
+    written[i] = (tw[i] > 0.0);
   }
   return written;
 }
@@ -404,6 +408,26 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
     for (std::size_t i = 0; i < keep.size(); i++)
     {
       keep[i] = keep[i] || mark[i];
+    }
+    // The environment neighbors of the sheet faces on Gamma, so that each of these faces
+    // has the same neighbors, and so belongs to the same side, as on the full mesh (see
+    // CheckSheets).
+    mfem::Vector lmark(parent_fes.GetVSize()), tmark(parent_fes.GetTrueVSize());
+    lmark = 0.0;
+    mfem::Array<int> dofs;
+    for (int be : gamma_sheet_faces)
+    {
+      parent_fes.GetBdrElementDofs(be, dofs);
+      for (int d : dofs)
+      {
+        lmark((d >= 0) ? d : -1 - d) = 1.0;
+      }
+    }
+    parent_fes.Dof_TrueDof_Matrix()->AbsMultTranspose(1.0, lmark, 0.0, tmark);
+    const double *t = tmark.HostRead();
+    for (std::size_t i = 0; i < keep.size(); i++)
+    {
+      keep[i] = keep[i] || (t[i] > 0.0);
     }
   }
   const std::vector<char> plain =

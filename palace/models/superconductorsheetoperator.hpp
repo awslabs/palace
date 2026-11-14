@@ -100,7 +100,9 @@ public:
   // One-sided sheets are integrated by the element adjacent to each boundary element, so a
   // sheet on one side of a film reads that side's versions. With domain_attributes, only
   // the faces bounding elements with these domain attributes are assembled (a film face
-  // with both neighbors among them, or a one-sided sheet whose adjacent element is).
+  // with both neighbors among them, or a one-sided sheet face whose neighbor of lower
+  // attribute is, as the libCEED boundary attributes of
+  // Mesh::GetCeedBdrAttributesByNeighbor assign a boundary element to a domain).
   std::unique_ptr<mfem::HypreParMatrix> AssembleBrokenSheetMatrix(
       const FiniteElementSpace &nd_fespace, const FiniteElementSpace &broken_nd_fespace,
       const CrackSides &sides, const std::vector<int> *domain_attributes = nullptr) const;

@@ -23,12 +23,15 @@
 #include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/schursolver.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/strumpackschur.hpp"
 #include "linalg/superlu.hpp"
 #include "linalg/vector.hpp"
+#include "models/curlcurloperator.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -335,22 +338,27 @@ private:
 
 }  // namespace substructuring
 
-// Region/environment operators are assembled on the parent space with domain-restricted
-// coefficients; the interface is identified in true-DOF space and the environment condensed
-// onto it (a distributed dense DtN).
+// Region/environment operators are those of Palace's regular solve, restricted to the
+// domains of each side; the interface is identified in true-DOF space and the environment
+// condensed onto it (a distributed dense DtN).
 struct SubstructuringSolver::Impl
 {
   const IoData &iodata;
   Mesh &mesh;
   mfem::ParMesh &parent;
   bool magnetostatic;
-  std::unique_ptr<mfem::FiniteElementCollection> fec;
-  FiniteElementSpace parent_space;
+  // The operator of the regular electrostatic or magnetostatic solve on the finest mesh,
+  // which assembles the operators of the sides (see GetTerm), and its (unbroken)
+  // finite element space.
+  std::unique_ptr<LaplaceOperator> laplace_op;
+  std::unique_ptr<CurlCurlOperator> curlcurl_op;
+  FiniteElementSpace &parent_space;
   mfem::ParFiniteElementSpace &parent_fes;
-  // Magnetostatics with two-sided superconductor films: the parent space broken across the
-  // films, on which the operators and true-DOF vectors act (see SolutionSpace()), its maps
-  // to the parent true DOFs, and the parent true DOF of each of its true DOFs.
-  std::unique_ptr<FiniteElementSpace> broken;
+  // Magnetostatics with two-sided superconductor films: the solution space of the operator,
+  // broken across the films, on which the operators and true-DOF vectors act (see
+  // SolutionSpace()), its maps to the parent true DOFs, and the parent true DOF of each of
+  // its true DOFs.
+  const FiniteElementSpace *broken = nullptr;
   std::unique_ptr<mfem::HypreParMatrix> first_version, all_versions;
   std::vector<int> version_parent;
   int nt;
@@ -394,7 +402,7 @@ struct SubstructuringSolver::Impl
   static constexpr double kFingerprintTol = 1.0e-9;
   bool region_dense_eligible = false;  // a dense S_E fits the exact region factor
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
-  // Region energy operator: the solve operator (electrostatics), the pure curl-curl
+  // Region energy operator: the solve operator (electrostatics), the volume terms
   // (magnetostatics).
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy;
   mfem::HypreParMatrix *K_region_e = nullptr;
@@ -423,7 +431,7 @@ struct SubstructuringSolver::Impl
   // x_k (e.g. the terminal unit potentials). With t_k = A_env x_k and
   // w_k = A_EE^-1 t_k|_E: the region-solve interface load g_k = (t_k - A_env w_k)|_Gamma
   // (G_rows, owned interface rows: G_rows[r * K + k]). For the energy (operator K_env;
-  // equal to A_env for electrostatics, the pure curl-curl for magnetostatics) the
+  // equal to A_env for electrostatics, the volume terms for magnetostatics) the
   // environment's exact condensed energy is [u_G; V]^T [S^K, G^K; G^K^T, Cmode] [u_G; V]
   // with S^K = P^T K P = S_E - P^T D P (D = A_env - K_env, P the A-harmonic lifting), G^K
   // (GK_rows; empty when K_env = A_env) and the replicated Cmode. A partition-invariant
@@ -443,14 +451,35 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_K;
   bool env_built = false;  // environment interior solver set up
 
-  Impl(const IoData &iodata, Mesh &mesh);
+  Impl(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+
+  // A term of the operator of the solves on the elements with the given domain attributes
+  // and the boundary elements bounding them (all, without), from the operator of the
+  // regular solve: the volume terms (curl-curl or Laplace), the superconductor sheet terms
+  // (magnetostatics; null without sheets), or the regularization eps M (magnetostatics,
+  // with attrs). Assembled, or applied matrix-free. Collective.
+  enum class Term
+  {
+    VOLUME,
+    SHEETS,
+    MASS
+  };
+  std::unique_ptr<ParOperator> GetTerm(const std::vector<int> *attrs, Term term,
+                                       bool assemble) const;
+
+  // The assembled term (null if there is none), symmetric on a broken space. Collective.
+  std::unique_ptr<mfem::HypreParMatrix> AssembleTerm(const std::vector<int> *attrs,
+                                                     Term term) const;
+
+  // The region operators: of the solves, of the energies, and the sheet terms. Collective.
+  void AssembleRegion();
 
   // Environment operators (whole-mesh size), assembled on first use. Collective. An online
-  // run with a matching saved model does not assemble them (its reuse checks run element by
-  // element, see EnvApply).
+  // run with a matching saved model does not assemble them (its reuse checks apply the
+  // environment operator matrix-free, see EnvApply).
   std::unique_ptr<mfem::HypreParMatrix> A_env, K_env, D_env, M_sheet, M_sheet_env;
   const mfem::HypreParMatrix &Aenv();
-  // Energy operator: A_env for electrostatics, the pure curl-curl for magnetostatics.
+  // Energy operator: A_env for electrostatics, the volume terms for magnetostatics.
   const mfem::HypreParMatrix &Kenv();
   // D_env = A_env - K_env = eps M_env (magnetostatics).
   const mfem::HypreParMatrix &Denv();
@@ -458,20 +487,12 @@ struct SubstructuringSolver::Impl
   const mfem::HypreParMatrix &Msheet();
   const mfem::HypreParMatrix &MsheetEnv();
 
-  // The terms of AssembleParent element by element, without assembling them: f(vdofs, A_e)
-  // for each local element with an attribute of coef_by_attr and each sheet face of sheet
-  // (if non-null) for which use(vdofs) is true, with the integrators and quadrature of
-  // AssembleParent, MFEM's DOF transformation and the DOFs of SolutionSpace().
-  void ForEachElement(const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass,
-                      bool with_curl, const std::vector<double> *sheet,
-                      const std::function<bool(const mfem::Array<int> &)> &use,
-                      const std::function<void(const mfem::Array<int> &,
-                                               const mfem::DenseMatrix &)> &f) const;
-
-  // Y_k = A_env X_k for true-DOF vectors X_k, element by element over the elements the X_k
-  // touch (volume and/or sheet terms). Collective.
+  // Y_k = A_env X_k for true-DOF vectors X_k (M_sheet^E X_k without the volume terms), by
+  // the assembled operator if there is one, else matrix-free (set up on first use).
+  // Collective.
   std::vector<mfem::Vector> EnvApply(const std::vector<const mfem::Vector *> &X,
-                                     bool volume = true, bool sheets = true) const;
+                                     bool volume = true) const;
+  mutable std::unique_ptr<Operator> env_op, env_sheet_op;
 
   // The space of the operators and true-DOF vectors: the parent space, broken across the
   // two-sided superconductor films.
@@ -484,10 +505,9 @@ struct SubstructuringSolver::Impl
   // of one side on the two-sided films (for the output fields).
   const mfem::Vector &FirstVersion(const mfem::Vector &x, mfem::Vector &y) const;
 
-  // Break the parent space across the two-sided superconductor films of the mesh, and
-  // return the two-port terms of the film faces bounding the region and of those bounding
-  // the environment (null without films), assembled as in the native operator. Collective.
-  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> SetUpBrokenSpace();
+  // With two-sided superconductor films, the solution space of the operator, broken across
+  // them, and its version maps. Collective.
+  void SetUpBrokenSpace();
 
   // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
   // energies use the unregularized operator and are stationary, so their error is O(eps^2).
@@ -502,21 +522,16 @@ struct SubstructuringSolver::Impl
   static constexpr double kMaxRegularizationFraction = 1.0e-2;
   double mag_eps = kMagRegularization;
 
-  // London superconductor sheets (magnetostatics) of a side: per local boundary element,
-  // 1/L_ksq (with the factor for a cracked sheet, whose two sides each carry half) on the
-  // side it belongs to, and the two-port terms of the faces of the two-sided films of the
-  // side (null without). A sheet face belongs to the region if it bounds a region element
-  // (all its DOFs are then region or interface DOFs), else to the environment: independent
-  // of the partition and of the region design, and exact either way for a face on Gamma.
-  struct Sheets
-  {
-    std::vector<double> coef;
-    std::unique_ptr<mfem::HypreParMatrix> two_sided;
-  };
-  Sheets sheet_region, sheet_env, sheet_all;
+  // London superconductor sheets (magnetostatics): whether there are any, and the local
+  // boundary elements of the one-sided sheets on Gamma. Like any boundary term of the
+  // native operators, a sheet face belongs to the side of its neighbor with the lower
+  // domain attribute (see Mesh::GetCeedBdrAttributesByNeighbor), so exactly one side; on
+  // Gamma, either side, the same offline and online as long as both neighbors are in the
+  // mesh (the mesh of the region keeps the environment neighbors, see WriteRegionMesh).
+  // Checks the two-sided films against the interface. Collective.
   bool has_sheets = false;
-  void SetUpSheets(const mfem::Array<int> &ra,
-                   std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided);
+  std::vector<int> gamma_sheet_faces;
+  void CheckSheets();
 
   // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
   std::unique_ptr<mfem::HypreParMatrix> M_sheet_region;
@@ -563,12 +578,6 @@ struct SubstructuringSolver::Impl
                   const std::function<void(std::ofstream &)> &write) const;
 
   void AppendSourceModes(const std::string &path);
-
-  std::unique_ptr<mfem::HypreParMatrix>
-  AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass,
-                 bool with_curl = true, const Sheets *sheet = nullptr);
-
-  std::map<int, mfem::DenseMatrix> region_eps, env_eps;
 
   // The partial factorization (Schur complement on Gamma) of A_env with the DOFs outside
   // E + Gamma eliminated, when one is built: it is then the environment solver. Collective.
@@ -685,7 +694,7 @@ struct SubstructuringSolver::Impl
   // fields (projected polynomials). Independent of the region (A_env has no region
   // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
   // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
-  // Computed element by element (no assembled A_env). Collective.
+  // With A_env applied by EnvApply (an online run assembles no A_env). Collective.
   std::array<double, 5> EnvironmentFingerprint() const;
   mutable std::optional<std::array<double, 5>> env_fp;
 

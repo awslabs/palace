@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -24,6 +25,7 @@
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
@@ -2702,6 +2704,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // H(curl) on an adapted (nonconforming) mesh with hanging edges on the interface: the
   // condensed magnetic energy of a divergence-free current source must match a monolith of
   // the same operator on the same mesh.
+  //
+  // The monolith uses the operators of the regular solve: the source has a normal flux on
+  // the boundary (no PEC), so it is not discretely divergence-free and u has a gradient
+  // part about 3e3 times its curl part. In 1/2 u^T K u the rounding of K on that gradient
+  // part (zero in exact arithmetic) is up to 1e-7 of the energy; it only cancels against a
+  // reference with the same element matrices. The curl parts of the two solutions agree to
+  // 1e-12.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0;
@@ -2750,21 +2759,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   lf.ParallelAssemble(f);
   const double e_sub = Energy(ss, ss.SolveSource(f));
 
-  mfem::Vector nu_by_attr(2), mass_by_attr(2);
-  nu_by_attr(0) = 1.0 / mu_r;
-  nu_by_attr(1) = 1.0 / mu_e;
-  mass_by_attr = 1.0e-3;  // SubstructuringSolver's regularization
-  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
-  mfem::ParBilinearForm asolve(&pfes), aenergy(&pfes);
-  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
-  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  asolve.Assemble();
-  asolve.Finalize();
-  aenergy.Assemble();
-  aenergy.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> Ksolve(asolve.ParallelAssemble());
-  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
+  const double mag_eps = 1.0e-3;  // SubstructuringSolver's regularization
+  CurlCurlOperator curlcurl_op(iodata, mesh);
+  const auto &nd_fespace = curlcurl_op.GetSolutionNDSpace();
+  const auto &mat_op = curlcurl_op.GetMaterialOp();
+  auto K = curlcurl_op.GetUnconstrainedStiffnessMatrix(true, false);
+  MaterialPropertyCoefficient eps_func(mat_op.MaxCeedAttribute());
+  eps_func.AddMaterialProperty(mat_op.GetCeedAttributes(std::vector<int>{1, 2}), mag_eps);
+  BilinearForm m(nd_fespace);
+  m.AddDomainIntegrator<VectorFEMassIntegrator>(eps_func);
+  ParOperator M(m.Assemble(false), nd_fespace);
+  const mfem::HypreParMatrix &Kpure = K->ParallelAssemble();
+  std::unique_ptr<mfem::HypreParMatrix> Ksolve(
+      mfem::Add(1.0, Kpure, 1.0, M.ParallelAssemble()));
   mfem::HypreAMS ams(*Ksolve, &pfes);
   ams.SetPrintLevel(0);
   mfem::HyprePCG pcg(*Ksolve);
@@ -2775,7 +2782,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   Vector u(pfes.GetTrueVSize()), t(pfes.GetTrueVSize());
   u = 0.0;
   pcg.Mult(f, u);
-  Kpure->Mult(u, t);
+  Kpure.Mult(u, t);
   const double e_mono = 0.5 * mfem::InnerProduct(pmesh.GetComm(), u, t);
   CAPTURE(e_sub, e_mono);
   CHECK(e_sub > 1.0e-6);
@@ -2784,6 +2791,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The refinement changes the energy by far more than the mismatch above, so the match is
   // meaningful.
   {
+    mfem::Vector nu_by_attr(2), mass_by_attr(2);
+    nu_by_attr(0) = 1.0 / mu_r;
+    nu_by_attr(1) = 1.0 / mu_e;
+    mass_by_attr = mag_eps;
+    mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
     auto coarse = MakeGradedSplit(4, 5, 6);
     mfem::ParFiniteElementSpace cfes(coarse.get(), &fec);
     mfem::ParLinearForm clf(&cfes);

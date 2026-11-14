@@ -455,6 +455,8 @@ SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
         }
       }
     }
+    mfem::FaceElementTransformations FET;
+    mfem::IsoparametricTransformation T1, T2;
     for (int be = 0; be < mesh.GetNBE() && !one_sided.empty(); be++)
     {
       auto it = one_sided.find(mesh.GetBdrAttribute(be));
@@ -462,12 +464,21 @@ SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
       {
         continue;
       }
+      if (domain_attributes)
+      {
+        // The face of a sheet between two domains belongs to the one with the lower
+        // attribute, as its libCEED boundary attribute (see
+        // Mesh::GetCeedBdrAttributesByNeighbor).
+        BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, mesh, FET, T1,
+                                                                         T2);
+        const bool lower2 = FET.Elem2 && FET.Elem2->Attribute < FET.Elem1->Attribute;
+        if (!in_domain(lower2 ? FET.Elem2->Attribute : FET.Elem1->Attribute))
+        {
+          continue;
+        }
+      }
       int e, info;
       mesh.GetBdrElementAdjacentElement(be, e, info);
-      if (!in_domain(mesh.GetAttribute(e)))
-      {
-        continue;
-      }
       const mfem::FiniteElement &fe = *nd_fespace.Get().GetFE(e);
       elmat.SetSize(fe.GetDof());
       elmat = 0.0;

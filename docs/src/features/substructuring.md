@@ -38,8 +38,8 @@ with ``\bm{S}_E``, so terminal energies need no environment solve.
 The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
 run loads it and solves only the region, possibly after re-meshing the region: its solves then
 follow the size of the region rather than of the device. On the full mesh the environment is
-checked element by element against the model, without assembling it; on the mesh of the region
-written with the model, only the region is read.
+checked against the model with its operator applied matrix-free, without assembling it; on the
+mesh of the region written with the model, only the region is read.
 
 ## Configuration
 
@@ -67,12 +67,12 @@ An `"Offline"` run that saves a model also writes a mesh of the region next to i
 the boundary conditions of the environment that reach the interface and, in magnetostatics, at the
 surface currents and flux loops of the environment (with the films of the flux loops whole and, if
 these elements reach a `"TwoSided"` film where it crosses the interface, the environment along every
-such crossing). An `"Online"` run on it (`"Model"/"Mesh"`, with the configuration otherwise
-unchanged) reads and partitions the region only. The environment is then that of the model, and the
-mesh must hold the environment elements written with it; the interface is found from the saved
-interface DOFs, and the nondimensionalization is that of the model. Every excitation with sources in
-the environment must be in the model, the fields are written in the region and on the interface
-only, and adaptive refinement needs the full mesh.
+such crossing) and next to the films on the interface. An `"Online"` run on it (`"Model"/"Mesh"`,
+with the configuration otherwise unchanged) reads and partitions the region only. The environment is
+then that of the model, and the mesh must hold the environment elements written with it; the
+interface is found from the saved interface DOFs, and the nondimensionalization is that of the
+model. Every excitation with sources in the environment must be in the model, the fields are written
+in the region and on the interface only, and adaptive refinement needs the full mesh.
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
@@ -164,13 +164,15 @@ boundaries are the Dirichlet boundaries of the condensation. The flux-loop films
 [`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
 films are London sheets, as in a regular simulation: a film without a `"Superconductor"` entry has
 the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The sheet term
-of each film face is condensed with the part of the domain the face bounds, so films may lie in the
-region, in the environment, or cross the interface; so may the surface-current ports and their
-apertures. A [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) film,
-across which the solution space is broken as in a regular simulation, may also cross the interface
-(the interface DOFs on it then have a version on each side of the film), but not lie on it, and the
-region of an adaptive refinement cannot hold one. A saved model includes the condensed excitations
-of the environment, so an online run needs no environment solve as long as the excitations in the
+of each film face goes to one side, that of its neighboring element with the lower domain attribute
+(as for every boundary term of *Palace*'s operators), so films may lie in the region, in the
+environment, or cross the interface, and films that are not `"TwoSided"` may also lie on it; the
+surface-current ports and their apertures may also cross it. A
+[`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) film, across which
+the solution space is broken as in a regular simulation, may also cross the interface (the interface
+DOFs on it then have a version on each side of the film), but not lie on it, and the region of an
+adaptive refinement cannot hold one. A saved model includes the condensed excitations of the
+environment, so an online run needs no environment solve as long as the excitations in the
 environment are unchanged; excitations inside the region, such as a port added or moved in a
 redesign, need none at all. A small mass regularization keeps the curl-curl operator definite; the
 extracted energies use the unregularized operator, in a form whose error is quadratic in the

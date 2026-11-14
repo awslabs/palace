@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <random>
 #include <string>
@@ -15,6 +16,8 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/substructure.hpp"
+#include "fixtures.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
@@ -58,6 +61,8 @@ struct ParityMesh
 {
   bool tet = false;   // split the hexahedra into tetrahedra
   int curvature = 0;  // order of a curved mesh (0: straight)
+  bool port = false;  // the faces y = 0 and y = 1 with attributes 8 and 9, not 3
+  bool nc = false;    // refine next to Gamma, nonconformingly, on both sides
 };
 
 // The unit cube with n^3 hexahedra (n a multiple of 8), see kRegion and kSheet.
@@ -124,8 +129,8 @@ mfem::Mesh MakeParitySerial(int n, const ParityMesh &opt)
       quad(0, n, a, b, 2);
       for (int dir = 1; dir < 3; dir++)
       {
-        quad(dir, 0, a, b, 3);
-        quad(dir, n, a, b, 3);
+        quad(dir, 0, a, b, (opt.port && dir == 1) ? 8 : 3);
+        quad(dir, n, a, b, (opt.port && dir == 1) ? 9 : 3);
       }
       if (in_patch(a) && in_patch(b))
       {
@@ -139,6 +144,22 @@ mfem::Mesh MakeParitySerial(int n, const ParityMesh &opt)
     }
   }
   mesh.FinalizeHexMesh(1, 0, true);
+  if (opt.nc)
+  {
+    mesh.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      mesh.GetElementCenter(e, c);
+      if ((c(0) > 0.37 && c(0) < 0.5 && c(1) < 0.5) ||
+          (c(0) > 0.5 && c(0) < 0.63 && c(1) > 0.5))
+      {
+        marked.Append(e);
+      }
+    }
+    mesh.GeneralRefinement(marked, 1);
+  }
   if (opt.tet)
   {
     mesh = mfem::Mesh::MakeSimplicial(mesh);
@@ -414,11 +435,25 @@ void CheckMagnetostatic(IoData &iodata, const std::vector<std::unique_ptr<Mesh>>
   CHECK(d_regularization < kRegularizationTol);
 }
 
-std::vector<std::unique_ptr<Mesh>> MakeMesh(mfem::Mesh &&serial)
+// With by_side, the processes own slabs of x (process floor(np x^2)), so that the last ones
+// own no element of x < 1/2, nor a neighbor of one.
+std::vector<std::unique_ptr<Mesh>> MakeMesh(mfem::Mesh &&serial, bool by_side = false)
 {
+  const int np = Mpi::Size(Mpi::World());
+  std::vector<int> part;
+  if (by_side && np > 1)
+  {
+    part.resize(serial.GetNE());
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      part[e] = std::min(np - 1, static_cast<int>(np * c(0) * c(0)));
+    }
+  }
   std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(
-      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(
+      Mpi::World(), serial, part.empty() ? nullptr : part.data())));
   return mesh;
 }
 
@@ -439,21 +474,33 @@ TEST_CASE("Substructured magnetostatic operators match CurlCurlOperator",
 {
   // Without sheets, with one-sided sheets (crossing the interface and on it), with a
   // two-sided film crossing the interface, and with both.
-  const auto [order, sheets, film, opt] =
-      GENERATE(table<int, bool, bool, ParityMesh>({{1, false, false, {}},
-                                                   {2, false, false, {}},
-                                                   {3, false, false, {}},
-                                                   {1, true, false, {}},
-                                                   {2, true, false, {}},
-                                                   {2, true, false, {false, 2}},
-                                                   {1, false, true, {}},
-                                                   {2, false, true, {}},
-                                                   {1, true, true, {}},
-                                                   {3, true, true, {}},
-                                                   {1, true, true, {true, 2}}}));
-  CAPTURE(order, sheets, film, opt.tet, opt.curvature);
+  const auto [order, sheets, film, opt] = GENERATE(
+      table<int, bool, bool, ParityMesh>({{1, false, false, {}},
+                                          {2, false, false, {}},
+                                          {3, false, false, {}},
+                                          {2, false, false, {false, 0, false, true}},
+                                          {1, true, false, {}},
+                                          {2, true, false, {}},
+                                          {2, true, false, {false, 2}},
+                                          {1, false, true, {}},
+                                          {2, false, true, {}},
+                                          {1, true, true, {}},
+                                          {3, true, true, {}},
+                                          {1, true, true, {true, 2}}}));
+  CAPTURE(order, sheets, film, opt.tet, opt.curvature, opt.nc);
   IoData iodata(MagnetostaticConfig(order, sheets, film), false);
   CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, opt)), sheets || film);
+}
+
+TEST_CASE("Substructured operators match on processes owning one side only",
+          "[substructure][Parallel]")
+{
+  // A process without an element of a side, or a neighbor of one, assembles nothing of
+  // its operators, but takes part in their parallel assembly.
+  IoData electrostatic(ElectrostaticConfig(2), false);
+  CheckElectrostatic(electrostatic, MakeMesh(MakeParitySerial(8, {}), true));
+  IoData magnetostatic(MagnetostaticConfig(1, true, true), false);
+  CheckMagnetostatic(magnetostatic, MakeMesh(MakeParitySerial(8, {}), true), true);
 }
 
 TEST_CASE(
@@ -468,6 +515,64 @@ TEST_CASE(
   IoData iodata(MagnetostaticConfig(order, true, false), false);
   iodata.boundaries.cracked_attributes = {kSheet, kInterfaceSheet};
   CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, {})), true);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Substructured sheet faces on the interface belong to one side",
+                 "[substructure][Serial][Parallel][GPU]")
+{
+  // A face of a sheet on Gamma belongs to the side of its neighbor with the lower
+  // attribute: the region with the region attributes numbered below those of the
+  // environment, the environment with them numbered above. Either way, the inductance of a
+  // surface current (on y = 0, from the PEC face x = 0 to x = 1, which the PEC face y = 1
+  // connects) of the offline run must be that of an online run on the full mesh and of one
+  // on the mesh of the region, which keeps the environment neighbors of these faces.
+  const auto [region_below, order, by_side] =
+      GENERATE(table<bool, int, bool>({{true, 1, false},
+                                       {false, 1, false},
+                                       {true, 2, false},
+                                       {false, 2, false},
+                                       {true, 1, true},
+                                       {false, 1, true}}));
+  CAPTURE(region_below, order, by_side);
+  const std::string model_path = (temp_dir / "sheet_side.model").string();
+  auto make_config = [&](const std::string &mode)
+  {
+    json config = MagnetostaticConfig(order, true, false);
+    config["Boundaries"]["PEC"]["Attributes"] = {1, 2, 9};
+    config["Boundaries"]["SurfaceCurrent"] = {
+        {{"Index", 1}, {"Attributes", {8}}, {"Direction", "+X"}}};
+    auto &sub = config["Solver"]["Substructuring"];
+    sub["Region"]["Attributes"] = region_below ? kRegion : kEnvironment;
+    sub["Environment"]["Attributes"] = region_below ? kEnvironment : kRegion;
+    sub["Mode"] = mode;
+    sub["SaveModel"] = model_path;
+    return IoData(config, false);
+  };
+  // The energy of the surface current, and whether the environment was solved.
+  auto energy = [&](const IoData &iodata, mfem::Mesh &&serial)
+  {
+    auto mesh = MakeMesh(std::move(serial), by_side);
+    Vector J;
+    CurlCurlOperator(iodata, mesh).GetCurrentExcitationVector(1, J);
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    const double E = ss.MagnetostaticEnergyMatrix({1}, {J}, {}, {}, {}, nullptr)(0, 0);
+    CHECK(ss.EnvironmentFactored() ==
+          (iodata.solver.substructuring->mode == SubstructuringMode::OFFLINE));
+    return E;
+  };
+  const ParityMesh opt{false, 0, true};
+  const double E_off = energy(make_config("Offline"), MakeParitySerial(8, opt));
+  const double E_on = energy(make_config("Online"), MakeParitySerial(8, opt));
+  mfem::Mesh region_mesh(RegionMeshPath(model_path).c_str());
+  const int region_ne = region_mesh.GetNE();
+  const double E_region = energy(make_config("Online"), std::move(region_mesh));
+  CAPTURE(E_off, E_on, E_region, region_ne);
+  CHECK(region_ne < 8 * 8 * 8);  // the mesh of the region, not the full mesh
+  CHECK(E_off > 0.0);
+  CHECK(std::abs(E_on - E_off) <= 1.0e-9 * E_off);
+  CHECK(std::abs(E_region - E_off) <= 1.0e-9 * E_off);
 }
 
 }  // namespace palace

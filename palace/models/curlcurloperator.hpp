@@ -5,8 +5,10 @@
 #define PALACE_MODELS_CURL_CURL_OPERATOR_HPP
 
 #include <deque>
+#include <initializer_list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <vector>
 #include <mfem.hpp>
@@ -150,6 +152,14 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
+  // Add the stiffness coefficients: curl-curl (μ⁻¹) and the kinetic sheet term (1/L_ksq,
+  // unbroken spaces only).
+  void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &fb) const;
+
+  // True if a superconductor film is present and the shift is positive.
+  bool HasShiftedPreconditioner() const;
+
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
   // given per-level essential DOFs (from attributes pc_dbc_attr); preconditioner-only, so
   // the extracted inductance is unchanged. The auxiliary H1 essential DOFs are written to
@@ -158,6 +168,18 @@ private:
   AssembleShiftedPreconditioner(const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
                                 const mfem::Array<int> &pc_dbc_attr,
                                 std::vector<mfem::Array<int>> &h1_dbc_tdof_lists);
+
+  // Optional restriction of the assembled operators to a set of domain attributes:
+  // libCEED domain attributes and boundary attributes (by neighboring domain) kept, and the
+  // domain attributes, for the sheet terms on a broken space.
+  struct AssemblyDomains
+  {
+    mfem::Array<int> domain, boundary;
+    std::vector<int> attrs;
+  };
+  std::optional<AssemblyDomains> assembly_domains;
+  void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
+                                 std::initializer_list<MaterialPropertyCoefficient *> fb);
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -172,6 +194,22 @@ public:
                    ProblemType problem_type, const Units &units,
                    const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+
+  // Restricts GetUnconstrainedStiffnessMatrix to the elements with the given domain
+  // attributes and the boundary elements bounding them while in scope (the previous
+  // restriction is restored).
+  class AssemblyRestriction
+  {
+  public:
+    AssemblyRestriction(CurlCurlOperator &op, const std::vector<int> &domain_attrs);
+    ~AssemblyRestriction() { op.assembly_domains = std::move(previous); }
+    AssemblyRestriction(const AssemblyRestriction &) = delete;
+    AssemblyRestriction &operator=(const AssemblyRestriction &) = delete;
+
+  private:
+    CurlCurlOperator &op;
+    std::optional<AssemblyDomains> previous;
+  };
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -240,6 +278,15 @@ public:
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
+
+  // Terms of the stiffness matrix on the finest solution space without the essential
+  // boundary conditions, for substructuring, which eliminates its own sets of true DOFs:
+  // the volume terms (curl-curl) if volume, and the superconductor sheet terms (on a broken
+  // space, of the one-sided sheets and the two-sided films) if sheets. Assembled, or
+  // applied matrix-free (partially assembled, the sheet terms on a broken space assembled)
+  // if not assemble.
+  std::unique_ptr<ParOperator> GetUnconstrainedStiffnessMatrix(bool volume, bool sheets,
+                                                               bool assemble = true);
 
   // True if any flux loop drives a London (finite-λ) superconductor film, whose free
   // interior gives the shifted-penalty operator a residual 1-D gradient null space.
