@@ -36,6 +36,22 @@ SNAPSHOT_FILES = (
     "surface-Q-corrected.csv",
     "surface-response-confidence.csv",
 )
+# Lane L1 (DESIGN-v2 s4.3): the coverage columns appended to surface-Q-corrected.csv and
+# surface-response-confidence.csv after the baseline was recorded.
+APPENDED_COVERAGE_COLUMNS = {
+    "coverage Type",
+    "W within-R raw (J)",
+    "uncovered raw share of W",
+    "Type uncovered raw share of W",
+    "Type method-gap raw share of W",
+    "Type pending-model share of W",
+    "Type covered correction factor",
+    "coverage status",
+    "regime status",
+    "worst uncovered raw share of W",
+    "worst coverage status",
+    "worst regime status",
+}
 INTEGER_COLUMNS = {
     "m",
     "exc",
@@ -116,12 +132,20 @@ def prepare_config(source, library, output, postpro):
     return mesh
 
 
+def _cell(value):
+    """A number, or the text of a text column (the coverage Type / status columns)."""
+    try:
+        return float(value)
+    except ValueError:
+        return value.strip()
+
+
 def read_csv(path):
     with path.open(newline="") as stream:
         reader = csv.DictReader(stream, skipinitialspace=True)
         result = []
         for row in reader:
-            result.append({key.strip(): float(value) for key, value in row.items()})
+            result.append({key.strip(): _cell(value) for key, value in row.items()})
         return result
 
 
@@ -156,7 +180,11 @@ def compare_snapshots(expected, observed, relative_tolerance, absolute_tolerance
         for row_index, (expected_row, observed_row) in enumerate(
             zip(expected[filename], observed[filename])
         ):
-            if expected_row.keys() != observed_row.keys():
+            # Columns APPENDED after the baseline (the coverage columns) are not compared;
+            # every baseline column must still be there.
+            if not expected_row.keys() <= observed_row.keys() or not (
+                observed_row.keys() - expected_row.keys() <= APPENDED_COVERAGE_COLUMNS
+            ):
                 failures.append(f"{filename}:{row_index}: columns changed")
                 continue
             for column in expected_row:
