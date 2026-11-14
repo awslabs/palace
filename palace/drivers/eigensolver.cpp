@@ -25,6 +25,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -68,14 +69,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
-  // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
-  // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
-  // solves).
-  if (space_op.GetWavePortOp().Size() > 0)
-  {
-    space_op.GetWavePortOp().InitializeModalReference(target);
-  }
-
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
@@ -114,23 +107,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
     interp->Interpolate(1i * target, 1i * target_max);
     // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield
-    // ABC contributes a pole term f(λ)·M_ff to A2(λ), with f(λ) = -0.5/λ (λ = iω; the
-    // negative sign of β is inside M_ff, not in f), that a polynomial (K' + λC' + λ²M')
-    // seed cannot fit accurately. AddFrozenPole removes the pole's interpolated
-    // contribution and re-adds it frozen at the target into the K-block. The freeze is
-    // deliberately unconditional (no DetermineFrozen): the fit's pointwise window error is
-    // small (the pole at λ = 0 sits outside the window), but its curvature term injects a
-    // fictitious rank-deficient λ² contribution into the seed's M-block that displaces
-    // spurious roots into the unphysical half-plane — the failure mode is structural, not a
-    // pointwise approximation error, so the pointwise metric must not be allowed to choose
-    // the fit here.
-    auto M_ff =
-        space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    if (M_ff)
+    // ABC contributes pole terms g(λ)·M to A2(λ), with g(λ) = -0.5/λ next to constant
+    // materials (M includes the negative sign of β) and 0.5i/(λ r_k(-iλ)) next to
+    // frequency-dependent material k, that a polynomial (K' + λC' + λ²M') seed cannot fit
+    // accurately. AddFrozenPole removes each term's interpolated contribution and re-adds
+    // it frozen at the target into the K-block: next to a frequency-dependent material, the
+    // material factor 1/r_k is frozen with the pole, as the seed has no separate
+    // representation of it. The freeze is deliberately unconditional (no DetermineFrozen):
+    // the fit's pointwise window error is small (the pole at λ = 0 sits outside the
+    // window), but its curvature term injects a fictitious rank-deficient λ² contribution
+    // into the seed's M-block that displaces spurious roots into the unphysical half-plane
+    // — the failure mode is structural, not a pointwise approximation error, so the
+    // pointwise metric must not be allowed to choose the fit here.
+    for (auto &[M_ff, g] : space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO))
     {
-      interp->AddFrozenPole(
-          std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; },
-          1i * target);
+      interp->AddFrozenPole(std::move(M_ff), g, 1i * target);
     }
     // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
     // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part
@@ -303,7 +294,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
+      !space_op.GetMaterialOp().HasLondonDepth() &&
+      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
@@ -312,6 +304,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
+  }
+  else if (iodata.solver.linear.divfree_max_it > 0 &&
+           space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
+  {
+    Mpi::Print(" Skipping divergence-free projection for frequency-dependent permittivity: "
+               "the fixed ε∞ projector does not enforce ∇·(ε(ω)E) = 0 at material "
+               "interfaces.\n");
   }
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -507,6 +506,33 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       eigen->GetEigenvector(i, E);
       E.Get(eigenvectors[i].data(), E.Size(), false);
+    }
+  }
+
+  // The target window is checked with the configuration; a mode may converge outside it.
+  for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+  {
+    const auto &material = iodata.domains.materials[m];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    for (int i = 0; i < num_report; i++)
+    {
+      const double omega = eigenvalues[i].imag();
+      if (permittivity::Contains(defects.gain, omega))
+      {
+        Mpi::Warning("Eigenmode {:d} at {:.6g} GHz lies where the frequency-dependent "
+                     "Permittivity of material {:d} has gain, a negative dissipated "
+                     "power!\nThe mode solves the model as given; a fit may only be meant "
+                     "for some frequencies.\n",
+                     i + 1,
+                     iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                         (2.0 * std::numbers::pi),
+                     m + 1);
+      }
     }
   }
 

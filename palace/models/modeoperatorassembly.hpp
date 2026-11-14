@@ -36,7 +36,9 @@ enum class CoefficientType
   OMEGA_SQUARED,
   SHIFT,
   SURFACE_CONDUCTIVITY,
-  RATIONAL_IMPEDANCE
+  RATIONAL_IMPEDANCE,
+  FREQUENCY_DEPENDENT_PERMITTIVITY,
+  FARFIELD_FREQUENCY_DEPENDENT_PERMITTIVITY
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -62,6 +64,8 @@ struct OperatorComponent
 class ModeOperatorModel
 {
 private:
+  const MaterialOperator &mat_op;
+  FarfieldBoundaryOperator &farfield_op;
   SurfaceConductivityOperator &surf_sigma_op;
   SurfaceRationalImpedanceOperator &surf_rz_op;
   std::vector<OperatorComponent> components;
@@ -103,7 +107,9 @@ void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_siz
 // Add coeff times the scalar inverse impedance of the domain material adjacent to each
 // farfield (first-order absorbing) boundary element to fb, the boundary coefficient of the
 // out-of-plane field component (H1 block) for the damping of the absorbing boundaries.
-// Assumes an isotropic material at the absorbing boundaries.
+// Assumes an isotropic material at the absorbing boundaries. Boundary elements next to a
+// frequency-dependent material are not included: their damping has its own coefficient
+// (FarfieldBoundaryOperator::AddDispersiveScalarDampingBdrCoefficients).
 void AddFarfieldScalarDampingBdrCoefficients(const MaterialOperator &mat_op,
                                              const FarfieldBoundaryOperator &farfield_op,
                                              double coeff, MaterialPropertyCoefficient &fb);
