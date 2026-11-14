@@ -384,12 +384,33 @@ public:
     std::map<std::pair<std::string, std::string>, double> classes;  // (class, label)
     std::map<std::string, double> served;                           // model-set label
     double unclaimed = 0.0;
+    // The loop remainder's energy no served label held (MoveCoverageLoopRemainder): counted
+    // in the class "LoopRemainder" and in another bin both (the bins then sum to `within`
+    // plus this amount).
+    double loop_remainder_unserved = 0.0;
   };
   std::map<int, InterfaceCoveragePartition> GetInterfaceCoveragePartition(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<CoveragePartitionClass> &kept_classes,
       const std::vector<UncoveredPerimeterPortion> &served,
       const std::vector<CoveragePartitionClass> &remainder_classes = {}) const;
+  // The uncovered portions relabelled by feature ("m<feature>"): the Missing class's bins
+  // of the coverage partition, one per feature (joined by '+' where portions overlap).
+  static std::vector<UncoveredPerimeterPortion>
+  CoverageMissingByFeature(const std::vector<UncoveredPerimeterPortion> &uncovered);
+  // Moves a served label that holds no model claim (the PatchEnergy list's `unpatched`
+  // label alone, fix round P2 2B) to the class `name` of the same partitions.
+  static void MoveCoverageServedLabel(std::map<int, InterfaceCoveragePartition> &partitions,
+                                      const std::string &label, const std::string &name);
+  // Maxwell (OI-MX-LOOPGATE, decision 955): the loop remainders' raw energy (per interface,
+  // by model row "m<idx>") is kept raw by the corrected total although it lies under the
+  // served claims; it moves from the served bins to the class "LoopRemainder" by label.
+  // A remainder row's energy is taken from the served labels holding the row's model token,
+  // in proportion to their energy, at most their total; the rest no served label held
+  // (`loop_remainder_unserved`) lies on kept-raw or remainder points already binned.
+  static void
+  MoveCoverageLoopRemainder(std::map<int, InterfaceCoveragePartition> &partitions,
+                            const std::map<int, std::map<std::string, double>> &remainder);
   // OI-MX-LOOPGATE (decision 955): the within-R energy of each requested interface on the
   // portions, WEIGHTED per portion (`weights`, parallel to `portions`: the patch's rho_p)
   // and grouped by the portions' `type` label (the model row "m<idx>"): per label the

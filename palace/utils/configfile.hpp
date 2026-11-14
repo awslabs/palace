@@ -1920,6 +1920,7 @@ public:
       bool unboxable = false;
     };
     std::vector<UncoveredKeyData> uncovered_keys;
+    // The excluded / unclaimed perimeter portions of the identification (idfix DESIGN
     // section 8; the exclusion-energy export): `topology` = the exclusion Class by name (a
     // whole-segment exclusion's class, an analytic CrossLayer zone's, CornerArmTrim for the
     // stretch a corner's exit trims off an arm cell, Unclaimed-other for the remainder of a

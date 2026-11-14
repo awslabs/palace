@@ -962,6 +962,21 @@ public:
     return surf_post_op.GetInterfacePartitionedEdgeEnergies(response_targets, *E,
                                                             D_recovered.get(), portions);
   }
+  // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage partition of
+  // the same field (SurfacePostOperator::GetInterfaceCoveragePartition).
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticCoveragePartition(
+      const std::set<int> &response_targets,
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> &kept_classes,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &served,
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> &remainder_classes)
+      const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::map<int, SurfacePostOperator::InterfaceCoveragePartition>>
+  {
+    return surf_post_op.GetInterfaceCoveragePartition(
+        response_targets, *E, D_recovered.get(), kept_classes, served, remainder_classes);
+  }
 
   // Evaluate localized interface energies for an electrostatic field without producing
   // ordinary measurement output. Volume-annulus diagnostics are omitted because response

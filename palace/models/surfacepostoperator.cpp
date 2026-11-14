@@ -1745,6 +1745,90 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
   return partitions;
 }
 
+std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+SurfacePostOperator::CoverageMissingByFeature(
+    const std::vector<UncoveredPerimeterPortion> &uncovered)
+{
+  std::vector<UncoveredPerimeterPortion> by_feature;
+  by_feature.reserve(uncovered.size());
+  for (const auto &portion : uncovered)
+  {
+    by_feature.push_back(
+        {portion.p0, portion.p1, "m" + std::to_string(portion.feature), portion.feature});
+  }
+  return by_feature;
+}
+
+void SurfacePostOperator::MoveCoverageServedLabel(
+    std::map<int, InterfaceCoveragePartition> &partitions, const std::string &label,
+    const std::string &name)
+{
+  for (auto &[interface, partition] : partitions)
+  {
+    (void)interface;
+    const auto served = partition.served.find(label);
+    if (served != partition.served.end())
+    {
+      partition.classes[{name, label}] += served->second;
+      partition.served.erase(served);
+    }
+  }
+}
+
+void SurfacePostOperator::MoveCoverageLoopRemainder(
+    std::map<int, InterfaceCoveragePartition> &partitions,
+    const std::map<int, std::map<std::string, double>> &remainder)
+{
+  // A served label holds a model token when one of its '+'-joined tokens equals it.
+  auto HoldsToken = [](const std::string &label, const std::string &token)
+  {
+    std::size_t begin = 0;
+    while (begin <= label.size())
+    {
+      const std::size_t end = std::min(label.find('+', begin), label.size());
+      if (label.compare(begin, end - begin, token) == 0 && end - begin == token.size())
+      {
+        return true;
+      }
+      begin = end + 1;
+    }
+    return false;
+  };
+  for (const auto &[interface, rows] : remainder)
+  {
+    auto found = partitions.find(interface);
+    if (found == partitions.end())
+    {
+      continue;
+    }
+    auto &partition = found->second;
+    for (const auto &[row, energy] : rows)
+    {
+      partition.classes[{"LoopRemainder", row}] += energy;
+      double holding = 0.0;
+      for (const auto &[label, served] : partition.served)
+      {
+        if (served > 0.0 && HoldsToken(label, row))
+        {
+          holding += served;
+        }
+      }
+      const double taken = std::min(energy, holding);
+      if (holding > 0.0)
+      {
+        for (auto &[label, served] : partition.served)
+        {
+          if (served > 0.0 && HoldsToken(label, row))
+          {
+            served -= taken * (served / holding);
+          }
+        }
+      }
+      partition.loop_remainder_unserved += energy - taken;
+    }
+  }
+}
+
 std::map<int, std::map<std::string, double>>
 SurfacePostOperator::GetInterfaceWeightedPortionEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,

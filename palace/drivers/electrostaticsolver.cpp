@@ -1281,6 +1281,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> model_raw_portions;
   std::vector<std::pair<int, std::map<int, std::map<std::string, double>>>>
       raw_model_partitions;
+  // Lane L1 (decision 1634 (1)): per source, the closed coverage partition of its raw
+  // field (SurfacePostOperator::GetInterfaceCoveragePartition), on every corrected run.
+  std::vector<
+      std::pair<int, std::map<int, SurfacePostOperator::InterfaceCoveragePartition>>>
+      coverage_partitions;
   if (response_correction)
   {
     for (const auto &portion : response_correction->GetUncoveredPortions())
@@ -1800,6 +1805,34 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         raw_conductor_consistency = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), conductor_consistency_portions);
         PostRawStage("conductor-consistency gate + raw energies");
+      }
+      if (response_correction->HasSurfaceResponse())
+      {
+        // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage
+        // partition of this source's RAW field (the grid functions still hold it), every
+        // point in ONE bin by the correction's ownership: the classes the corrected
+        // interface energies keep raw (ApplyResponse below) first, whatever claim lies
+        // under them (a conductor-consistency-excluded patch's claim included), then the
+        // served claims, then the remainder labels. Measured on every corrected run.
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(uncovered_portions);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &domain_boundary_portions},
+            {"SpatialClusterPriority", &spatial_cluster_priority_portions},
+            {"ConductorConsistency", &conductor_consistency_portions}};
+        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+        if (response_correction->ExclusionEnergyRequested())
+        {
+          remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
+        }
+        auto partition = post_op.GetElectrostaticCoveragePartition(
+            response_correction->GetTargetInterfaces(), kept_classes, model_raw_portions,
+            remainder_classes);
+        SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
+                                                     "UnpatchedPairs");
+        coverage_partitions.emplace_back(idx, std::move(partition));
       }
       if (self_consistent_response)
       {

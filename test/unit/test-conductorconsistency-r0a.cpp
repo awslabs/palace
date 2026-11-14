@@ -27,6 +27,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
@@ -821,6 +822,137 @@ TEST_CASE_METHOD(
       }
     }
   }
+#endif
+}
+
+// Lane L1 (decision 1634 (1); rulings 1641 (2) / (5), 1649 Q3; REPORT STEP 10): a patch the
+// conductor-consistency gate excluded is NOT served. The PEC island with the convex library
+// under the surface mortar and a potential growing along z (the gate fires on the cells of
+// the edges x = const, as in the case above). On E = -grad V the coverage partition with
+// the gate's portions as a kept-raw class (a) leaves the excluded claims' energy out of the
+// served bins: per interface the served bins plus the unclaimed remainder are the within-R
+// raw energy the corrected interface energy replaces, (raw - outside R) - the kept raw
+// conductor-consistency energy (ElectrostaticSolver's ApplyResponse), and the class's bins
+// are that kept energy; (b) THE ACCOUNTING BEFORE LANE L1 (the PatchEnergy model-raw
+// partition of the same claims) serves the excluded claims: it fails the identity of (a) by
+// exactly the kept energy (> 0).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage partition keeps a conductor-consistency-excluded patch's claim "
+                 "out of the served bins (electrostatic)",
+                 "[postoperator][surfaceresponseoperator][conductorconsistency][r0a][3d]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto library_path = temp.temp_dir / "fabrication-process-r0a-coverage-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-r0a-coverage-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  REQUIRE(response.GetPatchCount() == 20);
+  mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+  mfem::FunctionCoefficient coefficient([](const mfem::Vector &x) { return x[2] - 0.5; });
+  potential.ProjectCoefficient(coefficient);
+  Vector V;
+  potential.GetTrueDofs(V);
+  const auto records = response.ApplyConductorConsistencyGate(V, 1);
+  REQUIRE(std::any_of(records.begin(), records.end(),
+                      [](const auto &record) { return record.excluded; }));
+
+  auto Portions = [](const auto &list)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> portions;
+    for (const auto &portion : list)
+    {
+      portions.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return portions;
+  };
+  // The served claims exist on every run since lane L1 (no PatchEnergy in this config).
+  const auto served = Portions(response.GetModelRawClaimPortions().portions);
+  const auto excluded = Portions(response.GetConductorConsistencyPortions());
+  REQUIRE_FALSE(served.empty());
+  REQUIRE_FALSE(excluded.empty());
+
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace);
+  mfem::ParDiscreteLinearOperator gradient(&laplace.GetH1Space().Get(),
+                                           &laplace.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(laplace.GetNDSpace());
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  Vector e(laplace.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e);
+  field.Real().SetFromTrueDofs(e);
+  field.Real().ExchangeFaceNbrData();
+
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  const double kept =
+      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, excluded)
+          .at(4)
+          .energy;
+  REQUIRE(kept > 0.0);
+  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+  const double outside =
+      surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
+  const double replaced = (raw - outside) - kept;
+
+  // (a) The closed partition: the kept class first, then the served claims.
+  const auto coverage = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"ConductorConsistency", &excluded}}, served);
+  const auto &partition = coverage.at(4);
+  double served_energy = 0.0, kept_bins = 0.0;
+  for (const auto &[label, energy] : partition.served)
+  {
+    (void)label;
+    served_energy += energy;
+  }
+  for (const auto &[key, energy] : partition.classes)
+  {
+    CHECK(key.first == "ConductorConsistency");
+    kept_bins += energy;
+  }
+  CHECK_THAT(kept_bins, WithinRel(kept, 1.0e-12));
+  CHECK_THAT(served_energy + kept_bins + partition.unclaimed,
+             WithinRel(partition.within, 1.0e-12));
+  CHECK_THAT(partition.within, WithinRel(raw - outside, 1.0e-10));
+  CHECK_THAT(served_energy + partition.unclaimed, WithinRel(replaced, 1.0e-10));
+
+  // (b) The accounting before lane L1 serves the excluded claims.
+  const auto model_raw =
+      surf_post_op.GetInterfacePartitionedEdgeEnergies({4}, field, nullptr, served);
+  double old_served = 0.0, old_unclaimed = 0.0;
+  for (const auto &[label, energy] : model_raw.at(4))
+  {
+    (label == "unclaimed" ? old_unclaimed : old_served) += energy;
+  }
+  CHECK_THAT(old_unclaimed, WithinAbs(partition.unclaimed, 1.0e-12 * partition.within));
+  CHECK_THAT(old_served - served_energy, WithinRel(kept, 1.0e-12));
+  CHECK(old_served + old_unclaimed - replaced > 0.5 * kept);
 #endif
 }
 

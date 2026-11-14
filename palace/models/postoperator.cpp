@@ -1989,14 +1989,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // partition, every point in ONE bin by the correction's ownership (the kept-raw
         // classes first: the corrected total keeps them raw whatever claim lies under
         // them, e.g. a conductor-consistency-excluded patch's claim, REPORT STEP 10).
-        std::vector<SurfacePostOperator::UncoveredPerimeterPortion> missing_by_feature;
-        missing_by_feature.reserve(surface_response_uncovered.size());
-        for (const auto &portion : surface_response_uncovered)
-        {
-          missing_by_feature.push_back({portion.p0, portion.p1,
-                                        fmt::format("m{:d}", portion.feature),
-                                        portion.feature});
-        }
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(surface_response_uncovered);
         std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
             {"Missing", &missing_by_feature},
             {"DomainBoundary", &surface_response_domain_boundary},
@@ -2010,18 +2004,10 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.coverage = surf_post_op.GetInterfaceCoveragePartition(
             target_interfaces, *E, D_recovered.get(), kept_classes,
             surface_response_model_raw, remainder_classes);
-        for (auto &[interface, partition] : result.coverage)
-        {
-          // The served list's `unpatched` label ALONE (no model claim under the point) is
-          // the UnpatchedPairs class (fix round P2 2B), not a served claim.
-          (void)interface;
-          const auto unpatched = partition.served.find("unpatched");
-          if (unpatched != partition.served.end())
-          {
-            partition.classes[{"UnpatchedPairs", "unpatched"}] += unpatched->second;
-            partition.served.erase(unpatched);
-          }
-        }
+        // The served list's `unpatched` label ALONE (no model claim under the point) is the
+        // UnpatchedPairs class (fix round P2 2B), not a served claim.
+        SurfacePostOperator::MoveCoverageServedLabel(result.coverage, "unpatched",
+                                                     "UnpatchedPairs");
       }
       if (!result.confidence.loop_remainders.empty())
       {
@@ -2032,6 +2018,10 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.loop_remainder = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
             target_interfaces, *E, D_recovered.get(),
             RemainderPerimeter(remainder_portions), remainder_portions.weights);
+        // Lane L1 (ruling 1649 Q3): the loop remainder is kept raw by the corrected total:
+        // out of the coverage partition's served bins.
+        SurfacePostOperator::MoveCoverageLoopRemainder(result.coverage,
+                                                       result.loop_remainder);
       }
     }
     auto RemainderEnergy =

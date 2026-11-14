@@ -2899,6 +2899,69 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Lane L1 (ruling 1649 Q3): the coverage partition's bookkeeping helpers. (a) A served
+// `unpatched` label alone moves to the class UnpatchedPairs; a joined label stays served.
+// (b) A loop-remainder row is taken from the served labels holding its model token in
+// proportion to their energy ("m3" and "m3+m5", not "m35"), the class LoopRemainder gets
+// the whole row, and the part no served label holds is `loop_remainder_unserved`; the bins
+// then sum to `within` plus that part.
+TEST_CASE("Coverage partition moves the unpatched label and the loop remainder",
+          "[postoperator][surfaceresponseoperator][cornerarmtrim][Serial]")
+{
+  using Partition = SurfacePostOperator::InterfaceCoveragePartition;
+  auto BinSum = [](const Partition &partition)
+  {
+    double sum = partition.unclaimed;
+    for (const auto &[key, energy] : partition.classes)
+    {
+      (void)key;
+      sum += energy;
+    }
+    for (const auto &[label, energy] : partition.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+  std::map<int, Partition> partitions;
+  auto &p = partitions[4];
+  p.classes[{"Missing", "m2"}] = 0.5;
+  p.served = {{"m3", 3.0},
+              {"m3+m5", 1.0},
+              {"m35", 2.0},
+              {"unpatched", 0.25},
+              {"m5+unpatched", 0.75}};
+  p.unclaimed = 0.5;
+  p.within = 8.0;
+  REQUIRE(BinSum(p) == 8.0);
+
+  SurfacePostOperator::MoveCoverageServedLabel(partitions, "unpatched", "UnpatchedPairs");
+  CHECK(p.served.count("unpatched") == 0);
+  CHECK(p.served.at("m5+unpatched") == 0.75);
+  CHECK(p.classes.at({"UnpatchedPairs", "unpatched"}) == 0.25);
+  CHECK(BinSum(p) == 8.0);
+
+  // m3: 2.0 of the 4.0 its labels hold (3/4 from "m3", 1/4 from "m3+m5"); m7: no label.
+  SurfacePostOperator::MoveCoverageLoopRemainder(partitions,
+                                                 {{4, {{"m3", 2.0}, {"m7", 0.125}}}});
+  CHECK_THAT(p.served.at("m3"), WithinRel(1.5, 1.0e-15));
+  CHECK_THAT(p.served.at("m3+m5"), WithinRel(0.5, 1.0e-15));
+  CHECK(p.served.at("m35") == 2.0);
+  CHECK(p.classes.at({"LoopRemainder", "m3"}) == 2.0);
+  CHECK(p.classes.at({"LoopRemainder", "m7"}) == 0.125);
+  CHECK(p.loop_remainder_unserved == 0.125);
+  CHECK_THAT(BinSum(p), WithinRel(8.0 + 0.125, 1.0e-15));
+
+  // A row larger than what its labels hold: they are emptied, the rest is unserved.
+  SurfacePostOperator::MoveCoverageLoopRemainder(partitions, {{4, {{"m35", 3.0}}}});
+  CHECK(p.served.at("m35") == 0.0);
+  CHECK(p.loop_remainder_unserved == 0.125 + 1.0);
+  // An interface absent from the partitions is ignored.
+  SurfacePostOperator::MoveCoverageLoopRemainder(partitions, {{6, {{"m3", 1.0}}}});
+  CHECK(partitions.count(6) == 0);
+}
+
 // M-5 (decisions 845 O-C / 846): the Maxwell path writes surface-response-model-energy.csv
 // with the electrostatic driver's column set exactly and in order as a strict prefix, then
 // the Maxwell keys "m" / "exc". On the lead fixture above (one isolated-edge model, three
