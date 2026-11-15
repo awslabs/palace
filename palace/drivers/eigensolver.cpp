@@ -727,17 +727,28 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
   int corrected_num_conv = 0;
+  // Lane L4 (decision 1829; DESIGN-L4-v2 s2.3 M5): under Coverage.Policy "MarkNotApplied"
+  // the self-consistent corrected frequencies reach the log only after each mode's
+  // coverage is measured (the corrected-eigenvalue line names no value; the mode-matching
+  // table is printed after the modes, a marked mode's f corrected nan and its value in the
+  // partial column); under "Warn" both are printed here as before.
+  const bool mark_not_applied =
+      response_correction && response_correction->CoverageMarkNotApplied();
   if (corrected_eigen)
   {
     Mpi::Print("\nSolving self-consistent fabrication-response corrected eigenproblem\n");
     corrected_num_conv = corrected_eigen->Solve();
     std::complex<double> lambda =
         corrected_num_conv > 0 ? corrected_eigen->GetEigenvalue(0) : 0.0;
-    Mpi::Print(" Found {:d} converged corrected eigenvalue{}{}\n", corrected_num_conv,
-               corrected_num_conv > 1 ? "s" : "",
-               corrected_num_conv > 0
-                   ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
-                   : "");
+    Mpi::Print(
+        " Found {:d} converged corrected eigenvalue{}{}\n", corrected_num_conv,
+        corrected_num_conv > 1 ? "s" : "",
+        corrected_num_conv > 0
+            ? (mark_not_applied
+                   ? std::string(" (first: coverage pending; see the mode matching "
+                                 "after the modes)")
+                   : fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag()))
+            : "");
   }
 
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
@@ -819,6 +830,54 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     return internal::EigenvalueToAngularFrequency(solver.GetEigenvalue(i),
                                                   lambda_eigenproblem);
   };
+  // The mode-matching table (root); `marked` (MarkNotApplied only): per raw mode whether
+  // its measurement is marked (M5).
+  int mode_matching_pairs = 0;
+  auto PrintModeMatching = [&](int pair_count, const std::vector<bool> *marked)
+  {
+    Table table;
+    table.col_options = {6, 6};
+    table.insert(Column("raw", "Raw", 4, {}, {}, ""));
+    table.insert(Column("corrected", "Corrected", 9, {}, {}, ""));
+    table.insert(Column("overlap", "M-overlap"));
+    table.insert(Column("f_raw", "f raw (GHz)"));
+    table.insert(Column("f_corrected", "f corrected (GHz)"));
+    if (marked)
+    {
+      table.insert(Column("f_corrected_partial",
+                          std::string("f corrected (GHz)") + kCoveragePartialColumnSuffix));
+    }
+    table["raw"].print_as_int = true;
+    table["corrected"].print_as_int = true;
+    for (int i = 0; i < pair_count; i++)
+    {
+      const auto raw_omega = GetOmega(*eigen, i);
+      const auto response_omega = corrected_omega[corrected_mode[i]];
+      const double f_corrected =
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(response_omega.real()) /
+          (2 * M_PI);
+      table["raw"] << i + 1;
+      table["corrected"] << corrected_mode[i] + 1;
+      table["overlap"] << corrected_mode_overlap[i];
+      table["f_raw"] << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(
+                            raw_omega.real()) /
+                            (2 * M_PI);
+      if (marked)
+      {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const bool mode_marked = i >= static_cast<int>(marked->size()) || (*marked)[i];
+        table["f_corrected"] << (mode_marked ? nan : f_corrected);
+        table["f_corrected_partial"] << (mode_marked ? f_corrected : nan);
+      }
+      else
+      {
+        table["f_corrected"] << f_corrected;
+      }
+    }
+    Mpi::Print("\nSelf-consistent response-corrected mode matching{}:\n{}",
+               marked ? " (after the coverage: Coverage.Policy MarkNotApplied)" : "",
+               table.format_table());
+  };
   if (corrected_eigen)
   {
     MFEM_VERIFY(corrected_num_conv >= iodata.solver.eigenmode.n,
@@ -869,36 +928,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       corrected_mode_overlap[i] = overlap[i][assignment[i]];
     }
 
-    if (Mpi::Root(space_op.GetComm()))
+    mode_matching_pairs = pair_count;
+    if (Mpi::Root(space_op.GetComm()) && !mark_not_applied)
     {
-      Table table;
-      table.col_options = {6, 6};
-      table.insert(Column("raw", "Raw", 4, {}, {}, ""));
-      table.insert(Column("corrected", "Corrected", 9, {}, {}, ""));
-      table.insert(Column("overlap", "M-overlap"));
-      table.insert(Column("f_raw", "f raw (GHz)"));
-      table.insert(Column("f_corrected", "f corrected (GHz)"));
-      table["raw"].print_as_int = true;
-      table["corrected"].print_as_int = true;
-      for (int i = 0; i < pair_count; i++)
-      {
-        const auto raw_omega = GetOmega(*eigen, i);
-        const auto response_omega = corrected_omega[corrected_mode[i]];
-        table["raw"] << i + 1;
-        table["corrected"] << corrected_mode[i] + 1;
-        table["overlap"] << corrected_mode_overlap[i];
-        table["f_raw"] << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(
-                              raw_omega.real()) /
-                              (2 * M_PI);
-        table["f_corrected"] << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(
-                                    response_omega.real()) /
-                                    (2 * M_PI);
-      }
-      Mpi::Print("\nSelf-consistent response-corrected mode matching:\n{}",
-                 table.format_table());
+      PrintModeMatching(pair_count, nullptr);
     }
   }
   Mpi::Print("\n");
+  std::vector<bool> mode_marked;
 
   for (int i = 0; i < num_conv; i++)
   {
@@ -971,6 +1008,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
+    if (mark_not_applied)
+    {
+      // M5: no printed measurement = marked (fail-closed).
+      mode_marked.push_back(post_op.TakeSurfaceResponseMeasurementMarked().value_or(true));
+    }
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
@@ -983,6 +1025,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       post_op.MeasureFinalize(indicator);
     }
+  }
+  if (mark_not_applied && mode_matching_pairs > 0 && Mpi::Root(space_op.GetComm()))
+  {
+    PrintModeMatching(mode_matching_pairs, &mode_marked);
   }
   if (self_consistent_response)
   {
