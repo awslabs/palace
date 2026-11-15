@@ -4889,12 +4889,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   auto Weighted = [&](const SurfaceResponseOperator::LoopRemainderPortions &remainder)
   {
+    // The map is held by name: a range-for over a member of the call's temporary result
+    // would iterate a destroyed map (the temporary ends before the loop body).
+    const auto energies = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+        {4}, *field, nullptr, Perimeter(remainder), remainder.weights);
     double total = 0.0;
-    for (const auto &[label, energy] :
-         surf_post_op
-             .GetInterfaceWeightedPortionEdgeEnergies(
-                 {4}, *field, nullptr, Perimeter(remainder), remainder.weights)
-             .at(4))
+    for (const auto &[label, energy] : energies.at(4))
     {
       (void)label;
       total += energy;
