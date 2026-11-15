@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -202,15 +203,25 @@ class DriveWithFakeCLI(unittest.TestCase):
                                                         "FAKE_PALADIN_LOG": str(self.argv_log),
                                                         "FAKE_TOOL_LOG": str(self.tool_log)})
         self.environment.start()
+        self.slept = []  # the waits between repeated lookups (INTENT_RULE), recorded, not slept
+        self.pause = mock.patch.object(paladin_backend, "pause", side_effect=self.slept.append)
+        self.pause.start()
         self.script()
 
     def tearDown(self):
+        self.pause.stop()
         self.environment.stop()
         self.tmp.cleanup()
 
-    def script(self, plan=None):
+    def script(self, plan=None, lookups=None):
         with open(self.state, "w") as f:
-            json.dump({"Root": str(self.root / "runs"), "Plan": plan or {}}, f)
+            json.dump({"Root": str(self.root / "runs"), "Plan": plan or {}, "Lookups": lookups or []}, f)
+
+    def lookups(self, answers):
+        """The next my-jobs answers of the fake (its "Lookups"), without touching its runs."""
+        state = json.loads(self.state.read_text())
+        state["Lookups"] = list(answers)
+        self.state.write_text(json.dumps(state))
 
     def job(self, now=paladin_backend.utc_now):
         return paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
@@ -424,6 +435,110 @@ class DriveWithFakeCLI(unittest.TestCase):
         with self.assertRaises(paladin_backend.PaladinError):
             self.drive()
         self.assertEqual(self.submitted(), ["chainport-w"])
+
+    # Decision 1820 (1), MAJOR-1 of review r1799: the SubmitIntent, failed lookups, two consistent lookups.
+    def test_the_intent_is_on_disk_before_the_submit_and_its_nonce_is_in_the_metadata(self):
+        self.killed_after_the_submit()  # the driver ended between the submit and the save of its RunID
+        intent = self.records()["w"]["SubmitIntents"][-1]
+        self.assertNotIn("Outcome", intent)
+        self.assertEqual((intent["Stage"], len(intent["Nonce"])), ("w", 32))
+        submit = next(call for call in self.calls() if call[:2] == ["palace", "submit-detailed"])
+        self.assertIn(f"nonce={intent['Nonce']}", submit)
+
+    def test_r1_an_open_intent_and_one_empty_answer_adopts_without_a_second_submit(self):
+        self.killed_after_the_submit()
+        self.lookups(["empty"])
+        state = self.drive()
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        intent = state["Stages"]["w"]["SubmitIntents"][0]
+        self.assertEqual((intent["Outcome"].split()[0], intent["NonceMatches"]), ("adopted", True))
+        self.assertEqual(state["Stages"]["w"]["State"], "complete")
+
+    def test_r2_r3_a_partial_or_keyless_answer_is_a_failed_lookup_and_never_a_submit(self):
+        for answer in ("omitted", "nokey", "fail"):
+            with self.subTest(answer=answer):
+                self.setUp_fresh()
+                self.killed_after_the_submit()
+                self.lookups([answer])
+                with self.assertRaises(paladin_backend.PaladinError) as stop:
+                    self.drive()
+                if answer != "fail":
+                    self.assertIn("FAILED lookup", str(stop.exception))
+                self.assertEqual(self.submitted(), ["chainport-w"])
+                self.drive()  # the next driver, with a true listing, adopts the one run
+                self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def setUp_fresh(self):
+        """A new fake cluster and an empty local record in the same test."""
+        for path in (self.state, self.argv_log):
+            if path.exists():
+                path.unlink()
+        for directory in (self.out, Path(self.archive), self.root / "runs"):
+            shutil.rmtree(directory, ignore_errors=True)
+        (self.root / "runs").mkdir()
+        self.script()
+
+    def test_an_open_intent_with_no_run_found_stops_after_three_lookups_over_60_s(self):
+        self.killed_after_the_submit()
+        del self.slept[:]
+        self.lookups(["empty"] * 4)
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("submit intent without an outcome", str(stop.exception))
+        self.assertEqual(self.slept, [30.0, 30.0])
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_a_lost_record_and_one_empty_answer_adopts_by_the_second_lookup(self):
+        self.killed_after_the_submit()
+        (self.out / "paladin-status.json").unlink()  # the lost record: no intent, no RunID
+        self.lookups(["empty"])
+        state = self.drive()
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        self.assertEqual(state["Stages"]["w"]["Adopted"]["Status"], "queued")
+        self.assertIn(20.0, self.slept)
+
+    def test_a_first_submit_needs_two_consistent_empty_lookups_20_s_apart(self):
+        self.drive()
+        listings = [call for call in self.calls() if call[:2] == ["palace", "my-jobs"]]
+        self.assertEqual(self.slept, [20.0] * 3)  # one gap before each of the three submits
+        self.assertEqual(len(listings), 9)  # per stage: two before the submit, one after it
+
+    def test_two_lookups_that_disagree_stop_without_a_submit(self):
+        self.script({"chainport-w": "transport-once"})
+        real = paladin_backend.find_runs
+        answers = iter([[], [{"run_id": 1, "status": "submission_failed", "job_id": None}]])
+        with mock.patch.object(paladin_backend, "find_runs", side_effect=lambda cli, identity: next(answers)), \
+                self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("disagree", str(stop.exception))
+        self.assertEqual(self.submitted(), [])
+        self.assertIs(paladin_backend.find_runs, real)
+
+    def test_two_runs_of_one_stage_end_the_newer_early_and_mark_the_archive_unusable(self):
+        self.killed_after_the_submit()
+        state = json.loads(self.state.read_text())
+        first = state["NextID"] - 1
+        twin = dict(state["Runs"][str(first)], run_dir=str(self.root / "runs" / "twin"))
+        state["Runs"][str(first + 1)], state["NextID"] = twin, first + 2
+        self.state.write_text(json.dumps(state))
+        with self.assertRaises(paladin_backend.DuplicateRuns):
+            self.drive()
+        record = self.records()["w"]
+        duplicate = record["DuplicateRuns"][-1]
+        self.assertEqual((duplicate["Kept"], duplicate["Newer"][0]["RunID"], duplicate["Newer"][0]["EarlyEnded"]),
+                         (first, first + 1, True))
+        cancels = [call for call in self.calls() if call[:2] == ["palace", "cancel"]]
+        self.assertEqual(cancels, [["palace", "cancel", str(first + 1), "--json"]])
+        runs = json.loads(self.state.read_text())["Runs"]
+        self.assertEqual((runs[str(first)]["status"], runs[str(first + 1)]["status"]), ("queued", "canceled"))
+        marker = Path(self.archive) / paladin_backend.UNUSABLE_MARKER
+        self.assertTrue(marker.is_file())
+        self.assertEqual(self.submitted(), ["chainport-w"])
+        job = self.job()
+        with self.assertRaises(paladin_backend.PaladinError):
+            job.refuse_unusable_archive("r", self.archive)  # a reducer refuses it
+        with self.assertRaises(paladin_backend.PaladinError):
+            job.archive_guard(self.archive)  # a writer refuses it (not empty)
 
     def test_a_multi_node_plan_is_refused(self):
         plan_path, _ = three_stage_plan(self.root / "multi", nodes=2)

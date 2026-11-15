@@ -23,6 +23,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
+import paladin_backend  # noqa: E402
 import qualify_library  # noqa: E402
 import test_paladin_backend  # noqa: E402  (the fake block and plan)
 
@@ -104,6 +105,8 @@ class PaladinJobWrappers(unittest.TestCase):
                                                         "FAKE_PALADIN_LOG": str(self.root / "argv.jsonl"),
                                                         "FAKE_TOOL_LOG": str(self.root / "tools.jsonl")})
         self.environment.start()
+        self.pause = mock.patch.object(paladin_backend, "pause")  # the waits between lookups (INTENT_RULE)
+        self.pause.start()
         estimate = self.root / "stage-estimate.json"
         estimate.write_text(json.dumps({"Stages": {"k4": {"ArchiveGBEstimate": 0.001}}}))
         main = self.plan_path.parent
@@ -120,6 +123,7 @@ class PaladinJobWrappers(unittest.TestCase):
         os.symlink(main, self.local)
 
     def tearDown(self):
+        self.pause.stop()
         self.environment.stop()
         self.tmp.cleanup()
 

@@ -14,6 +14,8 @@ the stages of one plan in order, one step per advance():
     running or completed run is ADOPTED, never submitted again; a cancelled, out-of-memory or
     unexplained failed run STOPS the drive (nothing is resubmitted); a submission_failed row
     without a job id is no run (one re-submit; a second = STOP); two runs of one stage = STOP;
+    a SubmitIntent with a nonce is on disk before each submit call, and a lookup that is not
+    shown complete is a failed lookup, never 'no rows' (INTENT_RULE, LOOKUP_RULE);
   - before each submit: the run configuration schema-checked against the selector, the pin
     checked (pin_check_v2 check: its PASS line in the stage record), the E-2 sizing
     (ERRATUM-1702: the plan estimate x 1.30 <= 0.70 x MemTotal, < 10 % margin -> the next
@@ -48,6 +50,7 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 
 # The stage variables of build_plan.py and their keys.  Every other variable is refused.
 MODE_VARIABLES = {
@@ -235,8 +238,8 @@ def parse_time(text):
     return value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)
 
 
-def paladin_call(cli, arguments, *, timeout=600):
-    """Run `cli arguments` (a --json command); the envelope's data, or PaladinError."""
+def paladin_envelope(cli, arguments, *, timeout=600):
+    """Run `cli arguments` (a --json command); the whole envelope (data and warnings), or PaladinError."""
     try:
         completed = subprocess.run([cli] + list(arguments), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -245,9 +248,15 @@ def paladin_call(cli, arguments, *, timeout=600):
         envelope = json.loads(completed.stdout)
     except ValueError:
         raise PaladinError(f"{' '.join(arguments[:2])}: no JSON envelope (rc {completed.returncode})") from None
-    if completed.returncode != 0 or not envelope.get("ok"):
-        raise PaladinError(f"{' '.join(arguments[:2])}: {envelope.get('error')!r} (rc {completed.returncode})")
-    return envelope["data"]
+    if completed.returncode != 0 or not isinstance(envelope, dict) or not envelope.get("ok"):
+        error = envelope.get("error") if isinstance(envelope, dict) else None
+        raise PaladinError(f"{' '.join(arguments[:2])}: {error!r} (rc {completed.returncode})")
+    return envelope
+
+
+def paladin_call(cli, arguments, *, timeout=600):
+    """Run `cli arguments` (a --json command); the envelope's data, or PaladinError."""
+    return paladin_envelope(cli, arguments, timeout=timeout)["data"]
 
 
 def remote_shell(host, command, *, timeout=300, stdin=None):
@@ -267,10 +276,19 @@ def remote_text(host, command, *, timeout=300, stdin=None, what="a read on /data
 
 
 def write_json_atomic(path, value):
+    """The file replaced in one step and flushed to disk (the file and its directory) before return:
+    a SubmitIntent saved by it survives the end of the driver process at any later point."""
     temporary = path + ".tmp"
     with open(temporary, "w") as f:
         json.dump(value, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(temporary, path)
+    directory = os.open(os.path.dirname(os.path.abspath(path)), os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def tool_line(block, arguments, pattern, what, *, timeout=600):
@@ -307,10 +325,22 @@ def metadata_arguments(identity):
     return [part for key, value in identity.items() for part in ("-m", f"{key}={value}")]
 
 
+LOOKUP_RULE = ("decision 1820 (1): a lookup is FAILED (a STOP, never 'no rows') when paladin answers rc != 0, ok false, no JSON, "
+               "data without a 'jobs' list, or ANY warning (the client's rows_omitted drops rows it cannot rebuild: a listing "
+               "with a warning is not shown complete)")
+
+
 def find_runs(cli, identity):
-    """Every paladin row whose metadata holds the stage identity (server filter, re-checked here)."""
-    data = paladin_call(cli, ["palace", "my-jobs", *metadata_arguments(identity), "--json"])
-    return [row for row in data.get("jobs") or []
+    """Every paladin row whose metadata holds the stage identity (server filter, re-checked here);
+    PaladinError for a failed lookup (LOOKUP_RULE)."""
+    envelope = paladin_envelope(cli, ["palace", "my-jobs", *metadata_arguments(identity), "--json"])
+    data, warnings = envelope.get("data"), envelope.get("warnings")
+    if warnings:
+        raise PaladinError(f"palace my-jobs: a listing with warnings {[(w or {}).get('code') for w in warnings]}: a FAILED "
+                           f"lookup ({LOOKUP_RULE})")
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+        raise PaladinError(f"palace my-jobs: no 'jobs' list in the answer: a FAILED lookup ({LOOKUP_RULE})")
+    return [row for row in data["jobs"]
             if all((row.get("metadata") or {}).get(key) == value for key, value in identity.items())]
 
 
@@ -319,6 +349,27 @@ RESUME_RULE = ("decision 1799 (g): a stage's runs are found by its identity meta
                "run is adopted and never submitted again; a canceled (the cap included), out_of_memory, unknown or unexplained "
                "failed run STOPS the drive (no resubmit); a submission_failed row without a job id is NO RUN (CTR-HOWTO s12: one "
                "re-submit, a second = STOP); two runs of one stage = STOP")
+INTENT_RULE = ("decision 1820 (1): a SubmitIntent (stage, plan sha, UTC, a nonce that also goes into the run metadata) is saved "
+               "and flushed to disk BEFORE each submit call and closed (Outcome) after it; an OPEN intent (the driver ended in "
+               "between) or a recorded RunID that the lookup does not show = the lookup repeated 3 times over >= 60 s, a run "
+               "found = adopted, none = STOP (never a submit); any submit needs two consistent empty lookups >= 20 s apart; two "
+               "runs of one stage = the newer live run(s) early-ended by 'palace cancel' (recorded) before the STOP, and an "
+               "archive writer's Directory marked unusable (ARCHIVE-UNUSABLE.json: no reducer and no writer uses it)")
+LOOKUP_REPEATS, LOOKUP_REPEAT_SECONDS, SUBMIT_LOOKUP_GAP_SECONDS = 3, 30.0, 20.0
+UNUSABLE_MARKER = "ARCHIVE-UNUSABLE.json"
+
+
+def pause(seconds):
+    """The wait between repeated lookups (a module function: the tests replace it)."""
+    time.sleep(seconds)
+
+
+class DuplicateRuns(PaladinError):
+    """Two or more runs of one stage (RESUME_RULE); .runs = the rows."""
+
+    def __init__(self, message, runs):
+        super().__init__(message)
+        self.runs = runs
 
 
 def no_run(row):
@@ -329,8 +380,8 @@ def lookup_decision(rows):
     """('adopt', row) | ('submit', number of earlier no-run rows); PaladinError otherwise (RESUME_RULE)."""
     runs = [row for row in rows if not no_run(row)]
     if len(runs) > 1:
-        raise PaladinError(f"{len(runs)} runs of one stage: {[(row['run_id'], row.get('status')) for row in runs]}: "
-                           f"none is adopted ({RESUME_RULE})")
+        raise DuplicateRuns(f"{len(runs)} runs of one stage: {[(row['run_id'], row.get('status')) for row in runs]}: "
+                            f"none is adopted ({RESUME_RULE})", runs)
     if runs:
         return "adopt", runs[0]
     if len(rows) >= 2:
@@ -442,7 +493,7 @@ class PaladinJob:
     """The paladin runs of ONE run_stages plan, in order (module docstring)."""
 
     def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
-                 log=print, now=utc_now):
+                 log=print, now=utc_now, sleep=None):
         with open(plan_path, "rb") as f:
             data = f.read()
         self.plan = json.loads(data)
@@ -451,6 +502,7 @@ class PaladinJob:
         self.mapping = list(mapping)
         self.archive_estimates_gb = dict(archive_estimates_gb or {})
         self.log, self.now = log, now
+        self.sleep = sleep or (lambda seconds: pause(seconds))
         self.host = None if block["Host"] == "local" else block["Host"]
         self.confirmed = set()
         self.case = self.plan["Case"]
@@ -495,12 +547,13 @@ class PaladinJob:
             json.dump(config, f, indent=2)
         return path, config
 
-    def submit_arguments(self, stage, path):
+    def submit_arguments(self, stage, path, nonce="<the SubmitIntent's nonce>"):
         name = stage["Name"]
         return ["palace", "submit-detailed", path, "--instance-type", self.sizing["Type"], "--nodes", "1",
                 "--ranks-per-node", str(self.ranks), "--palace", self.block["Selector"],
                 "--label", f"{self.block['Lane']}-{name}",
                 *metadata_arguments(stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)),
+                "-m", f"nonce={nonce}",
                 "--comment", f"{self.case} {name}: coupon-library qualify, paladin backend (form Y-b)", "--json"]
 
     def dry_run(self):
@@ -586,7 +639,10 @@ class PaladinJob:
                         "ZeroHoleScan": {"ReturnCode": scan.returncode, "Report": report,
                                          "ToolSHA256": hashlib.sha256(tool.encode()).hexdigest()},
                         "Rule": ARCHIVE_RULE}
-        verification["OK"] = not (missing or extra or empty or uneven) and scan.returncode == 0
+        marker = remote_text(self.host, f"test -e {q}/{UNUSABLE_MARKER} && echo MARKED || true",
+                             what=f"the unusable marker of {directory}").strip() == "MARKED"
+        verification["Unusable"] = marker
+        verification["OK"] = not (missing or extra or empty or uneven or marker) and scan.returncode == 0
         return verification
 
     def qdash_record(self, run_dir, data):
@@ -619,51 +675,142 @@ class PaladinJob:
         mode = config.get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
         if mode.get("Mode") == "Archive":
             record["ArchiveGuard"] = self.archive_guard(mode["Directory"])
+        elif mode.get("Directory"):
+            self.refuse_unusable_archive(name, mode["Directory"])
         record["PinCheckBefore"] = self.tool_line([self.block["PinCheck"], "check", "--record", self.block["PinRecord"]],
                                                   r"PASS ", f"pin_check_v2 check before {name}")
         record["Instance"] = self.sizing
         record["Nodes"], record["RanksPerNode"] = 1, self.ranks
         record["Identity"] = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
+        intent = {"Nonce": uuid.uuid4().hex, "Stage": name, "PlanSHA256": self.plan_sha256, "UTC": self.now().isoformat(),
+                  "Rule": INTENT_RULE}
+        record.setdefault("SubmitIntents", []).append(intent)
+        self.save()  # on disk before the call (INTENT_RULE)
         try:
-            data = paladin_call(self.block["CLI"], self.submit_arguments(stage, path))
+            data = paladin_call(self.block["CLI"], self.submit_arguments(stage, path, intent["Nonce"]))
         except PaladinError as error:
             record.setdefault("SubmitErrors", []).append({"UTC": self.now().isoformat(), "Error": str(error)[:300]})
+            intent["Outcome"] = "error"
             self.save()
             return None
         run_id = int(data["jobs"][0]["run_id"])
         record["RunID"], record["Submitted"] = run_id, self.now().isoformat()
+        intent["Outcome"] = f"run {run_id}"
         self.save()
         self.log(f"{self.case}: submitted {name} as paladin run {run_id} ({self.sizing['Type']} x {self.ranks})")
         return run_id
 
+    def open_intent(self, record):
+        """The last SubmitIntent when it has no Outcome (the driver ended inside its submit), else None."""
+        intents = record.get("SubmitIntents") or []
+        return intents[-1] if intents and "Outcome" not in intents[-1] else None
+
+    def lookup(self, stage, record, identity):
+        """lookup_decision of one lookup; two runs of one stage = the newer ones early-ended first (INTENT_RULE)."""
+        try:
+            return lookup_decision(find_runs(self.block["CLI"], identity))
+        except DuplicateRuns as error:
+            self.resolve_duplicates(stage, record, error.runs)
+            raise
+
+    def resolve_duplicates(self, stage, record, runs):
+        """Keep the oldest run (smallest run id); 'palace cancel' each newer live one; mark an archive
+        writer's Directory unusable; all recorded (INTENT_RULE).  The STOP follows (the caller)."""
+        ordered = sorted(runs, key=lambda row: int(row["run_id"]))
+        ended = []
+        for row in ordered[1:]:
+            entry = {"RunID": int(row["run_id"]), "Status": row.get("status")}
+            if run_class(row.get("status")) == "live":
+                try:
+                    paladin_call(self.block["CLI"], ["palace", "cancel", str(row["run_id"]), "--json"])
+                    entry["EarlyEnded"] = True
+                except PaladinError as error:
+                    entry["EarlyEnded"], entry["Error"] = False, str(error)[:300]
+            ended.append(entry)
+        duplicate = {"UTC": self.now().isoformat(), "Kept": int(ordered[0]["run_id"]), "Newer": ended, "Rule": INTENT_RULE}
+        archive = self.stage_run_config(stage).get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
+        if archive.get("Mode") == "Archive":
+            directory = archive["Directory"]
+            marker = os.path.join(directory, UNUSABLE_MARKER)
+            remote_text(self.host, f"mkdir -p {shlex.quote(directory)} && cat > {shlex.quote(marker)}",
+                        stdin=json.dumps({"Stage": stage["Name"], "Case": self.case, "Runs": [int(r["run_id"]) for r in ordered],
+                                          "UTC": duplicate["UTC"], "Rule": INTENT_RULE}) + "\n",
+                        what=f"the unusable marker of {directory}")
+            duplicate["UnusableMarker"] = marker
+        record.setdefault("DuplicateRuns", []).append(duplicate)
+        self.save()
+        self.log(f"{self.case}: {stage['Name']}: {len(ordered)} runs of one stage; newer early-ended {ended}; kept "
+                 f"{duplicate['Kept']}")
+
+    def refuse_unusable_archive(self, name, directory):
+        """A stage that reads an archive refuses one marked unusable (INTENT_RULE)."""
+        q = shlex.quote(os.path.join(directory, UNUSABLE_MARKER))
+        if remote_text(self.host, f"test -e {q} && echo MARKED || true",
+                       what=f"the unusable marker of {directory}").strip() == "MARKED":
+            raise PaladinError(f"{name}: the archive {directory} is marked unusable ({UNUSABLE_MARKER}): STOP ({INTENT_RULE})")
+
+    def repeated_lookup(self, stage, record, identity, why):
+        """LOOKUP_REPEATS lookups LOOKUP_REPEAT_SECONDS apart; the first decision that adopts, else STOP."""
+        for attempt in range(LOOKUP_REPEATS):
+            if attempt:
+                self.sleep(LOOKUP_REPEAT_SECONDS)
+            decision, value = self.lookup(stage, record, identity)
+            if decision == "adopt":
+                return decision, value
+        raise PaladinError(f"{stage['Name']}: {why}, and {LOOKUP_REPEATS} lookups over "
+                           f"{(LOOKUP_REPEATS - 1) * LOOKUP_REPEAT_SECONDS:.0f} s show no run of the stage {identity}: STOP, no "
+                           f"second submit ({INTENT_RULE})")
+
+    def adopt(self, record, row, identity):
+        name = record["Name"]
+        if record.get("RunID") not in (None, int(row["run_id"])):
+            raise PaladinError(f"{name}: the recorded run {record['RunID']} is not the stage's run {row['run_id']}")
+        intent = self.open_intent(record)
+        if intent is not None:
+            nonce = (row.get("metadata") or {}).get("nonce")
+            intent["Outcome"] = f"adopted run {row['run_id']}"
+            intent["NonceMatches"] = nonce == intent["Nonce"]
+        if record.get("RunID") is None:
+            record["RunID"] = int(row["run_id"])
+            record["Adopted"] = {"UTC": self.now().isoformat(), "Status": row.get("status"),
+                                 "InstanceType": row.get("instance_type"), "Nodes": row.get("nodes"),
+                                 "Nonce": (row.get("metadata") or {}).get("nonce"), "Rule": RESUME_RULE}
+            self.log(f"{self.case}: adopted {name} paladin run {row['run_id']} ({row.get('status')})")
+        record.setdefault("Identity", identity)
+        self.save()
+        return record["RunID"]
+
     def find_or_submit(self, stage, record):
-        """RESUME_RULE: the stage's run (adopted or submitted now), or PaladinError.  A submit is
-        always followed by a lookup that must find exactly that run (a run recorded but not found
-        = STOP, never a second submit)."""
+        """RESUME_RULE + INTENT_RULE: the stage's run (adopted or submitted now), or PaladinError.  A
+        submit is always followed by a lookup that must find exactly that run (a run recorded but
+        not found = STOP after the repeated lookup, never a second submit)."""
         name = stage["Name"]
         identity = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
         for _ in range(3):
-            decision, value = lookup_decision(find_runs(self.block["CLI"], identity))
+            decision, value = self.lookup(stage, record, identity)
+            if decision == "submit":
+                if record.get("RunID") is not None:
+                    decision, value = self.repeated_lookup(stage, record, identity,
+                                                           f"the recorded run {record['RunID']} is not found")
+                elif self.open_intent(record) is not None:
+                    decision, value = self.repeated_lookup(stage, record, identity,
+                                                           "a submit intent without an outcome (the driver ended inside "
+                                                           "its submit)")
+                else:
+                    self.sleep(SUBMIT_LOOKUP_GAP_SECONDS)
+                    second = self.lookup(stage, record, identity)
+                    if second[0] == "adopt":
+                        decision, value = second
+                    elif second != (decision, value):
+                        raise PaladinError(f"{name}: two lookups {SUBMIT_LOOKUP_GAP_SECONDS:.0f} s apart disagree "
+                                           f"({value} / {second[1]} no-run rows): STOP, no submit ({INTENT_RULE})")
             if decision == "adopt":
-                if record.get("RunID") not in (None, int(value["run_id"])):
-                    raise PaladinError(f"{name}: the recorded run {record['RunID']} is not the stage's run {value['run_id']}")
-                if record.get("RunID") is None:
-                    record["RunID"] = int(value["run_id"])
-                    record["Adopted"] = {"UTC": self.now().isoformat(), "Status": value.get("status"),
-                                         "InstanceType": value.get("instance_type"), "Nodes": value.get("nodes"),
-                                         "Rule": RESUME_RULE}
-                    self.log(f"{self.case}: adopted {name} paladin run {value['run_id']} ({value.get('status')})")
-                record.setdefault("Identity", identity)
-                self.save()
-                return record["RunID"]
-            if record.get("RunID") is not None:
-                raise PaladinError(f"{name}: the recorded run {record['RunID']} is not found by its identity {identity}: "
-                                   f"STOP, no second submit ({RESUME_RULE})")
+                return self.adopt(record, value, identity)
             if value:
                 record["NoRunRowsBeforeSubmit"] = value
             if self.submit(stage, record) is not None:
                 continue  # the lookup must now find exactly this run
-            decision, value = lookup_decision(find_runs(self.block["CLI"], identity))
+            decision, value = self.lookup(stage, record, identity)
             if decision == "submit" and value == 0:
                 raise PaladinError(f"{name}: the submit was refused and left no row: STOP "
                                    f"({record['SubmitErrors'][-1]['Error']})")

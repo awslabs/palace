@@ -12,6 +12,10 @@ The state's "Plan" maps a run label to its scripted end:
   transport (every submit: an envelope ok false + a submission_failed row without a job id) |
   transport-once (the first submit only) | short-archive (an archive writer leaves one file out) |
   drift (paladin ran a configuration with one more changed leaf).
+The state's "Lookups" is a list of answers for the next `palace my-jobs` calls, one consumed per
+call (decision 1820 (1); the review r1799's R1 / R2 / R3): empty (rc 0, no rows) | omitted (rc 0,
+the first row dropped, the warning rows_omitted: the installed client's form) | nokey (rc 0, data
+without 'jobs') | fail (rc 1, ok false).  An empty list or none = the true listing.
 A run is 'queued' at the submit, 'running' at its first describe-run (started = now) and ends
 at the next one (completed = started + 600 s), when its run_dir is written: log.out, console.log,
 palace_config.json (paladin's rewrite of Mesh / Output / Device / SaveAdaptMesh) and postpro/
@@ -34,8 +38,9 @@ Total                     10.0   10.0   10.0
 """
 
 
-def envelope(command, data, ok=True, error=None):
-    return {"ok": ok, "command": command, "schema_version": "1", "data": data, "error": error, "warnings": []}
+def envelope(command, data, ok=True, error=None, warnings=()):
+    return {"ok": ok, "command": command, "schema_version": "1", "data": data, "error": error,
+            "warnings": list(warnings)}
 
 
 def option(argv, name):
@@ -160,6 +165,24 @@ def main(argv):
                           "started": run["started"], "completed": run["completed"]}
                          for run_id, run in sorted(runs.items(), reverse=True)
                          if all(run["metadata"].get(key) == value for key, value in wanted.items())]}
+        answer = state.get("Lookups", []).pop(0) if state.get("Lookups") else None
+        warnings = []
+        if answer == "empty":
+            data = {"jobs": []}
+        elif answer == "omitted":
+            data = {"jobs": data["jobs"][1:]}
+            warnings = [{"code": "rows_omitted", "message": "Skipping PalaceRun in listing (the fake)"}]
+        elif answer == "nokey":
+            data = {"count": 0}
+        elif answer == "fail":
+            with open(state_path, "w") as f:
+                json.dump(state, f)
+            print(json.dumps(envelope(command, None, ok=False, error="the fake's failed listing")))
+            return 1
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+        print(json.dumps(envelope(command, data, warnings=warnings)))
+        return 0
     else:
         print(json.dumps(envelope(command, None, ok=False, error="unknown to the fake")))
         return 2
