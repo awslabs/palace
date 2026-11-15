@@ -107,10 +107,11 @@ config::PMLData MakePML(json extra = json::object())
 void ExtrudeEntry(std::unique_ptr<mfem::Mesh> &mesh, config::PMLData &pml,
                   const config::BoundaryData &boundaries = {})
 {
-  std::vector<config::PMLData> blocks = {pml};
-  mesh::ExtrudePML(mesh, blocks, boundaries);
-  REQUIRE(blocks.size() == 1);
-  pml = std::move(blocks[0]);
+  config::DomainData domains;
+  domains.pml = {pml};
+  mesh::ExtrudePML(mesh, domains, boundaries);
+  REQUIRE(domains.pml.size() == 1);
+  pml = std::move(domains.pml[0]);
 }
 
 // Position of the nodal degree of freedom j of element e (or boundary element) of a mesh
@@ -248,6 +249,27 @@ TEST_CASE("ExtrudePML on a box", "[pml][geodata][Serial]")
                  Matchers::WithinAbs(1.5, 1.0e-12));
     }
   }
+}
+
+TEST_CASE("ExtrudePML numbers the new attributes above the configuration",
+          "[pml][geodata][Serial]")
+{
+  // The box has the domain attribute 1 and the boundary attribute 1. A material for the
+  // domain attribute 2 and a boundary condition for 5 and a postprocessing surface for 6
+  // (or the other way round), none of which is in the mesh, must not apply to the layer or
+  // its back.
+  const bool swap = GENERATE(false, true);
+  auto mesh = std::make_unique<mfem::Mesh>(MakeBox(mfem::Element::HEXAHEDRON, 2, 1));
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.pml = {MakePML()};
+  config::BoundaryData boundaries;
+  boundaries.attributes = {swap ? 6 : 5};
+  boundaries.postpro.attributes = {swap ? 5 : 6};
+  mesh::ExtrudePML(mesh, domains, boundaries);
+  REQUIRE(domains.pml.size() == 1);
+  CHECK(domains.pml[0].attributes == std::vector<int>{3});
+  CHECK(domains.pml[0].extrusion.back_attribute == 7);
 }
 
 TEST_CASE("ExtrudePML with a segment core", "[pml][geodata][Serial]")
@@ -1120,13 +1142,13 @@ namespace
 std::vector<config::PMLData> ExtrudeEntries(std::unique_ptr<mfem::Mesh> &mesh,
                                             const std::vector<json> &entries)
 {
-  std::vector<config::PMLData> blocks;
+  config::DomainData domains;
   for (std::size_t i = 0; i < entries.size(); i++)
   {
-    blocks.emplace_back(entries[i], true).extrusion.entry = static_cast<int>(i);
+    domains.pml.emplace_back(entries[i], true).extrusion.entry = static_cast<int>(i);
   }
-  mesh::ExtrudePML(mesh, blocks, {});
-  return blocks;
+  mesh::ExtrudePML(mesh, domains, {});
+  return domains.pml;
 }
 
 // Number of boundary elements with the given attribute, and whether every exterior face of
@@ -1452,8 +1474,9 @@ TEST_CASE("ExtrudePML along the normal of a periodic boundary", "[pml][geodata][
     boundaries.periodic.boundary_pairs[0].receiver_attributes = {3};
     auto pml =
         MakePML({{"Attributes", {6}}, {"Center", {{0.5, 0.0, -1.0}, {0.5, 1.0, -1.0}}}});
-    std::vector<config::PMLData> blocks = {pml};
-    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, blocks, boundaries),
+    config::DomainData domains;
+    domains.pml = {pml};
+    CHECK_THROWS_WITH(mesh::ExtrudePML(mesh, domains, boundaries),
                       Matchers::ContainsSubstring("would flare the two sides"));
   }
 }
@@ -1840,7 +1863,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   domains.pml[0].kappa_max.fill(1.5);
   domains.pml[0].frequency_dependent = frequency_dependent;
   domains.pml[0].alpha_max.fill(frequency_dependent ? 0.3 : 0.0);
-  mesh::ExtrudePML(serial_mesh, domains.pml, {});
+  mesh::ExtrudePML(serial_mesh, domains, {});
   std::vector<std::unique_ptr<Mesh>> mesh;
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   for (int l = 0; l < refine; l++)

@@ -287,7 +287,8 @@ public:
 
     // Boundary attribute of the outer (back) surface of the layer, PEC unless it has
     // another boundary condition. By default (0), the extrusion assigns one larger than the
-    // largest boundary attribute of the mesh and the configured back attributes.
+    // largest boundary attribute of the mesh, of the configuration, and of the configured
+    // back attributes.
     int back_attribute = 0;
 
     // Domain attribute of the elements below the extruded elements of each attribute of

@@ -301,7 +301,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   if (std::ranges::any_of(iodata.domains.pml,
                           [](const auto &pml) { return pml.IsExtruded(); }))
   {
-    ExtrudePML(smesh, iodata.domains.pml, iodata.boundaries);
+    ExtrudePML(smesh, iodata.domains, iodata.boundaries);
     ApplyPMLExtrusion(iodata);
   }
 
@@ -3305,7 +3305,7 @@ bool SamePlane(const std::array<double, 4> &a, const std::array<double, 4> &b, d
 namespace mesh
 {
 
-void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLData> &pml,
+void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &domains,
                 const config::BoundaryData &boundaries)
 {
   // Each extruded block of pml is an entry of config["Boundaries"]["PML"], whose surface is
@@ -3321,6 +3321,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
   // hexahedron is the depth into its layer).
   using Extrusion = config::PMLData::Extrusion;
   const mfem::Mesh &mesh = *orig_mesh;
+  auto &pml = domains.pml;
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "config[\"Boundaries\"][\"PML\"] requires a 3D mesh!");
   MFEM_VERIFY(mesh.Conforming(),
@@ -4059,8 +4060,21 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
 
   // Attributes of the extruded elements, one per part and attribute of the elements below,
   // and of the back of each layer: by default, one larger than the largest boundary
-  // attribute of the mesh and of the configured back attributes.
+  // attribute of the mesh, of the configuration, and of the configured back attributes.
+  // Both are above the attributes of the configuration, which need not be in the mesh, so
+  // that no entry for another attribute applies to the layer.
   int attr_max = mesh.attributes.Max(), back_max = mesh.bdr_attributes.Max();
+  for (const int attr : domains.attributes)
+  {
+    attr_max = std::max(attr_max, attr);
+  }
+  for (const auto *attributes : {&boundaries.attributes, &boundaries.postpro.attributes})
+  {
+    for (const int attr : *attributes)
+    {
+      back_max = std::max(back_max, attr);
+    }
+  }
   for (const int i : entries)
   {
     const int back = pml[i].extrusion.back_attribute;

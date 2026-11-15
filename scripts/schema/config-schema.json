@@ -1263,7 +1263,7 @@
         },
         "BackAttribute": {
           "type": "integer",
-          "description": "Boundary attribute of the outer surface of the layer, which is PEC unless another boundary condition is given for it. Defaults to one more than the largest boundary attribute of the mesh and of the other back attributes.",
+          "description": "Boundary attribute of the outer surface of the layer, which is PEC unless another boundary condition is given for it. Defaults to one more than the largest boundary attribute of the mesh, of the configuration, and of the other back attributes.",
           "exclusiveMinimum": 0,
           "x-palace-advanced": true
         },
