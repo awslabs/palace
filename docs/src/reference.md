@@ -2710,7 +2710,8 @@ cells: the rows of `surface-response-coverage.csv`), `"Complete": true`, `Level`
 applied`, and a banner line; with no cell and no reason `"Complete"` is false): `Level` is
 the solve of the adaptive sequence that wrote it (1 = the initial mesh) and `Levels` the
 largest number of solves (`Refinement.MaxIts` + 1; 1 without AMR). `"Final": true` is added
-only once the AMR loop has ended (a run without AMR: after its only solve). Under AMR the
+only once the AMR loop has ended (a run without AMR: after its only solve), by the run's
+end-of-run write of the timing record (no load of `palace.json` of its own). Under AMR the
 root output holds the last COMPLETED level until the next level writes, so a run killed
 during a later level keeps an earlier level's block, which reads `"Complete": true` but
 has no `Final`; a run killed during its first solve has no block at all. Only a block with

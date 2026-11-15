@@ -468,18 +468,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                   ? ", max. size = " + std::to_string(refinement.max_size)
                   : ""));
   // Erratum 1784 E-3: the AMR loop has ended (or no AMR ran): the root's coverage block is
-  // the final level's.
-  SaveCoverageFinalMetadata();
-}
-
-void BaseSolver::SaveCoverageFinalMetadata() const
-{
-  if (root && coverage_block_written)
-  {
-    nlohmann::json meta = LoadMetadata(post_dir);
-    meta["SurfaceResponse"]["Coverage"]["Final"] = true;
-    WriteMetadata(post_dir, meta);
-  }
+  // the final level's. Its Final flag is written by the end-of-run timer write
+  // (SaveMetadata(const Timer &), driver.cpp), not by a load of its own (review mn-3).
+  coverage_final = coverage_block_written;
 }
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
@@ -555,6 +546,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = red.node_mem.min[i] * to_mb;
       meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
       meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
+    }
+    // Erratum 1784 E-3 / review mn-3: after the AMR loop the root's coverage block gets
+    // "Final": true in this load (the first end-of-run write; the in-loop timer writes
+    // come before the flag is set).
+    if (coverage_final)
+    {
+      meta["SurfaceResponse"]["Coverage"]["Final"] = true;
     }
     WriteMetadata(post_dir, meta);
   }
