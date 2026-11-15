@@ -69,7 +69,12 @@ namespace
 // to the edge (fail-before: excluded). The CHORD-OFFSET-SNAPPED variant is the same coupon
 // whose placed patch carries the probe snaps of those two knots (displacement -0.02 along
 // AxisV = -x, as BuildFeaturePatches records them for an arc chord): the probes are read
-// on the device edge, the reading is the Dirichlet value, the snaps are recorded.
+// on the device edge, the reading is the Dirichlet value, the snaps are recorded. The
+// SWAPPED-CONDUCTOR variant (lane L1, the corrected-matrix coverage case) declares the
+// island-2 metal corner (u, v) = (-0.2, 0.25) a conductor-1 vertex: the gate reads island
+// 2's potential against island 1's reference, so the coupon is consistent (deviation 0) in
+// an excitation holding both islands at the same potential and excluded in one that does
+// not.
 enum class CouponVariant
 {
   CONSISTENT,
@@ -77,7 +82,8 @@ enum class CouponVariant
   CONDUCTOR_OFF_PLANE,
   NO_CONDUCTOR,
   CHORD_OFFSET,
-  CHORD_OFFSET_SNAPPED
+  CHORD_OFFSET_SNAPPED,
+  SWAPPED_CONDUCTOR
 };
 
 struct CouponFiles
@@ -159,6 +165,7 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
                           : variant == CouponVariant::CONDUCTOR_OFF_PLANE ? "off-plane"
                           : variant == CouponVariant::NO_CONDUCTOR        ? "no-conductor"
                           : variant == CouponVariant::CHORD_OFFSET        ? "chord-offset"
+                          : variant == CouponVariant::SWAPPED_CONDUCTOR   ? "swapped"
                                                                           : "chord-snapped";
   const bool chord_offset = variant == CouponVariant::CHORD_OFFSET ||
                             variant == CouponVariant::CHORD_OFFSET_SNAPPED;
@@ -228,8 +235,11 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     }
     else if (v >= kMetalEdgeV - 1.0e-12)
     {
-      plane[i] = AddConductor(
-          {u, v, variant == CouponVariant::CONDUCTOR_OFF_PLANE ? 0.1 : 0.0}, 2);
+      const bool swapped = variant == CouponVariant::SWAPPED_CONDUCTOR && u < 0.0 &&
+                           v > kMetalEdgeV + 1.0e-12;
+      plane[i] =
+          AddConductor({u, v, variant == CouponVariant::CONDUCTOR_OFF_PLANE ? 0.1 : 0.0},
+                       swapped ? 1 : 2);
     }
     else if (variant == CouponVariant::INCONSISTENT && u < 0.0)
     {
@@ -1369,6 +1379,128 @@ TEST_CASE_METHOD(
                  WithinRel(cc_ft / energies[0], 1.0e-9));
       CHECK_THAT(std::stod(cc.rows.at({source, 2, "Total"})[cc.share]),
                  WithinRel(cc_sc / energies[2], 1.0e-9));
+    }
+  }
+#endif
+}
+
+// Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed with the FINAL patch
+// weights, so the matrix coverage re-measures a source whose own measurement came BEFORE a
+// later conductor-consistency exclusion. The islands fixture with the box walls as terminal
+// 1 and the islands as terminals 2 and 3, and the SWAPPED-CONDUCTOR coupon (an island-2
+// metal vertex held at island 1's potential): consistent in source 1 (both islands at 0 V:
+// deviation 0), excluded at source 2 (island 1 at 1 V, island 2 at 0 V). (An INCONSISTENT
+// coupon is excluded at source 1 already: its fictitious gap vertex reads the gap
+// potential the walls raise.)
+// Source 1's own coverage row keeps its measurement (the coupon served); its matrix row is
+// re-measured with the final portions (the coupon kept raw: a larger uncovered share);
+// sources 2 and 3 were measured with the final portions already.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic corrected-matrix coverage is re-measured after a later "
+                 "conductor-consistency exclusion",
+                 "[electrostaticsolver][surfaceresponseoperator][conductorconsistency][3d]"
+                 "[coverage][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "coverage-matrix-islands.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto swapped = WriteCoupon(temp.temp_dir, CouponVariant::SWAPPED_CONDUCTOR);
+  json config = HighOrderSpatialConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Boundaries"].erase("Ground");
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {1, 2, 3, 4, 5, 6}}},
+                                      {{"Index", 2}, {"Attributes", {9}}},
+                                      {{"Index", 3}, {"Attributes", {10}}}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path output_dir = temp.temp_dir / "coverage-matrix";
+  {
+    test::GeometryCacheEnvGuard cache_env(swapped.cache.string(), false);
+    config["Problem"]["Output"] = output_dir.string();
+    test::RunElectrostatic(config);
+  }
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  // The premise: nothing kept as ConductorConsistency at source 1, the exclusion at 2.
+  auto ReadTrimmedTextCsv = [](const fs::path &path) { return test::ReadTextCsv(path); };
+  const test::TextCsv cc =
+      ReadTrimmedTextCsv(output_dir / "surface-response-conductor-consistency-energy.csv");
+  std::map<int, double> cc_energy;
+  for (const auto &row : cc.rows)
+  {
+    if (std::stoi(row[cc.Column("evaluation")]) == 0 && row[cc.Column("type")] == "Total")
+    {
+      cc_energy[std::stoi(row[cc.Column("source")])] =
+          std::stod(row[cc.Column("conductorconsistency raw energy[4] (J)")]);
+    }
+  }
+  REQUIRE(cc_energy.size() == 3);
+  REQUIRE(cc_energy.at(1) == 0.0);
+  REQUIRE(cc_energy.at(2) > 0.0);
+  // The per-source rows (their own measurement) and the matrix rows (the final one).
+  const test::TextCsv coverage =
+      ReadTrimmedTextCsv(output_dir / "surface-response-coverage.csv");
+  std::map<int, double> own_share;
+  for (const auto &row : coverage.rows)
+  {
+    const int source = std::stoi(row[coverage.Column("i")]);
+    const double share = std::stod(row[coverage.Column("uncovered raw share of W")]);
+    own_share[source] =
+        own_share.count(source) ? std::max(own_share[source], share) : share;
+  }
+  REQUIRE(own_share.size() == 3);
+  const test::TextCsv matrix =
+      ReadTrimmedTextCsv(output_dir / "terminal-C-corrected-coverage.csv");
+  REQUIRE(matrix.rows.size() == 3);
+  std::map<int, std::string> final_status;
+  for (const auto &row : matrix.rows)
+  {
+    const int source = std::stoi(row[matrix.Column("i")]);
+    INFO("source " << source);
+    const double final_share =
+        std::stod(row[matrix.Column("source final worst uncovered raw share of W")]);
+    final_status[source] = row[matrix.Column("source final worst coverage status")];
+    if (source == 1)
+    {
+      CHECK(std::stoi(row[matrix.Column("source re-measured")]) == 1);
+      CHECK(final_share > own_share.at(1));
+    }
+    else
+    {
+      CHECK(std::stoi(row[matrix.Column("source re-measured")]) == 0);
+      CHECK_THAT(final_share, WithinRel(own_share.at(source), 1.0e-12));
+    }
+  }
+  // Entry (i, j) = the worse of the two sources' final statuses.
+  const std::vector<std::string> order = {
+      "OK", "LOW", "PARTIAL", "NOT-ACHIEVABLE", "NO-ENERGY", "NOT-MEASURED"};
+  auto Rank = [&](const std::string &status)
+  { return std::find(order.begin(), order.end(), status) - order.begin(); };
+  for (const auto &row : matrix.rows)
+  {
+    const int i = std::stoi(row[matrix.Column("i")]);
+    for (int j = 1; j <= 3; j++)
+    {
+      const std::string &entry =
+          row[matrix.Column(fmt::format("coverage status[i][{}]", j))];
+      CHECK(Rank(entry) == std::max(Rank(final_status.at(i)), Rank(final_status.at(j))));
     }
   }
 #endif

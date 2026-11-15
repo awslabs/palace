@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
 #include "utils/configfile.hpp"
@@ -159,9 +160,9 @@ struct SpatialClusterPriorityExclusions
 // own patches".
 struct ModelRawClaimPortions
 {
-  // The claims; `topology` carries the model-set label.
-  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
-      portions;
+  // The claims (label = the model-set label), in the compact exact form (lane L1, ruling
+  // 1682: the list is replicated on every rank and always built).
+  SurfacePostOperator::CompactPerimeterPortions portions;
   // Per label and model of that label: the patches of the model on the label's claims and
   // the sum over those claims of (patch weight x claim length, mesh units), the share the
   // diagnosis attributes a shared label's raw energy with.
@@ -947,6 +948,9 @@ private:
   std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
   double geometry_fallback_coordinate_scale = 1.0;
   bool raw_fallback = false;
+  // Ruling 1738 (lane L1): the configuration's target interfaces
+  // (GetConfiguredTargetsNotServed).
+  std::set<int> configured_target_interfaces;
   // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
   // fallback portions' raw within-R energy of the last evaluation; empty until then.
   std::map<std::string, double> geometry_fallback_energy_shares;
@@ -956,6 +960,13 @@ private:
   // electrostatic driver keeps in the corrected interface energies.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
       uncovered_portions;
+  // Lane L1 (ruling 1649 Q1): the key record of every feature listed in
+  // uncovered_portions (the identification's Hash, matched / rejected, Unboxable).
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData>
+      uncovered_keys;
+  // Lane L1 (ruling 1688): the identification's matched / unmatched feature lengths (mesh
+  // units; negative when no feature pass ran in this process).
+  double identification_matched_length = -1.0, identification_unmatched_length = -1.0;
   // The placement's clip of those portions by the matched clusters' support boxes
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
@@ -974,6 +985,16 @@ private:
   ExcludedPatchPortions unprobed_model_portions;
   bool within_r_volume_energy = false;  // COL-3 (R-MAG-15), from the request
   bool exclusion_energy = false;
+  // Lane L1 (decision 1634 (4); decision 1636 (1)): the coverage outputs' interim bars, the
+  // validated-regime sidecar (empty: every cell NO-RANGE) and, on the root (the coverage
+  // writers' rank), the library models' qualification by Name (item (5)).
+  CoverageThresholds coverage_thresholds;
+  CoverageValidatedRegime coverage_validated_regime;
+  std::map<std::string, CoverageModelQualification> coverage_model_qualifications;
+  CoverageRunRecord coverage_run_record;  // root only: the writers' cells of the run
+  void
+  ConfigureCoverage(const config::ElectrostaticSolverData::ResponseCorrectionData &request,
+                    MPI_Comm comm);
   // Diagnostics.Directory / Diagnostics.ConductorConsistencyRecords (decision 1685), from
   // the request: empty = every table at the top level of the output directory.
   std::string diagnostics_directory;
@@ -1723,12 +1744,67 @@ public:
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
+  // Ruling 1738 (lane L1, OI-CONFIGURED-TARGET-NOT-SERVED): the configured targets (an
+  // automatic configuration's TargetInterfaces, or every typed interface with EdgeDistances
+  // without that list) no loaded model has a fabricated surface on: not corrected at all.
+  std::set<int> GetConfiguredTargetsNotServed() const;
+  // The coverage cells' interfaces: the served targets and the configured ones not served
+  // (every corrected value and every pre-existing table stays on GetTargetInterfaces()).
+  std::set<int> GetCoverageInterfaces() const;
   // The uncovered requirements (decision 394 F2; empty when every feature is matched).
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetUncoveredPortions() const
   {
     return uncovered_portions;
+  }
+  // Lane L1 (decision 1634 (4)): the coverage outputs' inputs (ConfigureCoverage).
+  const CoverageThresholds &GetCoverageThresholds() const { return coverage_thresholds; }
+  // The run's coverage cells as the writers printed them (root only), for the end-of-run
+  // banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata).
+  CoverageRunRecord &GetCoverageRunRecord() { return coverage_run_record; }
+  const CoverageRunRecord &GetCoverageRunRecord() const { return coverage_run_record; }
+  const CoverageValidatedRegime &GetCoverageValidatedRegime() const
+  {
+    return coverage_validated_regime;
+  }
+  // Runtime model index -> qualification (root only: empty elsewhere); a model the library
+  // read does not name counts NO_STATUS.
+  std::map<int, CoverageModelQualification> GetCoverageModelQualifications() const
+  {
+    std::map<int, CoverageModelQualification> qualifications;
+    for (const auto &model : models)
+    {
+      const auto found = coverage_model_qualifications.find(model.name);
+      qualifications[model.idx] = found != coverage_model_qualifications.end()
+                                      ? found->second
+                                      : CoverageModelQualification::NO_STATUS;
+    }
+    return coverage_model_qualifications.empty()
+               ? std::map<int, CoverageModelQualification>{}
+               : qualifications;
+  }
+  // The uncovered features' key records by feature id, classified (ruling 1649 Q2).
+  std::map<int, CoverageKeyRecord> GetCoverageKeyRecords() const
+  {
+    std::map<int, CoverageKeyRecord> records;
+    for (const auto &key : uncovered_keys)
+    {
+      records[key.feature] = ClassifyCoverageKey(key.hash, key.matched,
+                                                 key.placement_rejection, key.unboxable);
+    }
+    return records;
+  }
+  // Lane L1 (ruling 1649 Q1): the key records of the uncovered features.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData> &
+  GetUncoveredKeys() const
+  {
+    return uncovered_keys;
+  }
+  std::pair<double, double> GetIdentificationFeatureLengths() const
+  {
+    return {identification_matched_length, identification_unmatched_length};
   }
   // The parts of the uncovered requirements removed inside the matched clusters' support
   // boxes at placement (decision 399 MAJOR-1; GetUncoveredPortions holds the remainder).
@@ -1839,17 +1915,15 @@ public:
     return conductor_consistency_portions;
   }
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims labelled by model set
-  // (empty without PatchEnergy).
+  // (lane L1: always built, the coverage partition's served claims).
   const ModelRawClaimPortions &GetModelRawClaimPortions() const
   {
     return model_raw_claim_portions;
   }
   // Round 2b B1 (decision 1484): the claims' only reader after the construction is the
-  // driver's (or PostOperator's) conversion into the partition's portion list, made once;
-  // it takes the list out of the operator (the members and the length stay) so that the
-  // claims are held once per rank, not twice.
-  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
-  ReleaseModelRawClaimPortionList()
+  // driver's (or PostOperator's) partition, so the list is MOVED out of the operator (the
+  // members and the length stay): held once per rank, in its compact form (ruling 1682).
+  SurfacePostOperator::CompactPerimeterPortions ReleaseModelRawClaimPortionList()
   {
     return std::exchange(model_raw_claim_portions.portions, {});
   }

@@ -18,10 +18,18 @@ RAW_FILES = (
 )
 
 
+def _cell(value):
+    """A number, or the text of a text column (the coverage Type / status columns)."""
+    try:
+        return float(value)
+    except ValueError:
+        return value.strip()
+
+
 def read_rows(path):
     with path.open(newline="") as stream:
         return [
-            {key.strip(): float(value) for key, value in row.items()}
+            {key.strip(): _cell(value) for key, value in row.items()}
             for row in csv.DictReader(stream, skipinitialspace=True)
         ]
 

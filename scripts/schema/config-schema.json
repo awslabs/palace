@@ -3522,6 +3522,11 @@
                   "description": "Write per placed patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box into `surface-response-patch-energy.csv` (`within-R magnetic energy (J)` = 1/2 int mu^-1 |B|^2, `within-R electric energy (J)` = 1/2 int eps |E|^2, `within-R volume (m^3)` = the box volume the quadrature resolves): a translational patch's box = its model's edge span +- R laterally, +- R normally, its longitudinal cell; a spatial patch's = its support box x [-R, R]. Summed over the element quadrature points inside the box (a point is in or out: the box faces are resolved to ~h, an ESTIMATE for a share census, not a trace form; a patch without a box prints NaN). Requires `PatchEnergy: true`. Off by default: bitwise off (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15: the census of the spatial families' magnetic energy that decides the (A)-3D scope).",
                   "default": false
                 },
+                "UncoveredFeatureEnergy": {
+                  "type": "boolean",
+                  "description": "DIAGNOSTIC (lane ctx002-miss, decision 1567 (b); the Maxwell drivers only, refused by the electrostatic driver): write `surface-response-uncovered-feature-energy.csv`: the raw field's within-R energy of the uncovered requirements (the rows of `surface-response-uncovered-energy.csv`) split per type by the FEATURE (identification feature id; a perimeter piece several features' portions cover carries their union label) whose portion holds the nearest perimeter foot, per target interface, with each label's portion count, length and bounding box; per (type, interface) the rows sum to the uncovered-energy row of the raw field. One quadrature pass per interface and measurement when on.",
+                  "default": false
+                },
                 "Directory": {
                   "type": "string",
                   "pattern": "^(?!iteration)[A-Za-z0-9_][A-Za-z0-9._-]*$",
@@ -3532,6 +3537,35 @@
                   "enum": ["Metadata", "Directory"],
                   "description": "Decision 1685: where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Metadata` (default): `palace.json`. `Directory` (requires `Directory`): `surface-response-conductor-consistency-records.json` in that directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay).",
                   "default": "Metadata"
+                }
+              }
+            },
+            "Coverage": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The coverage outputs of the correction (lane L1; written on every corrected run: `surface-response-coverage.csv`, `surface-response-uncovered-energy-by-key.csv`, the appended coverage columns, the end-of-run coverage banner and the palace.json block). A coverage status is about coverage only; the regime status says whether the covered part's correction factor lies in the range validated for this library and excitation class; neither says that the mesh of the solve resolves the field at the correction radius.",
+              "properties": {
+                "Policy": {
+                  "type": "string",
+                  "enum": ["Warn"],
+                  "description": "What a cell with poor coverage does: \"Warn\" (the banner; every corrected value unchanged) is the only value accepted today.",
+                  "default": "Warn"
+                },
+                "MaxUncoveredShare": {
+                  "type": "number",
+                  "enum": [0.05],
+                  "description": "INTERIM bar (fixed at 0.05 until the status validation rules otherwise): a cell whose uncovered + pending-model share of W is above it is PARTIAL (LOW at or below it, above BuildTarget); a method-gap share above it alone makes the cell NOT-ACHIEVABLE.",
+                  "default": 0.05
+                },
+                "BuildTarget": {
+                  "type": "number",
+                  "enum": [0.02],
+                  "description": "INTERIM bar (fixed at 0.02 until the status validation rules otherwise): a cell whose uncovered + pending-model share of W is at or below it is OK.",
+                  "default": 0.02
+                },
+                "ValidatedRegime": {
+                  "type": "string",
+                  "description": "Optional sidecar file of the validated ranges of the covered correction factor per interface Type and excitation class (ElectrostaticTerminal / Eigenmode / Driven), with the SHA-256 of the library it was validated for (a mismatch is a config error). Absent: every cell reads regime NO-RANGE."
                 }
               }
             },

@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -12376,6 +12377,9 @@ FeaturePatchSummary BuildFeaturePatches(
   // disagreement / the A10 context test) under a ledger: NOT placed, read as Missing by
   // the uncovered-portion pass below (their perimeter stays raw).
   std::set<int> placement_rejected;
+  // Lane L1 (ruling 1649 Q2): the class of each refusal (the ledger record's), printed as
+  // the key's rejection reason by the coverage outputs.
+  std::map<int, std::string> placement_rejection_class;
   // The spatial cluster models' trace meshes, read once per library model (the probe snap).
   std::map<std::size_t, TraceMeshData> trace_meshes;
   std::map<std::size_t, const EdgeSegment3D *> framed;
@@ -13589,6 +13593,7 @@ FeaturePatchSummary BuildFeaturePatches(
         }
       }
       placement_rejected.insert(feature.id);
+      placement_rejection_class.emplace(feature.id, cls);
       GeometryFallbackData record;
       record.cls = cls;
       record.site = site;
@@ -14679,6 +14684,7 @@ FeaturePatchSummary BuildFeaturePatches(
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
   // global sub-segments of the perimeter, in the order of the feature list.
   result.uncovered_portions.clear();
+  result.uncovered_keys.clear();
   for (const auto &feature : identification.features)
   {
     if ((feature.matched_model && !placement_rejected.count(feature.id)) ||
@@ -14688,6 +14694,7 @@ FeaturePatchSummary BuildFeaturePatches(
       // features' (decision 481 / 512 (c)): never listed twice.
       continue;
     }
+    const std::size_t listed_portions = result.uncovered_portions.size();
     for (const auto &portion : feature.portions)
     {
       if (IsImage(portion))
@@ -14713,6 +14720,16 @@ FeaturePatchSummary BuildFeaturePatches(
           {feature.id, mirror_formed ? feature.type + ":MirrorFormed" : feature.type,
            static_cast<int>(portion.segment), SegmentPoint(portion.s0),
            SegmentPoint(portion.s1)});
+    }
+    if (result.uncovered_portions.size() > listed_portions)
+    {
+      // Lane L1 (ruling 1649 Q1): the listed feature's key record, as the identification
+      // gives it.
+      const auto rejection = placement_rejection_class.find(feature.id);
+      result.uncovered_keys.push_back(
+          {feature.id, feature.type, feature.hash, feature.matched_model.has_value(),
+           rejection != placement_rejection_class.end() ? rejection->second : "",
+           feature.signature.is_object() && feature.signature.value("Unboxable", false)});
     }
   }
 
@@ -15949,6 +15966,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes,
         &geometry_ledger, mesh.GetComm());
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    result.identification_matched_length = summary.matched_length;
+    result.identification_unmatched_length = summary.unmatched_length;
     if (requirements && !summary.unpatched_pairs.empty())
     {
       nlohmann::json records = nlohmann::json::array();
@@ -21013,6 +21032,32 @@ double TargetInterfaceMatchingRadius(const IoData &iodata,
   return radius;
 }
 
+// Ruling 1738 (lane L1, OI-CONFIGURED-TARGET-NOT-SERVED): the interfaces the configuration
+// targets. An automatic (library) configuration: its TargetInterfaces, or without that list
+// every typed dielectric interface with EdgeDistances (the identification's selection, as
+// above); an explicit-model configuration targets its models' surfaces only (none here).
+std::set<int> ConfiguredTargetInterfaces(const IoData &iodata, bool automatic,
+                                         const std::vector<int> &target_interfaces)
+{
+  std::set<int> configured;
+  if (!automatic)
+  {
+    return configured;
+  }
+  const std::set<int> target_filter(target_interfaces.begin(), target_interfaces.end());
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    if ((!target_filter.empty() && target_filter.find(index) == target_filter.end()) ||
+        dielectric.type == InterfaceDielectric::DEFAULT ||
+        dielectric.edge_distances.empty())
+    {
+      continue;
+    }
+    configured.insert(index);
+  }
+  return configured;
+}
+
 SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
@@ -21477,7 +21522,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 24},
+  nlohmann::json cache = {{"Version", 25},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -21543,6 +21588,19 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                            {"P1", portion.p1}});
     }
     cache["UncoveredPortions"] = std::move(uncovered);
+    // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a required leaf of
+    // version 25.
+    nlohmann::json uncovered_keys = nlohmann::json::array();
+    for (const auto &key : config.uncovered_keys)
+    {
+      uncovered_keys.push_back({{"Feature", key.feature},
+                                {"Type", key.type},
+                                {"Hash", key.hash},
+                                {"Matched", key.matched},
+                                {"PlacementRejection", key.placement_rejection},
+                                {"Unboxable", key.unboxable}});
+    }
+    cache["UncoveredKeys"] = std::move(uncovered_keys);
     // The exclusion-energy export's portions (idfix DESIGN section 8; decision 1072 Q3: a
     // required leaf of version 22).
     nlohmann::json exclusions = nlohmann::json::array();
@@ -21655,10 +21713,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 24,
+      data.value("Version", 0) == 25,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 24 = version 23 + the fix round P3's placement rule R-9b (every "
+          << " (version 25 = version 24 + the UncoveredKeys leaf (lane L1, ruling 1649 Q1: "
+             "the uncovered features' key records of the coverage outputs); version 24 = "
+             "version 23 + the fix round P3's placement rule R-9b (every "
              "KeyedAtTheMean feature placed cell-wise at its local cross-section from its "
              "family; decisions 1286 / 1291); version 23 = version 22 + the fix round P2's "
              "placement rule R-9 (the "
@@ -21781,6 +21841,23 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     portion.p0 = entry.at("P0");
     portion.p1 = entry.at("P1");
     result.uncovered_portions.push_back(std::move(portion));
+  }
+  // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a REQUIRED leaf of
+  // version 25 (a cache without it was written by another binary: refused by name).
+  MFEM_VERIFY(data.contains("UncoveredKeys"),
+              "Response-geometry cache version 25 without UncoveredKeys (lane L1, ruling "
+              "1649 Q1): delete the stale cache!");
+  result.uncovered_keys.clear();
+  for (const auto &entry : data.at("UncoveredKeys"))
+  {
+    ResponseCorrectionData::UncoveredKeyData key;
+    key.feature = entry.at("Feature");
+    key.type = entry.at("Type");
+    key.hash = entry.at("Hash");
+    key.matched = entry.at("Matched");
+    key.placement_rejection = entry.at("PlacementRejection");
+    key.unboxable = entry.at("Unboxable");
+    result.uncovered_keys.push_back(std::move(key));
   }
   // Decision 1072 Q3: the exclusion-energy portions are a REQUIRED leaf of version 22 (lane
   // B's version 21); a cache of the right version written before the export existed (the
@@ -23628,6 +23705,10 @@ struct ResponseMemoryCensus
     return Heap(d.entries) + Heap(d.portions);
   }
   static double Heap(const ModelRawClaimPortions::GroupMember &d) { return Heap(d.label); }
+  static double Heap(const SurfacePostOperator::CompactPerimeterPortions &d)
+  {
+    return double(d.HeapBytes());
+  }
   static double Heap(const ModelRawClaimPortions &d)
   {
     return Heap(d.portions) + Heap(d.members);
@@ -23738,6 +23819,13 @@ struct ResponseMemoryCensus
     add("op.conductor_consistency_claims (I-11)", Heap(op.conductor_consistency_claims));
     add("op.conductor_consistency_portions", Heap(op.conductor_consistency_portions));
     add("op.model_raw_claim_portions (I-11b)", Heap(op.model_raw_claim_portions));
+    // Lane L1 (ruling 1682): the compact claim list's portion and distinct end-point counts
+    // (bytes per portion = the line above over the first; end-point sharing = 2 x portions
+    // over points).
+    add("op.model_raw_claim_portions count",
+        double(op.model_raw_claim_portions.portions.Size()));
+    add("op.model_raw_claim_portions distinct end points",
+        double(op.model_raw_claim_portions.portions.PointCount()));
     add("op.mirror_planes", Heap(op.mirror_planes));
   }
 
@@ -28838,7 +28926,7 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
   std::map<std::pair<std::string, int>, ModelRawClaimPortions::GroupMember> members;
   for (std::size_t i = 0; i < claims.portions.size(); i++)
   {
-    auto portion = claims.portions[i];
+    const auto &portion = claims.portions[i];
     std::map<int, std::pair<int, double>> by_model;  // model -> (patches, weight sum)
     for (const std::size_t patch_idx : claims.patches[i])
     {
@@ -28861,8 +28949,7 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
       member.patches += entry.first;
       member.weight_length += entry.second * length;
     }
-    portion.topology = label;
-    result.portions.push_back(std::move(portion));
+    result.portions.Append(portion.p0, portion.p1, label, portion.feature);
   }
   for (auto &[key, member] : members)
   {
@@ -31067,6 +31154,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       ownership_diagnostics["MirrorFormedPlacement"] = placements;
     }
     uncovered_portions = config.uncovered_portions;
+    uncovered_keys = config.uncovered_keys;
+    identification_matched_length = config.identification_matched_length;
+    identification_unmatched_length = config.identification_unmatched_length;
     exclusion_portions = config.exclusion_portions;  // section 8's export set, by class
     mirror_planes = config.mirror_planes;
     mirror_band = config.mirror_band_over_radius * config.matching_radius;
@@ -31499,8 +31589,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
       // patch's raw claim by model set, for the per-model raw energy partition of
-      // surface-response-model-raw-energy.csv; off by default (the list stays empty).
-      if (config.patch_energy)
+      // surface-response-model-raw-energy.csv (written with PatchEnergy only). Lane L1
+      // (decision 1634 (1)): ALWAYS collected, the SERVED claims of the closed coverage
+      // partition (ruling 1641: a correction's coverage never depends on a switch).
       {
         model_raw_claim_portions = CollectModelRawClaimPortions(
             spatially_owned_patches, placed_patches, config, ownership,
@@ -31511,9 +31602,12 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         // existing label and the groups table unchanged).
         for (const auto &portion : config.unpatched_pair_portions)
         {
-          model_raw_claim_portions.portions.push_back(portion);
+          model_raw_claim_portions.portions.Append(portion.p0, portion.p1, portion.topology,
+                                                   portion.feature);
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
+        // Ruling 1682: the append lookups released, the buffers trimmed.
+        model_raw_claim_portions.portions.FinishAppending();
         PlacementStamp("model raw claim portions (PatchEnergy)");
       }
       // Decision 1475 (2): the memory census INSIDE the placement, at the end of its claims
@@ -31690,6 +31784,29 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   return placement;
 }
 
+void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &request,
+                                                MPI_Comm comm)
+{
+  // Lane L1 (decision 1634 (4)): the interim bars; the validated-regime sidecar, checked
+  // against the library file at setup on every rank (a mismatch is a config error before
+  // the solve); the models' qualification read on the root only (the coverage writers'
+  // rank; the library's load is unchanged).
+  coverage_thresholds.build_target = request.coverage.build_target;
+  coverage_thresholds.max_uncovered_share = request.coverage.max_uncovered_share;
+  if (!request.coverage.validated_regime.empty())
+  {
+    MFEM_VERIFY(request.IsAutomatic(),
+                "Response-correction \"Coverage.ValidatedRegime\" requires a Library!");
+    coverage_validated_regime =
+        ReadCoverageValidatedRegime(request.coverage.validated_regime, request.library);
+  }
+  coverage_model_qualifications.clear();
+  if (request.IsAutomatic() && Mpi::Root(comm))
+  {
+    coverage_model_qualifications = ReadCoverageModelQualifications(request.library);
+  }
+}
+
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
     std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
@@ -31827,6 +31944,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  ConfigureCoverage(*request, fespace.GetComm());
   diagnostics_directory = request->diagnostics_directory;
   conductor_consistency_records_in_directory =
       request->conductor_consistency_records ==
@@ -31871,6 +31989,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   };
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config->target_interfaces);
+  configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
+                                                            request->target_interfaces);
   const auto derived_cache_before = GetDerivedResponseMatrixCacheCounters();
   // setupmem S1 (decision 1546): the root builds every model's matrices here (the
   // all-model records and log lines); another rank builds the metadata only and, after the
@@ -33366,6 +33486,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       config::ElectrostaticSolverData::ResponseCorrectionData::
           ConductorConsistencyRecordsOutput::DIRECTORY;
   within_r_volume_energy = request->within_r_volume_energy;
+  ConfigureCoverage(*request, fespace.GetComm());
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -33420,6 +33541,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   basis_points.reserve(config.models.size());
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config.target_interfaces);
+  configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
+                                                            request->target_interfaces);
   // setupmem S1 (decision 1546): as the electrostatic constructor (the root builds every
   // model's matrices here; another rank the metadata, then BuildReferencedModelMatrices).
   const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
@@ -39175,6 +39298,24 @@ std::set<int> SurfaceResponseOperator::GetTargetInterfaces() const
       interfaces.insert(interface);
     }
   }
+  return interfaces;
+}
+
+std::set<int> SurfaceResponseOperator::GetConfiguredTargetsNotServed() const
+{
+  const auto served = GetTargetInterfaces();
+  std::set<int> not_served;
+  std::set_difference(configured_target_interfaces.begin(),
+                      configured_target_interfaces.end(), served.begin(), served.end(),
+                      std::inserter(not_served, not_served.end()));
+  return not_served;
+}
+
+std::set<int> SurfaceResponseOperator::GetCoverageInterfaces() const
+{
+  auto interfaces = GetTargetInterfaces();
+  interfaces.insert(configured_target_interfaces.begin(),
+                    configured_target_interfaces.end());
   return interfaces;
 }
 

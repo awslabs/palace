@@ -1806,6 +1806,8 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           "Response-correction \"Diagnostics.WithinRVolumeEnergy\" writes per-patch "
           "columns of surface-response-patch-energy.csv and requires "
           "\"PatchEnergy\": true!");
+      data.uncovered_feature_energy =
+          diagnostics->value("UncoveredFeatureEnergy", data.uncovered_feature_energy);
       if (auto directory = diagnostics->find("Directory"); directory != diagnostics->end())
       {
         // Decision 1685: one directory name inside Problem.Output. A name starting with
@@ -1851,11 +1853,46 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       {
         (void)value;
         MFEM_VERIFY(key == "ExclusionEnergy" || key == "WithinRVolumeEnergy" ||
-                        key == "Directory" || key == "ConductorConsistencyRecords",
+                        key == "UncoveredFeatureEnergy" || key == "Directory" ||
+                        key == "ConductorConsistencyRecords",
                     "Response-correction \"Diagnostics\" has an unknown key \""
                         << key
-                        << "\" (ExclusionEnergy, WithinRVolumeEnergy, Directory and "
+                        << "\" (ExclusionEnergy, WithinRVolumeEnergy, "
+                           "UncoveredFeatureEnergy, Directory and "
                            "ConductorConsistencyRecords are the only keys)!");
+      }
+    }
+    if (auto coverage = correction.find("Coverage"); coverage != correction.end())
+    {
+      // Lane L1 (decision 1634 (4)): the coverage outputs' block (interim bars).
+      MFEM_VERIFY(coverage->is_object(),
+                  "Response-correction \"Coverage\" must be an object!");
+      const std::string policy = coverage->value("Policy", "Warn");
+      MFEM_VERIFY(
+          policy == "Warn",
+          "Response-correction \"Coverage\": \"Policy\" accepts \"Warn\" only (another "
+          "policy awaits the USER's ruling D4)!");
+      data.coverage.max_uncovered_share =
+          coverage->value("MaxUncoveredShare", data.coverage.max_uncovered_share);
+      data.coverage.build_target =
+          coverage->value("BuildTarget", data.coverage.build_target);
+      // Ruling 1689 M-5: the interim bars are FIXED until the status validation rules
+      // otherwise (an OK must not be printable at any coverage by a config value).
+      MFEM_VERIFY(data.coverage.max_uncovered_share == 0.05 &&
+                      data.coverage.build_target == 0.02,
+                  "Response-correction \"Coverage\": the interim bars are fixed "
+                  "(\"MaxUncoveredShare\" 0.05, \"BuildTarget\" 0.02) until the status "
+                  "validation rules otherwise!");
+      data.coverage.validated_regime = coverage->value("ValidatedRegime", std::string{});
+      for (const auto &[key, value] : coverage->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "Policy" || key == "MaxUncoveredShare" || key == "BuildTarget" ||
+                        key == "ValidatedRegime",
+                    "Response-correction \"Coverage\" has an unknown key \""
+                        << key
+                        << "\" (Policy, MaxUncoveredShare, BuildTarget and ValidatedRegime "
+                           "are the only keys)!");
       }
     }
     if (auto domain_boundary = correction.find("DomainBoundary");
@@ -2168,6 +2205,13 @@ SolverData::SolverData(const json &solver)
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");
   eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)) is written by the Maxwell
+  // PostOperator only: refused on the electrostatic path rather than silently ignored.
+  MFEM_VERIFY(!electrostatic.response_correction ||
+                  !electrostatic.response_correction->uncovered_feature_energy,
+              "Response-correction \"Diagnostics.UncoveredFeatureEnergy\" is a Maxwell "
+              "diagnostic (surface-response-uncovered-feature-energy.csv); the "
+              "electrostatic driver does not write it!");
   magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
   boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");

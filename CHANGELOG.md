@@ -19,6 +19,52 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added the coverage outputs of the surface-response correction, on every corrected run of
+    both solve families: the
+    closed partition of the raw within-`R` energy `W` by the correction's ownership, one
+    quadrature pass per target interface; `surface-response-coverage.csv` (per cell and
+    interface `Type`: `W`, the uncovered / missing / method-gap / pending-model /
+    no-status-model shares of `W`, the covered correction factor, its validated range, an
+    INTERIM coverage status and a regime status, the untargeted raw energy of the `Type` and
+    the loop-remainder terms), `surface-response-uncovered-energy-by-key.csv`
+    (per Missing-class key) and `terminal-C-corrected-coverage.csv`; the coverage columns
+    APPENDED to `surface-Q-corrected.csv` (both families) and
+    `surface-response-confidence.csv`; `SurfaceResponse.Coverage` in `palace.json` and an
+    end-of-run banner per cell that is not `OK`; the config block `Coverage` (`Policy`
+    `"Warn"` only, `MaxUncoveredShare` 0.05 and `BuildTarget` 0.02 fixed interim bars, an
+    optional `ValidatedRegime` sidecar checked against the library's SHA-256). Every existing column keeps its
+    position, name and value. The geometry cache is version 25 (the uncovered features' key
+    records; an older cache is refused by name).
+    The coverage table also prints the signed method-gap share before its clamp at 0; a
+    cell whose partition serves more than the correction removes reads `INCONSISTENT`
+    (never `OK`); a served claim end one round-off short of its edge segment's end is
+    snapped to it in the coverage partition only (every corrected value unchanged), and
+    `SurfaceResponse.Coverage.ClaimEndCensus` counts such ends (served and kept) by
+    direction: round-off short with the exact vertex energy concerned, round-off beyond
+    (the end past the vertex: nothing at stake), near; a
+    `ValidatedRegime` range requires `N` >= 1 and a `Provenance`; a served model without a
+    qualification record counts as no-status; the log prints, per interface `Type`, the
+    Missing share of the target perimeter LENGTH before the solve. A configured target
+    interface on which no loaded model has a fabricated surface is a coverage interface
+    (its within-`R` raw energy uncovered in its `Type`'s `W`) with the status
+    `TARGET-NOT-SERVED`, a startup warning and `SurfaceResponse.Coverage.
+    ConfiguredTargetsNotServed`; a run with no coverage cell writes `NoCellsReason` and
+    `"Complete": true` only with that reason. The coverage block names the AMR `Level` that
+    wrote it of `Levels` (`Refinement.MaxIts` + 1) and gets `"Final": true` only after the
+    AMR loop has ended, so the block of a run killed during a later level is not read as
+    final. A cell whose coverage is `OK` but whose regime is `NO-RANGE` is flagged per cell
+    (banner and `SurfaceResponse.Coverage.Flagged`) as an `OK` + `OUT` cell is, with the
+    words "computed, NOT VALIDATED in this regime". A `ValidatedRegime` file with a
+    `Driven` range is refused by name (the class lumps every driven excitation).
+
+  - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
+    (off by default; refused by the electrostatic driver): the raw within-`R` energy of the
+    uncovered requirements (`surface-response-uncovered-energy.csv`) split per type by
+    identification FEATURE into `surface-response-uncovered-feature-energy.csv` (the label's
+    portions, length and bounding box, the energy per target interface; overlapping features
+    of one type share a `+`-joined label), one quadrature pass per interface; per mode, type
+    and interface the rows sum to the uncovered table (lane ctx002-miss, decision 1567 (b)).
+
   - Added `Solver.Electrostatic.ResponseArchive` (`Mode` `"None"` / `"Archive"` /
     `"Reduce"` / `"Estimate"`, `Directory`, `BlockSize`, `SourceTiming`,
     `RecycleInitialGuess`, `EstimateRequest`): the archived coupon-response generation
@@ -302,6 +348,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - The Maxwell `surface-Q-corrected.csv` and `surface-response-confidence.csv` column
+    `matched edge fraction` is renamed `matched edge length fraction` (a length figure, not
+    an energy coverage; values unchanged).
+
   - AMR now checks `config["Model"]["Refinement"]["MaxSize"]` against the predicted size
     of each refined mesh (the last solved number of degrees of freedom scaled by the
     element-count growth of the refinement step) and stops before the solve when the
@@ -390,6 +440,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the round size (lane fix-response-memory round 3; decision 1501; results bitwise).
 
 #### Bug Fixes
+
+  - The per-type portion tables and the loop-fit tables of the Maxwell correction write
+    their header with their first rows whatever print that is (a table first written at a
+    later mode or frequency, such as the conductor-consistency table, was appended without
+    a header).
 
   - `Mpi::BroadcastLarge` now bounds every single `MPI_Bcast` it issues IN BYTES, by the
     compile-time constant `mpi::BROADCAST_LARGE_CHUNK_BYTES` = 2^28 bytes (the element count

@@ -1488,9 +1488,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
   // model set (empty without PatchEnergy) and, per source, the raw field's within-R energy
   // partitioned over them.
-  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> model_raw_portions;
+  SurfacePostOperator::CompactPerimeterPortions model_raw_portions;
   std::vector<std::pair<int, std::map<int, std::map<std::string, double>>>>
       raw_model_partitions;
+  // Lane L1 (decision 1634 (1)): per source, the closed coverage partition of its raw
+  // field (SurfacePostOperator::GetInterfaceCoveragePartition), on every corrected run.
+  std::vector<
+      std::pair<int, std::map<int, SurfacePostOperator::InterfaceCoveragePartition>>>
+      coverage_partitions;
   if (response_correction)
   {
     for (const auto &portion : response_correction->GetUncoveredPortions())
@@ -1513,12 +1518,28 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
-    // Round 2b B1 (decision 1484): converted once and released from the operator (the same
-    // portions in the same order; the operator reads them nowhere after the construction).
-    for (const auto &portion : response_correction->ReleaseModelRawClaimPortionList())
+    // Round 2b B1 (decision 1484): moved out of the operator (the same portions in the
+    // same order; the operator reads them nowhere after the construction), held once, in
+    // the compact exact form (lane L1, ruling 1682).
+    model_raw_portions = response_correction->ReleaseModelRawClaimPortionList();
+    // Ruling 1688 (lane L1): the stage-0 Missing LENGTH line (root; log only).
+    if (!response_correction->IsRawFallback())
     {
-      model_raw_portions.push_back(
-          {portion.p0, portion.p1, portion.topology, portion.feature});
+      const auto [missing, method_gap] = SplitCoverageUncoveredByKeyClass(
+          uncovered_portions, response_correction->GetCoverageKeyRecords());
+      const auto targets = response_correction->GetTargetInterfaces();
+      Mpi::Print("\n{}",
+                 CoverageStageZeroLine(
+                     post_op.GetInterfaceTypes(), targets,
+                     post_op.GetSurfacePostOp().GetInterfacePerimeterLengths(
+                         targets, {missing, method_gap}),
+                     response_correction->GetIdentificationFeatureLengths(), iodata.units));
+      const auto not_served = response_correction->GetConfiguredTargetsNotServed();
+      if (!not_served.empty())
+      {
+        Mpi::Warning(
+            "{}", CoverageTargetsNotServedWarning(post_op.GetInterfaceTypes(&not_served)));
+      }
     }
     if (response_correction->ExclusionEnergyRequested())
     {
@@ -1795,6 +1816,159 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     return {indicator, laplace_op.GlobalTrueVSize()};
   }
 
+  // Lane L1 (decision 1634 (2) / (4); rulings 1641 / 1654 (III)): per source its coverage
+  // (root; the cells per Type of its raw field), in source order, and the number of
+  // conductor-consistency portions it was measured with (the matrix coverage is re-measured
+  // with the FINAL portions: ruling 1654 (III) Q3). The coverage tables are written as each
+  // source completes (a killed run keeps the finished sources).
+  std::vector<std::pair<int, CoverageMeasurement>> coverage_measurements;
+  std::vector<std::size_t> coverage_conductor_consistency_counts;
+  const auto coverage_path = post_dir / "surface-response-coverage.csv";
+  const auto coverage_by_key_path =
+      post_dir / "surface-response-uncovered-energy-by-key.csv";
+  if (root && response_correction)
+  {
+    fs::remove(coverage_path);
+    fs::remove(coverage_by_key_path);
+    fs::remove(post_dir / "terminal-C-corrected-coverage.csv");
+  }
+  auto MeasureSourceCoverage =
+      [&](const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &partition,
+          const EnergyData &raw, const std::map<int, double> *fabricated)
+  {
+    // W per target = the raw interface energy minus its energy outside R (the largest
+    // configured radius, the coupon's: the corrected energies' own split); NOT-MEASURED
+    // without a postprocessed response (ruling 1654 (III) Q2 (b): a raw response evaluation
+    // of a SelfConsistent-only run would move the operator's trace counters).
+    // Ruling 1738: the configured targets no loaded model serves are cells' interfaces too
+    // (W = raw - outside R, nothing fabricated: uncovered).
+    const auto targets = response_correction->GetCoverageInterfaces();
+    const auto not_served = response_correction->GetConfiguredTargetsNotServed();
+    const auto types = post_op.GetInterfaceTypes(&targets);
+    std::map<int, double> within;
+    for (const int target : targets)
+    {
+      const auto interface = raw.interfaces.find(target);
+      if (interface == raw.interfaces.end() || interface->second.edge_energies.empty())
+      {
+        fabricated = nullptr;
+        break;
+      }
+      within[target] =
+          interface->second.energy - interface->second.edge_energies.back().energy_outside;
+    }
+    auto measurement = fabricated
+                           ? ComputeCoverageMeasurement(
+                                 partition, types, within, *fabricated,
+                                 response_correction->GetCoverageKeyRecords(),
+                                 response_correction->GetCoverageModelQualifications(),
+                                 response_correction->GetCoverageThresholds(),
+                                 response_correction->GetCoverageValidatedRegime(),
+                                 CoverageExcitationClass::ELECTROSTATIC_TERMINAL)
+                           : NotMeasuredCoverageMeasurement(
+                                 types, CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+    MarkCoverageTargetsNotServed(measurement, post_op.GetInterfaceTypes(&not_served));
+    // Ruling 1694 (1): the postprocessing interfaces no model targets carry their raw
+    // energy; their Types' untargeted raw energy and share (NOT-TARGET cells for a Type
+    // with untargeted interfaces only).
+    std::map<int, std::string> untargeted;
+    for (const auto &[interface, type] : post_op.GetInterfaceTypes())
+    {
+      if (targets.count(interface) == 0)
+      {
+        untargeted[interface] = type;
+      }
+    }
+    std::map<int, double> raw_energy;
+    for (const auto &[interface, data] : raw.interfaces)
+    {
+      raw_energy[interface] = data.energy;
+    }
+    AddCoverageUntargetedInterfaces(measurement, untargeted, raw_energy);
+    return measurement;
+  };
+  auto WriteSourceCoverage = [&](int source, const CoverageMeasurement &measurement)
+  {
+    const auto targets = response_correction->GetCoverageInterfaces();
+    const bool first = coverage_measurements.size() == 1;
+    for (const auto &path : {coverage_path, coverage_by_key_path})
+    {
+      std::ofstream output(path, first ? std::ios::out | std::ios::trunc
+                                       : std::ios::out | std::ios::app);
+      MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
+      if (path == coverage_path)
+      {
+        output << (first ? CoverageTableHeader("i") : "");
+        WriteCoverageRows(output, std::to_string(source), measurement, iodata.units);
+      }
+      else
+      {
+        output << (first ? CoverageByKeyTableHeader("i", targets) : "");
+        WriteCoverageByKeyRows(output, std::to_string(source), measurement, targets,
+                               CoveragePortionsByFeature(uncovered_portions), iodata.units);
+      }
+    }
+    response_correction->GetCoverageRunRecord().Add({{"i", static_cast<double>(source)}},
+                                                    measurement);
+  };
+  auto WriteMatrixCoverage = [&](const std::map<int, mfem::Array<int>> &terminal_sources,
+                                 const std::vector<CoverageMeasurement> &final_coverage,
+                                 const std::vector<bool> &remeasured)
+  {
+    // terminal-C-corrected-coverage.csv: the matrix shape of terminal-C-corrected.csv
+    // (rows i, a column per j); entry (i, j) = the worse coverage status over the Types of
+    // sources i and j (CoverageStatusRank) on their FINAL measurement; then, per row,
+    // source i's final measurement (its worst status and largest uncovered share over
+    // Types, and whether a conductor-consistency exclusion after it made it differ from its
+    // own row of surface-response-coverage.csv). A text table, root only.
+    MFEM_VERIFY(final_coverage.size() == terminal_sources.size() &&
+                    remeasured.size() == terminal_sources.size(),
+                "The corrected-matrix coverage needs one measurement per terminal source!");
+    auto Worst = [](const CoverageMeasurement &measurement)
+    {
+      const auto *cell = measurement.WorstCoverageCell();
+      return cell ? cell->status : CoverageStatus::NOT_MEASURED;
+    };
+    auto WorstShare = [](const CoverageMeasurement &measurement)
+    {
+      double worst = std::numeric_limits<double>::quiet_NaN();
+      for (const auto &cell : measurement.cells)
+      {
+        if (std::isfinite(cell.uncovered_share) && !(cell.uncovered_share <= worst))
+        {
+          worst = cell.uncovered_share;
+        }
+      }
+      return std::isnan(worst) ? std::string("nan") : fmt::format("{:+.12e}", worst);
+    };
+    std::ofstream output(post_dir / "terminal-C-corrected-coverage.csv");
+    MFEM_VERIFY(output, "Unable to open terminal-C-corrected-coverage.csv for writing!");
+    output << "i";
+    for (const auto &[idx2, data2] : terminal_sources)
+    {
+      (void)data2;
+      output << fmt::format(",coverage status[i][{}]", idx2);
+    }
+    output << ",source final worst coverage status,source final worst uncovered raw share "
+              "of W,source re-measured\n";
+    std::size_t i = 0;
+    for (const auto &[idx, data] : terminal_sources)
+    {
+      (void)data;
+      output << idx;
+      for (std::size_t j = 0; j < final_coverage.size(); j++)
+      {
+        const auto a = Worst(final_coverage[i]), b = Worst(final_coverage[j]);
+        output << ','
+               << CoverageStatusName(CoverageStatusRank(a) >= CoverageStatusRank(b) ? a
+                                                                                    : b);
+      }
+      output << ',' << CoverageStatusName(Worst(final_coverage[i])) << ','
+             << WorstShare(final_coverage[i]) << ',' << (remeasured[i] ? 1 : 0) << '\n';
+      i++;
+    }
+  };
+
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} {}\n", n_step,
              (n_step > 1) ? "sources" : "source");
@@ -1967,9 +2141,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         AppendClippedRows(idx, V[step], true, raw_whole, raw_outside);
       }
-      if (!model_raw_portions.empty())
+      if (patch_energy_response && !model_raw_portions.Empty())
       {
-        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set.
+        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set
+        // (the claims exist on every run since lane L1; the table with PatchEnergy only).
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_model_partitions.emplace_back(
             idx, post_op.GetElectrostaticPartitionedEdgeEnergies(
@@ -2010,6 +2185,34 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         raw_conductor_consistency = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), conductor_consistency_portions);
         PostRawStage("conductor-consistency gate + raw energies");
+      }
+      if (response_correction->HasSurfaceResponse())
+      {
+        // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage
+        // partition of this source's RAW field (the grid functions still hold it), every
+        // point in ONE bin by the correction's ownership: the classes the corrected
+        // interface energies keep raw (ApplyResponse below) first, whatever claim lies
+        // under them (a conductor-consistency-excluded patch's claim included), then the
+        // served claims, then the remainder labels. Measured on every corrected run.
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(uncovered_portions);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &domain_boundary_portions},
+            {"SpatialClusterPriority", &spatial_cluster_priority_portions},
+            {"ConductorConsistency", &conductor_consistency_portions}};
+        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+        if (response_correction->ExclusionEnergyRequested())
+        {
+          remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
+        }
+        auto partition = post_op.GetElectrostaticCoveragePartition(
+            response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
+            remainder_classes);
+        SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
+                                                     "UnpatchedPairs");
+        coverage_partitions.emplace_back(idx, std::move(partition));
       }
       if (self_consistent_response)
       {
@@ -2283,6 +2486,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         corrected_results.back().raw_patch_contributions.shrink_to_fit();
         corrected_results.back().corrected_patch_contributions.clear();
         corrected_results.back().corrected_patch_contributions.shrink_to_fit();
+        // Lane L1: this source's coverage, measured and written before the next source.
+        coverage_conductor_consistency_counts.push_back(
+            response_correction->GetConductorConsistencyPortions().size());
+        if (root)
+        {
+          coverage_measurements.emplace_back(
+              idx,
+              MeasureSourceCoverage(
+                  coverage_partitions.back().second, corrected_results.back().raw,
+                  postprocess_response ? &response.fabricated_surface_energy : nullptr));
+          WriteSourceCoverage(idx, coverage_measurements.back().second);
+        }
       }
     }
 
@@ -2322,6 +2537,79 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       PostprocessCorrectedTerminals(post_op, laplace_op.GetSources(), V, V_corrected,
                                     *response_correction, postprocess_response,
                                     self_consistent_accepted);
+      // Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed from the
+      // fields of sources i and j with the FINAL patch weights (after the last
+      // conductor-consistency exclusion), so each source's coverage is re-measured with the
+      // FINAL conductor-consistency portions where a later exclusion changed them (else its
+      // own measurement is the final one); entry (i, j) = the worse of sources i and j.
+      // The per-source rows keep their own measurement (what they print).
+      const std::size_t final_count =
+          response_correction->GetConductorConsistencyPortions().size();
+      std::vector<CoverageMeasurement> final_coverage;
+      std::vector<bool> remeasured;
+      std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+          final_conductor_consistency;
+      for (const auto &portion : response_correction->GetConductorConsistencyPortions())
+      {
+        final_conductor_consistency.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      for (std::size_t i = 0; i < coverage_partitions.size() && i < V.size(); i++)
+      {
+        if (coverage_conductor_consistency_counts.at(i) == final_count || V[i].Size() == 0)
+        {
+          if (root)
+          {
+            final_coverage.push_back(coverage_measurements.at(i).second);
+            remeasured.push_back(false);
+          }
+          continue;
+        }
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        E = 0.0;
+        Grad.AddMult(V[i], E, -1.0);
+        if (post_op.NeedsRecoveredElectricFlux())
+        {
+          estimator->RecoverFlux(E, D);
+        }
+        const auto raw = post_op.GetElectrostaticEnergies(
+            V[i], E, post_op.NeedsRecoveredElectricFlux() ? &D : nullptr);
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(uncovered_portions);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &domain_boundary_portions},
+            {"SpatialClusterPriority", &spatial_cluster_priority_portions},
+            {"ConductorConsistency", &final_conductor_consistency}};
+        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+        if (response_correction->ExclusionEnergyRequested())
+        {
+          remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
+        }
+        auto partition = post_op.GetElectrostaticCoveragePartition(
+            response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
+            remainder_classes);
+        SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
+                                                     "UnpatchedPairs");
+        if (root)
+        {
+          // The factor of this re-measurement is not printed (the matrix coverage is a
+          // status); the source's fabricated energy stands in.
+          const auto &own = coverage_measurements.at(i).second;
+          std::map<int, double> fabricated;
+          for (const auto &[interface, summary] : own.interfaces)
+          {
+            fabricated[interface] = summary.fabricated;
+          }
+          final_coverage.push_back(
+              own.measured ? MeasureSourceCoverage(partition, raw, &fabricated) : own);
+          remeasured.push_back(own.measured);
+        }
+      }
+      if (root && final_coverage.size() == laplace_op.GetSources().size())
+      {
+        WriteMatrixCoverage(laplace_op.GetSources(), final_coverage, remeasured);
+      }
     }
   }
   else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
@@ -2381,7 +2669,48 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       output.table.insert(fmt::format("trace_closure_spread_{}", interface),
                           fmt::format("trace closure spread[{}]", interface));
     }
+    // Lane L1 (DESIGN-v2 s4.3; decision 1636 (1)): the coverage columns APPENDED at the
+    // end of the row (every column above keeps its position, name and value): per
+    // interface W and its uncovered share, then per Type (first appearance over the
+    // ascending target interfaces) the source's cell.
+    const auto coverage_targets = response_correction->GetCoverageInterfaces();
+    std::vector<std::string> coverage_types;
+    for (const auto &[interface, type] : post_op.GetInterfaceTypes(&coverage_targets))
+    {
+      (void)interface;
+      if (std::find(coverage_types.begin(), coverage_types.end(), type) ==
+          coverage_types.end())
+      {
+        coverage_types.push_back(type);
+      }
+    }
+    for (const auto &[interface, data] : interfaces)
+    {
+      (void)data;
+      output.table.insert(fmt::format("coverage_within_{}", interface),
+                          fmt::format("W within-R raw[{}] (J)", interface));
+      output.table.insert(fmt::format("coverage_uncovered_share_{}", interface),
+                          fmt::format("uncovered raw share of W[{}]", interface));
+    }
+    for (const auto &type : coverage_types)
+    {
+      output.table.insert(fmt::format("coverage_uncovered_share_{}", type),
+                          fmt::format("uncovered raw share of W {}", type));
+      output.table.insert(fmt::format("coverage_method_gap_share_{}", type),
+                          fmt::format("method-gap raw share of W {}", type));
+      output.table.insert(fmt::format("coverage_pending_share_{}", type),
+                          fmt::format("pending-model share of W {}", type));
+      output.table.insert(fmt::format("coverage_factor_{}", type),
+                          fmt::format("covered correction factor {}", type));
+      output.table.insert(Column::Text(fmt::format("coverage_status_{}", type),
+                                       fmt::format("coverage status {}", type)));
+      output.table.insert(Column::Text(fmt::format("regime_status_{}", type),
+                                       fmt::format("regime status {}", type)));
+    }
+    MFEM_VERIFY(coverage_measurements.size() == corrected_results.size(),
+                "The coverage needs one measurement per corrected source!");
     const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::size_t coverage_index = 0;
     for (const auto &result : corrected_results)
     {
       output.table["source"] << result.source;
@@ -2456,6 +2785,40 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         closure_spread == result.trace_closure_spread.end()
                     ? nan
                     : closure_spread->second);
+      }
+      const auto &[coverage_source, coverage] = coverage_measurements[coverage_index++];
+      MFEM_VERIFY(coverage_source == result.source,
+                  "The coverage measurements are out of source order!");
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        const auto summary = coverage.interfaces.find(interface);
+        // Ruling 1694 (A): an untargeted interface's within-R region is empty (W = 0).
+        const double within = summary != coverage.interfaces.end() ? summary->second.within
+                              : coverage_targets.count(interface) == 0 ? 0.0
+                                                                       : nan;
+        output.table[fmt::format("coverage_within_{}", interface)]
+            << iodata.units.Dimensionalize<VT::ENERGY>(within);
+        output.table[fmt::format("coverage_uncovered_share_{}", interface)]
+            << (summary != coverage.interfaces.end() && within > 0.0
+                    ? (within - summary->second.served) / within
+                    : nan);
+      }
+      for (const auto &type : coverage_types)
+      {
+        const auto *cell = coverage.FindCell(type);
+        output.table[fmt::format("coverage_uncovered_share_{}", type)]
+            << (cell ? cell->uncovered_share : nan);
+        output.table[fmt::format("coverage_method_gap_share_{}", type)]
+            << (cell ? cell->method_gap_share : nan);
+        output.table[fmt::format("coverage_pending_share_{}", type)]
+            << (cell ? cell->pending_share : nan);
+        output.table[fmt::format("coverage_factor_{}", type)]
+            << (cell ? cell->factor : nan);
+        output.table[fmt::format("coverage_status_{}", type)] << std::string(
+            CoverageStatusName(cell ? cell->status : CoverageStatus::NOT_MEASURED));
+        output.table[fmt::format("regime_status_{}", type)]
+            << std::string(RegimeStatusName(cell ? cell->regime : RegimeStatus::NO_MODEL));
       }
     }
     output.WriteFullTableTrunc();

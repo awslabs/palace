@@ -43,7 +43,8 @@ std::string ReadFile(const fs::path &path)
 
 Table LoadCsv(const fs::path &path)
 {
-  TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true);
+  TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true,
+                           /*text_columns=*/true);
   return std::move(wrapped.table);
 }
 

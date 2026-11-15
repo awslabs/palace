@@ -974,6 +974,55 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
       json{{"SurfaceResponseCorrection", patch_energy}});
   REQUIRE(maxwell_patch_energy.surface_response_correction);
   CHECK(maxwell_patch_energy.surface_response_correction->patch_energy);
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): off by default, parsed on the
+  // Maxwell path, refused on the electrostatic path (no silent no-op).
+  CHECK_FALSE(maxwell_patch_energy.surface_response_correction->uncovered_feature_energy);
+  auto uncovered_feature = automatic_correction;
+  uncovered_feature["Diagnostics"] = {{"UncoveredFeatureEnergy", true}};
+  const config::SolverData maxwell_uncovered_feature(
+      json{{"SurfaceResponseCorrection", uncovered_feature}});
+  REQUIRE(maxwell_uncovered_feature.surface_response_correction);
+  CHECK(maxwell_uncovered_feature.surface_response_correction->uncovered_feature_energy);
+  CHECK_THROWS(config::SolverData(
+      json{{"Electrostatic", {{"ResponseCorrection", uncovered_feature}}}}));
+  uncovered_feature["Diagnostics"] = {{"UncoveredFeatureEnergies", true}};
+  CHECK_THROWS(config::SolverData(json{{"SurfaceResponseCorrection", uncovered_feature}}));
+  // Coverage (lane L1, decision 1634 (4)): the interim bars by default and FIXED (ruling
+  // 1689 M-5: any other value is refused); Policy "Warn" only; no unknown key; the same
+  // block on both paths.
+  CHECK(maxwell_patch_energy.surface_response_correction->coverage.max_uncovered_share ==
+        0.05);
+  CHECK(maxwell_patch_energy.surface_response_correction->coverage.build_target == 0.02);
+  CHECK(
+      maxwell_patch_energy.surface_response_correction->coverage.validated_regime.empty());
+  auto coverage = automatic_correction;
+  coverage["Coverage"] = {{"Policy", "Warn"},
+                          {"MaxUncoveredShare", 0.05},
+                          {"BuildTarget", 0.02},
+                          {"ValidatedRegime", "validated-regime.json"}};
+  const config::SolverData maxwell_coverage(json{{"SurfaceResponseCorrection", coverage}});
+  REQUIRE(maxwell_coverage.surface_response_correction);
+  CHECK(maxwell_coverage.surface_response_correction->coverage.max_uncovered_share == 0.05);
+  CHECK(maxwell_coverage.surface_response_correction->coverage.build_target == 0.02);
+  CHECK(maxwell_coverage.surface_response_correction->coverage.validated_regime ==
+        "validated-regime.json");
+  const config::ElectrostaticSolverData electrostatic_coverage(
+      json{{"ResponseCorrection", coverage}});
+  REQUIRE(electrostatic_coverage.response_correction);
+  CHECK(electrostatic_coverage.response_correction->coverage.build_target == 0.02);
+  for (const auto &[key, value] :
+       std::vector<std::pair<std::string, json>>{{"Policy", "MarkNotApplied"},
+                                                 {"BuildTarget", 0.2},
+                                                 {"BuildTarget", 0.01},
+                                                 {"MaxUncoveredShare", 1.5},
+                                                 {"MaxUncoveredShare", 0.1},
+                                                 {"MaxUncoveredShare", 1.0},
+                                                 {"MaxMissingLengthShare", 0.01}})
+  {
+    auto invalid_coverage = coverage;
+    invalid_coverage["Coverage"][key] = value;
+    CHECK_THROWS(config::SolverData(json{{"SurfaceResponseCorrection", invalid_coverage}}));
+  }
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;
