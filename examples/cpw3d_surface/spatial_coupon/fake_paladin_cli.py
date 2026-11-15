@@ -20,6 +20,12 @@ The state's "Describes" is the same for `palace describe-run` (decision 1820 (3)
 true (the true answer) | empty (rc 0, data {}) | nostatus (status "") | unlisted (status
 "suspended") | otherid (another run_id) | truncated (only run_id and status) | fail (rc 1).  The
 run's own progress (queued -> running -> ended) happens at every describe-run call.
+`palace status RUN` reads the run without changing it (paladin_run_watcher.py's read);
+FAKE_CANCEL_FAIL=1 makes `palace cancel` fail (rc 1).  The FAKE PBS and exec-host ssh of the
+watcher's tests: `fake_paladin_cli.py --pbs qstat -xf -F json JOB` (Q / R with its stime / F, from
+the run whose job id is JOB; no row = no job), `--pbs qdel JOB` (the run reads canceled) and
+`--ssh HOST COMMAND` (prints FAKE_MEMINFO, default "1000 900": MemTotal and MemAvailable in kB).
+Every call holds an exclusive lock on the state file (the driver and its watcher call at once).
 A run is 'queued' at the submit, 'running' at its first describe-run (started = now) and ends
 at the next one (completed = started + 600 s), when its run_dir is written: log.out, console.log,
 palace_config.json (paladin's rewrite of Mesh / Output / Device / SaveAdaptMesh) and postpro/
@@ -28,9 +34,11 @@ response-matrix solve); an archive writer writes source-NNNNNN-rank-NNNNNN-V.bin
 """
 import copy
 import datetime
+import fcntl
 import json
 import os
 import sys
+import time
 
 LOG = """Running with {ranks} MPI processes
 H1 (p = 2): 1,234, ND (p = 2): 5,678, RT (p = 2): 9,012
@@ -103,15 +111,50 @@ def write_outputs(run, end):
                     f.write(bytes([1]) * (64 + rank))
 
 
+def fake_pbs(argv, state):
+    """qstat -xf -F json JOB | qdel JOB against the fake runs (module docstring)."""
+    job = argv[-1]
+    found = [run for run in state.get("Runs", {}).values() if run.get("job_id") == job]
+    if argv[0] == "qdel":
+        for run in found:
+            run["status"], run["completed"] = "canceled", datetime.datetime.now(datetime.timezone.utc).isoformat()
+        return 0 if found else 1
+    jobs = {}
+    for run in found:
+        status = run["status"]
+        entry = {"job_state": {"queued": "Q", "submitted": "Q", "running": "R", "canceling": "R"}.get(status, "F"),
+                 "exec_host": "fakenode/0*4"}
+        if run.get("started"):
+            epoch = datetime.datetime.fromisoformat(run["started"]).timestamp()
+            entry["stime"] = time.strftime("%a %b %d %H:%M:%S %Y", time.localtime(epoch))
+        jobs[job] = entry
+    print(json.dumps({"Jobs": jobs}))
+    return 0
+
+
 def main(argv):
     state_path = os.environ["FAKE_PALADIN_STATE"]
     with open(os.environ["FAKE_PALADIN_LOG"], "a") as f:
         f.write(json.dumps(argv) + "\n")
+    if argv[:1] == ["--ssh"]:
+        print(os.environ.get("FAKE_MEMINFO", "1000 900"))
+        return 0
+    with open(state_path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return locked_main(argv, state_path)
+
+
+def locked_main(argv, state_path):
     if argv == ["--version"]:
         print("0.2.16")
         return 0
     with open(state_path) as f:
         state = json.load(f)
+    if argv[:1] == ["--pbs"]:
+        code = fake_pbs(argv[1:], state)
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+        return code
     runs = state.setdefault("Runs", {})
     command = " ".join(argv[:2])
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -173,7 +216,14 @@ def main(argv):
                 json.dump(state, f)
             print(json.dumps(envelope(command, None, ok=False, error="the fake's failed describe")))
             return 1
+    elif command == "palace status":
+        run = runs[argv[2]]
+        data = {"run_id": int(argv[2]), "job_id": run["job_id"], "status": run["status"],
+                "terminal": run["status"] in ("completed", "failed", "canceled", "out_of_memory", "submission_failed")}
     elif command == "palace cancel":
+        if os.environ.get("FAKE_CANCEL_FAIL") == "1":
+            print(json.dumps(envelope(command, None, ok=False, error="the fake's failed cancel")))
+            return 1
         run = runs[argv[2]]
         run["status"], run["completed"] = "canceled", now.isoformat()
         os.makedirs(run["run_dir"], exist_ok=True)

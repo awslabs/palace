@@ -140,6 +140,8 @@ class PaladinJobWrappers(unittest.TestCase):
         self.environment.start()
         self.pause = mock.patch.object(paladin_backend, "pause")  # the waits between lookups (INTENT_RULE)
         self.pause.start()
+        self.watchers = mock.patch.object(paladin_backend, "RunWatchers", test_paladin_backend.RecordingWatchers)
+        self.watchers.start()
         estimate = self.root / "stage-estimate.json"
         estimate.write_text(json.dumps({"Stages": {"k4": {"ArchiveGBEstimate": 0.001}}}))
         main = self.plan_path.parent
@@ -156,6 +158,7 @@ class PaladinJobWrappers(unittest.TestCase):
         os.symlink(main, self.local)
 
     def tearDown(self):
+        self.watchers.stop()
         self.pause.stop()
         self.environment.stop()
         self.tmp.cleanup()

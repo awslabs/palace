@@ -1182,7 +1182,8 @@ def paladin_job_of(record, context, job, *, log=None):
         machines[job["Name"]] = paladin_backend.PaladinJob(
             job["Plan"], block=context["paladin"], remote_dir=job["RemoteDirectory"], local_dir=job["Directory"],
             mapping=[(remote_main, str(Path(record["Root"]) / "main"))], archive_estimates_gb=archives,
-            log=log or log_line, exclusive=not context.get("paladin_root_locked"))
+            log=log or log_line, exclusive=not context.get("paladin_root_locked"),
+            pbs_bin=context.get("paladin_pbs_bin") or paladin_backend.DEFAULT_PBS_BIN)
     return machines[job["Name"]]
 
 
@@ -2210,6 +2211,7 @@ def run_qualify_run(args, *, log, driver_locks):
             if paladin is not None:
                 context["paladin"] = paladin
                 context["paladin_root_locked"] = bool(driver_locks)
+                context["paladin_pbs_bin"] = profile.get("PBSBin") or paladin_backend.DEFAULT_PBS_BIN
             log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Split']['Decision']})")
             if not args.dry_run:
                 pending.append((record, context))

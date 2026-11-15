@@ -422,6 +422,14 @@ def pause(seconds):
     time.sleep(seconds)
 
 
+class WatcherNotStarted(PaladinError):
+    """A run whose watcher did not start (WATCHER_RULE); .watcher = its record."""
+
+    def __init__(self, message, watcher):
+        super().__init__(message)
+        self.watcher = watcher
+
+
 class DuplicateRuns(PaladinError):
     """Two or more runs of one stage (RESUME_RULE); .runs = the rows."""
 
@@ -542,6 +550,53 @@ def archive_name(source, rank):
     return f"source-{int(source):06d}-rank-{int(rank):06d}-V.bin"
 
 
+WATCHER_RULE = ("decision 1820 (4): every run has an UNATTENDED run watcher (paladin_run_watcher.py; nohup, its own session, "
+                "its own lock, pid file, events.log and end.json under <local>/watchers/<stage>-<run>) started at its submit and "
+                "for an adopted run without a live one: it ends the run early at the stage's CapSeconds (from the PBS start, "
+                "else the submit time) and at the memory bar (0.85 of MemTotal, measured), with 'palace cancel' and, when the "
+                "row is not terminal 120 s later, qdel by the PBS job id; the driver's own cap stays as a second line; a run "
+                "whose watcher does not start is ended early (never left without one)")
+WATCHER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paladin_run_watcher.py")
+WATCHER_INTERVAL_SECONDS, WATCHER_GRACE_SECONDS, WATCHER_MEMORY_BAR = 30.0, 120.0, 0.85
+DEFAULT_PBS_BIN = "/opt/soca/soca-green1/schedulers/default/pbs/bin"
+
+
+class RunWatchers:
+    """Starts paladin_run_watcher.py processes and tells whether one holds a directory (WATCHER_RULE)."""
+
+    def __init__(self):
+        self.processes = []  # kept while the driver lives (a watcher outlives it)
+
+    def alive(self, directory):
+        path = os.path.join(directory, "watcher.lock")
+        if not os.path.exists(path):
+            return False
+        descriptor = os.open(path, os.O_RDWR)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        finally:
+            os.close(descriptor)  # closing it also drops a lock taken just now
+        return False
+
+    def start(self, argv, directory, *, wait_seconds=15.0):
+        """The watcher's pid once it holds its lock, else None."""
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "watcher.out"), "ab") as out:
+            process = subprocess.Popen(["nohup", *argv], stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                       start_new_session=True, close_fds=True)
+        self.processes.append(process)
+        deadline = time.time() + wait_seconds
+        while time.time() < deadline:
+            if self.alive(directory):
+                return process.pid
+            if process.poll() is not None:
+                return None
+            time.sleep(0.1)
+        return None
+
+
 # The tables, logs and meshes paladin 0.2.16 uploads: the run's top level and each AMR iteration's
 # top level (ERRATUM-1802 E-1), never other sub-directories or suffixes.
 UPLOADED_SUFFIXES = (".csv", ".json", ".mesh", ".meshgz")
@@ -551,7 +606,7 @@ class PaladinJob:
     """The paladin runs of ONE run_stages plan, in order (module docstring)."""
 
     def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
-                 log=print, now=utc_now, sleep=None, exclusive=True):
+                 log=print, now=utc_now, sleep=None, exclusive=True, watchers=None, pbs_bin=DEFAULT_PBS_BIN):
         with open(plan_path, "rb") as f:
             data = f.read()
         self.plan = json.loads(data)
@@ -565,6 +620,7 @@ class PaladinJob:
         # LOCK_RULE: the job's local state directory and the plan's directory (two --out directories of one
         # plan are refused too); False when the caller holds its root's lock (qualify_library.run_qualify).
         self.exclusive, self.locks = exclusive, []
+        self.watchers, self.pbs_bin = watchers or RunWatchers(), pbs_bin
         self.host = None if block["Host"] == "local" else block["Host"]
         self.confirmed = set()
         self.case = self.plan["Case"]
@@ -749,6 +805,8 @@ class PaladinJob:
         """The checks of a submit, the submit, the RunID recorded at once; a failed submit
         re-read by the lookup (a no-run row = one re-submit; a refusal = STOP)."""
         name = stage["Name"]
+        if not stage.get("CapSeconds"):
+            raise PaladinError(f"{name}: no CapSeconds: a paladin run is submitted only with a cap ({WATCHER_RULE})")
         path, config = self.write_run_config(stage)
         record["RunConfig"] = {"Path": path, "SHA256": sha256_of(path)}
         record["SchemaCheck"] = self.tool_line([self.block["SchemaCheck"], self.block["Selector"], path], r"VALID ",
@@ -776,10 +834,56 @@ class PaladinJob:
             return None
         run_id = int(data["jobs"][0]["run_id"])
         record["RunID"], record["Submitted"] = run_id, self.now().isoformat()
+        record["JobID"] = data["jobs"][0].get("job_id")
         intent["Outcome"] = f"run {run_id}"
         self.save()
+        self.watch(stage, record)
         self.log(f"{self.case}: submitted {name} as paladin run {run_id} ({self.sizing['Type']} x {self.ranks})")
         return run_id
+
+    def ensure_watcher(self, name, run_id, *, job_id, submitted, cap_seconds):
+        """WATCHER_RULE: a missing watcher started (its record), None when a live one holds the directory."""
+        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"{name}-{run_id}")
+        if self.watchers.alive(directory):
+            return None
+        argv = [sys.executable, WATCHER_PATH, "--run-id", str(run_id), "--job", str(job_id or ""), "--cli", self.block["CLI"],
+                "--host", self.block["Host"], "--pbs-bin", self.pbs_bin, "--cap-seconds", str(float(cap_seconds)),
+                "--submitted", submitted, "--bar", str(WATCHER_MEMORY_BAR), "--interval", str(WATCHER_INTERVAL_SECONDS),
+                "--grace", str(WATCHER_GRACE_SECONDS), "--dir", directory]
+        pid = None
+        for attempt in range(2):
+            pid = self.watchers.start(argv, directory)
+            if pid:
+                break
+        watcher = {"Dir": directory, "PID": pid, "Started": attempt + 1, "UTC": self.now().isoformat(), "Argv": argv,
+                   "Rule": WATCHER_RULE}
+        if pid:
+            self.log(f"{self.case}: {name} run {run_id}: run watcher pid {pid} (cap {float(cap_seconds):.0f} s)")
+            return watcher
+        try:
+            paladin_call(self.block["CLI"], ["palace", "cancel", str(run_id), "--json"])
+            watcher["EarlyEnded"] = True
+        except PaladinError as error:
+            watcher["EarlyEnded"], watcher["Error"] = False, str(error)[:300]
+        raise WatcherNotStarted(f"{name}: the run watcher of run {run_id} did not start (twice): the run is ended early "
+                                f"({'done' if watcher['EarlyEnded'] else 'FAILED: end it by hand'}): STOP ({WATCHER_RULE})",
+                                watcher)
+
+    def watch(self, stage, record):
+        """ensure_watcher for the stage's recorded run, kept in its record (the submit time: the record's,
+        else its last SubmitIntent's, else the adoption time)."""
+        intents = record.get("SubmitIntents") or []
+        submitted = record.get("Submitted") or (intents[-1]["UTC"] if intents else None) or record["Adopted"]["UTC"]
+        try:
+            started = self.ensure_watcher(stage["Name"], record["RunID"], job_id=record.get("JobID"), submitted=submitted,
+                                          cap_seconds=stage["CapSeconds"])
+        except WatcherNotStarted as error:
+            record.setdefault("Watchers", []).append(error.watcher)
+            self.save()
+            raise
+        if started is not None:
+            record.setdefault("Watchers", []).append(started)
+        self.save()
 
     def open_intent(self, record):
         """The last SubmitIntent when it has no Outcome (the driver ended inside its submit), else None."""
@@ -809,6 +913,17 @@ class PaladinJob:
                     entry["EarlyEnded"], entry["Error"] = False, str(error)[:300]
             ended.append(entry)
         duplicate = {"UTC": self.now().isoformat(), "Kept": int(ordered[0]["run_id"]), "Newer": ended, "Rule": INTENT_RULE}
+        # WATCHER_RULE: the kept run keeps a watcher at the stage cap; a newer run whose early end failed gets one at cap 0.
+        watched = [(ordered[0], stage["CapSeconds"])] if run_class(ordered[0].get("status")) == "live" else []
+        watched += [(row, 0) for row, entry in zip(ordered[1:], ended) if entry.get("EarlyEnded") is False]
+        duplicate["Watchers"] = []
+        for row, cap in watched:
+            try:
+                started = self.ensure_watcher(stage["Name"], int(row["run_id"]), job_id=row.get("job_id"),
+                                              submitted=self.now().isoformat(), cap_seconds=cap)
+            except WatcherNotStarted as error:
+                started = error.watcher
+            duplicate["Watchers"].append({"RunID": int(row["run_id"]), "CapSeconds": cap, "Watcher": started})
         archive = self.stage_run_config(stage).get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
         if archive.get("Mode") == "Archive":
             directory = archive["Directory"]
@@ -842,7 +957,7 @@ class PaladinJob:
                            f"{(LOOKUP_REPEATS - 1) * LOOKUP_REPEAT_SECONDS:.0f} s show no run of the stage {identity}: STOP, no "
                            f"second submit ({INTENT_RULE})")
 
-    def adopt(self, record, row, identity):
+    def adopt(self, stage, record, row, identity):
         name = record["Name"]
         if record.get("RunID") not in (None, int(row["run_id"])):
             raise PaladinError(f"{name}: the recorded run {record['RunID']} is not the stage's run {row['run_id']}")
@@ -857,8 +972,12 @@ class PaladinJob:
                                  "InstanceType": row.get("instance_type"), "Nodes": row.get("nodes"),
                                  "Nonce": (row.get("metadata") or {}).get("nonce"), "Rule": RESUME_RULE}
             self.log(f"{self.case}: adopted {name} paladin run {row['run_id']} ({row.get('status')})")
+        if row.get("job_id") and not record.get("JobID"):
+            record["JobID"] = row["job_id"]
         record.setdefault("Identity", identity)
         self.save()
+        if run_class(row.get("status")) == "live":
+            self.watch(stage, record)  # a resume re-attaches to a live watcher or starts a missing one
         return record["RunID"]
 
     def find_or_submit(self, stage, record):
@@ -886,7 +1005,7 @@ class PaladinJob:
                         raise PaladinError(f"{name}: two lookups {SUBMIT_LOOKUP_GAP_SECONDS:.0f} s apart disagree "
                                            f"({value} / {second[1]} no-run rows): STOP, no submit ({INTENT_RULE})")
             if decision == "adopt":
-                return self.adopt(record, value, identity)
+                return self.adopt(stage, record, value, identity)
             if value:
                 record["NoRunRowsBeforeSubmit"] = value
             if self.submit(stage, record) is not None:
@@ -992,7 +1111,11 @@ class PaladinJob:
             record["NodeHours"] = record["WallSeconds"] / 3600.0
         cls = run_class(status)
         if cls in ("cancelled", "out-of-memory", "unknown"):
-            record["State"] = ("timed-out" if cls == "cancelled" and record.get("CapCancel", {}).get("OK") else cls)
+            ended_by = self.watcher_end(record)
+            record["WatcherEnd"] = ended_by
+            record["State"] = ("timed-out" if cls == "cancelled" and (record.get("CapCancel", {}).get("OK") or
+                                                                       (ended_by or {}).get("Kind") == "cap") else
+                               "memory-stop" if cls == "cancelled" and (ended_by or {}).get("Kind") == "memory" else cls)
             self.save()
             raise PaladinError(f"{name}: run {record['RunID']} ended {status} (State {record['State']}): nothing is resubmitted "
                                f"({RESUME_RULE})")
@@ -1064,6 +1187,19 @@ class PaladinJob:
         record["State"] = "complete"
         self.save()
         self.log(f"{self.case}: {name} run {record['RunID']} complete ({record.get('WallSeconds', 0):.0f} s)")
+
+    def watcher_end(self, record):
+        """The end.json of the record's watcher (WATCHER_RULE), or None."""
+        for watcher in reversed(record.get("Watchers") or []):
+            path = os.path.join(watcher["Dir"], "end.json")
+            if os.path.isfile(path):
+                with open(path) as f:
+                    return json.load(f)
+        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"{record['Name']}-{record.get('RunID')}")
+        if os.path.isfile(os.path.join(directory, "end.json")):
+            with open(os.path.join(directory, "end.json")) as f:
+                return json.load(f)
+        return None
 
     def partition_check(self, stage, record):
         """Requires: every required stage completed, on this stage's partition (the archive is per rank)."""
@@ -1150,6 +1286,7 @@ def main(argv=None):
     parser.add_argument("--map", action="append", default=[], help="REMOTE_PREFIX=LOCAL_PREFIX of the stage configurations")
     parser.add_argument("--archive-gb", action="append", default=[], help="DIRECTORY=GB: an archive writer's estimate")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
+    parser.add_argument("--pbs-bin", default=DEFAULT_PBS_BIN, help="the PBS bin directory on Host (the run watchers' qstat / qdel)")
     args = parser.parse_args(argv)
     with open(args.profile) as f:
         block = backend_of("paladin", json.load(f))
@@ -1173,7 +1310,7 @@ def main(argv=None):
     job = None
     try:
         job = PaladinJob(args.plan, block=block, remote_dir=args.remote_dir, local_dir=args.out, mapping=mapping,
-                         archive_estimates_gb=estimates)
+                         archive_estimates_gb=estimates, pbs_bin=args.pbs_bin)
         drive(job, poll_seconds=args.poll_seconds)
     except PaladinError as error:
         print(f"STOP: {error}", file=sys.stderr)
