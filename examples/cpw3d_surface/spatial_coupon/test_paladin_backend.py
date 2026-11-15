@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -163,8 +164,9 @@ class RecordingWatchers:
     def covered(self, runs):
         """The fake's run ids with a recorded watcher: by --run-id, or by --nonce (paladin_run_watcher's NONCE_RULE:
         the nonce watcher finds its run; WatcherInProcess shows that part)."""
-        nonces = {argv[argv.index("--nonce") + 1] for argv, _ in self.started if "--nonce" in argv}
-        return ({run_id for run_id in self.runs() if run_id} |
+        started = [(argv, directory) for argv, directory in self.started if directory in self.live]  # the live ones
+        nonces = {argv[argv.index("--nonce") + 1] for argv, _ in started if "--nonce" in argv}
+        return ({int(argv[argv.index("--run-id") + 1]) for argv, _ in started} - {0} |
                 {int(run_id) for run_id, run in runs.items() if (run.get("metadata") or {}).get("nonce") in nonces})
 
 
@@ -824,6 +826,15 @@ class DriveWithFakeCLI(FakeCLICase):
         self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
 
     def test_a_stop_right_after_a_submit_leaves_the_run_with_its_watcher(self):
+        recording = self.watchers.start
+
+        def the_submit_window_watcher_ends_at_once(argv, directory):
+            pid = recording(argv, directory)
+            if "/nonce-" in directory:
+                self.watchers.live.discard(directory)  # it ended (e.g. its search met a failed listing first)
+            return pid
+
+        self.watchers.start = the_submit_window_watcher_ends_at_once
         self.lookups(["true", "true", "fail"])  # the lookup after the submit fails: STOP
         with self.assertRaises(paladin_backend.PaladinError):
             self.drive()
@@ -1027,6 +1038,18 @@ class DriveWithFakeCLI(FakeCLICase):
         self.assertEqual(json.loads((self.root / "out-B" / "paladin-status.json").read_text())["Stages"]["w"]["RunID"], run_id)
         self.assertEqual(len(self.watchers.started), 1)  # no second watcher for the run
         self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_an_adoption_starts_the_missing_watcher_before_any_poll(self):
+        self.killed_after_the_submit()
+        self.watchers.live.clear()  # the submit-window watcher is gone
+
+        def ended(job, stage, record):
+            raise KeyboardInterrupt("the driver process ends right after the adoption")
+
+        with mock.patch.object(paladin_backend.PaladinJob, "poll", ended), self.assertRaises(KeyboardInterrupt):
+            self.drive()
+        self.assertEqual(self.live_runs_without_a_watcher(), [])
+        self.assertEqual(Path(self.watchers.started[-1][1]).name, f"run-{self.records()['w']['RunID']}")
 
     def test_a_run_whose_watcher_does_not_start_is_ended_early(self):
         recording = self.watchers.start
@@ -1721,6 +1744,16 @@ class WatcherInProcess(GuardedTestCase):
         # started a moment before it: 5 or 6 reads)
         self.assertIn(self.calls.count(["palace", "status"]), (5, 6))
         self.assertFalse((self.dir / "end.json").exists())
+
+    def test_the_read_count_bound_holds_without_a_clock(self):
+        """Decision 1830 (3): the count bound holds by itself (a clock that never advances: the life deadline is never met)."""
+        self.status, self.pbs = "queued", "Q"
+        frozen = types.SimpleNamespace(time=lambda: self.clock.now, sleep=lambda seconds: None)
+        with mock.patch.object(self.module, "time", frozen), \
+                mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0), \
+                mock.patch.object(self.module, "QUEUE_LIFE_SECONDS", 0.0):
+            self.assertEqual(self.run_watcher(cap=5), 5)
+        self.assertEqual(self.calls.count(["palace", "status"]), 15)  # int((0 + 5 + 0) / 1) + 10 reads
 
     def test_a_run_queued_beyond_cap_plus_one_day_keeps_its_watcher_and_is_capped_from_its_pbs_start(self):
         """Review r1833 MINOR-4 (b): the life bound counted from the watcher's start ended it while queued (exit 5)."""
