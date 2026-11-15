@@ -97,9 +97,10 @@ public:
   // and return num_converged = 0. omega may be complex (eigenmode nonlinear solve, where
   // the cross-section EVP is solved at the genuinely complex eigenvalue ω = -i·λ); the
   // shift sigma stays real (a pure algebraic centering). For real omega (imag = 0) the
-  // assembly and solve reduce bit-for-bit to the real-frequency form.
-  SolveResult Solve(std::complex<double> omega, double sigma,
-                    const ComplexVector *initial_space = nullptr);
+  // assembly and solve reduce bit-for-bit to the real-frequency form. Every exact solve
+  // starts from the same vector, so its result depends on omega and sigma only, not on the
+  // solves before it.
+  SolveResult Solve(std::complex<double> omega, double sigma);
 
   // Collect exact real-frequency eigenvectors for a per-port reduced model. Reduced
   // evaluation remains disabled until EnableReducedModel is called, so adaptive offline
@@ -181,6 +182,10 @@ private:
   // Cached FE space sizes.
   int nd_size, h1_size;
 
+  // Initial space of every exact solve: ones on the unknowns of the tangential field which
+  // are not essential.
+  ComplexVector v0;
+
   // Shift and frequency of the most recent Solve.
   double sigma_cached = 0.0;
   std::complex<double> omega_cached = 0.0;
@@ -219,9 +224,6 @@ private:
 
   // Wave-port-only projection/training state is isolated from the exact eigensolver.
   std::unique_ptr<WavePortReducedModel> reduced_model;
-
-  // Best portable single-vector initial space for subsequent exact solves.
-  ComplexVector warm_start;
 
   // Permutation that maps external mode index to eigensolver index, sorted by ascending
   // |kn - kn_target| (see mode_assembly::TargetDistance). This ensures consistent mode

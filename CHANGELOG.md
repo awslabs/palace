@@ -227,6 +227,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sapphire substrate, and AMR spent refinement there. The error indicator decreases for
     models with material interfaces, and their AMR meshes change.
     [PR 1072](https://github.com/awslabs/palace/pull/1072).
+  - Fixed wave port sweeps with a degenerate pair of port modes, where the polarization
+    selected within the pair could change between frequencies: the fields of the sweep were
+    then not those of one excitation, and an adaptive sweep could excite another
+    polarization than it was trained with. Every port mode solve now starts from the same
+    vector and no longer depends on the solves before it, also in `BoundaryMode`
+    simulations. The index of a mode above an exactly degenerate pair can still depend on
+    roundoff. [PR 1208](https://github.com/awslabs/palace/pull/1208).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).

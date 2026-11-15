@@ -1519,6 +1519,33 @@ palace::test::CustomCheck TestFloquetAbsorbingEigen(double rtol)
   };
 }
 
+// The transverse electric field at probe 1 (columns E_x and E_y of probe-E.csv) has the
+// same polarization at every frequency: (E_x, E_y) of each row is a complex multiple of
+// that of the first row, to a relative tol. One polarization of a mode of a homogeneous
+// guide has this property. Which polarization of a degenerate pair is selected depends on
+// the partition of the mesh, so that the field itself has no reference value.
+palace::test::CustomCheck TestProbePolarization(double tol)
+{
+  return [tol](palace::Table &a, palace::Table &, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() >= 5);
+    REQUIRE(a.n_rows() > 1);
+    auto E = [&a](std::size_t i, std::size_t c)
+    { return std::complex<double>(a[c].data[i], a[c + 1].data[i]); };
+    const std::complex<double> ex0 = E(0, 1), ey0 = E(0, 3);
+    const double mag0 = std::hypot(std::abs(ex0), std::abs(ey0));
+    REQUIRE(mag0 > 0.0);
+    for (std::size_t i = 1; i < a.n_rows(); ++i)
+    {
+      const std::complex<double> ex = E(i, 1), ey = E(i, 3);
+      INFO("row " << i + 1 << ": E_x = " << ex << ", E_y = " << ey
+                  << ", row 1: E_x = " << ex0 << ", E_y = " << ey0);
+      CHECK(std::abs(ex * ey0 - ey * ex0) <=
+            tol * std::hypot(std::abs(ex), std::abs(ey)) * mag0);
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -1901,6 +1928,24 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
   opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_cutoff.json",
                                   "driven_wave_tm_cutoff", opts);
+}
+
+// TE11 (Mode 1) of the circular guide is a degenerate pair, and the field at a point off
+// the axis shows which polarization each port mode solve selected: it must be the same at
+// every frequency. Which one it is depends on the partition of the mesh, so the probed
+// fields are not compared with the reference. S11 and the energies do not depend on the
+// polarization; |S11| is round-off around 0 dB.
+TEST_CASE("cylinder_driven_wave_te11_sweep", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "(dB)"};
+  opts.custom_checks["probe-E.csv"] = TestProbePolarization(1.0e-4);
+  opts.excluded_files = {"probe-B.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_te11_sweep.json",
+                                  "driven_wave_te11_sweep", opts);
 }
 
 // TE11 mode of the lossless PEC-shorted circular waveguide swept from below its cutoff
