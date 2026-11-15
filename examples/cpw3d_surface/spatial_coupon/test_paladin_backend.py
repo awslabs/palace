@@ -842,6 +842,61 @@ class DriveWithFakeCLI(FakeCLICase):
         check = paladin_backend.session_check(write_cookie(self.cookie, 7200), 1800)
         self.assertEqual((check["Verdict"], check["Entries"]), ("OK", 1))  # the 'other' entry is not a session entry
 
+    # Decision 1820 m-1: the completion read = PREREG-ESSURR-NOTE-1 exactly.
+    def test_an_error_line_that_is_not_the_upload_harness_s_fails_condition_3(self):
+        self.script({"chainport-w": "failed-other-error"})
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        record = self.records()["w"]
+        self.assertFalse(record["CompletionRead"]["Conditions"]["3-OnlyUploadErrors"])
+        self.assertEqual(record["State"], "failed")
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_a_missing_table_of_a_full_solve_fails_condition_4(self):
+        self.script({"chainport-local-edge": "missing-table"})
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        record = self.records()["local-edge"]
+        self.assertEqual(record["CompletionRead"]["MissingOutputs"], ["error-indicators.csv"])
+        self.assertEqual(record["State"], "failed")
+
+    def test_a_run_its_watcher_ended_fails_condition_5(self):
+        self.script({"chainport-w": "failed-upload"})
+        real = paladin_backend.PaladinJob.watcher_end
+        with mock.patch.object(paladin_backend.PaladinJob, "watcher_end",
+                               lambda job, record: {"Kind": "memory"} if record["Name"] == "w" else real(job, record)), \
+                self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        self.assertFalse(self.records()["w"]["CompletionRead"]["Conditions"]["5-NoStop"])
+
+    def test_the_expected_outputs_per_stage_type(self):
+        main = self.plan_path.parent
+        configs = {name: paladin_backend.run_config(json.loads((main / f"{name}-in.json").read_text()), environment)
+                   for name, environment in (("w", WORKER), ("r", REDUCER), ("local-edge", {}))}
+        self.assertEqual(paladin_backend.expected_outputs(configs["w"]), ["palace.json", "palace_config_resolved.json"])
+        self.assertEqual(paladin_backend.expected_outputs(configs["r"]),
+                         ["domain-response-matrix.csv", "palace.json", "palace_config_resolved.json", "surface-response-matrix.csv"])
+        self.assertIn("error-indicators.csv", paladin_backend.expected_outputs(configs["local-edge"]))
+        estimate = paladin_backend.run_config(json.loads((main / "w-in.json").read_text()),
+                                              {"PALACE_RESPONSE_ESTIMATE_ONLY": "1", "PALACE_RESPONSE_ARCHIVE_DIR": ARCHIVE})
+        with self.assertRaises(paladin_backend.PaladinError):
+            paladin_backend.expected_outputs(estimate)  # no list: not submitted
+
+    REHEARSAL = Path("/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/stageF/chainport/"
+                     "yb-rehearsal-1/driver/thin-spatial-3-edge-a61f856dce13/spatial-3-edge-a61f856dce13-thin")
+
+    @unittest.skipUnless(REHEARSAL.is_dir(), "the Y-b rehearsal's records (2026-11-15) are absent on this host")
+    def test_the_expected_outputs_equal_the_rehearsal_s_real_rows(self):
+        """The three stage types of the rehearsal (paladin runs 14813302 / 14813397 / 14813418): the names the rule
+        expects = the names each real row wrote (its fetched postpro copy)."""
+        for stage, output in (("p4-worker", "p4/worker"), ("p4-reducer", "p4/reducer"), ("p4-local-edge", "p4-local-edge/output")):
+            with self.subTest(stage=stage):
+                prefix = "spatial-3-edge-a61f856dce13-thin-"
+                config = json.loads((self.REHEARSAL / "main" / "paladin" / f"{prefix}{stage}.json").read_text())
+                directory = self.REHEARSAL / "results" / "main" / (prefix + output.split("/")[0]) / "/".join(output.split("/")[1:])
+                written = sorted(path.name for path in directory.iterdir() if path.is_file())
+                self.assertEqual(paladin_backend.expected_outputs(config), written)
+
     def test_a_multi_node_plan_is_refused(self):
         plan_path, _ = three_stage_plan(self.root / "multi", nodes=2)
         with self.assertRaises(paladin_backend.PaladinError):

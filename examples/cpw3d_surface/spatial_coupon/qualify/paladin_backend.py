@@ -468,26 +468,50 @@ def run_class(status):
             "out_of_memory": "out-of-memory"}.get(status, "unknown")
 
 
+OUTPUTS_RULE = ("PREREG-ESSURR-NOTE-1 (4), decision 1820 m-1: the postpro names every completed run of a stage type writes: "
+                "palace.json and palace_config_resolved.json; Mode Archive nothing else; Mode Reduce the two response matrices; a "
+                "full solve error-indicators.csv, the two matrices (Solver.Electrostatic.ResponseMatrix), domain-E.csv "
+                "(Domains.Postprocessing.Energy), surface-Q.csv (Boundaries.Postprocessing.Dielectric), surface-Q-edge.csv "
+                "(LocalizeEdgeEnergy) and surface-Q-edge-local.csv (SaveLocalEdgeEnergy); any other stage type has no list and "
+                "is not submitted")
+MATRICES = ["domain-response-matrix.csv", "surface-response-matrix.csv"]
+
+
 def expected_outputs(config):
-    """The postpro files every completed run of this configuration writes (palace.json; the two
-    response matrices of a reducer or of a response-matrix solve that is not an archive writer).
-    The chain's own validations read the other tables later."""
-    names = ["palace.json"]
+    """OUTPUTS_RULE: the sorted postpro names of the stage configuration, or PaladinError (no list)."""
+    names = ["palace.json", "palace_config_resolved.json"]
     electrostatic = config.get("Solver", {}).get("Electrostatic", {})
     mode = electrostatic.get("ResponseArchive", {}).get("Mode")
-    if mode == "Reduce" or (mode is None and electrostatic.get("ResponseMatrix")):
-        names += ["domain-response-matrix.csv", "surface-response-matrix.csv"]
-    return names
+    if config.get("Problem", {}).get("Type") != "Electrostatic" or mode not in (None, "Archive", "Reduce"):
+        raise PaladinError(f"no expected-output list for a {config.get('Problem', {}).get('Type')} stage of Mode {mode} "
+                           f"({OUTPUTS_RULE})")
+    if mode == "Reduce":
+        names += MATRICES
+    elif mode is None:
+        dielectric = config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", [])
+        names.append("error-indicators.csv")
+        if electrostatic.get("ResponseMatrix"):
+            names += MATRICES
+        if config.get("Domains", {}).get("Postprocessing", {}).get("Energy"):
+            names.append("domain-E.csv")
+        if dielectric:
+            names.append("surface-Q.csv")
+        if any(entry.get("LocalizeEdgeEnergy") for entry in dielectric):
+            names.append("surface-Q-edge.csv")
+        if any(entry.get("SaveLocalEdgeEnergy") for entry in dielectric):
+            names.append("surface-Q-edge-local.csv")
+    return sorted(names)
 
 
+UPLOAD_HARNESS_ERROR = "qdash_das.palace.runner.process_harness: harness upload"
 COMPLETION_RULE = ("PREREG-ESSURR-NOTE-1: a row failed by the qdash upload ALONE is a completed run iff (1) log.out has 'Elapsed "
                    "Time Report (s)', (2) console.log has 'Runner finished (exit 0)', (3) every ERROR line of console.log is the "
-                   "upload harness's (at least one), (4) every expected output is present by name, (5) no cap / memory stop fired "
-                   "(this backend issued no cancel; paladin's own guard ends a row out_of_memory, not failed); a completed row "
-                   "must show (1), (2) and (4)")
+                   "upload harness's ('" + UPLOAD_HARNESS_ERROR + "'; at least one), (4) every expected output is present by "
+                   "name (OUTPUTS_RULE), (5) no cap / memory stop fired (no cancel by this backend, no end.json of the run "
+                   "watcher; paladin's own guard ends a row out_of_memory, not failed); a completed row must show (1), (2) and (4)")
 
 
-def completion_read(host, run_dir, expected, *, row_status, cancelled_by_backend):
+def completion_read(host, run_dir, expected, *, row_status, cancelled_by_backend, watcher_end=None):
     """The five conditions of COMPLETION_RULE read on the run directory."""
     q = shlex.quote(run_dir)
     text = remote_text(host, f"cd {q} && echo ELAPSED $(grep -c 'Elapsed Time Report (s)' log.out 2>/dev/null); "
@@ -505,9 +529,9 @@ def completion_read(host, run_dir, expected, *, row_status, cancelled_by_backend
     conditions = {
         "1-ElapsedTimeReport": int(value.get("ELAPSED", "0") or 0) >= 1,
         "2-RunnerFinishedExit0": int(value.get("FINISHED", "0") or 0) >= 1,
-        "3-OnlyUploadErrors": (bool(errors) and all("upload" in line for line in errors)) if failed else True,
+        "3-OnlyUploadErrors": (bool(errors) and all(UPLOAD_HARNESS_ERROR in line for line in errors)) if failed else True,
         "4-ExpectedOutputs": all(name in files for name in expected),
-        "5-NoStop": not cancelled_by_backend and str(row_status).lower() != "out_of_memory",
+        "5-NoStop": not cancelled_by_backend and watcher_end is None and str(row_status).lower() != "out_of_memory",
     }
     return {"Conditions": conditions, "Holds": all(conditions.values()), "ErrorLines": errors, "TracebackLast": last,
             "MissingOutputs": [name for name in expected if name not in files], "RowStatus": row_status, "Rule": COMPLETION_RULE}
@@ -1176,7 +1200,7 @@ class PaladinJob:
                                f"1 x {self.ranks}: STOP")
         config = self.stage_run_config(stage)
         read = completion_read(self.host, run_dir, expected_outputs(config), row_status=status,
-                               cancelled_by_backend=bool(record.get("CapCancel")))
+                               cancelled_by_backend=bool(record.get("CapCancel")), watcher_end=self.watcher_end(record))
         record["CompletionRead"] = read
         conditions = read["Conditions"]
         holds = read["Holds"] if cls == "failed" else all(conditions[key] for key in
