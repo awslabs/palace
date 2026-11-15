@@ -1,0 +1,111 @@
+{
+  // The periodic cell of examples/pml_oblique filled with a dielectric (relative
+  // permittivity 9) and terminated by a +z PML region whose background is a uniaxial
+  // crystal of principal permittivities 9, 1, and 9 on material axes rotated
+  // by -45° about x. The PML stands for a half-space of the crystal, so the reflection of a
+  // TM plane wave at 30° (Floquet wave vector k_y = 3 k₀ sin(30°) at 1 GHz) is the Fresnel
+  // reflection of that half-space, -10.065 dB, although the phase of the wave in the
+  // crystal runs towards the interface (k_z / k₀ = -0.205).
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/uniaxial_30_tm",
+    "OutputFormats":
+    {
+      "Paraview": false
+    }
+  },
+  "Model":
+  {
+    "Mesh": "mesh/pml_oblique.msh",
+    "L0": 1.0
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 9.0
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": [9.0, 1.0, 9.0],
+        "MaterialAxes":
+        [
+          [1.0, 0.0, 0.0],
+          [0.0, 0.7071067811865476, -0.7071067811865476],
+          [0.0, 0.7071067811865476, 0.7071067811865476]
+        ]
+      }
+    ],
+    "PML":
+    [
+      {
+        "Attributes": [2],
+        "Direction": ["+Z"],
+        "Thickness": 0.3,
+        "Order": 3,
+        "ReflectionTarget": 1.0e-12,
+        "ReferenceFrequency": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.0, 31.437675, 0.0],
+      "FloquetReferenceFrequency": 1.0,
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        },
+        {
+          "DonorAttributes": [5],
+          "ReceiverAttributes": [6]
+        }
+      ]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [7],
+        "Excitation": true,
+        "IncidentPolarization": "TM",
+        "MaxOrder": 0
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [8]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 1.0,
+      "MaxFreq": 1.0,
+      "FreqStep": 0.5,
+      "SaveStep": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 300,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}
