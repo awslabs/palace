@@ -155,7 +155,7 @@ TEST_CASE("Coverage claim-end match by the round-off rule",
   CHECK(near == Match::NEAR);
   CHECK(distance > 0.0);
   p[0] = v[0] - 2.0e-5 * R;
-  CHECK(SurfacePostOperator::ClassifyClaimEnd(p, v, R).first == Match::FAR);
+  CHECK(SurfacePostOperator::ClassifyClaimEnd(p, v, R).first == Match::BEYOND);
   // A zero coordinate: the bar is 16 eps R there.
   const std::array<double, 3> zero = {0.0, 0.0, 0.0};
   auto q = zero;

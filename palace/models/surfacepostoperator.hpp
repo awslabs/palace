@@ -495,13 +495,14 @@ public:
   };
   // Rulings 1714 / 1715: a portion end against a tree-segment end point. EXACT: every
   // coordinate equal; ROUNDOFF: |p_d - v_d| <= kClaimEndRoundoffUlps eps max(|v_d|, R) for
-  // every d; NEAR: otherwise within kSupportEndCoincidenceOverRadius R; FAR: beyond.
+  // every d; NEAR: otherwise within kSupportEndCoincidenceOverRadius R; BEYOND: beyond
+  // (not FAR: zlib's zconf.h defines FAR as an empty macro).
   enum class ClaimEndMatch : char
   {
     EXACT,
     ROUNDOFF,
     NEAR,
-    FAR
+    BEYOND
   };
   static std::pair<ClaimEndMatch, double> ClassifyClaimEnd(const std::array<double, 3> &p,
                                                            const std::array<double, 3> &v,

@@ -1643,7 +1643,7 @@ SurfacePostOperator::ClassifyClaimEnd(const std::array<double, 3> &p,
                               : roundoff ? ClaimEndMatch::ROUNDOFF
                               : distance <= kSupportEndCoincidenceOverRadius * radius
                                   ? ClaimEndMatch::NEAR
-                                  : ClaimEndMatch::FAR;
+                                  : ClaimEndMatch::BEYOND;
   return {match, distance};
 }
 
