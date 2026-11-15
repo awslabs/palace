@@ -12,7 +12,8 @@ Most of these meshes are copies of files in the `data/` folder of MFEM v4.10
 
 The header comment of `fichera-hex.mesh`, `fichera-mixed-p2.mesh`, `star-mixed-p2.mesh`,
 and `star-quad.mesh` differs from the MFEM file; the rest of each file is the same.
-`nc-boundary-submesh.mesh` was written for *Palace*; its header describes it.
+`nc-boundary-submesh.mesh` and `cube-pyramid.mesh` were written for *Palace*; their
+headers describe them.
 
 The unit tests also use `star-tri.mesh` and `fichera-tet.mesh`, which are not stored here.
 `TestMeshPath` in `test/unit/test-helpers.hpp` generates them from `star-quad.mesh` and
