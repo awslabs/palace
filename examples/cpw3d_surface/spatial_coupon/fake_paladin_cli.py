@@ -16,6 +16,7 @@ The state's "Plan" maps a run label to its scripted end:
   that names an upload but is not the harness's) | failed-deep-error (25 harness ERROR lines, then one other
   ERROR line: beyond a first-20 read) | failed-stray-exception (an exception line after the harness traceback's
   own, with no traceback of its own) | failed-foreign-traceback (a traceback before any ERROR line) |
+  failed-second-traceback (the harness traceback, then a second traceback with no new ERROR line: review r1836 C1) |
   failed-upload-extra / completed-extra (as failed-upload / completed, plus a postpro file no rule names).
 The state's "Lookups" is a list of answers for the next `palace my-jobs` calls, one consumed per
 call (decision 1820 (1); the review r1799's R1 / R2 / R3): empty (rc 0, no rows) | omitted (rc 0,
@@ -75,7 +76,8 @@ def write_outputs(run, end):
     ranks = run["ranks"]
     os.makedirs(os.path.join(run_dir, "postpro"), exist_ok=True)
     finished = end in ("completed", "failed-upload", "failed-other-error", "short-archive", "drift", "missing-table",
-                       "failed-deep-error", "failed-stray-exception", "failed-foreign-traceback", "failed-upload-extra",
+                       "failed-deep-error", "failed-stray-exception", "failed-foreign-traceback", "failed-second-traceback",
+                       "failed-upload-extra",
                        "completed-extra")
     with open(os.path.join(run_dir, "log.out"), "w") as f:
         f.write(LOG.format(ranks=ranks, tail=TIME_REPORT if finished else "MPI_ABORT\n"))
@@ -92,6 +94,8 @@ def write_outputs(run, end):
         if end == "failed-deep-error":
             f.write("ERROR qdash_das.palace.runner.process_harness: harness upload retry\n" * 24 +
                     "ERROR qdash_das.palace.runner.artifacts: the artifact index was not written\n")
+        if end == "failed-second-traceback":
+            f.write("Traceback (most recent call last):\n  File \"runner.py\", line 1\nRuntimeError: the solver step failed\n")
         if end == "failed-stray-exception":
             f.write("ValueError: the result table was truncated\n")
         f.write("Runner finished (exit 0)\n" if finished else "Runner finished (exit 1)\n")

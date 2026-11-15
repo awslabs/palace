@@ -519,7 +519,9 @@ UPLOAD_HARNESS_ERROR = "qdash_das.palace.runner.process_harness: harness upload"
 COMPLETION_RULE = ("PREREG-ESSURR-NOTE-1 (decision 1836 m-6: exactly): a row failed by the qdash upload ALONE is a completed run "
                    "iff (1) log.out has 'Elapsed Time Report (s)', (2) console.log has 'Runner finished (exit 0)', (3) EVERY ERROR "
                    "line of console.log is the upload harness's ('" + UPLOAD_HARNESS_ERROR + "'; at least one), every traceback "
-                   "follows such a line and every exception line follows such a traceback (its last line judged and quoted), (4) the "
+                   "follows such a line, ONE traceback per such line (decision 1844: a second traceback without a new harness ERROR "
+                   "line, a chained one included, is an error other than the upload's) and every exception line ends such a "
+                   "traceback (its last line judged and quoted), (4) the "
                    "postpro file names equal OUTPUTS_RULE's list (every difference reported; an untraced one = not shown), (5) no "
                    "cap / memory stop fired (no cancel by this backend, no end.json of the run watcher, its events.log without a CAP "
                    "/ MEMORY line and its END line read: 'END exit 0' (or 5, its life bound: no stop); paladin's own guard ends a row out_of_memory, not failed); a "
@@ -539,7 +541,7 @@ def judge_console(marks, error_count):
             if not anchor:
                 offending.append(text)
         elif text.startswith("Traceback (most recent call last)"):
-            traceback_ok = bool(anchor)
+            traceback_ok, anchor = bool(anchor), False  # one traceback per harness ERROR line (decision 1844)
             if not traceback_ok:
                 offending.append(text)
         else:  # an exception line: it must end a traceback of the harness's (one exception line per traceback)

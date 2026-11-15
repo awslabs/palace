@@ -1195,7 +1195,8 @@ class DriveWithFakeCLI(FakeCLICase):
 
     def test_the_traceback_s_last_line_is_judged(self):
         for end, offending in (("failed-stray-exception", "ValueError: the result table was truncated"),
-                               ("failed-foreign-traceback", "Traceback (most recent call last):")):
+                               ("failed-foreign-traceback", "Traceback (most recent call last):"),
+                               ("failed-second-traceback", "Traceback (most recent call last):")):  # decision 1844 (C1)
             with self.subTest(end=end):
                 self.setUp_fresh()
                 self.script({"chainport-w": end})
@@ -1207,14 +1208,32 @@ class DriveWithFakeCLI(FakeCLICase):
                 self.assertEqual(self.records()["w"]["State"], "failed")
 
     def test_the_harness_s_own_traceback_passes_and_is_quoted(self):
+        harness_line = "ERROR qdash_das.palace.runner.process_harness: harness upload final tick failed"
         holds, offending, last = paladin_backend.judge_console(
-            [(1, "ERROR qdash_das.palace.runner.process_harness: harness upload final tick failed"),
-             (2, "Traceback (most recent call last):"), (9, "KeyError: 'x'"), (10, "Traceback (most recent call last):"),
-             (14, "pyarrow.lib.ArrowTypeError: (1)")], 1)
-        self.assertEqual((holds, offending, last), (True, [], "pyarrow.lib.ArrowTypeError: (1)"))  # a chained exception
+            [(1, harness_line), (2, "Traceback (most recent call last):"), (9, "pyarrow.lib.ArrowTypeError: (1)")], 1)
+        self.assertEqual((holds, offending, last), (True, [], "pyarrow.lib.ArrowTypeError: (1)"))
+        # two harness ERROR lines, each with its own traceback
+        self.assertTrue(paladin_backend.judge_console(
+            [(1, harness_line), (2, "Traceback (most recent call last):"), (5, "KeyError: 'x'"), (6, harness_line),
+             (7, "Traceback (most recent call last):"), (9, "pyarrow.lib.ArrowTypeError: (1)")], 2)[0])
         harness = (1, "ERROR " + paladin_backend.UPLOAD_HARNESS_ERROR + " final tick failed")
         self.assertTrue(paladin_backend.judge_console([harness], 1)[0])
         self.assertFalse(paladin_backend.judge_console([harness], 2)[0])  # 2 ERROR lines counted, 1 read: not all judged
+
+    def test_c1_a_second_traceback_without_a_new_harness_line_is_another_error(self):
+        """Decision 1844 (review r1836 MINOR-3, probe C1): was holds True, offending [] (the anchor stayed True until the next
+        ERROR line).  One traceback per harness ERROR line: a chained exception (two tracebacks after one ERROR line; its
+        'During handling ...' line is not marked) now fails too (round 2 had asserted it passes)."""
+        harness = (1, "ERROR " + paladin_backend.UPLOAD_HARNESS_ERROR + " final tick failed for run 1")
+        trace = "Traceback (most recent call last):"
+        holds, offending, last = paladin_backend.judge_console(
+            [harness, (2, trace), (3, "pyarrow.lib.ArrowTypeError: (1)"), (4, trace),
+             (5, "RuntimeError: the solver step failed")], 1)
+        self.assertEqual((holds, offending, last), (False, [trace, "RuntimeError: the solver step failed"],
+                                                    "RuntimeError: the solver step failed"))
+        chained = [harness, (2, trace), (9, "KeyError: 'x'"), (10, trace), (14, "pyarrow.lib.ArrowTypeError: (1)")]
+        self.assertFalse(paladin_backend.judge_console(chained, 1)[0])
+        self.assertFalse(paladin_backend.judge_console([harness, (2, trace), (3, trace), (4, "KeyError: 'x'")], 1)[0])
 
     def test_every_name_difference_is_reported(self):
         self.script({"chainport-w": "failed-upload-extra", "chainport-local-edge": "completed-extra"})
