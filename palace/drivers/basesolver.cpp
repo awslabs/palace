@@ -709,7 +709,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
                                         : " and surface-response-geometry-fallbacks.csv")));
   }
   // Lane L1 (DESIGN-v2 s4.5): the coverage banner closes the run summary (a line per
-  // cell whose coverage status is not OK or whose regime is OUT; never silent).
+  // cell whose coverage status is not OK or whose regime is not IN; never silent).
   if (!coverage_banner.empty())
   {
     Mpi::Print("{}", coverage_banner);

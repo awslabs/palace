@@ -169,8 +169,10 @@ file. These include:
     `surface-response-uncovered-energy-by-key.csv` lists the uncovered energy per missing
     key, and `terminal-C-corrected-coverage.csv` the status of each corrected capacitance
     entry. The same columns are appended to `surface-Q-corrected.csv` and
-    `surface-response-confidence.csv`, and every cell that is not `OK` is named by the
-    end-of-run banner and in `palace.json`. A coverage status is about coverage only; the
+    `surface-response-confidence.csv`, and every cell that is not `OK`, or whose regime
+    status is not `IN` (computed, NOT VALIDATED in this regime), is named by the end-of-run
+    banner (at most 40 cell lines, then a line counting the rest) and in `palace.json`
+    (`SurfaceResponse.Coverage.Flagged`: every such cell). A coverage status is about coverage only; the
     regime status says whether the covered part's correction factor lies in the range
     validated for this library and excitation class; NEITHER says that the mesh of the
     solve resolves the field at the correction radius. See

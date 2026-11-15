@@ -52,7 +52,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Complete": true` only with that reason. The coverage block names the AMR `Level` that
     wrote it of `Levels` (`Refinement.MaxIts` + 1) and gets `"Final": true` only after the
     AMR loop has ended, so the block of a run killed during a later level is not read as
-    final.
+    final. A cell whose coverage is `OK` but whose regime is `NO-RANGE` is flagged per cell
+    (banner and `SurfaceResponse.Coverage.Flagged`) as an `OK` + `OUT` cell is, with the
+    words "computed, NOT VALIDATED in this regime".
 
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the

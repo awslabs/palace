@@ -2681,10 +2681,13 @@ report (never `OK`; ``U`` is printed as computed; the worst status of all);
 all, its corrected values are its raw values): its within-``R`` raw energy is in its
 `Type`'s ``W`` and counts as uncovered, and the cell reads `TARGET-NOT-SERVED` whatever its
 band (worse than every band, never `OK`); a startup warning names the interface. Every
-status but `OK` and `NOT-TARGET` is listed by the end-of-run banner, which
-names the bars as interim thresholds and the untargeted interfaces once, and in
-`SurfaceResponse.Coverage` of `palace.json`: the status counts, the regime counts, every
-flagged cell, the counts of served pending and status-less models, `UntargetedInterfaces`,
+cell whose status is not `OK` (`NOT-TARGET` aside) or whose regime status is not `IN` (an
+`OK` cell that reads `NO-RANGE` or `OUT`: its correction factor is computed, NOT VALIDATED
+in this regime) is listed by the end-of-run banner, one line per cell and at most 40 such
+lines (then one line counting the others), which names the bars as interim thresholds and
+the untargeted interfaces once, and in `SurfaceResponse.Coverage` of `palace.json`: the
+status counts, the regime counts, every flagged cell (`Flagged`: all of them, also those
+beyond the banner's 40 lines), the counts of served pending and status-less models, `UntargetedInterfaces`,
 `ConfiguredTargetsNotServed` (each such interface with its `Type` and the reason),
 `CellSet` (the kind of cell key, the number of measurements, the `Type`s and the number of
 cells: the rows of `surface-response-coverage.csv`), `"Complete": true`, `Level` and

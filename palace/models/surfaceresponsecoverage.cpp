@@ -1055,7 +1055,10 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
     const std::string regime_status(RegimeStatusName(cell.regime));
     status_counts[status] = status_counts.value(status, 0) + 1;
     regime_counts[regime_status] = regime_counts.value(regime_status, 0) + 1;
-    if ((cell.status == CoverageStatus::OK && cell.regime != RegimeStatus::OUT) ||
+    // Erratum 1784 E-2 (ERRATUM-1581 MJ-2: NO-RANGE is never OK, a contact like OUT): a
+    // cell is flagged unless its coverage is OK AND its regime IN; an OK + NO-RANGE cell is
+    // flagged per cell as an OK + OUT cell is.
+    if ((cell.status == CoverageStatus::OK && cell.regime == RegimeStatus::IN) ||
         cell.status == CoverageStatus::NOT_TARGET)
     {
       continue;  // a NOT-TARGET Type: named once in UntargetedInterfaces
@@ -1193,7 +1196,8 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
     }
     else if (regime_status == "NO-RANGE")
     {
-      factor = fmt::format("covered factor {} (no validated range: NO-RANGE)",
+      factor = fmt::format("covered factor {} (no validated range: NO-RANGE: computed, NOT "
+                           "VALIDATED in this regime)",
                            Factor(entry.at("covered correction factor")));
     }
     else
@@ -1255,8 +1259,8 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
   {
     banner +=
         fmt::format("Coverage: {:d} of {:d} cell(s) NO-RANGE (no validated range of the "
-                    "covered correction factor for this library and excitation "
-                    "class)\n",
+                    "covered correction factor for this library and excitation class: "
+                    "computed, NOT VALIDATED in this regime)\n",
                     no_range, metadata.at("Cells").get<int>());
   }
   if (const auto census = metadata.find("ClaimEndCensus"); census != metadata.end())

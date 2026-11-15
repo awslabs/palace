@@ -356,7 +356,8 @@ struct CoverageRunRecord
 };
 // palace.json SurfaceResponse.Coverage: the policy, the interim bars, the regime file, the
 // status counts and one entry per cell whose coverage status is not OK or whose regime is
-// OUT (energies in J by `energy_scale`; nan as null). Erratum 1784 E-3: `level` of
+// not IN (erratum 1784 E-2: an OK + NO-RANGE cell is flagged as an OK + OUT cell is;
+// energies in J by `energy_scale`; nan as null). Erratum 1784 E-3: `level` of
 // `levels` = the solve of the AMR sequence that wrote the block (1 = the initial mesh) of
 // Refinement.MaxIts + 1 (1 without AMR), written as Level / Levels; the block never holds
 // "Final" (BaseSolver adds it once the AMR loop has ended).
@@ -364,8 +365,10 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                    const CoverageThresholds &thresholds,
                                    const CoverageValidatedRegime &regime,
                                    double energy_scale, int level, int levels);
-// The end-of-run banner of palace.json's block (a line per non-OK / OUT cell, capped; one
-// NO-RANGE summary line; one line naming the status-less served models).
+// The end-of-run banner of palace.json's block (a line per flagged cell: coverage not OK or
+// regime not IN, a NO-RANGE cell's line saying "computed, NOT VALIDATED in this regime";
+// at most 40 such lines, then one line counting the rest, which palace.json's Flagged
+// lists; one NO-RANGE summary line; one line naming the status-less served models).
 std::string CoverageRunBanner(const nlohmann::json &metadata);
 
 // Ruling 1688 (the stage-0 Missing LENGTH line; a log line only): the uncovered portions
