@@ -2671,6 +2671,13 @@ value does not exist):
     interface `W within-R raw[k] (J)` and `uncovered raw share of W[k]`, then per `Type` the
     six columns suffixed with the `Type`; `surface-response-confidence.csv` gains `worst
     uncovered raw share of W`, `worst coverage status` and `worst regime status`.
+  - INTERIM: every coverage-status column (`coverage status` in
+    `surface-response-coverage.csv` and `surface-Q-corrected.csv`, `worst coverage status`
+    in `surface-response-confidence.csv`, the entries and `source final worst coverage
+    status` of `terminal-C-corrected-coverage.csv`) is read on the INTERIM bars below
+    (placeholders until the status validation fixes them). The CSV column names carry no
+    marker of it; `palace.json` (`SurfaceResponse.Coverage.Thresholds.Interim`: true) and the
+    end-of-run banner ("interim thresholds") do.
 
 The coverage status of a cell, on ``(U + U_{pending}) / W`` with the INTERIM bars of
 `"Coverage"`: `OK` at or below `BuildTarget`, `LOW` at or below `MaxUncoveredShare`,
