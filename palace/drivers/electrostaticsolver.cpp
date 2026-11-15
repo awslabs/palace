@@ -1324,6 +1324,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                      post_op.GetSurfacePostOp().GetInterfacePerimeterLengths(
                          targets, {missing, method_gap}),
                      response_correction->GetIdentificationFeatureLengths(), iodata.units));
+      const auto not_served = response_correction->GetConfiguredTargetsNotServed();
+      if (!not_served.empty())
+      {
+        Mpi::Warning(
+            "{}", CoverageTargetsNotServedWarning(post_op.GetInterfaceTypes(&not_served)));
+      }
     }
     if (response_correction->ExclusionEnergyRequested())
     {
@@ -1623,7 +1629,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // configured radius, the coupon's: the corrected energies' own split); NOT-MEASURED
     // without a postprocessed response (ruling 1654 (III) Q2 (b): a raw response evaluation
     // of a SelfConsistent-only run would move the operator's trace counters).
-    const auto targets = response_correction->GetTargetInterfaces();
+    // Ruling 1738: the configured targets no loaded model serves are cells' interfaces too
+    // (W = raw - outside R, nothing fabricated: uncovered).
+    const auto targets = response_correction->GetCoverageInterfaces();
+    const auto not_served = response_correction->GetConfiguredTargetsNotServed();
     const auto types = post_op.GetInterfaceTypes(&targets);
     std::map<int, double> within;
     for (const int target : targets)
@@ -1647,6 +1656,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                  CoverageExcitationClass::ELECTROSTATIC_TERMINAL)
                            : NotMeasuredCoverageMeasurement(
                                  types, CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+    MarkCoverageTargetsNotServed(measurement, post_op.GetInterfaceTypes(&not_served));
     // Ruling 1694 (1): the postprocessing interfaces no model targets carry their raw
     // energy; their Types' untargeted raw energy and share (NOT-TARGET cells for a Type
     // with untargeted interfaces only).
@@ -1668,7 +1678,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   };
   auto WriteSourceCoverage = [&](int source, const CoverageMeasurement &measurement)
   {
-    const auto targets = response_correction->GetTargetInterfaces();
+    const auto targets = response_correction->GetCoverageInterfaces();
     const bool first = coverage_measurements.size() == 1;
     for (const auto &path : {coverage_path, coverage_by_key_path})
     {
@@ -1987,7 +1997,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
         }
         auto partition = post_op.GetElectrostaticCoveragePartition(
-            response_correction->GetTargetInterfaces(), kept_classes, model_raw_portions,
+            response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
             remainder_classes);
         SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
                                                      "UnpatchedPairs");
@@ -2366,7 +2376,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
         }
         auto partition = post_op.GetElectrostaticCoveragePartition(
-            response_correction->GetTargetInterfaces(), kept_classes, model_raw_portions,
+            response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
             remainder_classes);
         SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
                                                      "UnpatchedPairs");
@@ -2452,7 +2462,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // end of the row (every column above keeps its position, name and value): per
     // interface W and its uncovered share, then per Type (first appearance over the
     // ascending target interfaces) the source's cell.
-    const auto coverage_targets = response_correction->GetTargetInterfaces();
+    const auto coverage_targets = response_correction->GetCoverageInterfaces();
     std::vector<std::string> coverage_types;
     for (const auto &[interface, type] : post_op.GetInterfaceTypes(&coverage_targets))
     {

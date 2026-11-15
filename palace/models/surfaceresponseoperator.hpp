@@ -948,6 +948,9 @@ private:
   std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
   double geometry_fallback_coordinate_scale = 1.0;
   bool raw_fallback = false;
+  // Ruling 1738 (lane L1): the configuration's target interfaces
+  // (GetConfiguredTargetsNotServed).
+  std::set<int> configured_target_interfaces;
   // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
   // fallback portions' raw within-R energy of the last evaluation; empty until then.
   std::map<std::string, double> geometry_fallback_energy_shares;
@@ -1737,6 +1740,13 @@ public:
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
+  // Ruling 1738 (lane L1, OI-CONFIGURED-TARGET-NOT-SERVED): the configured targets (an
+  // automatic configuration's TargetInterfaces, or every typed interface with EdgeDistances
+  // without that list) no loaded model has a fabricated surface on: not corrected at all.
+  std::set<int> GetConfiguredTargetsNotServed() const;
+  // The coverage cells' interfaces: the served targets and the configured ones not served
+  // (every corrected value and every pre-existing table stays on GetTargetInterfaces()).
+  std::set<int> GetCoverageInterfaces() const;
   // The uncovered requirements (decision 394 F2; empty when every feature is matched).
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &

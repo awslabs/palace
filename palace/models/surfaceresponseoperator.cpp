@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -21031,6 +21032,32 @@ double TargetInterfaceMatchingRadius(const IoData &iodata,
   return radius;
 }
 
+// Ruling 1738 (lane L1, OI-CONFIGURED-TARGET-NOT-SERVED): the interfaces the configuration
+// targets. An automatic (library) configuration: its TargetInterfaces, or without that list
+// every typed dielectric interface with EdgeDistances (the identification's selection, as
+// above); an explicit-model configuration targets its models' surfaces only (none here).
+std::set<int> ConfiguredTargetInterfaces(const IoData &iodata, bool automatic,
+                                         const std::vector<int> &target_interfaces)
+{
+  std::set<int> configured;
+  if (!automatic)
+  {
+    return configured;
+  }
+  const std::set<int> target_filter(target_interfaces.begin(), target_interfaces.end());
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    if ((!target_filter.empty() && target_filter.find(index) == target_filter.end()) ||
+        dielectric.type == InterfaceDielectric::DEFAULT ||
+        dielectric.edge_distances.empty())
+    {
+      continue;
+    }
+    configured.insert(index);
+  }
+  return configured;
+}
+
 SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
@@ -31940,6 +31967,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   };
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config->target_interfaces);
+  configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
+                                                            request->target_interfaces);
   const auto derived_cache_before = GetDerivedResponseMatrixCacheCounters();
   // setupmem S1 (decision 1546): the root builds every model's matrices here (the
   // all-model records and log lines); another rank builds the metadata only and, after the
@@ -33485,6 +33514,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   basis_points.reserve(config.models.size());
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config.target_interfaces);
+  configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
+                                                            request->target_interfaces);
   // setupmem S1 (decision 1546): as the electrostatic constructor (the root builds every
   // model's matrices here; another rank the metadata, then BuildReferencedModelMatrices).
   const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
@@ -39240,6 +39271,24 @@ std::set<int> SurfaceResponseOperator::GetTargetInterfaces() const
       interfaces.insert(interface);
     }
   }
+  return interfaces;
+}
+
+std::set<int> SurfaceResponseOperator::GetConfiguredTargetsNotServed() const
+{
+  const auto served = GetTargetInterfaces();
+  std::set<int> not_served;
+  std::set_difference(configured_target_interfaces.begin(),
+                      configured_target_interfaces.end(), served.begin(), served.end(),
+                      std::inserter(not_served, not_served.end()));
+  return not_served;
+}
+
+std::set<int> SurfaceResponseOperator::GetCoverageInterfaces() const
+{
+  auto interfaces = GetTargetInterfaces();
+  interfaces.insert(configured_target_interfaces.begin(),
+                    configured_target_interfaces.end());
   return interfaces;
 }
 

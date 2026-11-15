@@ -601,6 +601,22 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     // Lane L1 (decision 1634 (4); DESIGN-v2 s4.5): the coverage of the run's cells (the
     // writers' record, root only); an empty record (no cell measured, e.g. a raw
     // fallback) writes its block too, with Cells 0 (review m-6: never silent).
+    // Ruling 1738: a raw fallback measures no cell: its reason (the run-level geometry
+    // fallback classes) is named, so that zero cells are never read as complete coverage.
+    if (response.IsRawFallback() && response.GetCoverageRunRecord().entries.empty())
+    {
+      std::string classes;
+      for (const auto &fallback : response.GetGeometryFallbacks())
+      {
+        if (fallback.what == "run" && classes.find(fallback.cls) == std::string::npos)
+        {
+          classes += (classes.empty() ? "" : "+") + fallback.cls;
+        }
+      }
+      response.GetCoverageRunRecord().no_cells_reason =
+          "RawFallback" + (classes.empty() ? std::string() : ": " + classes) +
+          ": no correction applied";
+    }
     meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
         response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
         response.GetCoverageValidatedRegime(),

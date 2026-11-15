@@ -80,6 +80,8 @@ std::string_view CoverageStatusName(CoverageStatus status)
       return "NOT-TARGET";
     case CoverageStatus::INCONSISTENT:
       return "INCONSISTENT";
+    case CoverageStatus::TARGET_NOT_SERVED:
+      return "TARGET-NOT-SERVED";
   }
   return "NOT-MEASURED";
 }
@@ -128,16 +130,18 @@ int CoverageStatusRank(CoverageStatus status)
       return 2;
     case CoverageStatus::NOT_ACHIEVABLE:
       return 3;
+    case CoverageStatus::TARGET_NOT_SERVED:
+      return 4;  // ruling 1738: worse than any band (the existing order unchanged)
     case CoverageStatus::NO_ENERGY:
-      return 4;
-    case CoverageStatus::NOT_MEASURED:
       return 5;
+    case CoverageStatus::NOT_MEASURED:
+      return 6;
     case CoverageStatus::NOT_TARGET:
       return -1;
     case CoverageStatus::INCONSISTENT:
-      return 6;  // a defect of the partition: worse than any coverage reading
+      return 7;  // a defect of the partition: worse than any coverage reading
   }
-  return 5;
+  return 6;
 }
 
 int RegimeStatusRank(RegimeStatus status)
@@ -747,6 +751,37 @@ void AddCoverageUntargetedInterfaces(CoverageMeasurement &measurement,
   }
 }
 
+void MarkCoverageTargetsNotServed(CoverageMeasurement &measurement,
+                                  const std::map<int, std::string> &not_served)
+{
+  measurement.not_served = not_served;
+  for (auto &cell : measurement.cells)
+  {
+    const bool holds =
+        std::any_of(not_served.begin(), not_served.end(),
+                    [&](const auto &entry) { return entry.second == cell.type; });
+    if (holds && CoverageStatusRank(CoverageStatus::TARGET_NOT_SERVED) >
+                     CoverageStatusRank(cell.status))
+    {
+      cell.status = CoverageStatus::TARGET_NOT_SERVED;
+    }
+  }
+}
+
+std::string CoverageTargetsNotServedWarning(const std::map<int, std::string> &not_served)
+{
+  std::string text;
+  for (const auto &[interface, type] : not_served)
+  {
+    text += fmt::format("Configured response-correction target interface {:d} ({}) is NOT "
+                        "SERVED: {}; it is not corrected (its corrected values are its raw "
+                        "values) and its within-R raw energy counts as uncovered in its "
+                        "Type's coverage (status TARGET-NOT-SERVED)\n",
+                        interface, type, kCoverageTargetNotServedReason);
+  }
+  return text;
+}
+
 namespace
 {
 
@@ -894,6 +929,7 @@ void CoverageRunRecord::Add(const std::vector<std::pair<std::string, double>> &k
   served_pending_models.insert(measurement.served_pending_models.begin(),
                                measurement.served_pending_models.end());
   untargeted.insert(measurement.untargeted.begin(), measurement.untargeted.end());
+  not_served.insert(measurement.not_served.begin(), measurement.not_served.end());
 }
 
 nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
@@ -950,6 +986,16 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
     untargeted.push_back({{"Interface", interface}, {"Type", type}});
   }
   metadata["UntargetedInterfaces"] = std::move(untargeted);
+  // Ruling 1738: the configured targets no loaded model serves (in their Type's W,
+  // uncovered; the Type's cells TARGET-NOT-SERVED).
+  nlohmann::json not_served = nlohmann::json::array();
+  for (const auto &[interface, type] : record.not_served)
+  {
+    not_served.push_back({{"Interface", interface},
+                          {"Type", type},
+                          {"Reason", kCoverageTargetNotServedReason}});
+  }
+  metadata["ConfiguredTargetsNotServed"] = std::move(not_served);
   nlohmann::json status_counts = nlohmann::json::object(),
                  regime_counts = nlohmann::json::object();
   nlohmann::json flagged = nlohmann::json::array();
@@ -1065,7 +1111,14 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
   metadata["ServedPendingModels"] = static_cast<int>(record.served_pending_models.size());
   metadata["ServedNoStatusModels"] =
       static_cast<int>(record.served_no_status_models.size());
-  metadata["Complete"] = true;
+  // Ruling 1738: a run with no cell says why; without a reason it is not complete.
+  if (record.entries.empty())
+  {
+    metadata["NoCellsReason"] = record.no_cells_reason.empty()
+                                    ? nlohmann::json(nullptr)
+                                    : nlohmann::json(record.no_cells_reason);
+  }
+  metadata["Complete"] = !record.entries.empty() || !record.no_cells_reason.empty();
   return metadata;
 }
 
@@ -1100,9 +1153,13 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
   banner += "\n";
   if (metadata.at("Cells").get<int>() == 0)
   {
-    banner += "*** COVERAGE: no coverage cell was measured in this run (no corrected "
-              "measurement): nothing of its corrected output is covered by this record "
-              "***\n";
+    const auto reason = metadata.find("NoCellsReason");
+    banner += fmt::format(
+        "*** COVERAGE: no coverage cell was measured in this run (no corrected "
+        "measurement{}): nothing of its corrected output is covered by this record ***\n",
+        reason != metadata.end() && reason->is_string()
+            ? " (" + reason->get<std::string>() + ")"
+            : std::string());
   }
   int lines = 0;
   const auto &flagged = metadata.at("Flagged");
@@ -1177,6 +1234,15 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
                           "targeted interfaces only; see `untargeted raw share of the Type "
                           "interface energy`)\n",
                           static_cast<int>(untargeted.size()), names);
+  }
+  for (const auto &entry : metadata.at("ConfiguredTargetsNotServed"))
+  {
+    banner +=
+        fmt::format("*** COVERAGE TARGET-NOT-SERVED: configured target interface {:d} "
+                    "({}): {}; it is NOT corrected (its raw within-R energy is "
+                    "uncovered in its Type's W) ***\n",
+                    entry.at("Interface").get<int>(), entry.at("Type").get<std::string>(),
+                    entry.at("Reason").get<std::string>());
   }
   const int no_range = metadata.at("RegimeCounts").value("NO-RANGE", 0);
   if (no_range > 0)

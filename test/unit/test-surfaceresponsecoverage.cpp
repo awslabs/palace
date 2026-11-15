@@ -619,9 +619,82 @@ TEST_CASE("Coverage untargeted interfaces, the cell set and the banner edge case
   const auto empty = CoverageRunMetadata(CoverageRunRecord{}, CoverageThresholds{},
                                          CoverageValidatedRegime{}, 1.0);
   CHECK(empty.at("Cells") == 0);
-  CHECK(empty.at("Complete") == true);
+  // Ruling 1738: zero cells without a reason is NOT complete; with the reason it is, and
+  // the reason is printed.
+  CHECK(empty.at("Complete") == false);
+  CHECK(empty.at("NoCellsReason").is_null());
+  CHECK(empty.at("ConfiguredTargetsNotServed").empty());
   CHECK(CoverageRunBanner(empty).find("no coverage cell was measured") !=
         std::string::npos);
+  CoverageRunRecord fallback;
+  fallback.no_cells_reason = "RawFallback: NoMatchedFeature: no correction applied";
+  const auto reasoned =
+      CoverageRunMetadata(fallback, CoverageThresholds{}, CoverageValidatedRegime{}, 1.0);
+  CHECK(reasoned.at("Complete") == true);
+  CHECK(reasoned.at("NoCellsReason") == fallback.no_cells_reason);
+  CHECK(CoverageRunBanner(reasoned).find("(RawFallback: NoMatchedFeature: no correction "
+                                         "applied)") != std::string::npos);
+}
+
+// Ruling 1738 (OI-CONFIGURED-TARGET-NOT-SERVED): a configured target no loaded model serves
+// is a coverage interface of its Type (its within-R raw energy in W, uncovered: U counts
+// it), the Type's cell reads TARGET-NOT-SERVED whatever its band (ranked above every band,
+// below NO-ENERGY), a Type without one keeps its band; palace.json lists the interface with
+// its reason, the banner names it, the startup warning names it.
+TEST_CASE("Coverage configured target not served", "[SurfaceResponseCoverage][Serial]")
+{
+  CHECK(CoverageStatusName(CoverageStatus::TARGET_NOT_SERVED) == "TARGET-NOT-SERVED");
+  CHECK(CoverageStatusRank(CoverageStatus::TARGET_NOT_SERVED) >
+        CoverageStatusRank(CoverageStatus::NOT_ACHIEVABLE));
+  CHECK(CoverageStatusRank(CoverageStatus::TARGET_NOT_SERVED) <
+        CoverageStatusRank(CoverageStatus::NO_ENERGY));
+  std::map<int, Partition> partitions;
+  partitions[1] = InterfaceOne();  // SA, served
+  Partition unserved;              // SA, configured, no model surface: nothing served
+  unserved.within = 4.0;
+  unserved.classes = {{{"Missing", "m3"}, 3.0}};
+  unserved.unclaimed = 1.0;
+  partitions[2] = unserved;
+  Partition full;  // MS, served whole
+  full.within = 10.0;
+  full.served = {{"m0", 10.0}};
+  partitions[3] = full;
+  auto measurement = ComputeCoverageMeasurement(
+      partitions, {{1, "SA"}, {2, "SA"}, {3, "MS"}}, {{1, 16.0}, {2, 4.0}, {3, 10.0}},
+      {{1, 13.5}, {3, 12.0}}, Keys(), Models(), CoverageThresholds{},
+      CoverageValidatedRegime{}, CoverageExcitationClass::EIGENMODE, {});
+  MarkCoverageTargetsNotServed(measurement, {{2, "SA"}});
+  CHECK(measurement.not_served == std::map<int, std::string>{{2, "SA"}});
+  const auto *sa = measurement.FindCell("SA");
+  const auto *ms = measurement.FindCell("MS");
+  REQUIRE(sa);
+  REQUIRE(ms);
+  CHECK(sa->within == 20.0);
+  CHECK(std::abs(sa->uncovered_share - 8.5 / 20.0) <= 1.0e-12);  // 4.5 + all of 4
+  CHECK(sa->status == CoverageStatus::TARGET_NOT_SERVED);
+  CHECK(ms->status == CoverageStatus::OK);
+  CHECK(measurement.WorstCoverageCell() == sa);
+  CoverageRunRecord record;
+  record.Add({{"m", 1.0}}, measurement);
+  const auto metadata =
+      CoverageRunMetadata(record, CoverageThresholds{}, CoverageValidatedRegime{}, 1.0);
+  const auto &listed = metadata.at("ConfiguredTargetsNotServed");
+  REQUIRE(listed.size() == 1);
+  CHECK(listed[0].at("Interface") == 2);
+  CHECK(listed[0].at("Type") == "SA");
+  CHECK(listed[0].at("Reason") == kCoverageTargetNotServedReason);
+  CHECK(metadata.at("StatusCounts").at("TARGET-NOT-SERVED") == 1);
+  CHECK(metadata.at("Complete") == true);
+  CHECK(CoverageRunBanner(metadata).find(
+            "*** COVERAGE TARGET-NOT-SERVED: configured target interface 2 (SA): no loaded "
+            "model has a fabricated surface on it; it is NOT corrected") !=
+        std::string::npos);
+  CHECK(CoverageTargetsNotServedWarning({{2, "SA"}}) ==
+        "Configured response-correction target interface 2 (SA) is NOT SERVED: no loaded "
+        "model has a fabricated surface on it; it is not corrected (its corrected values "
+        "are its raw values) and its within-R raw energy counts as uncovered in its Type's "
+        "coverage (status TARGET-NOT-SERVED)\n");
+  CHECK(CoverageTargetsNotServedWarning({}).empty());
 }
 
 // Ruling 1682: the compact claim list returns every appended value BIT FOR BIT in the

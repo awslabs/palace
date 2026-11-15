@@ -403,6 +403,12 @@ PostOperator<solver_t>::PostOperator(
                 GetInterfaceTypes(), targets,
                 surf_post_op.GetInterfacePerimeterLengths(targets, {missing, method_gap}),
                 surface_response_op->GetIdentificationFeatureLengths(), iodata.units));
+        const auto not_served = surface_response_op->GetConfiguredTargetsNotServed();
+        if (!not_served.empty())
+        {
+          Mpi::Warning("{}",
+                       CoverageTargetsNotServedWarning(GetInterfaceTypes(&not_served)));
+        }
       }
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();
@@ -1918,6 +1924,11 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     }
 
     const auto target_interfaces = surface_response_op->GetTargetInterfaces();
+    // Ruling 1738 (lane L1): the coverage cells' interfaces = the served targets and the
+    // configured ones no loaded model serves (W = raw - outside R, nothing fabricated:
+    // uncovered); every corrected value and every pre-existing table stays on the served.
+    const auto coverage_interfaces = surface_response_op->GetCoverageInterfaces();
+    const auto not_served_interfaces = surface_response_op->GetConfiguredTargetsNotServed();
     // The raw within-R energy of every uncovered requirement (decision 394 F2) and
     // DomainBoundary claim (F-DB-a) of the same field, kept in the corrected interface
     // energies as the electrostatic driver keeps it (decision 751): a feature the library
@@ -1958,7 +1969,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         remainder_classes.push_back({"Excluded", &surface_response_exclusion_energy});
       }
       auto coverage = surf_post_op.GetInterfaceCoveragePartition(
-          target_interfaces, *E, D_recovered.get(), kept_classes,
+          coverage_interfaces, *E, D_recovered.get(), kept_classes,
           surface_response_model_raw, remainder_classes);
       SurfacePostOperator::MoveCoverageServedLabel(coverage, "unpatched", "UnpatchedPairs");
       return coverage;
@@ -1978,13 +1989,15 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           loop_remainder_excluded[target] += energy;
         }
       }
-      return ComputeCoverageMeasurement(
-          coverage, GetInterfaceTypes(&target_interfaces), within, fabricated,
+      auto measurement = ComputeCoverageMeasurement(
+          coverage, GetInterfaceTypes(&coverage_interfaces), within, fabricated,
           surface_response_op->GetCoverageKeyRecords(),
           surface_response_op->GetCoverageModelQualifications(),
           surface_response_op->GetCoverageThresholds(),
           surface_response_op->GetCoverageValidatedRegime(),
           SurfaceResponseCoverageExcitation(), loop_remainder_excluded);
+      MarkCoverageTargetsNotServed(measurement, GetInterfaceTypes(&not_served_interfaces));
+      return measurement;
     };
     // Ruling 1694 (1): the untargeted postprocessing interfaces (their Types and raw
     // interface energies) in every measurement of the root.
@@ -1993,7 +2006,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       std::map<int, std::string> untargeted;
       for (const auto &[interface, type] : GetInterfaceTypes())
       {
-        if (target_interfaces.count(interface) == 0)
+        if (coverage_interfaces.count(interface) == 0)
         {
           untargeted[interface] = type;
         }
@@ -2227,6 +2240,27 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       }
       result.fixed_trace_shift_coverage =
           FixedTraceShiftCoverage(shift_coverage_within_radius, shift_coverage_kept_raw);
+      // Ruling 1738: a configured target no loaded model serves: its W as a served target's
+      // (raw - outside at R), nothing fabricated; its corrected values stay its raw ones.
+      for (const int target : not_served_interfaces)
+      {
+        const auto interface = result.interfaces.find(target);
+        const double radius = surface_response_op->GetMatchingRadius();
+        const auto outside = std::find_if(
+            measurement_cache.interface_edge_i.begin(),
+            measurement_cache.interface_edge_i.end(),
+            [&](const auto &edge)
+            {
+              return edge.idx == target && std::abs(edge.distance - radius) <=
+                                               1.0e-10 * std::max(edge.distance, radius);
+            });
+        if (interface != result.interfaces.end() &&
+            outside != measurement_cache.interface_edge_i.end())
+        {
+          coverage_within[target] = interface->second.raw_energy - outside->energy_outside;
+          coverage_fabricated[target] = 0.0;
+        }
+      }
       if (Mpi::Root(fem_op->GetComm()))
       {
         result.coverage_measurement =
@@ -2242,7 +2276,9 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       if (Mpi::Root(fem_op->GetComm()))
       {
         result.coverage_measurement = NotMeasuredCoverageMeasurement(
-            GetInterfaceTypes(&target_interfaces), SurfaceResponseCoverageExcitation());
+            GetInterfaceTypes(&coverage_interfaces), SurfaceResponseCoverageExcitation());
+        MarkCoverageTargetsNotServed(result.coverage_measurement,
+                                     GetInterfaceTypes(&not_served_interfaces));
         AddUntargeted(result.coverage_measurement);
       }
     }
@@ -2681,7 +2717,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       const auto summary = coverage.interfaces.find(interface_index);
       const CoverageCell *cell =
           type != coverage_types.end() ? coverage.FindCell(type->second) : nullptr;
-      if (!interface.response_target)
+      // Ruling 1738: a configured target no loaded model serves is a coverage interface
+      // (its W, its uncovered share, its Type's TARGET-NOT-SERVED cell), not NOT-TARGET.
+      if (!interface.response_target && coverage.not_served.count(interface_index) == 0)
       {
         // Ruling 1694 (A): no target = no correction radius = an empty within-R region
         // (W = 0); the shares and the factor nan; its raw energy stays in E_surf raw.
@@ -3457,7 +3495,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
           ? fmt::format("{:+.12e},{}", output_index, excitation)  // the other tables' form
           : fmt::format("{},{}", static_cast<int>(std::lround(output_index)), excitation);
   const std::string key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
-  const auto target_interfaces = surface_response_op->GetTargetInterfaces();
+  // Ruling 1738: the coverage cells' interfaces (the served and the configured not served).
+  const auto target_interfaces = surface_response_op->GetCoverageInterfaces();
   for (const auto &path : {coverage_path, by_key_path})
   {
     const bool write_header =

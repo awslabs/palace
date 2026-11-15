@@ -2674,13 +2674,23 @@ solve family, which evaluates no response on the raw field); `NOT-TARGET` for an
 interface and for a `Type` with untargeted interfaces only (never counted as a covered
 cell); `INCONSISTENT` when the signed method-gap share is below ``-10^{-9}``: the served and
 Missing energy exceed ``W``, so the partition and the corrected total disagree: a defect to
-report (never `OK`; ``U`` is printed as computed; the worst status of all). Every status but `OK` and `NOT-TARGET` is listed by the end-of-run banner, which
+report (never `OK`; ``U`` is printed as computed; the worst status of all);
+`TARGET-NOT-SERVED` for a `Type` holding a configured target that no loaded model serves
+(an interface of `TargetInterfaces`, or without that list any typed interface with
+`EdgeDistances`, on which no loaded model has a fabricated surface: it is not corrected at
+all, its corrected values are its raw values): its within-``R`` raw energy is in its
+`Type`'s ``W`` and counts as uncovered, and the cell reads `TARGET-NOT-SERVED` whatever its
+band (worse than every band, never `OK`); a startup warning names the interface. Every
+status but `OK` and `NOT-TARGET` is listed by the end-of-run banner, which
 names the bars as interim thresholds and the untargeted interfaces once, and in
 `SurfaceResponse.Coverage` of `palace.json`: the status counts, the regime counts, every
 flagged cell, the counts of served pending and status-less models, `UntargetedInterfaces`,
+`ConfiguredTargetsNotServed` (each such interface with its `Type` and the reason),
 `CellSet` (the kind of cell key, the number of measurements, the `Type`s and the number of
 cells: the rows of `surface-response-coverage.csv`) and `"Complete": true`. That block is
-written at the END of a run (also when no cell was measured: `Cells` 0 and a banner line),
+written at the END of a run (also when no cell was measured: `Cells` 0, `NoCellsReason`
+naming why, e.g. `RawFallback: NoMatchedFeature: no correction applied`, and a banner line;
+with no cell and no reason `"Complete"` is false),
 so a killed run has none: its tables hold the finished cells only and cannot be read as
 complete. The expected cell set of a design (the cells a run should have measured) and a
 coverage certificate are not written by this version.

@@ -50,7 +50,13 @@ enum class CoverageStatus : char
   NOT_TARGET,
   // Ruling 1714 (B)(3): the signed method gap is below -kCoverageInconsistentShare x W: the
   // partition serves MORE than the corrected total removes (a defect to report; never OK).
-  INCONSISTENT
+  INCONSISTENT,
+  // Ruling 1738 (OI-CONFIGURED-TARGET-NOT-SERVED): a Type holding an interface the
+  // configuration targets (TargetInterfaces, or every typed interface with EdgeDistances
+  // when the list is absent) that no loaded model has a fabricated surface on: that
+  // interface is not corrected at all (its corrected value is its raw value); worse than
+  // any band, never OK.
+  TARGET_NOT_SERVED
 };
 // Ruling 1714 (B)(3): the round-off margin of the signed method-gap share.
 inline constexpr double kCoverageInconsistentShare = 1.0e-9;
@@ -251,6 +257,10 @@ struct CoverageMeasurement
   // Ruling 1694 (1): the untargeted postprocessing interfaces and their Types
   // (AddCoverageUntargetedInterfaces).
   std::map<int, std::string> untargeted;
+  // Ruling 1738: the configured targets no loaded model serves and their Types (in `types`
+  // too: their within-R raw energy is in their Type's W, uncovered;
+  // MarkCoverageTargetsNotServed).
+  std::map<int, std::string> not_served;
   const CoverageCell *FindCell(const std::string &type) const;
   // The worst cell over Types (CoverageStatusRank / RegimeStatusRank); NOT-TARGET cells
   // never enter; nullptr when no other cell exists.
@@ -280,6 +290,18 @@ CoverageMeasurement NotMeasuredCoverageMeasurement(const std::map<int, std::stri
 void AddCoverageUntargetedInterfaces(CoverageMeasurement &measurement,
                                      const std::map<int, std::string> &untargeted,
                                      const std::map<int, double> &raw_energy);
+// Ruling 1738: records the configured targets no loaded model serves (`not_served`: index
+// -> Type; each must be in the measurement's `types`) and gives every cell of their Types
+// the worse of its status and TARGET-NOT-SERVED.
+void MarkCoverageTargetsNotServed(CoverageMeasurement &measurement,
+                                  const std::map<int, std::string> &not_served);
+// Ruling 1738: the reason a configured target is not served (the startup warning, the
+// banner and palace.json's ConfiguredTargetsNotServed).
+inline constexpr const char *kCoverageTargetNotServedReason =
+    "no loaded model has a fabricated surface on it";
+// Ruling 1738: the startup warning naming each configured target no loaded model serves
+// (empty when there is none).
+std::string CoverageTargetsNotServedWarning(const std::map<int, std::string> &not_served);
 
 struct CoverageFeaturePortions
 {
@@ -324,6 +346,11 @@ struct CoverageRunRecord
   std::vector<Entry> entries;
   std::set<int> served_no_status_models, served_pending_models;
   std::map<int, std::string> untargeted;  // ruling 1694 (1): named once in the banner
+  std::map<int, std::string>
+      not_served;  // ruling 1738: named in the banner and palace.json
+  // Ruling 1738: why no cell was measured (a raw fallback: its geometry fallback class);
+  // with no cell, palace.json writes "Complete": true only when this is set.
+  std::string no_cells_reason;
   void Add(const std::vector<std::pair<std::string, double>> &keys,
            const CoverageMeasurement &measurement);
 };

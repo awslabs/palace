@@ -44,7 +44,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (the end past the vertex: nothing at stake), near; a
     `ValidatedRegime` range requires `N` >= 1 and a `Provenance`; a served model without a
     qualification record counts as no-status; the log prints, per interface `Type`, the
-    Missing share of the target perimeter LENGTH before the solve.
+    Missing share of the target perimeter LENGTH before the solve. A configured target
+    interface on which no loaded model has a fabricated surface is a coverage interface
+    (its within-`R` raw energy uncovered in its `Type`'s `W`) with the status
+    `TARGET-NOT-SERVED`, a startup warning and `SurfaceResponse.Coverage.
+    ConfiguredTargetsNotServed`; a run with no coverage cell writes `NoCellsReason` and
+    `"Complete": true` only with that reason.
 
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the
