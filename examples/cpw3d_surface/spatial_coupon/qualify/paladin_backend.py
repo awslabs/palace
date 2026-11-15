@@ -1,21 +1,41 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Form Y-b of `coupon-library qualify` (lane chainport; USER decision 1674 (2); Y-SPEC s2),
-FIRST PIECE: a run_stages plan as paladin runs, ONE RUN PER STAGE.  Paladin runs one
-configuration file per run and passes no environment variable and no command-line flag to
-Palace, so each stage's PALACE_RESPONSE_* variables become the stage configuration's
-Solver.Electrostatic.ResponseArchive keys (the Palace change Y-a, d8a603ae0a).  --dry-run
-writes the run configurations and prints the submit commands; it contacts nothing.  --submit
-drives the planned runs in order through the paladin CLI: submit-detailed (the run_id is
-recorded in status.json before anything else; a stage with a run_id is never submitted
-again), the wait (describe-run polled until the run ends; past the stage's CapSeconds from
-its start the run is cancelled), and the fetch of <run_dir>/postpro and log.out by rsync.
-A failed or cancelled run stops the drive; nothing is resubmitted.
+"""Form Y-b of `coupon-library qualify` (lane chainport; USER decision 1674 (2); Y-SPEC s2):
+a run_stages plan run as paladin runs, ONE RUN PER STAGE, on ONE node per stage (multi-node
+stages are refused: NOT DONE).  Paladin runs one configuration file per run and passes no
+environment variable and no command-line flag to Palace, so each stage's PALACE_RESPONSE_*
+variables become the stage configuration's Solver.Electrostatic.ResponseArchive keys.
 
-  python3 paladin_backend.py --dry-run PLAN --selector dev-simlapointe-sp-pin-<sha10>
-      --lane LANE --out DIR [--nodes N] [--map REMOTE_PREFIX=LOCAL_PREFIX]
-  python3 paladin_backend.py --submit PLAN ... [--paladin-cli PATH] [--remote-host HOST]
-      [--poll-seconds S]
+The backend is configured by the cluster profile's "Paladin" block (PALADIN_KEYS; a profile
+with both a Paladin and a Launcher block is refused: one route per run).  PaladinJob drives
+the stages of one plan in order, one step per advance():
+  - resume by metadata: before any submit the stage's runs are looked up by its identity
+    (programme, lane, case, stage, plan sha) with `paladin palace my-jobs -m ...`; a queued,
+    running or completed run is ADOPTED, never submitted again; a cancelled, out-of-memory or
+    unexplained failed run STOPS the drive (nothing is resubmitted); a submission_failed row
+    without a job id is no run (one re-submit; a second = STOP); two runs of one stage = STOP;
+  - before each submit: the run configuration schema-checked against the selector, the pin
+    checked (pin_check_v2 check: its PASS line in the stage record), the E-2 sizing
+    (ERRATUM-1702: the plan estimate x 1.30 <= 0.70 x MemTotal, < 10 % margin -> the next
+    type) choosing --instance-type, and for an archive writer the /data guard (the archive
+    directory created, free >= 150 GB, the estimate <= 10 % of free, the directory empty);
+  - while it runs: describe-run polled; past the stage's CapSeconds from its start the run is
+    cancelled (recorded; the row then reads canceled: the stage STOPS as timed-out);
+  - after it ends: the completion read (a row failed by the upload alone counts as completed
+    only if PREREG-ESSURR-NOTE-1's five conditions hold), pin_check_v2 postrun (its PASS line),
+    the resolved configuration's leaf diff (only paladin's own paths may differ), the outputs
+    copied on /data into the stage's Problem.Output with equal sha256 manifests, the log parsed
+    by run_stages.parse_log, an archive writer's archive verified (sources x ranks files, none
+    empty, per-rank sizes equal across sources, the zero-hole scan in place), and what paladin
+    uploaded to qdash (the run's output artifacts and the bytes of the top-level and
+    AMR-iteration tables, log and meshes);
+  - when every stage is complete: status.json in run_stages' schema in the plan's directory on
+    /data (Backend "paladin"), so that the chain's fetch, verification and archive deletion
+    read it as they read a PBS job's.
+
+  python3 paladin_backend.py --dry-run PLAN --profile PROFILE --out DIR [--map REMOTE=LOCAL]
+  python3 paladin_backend.py --submit PLAN --profile PROFILE --out DIR --remote-dir DIR
+      [--map REMOTE=LOCAL] [--archive-gb DIRECTORY=GB] [--poll-seconds S]
 """
 import argparse
 import copy
@@ -23,6 +43,8 @@ import datetime
 import hashlib
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
@@ -92,165 +114,739 @@ def map_path(path, mapping):
     return path
 
 
-def plan_runs(plan, *, plan_sha256, selector, lane, nodes, out, mapping=()):
-    """The paladin runs of a plan (one per stage), their run configurations written to out."""
-    ranks = int(plan["Ranks"])
-    if nodes < 1 or ranks % nodes:
-        raise ValueError(f"{ranks} ranks do not split over {nodes} nodes")
-    instance = plan["Instance"]["Type"] if isinstance(plan["Instance"], dict) else plan["Instance"]
-    case = plan["Case"]
-    names = [stage["Name"] for stage in plan["Stages"]]
-    runs = []
-    for stage in plan["Stages"]:
-        for required in stage.get("Requires", []):
-            if required not in names[: names.index(stage["Name"])]:
-                raise ValueError(f"{stage['Name']} requires {required}, not an earlier stage")
-        with open(map_path(stage["Config"], mapping)) as f:
-            config = run_config(json.load(f), stage.get("Environment", {}))
-        path = os.path.join(out, stage["Name"] + ".json")
-        with open(path, "w") as f:
-            json.dump(config, f, indent=2)
-        submit = ["paladin", "palace", "submit-detailed", path,
-                  "--instance-type", instance, "--nodes", str(nodes),
-                  "--ranks-per-node", str(ranks // nodes), "--palace", selector,
-                  "--label", stage["Name"],
-                  "-m", "programme=spr", "-m", f"lane={lane}", "-m", f"case={case}",
-                  "-m", f"stage={stage['Name']}", "-m", f"plan={plan_sha256[:16]}",
-                  "--comment", f"{case} {stage['Name']} (coupon-library qualify, paladin form)",
-                  "--json"]
-        runs.append({"Stage": stage["Name"], "RunConfig": path,
-                     "ResponseArchive": config["Solver"]["Electrostatic"].get(
-                         "ResponseArchive", {}),
-                     "Mesh": config.get("Model", {}).get("Mesh"),
-                     "Requires": list(stage.get("Requires", [])),
-                     "CapSeconds": stage.get("CapSeconds"),
-                     "Nodes": nodes, "RanksPerNode": ranks // nodes, "Submit": submit})
-    return runs
-
-
-TERMINAL = {"completed", "failed", "canceled", "cancelled"}
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 class PaladinError(RuntimeError):
-    """A paladin call that failed, or a run that did not complete: the drive stops."""
+    """A paladin call that failed, a check that did not pass, or a run that did not complete:
+    the drive stops (fail closed; nothing is resubmitted)."""
+
+
+# The cluster profile's Paladin block: exactly these keys.
+PALADIN_KEYS = {
+    "Selector": "the container selector (dev-simlapointe-sp-pin-<sha10>): --palace of every submit",
+    "PinRecord": "the pin record (pin_check_v1 record) whose 'selector' is Selector",
+    "PinCheck": "pin_check_v2.py: 'check' before each submit, 'postrun' after each run",
+    "SchemaCheck": "ctr_schema_check_v1.py: each run configuration against the selector's schema",
+    "ToolPython": "the python of the two tools (paladin's: they read qdash and S3)",
+    "ImageSHA256": "the sha256 of the pinned SIF's copy (recorded with the pin)",
+    "ImageBinary": "the Palace executable inside the image (the plans' Binary)",
+    "ImageBinarySHA256": "its sha256 (the plans' BinarySHA256 and the frozen digest)",
+    "CLI": "the paladin executable",
+    "Host": "the ssh host that reads and writes /data (soca-green-job); 'local' = this host (the tests' form)",
+    "Lane": "the lane metadata of every submit",
+    "MemTotalGiB": "MemTotal per instance type, GiB, in the order of preference (E-2 sizing)",
+    "ZeroHoleScan": "zero_hole_scan_fbc2_v1.py, run on Host over an archive in place",
+}
+PALADIN_ROUTE_RULE = ("one route per run (decision 1799 (l)): a cluster profile carries a Launcher block (form X, PBS) or a "
+                      "Paladin block (form Y-b), never both; --backend paladin needs the Paladin block and --backend pbs "
+                      "(the default) refuses it")
+
+
+def paladin_block_of(profile):
+    """The profile's validated Paladin block, or None (no block = the PBS route of record)."""
+    block = profile.get("Paladin")
+    if block is None:
+        return None
+    if profile.get("Launcher") is not None:
+        raise ValueError(f"the cluster profile carries both a Launcher and a Paladin block ({PALADIN_ROUTE_RULE})")
+    if not isinstance(block, dict):
+        raise ValueError("the Paladin block must be an object")
+    unknown = sorted(set(block) - set(PALADIN_KEYS))
+    missing = sorted(set(PALADIN_KEYS) - set(block))
+    if unknown or missing:
+        raise ValueError(f"the Paladin block: unknown keys {unknown}, missing keys {missing} (exactly {sorted(PALADIN_KEYS)})")
+    for key in ("ImageSHA256", "ImageBinarySHA256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(block[key])):
+            raise ValueError(f"Paladin.{key} must be a sha256 (64 lowercase hex), not {block[key]!r}")
+    for key in ("PinRecord", "PinCheck", "SchemaCheck", "ToolPython", "ImageBinary", "ZeroHoleScan"):
+        if not isinstance(block[key], str) or not os.path.isabs(block[key]):
+            raise ValueError(f"Paladin.{key} must be an absolute path, not {block[key]!r}")
+    for key in ("Selector", "CLI", "Host", "Lane"):
+        if not isinstance(block[key], str) or not block[key]:
+            raise ValueError(f"Paladin.{key} must be a non-empty string")
+    memory = block["MemTotalGiB"]
+    if (not isinstance(memory, dict) or not memory or
+            any(not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0 for value in memory.values())):
+        raise ValueError("Paladin.MemTotalGiB must map at least one instance type to a positive MemTotal in GiB")
+    with open(block["PinRecord"]) as f:
+        record = json.load(f)
+    if record.get("selector") != block["Selector"]:
+        raise ValueError(f"the pin record {block['PinRecord']} is of selector {record.get('selector')!r}, "
+                         f"not Paladin.Selector {block['Selector']!r}")
+    return dict(block)
+
+
+def backend_of(backend, profile):
+    """The Paladin block for --backend paladin, None for --backend pbs (PALADIN_ROUTE_RULE)."""
+    block = paladin_block_of(profile)
+    if backend == "pbs":
+        if block is not None:
+            raise ValueError(f"--backend pbs with a cluster profile that carries a Paladin block ({PALADIN_ROUTE_RULE})")
+        return None
+    if backend != "paladin":
+        raise ValueError(f"unknown backend {backend!r}")
+    if block is None:
+        raise ValueError(f"--backend paladin needs a cluster profile with a Paladin block ({PALADIN_ROUTE_RULE})")
+    return block
+
+
+def route_line(block):
+    """The ONE line a paladin run prints at its start."""
+    return (f"route paladin: selector {block['Selector']}, pin record {block['PinRecord']} "
+            f"(sha256 {sha256_of(block['PinRecord'])[:16]}), image {block['ImageSHA256'][:16]}, "
+            f"in-image {block['ImageBinary']} {block['ImageBinarySHA256'][:16]}")
+
+
+# ERRATUM-1702 E-2, the interim sizing rule of every container job.
+SIZING_FACTOR, SIZING_FRACTION, SIZING_MARGIN = 1.30, 0.70, 0.10
+SIZING_RULE = ("ERRATUM-1702 E-2: the plan's EstimatedPalacePeakGiB x 1.30 must be <= 0.70 x MemTotal of the instance type; the "
+               "first type of Paladin.MemTotalGiB where it fits with a margin >= 10 % of that bound is chosen (a smaller margin "
+               "moves to the next type: m8g -> r8g); above the last type's bound = STOP (a CONTACT); one node per stage")
+
+
+def instance_for(estimate_gib, mem_total_gib):
+    """The --instance-type of a stage by SIZING_RULE, with the figures; PaladinError above the last type."""
+    figure = float(estimate_gib) * SIZING_FACTOR
+    types = list(mem_total_gib)
+    for position, name in enumerate(types):
+        bound = SIZING_FRACTION * float(mem_total_gib[name])
+        margin = (bound - figure) / bound
+        if figure <= bound and (margin >= SIZING_MARGIN or position == len(types) - 1):
+            return {"Type": name, "EstimateGiB": float(estimate_gib), "Factor": SIZING_FACTOR, "FigureGiB": figure,
+                    "MemTotalGiB": float(mem_total_gib[name]), "BoundGiB": bound, "MarginFraction": margin, "Rule": SIZING_RULE}
+    raise PaladinError(f"E-2 sizing: {estimate_gib:.1f} GiB x {SIZING_FACTOR} = {figure:.1f} GiB is above 0.70 x MemTotal of every "
+                       f"type {types}: CONTACT ({SIZING_RULE})")
 
 
 def utc_now():
     return datetime.datetime.now(datetime.timezone.utc)
 
 
-def paladin_call(cli, arguments):
+def parse_time(text):
+    if not text:
+        return None
+    value = datetime.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    return value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)
+
+
+def paladin_call(cli, arguments, *, timeout=600):
     """Run `cli arguments` (a --json command); the envelope's data, or PaladinError."""
-    completed = subprocess.run([cli] + list(arguments), capture_output=True, text=True)
+    try:
+        completed = subprocess.run([cli] + list(arguments), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise PaladinError(f"{' '.join(arguments[:2])}: no answer in {timeout} s") from None
     try:
         envelope = json.loads(completed.stdout)
     except ValueError:
-        raise PaladinError(f"{' '.join(arguments[:2])}: no JSON envelope "
-                           f"(rc {completed.returncode})") from None
+        raise PaladinError(f"{' '.join(arguments[:2])}: no JSON envelope (rc {completed.returncode})") from None
     if completed.returncode != 0 or not envelope.get("ok"):
-        raise PaladinError(f"{' '.join(arguments[:2])}: {envelope.get('error')!r} "
-                           f"(rc {completed.returncode})")
+        raise PaladinError(f"{' '.join(arguments[:2])}: {envelope.get('error')!r} (rc {completed.returncode})")
     return envelope["data"]
 
 
-def write_status(path, status):
+def remote_shell(host, command, *, timeout=300, stdin=None):
+    """`command` on host by ssh (None: here, by bash; the tests).  The CompletedProcess."""
+    argv = (["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host, command] if host else ["bash", "-c", command])
+    try:
+        return subprocess.run(argv, input=stdin or "", capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise PaladinError(f"{'ssh ' + host if host else 'bash'}: no answer in {timeout} s: {command[:160]}") from None
+
+
+def remote_text(host, command, *, timeout=300, stdin=None, what="a read on /data"):
+    result = remote_shell(host, command, timeout=timeout, stdin=stdin)
+    if result.returncode != 0:
+        raise PaladinError(f"{what} failed (rc {result.returncode}): {result.stderr.strip()[:300]}")
+    return result.stdout
+
+
+def write_json_atomic(path, value):
     temporary = path + ".tmp"
     with open(temporary, "w") as f:
-        json.dump(status, f, indent=1)
+        json.dump(value, f, indent=1)
     os.replace(temporary, path)
 
 
-def wait_run(cli, run_id, cap_seconds, *, poll_seconds, now=utc_now, sleep=time.sleep):
-    """Poll describe-run until the run ends; past cap_seconds from its start, cancel it.
-    Returns (the last describe-run data, whether this wait cancelled the run)."""
-    cancelled = False
-    while True:
-        data = paladin_call(cli, ["palace", "describe-run", str(run_id), "--json"])
-        if str(data.get("status", "")).lower() in TERMINAL:
-            return data, cancelled
-        started = data.get("started")
-        if cap_seconds and started and not cancelled:
-            running = (now() - datetime.datetime.fromisoformat(started)).total_seconds()
-            if running > float(cap_seconds):
-                paladin_call(cli, ["palace", "cancel", str(run_id), "--json"])
-                cancelled = True
+def tool_line(block, arguments, pattern, what, *, timeout=600):
+    """Run a check tool with the block's ToolPython: its PASS line, or PaladinError (fail closed)."""
+    try:
+        completed = subprocess.run([block["ToolPython"], *arguments], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise PaladinError(f"{what}: no answer in {timeout} s") from None
+    lines = completed.stdout.strip().splitlines()
+    passed = [line for line in lines if re.match(pattern, line)]
+    if completed.returncode != 0 or not passed:
+        raise PaladinError(f"{what} did not pass (rc {completed.returncode}): {(lines or [completed.stderr.strip()])[-1][:300]}")
+    return passed[-1]
+
+
+def verify_route(block):
+    """Before the first submit of a qualify run (as verify_remote_executables for PBS): the pin
+    checked (each stage checks it again before its submit and after its run)."""
+    line = tool_line(block, [block["PinCheck"], "check", "--record", block["PinRecord"]], r"PASS ",
+                     "pin_check_v2 check before the first submit")
+    return {"Backend": "paladin", "Host": block["Host"], "Selector": block["Selector"],
+            "PinRecord": {"Path": block["PinRecord"], "SHA256": sha256_of(block["PinRecord"])}, "PinCheck": line,
+            "Executables": [{"Binary": block["ImageBinary"], "SHA256": block["ImageBinarySHA256"], "MPIExec": "paladin"}],
+            "Image": {"SHA256": block["ImageSHA256"]}, "UTC": utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "Rule": PALADIN_ROUTE_RULE}
+
+
+# The stage identity every submit carries as metadata (and the lookup filters on).
+def stage_identity(lane, case, stage, plan_sha256):
+    return {"programme": "spr", "lane": lane, "case": case, "stage": stage, "plan": "sha256:" + plan_sha256[:16]}
+
+
+def metadata_arguments(identity):
+    return [part for key, value in identity.items() for part in ("-m", f"{key}={value}")]
+
+
+def find_runs(cli, identity):
+    """Every paladin row whose metadata holds the stage identity (server filter, re-checked here)."""
+    data = paladin_call(cli, ["palace", "my-jobs", *metadata_arguments(identity), "--json"])
+    return [row for row in data.get("jobs") or []
+            if all((row.get("metadata") or {}).get(key) == value for key, value in identity.items())]
+
+
+LIVE_STATUSES = {"submitted", "queued", "running", "canceling"}
+RESUME_RULE = ("decision 1799 (g): a stage's runs are found by its identity metadata + the plan sha; a queued / running / completed "
+               "run is adopted and never submitted again; a canceled (the cap included), out_of_memory, unknown or unexplained "
+               "failed run STOPS the drive (no resubmit); a submission_failed row without a job id is NO RUN (CTR-HOWTO s12: one "
+               "re-submit, a second = STOP); two runs of one stage = STOP")
+
+
+def no_run(row):
+    return str(row.get("status", "")).lower() == "submission_failed" and not row.get("job_id")
+
+
+def lookup_decision(rows):
+    """('adopt', row) | ('submit', number of earlier no-run rows); PaladinError otherwise (RESUME_RULE)."""
+    runs = [row for row in rows if not no_run(row)]
+    if len(runs) > 1:
+        raise PaladinError(f"{len(runs)} runs of one stage: {[(row['run_id'], row.get('status')) for row in runs]}: "
+                           f"none is adopted ({RESUME_RULE})")
+    if runs:
+        return "adopt", runs[0]
+    if len(rows) >= 2:
+        raise PaladinError(f"{len(rows)} submission_failed rows of one stage {[row['run_id'] for row in rows]}: "
+                           f"no further submit ({RESUME_RULE})")
+    return "submit", len(rows)
+
+
+def run_class(status):
+    status = str(status or "").lower()
+    if status in LIVE_STATUSES:
+        return "live"
+    return {"completed": "completed", "failed": "failed", "canceled": "cancelled", "cancelled": "cancelled",
+            "out_of_memory": "out-of-memory"}.get(status, "unknown")
+
+
+def expected_outputs(config):
+    """The postpro files every completed run of this configuration writes (palace.json; the two
+    response matrices of a reducer or of a response-matrix solve that is not an archive writer).
+    The chain's own validations read the other tables later."""
+    names = ["palace.json"]
+    electrostatic = config.get("Solver", {}).get("Electrostatic", {})
+    mode = electrostatic.get("ResponseArchive", {}).get("Mode")
+    if mode == "Reduce" or (mode is None and electrostatic.get("ResponseMatrix")):
+        names += ["domain-response-matrix.csv", "surface-response-matrix.csv"]
+    return names
+
+
+COMPLETION_RULE = ("PREREG-ESSURR-NOTE-1: a row failed by the qdash upload ALONE is a completed run iff (1) log.out has 'Elapsed "
+                   "Time Report (s)', (2) console.log has 'Runner finished (exit 0)', (3) every ERROR line of console.log is the "
+                   "upload harness's (at least one), (4) every expected output is present by name, (5) no cap / memory stop fired "
+                   "(this backend issued no cancel; paladin's own guard ends a row out_of_memory, not failed); a completed row "
+                   "must show (1), (2) and (4)")
+
+
+def completion_read(host, run_dir, expected, *, row_status, cancelled_by_backend):
+    """The five conditions of COMPLETION_RULE read on the run directory."""
+    q = shlex.quote(run_dir)
+    text = remote_text(host, f"cd {q} && echo ELAPSED $(grep -c 'Elapsed Time Report (s)' log.out 2>/dev/null); "
+                             f"echo FINISHED $(grep -a -c 'Runner finished (exit 0)' console.log 2>/dev/null); "
+                             f"grep -a 'ERROR' console.log 2>/dev/null | sed 's/^/ERRORLINE /' | head -20; "
+                             f"grep -a -E '^[A-Za-z_.]+(Error|Exception)' console.log 2>/dev/null | tail -1 | sed 's/^/LAST /'; "
+                             f"ls -1 postpro 2>/dev/null | sed 's/^/FILE /'", what=f"the completion read of {run_dir}")
+    lines = text.splitlines()
+    value = {line.split()[0]: line.split()[1] if len(line.split()) > 1 else "0" for line in lines
+             if line.startswith(("ELAPSED ", "FINISHED "))}
+    errors = [line[len("ERRORLINE "):] for line in lines if line.startswith("ERRORLINE ")]
+    last = next((line[len("LAST "):] for line in lines if line.startswith("LAST ")), None)
+    files = {line[len("FILE "):] for line in lines if line.startswith("FILE ")}
+    failed = str(row_status).lower() == "failed"
+    conditions = {
+        "1-ElapsedTimeReport": int(value.get("ELAPSED", "0") or 0) >= 1,
+        "2-RunnerFinishedExit0": int(value.get("FINISHED", "0") or 0) >= 1,
+        "3-OnlyUploadErrors": (bool(errors) and all("upload" in line for line in errors)) if failed else True,
+        "4-ExpectedOutputs": all(name in files for name in expected),
+        "5-NoStop": not cancelled_by_backend and str(row_status).lower() != "out_of_memory",
+    }
+    return {"Conditions": conditions, "Holds": all(conditions.values()), "ErrorLines": errors, "TracebackLast": last,
+            "MissingOutputs": [name for name in expected if name not in files], "RowStatus": row_status, "Rule": COMPLETION_RULE}
+
+
+def leaves(value, prefix=""):
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            out.update(leaves(item, f"{prefix}.{key}"))
+        return out
+    return {prefix: json.dumps(value, sort_keys=True)}
+
+
+# Paladin owns these paths of the configuration it runs (CTR-HOWTO s4 / s5 m-5).
+PALADIN_OWNED_PATHS = {".Model.Mesh", ".Problem.Output", ".Solver.Device", ".Model.Refinement.SaveAdaptMesh"}
+
+
+def leaf_diff(submitted, ran):
+    """The leaf paths where the configuration paladin ran differs from the submitted one."""
+    first, second = leaves(submitted), leaves(ran)
+    return sorted(path for path in set(first) | set(second) if first.get(path) != second.get(path))
+
+
+def manifest(text):
+    """{relative path: sha256} of `find . -type f -exec sha256sum` output."""
+    out = {}
+    for line in text.splitlines():
+        if line.strip():
+            digest, path = line.split(None, 1)
+            out[path.strip()[2:] if path.strip().startswith("./") else path.strip()] = digest
+    return out
+
+
+ARCHIVE_FREE_BYTES, ARCHIVE_SHARE = 150e9, 0.10
+ARCHIVE_RULE = ("decision 1799 (j): before an archive writer's submit its absolute /data Directory is created and must be empty; "
+                "/data free >= 150 GB and the stage's ArchiveGBEstimate <= 10 % of free; after the writer: one "
+                "source-NNNNNN-rank-NNNNNN-V.bin per (source, rank) of its configuration and partition, none empty, every rank's "
+                "size equal across sources, the zero-hole scan CLEAN in place; the archive is deleted by the chain only after "
+                "the reducer's outputs verify (finish_case, as in the PBS and form-X routes)")
+
+
+def archive_name(source, rank):
+    return f"source-{int(source):06d}-rank-{int(rank):06d}-V.bin"
+
+
+# The tables, logs and meshes paladin 0.2.16 uploads: the run's top level and each AMR iteration's
+# top level (ERRATUM-1802 E-1), never other sub-directories or suffixes.
+UPLOADED_SUFFIXES = (".csv", ".json", ".mesh", ".meshgz")
+
+
+class PaladinJob:
+    """The paladin runs of ONE run_stages plan, in order (module docstring)."""
+
+    def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
+                 log=print, now=utc_now):
+        with open(plan_path, "rb") as f:
+            data = f.read()
+        self.plan = json.loads(data)
+        self.plan_sha256 = hashlib.sha256(data).hexdigest()
+        self.block, self.remote_dir, self.local_dir = block, remote_dir, local_dir
+        self.mapping = list(mapping)
+        self.archive_estimates_gb = dict(archive_estimates_gb or {})
+        self.log, self.now = log, now
+        self.host = None if block["Host"] == "local" else block["Host"]
+        self.confirmed = set()
+        self.case = self.plan["Case"]
+        if int(self.plan.get("Nodes", 1)) != 1:
+            raise PaladinError(f"{self.case}: a {self.plan['Nodes']}-node plan: multi-node paladin stages are NOT DONE "
+                               "(one node per stage, parity with form X)")
+        estimate = (self.plan.get("Instance") or {}).get("EstimatedPalacePeakGiB")
+        if estimate is None:
+            raise PaladinError(f"{self.case}: the plan has no Instance.EstimatedPalacePeakGiB (E-2 sizing)")
+        self.sizing = instance_for(estimate, block["MemTotalGiB"])
+        self.ranks = int(self.plan["Ranks"])
+        self.state_path = os.path.join(local_dir, "paladin-status.json")
+        self.configs_dir = os.path.join(local_dir, "paladin")
+        if os.path.isfile(self.state_path):
+            with open(self.state_path) as f:
+                self.state = json.load(f)
+            if self.state.get("PlanSHA256") != self.plan_sha256:
+                raise PaladinError(f"{self.state_path} records plan {self.state.get('PlanSHA256', '')[:16]}, the plan is "
+                                   f"{self.plan_sha256[:16]}: not resumable")
+        else:
+            self.state = {"Backend": "paladin", "Case": self.case, "PlanSHA256": self.plan_sha256, "Stages": {}}
+
+    def save(self):
+        os.makedirs(self.local_dir, exist_ok=True)
+        write_json_atomic(self.state_path, self.state)
+
+    # The run configuration of a stage: the stage config + its ResponseArchive keys, the mesh local.
+    def stage_run_config(self, stage):
+        with open(map_path(stage["Config"], self.mapping)) as f:
+            config = run_config(json.load(f), stage.get("Environment", {}))
+        mesh = config.get("Model", {}).get("Mesh")
+        if mesh is not None:
+            local = self.plan["MeshLocal"] if mesh == self.plan.get("MeshRemote") else map_path(mesh, self.mapping)
+            config["Model"]["Mesh"] = local
+        return config
+
+    def write_run_config(self, stage):
+        config = self.stage_run_config(stage)
+        os.makedirs(self.configs_dir, exist_ok=True)
+        path = os.path.join(self.configs_dir, stage["Name"] + ".json")
+        with open(path, "w") as f:
+            json.dump(config, f, indent=2)
+        return path, config
+
+    def submit_arguments(self, stage, path):
+        name = stage["Name"]
+        return ["palace", "submit-detailed", path, "--instance-type", self.sizing["Type"], "--nodes", "1",
+                "--ranks-per-node", str(self.ranks), "--palace", self.block["Selector"],
+                "--label", f"{self.block['Lane']}-{name}",
+                *metadata_arguments(stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)),
+                "--comment", f"{self.case} {name}: coupon-library qualify, paladin backend (form Y-b)", "--json"]
+
+    def dry_run(self):
+        """The run configurations and submit commands; contacts nothing."""
+        runs = []
+        for stage in self.plan["Stages"]:
+            path, config = self.write_run_config(stage)
+            runs.append({"Stage": stage["Name"], "RunConfig": path, "RunConfigSHA256": sha256_of(path),
+                         "ResponseArchive": config.get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {}),
+                         "Mesh": config.get("Model", {}).get("Mesh"), "Requires": list(stage.get("Requires", [])),
+                         "CapSeconds": stage.get("CapSeconds"), "Nodes": 1, "RanksPerNode": self.ranks,
+                         "Instance": self.sizing, "Submit": [self.block["CLI"], *self.submit_arguments(stage, path)]})
+        return runs
+
+    # The checks of a submit (decision 1799 (h) / (i) / (j); REFREEZE s20.8 (c)).
+    def tool_line(self, arguments, pattern, what, timeout=600):
+        return tool_line(self.block, arguments, pattern, what, timeout=timeout)
+
+    def preflight(self):
+        """Once per job before its first submit: the mesh the runs upload is the plan's."""
+        if "Preflight" in self.state:
+            return
+        mesh = self.plan.get("MeshLocal")
+        record = {"Backend": "paladin", "Selector": self.block["Selector"],
+                  "PinRecord": {"Path": self.block["PinRecord"], "SHA256": sha256_of(self.block["PinRecord"])},
+                  "ImageSHA256": self.block["ImageSHA256"], "ImageBinary": self.block["ImageBinary"],
+                  "ImageBinarySHA256": self.block["ImageBinarySHA256"], "PlanSHA256": self.plan_sha256,
+                  "Instance": self.sizing, "UTC": self.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+        if self.plan.get("BinarySHA256") != self.block["ImageBinarySHA256"]:
+            raise PaladinError(f"the plan pins {self.plan.get('BinarySHA256')}, the pinned image's executable is "
+                               f"{self.block['ImageBinarySHA256']}")
+        if mesh is not None:
+            if not os.path.isfile(mesh) or sha256_of(mesh) != self.plan.get("MeshSHA256"):
+                raise PaladinError(f"the local mesh {mesh} is absent or not the plan's {self.plan.get('MeshSHA256', '')[:16]}")
+            record["Mesh"] = {"Local": mesh, "SHA256": self.plan["MeshSHA256"]}
+        try:
+            version = subprocess.run([self.block["CLI"], "--version"], capture_output=True, text=True, timeout=120)
+            record["PaladinVersion"] = version.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            record["PaladinVersion"] = None
+        self.state["Preflight"] = record
+        self.save()
+
+    def archive_guard(self, directory):
+        estimate_gb = self.archive_estimates_gb.get(directory)
+        if estimate_gb is None:
+            raise PaladinError(f"no ArchiveGBEstimate for the archive {directory} ({ARCHIVE_RULE})")
+        q = shlex.quote(directory)
+        text = remote_text(self.host, f"mkdir -p {q} && df -Pk {q} | tail -1 && echo FILES $(ls -A {q} | wc -l)",
+                           what=f"the archive guard of {directory}")
+        fields = [line for line in text.splitlines() if not line.startswith("FILES")][-1].split()
+        free = int(fields[3]) * 1024
+        files = int(text.split("FILES")[-1].split()[0])
+        guard = {"Directory": directory, "FreeBytes": free, "EstimateBytes": estimate_gb * 1e9, "FilesBefore": files,
+                 "Rule": ARCHIVE_RULE}
+        if free < ARCHIVE_FREE_BYTES or estimate_gb * 1e9 > ARCHIVE_SHARE * free or files:
+            raise PaladinError(f"the archive guard of {directory} refuses the submit: {guard}")
+        return guard
+
+    def archive_verify(self, directory, config, record):
+        sources = [entry["Index"] for entry in config.get("Boundaries", {}).get("PrescribedPotential", [])]
+        q = shlex.quote(directory)
+        text = remote_text(self.host, f"find {q} -maxdepth 1 -type f -name 'source-*-rank-*-V.bin' -printf '%f %s\\n'",
+                           timeout=900, what=f"the listing of the archive {directory}")
+        sizes = {}
+        for line in text.splitlines():
+            name, size = line.rsplit(" ", 1)
+            sizes[name] = int(size)
+        expected = {archive_name(source, rank) for source in sources for rank in range(self.ranks)}
+        missing = sorted(expected - set(sizes))
+        extra = sorted(set(sizes) - expected)
+        empty = sorted(name for name, size in sizes.items() if size == 0)
+        uneven = [rank for rank in range(self.ranks)
+                  if len({sizes.get(archive_name(source, rank)) for source in sources}) > 1]
+        report = os.path.join(self.remote_dir, f"{record['Name']}-archive-zero-hole.json")
+        with open(self.block["ZeroHoleScan"]) as f:
+            tool = f.read()
+        scan = remote_shell(self.host, f"python3 - --out {shlex.quote(report)} {q}", timeout=1800, stdin=tool)
+        verification = {"Directory": directory, "Sources": len(sources), "Ranks": self.ranks, "Expected": len(expected),
+                        "Found": len(sizes), "Missing": missing[:5], "MissingCount": len(missing), "Extra": extra[:5],
+                        "Empty": empty[:5], "UnevenRanks": uneven[:5], "Bytes": sum(sizes.values()),
+                        "EstimateBytes": (self.archive_estimates_gb.get(directory) or 0) * 1e9,
+                        "ZeroHoleScan": {"ReturnCode": scan.returncode, "Report": report,
+                                         "ToolSHA256": hashlib.sha256(tool.encode()).hexdigest()},
+                        "Rule": ARCHIVE_RULE}
+        verification["OK"] = not (missing or extra or empty or uneven) and scan.returncode == 0
+        return verification
+
+    def qdash_record(self, run_dir, data):
+        q = shlex.quote(run_dir)
+        text = remote_text(self.host, f"cd {q} && for f in log.out postpro/* postpro/iteration*/*; do "
+                                      f"[ -f \"$f\" ] && [ ! -L \"$f\" ] && stat -c '%s %n' \"$f\"; done; true",
+                           what=f"the upload sizes of {run_dir}")
+        files = {}
+        for line in text.splitlines():
+            size, name = line.split(" ", 1)
+            if name == "log.out" or name.endswith(UPLOADED_SUFFIXES):
+                files[name] = int(size)
+        return {"Artifacts": [[item.get("label"), item.get("type")] for item in data.get("output_artifacts") or []],
+                "Files": len(files), "Bytes": sum(files.values()),
+                "IterationFiles": sorted(name for name in files if name.startswith("postpro/iteration")),
+                "Rule": "paladin 0.2.16 uploads log.out and the top-level csv / json / mesh of postpro and of each "
+                        "postpro/iterationN (ERRATUM-1802 E-1); the archive is outside the run directory: not uploaded"}
+
+    def describe(self, run_id):
+        return paladin_call(self.block["CLI"], ["palace", "describe-run", str(run_id), "--json"])
+
+    def submit(self, stage, record):
+        """The checks of a submit, the submit, the RunID recorded at once; a failed submit
+        re-read by the lookup (a no-run row = one re-submit; a refusal = STOP)."""
+        name = stage["Name"]
+        path, config = self.write_run_config(stage)
+        record["RunConfig"] = {"Path": path, "SHA256": sha256_of(path)}
+        record["SchemaCheck"] = self.tool_line([self.block["SchemaCheck"], self.block["Selector"], path], r"VALID ",
+                                               f"the schema check of {name}")
+        mode = config.get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
+        if mode.get("Mode") == "Archive":
+            record["ArchiveGuard"] = self.archive_guard(mode["Directory"])
+        record["PinCheckBefore"] = self.tool_line([self.block["PinCheck"], "check", "--record", self.block["PinRecord"]],
+                                                  r"PASS ", f"pin_check_v2 check before {name}")
+        record["Instance"] = self.sizing
+        record["Nodes"], record["RanksPerNode"] = 1, self.ranks
+        record["Identity"] = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
+        try:
+            data = paladin_call(self.block["CLI"], self.submit_arguments(stage, path))
+        except PaladinError as error:
+            record.setdefault("SubmitErrors", []).append({"UTC": self.now().isoformat(), "Error": str(error)[:300]})
+            self.save()
+            return None
+        run_id = int(data["jobs"][0]["run_id"])
+        record["RunID"], record["Submitted"] = run_id, self.now().isoformat()
+        self.save()
+        self.log(f"{self.case}: submitted {name} as paladin run {run_id} ({self.sizing['Type']} x {self.ranks})")
+        return run_id
+
+    def find_or_submit(self, stage, record):
+        """RESUME_RULE: the stage's run (adopted or submitted now), or PaladinError.  A submit is
+        always followed by a lookup that must find exactly that run (a run recorded but not found
+        = STOP, never a second submit)."""
+        name = stage["Name"]
+        identity = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
+        for _ in range(3):
+            decision, value = lookup_decision(find_runs(self.block["CLI"], identity))
+            if decision == "adopt":
+                if record.get("RunID") not in (None, int(value["run_id"])):
+                    raise PaladinError(f"{name}: the recorded run {record['RunID']} is not the stage's run {value['run_id']}")
+                if record.get("RunID") is None:
+                    record["RunID"] = int(value["run_id"])
+                    record["Adopted"] = {"UTC": self.now().isoformat(), "Status": value.get("status"),
+                                         "InstanceType": value.get("instance_type"), "Nodes": value.get("nodes"),
+                                         "Rule": RESUME_RULE}
+                    self.log(f"{self.case}: adopted {name} paladin run {value['run_id']} ({value.get('status')})")
+                record.setdefault("Identity", identity)
+                self.save()
+                return record["RunID"]
+            if record.get("RunID") is not None:
+                raise PaladinError(f"{name}: the recorded run {record['RunID']} is not found by its identity {identity}: "
+                                   f"STOP, no second submit ({RESUME_RULE})")
+            if value:
+                record["NoRunRowsBeforeSubmit"] = value
+            if self.submit(stage, record) is not None:
+                continue  # the lookup must now find exactly this run
+            decision, value = lookup_decision(find_runs(self.block["CLI"], identity))
+            if decision == "submit" and value == 0:
+                raise PaladinError(f"{name}: the submit was refused and left no row: STOP "
+                                   f"({record['SubmitErrors'][-1]['Error']})")
+        raise PaladinError(f"{name}: no run after its submits ({record.get('SubmitErrors')}; {RESUME_RULE})")
+
+    def poll(self, stage, record):
+        """One describe-run of the stage's run; the cap cancel; the data when the run ended."""
+        data = self.describe(record["RunID"])
+        status = str(data.get("status", "")).lower()
+        record["RowStatus"] = status
+        if run_class(status) != "live":
+            return data
+        started = parse_time(data.get("started"))
+        cap = stage.get("CapSeconds")
+        if cap and started and (self.now() - started).total_seconds() > float(cap) and not record.get("CapCancel", {}).get("OK"):
+            cancel = record.setdefault("CapCancel", {"Attempts": 0, "CapSeconds": cap})
+            cancel["Attempts"] += 1
+            cancel["UTC"] = self.now().isoformat()
+            try:
+                paladin_call(self.block["CLI"], ["palace", "cancel", str(record["RunID"]), "--json"])
+                cancel["OK"] = True
+                self.log(f"{self.case}: {stage['Name']} run {record['RunID']} past its cap {cap} s: cancelled")
+            except PaladinError as error:
+                cancel["Error"] = str(error)[:300]
+                if cancel["Attempts"] >= 3:
+                    self.save()
+                    raise PaladinError(f"{stage['Name']}: the cap cancel of run {record['RunID']} failed 3 times: cancel it "
+                                       f"by hand ({error})")
+        self.save()
+        return None
+
+    def finish(self, stage, record, data):
+        """The reads after a run ended (module docstring); State complete, or PaladinError."""
+        name = stage["Name"]
+        status = str(data.get("status", "")).lower()
+        run_dir = (data.get("block") or {}).get("backend_data", {}).get("run_dir")
+        started, completed = parse_time(data.get("started")), parse_time(data.get("completed"))
+        record.update(RunDir=run_dir, Started=data.get("started"), Completed=data.get("completed"), RowStatus=status,
+                      Class=run_class(status))
+        if started and completed:
+            record["WallSeconds"] = (completed - started).total_seconds()
+            record["NodeHours"] = record["WallSeconds"] / 3600.0
+        cls = run_class(status)
+        if cls in ("cancelled", "out-of-memory", "unknown"):
+            record["State"] = ("timed-out" if cls == "cancelled" and record.get("CapCancel", {}).get("OK") else cls)
+            self.save()
+            raise PaladinError(f"{name}: run {record['RunID']} ended {status} (State {record['State']}): nothing is resubmitted "
+                               f"({RESUME_RULE})")
+        backend_data = (data.get("block") or {}).get("backend_data", {})
+        partition = (record.get("Adopted", {}).get("Nodes", 1), backend_data.get("ranks_per_node_resolved", self.ranks))
+        record["Partition"] = {"Nodes": partition[0], "RanksPerNode": partition[1]}
+        if partition != (1, self.ranks):
+            record["State"] = "failed"
+            self.save()
+            raise PaladinError(f"{name}: run {record['RunID']} ran on {partition[0]} node(s) x {partition[1]} ranks, the plan is "
+                               f"1 x {self.ranks}: STOP")
+        config = self.stage_run_config(stage)
+        read = completion_read(self.host, run_dir, expected_outputs(config), row_status=status,
+                               cancelled_by_backend=bool(record.get("CapCancel")))
+        record["CompletionRead"] = read
+        conditions = read["Conditions"]
+        holds = read["Holds"] if cls == "failed" else all(conditions[key] for key in
+                                                          ("1-ElapsedTimeReport", "2-RunnerFinishedExit0", "4-ExpectedOutputs"))
+        if not holds:
+            record["State"] = "failed"
+            self.save()
+            raise PaladinError(f"{name}: run {record['RunID']} ({status}) fails the completion read {conditions}: STOP, no read "
+                               f"of its data, nothing resubmitted")
+        if cls == "failed":
+            record["CompletedByNote1"] = True
+        record["PinCheckAfter"] = self.tool_line([self.block["PinCheck"], "postrun", "--record", self.block["PinRecord"],
+                                                  "--run-id", str(record["RunID"])], r"POSTRUN-V2 PASS ",
+                                                 f"pin_check_v2 postrun of {name}")
+        q = shlex.quote(run_dir)
+        ran = json.loads(remote_text(self.host, f"cat {q}/palace_config.json", what=f"palace_config.json of {run_dir}"))
+        differing = leaf_diff(config, ran)
+        record["LeafDiff"] = differing
+        foreign = [path for path in differing if path not in PALADIN_OWNED_PATHS]
+        if foreign:
+            record["State"] = "failed"
+            self.save()
+            raise PaladinError(f"{name}: paladin ran a configuration that differs from the submitted one at {foreign}: STOP")
+        addon = remote_text(self.host, f"grep -a -m1 'Paladin addon:' {q}/console.log || true", what="the addon line")
+        record["PaladinAddon"] = addon.strip()
+        output = config.get("Problem", {}).get("Output")
+        if not output or not os.path.isabs(output):
+            record["State"] = "failed"
+            self.save()
+            raise PaladinError(f"{name}: the stage configuration names no absolute Problem.Output ({output!r})")
+        log_path = os.path.join(self.remote_dir, f"{name}.log")
+        qo, ql = shlex.quote(output), shlex.quote(log_path)
+        text = remote_text(self.host, f"mkdir -p {qo} && cp -a {q}/postpro/. {qo}/ && cp -a {q}/log.out {ql} && "
+                                      f"(cd {q}/postpro && find . -type f -exec sha256sum {{}} + | sort -k2) && echo '--SPLIT--' && "
+                                      f"(cd {qo} && find . -type f -exec sha256sum {{}} + | sort -k2)",
+                           timeout=900, what=f"the copy of {run_dir}/postpro to {output}")
+        source, target = (manifest(part) for part in text.split("--SPLIT--"))
+        if source != target:
+            record["State"] = "failed"
+            self.save()
+            raise PaladinError(f"{name}: the copy of {run_dir}/postpro into {output} differs from its source")
+        record["Outputs"] = {"Directory": output, "Files": len(target), "Log": log_path}
+        import run_stages  # the same qualify/ directory: ONE log parser
+        record["Parsed"] = run_stages.parse_log(remote_text(self.host, f"cat {ql}", what=f"the log {log_path}"))
+        archive = config.get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
+        if archive.get("Mode") == "Archive":
+            record["Archive"] = self.archive_verify(archive["Directory"], config, record)
+            if not record["Archive"]["OK"]:
+                record["State"] = "failed"
+                self.save()
+                raise PaladinError(f"{name}: the archive {archive['Directory']} does not verify: "
+                                   f"{ {k: v for k, v in record['Archive'].items() if k != 'Rule'} }")
+        record["QdashUpload"] = self.qdash_record(run_dir, data)
+        record["State"] = "complete"
+        self.save()
+        self.log(f"{self.case}: {name} run {record['RunID']} complete ({record.get('WallSeconds', 0):.0f} s)")
+
+    def partition_check(self, stage, record):
+        """Requires: every required stage completed, on this stage's partition (the archive is per rank)."""
+        for required in stage.get("Requires", []):
+            other = self.state["Stages"].get(required, {})
+            if other.get("State") != "complete":
+                raise PaladinError(f"{stage['Name']} requires {required}, which has not completed")
+            if other.get("Partition") != {"Nodes": 1, "RanksPerNode": self.ranks}:
+                raise PaladinError(f"{stage['Name']} reads the archive of {required}, which ran on {other.get('Partition')}, "
+                                   f"not 1 x {self.ranks} (the archive is per rank)")
+
+    def advance(self):
+        """One step of the job: True when every stage is complete (status.json written)."""
+        self.preflight()
+        for stage in self.plan["Stages"]:
+            name = stage["Name"]
+            record = self.state["Stages"].setdefault(name, {"Name": name})
+            if record.get("State") == "complete":
+                continue
+            if record.get("State") is not None:
+                raise PaladinError(f"{name}: State {record['State']} recorded: STOP ({RESUME_RULE})")
+            self.partition_check(stage, record)
+            if record.get("RunID") is None or name not in self.confirmed:
+                # Every driver process confirms a recorded run by the lookup once (RESUME_RULE).
+                self.find_or_submit(stage, record)
+                self.confirmed.add(name)
+            data = self.poll(stage, record)
+            if data is None:
+                return False
+            self.finish(stage, record, data)
+        self.write_status()
+        return True
+
+    def write_status(self):
+        """status.json of run_stages' schema in the plan's directory on /data."""
+        records = [self.state["Stages"][stage["Name"]] for stage in self.plan["Stages"]]
+        stages = []
+        for stage, record in zip(self.plan["Stages"], records):
+            stages.append({"Name": stage["Name"], "Config": stage["Config"], "Environment": stage.get("Environment", {}),
+                           "CapSeconds": stage.get("CapSeconds"), "Log": record["Outputs"]["Log"],
+                           "StartUTC": record.get("Started"), "EndUTC": record.get("Completed"),
+                           "Binary": self.block["ImageBinary"], "BinarySHA256": self.block["ImageBinarySHA256"],
+                           "ReturnCode": 0, "WallSeconds": record.get("WallSeconds"), "TimedOut": False,
+                           "Parsed": record.get("Parsed", {}), "State": "complete",
+                           "Paladin": {key: value for key, value in record.items() if key != "Parsed"}})
+        starts = [parse_time(record.get("Started")) for record in records if record.get("Started")]
+        ends = [parse_time(record.get("Completed")) for record in records if record.get("Completed")]
+        status = {"Version": 2, "Plan": os.path.join(self.remote_dir, "plan.json"), "Case": self.case, "Backend": "paladin",
+                  "PBSJobID": None, "PaladinRunIDs": [record["RunID"] for record in records], "Host": None,
+                  "StartUTC": min(starts).strftime("%Y-%m-%dT%H:%M:%SZ") if starts else None,
+                  "EndUTC": max(ends).strftime("%Y-%m-%dT%H:%M:%SZ") if ends else None, "State": "complete",
+                  "Preflight": self.state.get("Preflight"),
+                  "TotalSeconds": sum(record.get("WallSeconds") or 0.0 for record in records), "Stages": stages}
+        target = os.path.join(self.remote_dir, "status.json")
+        remote_text(self.host, f"mkdir -p {shlex.quote(self.remote_dir)} && cat > {shlex.quote(target)}",
+                    stdin=json.dumps(status, indent=1) + "\n", what=f"the write of {target}")
+        self.state["StatusJSON"] = target
+        self.state["NodeHours"] = sum(record.get("NodeHours") or 0.0 for record in records)
+        self.save()
+        return status
+
+
+def drive(job, *, poll_seconds, sleep=time.sleep):
+    """advance() until the job completes (the standalone form; qualify_library polls itself)."""
+    while not job.advance():
         sleep(poll_seconds)
+    return job.state
 
-
-def fetch_run(run_dir, local, *, remote_host, rsync="rsync"):
-    """rsync <run_dir>/postpro and <run_dir>/log.out into local.  The archives are not in
-    the run_dir (their Directory is an absolute path under the remote case root)."""
-    os.makedirs(local, exist_ok=True)
-    source = f"{remote_host}:{run_dir}" if remote_host else run_dir
-    transport = ["-e", "ssh -o BatchMode=yes -o ConnectTimeout=20"] if remote_host else []
-    for part, target in (("postpro/", os.path.join(local, "postpro") + "/"),
-                         ("log.out", os.path.join(local, "log.out"))):
-        command = [rsync, "-a"] + transport + [source.rstrip("/") + "/" + part, target]
-        if subprocess.run(command, capture_output=True).returncode != 0:
-            raise PaladinError(f"the fetch of {part} from {run_dir} failed")
-
-
-def log_summary(path):
-    """run_stages.parse_log on a fetched log.out (one parser), without its long reports."""
-    import run_stages  # the same qualify/ directory
-
-    with open(path, errors="replace") as f:
-        parsed = run_stages.parse_log(f.read())
-    for long_entry in ("ElapsedTimeReport", "PeakMemoryReport", "Iterations"):
-        parsed.pop(long_entry, None)
-    return parsed
-
-
-def drive(runs, *, status_path, case, cli, out, remote_host, poll_seconds, rsync="rsync",
-          now=utc_now, sleep=time.sleep):
-    """Submit, wait for and fetch the runs IN ORDER.  status.json records each stage's
-    RunID right after its submit; a stage with a RunID is never submitted again."""
-    status = {"Backend": "paladin", "Case": case, "Stages": {}}
-    if os.path.isfile(status_path):
-        with open(status_path) as f:
-            status = json.load(f)
-    stages = status["Stages"]
-    by_name = {run["Stage"]: run for run in runs}
-    for run in runs:
-        name = run["Stage"]
-        record = stages.setdefault(name, {})
-        if record.get("State") == "completed" and record.get("Fetched"):
-            continue
-        for required in run["Requires"]:
-            if stages.get(required, {}).get("State") != "completed":
-                raise PaladinError(f"{name} requires {required}, which has not completed")
-            other = by_name[required]
-            directory = run["ResponseArchive"].get("Directory")
-            if (directory and directory == other["ResponseArchive"].get("Directory") and
-                    (run["Nodes"], run["RanksPerNode"]) !=
-                    (other["Nodes"], other["RanksPerNode"])):
-                raise PaladinError(f"{name} reads the archive of {required} on another "
-                                   "partition (the archive is per rank)")
-        if "RunID" not in record:
-            data = paladin_call(cli, run["Submit"][1:])
-            record["RunID"] = int(data["jobs"][0]["run_id"])
-            record["Submitted"] = now().isoformat()
-            write_status(status_path, status)
-        data, cancelled = wait_run(cli, record["RunID"], run.get("CapSeconds"),
-                                   poll_seconds=poll_seconds, now=now, sleep=sleep)
-        backend_data = data.get("block", {}).get("backend_data", {})
-        record.update({"State": "timed-out" if cancelled else str(data["status"]).lower(),
-                       "RunDir": backend_data.get("run_dir"),
-                       "Started": data.get("started"), "Completed": data.get("completed")})
-        if record["Started"] and record["Completed"]:
-            seconds = (datetime.datetime.fromisoformat(record["Completed"]) -
-                       datetime.datetime.fromisoformat(record["Started"])).total_seconds()
-            record["NodeHours"] = run["Nodes"] * seconds / 3600.0
-        write_status(status_path, status)
-        if record["State"] != "completed":
-            raise PaladinError(f"{name}: run {record['RunID']} ended {record['State']}; "
-                               "nothing is resubmitted")
-        local = os.path.join(out, name)
-        fetch_run(record["RunDir"], local, remote_host=remote_host, rsync=rsync)
-        record["Fetched"] = local
-        record["Log"] = log_summary(os.path.join(local, "log.out"))
-        write_status(status_path, status)
-    return status
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -258,46 +854,45 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--submit", action="store_true")
-    parser.add_argument("--selector", required=True)
-    parser.add_argument("--lane", required=True)
-    parser.add_argument("--out", required=True)
-    parser.add_argument("--nodes", type=int, default=1)
-    parser.add_argument("--map", action="append", default=[])
-    parser.add_argument("--paladin-cli", default="paladin")
-    parser.add_argument("--remote-host", default="soca-green-job")
+    parser.add_argument("--profile", required=True, help="a cluster profile with a Paladin block")
+    parser.add_argument("--out", required=True, help="the local directory of the job's state and run configurations")
+    parser.add_argument("--remote-dir", help="the plan's directory on /data (outputs, logs, status.json); --submit")
+    parser.add_argument("--map", action="append", default=[], help="REMOTE_PREFIX=LOCAL_PREFIX of the stage configurations")
+    parser.add_argument("--archive-gb", action="append", default=[], help="DIRECTORY=GB: an archive writer's estimate")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
     args = parser.parse_args(argv)
-    with open(args.plan, "rb") as f:
-        data = f.read()
+    with open(args.profile) as f:
+        block = backend_of("paladin", json.load(f))
     mapping = [tuple(entry.split("=", 1)) for entry in args.map]
+    estimates = {key: float(value) for key, value in (entry.rsplit("=", 1) for entry in args.archive_gb)}
     os.makedirs(args.out, exist_ok=True)
-    runs = plan_runs(json.loads(data), plan_sha256=hashlib.sha256(data).hexdigest(),
-                     selector=args.selector, lane=args.lane, nodes=args.nodes,
-                     out=args.out, mapping=mapping)
-    with open(os.path.join(args.out, "paladin-runs.json"), "w") as f:
-        json.dump(runs, f, indent=1)
-    if args.submit:
-        status_path = os.path.join(args.out, "status.json")
-        code = 0
-        try:
-            drive(runs, status_path=status_path, case=json.loads(data)["Case"],
-                  cli=args.paladin_cli, out=args.out, remote_host=args.remote_host or None,
-                  poll_seconds=args.poll_seconds)
-        except PaladinError as error:
-            print(f"STOP: {error}", file=sys.stderr)
-            code = 3
-        if os.path.isfile(status_path):
-            with open(status_path) as f:
-                stages = json.load(f)["Stages"]
-            for name, record in stages.items():
-                print(json.dumps({"Stage": name, "RunID": record.get("RunID"),
-                                  "State": record.get("State"),
-                                  "NodeHours": record.get("NodeHours")}))
-        return code
-    for run in runs:
-        print(json.dumps({"Stage": run["Stage"], "ResponseArchive": run["ResponseArchive"],
-                          "Requires": run["Requires"]}))
-    return 0
+    print(route_line(block))
+    if args.dry_run:
+        job = PaladinJob(args.plan, block=block, remote_dir=args.remote_dir or "", local_dir=args.out, mapping=mapping,
+                         archive_estimates_gb=estimates)
+        runs = job.dry_run()
+        with open(os.path.join(args.out, "paladin-runs.json"), "w") as f:
+            json.dump(runs, f, indent=1)
+        for run in runs:
+            print(json.dumps({"Stage": run["Stage"], "ResponseArchive": run["ResponseArchive"], "Requires": run["Requires"],
+                              "Instance": run["Instance"]["Type"]}))
+        return 0
+    if not args.remote_dir:
+        parser.error("--submit needs --remote-dir")
+    code = 0
+    job = None
+    try:
+        job = PaladinJob(args.plan, block=block, remote_dir=args.remote_dir, local_dir=args.out, mapping=mapping,
+                         archive_estimates_gb=estimates)
+        drive(job, poll_seconds=args.poll_seconds)
+    except PaladinError as error:
+        print(f"STOP: {error}", file=sys.stderr)
+        code = 3
+    if job is not None:
+        for name, record in job.state["Stages"].items():
+            print(json.dumps({"Stage": name, "RunID": record.get("RunID"), "State": record.get("State"),
+                              "NodeHours": record.get("NodeHours")}))
+    return code
 
 
 if __name__ == "__main__":
