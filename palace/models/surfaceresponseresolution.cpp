@@ -9,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <fmt/format.h>
 #include "models/surfaceresponseidentification.hpp"
@@ -531,6 +532,61 @@ std::string ResolutionPreflightLine(const std::vector<ResolutionPreflightRow> &r
   return line + " RESOLVED is necessary, not sufficient.\n";
 }
 
+std::vector<bool>
+ResolutionRepeatedPlaneCells(const std::vector<ResolutionRunRecord::Entry> &entries)
+{
+  std::vector<bool> repeated(entries.size(), false);
+  std::set<double> planes;
+  for (const auto &entry : entries)
+  {
+    if (!entry.cell.all_planes)
+    {
+      planes.insert(entry.cell.plane);
+    }
+  }
+  if (planes.size() != 1)
+  {
+    return repeated;
+  }
+  // The same reading: every count, the energy, the shares, the quantiles (NaN equal to
+  // NaN), the status and the reason; anything else is a distinct reading (counted).
+  auto Same = [](double a, double b) { return (std::isnan(a) && std::isnan(b)) || a == b; };
+  auto SameReading = [&](const ResolutionCell &a, const ResolutionCell &b)
+  {
+    bool same = a.status == b.status && a.reason == b.reason && a.patches == b.patches &&
+                a.not_evaluated == b.not_evaluated && Same(a.energy, b.energy);
+    for (std::size_t k = 0; k < a.shares.size(); k++)
+    {
+      same = same && Same(a.shares[k], b.shares[k]);
+    }
+    for (std::size_t k = 0; k < a.quantiles.size(); k++)
+    {
+      same = same && Same(a.quantiles[k], b.quantiles[k]);
+    }
+    return same;
+  };
+  using CellKey = std::pair<std::vector<std::pair<std::string, double>>, std::string>;
+  std::map<CellKey, std::size_t> all_planes_cell;
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    if (entries[i].cell.all_planes)
+    {
+      all_planes_cell.emplace(CellKey{entries[i].keys, entries[i].cell.type}, i);
+    }
+  }
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    if (entries[i].cell.all_planes)
+    {
+      continue;
+    }
+    const auto it = all_planes_cell.find(CellKey{entries[i].keys, entries[i].cell.type});
+    repeated[i] = it != all_planes_cell.end() &&
+                  SameReading(entries[i].cell, entries[it->second].cell);
+  }
+  return repeated;
+}
+
 nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int level,
                                      int levels)
 {
@@ -606,8 +662,21 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
   std::map<std::string, TypeSummary> by_type_summary;
   nlohmann::json flagged = nlohmann::json::array();
   int flagged_count = 0;
-  for (const auto &entry : record.entries)
+  // Review r1846 mn-A: with ONE plane in the run, each plane cell repeats the all-planes
+  // cell of its measurement and Type (the same patches): the summary counts DISTINCT
+  // readings, so such a plane cell (when its reading equals the all-planes cell's) is not
+  // counted again. The table keeps every row; RepeatedPlaneCells says how many were not
+  // counted.
+  const auto repeated = ResolutionRepeatedPlaneCells(record.entries);
+  int repeated_count = 0;
+  for (std::size_t i = 0; i < record.entries.size(); i++)
   {
+    const auto &entry = record.entries[i];
+    if (repeated[i])
+    {
+      repeated_count++;
+      continue;
+    }
     const auto &cell = entry.cell;
     counts[std::string(ResolutionStatusName(cell.status))]++;
     auto [it, inserted] = by_type_summary.try_emplace(cell.type);
@@ -656,6 +725,7 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
   metadata["WorstByType"] = std::move(by_type);
   metadata["Flagged"] = std::move(flagged);
   metadata["FlaggedCount"] = flagged_count;
+  metadata["RepeatedPlaneCells"] = repeated_count;
   metadata["Cells"] = static_cast<int>(record.entries.size());
   // Review r1817 mn-1 (the coverage block's rule, ruling 1738): a run with no cell says
   // why; without a reason it is not complete.

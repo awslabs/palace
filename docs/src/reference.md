@@ -2870,7 +2870,11 @@ per `Type`, the flagged cells, the PREFLIGHT rows, `"Complete"`, `Level` / `Leve
 `"Final"` like the coverage block) and to one banner line per `Type`. The status counts,
 the worst status per `Type`, the flagged cells and the banner's `m50` range, share beyond
 ``b_{10}`` and count of cells not RESOLVED are taken over EVERY cell, each plane and the
-all-planes cell: a `Type` whose energy on one plane is not RESOLVED never reads RESOLVED. A
+all-planes cell: a `Type` whose energy on one plane is not RESOLVED never reads RESOLVED.
+They count DISTINCT readings: in a run with a single plane each plane cell repeats the
+all-planes cell of its measurement and `Type` (the same patches), and such a plane cell is
+counted once (`"RepeatedPlaneCells"` gives how many; the table keeps both rows; `"Cells"`
+counts the table's rows). A
 run that measures no cell (a raw fallback that applies no patch) names its reason in
 `"NoCellsReason"`, as the coverage block does; without a reason it does not read
 `"Complete"`. With `PatchEnergy`,

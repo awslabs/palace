@@ -196,10 +196,16 @@ struct ResolutionRunRecord
 };
 // palace.json SurfaceResponse.Resolution (Level / Levels as the coverage block; "Final" is
 // added by BaseSolver once the AMR loop has ended). StatusCounts, WorstByType, Flagged,
-// FlaggedCount and the m50 / share ranges are taken over EVERY cell (each plane and the
-// all-planes cell): a Type whose energy on one plane is not RESOLVED never reads RESOLVED.
+// FlaggedCount and the m50 / share ranges are taken over EVERY distinct cell reading (each
+// plane and the all-planes cell): a Type whose energy on one plane is not RESOLVED never
+// reads RESOLVED. With one plane in the run a plane cell that repeats its all-planes cell
+// is counted once (RepeatedPlaneCells).
 nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int level,
                                      int levels);
+// Per entry: whether it is a plane cell that repeats the all-planes cell of its measurement
+// and Type (the run has ONE plane and the two readings are equal in every field).
+std::vector<bool>
+ResolutionRepeatedPlaneCells(const std::vector<ResolutionRunRecord::Entry> &entries);
 // The end-of-run banner: one line per Type (its worst status over every cell, the count of
 // cells not RESOLVED, the m50 range and the range of the share beyond b10, the bars'
 // source and scope) and "RESOLVED is necessary, not sufficient"; a run without a census

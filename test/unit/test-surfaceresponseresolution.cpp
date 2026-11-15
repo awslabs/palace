@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -466,6 +467,98 @@ TEST_CASE("Resolution census summary reads every plane's cell",
     CHECK(metadata["FlaggedCount"] == 1);
     CHECK(ResolutionRunBanner(metadata).find("1 of 3 cell(s) not RESOLVED") !=
           std::string::npos);
+  }
+}
+
+TEST_CASE("Resolution census summary counts a single plane's repeated cell once",
+          "[SurfaceResponseResolution][Serial]")
+{
+  // Review r1846 mn-A: with ONE plane in the run, each plane cell repeats the all-planes
+  // cell of its measurement and Type; the summary counts distinct readings (the table keeps
+  // both rows). A plane cell whose reading differs from the all-planes cell (here: a patch
+  // without a plane slot enters the all-planes cell only) is a distinct reading, counted.
+  using S = ResolutionStatus;
+  auto Summary = [](bool patch_without_plane)
+  {
+    ResolutionRunRecord record;
+    record.order = 2;
+    record.radius = kResolutionBuiltInRadius;
+    record.bars = BuiltInResolutionBars();
+    record.bars_hold = ResolutionBarsHold(record.bars, record.radius);
+    for (const double mode : {1.0, 2.0})
+    {
+      ResolutionAccumulator sums;
+      sums.Reset(2, 2);
+      for (int type = 0; type < 2; type++)
+      {
+        sums.Add(type, 1, S::UNDER_RESOLVED, 2.0, 7.0);
+        sums.Add(type, 1, type == 0 ? S::UNDER_RESOLVED : S::RESOLVED, 0.3, 3.0);
+        if (patch_without_plane && type == 0)
+        {
+          sums.Add(type, 0, S::RESOLVED, 0.3, 1.0);
+        }
+      }
+      for (int type = 0; type < 2; type++)
+      {
+        for (int slot = 0; slot < 2; slot++)
+        {
+          record.entries.push_back(
+              {{{"m", mode}},
+               ComputeResolutionCell(sums.Slot(type, slot), type == 0 ? "SA" : "MS",
+                                     slot == 0, 0.0, true, 1.0, "")});
+        }
+      }
+    }
+    return std::make_pair(record, ResolutionRunMetadata(record, 1, 1));
+  };
+  {
+    const auto [record, metadata] = Summary(false);
+    REQUIRE(record.entries.size() == 8);
+    const auto repeated = ResolutionRepeatedPlaneCells(record.entries);
+    CHECK(std::count(repeated.begin(), repeated.end(), true) == 4);
+    CHECK(metadata["Cells"] == 8);
+    CHECK(metadata["RepeatedPlaneCells"] == 4);
+    CHECK(metadata["WorstByType"]["SA"]["Cells"] == 2);
+    CHECK(metadata["WorstByType"]["SA"]["Flagged"] == 2);
+    CHECK(metadata["WorstByType"]["SA"]["Worst"] == "UNDER-RESOLVED");
+    CHECK(metadata["WorstByType"]["MS"]["Cells"] == 2);
+    CHECK(metadata["WorstByType"]["MS"]["Flagged"] == 2);
+    CHECK(metadata["WorstByType"]["MS"]["Worst"] == "UNDER-RESOLVED");
+    CHECK(metadata["FlaggedCount"] == 4);
+    CHECK(metadata["Flagged"].size() == 4);
+    for (const auto &entry : metadata["Flagged"])
+    {
+      CHECK(entry["Plane"].is_null());
+    }
+    CHECK(metadata["StatusCounts"]["UNDER-RESOLVED"] == 4);
+    const std::string banner = ResolutionRunBanner(metadata);
+    CHECK(banner.find("SA UNDER-RESOLVED over every cell and plane") != std::string::npos);
+    CHECK(banner.find("2 of 2 cell(s) not RESOLVED") != std::string::npos);
+    CHECK(banner.find("4 of 4 cell(s)") == std::string::npos);
+  }
+  {
+    // SA's all-planes cell holds a patch the plane cell does not: SA's plane cells are
+    // distinct readings (counted); MS's still repeat.
+    const auto [record, metadata] = Summary(true);
+    CHECK(metadata["RepeatedPlaneCells"] == 2);
+    CHECK(metadata["WorstByType"]["SA"]["Cells"] == 4);
+    CHECK(metadata["WorstByType"]["SA"]["Flagged"] == 4);
+    CHECK(metadata["WorstByType"]["MS"]["Cells"] == 2);
+    CHECK(metadata["FlaggedCount"] == 6);
+  }
+  {
+    // Two planes: nothing repeats (each plane is its own reading).
+    ResolutionRunRecord record;
+    ResolutionCell all, plane_a, plane_b;
+    all.type = plane_a.type = plane_b.type = "SA";
+    all.status = plane_a.status = plane_b.status = S::UNDER_RESOLVED;
+    plane_a.all_planes = plane_b.all_planes = false;
+    plane_b.plane = 4.8;
+    record.entries = {
+        {{{"m", 1.0}}, all}, {{{"m", 1.0}}, plane_a}, {{{"m", 1.0}}, plane_b}};
+    const auto metadata = ResolutionRunMetadata(record, 1, 1);
+    CHECK(metadata["RepeatedPlaneCells"] == 0);
+    CHECK(metadata["WorstByType"]["SA"]["Cells"] == 3);
   }
 }
 
