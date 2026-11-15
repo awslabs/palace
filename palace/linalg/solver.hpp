@@ -83,6 +83,10 @@ private:
   // approximation A = Ar + Ai.
   bool complex_matrix = true;
 
+  // Whether SetOperator assembled the real-valued block form of a complex-valued system
+  // matrix, of twice the size of the vectors, for the solver.
+  bool block_form = false;
+
   // Whether to drop small entries (< ε) in the sparse system matrix.
   bool drop_small_entries = true;
 

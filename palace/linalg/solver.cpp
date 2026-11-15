@@ -51,6 +51,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
     hAi = &PtAPi->ParallelAssemble();
   }
+  block_form = hAr && hAi && complex_matrix;
   if (hAr && hAi)
   {
     if (complex_matrix)
@@ -145,7 +146,11 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
-  if (pc->Height() == x.Size())
+  // A block form assembled by the caller (the boundary mode solver) is told by its size,
+  // twice that of the vectors. The size is not enough for the one assembled in SetOperator:
+  // on a process without unknowns both forms have size zero, and all processes must make
+  // the same calls to a parallel solver.
+  if (!block_form && pc->Height() == x.Size())
   {
     mfem::Array<const Vector *> X(2);
     mfem::Array<Vector *> Y(2);
