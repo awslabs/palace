@@ -209,6 +209,16 @@ def remote_sha256(host, remote_paths):
     return digests
 
 
+def remote_image_sha256(host, apptainer, image, inner_path):
+    """Form X: the sha256 of the file `inner_path` INSIDE the apptainer image `image` on the host
+    (`apptainer exec IMAGE sha256sum PATH`, read-only); the digest, or RuntimeError without one."""
+    result = ssh(host, f"'{apptainer}' exec '{image}' sha256sum '{inner_path}'", retries=READ_ONLY_RETRIES)
+    digest, _, path = result.stdout.strip().partition("  ")
+    if path.strip() != inner_path or not re.fullmatch(r"[0-9a-f]{64}", digest.strip()):
+        raise RuntimeError(f"no sha256 of {inner_path} inside {image} on {host}: {result.stdout.strip()[:200]!r}")
+    return digest.strip()
+
+
 READ_MARKER = "---READ-OK---"
 
 

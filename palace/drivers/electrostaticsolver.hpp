@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "linalg/operator.hpp"
@@ -24,7 +26,64 @@ class Array;
 namespace palace
 {
 
+// Where a resolved setting came from: its default, its key, its alias variable, or both
+// (equal).
+enum class ResponseArchiveSource
+{
+  DEFAULT,
+  KEY,
+  VARIABLE,
+  KEY_AND_VARIABLE
+};
+
+// The response-archive run mode of coupon generation: Solver.Electrostatic.ResponseArchive
+// with its alias variables (Mode "Archive" / "Reduce" / "Estimate" =
+// PALACE_RESPONSE_ARCHIVE_ONLY / _REDUCE_ONLY / _ESTIMATE_ONLY = "1"; Directory =
+// PALACE_RESPONSE_ARCHIVE_DIR; BlockSize = PALACE_RESPONSE_BLOCK_SIZE; SourceTiming =
+// PALACE_RESPONSE_SOURCE_TIMING; RecycleInitialGuess =
+// PALACE_RESPONSE_RECYCLE_INITIAL_GUESS; EstimateRequest =
+// PALACE_RESPONSE_ESTIMATE_REQUEST). Per setting: the key when only the key is given, the
+// variable when only the variable is set, and an error when both are given with different
+// values. The variables are read collectively (the root's value on every rank:
+// utils/collectiveenvironment.hpp).
+struct ResponseArchiveSettings
+{
+  bool archive_only = false;
+  bool reduce_only = false;
+  bool estimate_only = false;
+  // Absolute and lexically normal; relative paths are taken against the working directory.
+  std::optional<std::filesystem::path> directory;
+  int block_size = 3;
+  bool source_timing = false;
+  bool recycle_initial_guess = false;
+  std::optional<std::string> estimate_request;
+  // The given settings an archive estimate refuses (an alias variable counts when it is
+  // set at all, as before the keys existed).
+  std::vector<std::string> estimate_conflicts;
+  ResponseArchiveSource mode_source = ResponseArchiveSource::DEFAULT;
+  ResponseArchiveSource directory_source = ResponseArchiveSource::DEFAULT;
+  ResponseArchiveSource block_size_source = ResponseArchiveSource::DEFAULT;
+  ResponseArchiveSource source_timing_source = ResponseArchiveSource::DEFAULT;
+  ResponseArchiveSource recycle_initial_guess_source = ResponseArchiveSource::DEFAULT;
+  ResponseArchiveSource estimate_request_source = ResponseArchiveSource::DEFAULT;
+
+  // Whether a mode or an archive Directory is active (an ordinary solve otherwise).
+  bool Active() const
+  {
+    return archive_only || reduce_only || estimate_only || directory.has_value();
+  }
+};
+ResponseArchiveSettings
+ResolveResponseArchive(const config::ElectrostaticSolverData &electrostatic, MPI_Comm comm);
+
+// One log line naming every resolved setting with its source, e.g. "Response-archive
+// settings: Mode=Archive (variable), Directory=/a (key), ...".
+std::string ResponseArchiveSummary(const ResponseArchiveSettings &settings);
+
 // Called before creating any output; the experimental reader must never reuse output.
+// Also refuses, on the key path only, a Solver.Electrostatic.ResponseArchive key that has
+// no effect in the resolved mode and a key-given Archive / Reduce mode without a
+// Directory.
 void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm,
                                     bool check_output = true);
 
@@ -107,7 +166,8 @@ private:
                                          int block_size) const;
 
   ErrorIndicator EstimateArchivedFields(LaplaceOperator &laplace_op, const Operator &K,
-                                        const std::filesystem::path &archive) const;
+                                        const std::filesystem::path &archive,
+                                        const std::string &estimate_request) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

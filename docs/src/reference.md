@@ -895,6 +895,37 @@ When any participating interface sets `FluxRecovery`, the recovered normal flux 
 enters the response matrix. In that case `Solver.Linear.EstimatorTol` controls a physical
 postprocessing solve and must remain tight even if the simulation performs no AMR.
 
+Coupon libraries with many basis traces can split this work between runs with
+`Solver.Electrostatic.ResponseArchive`. `"Mode": "Archive"` solves every
+prescribed-potential source and writes its potential (and recovered flux) to `Directory`
+without postprocessing; `"SourceTiming": true` then prints one timing line per source and
+`"RecycleInitialGuess": true` starts each solve from the previous source's field.
+`"Mode": "Reduce"` assembles `surface-response-matrix.csv` and
+`domain-response-matrix.csv` from that archive without solving, streaming `BlockSize`
+sources at a time (default 3); `"Mode": "Estimate"` evaluates the error indicator of the
+archived fields for the excitations listed in `EstimateRequest`. `"Mode": "None"` (the
+default) with a `Directory` is the ordinary solve that also writes the archive. Both
+archive modes require `ResponseMatrix` and `AggregateResponseMatrix`. The archive holds one
+file per source, rank and field, so the reduction runs at the rank count of the archiving
+run. A relative `Directory` is taken against the working directory of the process: a
+reduction in another run, or on more than one node, needs an absolute path on a shared file
+system. A key that has no effect in the resolved mode (`SourceTiming` or
+`RecycleInitialGuess` outside `"Archive"`, `BlockSize` outside `"Reduce"`,
+`EstimateRequest` outside `"Estimate"`), and a `"Mode"` of `"Archive"` or `"Reduce"`
+without a `Directory`, stop Palace before the mesh is loaded.
+
+Each key has an alias environment variable, read on the root rank and broadcast:
+`PALACE_RESPONSE_ARCHIVE_ONLY=1`, `PALACE_RESPONSE_REDUCE_ONLY=1` and
+`PALACE_RESPONSE_ESTIMATE_ONLY=1` for the three modes, `PALACE_RESPONSE_ARCHIVE_DIR`,
+`PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING=1`,
+`PALACE_RESPONSE_RECYCLE_INITIAL_GUESS=1` and `PALACE_RESPONSE_ESTIMATE_REQUEST`. A setting
+given only by its key or only by its variable takes that value; a key and its variable that
+are both set must agree, otherwise Palace stops with an error naming both. The resolved
+configuration echoes the `ResponseArchive` block as given (an absent key is left to its
+variable); when a mode or a `Directory` is active, the log has one
+`Response-archive settings:` line naming each resolved setting and its source (key,
+variable, both, or default).
+
 ### Self-consistent thin-metal response correction
 
 The experimental `Solver.Electrostatic.ResponseCorrection` option uses matched
@@ -1867,6 +1898,27 @@ also writes `surface-response-model-raw-energy.csv` (`source`, `evaluation` 0, `
 within-`R` energy partitioned exactly over the applied patches' claims, the labels and
 `unclaimed` summing to the within-`R` energy) and `surface-response-model-raw-groups.csv`
 (`label`, `model`, `patches`, `weight length (m)`).
+
+The per-patch tables can be kept out of the top level of `Problem.Output` (decision 1685;
+a tool that collects the top-level CSV / JSON files of the output directory, such as a run
+service that uploads them, then leaves them out). `"Diagnostics": {"Directory": "<name>"}`
+in `ResponseCorrection` / `SurfaceResponseCorrection` (one directory name of letters,
+digits, `_`, `-` and `.`, not starting with `.`, `-` or `iteration`; absent by default)
+writes `surface-response-patches.csv`, `surface-response-patch-energy.csv`,
+`surface-response-traces.csv` and `surface-response-patch-loops.csv` into
+`<Output>/<name>/` with the same names and bytes; every other table (the corrected,
+confidence, model, class-energy and terminal tables) and `palace.json` stay at the top level,
+unchanged. Under adaptive mesh refinement each `iterationNN/` folder holds its own
+`<name>/` (the final iteration's is `<Output>/<name>/`). `"ConductorConsistencyRecords":
+"Directory"` (default `"Metadata"`; requires `Directory`) moves the `Records` array of
+`SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and
+excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
+`<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
+the array at the same key path and in the same text; `palace.json` then lacks only that
+member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
+patch list stays beside its manifest. `Diagnostics.Directory` names a sub-directory of
+`Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
+path of the field archive (relative to the working directory of the process).
 
 Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's

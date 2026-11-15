@@ -998,6 +998,28 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     auto invalid_trace_coupling = automatic;
     invalid_trace_coupling["ResponseCorrection"]["TraceCoupling"] = "Mortar";
     CHECK(!ValidateConfig(invalid_trace_coupling, "Electrostatic").empty());
+
+    // Decision 1685: Diagnostics.Directory (one directory name) and
+    // Diagnostics.ConductorConsistencyRecords ("Metadata" | "Directory").
+    auto diagnostics_directory = automatic;
+    diagnostics_directory["ResponseCorrection"]["Diagnostics"] = {
+        {"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Directory"}};
+    CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
+    diagnostics_directory["ResponseCorrection"]["Diagnostics"]
+                         ["ConductorConsistencyRecords"] = "Metadata";
+    CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
+    for (const auto *name :
+         {"", "a/b", "../up", ".hidden", "-dash", "with space", "iteration1"})
+    {
+      CAPTURE(name);
+      auto invalid_directory = automatic;
+      invalid_directory["ResponseCorrection"]["Diagnostics"] = {{"Directory", name}};
+      CHECK(!ValidateConfig(invalid_directory, "Electrostatic").empty());
+    }
+    auto invalid_records = automatic;
+    invalid_records["ResponseCorrection"]["Diagnostics"] = {
+        {"ConductorConsistencyRecords", "directory"}};
+    CHECK(!ValidateConfig(invalid_records, "Electrostatic").empty());
     auto mortar_oversampling = automatic;
     mortar_oversampling["ResponseCorrection"]["MortarOversampling"] = 2;
     CHECK(ValidateConfig(mortar_oversampling, "Electrostatic").empty());

@@ -166,9 +166,23 @@ def executables_of_record(profile, remote_root, binary_sha256, *, binary_path=No
     """(binary, mpiexec) the plan names (BINARY_OF_RECORD_RULE), verified where the planner runs:
     the binary exists at `binary_sha256` and the wrapper exists; RuntimeError with the seeding
     message otherwise.  `exists` / `digest` default to the local filesystem (the planner runs on
-    the cluster beside the root)."""
+    the cluster beside the root).  A form-X profile (build_plan.launcher_of): the plan names the
+    executable and MPI launcher INSIDE the image; the image file must exist at ImageSHA256 and
+    `binary_sha256` be ImageBinarySHA256 (run_stages checks the executable inside it)."""
     exists = exists or (lambda path: Path(path).is_file())
     digest = digest or sha256
+    launcher = build_plan.launcher_of(profile)
+    if launcher is not None:
+        if binary_path or mpiexec_path:
+            raise RuntimeError("--binary-path / --mpiexec-path do not apply to a form-X cluster profile: its Launcher names the "
+                               "executable and the MPI launcher inside the image; no plan written")
+        if binary_sha256 != launcher["ImageBinarySHA256"]:
+            raise RuntimeError(f"--binary-sha256 {binary_sha256} is not the form-X image executable's "
+                               f"{launcher['ImageBinarySHA256']}; no plan written")
+        if not exists(launcher["Image"]) or digest(launcher["Image"]) != launcher["ImageSHA256"]:
+            raise RuntimeError(f"the form-X image {launcher['Image']} does not exist at digest {launcher['ImageSHA256']}; "
+                               f"no plan written")
+        return launcher["ImageBinary"], launcher["ImageMPIExec"]
     binary = binary_path or f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
     mpiexec = mpiexec_path or f"{remote_root}/{profile['MPIExecWrapper']}"
     pattern = f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
@@ -196,11 +210,13 @@ def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job
     exactly: its Nodes, with the ranks checked against the profile (IDENTITY_PARTITION_RULE;
     fail closed without the partition, above it, or with a differing `nodes`).  `binary` /
     `mpiexec` are the verified executable paths of executables_of_record (BINARY_OF_RECORD_RULE);
-    None keeps the profile's pattern under the remote root."""
+    None keeps the profile's pattern under the remote root (a form-X profile: the image's)."""
+    launcher = build_plan.launcher_of(profile)
     if binary is None:
-        binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
+        binary = (f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}" if launcher is None
+                  else launcher["ImageBinary"])
     if mpiexec is None:
-        mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
+        mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}" if launcher is None else launcher["ImageMPIExec"]
     dense_dir = Path(dense_dir)
     traces_record = json.loads((dense_dir / "dense-traces.json").read_text())
     factors = [f"{factor:.1f}" for factor in model["PCGFactors"]]
@@ -288,6 +304,8 @@ def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job
         plan["Purpose"] = (f"{plan['Purpose']}; the identity twin {identity_run} on the reducer's partition {reducer_partition['Nodes']} "
                            f"node(s) x {reducer_partition['Ranks']} ranks ({reducer_partition['Job']} {reducer_partition['PBSJobID']}; "
                            f"decisions 482 / 487 (d))")
+    plan.update(build_plan.launcher_plan_fields(profile, binary=binary, binary_sha256=binary_sha256, mpiexec=mpiexec,
+                                                nodes=job_nodes))
     if job_nodes > 1:
         plan.update(build_plan.multi_node_fields(profile, job_nodes, instance))
         plan["Purpose"] = f"{plan['Purpose']}; {build_plan.MULTI_NODE_REDUCTION_NOTE}"

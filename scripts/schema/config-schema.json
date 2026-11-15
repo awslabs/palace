@@ -3211,6 +3211,45 @@
           "description": "Sum `surface-response-matrix.csv` entries over physical edges before writing. The output retains one synthetic edge per interface and matching radius, reducing coupon output size while preserving the interface-aggregated core- and full-patch response operators.",
           "default": false
         },
+        "ResponseArchive": {
+          "type": "object",
+          "description": "Run mode of coupon response generation by archived fields. `\"Archive\"` solves every prescribed-potential source and writes its fields to `Directory` without postprocessing; `\"Reduce\"` assembles the response matrices from such an archive without solving; `\"Estimate\"` evaluates the error indicator of archived fields for the excitations of `EstimateRequest`; `\"None\"` runs the ordinary solve and still writes the fields when `Directory` is set. Each key has an alias environment variable (`PALACE_RESPONSE_ARCHIVE_ONLY`, `PALACE_RESPONSE_REDUCE_ONLY`, `PALACE_RESPONSE_ESTIMATE_ONLY`, `PALACE_RESPONSE_ARCHIVE_DIR`, `PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING`, `PALACE_RESPONSE_RECYCLE_INITIAL_GUESS`, `PALACE_RESPONSE_ESTIMATE_REQUEST`); a key and its variable that are both set must agree.",
+          "additionalProperties": false,
+          "properties": {
+            "Mode": {
+              "type": "string",
+              "enum": ["None", "Archive", "Reduce", "Estimate"],
+              "description": "Response-archive run mode.",
+              "default": "None"
+            },
+            "Directory": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Archive directory, relative to the working directory of the process. The archive holds one file per source, rank and field, so a reduction runs at the rank count of the archiving run; a reduction in another run or on more than one node needs an absolute path on a shared file system."
+            },
+            "BlockSize": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of archived sources streamed together by a reduction.",
+              "default": 3
+            },
+            "SourceTiming": {
+              "type": "boolean",
+              "description": "Print the iterations and wall times of every archived source.",
+              "default": false
+            },
+            "RecycleInitialGuess": {
+              "type": "boolean",
+              "description": "Start each archived source's solve from the previous source's field.",
+              "default": false
+            },
+            "EstimateRequest": {
+              "type": "string",
+              "minLength": 1,
+              "description": "JSON request file listing the excitations of an archive estimate."
+            }
+          }
+        },
         "ResponseCorrection": {
           "type": "object",
           "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax remains supported for explicit 2D placement. A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
@@ -3482,6 +3521,17 @@
                   "type": "boolean",
                   "description": "Write per placed patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box into `surface-response-patch-energy.csv` (`within-R magnetic energy (J)` = 1/2 int mu^-1 |B|^2, `within-R electric energy (J)` = 1/2 int eps |E|^2, `within-R volume (m^3)` = the box volume the quadrature resolves): a translational patch's box = its model's edge span +- R laterally, +- R normally, its longitudinal cell; a spatial patch's = its support box x [-R, R]. Summed over the element quadrature points inside the box (a point is in or out: the box faces are resolved to ~h, an ESTIMATE for a share census, not a trace form; a patch without a box prints NaN). Requires `PatchEnergy: true`. Off by default: bitwise off (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15: the census of the spatial families' magnetic energy that decides the (A)-3D scope).",
                   "default": false
+                },
+                "Directory": {
+                  "type": "string",
+                  "pattern": "^(?!iteration)[A-Za-z0-9_][A-Za-z0-9._-]*$",
+                  "description": "Decision 1685: one directory name inside `Problem.Output` for the heavy per-patch tables (`surface-response-patches.csv`, `surface-response-patch-energy.csv`, `surface-response-traces.csv`, `surface-response-patch-loops.csv`): written there with the same names and bytes; every other output stays at the top level. Absent (the default): every table at the top level. Under AMR each `iterationNN/` folder holds its own copy of the directory. A name may not start with `iteration` (refused at load: SaveIteration leaves such entries in place)."
+                },
+                "ConductorConsistencyRecords": {
+                  "type": "string",
+                  "enum": ["Metadata", "Directory"],
+                  "description": "Decision 1685: where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Metadata` (default): `palace.json`. `Directory` (requires `Directory`): `surface-response-conductor-consistency-records.json` in that directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay).",
+                  "default": "Metadata"
                 }
               }
             },

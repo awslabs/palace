@@ -1649,6 +1649,31 @@ public:
     // off (one pass over the mesh per measurement when on).
     bool within_r_volume_energy = false;
 
+    // Diagnostics.Directory (decision 1685; lane diagdir DESIGN section 2): the directory,
+    // relative to Problem.Output, of the heavy per-patch tables whose rows scale with the
+    // applied patch count (surface-response-patches.csv, surface-response-patch-energy.csv,
+    // surface-response-traces.csv, surface-response-patch-loops.csv): written there with
+    // the same names and bytes, so that a tool which collects the top-level CSV / JSON
+    // files of the output directory leaves them out. Empty (the key absent, the default) =
+    // every file at the top level, as before. A single directory name; under AMR each
+    // iterationNN/ folder gets its own copy of the directory (SaveIteration moves it like a
+    // file).
+    std::string diagnostics_directory = "";
+
+    // Diagnostics.ConductorConsistencyRecords (decision 1685): where the Records array of
+    // SurfaceResponse.Diagnostics.ConductorConsistency (one entry per tested patch and
+    // excitation) goes. METADATA (default): palace.json, as before. DIRECTORY: the file
+    // surface-response-conductor-consistency-records.json in Diagnostics.Directory, with
+    // the array at the same key path and in the same text; palace.json then lacks only that
+    // member (TestedPatches, the record count, and the gate's summary stay).
+    enum class ConductorConsistencyRecordsOutput
+    {
+      METADATA,
+      DIRECTORY
+    };
+    ConductorConsistencyRecordsOutput conductor_consistency_records =
+        ConductorConsistencyRecordsOutput::METADATA;
+
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
     // identification / placement (a valid config and library). RecordRaw: the affected
@@ -1948,6 +1973,27 @@ public:
 
   // Whether to sum response-matrix entries over physical edges before writing them.
   bool aggregate_response_matrix = false;
+
+  // The response-archive run mode of coupon generation (Solver.Electrostatic.
+  // ResponseArchive). Every field is optional: an absent key leaves its PALACE_RESPONSE_*
+  // alias variable in charge (ResolveResponseArchive, drivers/electrostaticsolver.hpp).
+  struct ResponseArchiveData
+  {
+    enum class Mode
+    {
+      NONE,
+      ARCHIVE,
+      REDUCE,
+      ESTIMATE
+    };
+    std::optional<Mode> mode = std::nullopt;
+    std::optional<std::string> directory = std::nullopt;
+    std::optional<int> block_size = std::nullopt;
+    std::optional<bool> source_timing = std::nullopt;
+    std::optional<bool> recycle_initial_guess = std::nullopt;
+    std::optional<std::string> estimate_request = std::nullopt;
+  };
+  std::optional<ResponseArchiveData> response_archive = std::nullopt;
 
   // Optional global Schur-complement correction assembled from a matched pair of local
   // fabricated- and thin-metal coupon response matrices.

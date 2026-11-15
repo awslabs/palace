@@ -893,21 +893,38 @@ BINARY_OF_RECORD_RULE = (
 def executables_of(args, profile, remote_root, binary_sha256):
     """(binary, mpiexec) remote paths the plans name: --frozen-binary-remote-path / --mpiexec-remote-path
     when given, else the cluster profile's BinaryPattern / MPIExecWrapper under the remote root
-    (BINARY_OF_RECORD_RULE)."""
+    (BINARY_OF_RECORD_RULE).  A form-X profile (build_plan.launcher_of) names the executable and
+    the MPI launcher INSIDE its image; the frozen digest must then be the image executable's."""
+    launcher = build_plan.launcher_of(profile)
+    if launcher is not None:
+        if getattr(args, "frozen_binary_remote_path", None) or getattr(args, "mpiexec_remote_path", None):
+            raise ValueError("--frozen-binary-remote-path / --mpiexec-remote-path do not apply to a form-X cluster profile: "
+                             "its Launcher names the executable and the MPI launcher inside the image")
+        if binary_sha256 != launcher["ImageBinarySHA256"]:
+            raise ValueError(f"the frozen digest {binary_sha256} is not the form-X image executable's "
+                             f"{launcher['ImageBinarySHA256']} (pass --frozen-binary-sha256 {launcher['ImageBinarySHA256']})")
+        return launcher["ImageBinary"], launcher["ImageMPIExec"]
     binary = getattr(args, "frozen_binary_remote_path", None) or \
         f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
     mpiexec = getattr(args, "mpiexec_remote_path", None) or f"{remote_root}/{profile['MPIExecWrapper']}"
     return binary, mpiexec
 
 
-def verify_remote_executables(host, executables, *, profile, remote_root, path_exists=None, remote_sha256=None):
+def verify_remote_executables(host, executables, *, profile, remote_root, path_exists=None, remote_sha256=None,
+                              image_sha256=None):
     """BINARY_OF_RECORD_RULE: every (binary, binary sha256, mpiexec) triple the plans of a run name must
     exist on `host` with the binary at its digest - checked ONCE before the first qsub (the job
     script would otherwise die in seconds with FileNotFoundError on the node: R2 PBS 60101 / 60448).
     Returns the verification record; raises RuntimeError with the seeding message otherwise.
-    `path_exists` / `remote_sha256` default to remote.path_exists / remote.remote_sha256."""
+    `path_exists` / `remote_sha256` default to remote.path_exists / remote.remote_sha256.  A form-X
+    profile: the image exists on `host` at ImageSHA256 and its executable at ImageBinarySHA256
+    (`image_sha256`, default remote.remote_image_sha256), every triple = the image's."""
     path_exists = path_exists or remote_side.path_exists
     remote_sha256 = remote_sha256 or remote_side.remote_sha256
+    launcher = build_plan.launcher_of(profile)
+    if launcher is not None:
+        return verify_remote_image(host, executables, launcher=launcher, path_exists=path_exists, remote_sha256=remote_sha256,
+                                   image_sha256=image_sha256 or remote_side.remote_image_sha256)
     pattern = f"{remote_root}/{profile['BinaryPattern']}"
     checked = []
     for binary, digest, mpiexec in sorted(set(executables)):
@@ -926,6 +943,30 @@ def verify_remote_executables(host, executables, *, profile, remote_root, path_e
                                f"({BINARY_OF_RECORD_RULE})")
         checked.append({"Binary": binary, "SHA256": digest, "MPIExec": mpiexec})
     return {"Host": host, "Executables": checked, "UTC": remote_side.utc(), "Rule": BINARY_OF_RECORD_RULE}
+
+
+def verify_remote_image(host, executables, *, launcher, path_exists, remote_sha256, image_sha256):
+    """verify_remote_executables for a form-X profile: the Launcher's image exists on `host` at
+    ImageSHA256, the executable inside it has ImageBinarySHA256, and every triple the plans name
+    is (ImageBinary, ImageBinarySHA256, ImageMPIExec).  RuntimeError otherwise; nothing submitted."""
+    image = launcher["Image"]
+    expected = (launcher["ImageBinary"], launcher["ImageBinarySHA256"], launcher["ImageMPIExec"])
+    for triple in sorted(set(executables)):
+        if triple != expected:
+            raise RuntimeError(f"a form-X plan names {triple}, not the image's {expected}; nothing was submitted")
+    if not path_exists(host, image):
+        raise RuntimeError(f"the form-X image {image} does not exist on {host}; nothing was submitted")
+    actual = remote_sha256(host, [image]).get(image)
+    if actual != launcher["ImageSHA256"]:
+        raise RuntimeError(f"the form-X image {image} on {host} has digest {actual}, the profile pins "
+                           f"{launcher['ImageSHA256']}; nothing was submitted")
+    inner = image_sha256(host, launcher["Apptainer"], image, launcher["ImageBinary"])
+    if inner != launcher["ImageBinarySHA256"]:
+        raise RuntimeError(f"the executable {launcher['ImageBinary']} inside {image} has digest {inner}, the profile pins "
+                           f"{launcher['ImageBinarySHA256']}; nothing was submitted")
+    return {"Host": host, "Executables": [{"Binary": expected[0], "SHA256": expected[1], "MPIExec": expected[2]}],
+            "Image": {"Path": image, "SHA256": actual, "Apptainer": launcher["Apptainer"]},
+            "UTC": remote_side.utc(), "Rule": build_plan.LAUNCHER_SINGLE_NODE_RULE}
 
 
 def job_policy_of(args, physics_run, profile):
