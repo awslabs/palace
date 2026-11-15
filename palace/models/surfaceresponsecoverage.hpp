@@ -298,6 +298,10 @@ struct CoverageMeasurement
   // The mark of the measurement's whole values: AnyMarked, or no cell at all (fail-closed:
   // a corrected measurement without cells says nothing about its coverage).
   bool MarksWholeMeasurement() const { return AnyMarked() || cells.empty(); }
+  // Lane L4 (ERRATUM-1847 m-2): the Types of the coverage interfaces (`types`) that hold no
+  // cell; the writers mark such an interface's corrected values (fail-closed, like a
+  // measurement without cells).
+  std::vector<std::string> TypesWithoutCell() const;
 };
 // Lane L4 (ERRATUM-1829 E-1; DESIGN-L4-v2 s2.3 E2): the marks of the corrected terminal
 // matrices from the per-source marks (MarksWholeMeasurement of each source's FINAL
@@ -395,6 +399,15 @@ struct CoverageRunRecord
   // Ruling 1738: why no cell was measured (a raw fallback: its geometry fallback class);
   // with no cell, palace.json writes "Complete": true only when this is set.
   std::string no_cells_reason;
+  // Lane L4 (ERRATUM-1847 m-2): the measurements marked without a marked-status cell (no
+  // cell at all, or a coverage interface Type without a cell) and why; counted in
+  // MarkedMeasurements and listed as MarkedWithoutCell under MarkNotApplied.
+  struct MarkWithoutCell
+  {
+    std::vector<std::pair<std::string, double>> keys;
+    std::string reason;
+  };
+  std::vector<MarkWithoutCell> marked_without_cell;
   void Add(const std::vector<std::pair<std::string, double>> &keys,
            const CoverageMeasurement &measurement);
 };
@@ -406,8 +419,10 @@ struct CoverageRunRecord
 // Refinement.MaxIts + 1 (1 without AMR), written as Level / Levels; the block never holds
 // "Final" (BaseSolver adds it once the AMR loop has ended).
 // Lane L4 (DESIGN-L4-v2 s2.4): `mark_not_applied` (Policy "MarkNotApplied") writes "Policy"
-// "MarkNotApplied", "MarkedStatuses", "MarkedCells", "MarkedMeasurements" and each Flagged
-// entry's "Marked"; false (Policy "Warn") writes the block exactly as before.
+// "MarkNotApplied", "MarkedStatuses", "MarkedCells", "MarkedMeasurements" (a measurement
+// with a marked cell or marked without one: ERRATUM-1847 m-2), "MarkedWithoutCell" (when
+// any) and each Flagged entry's "Marked"; false (Policy "Warn") writes the block exactly as
+// before.
 nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                    const CoverageThresholds &thresholds,
                                    const CoverageValidatedRegime &regime,

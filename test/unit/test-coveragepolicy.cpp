@@ -216,6 +216,42 @@ TEST_CASE("Coverage policy run metadata and banner", "[CoveragePolicy][Serial]")
   CHECK(unmarked == warn_banner);
 }
 
+TEST_CASE("Coverage policy marks without a marked-status cell", "[CoveragePolicy][Serial]")
+{
+  // ERRATUM-1847 m-2: the two fail-closed marks that need no marked-status cell are counted
+  // in MarkedMeasurements and named in MarkedWithoutCell: a measurement without cells (its
+  // whole values are marked) and a coverage interface whose Type has no cell (its
+  // per-interface values are marked).
+  CoverageRunRecord record;
+  record.Add({{"m", 1.0}}, Measurement({Cell("SA", CoverageStatus::OK, 4.0, 0.0)}));
+  record.Add({{"m", 2.0}}, CoverageMeasurement{});
+  auto typeless = Measurement({Cell("SA", CoverageStatus::OK, 4.0, 0.0)});
+  typeless.types = {{1, "SA"}, {2, "MS"}, {3, "MS"}};
+  CHECK(typeless.TypesWithoutCell() == std::vector<std::string>{"MS"});
+  CHECK_FALSE(typeless.AnyMarked());
+  record.Add({{"m", 3.0}}, typeless);
+  record.Add({{"m", 4.0}}, Measurement({Cell("SA", CoverageStatus::PARTIAL, 4.0, 1.0)}));
+  const auto warn = CoverageRunMetadata(record, CoverageThresholds{},
+                                        CoverageValidatedRegime{}, 1.0, 1, 1);
+  CHECK_FALSE(warn.contains("MarkedWithoutCell"));
+  CHECK_FALSE(warn.contains("MarkedMeasurements"));
+  CHECK(CoverageRunBanner(warn).find("marked-status cell") == std::string::npos);
+  const auto marked = CoverageRunMetadata(record, CoverageThresholds{},
+                                          CoverageValidatedRegime{}, 1.0, 1, 1, true);
+  CHECK(marked.at("MarkedCells") == 1);
+  CHECK(marked.at("MarkedMeasurements") == 3);  // m = 2, 3 (without a cell) and 4
+  REQUIRE(marked.at("MarkedWithoutCell").size() == 2);
+  CHECK(marked.at("MarkedWithoutCell")[0] ==
+        nlohmann::json({{"Cell", {{"m", 2.0}}}, {"Reason", "no cell"}}));
+  CHECK(marked.at("MarkedWithoutCell")[1] ==
+        nlohmann::json({{"Cell", {{"m", 3.0}}},
+                        {"Reason", "a coverage interface Type without a cell: MS"}}));
+  const std::string banner = CoverageRunBanner(marked);
+  CHECK(banner.find("3 measurement(s)' corrected totals") != std::string::npos);
+  CHECK(banner.find("*** MARK-NOT-APPLIED: 2 of these measurement(s) are marked without a "
+                    "marked-status cell") != std::string::npos);
+}
+
 TEST_CASE("Coverage policy terminal matrix marks", "[CoveragePolicy][Serial]")
 {
   // ERRATUM-1829 E-1: source 1 OK, source 2 PARTIAL + NO-ENERGY, source 3 PARTIAL +

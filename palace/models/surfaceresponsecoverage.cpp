@@ -642,6 +642,20 @@ bool CoverageMeasurement::IsTypeMarked(const std::string &type) const
   return cell && IsCoverageStatusMarked(cell->status);
 }
 
+std::vector<std::string> CoverageMeasurement::TypesWithoutCell() const
+{
+  std::vector<std::string> out;
+  for (const auto &[interface, type] : types)
+  {
+    (void)interface;
+    if (!FindCell(type) && std::find(out.begin(), out.end(), type) == out.end())
+    {
+      out.push_back(type);
+    }
+  }
+  return out;
+}
+
 double CoverageMeasurement::MarkedUncoveredEnergy() const
 {
   double energy = 0.0;
@@ -1016,6 +1030,20 @@ void CoverageRunRecord::Add(const std::vector<std::pair<std::string, double>> &k
                                measurement.served_pending_models.end());
   untargeted.insert(measurement.untargeted.begin(), measurement.untargeted.end());
   not_served.insert(measurement.not_served.begin(), measurement.not_served.end());
+  if (measurement.cells.empty())
+  {
+    marked_without_cell.push_back({keys, "no cell"});
+  }
+  else if (const auto types_without_cell = measurement.TypesWithoutCell();
+           !types_without_cell.empty())
+  {
+    std::string reason = "a coverage interface Type without a cell:";
+    for (const auto &type : types_without_cell)
+    {
+      reason += " " + type;
+    }
+    marked_without_cell.push_back({keys, reason});
+  }
 }
 
 nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
@@ -1060,9 +1088,27 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
         marked_measurements.insert(key);
       }
     }
+    // ERRATUM-1847 m-2: the measurements the writers mark without a marked-status cell.
+    nlohmann::json without_cell = nlohmann::json::array();
+    for (const auto &mark : record.marked_without_cell)
+    {
+      std::vector<double> key;
+      nlohmann::json keys = nlohmann::json::object();
+      for (const auto &[name, value] : mark.keys)
+      {
+        key.push_back(value);
+        keys[name] = value;
+      }
+      marked_measurements.insert(key);
+      without_cell.push_back({{"Cell", std::move(keys)}, {"Reason", mark.reason}});
+    }
     metadata["MarkedStatuses"] = std::move(statuses);
     metadata["MarkedCells"] = marked_cells;
     metadata["MarkedMeasurements"] = static_cast<int>(marked_measurements.size());
+    if (!without_cell.empty())
+    {
+      metadata["MarkedWithoutCell"] = std::move(without_cell);
+    }
   }
   metadata["Thresholds"] = {{"BuildTarget", thresholds.build_target},
                             {"MaxUncoveredShare", thresholds.max_uncovered_share},
@@ -1305,6 +1351,15 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
         "marked ***\n",
         metadata.at("MarkedCells").get<int>(), statuses, kCoveragePartialColumnSuffix,
         metadata.at("MarkedMeasurements").get<int>());
+    if (const auto without_cell = metadata.find("MarkedWithoutCell");
+        without_cell != metadata.end())
+    {
+      banner += fmt::format(
+          "*** MARK-NOT-APPLIED: {:d} of these measurement(s) are marked without a "
+          "marked-status cell (no cell, or a coverage interface Type without a cell: "
+          "palace.json MarkedWithoutCell) ***\n",
+          without_cell->size());
+    }
     banner +=
         "Coverage labels: COVERAGE = a cell's coverage status (MEASURED on this run); "
         "REGIME (validated-range status) = whether its covered correction factor lies "
