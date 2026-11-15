@@ -1546,7 +1546,9 @@ class WatcherInProcess(GuardedTestCase):
         self.dir = Path(self.tmp.name) / "watchers" / "run-7"
         self.dir.mkdir(parents=True)
         self.clock = FakeTime()
-        self.calls, self.status, self.cancel = [], "running", "ok"  # cancel: ok | refused | accepted (the row stays)
+        # cancel: ok (the row canceled and PBS F: paladin's end reached PBS) | refused | accepted (the row stays) |
+        # row-only (the row canceled while PBS keeps answering R: review r1836 X2b)
+        self.calls, self.status, self.cancel = [], "running", "ok"
         self.status_fails = False  # the row's read missing
         self.qdel = []  # the outcomes of the next qdel calls: ok | rc1 | ssh; none left = ok
         self.pbs = "R"  # R | Q | NOTFOUND | F | ssh (the cluster read fails)
@@ -1560,8 +1562,10 @@ class WatcherInProcess(GuardedTestCase):
             if arguments[1] == "cancel":
                 if self.cancel == "refused":
                     raise paladin_backend.PaladinError("palace cancel: 'failed transport: the session has expired; run mwinit'")
-                if self.cancel == "ok":
+                if self.cancel in ("ok", "row-only"):
                     self.status = "canceled"
+                if self.cancel == "ok" and self.pbs == "R":
+                    self.pbs = "F"
                 return {}
             if self.status_fails:
                 raise paladin_backend.PaladinError("palace status: no answer")
@@ -1776,6 +1780,41 @@ class WatcherInProcess(GuardedTestCase):
                 mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 600.0):
             self.assertEqual(self.run_watcher(cap=50, interval=30), 11)
         self.assertIn("from the PBS start", self.end()["Reason"])
+
+    # Decision 1844 (review r1836 MINOR-1, attacks X2a / X2b): ROW_RULE: a terminal row with PBS still showing the job.
+    def test_x2a_a_terminal_row_while_pbs_shows_the_job_running_keeps_the_cap_in_force(self):
+        """Was: exit 0 'the row is terminal' before any PBS read, 0 end requests and 0 qdels, PBS R 1000 s past the cap."""
+        self.status, self.cancel = "failed", "row-only"  # the row terminal from the start; PBS answers R
+        self.assertEqual(self.run_watcher(cap=50, submitted_ago=1000), 11)
+        events = (self.dir / "events.log").read_text()
+        self.assertIn("DISAGREE the row is terminal (failed) while PBS shows job_state R: not ended", events)
+        self.assertIn("from the PBS start", self.end()["Reason"])
+        self.assertIn("running by PBS R", self.end()["Reason"])
+        self.assertEqual(sum(1 for command in self.commands if "qdel" in command), 1)
+        self.assertEqual(self.end()["PBSAtVerification"], {"State": "F", "ExitStatus": 0})
+
+    def test_x2b_an_accepted_end_request_with_pbs_still_running_is_not_verified_by_the_row(self):
+        """Was: Verified true, VerifiedBy 'the row terminal (canceled)', 0 qdels, with PBS R."""
+        self.cancel = "row-only"
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        round_one = self.end()["Rounds"][0]
+        self.assertEqual((round_one["Cancel"]["OK"], round_one["Qdel"]["Command"]), (True, "/pbs/qdel j7"))
+        self.assertIn("DISAGREE the row is terminal (canceled) while PBS shows job_state R: not verified",
+                      (self.dir / "events.log").read_text())
+        self.assertEqual((self.end()["Verified"], self.end()["PBSAtVerification"]), (True, {"State": "F", "ExitStatus": 0}))
+        self.assertNotIn("'State': 'R'", self.end()["VerifiedBy"])
+
+    def test_a_terminal_row_with_no_job_shown_by_pbs_ends_the_watcher_and_records_the_read(self):
+        self.status, self.pbs = "completed", "NOTFOUND"
+        self.assertEqual(self.run_watcher(cap=50), 0)
+        self.assertIn("END exit 0: the row is terminal (completed); PBS {'State': 'NOTFOUND', 'ExitStatus': None}",
+                      (self.dir / "events.log").read_text())
+        self.assertEqual(self.calls.count(["palace", "cancel"]), 0)
+
+    def test_the_verifying_round_s_pbs_read_is_recorded(self):
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        self.assertEqual(self.end()["PBSAtVerification"], {"State": "F", "ExitStatus": 0})
+        self.assertIn("row terminal (canceled); PBS", self.end()["VerifiedBy"])
 
     # Decision 1836 m-1 (review r1833 MINOR-1): the nonce phase of the submit-window watcher (NONCE_RULE).
     def run_nonce(self, search=600.0):

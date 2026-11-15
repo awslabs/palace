@@ -23,6 +23,12 @@ and the memory bar stay in force under a missing read.
           MEASURED in that read (never projected) -> the run is ended early.
   Missing memory reads never end a run.  The watcher ends (exit 0) when the row is terminal or the
   PBS job has ended (a finished-job answer), and when its directory is removed.
+ROW_RULE (decision 1844, review r1836 MINOR-1): a terminal row counts as 'ended' (and, in END_RULE, as
+'verified') ONLY when the SAME round's PBS read does not show the job in the queue (in_queue: a job_state
+that is not F / X and no Exit_status: R / Q / H / E / S / W / T / B ...).  If that read shows it, a
+DISAGREE line is recorded and nothing has ended: the watcher keeps watching with the limits (the cap
+from the PBS start and the memory bar, 'running' by PBS R), and an early end goes on to the qdel by the
+job id.  The PBS read of the verifying round is recorded (end.json PBSAtVerification; the END line).
 END_RULE (decision 1836, review r1833 MAJOR-1 (b) / (c)): AN EARLY END is repeated until it is
 VERIFIED (the row terminal or a finished-job answer; an empty qstat answer verifies nothing).  One
 round = `paladin palace cancel RUN` (the end request); refused, or the run not verified within
@@ -120,6 +126,7 @@ class Watcher:
         self.job = args.job or None
         self.start_epoch = None
         self.hosts = []  # the exec hosts of the last good PBS read (READ_RULE)
+        self.verification = None  # the PBS read of the last verifying round (ROW_RULE)
         self.events = os.path.join(args.dir, "events.log")
 
     def event(self, line):
@@ -176,14 +183,32 @@ class Watcher:
             return f"PBS job_state {sample['State']}, Exit_status {sample['ExitStatus']}"
         return None
 
+    @staticmethod
+    def in_queue(sample):
+        """ROW_RULE: True for a PBS read that shows the job in the queue (a job_state, not F / X, no Exit_status)."""
+        return Watcher.pbs_read(sample) and sample["State"] not in ENDED_STATES and sample["ExitStatus"] is None
+
+    @staticmethod
+    def pbs_shown(sample):
+        """The PBS read of a round as recorded at an end or a verification (ROW_RULE)."""
+        if sample is None:
+            return {"State": None, "ExitStatus": None, "Read": "no answer"}
+        return {"State": sample["State"], "ExitStatus": sample["ExitStatus"]}
+
     def verified(self):
-        """END_RULE: what shows the run has ended (the row terminal, a finished-job answer), or None."""
+        """END_RULE: what shows the run has ended (the row terminal with no in-queue PBS read in the same round, a
+        finished-job answer), or None.  self.verification = the PBS read of the last verifying round (ROW_RULE)."""
         status = self.status()
-        if status and status.get("terminal") is True:
-            return f"the row terminal ({status.get('status')})"
         if status and not self.job and status.get("job_id"):
             self.job = str(status["job_id"])
-        return self.finished(self.sample())
+        sample = self.sample()
+        self.verification = self.pbs_shown(sample)
+        if status and status.get("terminal") is True:
+            if not self.in_queue(sample):
+                return f"the row terminal ({status.get('status')}); PBS {self.verification}"
+            self.event(f"DISAGREE the row is terminal ({status.get('status')}) while PBS shows job_state {sample['State']}: "
+                       f"not verified (ROW_RULE)")
+        return self.finished(sample)
 
     def wait_verified(self, seconds):
         deadline = time.time() + seconds
@@ -231,6 +256,7 @@ class Watcher:
             record["Job"] = self.job
             if shown:
                 record["Verified"], record["VerifiedBy"] = True, shown
+                record["PBSAtVerification"] = self.verification
                 break
             paladin_backend.write_json_atomic(path, record)  # the rounds so far, on disk
             if round_number < END_MAX_ROUNDS:
@@ -326,9 +352,6 @@ class Watcher:
             if not os.path.isdir(args.dir):
                 return 0
             status = self.status()
-            if status and status.get("terminal") is True:
-                self.event(f"END exit 0: the row is terminal ({status.get('status')})")
-                return 0
             if status and not self.job and status.get("job_id"):
                 self.job = str(status["job_id"])
             sample = self.sample()
@@ -336,6 +359,12 @@ class Watcher:
             if finished:
                 self.event(f"END exit 0: the PBS job has ended ({finished}; row {(status or {}).get('status')})")
                 return 0
+            if status and status.get("terminal") is True:
+                if not self.in_queue(sample):
+                    self.event(f"END exit 0: the row is terminal ({status.get('status')}); PBS {self.pbs_shown(sample)}")
+                    return 0
+                self.event(f"DISAGREE the row is terminal ({status.get('status')}) while PBS shows job_state {sample['State']}: "
+                           f"not ended; the limits stay in force (ROW_RULE)")
             now = time.time()
             if status or self.pbs_read(sample):
                 last_read = now
