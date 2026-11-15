@@ -9,7 +9,9 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -374,6 +376,7 @@ public:
 
   const auto &GetModel() const { return *model; }
   const auto &GetDbcTDofList() const { return dbc_tdof_list; }
+  const auto &GetUnits() const { return iodata.units; }
 
   const mode_assembly::OperatorComponent &
   GetComponent(mode_assembly::CoefficientType type) const
@@ -1045,6 +1048,71 @@ TEST_CASE("ModeEigenSolver preconditioners of lossy modes",
   }
 }
 
+TEST_CASE("ModeEigenSolver multigrid preconditioners of impedance sheets",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The p-multigrid preconditioners of the in-plane (ND) and out-of-plane (H1) blocks have
+  // the terms of the impedance boundaries of the system matrix. Here oxide between two
+  // sheets of 1 mOhm per square in parallel with 10 fH per square (impedance boundaries, or
+  // rational impedance boundaries of the same parallel RL admittance), whose terms dominate
+  // the boundary terms of the system matrix. A preconditioner without them stagnates the
+  // Krylov solver (in-plane block) or doubles its number of iterations (out-of-plane block;
+  // here about 17 per solve with the complex and 24 with the real-valued preconditioner).
+  // The solutions are compared to the solution with the exact complex sparse direct
+  // preconditioner.
+  constexpr double t = 2.0, d = 3.0, freq_ghz = 10.0, eps_d = 3.9, Rs = 1.0e-3,
+                   Ls = 1.0e-14;
+  const double n_target = std::sqrt(1.1 * eps_d);
+  auto check = [&](const std::function<void(IoData &)> &configure_sheets)
+  {
+    auto configure = [&](IoData &iodata)
+    {
+      auto &oxide = iodata.domains.materials.emplace_back();
+      oxide.attributes = {1, 2};
+      oxide.epsilon_r.s = {eps_d, eps_d, eps_d};
+      iodata.boundaries.pmc.attributes = {2, 4};
+      configure_sheets(iodata);
+    };
+    const auto ref =
+        SolveParallelPlateMode(t, d, freq_ghz, n_target, 1, false, true, configure);
+    for (bool pc_mat_real : {false, true})
+    {
+      const auto result = SolveParallelPlateMode(t, d, freq_ghz, n_target, 2, pc_mat_real,
+                                                 !pc_mat_real, configure);
+      CAPTURE(pc_mat_real, result.n_eff, ref.n_eff, result.num_solves,
+              result.num_iterations);
+      REQUIRE(result.num_solves > 0);
+      CHECK(result.num_iterations <= 35 * result.num_solves);
+      CHECK(std::abs(result.n_eff - ref.n_eff) <= 1.0e-6 * std::abs(ref.n_eff));
+    }
+  };
+
+  SECTION("Impedance")
+  {
+    check(
+        [&](IoData &iodata)
+        {
+          auto &sheets = iodata.boundaries.impedance.emplace_back();
+          sheets.attributes = {1, 3};
+          sheets.Rs = Rs;
+          sheets.Ls = Ls;
+        });
+  }
+
+  SECTION("Rational impedance")
+  {
+    // Zs(s) = s Ls Rs / (s Ls + Rs).
+    check(
+        [&](IoData &iodata)
+        {
+          auto &sheets = iodata.boundaries.rational_impedance.emplace_back();
+          sheets.attributes = {1, 3};
+          sheets.num = {Ls * Rs, 0.0};
+          sheets.den = {Ls, Rs};
+        });
+  }
+}
+
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
           "[boundarymodeoperator][Serial][Parallel]")
 {
@@ -1088,6 +1156,40 @@ TEST_CASE("ModeOperatorModel impedance damping with an anisotropic absorbing bou
   const auto pair_t = rect.Pairing(component, 1.0, 0.0);
   CHECK(pair_t.real() == 0.0);
   CHECK_THAT(pair_t.imag(), WithinRel(2.0 * RMM::H, 1.0e-12));
+}
+
+TEST_CASE("ModeOperatorModel surface capacitance of impedance boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The surface capacitance Cs of an impedance boundary adds -ω² Cs times the boundary mass
+  // of the in-plane (ND, tangential trace) field component and +ω² Cs times that of the
+  // out-of-plane (H1) component, with the sign of the H1 block, so for a unit field
+  // tangential to the impedance side x = W, the quadratic component differs by ∓Cs H from
+  // that of the cross-section without it (the frequency scalar ω² is applied separately).
+  using RMM = RectangleModeModel;
+  const double Cs = 2.0e-6 * electromagnetics::epsilon0_;  // F/sq
+  RMM bare([](IoData &) {});
+  RMM capacitive(
+      [&](IoData &iodata)
+      {
+        auto &imp = iodata.boundaries.impedance.emplace_back();
+        imp.attributes = {2};
+        imp.Cs = Cs;
+      });
+  const double expected =
+      capacitive.GetUnits().Nondimensionalize<Units::ValueType::CAPACITANCE>(Cs) * RMM::H;
+  const auto &bare_component =
+      bare.GetComponent(mode_assembly::CoefficientType::OMEGA_SQUARED);
+  const auto &component =
+      capacitive.GetComponent(mode_assembly::CoefficientType::OMEGA_SQUARED);
+  const auto pair_t =
+      capacitive.Pairing(component, 1.0, 0.0) - bare.Pairing(bare_component, 1.0, 0.0);
+  const auto pair_n =
+      capacitive.Pairing(component, 0.0, 1.0) - bare.Pairing(bare_component, 0.0, 1.0);
+  CHECK_THAT(pair_t.real(), WithinRel(-expected, 1.0e-10));
+  CHECK(pair_t.imag() == 0.0);
+  CHECK_THAT(pair_n.real(), WithinRel(expected, 1.0e-10));
+  CHECK(pair_n.imag() == 0.0);
 }
 
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
@@ -1605,6 +1707,71 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts[0] > 0);
     CHECK(counts[1] > 0);
     CHECK(counts[2] > 0);
+  }
+}
+
+// BoundaryMode cross-section of a 3D mesh crossed by an impedance, conductivity, or
+// rational impedance sheet, or by a sheet which is PEC only for the 2D solve (WavePortPEC):
+// the uncracked metal trace of cpw_wave_2dmode crossing its wave port face. Where the sheet
+// meets the cross-section, the 2D mesh has boundary elements with the attribute of the
+// sheet, the same as for a PEC trace, on which the 2D solve applies the boundary condition
+// of the sheet.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "BoundaryMode cross-section edges of impedance sheets",
+                 "[boundarymodeoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  constexpr int trace_attr = 11;
+  const auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
+  const std::string config =
+      PreprocessFile((cpw_dir / "cpw_wave_2dmode.json").string().c_str()).str();
+
+  // Numbers of boundary elements of the 2D mesh with the attribute of the trace, and of
+  // those in its interior, with the given boundary condition on the trace.
+  auto CountTraceEdges = [&](const std::string &type, const nlohmann::json &trace_bc)
+  {
+    auto setup = nlohmann::json::parse(config);
+    setup["Model"]["Mesh"] = (cpw_dir / setup["Model"]["Mesh"].get<std::string>()).string();
+    setup["Model"]["CrackInternalBoundaryElements"] = false;
+    setup["Problem"]["Output"] = temp_dir.string();
+    auto &boundaries = setup["Boundaries"];
+    REQUIRE(boundaries["PEC"]["Attributes"] == nlohmann::json({8, 9, trace_attr}));
+    if (type != "PEC")
+    {
+      boundaries["PEC"]["Attributes"] = {8, 9};
+      nlohmann::json bc = trace_bc;
+      bc["Attributes"] = nlohmann::json::array({trace_attr});
+      // WavePortPEC is one boundary, the other types are arrays of boundaries.
+      boundaries[type] = (type == "WavePortPEC") ? bc : nlohmann::json::array({bc});
+    }
+    IoData iodata(setup, /*print=*/false);
+    auto smesh = mesh::Load(iodata, comm);
+    BoundaryModeSolver solver(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+    solver.Preprocess(iodata, smesh, comm);
+    auto pmesh = mesh::Partition(iodata, std::move(smesh), comm);
+    std::array<int, 2> n = {0, 0};
+    for (int be = 0; be < pmesh->GetNBE(); be++)
+    {
+      if (pmesh->GetBdrAttribute(be) == trace_attr)
+      {
+        n[0]++;
+        n[1] += pmesh->FaceIsInterior(pmesh->GetBdrElementFaceIndex(be));
+      }
+    }
+    Mpi::GlobalSum(2, n.data(), comm);
+    return n;
+  };
+  const auto pec = CountTraceEdges("PEC", {});
+  CHECK(pec[1] > 0);
+  const std::pair<std::string, nlohmann::json> sheets[] = {
+      {"Impedance", {{"Rs", 1.0e-3}, {"Ls", 1.0e-12}}},
+      {"Conductivity", {{"Conductivity", 5.0e7}}},
+      {"RationalImpedance", {{"Numerator", {1.0e-12, 1.0e-3}}, {"Denominator", {1.0}}}},
+      {"WavePortPEC", {}}};
+  for (const auto &[type, bc] : sheets)
+  {
+    CAPTURE(type);
+    CHECK(CountTraceEdges(type, bc) == pec);
   }
 }
 

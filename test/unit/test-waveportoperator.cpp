@@ -6,6 +6,8 @@
 #include <fstream>
 #include <memory>
 #include <numbers>
+#include <string>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -946,4 +948,62 @@ TEST_CASE("WavePortOperator-InteriorPECOnNonconformingPorts",
   CHECK(counts[0] > 0);
   CHECK(counts[1] > 0);
   CHECK(counts[2] > 0);
+}
+
+// Wave ports crossed by an impedance, conductivity, or rational impedance sheet, or by a
+// sheet which is PEC only for the port mode solve (WavePortPEC): the uncracked metal trace
+// of the cpw example, which crosses the port faces. Where the sheet meets a port face, the
+// port mesh has boundary elements with the attribute of the sheet, the same as for a PEC
+// trace, on which the port mode solve applies the boundary condition of the sheet.
+TEST_CASE("WavePortOperator-ImpedanceSheetEdges", "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  constexpr int trace_attr = 11;
+
+  // Numbers of boundary elements of each port mesh with the attribute of the trace, with
+  // the given boundary condition on the trace.
+  auto CountTraceEdges = [&](const std::string &type, const json &trace_bc)
+  {
+    json setup = LoadCpwWaveConfig();
+    setup["Model"]["CrackInternalBoundaryElements"] = false;
+    auto &boundaries = setup["Boundaries"];
+    REQUIRE(boundaries["PEC"]["Attributes"] == json({8, 9, trace_attr}));
+    if (type != "PEC")
+    {
+      boundaries["PEC"]["Attributes"] = {8, 9};
+      json bc = trace_bc;
+      bc["Attributes"] = json::array({trace_attr});
+      // WavePortPEC is one boundary, the other types are arrays of boundaries.
+      boundaries[type] = (type == "WavePortPEC") ? bc : json::array({bc});
+    }
+    IoData iodata(setup, /*print=*/false);
+    auto mesh_io = LoadScaleParMesh(iodata, comm);
+    SpaceOperator space_op(iodata, mesh_io);
+    std::vector<int> counts;
+    for (const auto &[idx, data] : space_op.GetWavePortOp())
+    {
+      const auto &port_mesh = *data.GetNDSpace().Get().GetParMesh();
+      int n = 0;
+      for (int be = 0; be < port_mesh.GetNBE(); be++)
+      {
+        n += (port_mesh.GetBdrAttribute(be) == trace_attr);
+      }
+      Mpi::GlobalSum(1, &n, comm);
+      counts.push_back(n);
+    }
+    return counts;
+  };
+  const auto pec = CountTraceEdges("PEC", {});
+  REQUIRE(pec.size() == 4);
+  CHECK(*std::max_element(pec.begin(), pec.end()) > 0);
+  const std::pair<std::string, json> sheets[] = {
+      {"Impedance", {{"Rs", 1.0e-3}, {"Ls", 1.0e-12}}},
+      {"Conductivity", {{"Conductivity", 5.0e7}}},
+      {"RationalImpedance", {{"Numerator", {1.0e-12, 1.0e-3}}, {"Denominator", {1.0}}}},
+      {"WavePortPEC", {}}};
+  for (const auto &[type, bc] : sheets)
+  {
+    CAPTURE(type);
+    CHECK(CountTraceEdges(type, bc) == pec);
+  }
 }
