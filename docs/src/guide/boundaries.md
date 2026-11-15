@@ -175,9 +175,9 @@ each part becomes one PML block:
     `"Center"` is extruded along its outward normal, and any other part radially, from a
     core: the center of the bounding box of the part, or `"Center"`, a point or the two
     corners of an axis-aligned box (a rectangle or a segment where they share coordinates).
-  - With `"Extrusion": "Normal"`, the parts are the flat patches of the surface (its
-    connected, coplanar faces), each extruded along its own normal, and a curved face is an
-    error.
+  - `"Extrusion": "Normal"` is for separate flat faces, such as the two ends of a pipe: the
+    parts are the flat patches of the surface (its connected, coplanar faces), each
+    extruded along its own normal, and a curved face is an error.
   - With `"Extrusion": "Radial"`, every connected part is extruded radially, flat or not.
 
 Each face becomes a column of `"Layers"` prisms (triangles) or hexahedra (quadrilaterals),
@@ -203,7 +203,10 @@ position. This limits the shapes of the parts extruded radially:
     sphere on a ground plane, needs its center on that boundary.
 
 Other parts, such as an L-shaped box or a box whose faces are not normal to the axes, are
-rejected, and every face must face its direction. For example:
+rejected, and every face must face its direction. Two parts, of one entry or of two, must not
+share an edge: a closed surface is one part, with one layer around it, so that the corners of
+a cube go out along its diagonals. A closed cylinder, whose flat caps meet its curved wall,
+cannot be extruded, and the wall of a cylinder between PEC caps can. For example:
 
 ```json
 // The end of a waveguide is flat, so it is extruded along its normal, and the side walls
@@ -216,12 +219,10 @@ rejected, and every face must face its direction. For example:
         { "Attributes": [6], "Thickness": 0.2, "Layers": 8 }]
 
 // A cube is one closed layer extruded from its center, whose outside is a larger cube, or
-// from a box just inside of it (with straight columns over the box), or a cuboid on each
-// face (the edge and corner regions stay outside of the domain).
+// from a box just inside of it (with straight columns over the box).
 "PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4 }]
 "PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4,
           "Center": [[-0.9, -0.9, -0.9], [0.9, 0.9, 0.9]] }]
-"PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4, "Extrusion": "Normal" }]
 
 // A patch antenna in a box with the PML on its top, its two sides, and its back: the core
 // is on the port face and on the ground plane, as a segment through the substrate, so that
@@ -229,10 +230,9 @@ rejected, and every face must face its direction. For example:
 "PML": [{ "Attributes": [7], "Thickness": 4.0, "Layers": 4,
           "Center": [[0, 0, 0], [0, 0, 0.794]] }]
 
-// A closed cylinder has its caps along their normals, and its wall along the rays from
-// its axis.
-"PML": [{ "Attributes": [5, 6], "Thickness": 0.1, "Layers": 6 },
-        { "Attributes": [4], "Thickness": 0.1, "Layers": 6,
+// The wall of a cylinder between PEC caps is extruded along the rays from its axis, and
+// the caps continue through the layer.
+"PML": [{ "Attributes": [4], "Thickness": 0.1, "Layers": 6,
           "Center": [[0, 0, -1], [0, 0, 1]] }]
 ```
 
@@ -240,10 +240,9 @@ The figure shows cross-sections of the layers of some of these cases, with their
 each: (a) a sphere, extruded along the rays from its center; (b) the end of a waveguide and
 (c) both ends of a pipe, flat parts extruded along their normals; a cube (d) extruded from
 its center, (e) from a box inside of it, with straight columns over the box and fans at its
-edges and corners, and (f) with a cuboid on each face; (g) the top of a Floquet cell, with
-the periodic boundaries through the layer; and (h) the
-[patch antenna example](../examples/patch_antenna.md), extruded from a segment through the
-substrate on the ground plane.
+edges and corners; (f) the top of a Floquet cell, with the periodic boundaries through the
+layer; and (g) the [patch antenna example](../examples/patch_antenna.md), extruded from a
+segment through the substrate on the ground plane.
 
 ```@raw html
 <br/><p align="center">
@@ -259,13 +258,8 @@ edges between the faces with a PML to about the element size of the layer, `"Thi
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
 layer. The outer boundary of the layer is PEC, unless a boundary condition is given for its
-`"BackAttribute"`, and so are its sides where two layers meet only along an edge, as on the
-cube and the cylinder above. These sides reflect the waves which reach them obliquely: for a
-dipole at the center of a cube one wavelength across, the field 0.3 wavelengths from it is
-within 1.5% of the free-space field with the layer extruded from the center (1.1% from a box
-just inside of the cube), and 29% off with the cuboids. The extruded boundary becomes an
-interior boundary, whose attribute can still be used for postprocessing, such as the far
-field of
+`"BackAttribute"`. The extruded boundary becomes an interior boundary, whose attribute can
+still be used for postprocessing, such as the far field of
 [`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries-postprocessing-farfield):
 for the antenna example, the far field with the extruded PML above agrees with the one with
 the second-order absorbing boundary to 0.06 dB.

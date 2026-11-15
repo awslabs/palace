@@ -3311,14 +3311,14 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
   // Each extruded block of pml is an entry of config["Boundaries"]["PML"], whose surface is
   // split into parts, each of which becomes one block. Each geometry node of a face of a
   // part moves along its direction d to the depths ξ_k = k t / N, k = 1, ..., N: each
-  // triangle becomes N prisms and each quadrilateral N hexahedra. A node on an edge between
-  // two parts moves once for each. A flat part is extruded along its outward normal, unless
-  // a core is configured or the extrusion is radial; any other part along the ray of each
-  // node from its closest point on the core. With the face vertices ordered so that their
-  // normal points out of the element below (as for the faces of MFEM meshes on the exterior
-  // boundary), the bottom face of each new element is its face 0, with its outward normal
-  // pointing along d (the reference coordinate z of the prism or hexahedron is the depth
-  // into its layer).
+  // triangle becomes N prisms and each quadrilateral N hexahedra. Two parts do not share an
+  // edge, and a vertex of two parts moves once for each. A flat part is extruded along its
+  // outward normal, unless a core is configured or the extrusion is radial; any other part
+  // along the ray of each node from its closest point on the core. With the face vertices
+  // ordered so that their normal points out of the element below (as for the faces of MFEM
+  // meshes on the exterior boundary), the bottom face of each new element is its face 0,
+  // with its outward normal pointing along d (the reference coordinate z of the prism or
+  // hexahedron is the depth into its layer).
   using Extrusion = config::PMLData::Extrusion;
   const mfem::Mesh &mesh = *orig_mesh;
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
@@ -3518,6 +3518,45 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
     }
   }
 
+  // Two parts must not share an edge: a closed surface is one part, with one layer around
+  // it, and the normal extrusion is for separate flat faces. Two layers which met along an
+  // edge would overlap at a re-entrant edge, or be separated by their sides.
+  std::map<std::pair<int, int>, int> edge_part;  // edge → part
+  for (std::size_t p = 0; p < parts.size(); p++)
+  {
+    for (const int f : parts[p].faces)
+    {
+      for (const auto &e : FaceEdges(f))
+      {
+        const auto [it, inserted] = edge_part.try_emplace(e, static_cast<int>(p));
+        if (inserted || it->second == static_cast<int>(p))
+        {
+          continue;
+        }
+        const auto &a = parts[it->second], &b = parts[p];
+        const bool normal =
+            pml[entries[a.entry]].extrusion.type == Extrusion::Type::NORMAL ||
+            pml[entries[b.entry]].extrusion.type == Extrusion::Type::NORMAL;
+        const double *x1 = mesh.GetVertex(e.first), *x2 = mesh.GetVertex(e.second);
+        MFEM_ABORT(
+            "The PML is extruded from "
+            << a.name << " and from " << b.name << ", which share the edge at "
+            << fmt::format("({:.6g}, {:.6g}, {:.6g})", 0.5 * (x1[0] + x2[0]),
+                           0.5 * (x1[1] + x2[1]), 0.5 * (x1[2] + x2[2]))
+            << "! Two extruded parts must not share an edge: "
+            << ((a.entry == b.entry)
+                    ? "\"Extrusion\": \"Normal\" is for separate flat faces, such as "
+                      "the two ends of a pipe, and without it a connected surface is "
+                      "extruded as one layer."
+                    : (normal ? "list their attributes in one entry without "
+                                "\"Extrusion\": \"Normal\", which is for separate flat "
+                                "faces, so that they are extruded as one layer."
+                              : "list their attributes in one entry, so that they are "
+                                "extruded as one layer.")));
+      }
+    }
+  }
+
   // The direction and the depth of each part. Normal extrusion moves the nodes of a flat
   // part by the thickness along its normal, with the depth n · x - h. A box, whose faces
   // are all flat, normal to the axes, and on the sides of its bounding box, moves each node
@@ -3572,6 +3611,15 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
                                        plane0[0], plane0[1], plane0[2]));
       continue;
     }
+    // A surface of flat and curved faces, such as a closed cylinder, fits no shape.
+    MFEM_VERIFY(
+        std::ranges::all_of(p.faces, IsFlat) || std::ranges::none_of(p.faces, IsFlat),
+        "The extruded PML does not fit "
+            << p.name
+            << ", which has flat and curved faces! Such a surface, for example a closed "
+               "cylinder, cannot be extruded: extrude the PML from its ends alone, from "
+               "its wall alone between other boundaries, or from a box or a sphere around "
+               "the object.");
 
     // A box has its faces on its PML sides, and its core on its open sides.
     auto Axis = [](const std::array<double, 4> &plane)
@@ -3604,9 +3652,9 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
           MFEM_ABORT("The face of "
                      << p.name << " at (" << x(0) << ", " << x(1) << ", " << x(2)
                      << ") is not on the bounding box of the part, which is not a box (it "
-                        "is L-shaped or stepped)! Use \"Extrusion\": \"Normal\" to extrude "
-                        "each flat patch along its normal, or split the surface into "
-                        "entries which are boxes.");
+                        "is L-shaped or stepped)! A layer cannot be extruded around a "
+                        "re-entrant edge, where it would fold: extrude the PML from a box "
+                        "around the domain instead.");
         }
         ex.box_sides[2 * a + upper] = true;
       }
@@ -3667,9 +3715,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
                               << p.name << " at (" << x(0) << ", " << x(1) << ", " << x(2)
                               << ") does not face its closest point on the " << core
                               << ", from which the extrusion starts! Every face must face "
-                                 "the core, or the layer would fold: set \"Center\", or "
-                                 "use \"Extrusion\": \"Normal\" for a surface of flat "
-                                 "patches.");
+                                 "the core, or the layer would fold: set \"Center\".");
                     });
     }
     if (box)
@@ -3703,8 +3749,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
                "distance from the core (a sphere around its centre, or the wall of a "
                "cylinder around its axis), or a box with its faces normal to the "
                "coordinate axes. Set \"Center\" to the centre of a sphere or the axis of a "
-               "cylinder, or use \"Extrusion\": \"Normal\" for a surface of flat "
-               "patches.");
+               "cylinder.");
     ex.depth = Extrusion::Depth::DISTANCE;
     depth_text.push_back(fmt::format("along the rays from the {}, at the distance {:.6g} "
                                      "(within {:.2g}% of the thickness)",
@@ -3774,8 +3819,9 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
     }
   }
 
-  // Columns of vertices along the directions of the vertices of each part, and the edges of
-  // each part with their number of faces in it.
+  // Columns of vertices along the directions of the vertices of each part (two parts which
+  // meet at a vertex have a column each), and the edges of each part with their number of
+  // faces in it.
   struct Column
   {
     double x[3], d[3], h;
@@ -3783,7 +3829,6 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
   };
   std::map<std::pair<int, int>, int> column;  // (part, vertex) → first new vertex
   std::vector<Column> column_base;
-  std::map<std::pair<int, int>, std::vector<int>> edge_parts;  // edge → parts
   std::vector<std::map<std::pair<int, int>, int>> part_edges(parts.size());
   std::unordered_map<int, std::vector<int>> vertex_parts;
   int num_new_vertices = 0;
@@ -3808,11 +3853,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
           c.layers = N;
           c.h = parts[p].block.extrusion.thickness / N;
         }
-        const auto edge = std::minmax(verts[j], verts[(j + 1) % verts.Size()]);
-        if (part_edges[p][edge]++ == 0)
-        {
-          edge_parts[edge].push_back(static_cast<int>(p));
-        }
+        part_edges[p][std::minmax(verts[j], verts[(j + 1) % verts.Size()])]++;
       }
     }
   }
@@ -3824,8 +3865,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
   // boundary. The other boundaries through the edges of a part are extruded into
   // quadrilaterals with their attribute, with the two boundary elements of a face of a
   // periodic boundary (merged by mfem::Mesh::MakePeriodic) into two on the same face, so
-  // that the layer is periodic too. The edges of a part on another part are extruded into
-  // its exposed sides, with the back attribute.
+  // that the layer is periodic too.
   std::vector<int> rejected, periodic;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -3904,9 +3944,10 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
     const auto &corners = *mfem::Geometries.GetVertices(T.GetGeometryType());
     for (int j = 0; j < verts.Size(); j++)
     {
-      const auto it = edge_parts.find(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
-      for (const int p : (it == edge_parts.end()) ? std::vector<int>{} : it->second)
+      const auto it = edge_part.find(std::minmax(verts[j], verts[(j + 1) % verts.Size()]));
+      if (it != edge_part.end())
       {
+        const int p = it->second;
         AddSide(p, it->first, attr, face);
         for (const int k : {j, (j + 1) % verts.Size()})
         {
@@ -3977,15 +4018,6 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
               ex.base_attributes.begin()));
     }
     attr_max += static_cast<int>(block.attributes.size());
-
-    // The exposed sides, on the edges of the part on another part.
-    for (const auto &[edge, n] : part_edges[p])
-    {
-      if (n == 1 && edge_parts.at(edge).size() > 1)
-      {
-        AddSide(static_cast<int>(p), edge, ex.back_attribute, -1);
-      }
-    }
   }
 
   // Build the new mesh: the original elements and boundary elements, followed by the

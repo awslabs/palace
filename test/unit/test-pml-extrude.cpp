@@ -380,7 +380,9 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     CHECK(pml.extrusion.depth == config::PMLData::Extrusion::Depth::DISTANCE);
   }
   // A surface which fits none of the shapes: an L-shaped box, whose faces are not all on
-  // its bounding box, and a cube with faces normal to no axis.
+  // its bounding box, and a cube with faces normal to no axis. Along their normals, the
+  // faces of the L-shaped box would share their edges.
+  for (const bool normal : {false, true})
   {
     auto cubes = mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0);
     std::vector<int> keep;
@@ -411,9 +413,13 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     }
     mesh->SetAttributes();
     mesh->SetCurvature(1);
-    auto pml = MakePML();
+    auto pml = normal ? MakePML({{"Extrusion", "Normal"}}) : MakePML();
     CHECK_THROWS_WITH(ExtrudeEntry(mesh, pml, {}),
-                      ContainsSubstring("is not on the bounding box of the part"));
+                      normal
+                          ? ContainsSubstring("which share the edge at") &&
+                                ContainsSubstring("is for separate flat faces")
+                          : ContainsSubstring("is not on the bounding box of the part") &&
+                                !ContainsSubstring("\"Normal\""));
   }
   {
     auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 2, 1));
@@ -430,7 +436,7 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     CHECK_THROWS_WITH(ExtrudeEntry(mesh, pml, {}),
                       ContainsSubstring("or a box with its faces normal to the coordinate "
                                         "axes") &&
-                          ContainsSubstring("\"Extrusion\": \"Normal\""));
+                          !ContainsSubstring("\"Normal\""));
   }
 
   // A half sphere on a ground plane (attribute 2) ends flush with it for its centre on the
@@ -1037,9 +1043,9 @@ TEST_CASE("ExtrudePML splits the surface into parts", "[pml][geodata][Serial]")
     // By default, or with the radial extrusion, the cube is one part extruded per
     // component from its centre, or from a box just inside of it (straight over the box,
     // with fans at the edges and corners), into a larger cube: the layer has the thickness
-    // normal to every face. With the normal extrusion, each face is a cuboid along its
-    // normal, whose sides exposed along the edges of the cube have the back attribute.
-    for (const std::string extrusion : {"", "Radial", "Box", "Normal"})
+    // normal to every face. The normal extrusion, for separate flat faces, would make each
+    // face a part, which shares its edges with four others.
+    for (const std::string extrusion : {"", "Radial", "Box"})
     {
       auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 3, 1));
       const int ne = mesh->GetNE(), nbe = mesh->GetNBE();
@@ -1056,75 +1062,76 @@ TEST_CASE("ExtrudePML splits the surface into parts", "[pml][geodata][Serial]")
       CHECK(MinExtrudedJacobian(*mesh, ne, 1) > 0.0);
       CHECK(ExteriorHasBdrElements(*mesh));
       const int back = blocks[0].extrusion.back_attribute;
-      if (extrusion != "Normal")
+      REQUIRE(blocks.size() == 1);
+      CHECK(blocks[0].extrusion.depth == Depth::BOX);
+      CHECK(CountBdrElements(*mesh, back) == nbe);
+      CHECK(BoxDepthError(*mesh, blocks[0]) < 1.0e-12);
+      double err = 0.0;
+      for (int be = nbe; be < mesh->GetNBE(); be++)
       {
-        REQUIRE(blocks.size() == 1);
-        CHECK(blocks[0].extrusion.depth == Depth::BOX);
-        CHECK(CountBdrElements(*mesh, back) == nbe);
-        CHECK(BoxDepthError(*mesh, blocks[0]) < 1.0e-12);
-        double err = 0.0;
-        for (int be = nbe; be < mesh->GetNBE(); be++)
+        for (int j = 0; mesh->GetBdrAttribute(be) == back &&
+                        j < mesh->GetNodes()->FESpace()->GetBE(be)->GetDof();
+             j++)
         {
-          for (int j = 0; mesh->GetBdrAttribute(be) == back &&
-                          j < mesh->GetNodes()->FESpace()->GetBE(be)->GetDof();
-               j++)
-          {
-            err =
-                std::max(err, std::abs(NodePosition(*mesh, be, j, true).Normlinf() - 1.5));
-          }
+          err = std::max(err, std::abs(NodePosition(*mesh, be, j, true).Normlinf() - 1.5));
         }
-        CHECK(err < 1.0e-12);
-        continue;
       }
-      REQUIRE(blocks.size() == 6);
-      for (const auto &block : blocks)
-      {
-        REQUIRE(block.extrusion.depth == Depth::NORMAL);
-        const auto &plane = block.extrusion.plane;
-        CHECK(DepthError(*mesh, block,
-                         [&](const mfem::Vector &x)
-                         {
-                           return plane[0] * x(0) + plane[1] * x(1) + plane[2] * x(2) - 1.0;
-                         }) < 1.0e-12);
-        CHECK(block.extrusion.back_attribute == back);
-      }
-      // The back of each face, and 4 sides of n edges each with one quadrilateral per
-      // layer.
-      CHECK(CountBdrElements(*mesh, back) == nbe + 6 * 4 * 3 * 2);
+      CHECK(err < 1.0e-12);
     }
+    auto mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 3, 1));
+    CHECK_THROWS_WITH(
+        ExtrudeEntries(
+            mesh, {{{"Attributes", {1}}, {"Thickness", 0.5}, {"Extrusion", "Normal"}}}),
+        Matchers::ContainsSubstring("which share the edge at") &&
+            Matchers::ContainsSubstring("is for separate flat faces"));
   }
 
-  SECTION("Closed cylinder")
+  SECTION("Cylinder")
   {
-    // The caps (attribute 2) are two flat parts along their normals, and the wall
-    // (attribute 1) is at the distance 1 from its axis. The layers meet only along the
-    // rims, where both have exposed sides.
+    // The wall (attribute 1) is at the distance 1 from its axis, and its layer ends flush
+    // with the caps (attribute 2), which continue through it.
     auto mesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, n, 2));
-    const int ne = mesh->GetNE(), n_caps = CountBdrElements(*mesh, 2),
-              n_wall = CountBdrElements(*mesh, 1);
-    auto blocks =
-        ExtrudeEntries(mesh, {{{"Attributes", {2}}, {"Thickness", 0.1}, {"Layers", 2}},
-                              {{"Attributes", {1}},
-                               {"Thickness", 0.1},
-                               {"Layers", 2},
-                               {"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}}});
-    REQUIRE(blocks.size() == 3);
+    const int ne = mesh->GetNE(), n_caps = CountBdrElements(*mesh, 2);
+    auto blocks = ExtrudeEntries(mesh, {{{"Attributes", {1}},
+                                         {"Thickness", 0.1},
+                                         {"Layers", 2},
+                                         {"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}}});
+    REQUIRE(blocks.size() == 1);
     CHECK(MinExtrudedJacobian(*mesh, ne, 2) > 0.0);
     CHECK(ExteriorHasBdrElements(*mesh));
-    for (int b = 0; b < 2; b++)
-    {
-      REQUIRE(blocks[b].extrusion.depth == Depth::NORMAL);
-      const double nz = blocks[b].extrusion.plane[2];
-      CHECK(DepthError(*mesh, blocks[b],
-                       [&](const mfem::Vector &x) { return nz * x(2) - 1.0; }) < 1.0e-12);
-    }
-    REQUIRE(blocks[2].extrusion.depth == Depth::DISTANCE);
-    CHECK(DepthError(*mesh, blocks[2], [](const mfem::Vector &x)
+    REQUIRE(blocks[0].extrusion.depth == Depth::DISTANCE);
+    CHECK(DepthError(*mesh, blocks[0], [](const mfem::Vector &x)
                      { return std::hypot(x(0), x(1)) - 1.0; }) < 1.0e-12);
-    // The rim of each cap has 4 n edges, with one exposed side per layer on each of the two
-    // layers which meet there.
-    const int back = blocks[0].extrusion.back_attribute;
-    CHECK(CountBdrElements(*mesh, back) == n_caps + n_wall + 2 * 2 * (4 * n * 2));
+    // The rim of each cap has 4 n edges, with one quadrilateral per layer.
+    CHECK(CountBdrElements(*mesh, 2) == n_caps + 2 * (4 * n * 2));
+
+    // The closed cylinder, with its caps as parts of their own, whose layers would meet the
+    // wall's along the rims.
+    mesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, n, 2));
+    CHECK_THROWS_WITH(
+        ExtrudeEntries(mesh, {{{"Attributes", {2}}, {"Thickness", 0.1}},
+                              {{"Attributes", {1}},
+                               {"Thickness", 0.1},
+                               {"Center", {{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}}}}}),
+        Matchers::ContainsSubstring("which share the edge at") &&
+            Matchers::ContainsSubstring("list their attributes in one entry, so that"));
+
+    // In one entry, the closed cylinder, of flat and curved faces, fits no shape with any
+    // core: the error says so, and what to extrude instead.
+    for (const auto &center : {json(), json({{0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}})})
+    {
+      mesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, n, 2));
+      json entry = {{"Attributes", {1, 2}}, {"Thickness", 0.1}};
+      if (!center.is_null())
+      {
+        entry["Center"] = center;
+      }
+      CHECK_THROWS_WITH(
+          ExtrudeEntries(mesh, {entry}),
+          Matchers::ContainsSubstring("which has flat and curved faces") &&
+              Matchers::ContainsSubstring("for example a closed cylinder, cannot be") &&
+              Matchers::ContainsSubstring("from a box or a sphere around the object"));
+    }
 
     // The wall is curved, and cannot be extruded along its normal.
     mesh = std::make_unique<mfem::Mesh>(MakeCylinder(type, n, 2));
@@ -1132,6 +1139,68 @@ TEST_CASE("ExtrudePML splits the surface into parts", "[pml][geodata][Serial]")
         ExtrudeEntries(
             mesh, {{{"Attributes", {1}}, {"Thickness", 0.1}, {"Extrusion", "Normal"}}}),
         Matchers::ContainsSubstring("is curved"));
+  }
+
+  SECTION("Two entries on one flat face")
+  {
+    // The face z = 1 of the box split at x = 0 into the attributes 3 and 5 is one flat part
+    // of one entry, and two parts which share the edges x = 0 of two entries, whose layers
+    // would be split by their sides.
+    auto MakeSplitTop = [&]()
+    {
+      auto mesh = std::make_unique<mfem::Mesh>(MakeBoxTop(type, n, 1));
+      for (int be = 0; be < mesh->GetNBE(); be++)
+      {
+        mfem::Vector c(3);
+        mfem::IsoparametricTransformation T;
+        mesh->GetBdrElementTransformation(be, &T);
+        T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+        if (mesh->GetBdrAttribute(be) == 2)
+        {
+          mesh->SetBdrAttribute(be, (c(0) < 0.0) ? 3 : 5);
+        }
+      }
+      mesh->SetAttributes();
+      return mesh;
+    };
+    auto mesh = MakeSplitTop();
+    const auto blocks =
+        ExtrudeEntries(mesh, {{{"Attributes", {3, 5}}, {"Thickness", 0.1}, {"Layers", 2}}});
+    REQUIRE(blocks.size() == 1);
+    CHECK(blocks[0].extrusion.depth == Depth::NORMAL);
+    CHECK(ExteriorHasBdrElements(*mesh));
+    mesh = MakeSplitTop();
+    CHECK_THROWS_WITH(
+        ExtrudeEntries(mesh, {{{"Attributes", {3}}, {"Thickness", 0.1}},
+                              {{"Attributes", {5}}, {"Thickness", 0.1}}}),
+        Matchers::ContainsSubstring("which share the edge at (0, ") &&
+            Matchers::ContainsSubstring("list their attributes in one entry"));
+  }
+
+  SECTION("Two parts which meet at a vertex")
+  {
+    // The quadrilaterals x, y > 0 of the face z = 1 and y < 0, z > 0 of the face x = 1
+    // (attributes 3 and 4) meet at the vertex (1, 0, 1) only, from which each part has a
+    // column of its own, along its normal.
+    auto mesh = std::make_unique<mfem::Mesh>(MakeBox(mfem::Element::HEXAHEDRON, n, 1));
+    for (int be = 0; be < mesh->GetNBE(); be++)
+    {
+      mfem::Vector c(3);
+      mfem::IsoparametricTransformation T;
+      mesh->GetBdrElementTransformation(be, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+      mesh->SetBdrAttribute(be, (c(2) > 1.0 - 1.0e-12 && c(0) > 0.0 && c(1) > 0.0)   ? 3
+                                : (c(0) > 1.0 - 1.0e-12 && c(1) < 0.0 && c(2) > 0.0) ? 4
+                                                                                     : 1);
+    }
+    mesh->SetAttributes();
+    const int ne = mesh->GetNE(), nv = mesh->GetNV();
+    const auto blocks =
+        ExtrudeEntries(mesh, {{{"Attributes", {3, 4}}, {"Thickness", 0.5}, {"Layers", 2}}});
+    REQUIRE(blocks.size() == 2);
+    CHECK(mesh->GetNV() == nv + 2 * (4 + 4));
+    CHECK(MinExtrudedJacobian(*mesh, ne, 1) > 0.0);
+    CHECK(ExteriorHasBdrElements(*mesh));
   }
 }
 

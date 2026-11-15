@@ -254,7 +254,7 @@ function generate_pml_diagrams(; path::String=PML_DIAGRAMS_PATH)
     # (e) Cube: radial from a box inside it, the same outside, with straight columns over the
     # box and fans at the edges.
     panel(
-        1,
+        1.5,
         2,
         "(e) Cube, radial from a box",
         [
@@ -293,49 +293,11 @@ function generate_pml_diagrams(; path::String=PML_DIAGRAMS_PATH)
         end
     )
 
-    # (f) Cube, normal extrusion: a cuboid on each face; the edges stay outside.
+    # (f) Floquet cell with a PML on top; the periodic sides continue through the layer.
     panel(
+        2.5,
         2,
-        2,
-        "(f) Cube, normal extrusion",
-        [
-            "{ \"Attributes\": [7], \"Thickness\": 0.5,",
-            "  \"Layers\": 4,",
-            "  \"Extrusion\": \"Normal\" }"
-        ],
-        P -> begin
-            a, t, N = 1.0, 0.5, 4
-            polygon(
-                [P(-a, -a), P(a, -a), P(a, a), P(-a, a)],
-                PHYS,
-                0.16;
-                stroke=PHYS,
-                stroke_width="1.2"
-            )
-            for (n, τ) in (
-                ((1, 0), (0, 1)),
-                ((0, 1), (-1, 0)),
-                ((-1, 0), (0, -1)),
-                ((0, -1), (1, 0))
-            )
-                q(s, r) = P((a .* n .+ s * t .* n .+ r * a .* τ)...)
-                polygon([q(0, -1), q(1, -1), q(1, 1), q(0, 1)], PML, 0.28)
-                for k = 1:N
-                    line(q(k / N, -1)..., q(k / N, 1)..., PML, 1.0)
-                end
-                polyline([q(0, -1), q(1, -1), q(1, 1), q(0, 1)], GRAY, 1.6)
-                for r in (-0.5, 0.0, 0.5)
-                    arrow(q(0, r)..., q(0.9, r)...)
-                end
-            end
-        end
-    )
-
-    # (g) Floquet cell with a PML on top; the periodic sides continue through the layer.
-    panel(
-        3,
-        2,
-        "(g) Floquet cell, PML on top",
+        "(f) Floquet cell, PML on top",
         ["{ \"Attributes\": [6], \"Thickness\": 0.1,", "  \"Layers\": 6 }"],
         P -> begin
             w, h, t, N = 0.75, 1.1, 0.8, 6
@@ -366,13 +328,13 @@ function generate_pml_diagrams(; path::String=PML_DIAGRAMS_PATH)
         end
     )
 
-    # (h) Patch antenna: one closed layer on the sides and the top, radial from a segment
+    # (g) Patch antenna: one closed layer on the sides and the top, radial from a segment
     # through the substrate on the ground plane, so that the substrate stays flat through
     # the side layers and the layer ends flush with the ground plane.
     panel(
-        4,
+        3.5,
         2,
-        "(h) Patch antenna, radial from a segment",
+        "(g) Patch antenna, radial from a segment",
         [
             "{ \"Attributes\": [7], \"Thickness\": 4.0,",
             "  \"Layers\": 4,",
