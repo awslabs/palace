@@ -1068,20 +1068,20 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
 
   auto directory_only = automatic_correction;
   directory_only["Diagnostics"] = {{"Directory", "heavy.tables_1"}};
-  const config::ElectrostaticSolverData only(
-      json{{"ResponseCorrection", directory_only}});
+  const config::ElectrostaticSolverData only(json{{"ResponseCorrection", directory_only}});
   REQUIRE(only.response_correction);
   CHECK(only.response_correction->diagnostics_directory == "heavy.tables_1");
   CHECK(only.response_correction->conductor_consistency_records == Records::METADATA);
 
-  for (const auto *name : {"", "a/b", "..", ".", ".hidden", "-dash", "iteration1",
-                           "iterations", "with space"})
+  for (const auto *name :
+       {"", "a/b", "..", ".", ".hidden", "-dash", "iteration1", "iterations", "with space"})
   {
     CAPTURE(name);
     auto invalid = automatic_correction;
     invalid["Diagnostics"] = {{"Directory", name}};
-    CHECK_THROWS_WITH(config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid}}),
-                      Catch::Matchers::ContainsSubstring("Diagnostics.Directory"));
+    CHECK_THROWS_WITH(
+        config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid}}),
+        Catch::Matchers::ContainsSubstring("Diagnostics.Directory"));
   }
   auto not_a_string = automatic_correction;
   not_a_string["Diagnostics"] = {{"Directory", 1}};

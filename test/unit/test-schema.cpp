@@ -1005,8 +1005,8 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     diagnostics_directory["ResponseCorrection"]["Diagnostics"] = {
         {"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Directory"}};
     CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
-    diagnostics_directory["ResponseCorrection"]["Diagnostics"]["ConductorConsistencyRecords"] =
-        "Metadata";
+    diagnostics_directory["ResponseCorrection"]["Diagnostics"]
+                         ["ConductorConsistencyRecords"] = "Metadata";
     CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
     for (const auto *name : {"", "a/b", "../up", ".hidden", "-dash", "with space"})
     {
