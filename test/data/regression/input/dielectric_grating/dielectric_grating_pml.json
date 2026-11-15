@@ -77,7 +77,9 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 200
+      "MaxIts": 200,
+      // The complex coarse solve needs two to three times fewer iterations here
+      "ComplexCoarseSolve": true
     }
   }
 }
