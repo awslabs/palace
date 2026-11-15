@@ -34,6 +34,14 @@ entry is read only when its key has the job id's numeric prefix (JOB_PARSER; ent
 = OTHERJOB, a missing PBS read).  The row's job_id is compared with the kept job id (the numeric prefix)
 in every read: a CHANGED job id makes the whole round a MISSING read (the row and the PBS read of the
 kept job are set aside: never 'ended', never 'verified'), recorded (end.json / the marker RowJobIDs).
+ABSENCE_RULE (decision 1858, review r1848 m-2): a terminal row in a round whose PBS read is MISSING (no answer, an
+empty answer, another job's answer, no job_state) is NO VERDICT: a WAIT line, and the watcher reads again (in END_RULE
+the round is not verified, so the qdel by the job id follows).  The run has ended (run) / the end is verified
+(END_RULE) only on a read that SHOWS the job gone: a finished-job answer for this job id, or qstat's explicit
+'Unknown Job Id <this job id>' answer (state GONE: PBS no longer knows the job, e.g. its history has expired); or
+after remote.ABSENT_ANSWERS consecutive missing PBS reads with a terminal row spanning >= remote.ABSENT_SECONDS (the
+PBS route's EMPTY_STATE_RULE numbers).  The count grows by one per round with a terminal row and a missing PBS read; a
+PBS read that shows the job and a non-terminal row reset it; a round whose row read is missing leaves it unchanged.
 END_RULE (decision 1836, review r1833 MAJOR-1 (b) / (c)): AN EARLY END is repeated until it is
 VERIFIED (the row terminal or a finished-job answer; an empty qstat answer verifies nothing).  One
 round = `paladin palace cancel RUN` (the end request); refused, or the run not verified within
@@ -70,20 +78,32 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paladin_backend  # noqa: E402  (the same qualify/ directory)
+import remote  # noqa: E402  (ABSENCE_RULE: the PBS route's EMPTY_STATE_RULE numbers)
 
-# JOB_RULE: the parser of one `qstat -xf -F json JOB` answer (argv[1] = JOB): only the entry whose key has JOB's numeric
-# prefix is read; no entry = NOTFOUND, entries of other jobs only = OTHERJOB (both a missing PBS read).  No single quote in
-# it: it is embedded in SAMPLE_SCRIPT between single quotes.
+# JOB_RULE: the parser of one `qstat -xf -F json JOB` answer (argv[1] = JOB; argv[2] = the file holding qstat's stderr):
+# only the entry whose key has JOB's numeric prefix is read; no entry = NOTFOUND, entries of other jobs only = OTHERJOB (both
+# a missing PBS read); no entry and qstat's stderr line 'qstat: Unknown Job Id <JOB's numeric prefix>[.server]' = GONE
+# (ABSENCE_RULE: PBS says it does not know this job).  No single quote in it: it is embedded in SAMPLE_SCRIPT between single
+# quotes.
 JOB_PARSER = r'''
 import json, sys, time
+wanted = sys.argv[1].split(".")[0]
 try:
     jobs = json.load(sys.stdin).get("Jobs", {})
 except Exception:
     jobs = {}
 if not isinstance(jobs, dict) or not jobs:
-    print("NOTFOUND - -")
+    said = ""
+    try:
+        if len(sys.argv) > 2:
+            with open(sys.argv[2]) as error_file:
+                said = error_file.read(4000)
+    except Exception:
+        said = ""
+    gone = [line for line in said.splitlines()
+            if line.strip().startswith("qstat: Unknown Job Id ") and line.split()[-1].split(".")[0] == wanted]
+    print("GONE - -" if gone else "NOTFOUND - -")
     sys.exit(0)
-wanted = sys.argv[1].split(".")[0]
 mine = [value for key, value in jobs.items() if str(key).split(".")[0] == wanted]
 if not mine:
     print("OTHERJOB - -")
@@ -104,7 +124,9 @@ print(job.get("job_state", "UNKNOWN"), start, "-" if code is None else code, " "
 # One read of the cluster (bash on --host, the job id and the PBS bin directory as arguments).
 SAMPLE_SCRIPT = r'''set -u
 JOB="$1"; PBS_BIN="$2"; shift 2; KEPT_HOSTS="$*"
-read -r STATE STIME EXIT HOSTS < <(timeout 30 "$PBS_BIN/qstat" -xf -F json "$JOB" 2>/dev/null | python3 -c ''' + "'" + JOB_PARSER + "'" + r''' "$JOB")
+ERRF=$(mktemp 2>/dev/null) || ERRF=/dev/null
+read -r STATE STIME EXIT HOSTS < <(timeout 30 "$PBS_BIN/qstat" -xf -F json "$JOB" 2>"$ERRF" | python3 -c ''' + "'" + JOB_PARSER + "'" + r''' "$JOB" "$ERRF")
+[ "$ERRF" = /dev/null ] || rm -f "$ERRF"
 echo "STATE ${STATE:-NOTFOUND}"
 echo "STIME ${STIME:--}"
 echo "EXIT ${EXIT:--}"
@@ -119,6 +141,7 @@ for h in $HOSTS; do
 done
 '''
 ENDED_STATES = ("F", "X")  # PBS's finished job / finished subjob
+GONE_STATE = "GONE"  # ABSENCE_RULE: qstat's 'Unknown Job Id' answer for this job id
 # Decision 1830 (3): a minimum sleep between reads and a hard bound on the reads (the cap + one day, at the interval).
 WATCHER_MIN_INTERVAL_SECONDS, WATCHER_LIFE_BEYOND_CAP_SECONDS = 1.0, 86400.0
 QUEUE_LIFE_SECONDS = 7 * 86400.0  # decision 1836 m-4 (b): the longest queue wait a watcher outlives
@@ -142,6 +165,7 @@ class Watcher:
         self.hosts = []  # the exec hosts of the last good PBS read (READ_RULE)
         self.verification = None  # the PBS read of the last verifying round (ROW_RULE)
         self.row_jobs = []  # the other job ids a row named (JOB_RULE)
+        self.absences = []  # ABSENCE_RULE: the times of the consecutive rounds with a terminal row and a missing PBS read
         self.events = os.path.join(args.dir, "events.log")
 
     def event(self, line):
@@ -209,15 +233,46 @@ class Watcher:
 
     @staticmethod
     def finished(sample):
-        """The finished-job answer of READ_RULE ('ended' only on it or a terminal row), or None."""
+        """A read that SHOWS the job gone (READ_RULE / ABSENCE_RULE): the finished-job answer or PBS's 'Unknown Job Id'
+        answer for this job id, or None."""
+        if Watcher.pbs_read(sample) and sample["State"] == GONE_STATE:
+            return "PBS: Unknown Job Id (PBS does not know the job)"
         if Watcher.pbs_read(sample) and (sample["State"] in ENDED_STATES or sample["ExitStatus"] is not None):
             return f"PBS job_state {sample['State']}, Exit_status {sample['ExitStatus']}"
         return None
 
     @staticmethod
     def in_queue(sample):
-        """ROW_RULE: True for a PBS read that shows the job in the queue (a job_state, not F / X, no Exit_status)."""
-        return Watcher.pbs_read(sample) and sample["State"] not in ENDED_STATES and sample["ExitStatus"] is None
+        """ROW_RULE: True for a PBS read that shows the job in the queue (a job_state, not F / X / GONE, no Exit_status)."""
+        return Watcher.pbs_read(sample) and Watcher.finished(sample) is None
+
+    @staticmethod
+    def missing_kind(sample):
+        """The form of a missing PBS read, for the event lines."""
+        return ("another job's answer (OTHERJOB)" if sample and sample["State"] == "OTHERJOB" else
+                "no job_state" if sample and sample["State"] == "UNKNOWN" else
+                "an empty qstat answer" if sample else "no answer")
+
+    def absence(self, status, sample):
+        """ABSENCE_RULE: count this round (a row read and a PBS read taken); for a terminal row with a missing PBS read,
+        the verdict text once the absences reach their numbers, else None (a WAIT line)."""
+        if self.pbs_read(sample):
+            self.absences = []
+            return None
+        if not status:
+            return None
+        if status.get("terminal") is not True:
+            self.absences = []
+            return None
+        self.absences.append(time.time())
+        count, span = len(self.absences), self.absences[-1] - self.absences[0]
+        if count >= remote.ABSENT_ANSWERS and span >= remote.ABSENT_SECONDS:
+            return (f"PBS absent: {count} consecutive missing reads over {span:.0f} s >= {remote.ABSENT_ANSWERS} over "
+                    f"{remote.ABSENT_SECONDS:.0f} s (ABSENCE_RULE)")
+        self.event(f"WAIT the row is terminal ({status.get('status')}) but this round's PBS read is missing "
+                   f"({self.missing_kind(sample)}): no verdict; read again ({count} of {remote.ABSENT_ANSWERS} absences over "
+                   f"{span:.0f} s of {remote.ABSENT_SECONDS:.0f} s) (ABSENCE_RULE)")
+        return None
 
     @staticmethod
     def pbs_shown(sample):
@@ -235,11 +290,15 @@ class Watcher:
             return None
         sample = self.sample()
         self.verification = self.pbs_shown(sample)
+        absent = self.absence(status, sample)
         if status and status.get("terminal") is True:
-            if not self.in_queue(sample):
+            if self.finished(sample):
                 return f"the row terminal ({status.get('status')}); PBS {self.verification}"
-            self.event(f"DISAGREE the row is terminal ({status.get('status')}) while PBS shows job_state {sample['State']}: "
-                       f"not verified (ROW_RULE)")
+            if absent:
+                return f"the row terminal ({status.get('status')}); {absent}"
+            if self.in_queue(sample):
+                self.event(f"DISAGREE the row is terminal ({status.get('status')}) while PBS shows job_state "
+                           f"{sample['State']}: not verified (ROW_RULE)")
         return self.finished(sample)
 
     def wait_verified(self, seconds):
@@ -392,12 +451,14 @@ class Watcher:
             if finished:
                 self.event(f"END exit 0: the PBS job has ended ({finished}; row {(status or {}).get('status')})")
                 return 0
+            absent = None if changed else self.absence(status, sample)
             if status and status.get("terminal") is True:
-                if not self.in_queue(sample):
-                    self.event(f"END exit 0: the row is terminal ({status.get('status')}); PBS {self.pbs_shown(sample)}")
+                if absent:
+                    self.event(f"END exit 0: the row is terminal ({status.get('status')}); {absent}")
                     return 0
-                self.event(f"DISAGREE the row is terminal ({status.get('status')}) while PBS shows job_state {sample['State']}: "
-                           f"not ended; the limits stay in force (ROW_RULE)")
+                if self.in_queue(sample):
+                    self.event(f"DISAGREE the row is terminal ({status.get('status')}) while PBS shows job_state "
+                               f"{sample['State']}: not ended; the limits stay in force (ROW_RULE)")
             now = time.time()
             if status or self.pbs_read(sample):
                 last_read = now
@@ -409,9 +470,7 @@ class Watcher:
                 running, how = sample["State"] == "R", f"PBS {sample['State']}"
             else:
                 running, how = (status or {}).get("status") == "running", "the row's status (a missing PBS read)"
-                kind = ("another job's answer (OTHERJOB)" if sample and sample["State"] == "OTHERJOB" else
-                        "an empty qstat answer" if sample else "no answer")
-                self.event(f"READ missing PBS read ({kind}): running from "
+                self.event(f"READ missing PBS read ({self.missing_kind(sample)}): running from "
                            f"{how}: {running}")
             blind = now - last_read >= BLIND_SECONDS
             clock = self.start_epoch or submitted

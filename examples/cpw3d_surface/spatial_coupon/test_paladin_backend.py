@@ -1572,7 +1572,7 @@ class WatcherInProcess(GuardedTestCase):
         self.calls, self.status, self.cancel = [], "running", "ok"
         self.status_fails = False  # the row's read missing
         self.qdel = []  # the outcomes of the next qdel calls: ok | rc1 | ssh; none left = ok
-        self.pbs = "R"  # R | Q | NOTFOUND | OTHERJOB | F | ssh (the cluster read fails)
+        self.pbs = "R"  # R | Q | NOTFOUND | OTHERJOB | UNKNOWN | GONE | F | ssh (the cluster read fails)
         self.start_ago, self.start_at, self.memory = 100, None, (1000, 900)  # the PBS start: now - start_ago, or start_at
         self.commands = []
 
@@ -1635,11 +1635,11 @@ class WatcherInProcess(GuardedTestCase):
             patch.stop()
         self.tmp.cleanup()
 
-    def run_watcher(self, cap=50.0, bar=0.85, submitted_ago=0.0, interval=1.0):
+    def run_watcher(self, cap=50.0, bar=0.85, submitted_ago=0.0, interval=1.0, grace=1.0):
         submitted = paladin_backend.utc_now() - datetime.timedelta(seconds=submitted_ago)
         args = ["--run-id", "7", "--job", "j7", "--cli", "paladin", "--host", "local", "--pbs-bin", "/pbs",
                 "--cap-seconds", str(cap), "--submitted", submitted.isoformat(), "--dir", str(self.dir),
-                "--bar", str(bar), "--interval", str(interval), "--grace", "1"]
+                "--bar", str(bar), "--interval", str(interval), "--grace", str(grace)]
         return self.module.main(args)
 
     def end(self):
@@ -1825,12 +1825,141 @@ class WatcherInProcess(GuardedTestCase):
         self.assertEqual((self.end()["Verified"], self.end()["PBSAtVerification"]), (True, {"State": "F", "ExitStatus": 0}))
         self.assertNotIn("'State': 'R'", self.end()["VerifiedBy"])
 
-    def test_a_terminal_row_with_no_job_shown_by_pbs_ends_the_watcher_and_records_the_read(self):
+    # Decision 1858 (review r1848 m-2): ABSENCE_RULE: a terminal row with a MISSING PBS read is no verdict.
+    def test_m2_a_terminal_row_under_empty_qstat_answers_ends_only_after_the_absences(self):
+        """Round 3 asserted the opposite on purpose (exit 0 at the first read, 'PBS {State NOTFOUND}'); reversed by ruling
+        1858 (m-2): the watcher reads again and ends after 5 consecutive missing reads spanning >= 600 s."""
         self.status, self.pbs = "completed", "NOTFOUND"
-        self.assertEqual(self.run_watcher(cap=50), 0)
-        self.assertIn("END exit 0: the row is terminal (completed); PBS {'State': 'NOTFOUND', 'ExitStatus': None}",
-                      (self.dir / "events.log").read_text())
+        self.assertEqual(self.run_watcher(cap=50, interval=30), 0)
+        events = (self.dir / "events.log").read_text()
+        self.assertIn("END exit 0: the row is terminal (completed); PBS absent: 21 consecutive missing reads over 600 s >= 5 "
+                      "over 600 s (ABSENCE_RULE)", events)
+        self.assertEqual(events.count("WAIT the row is terminal (completed) but this round's PBS read is missing "
+                                      "(an empty qstat answer): no verdict"), 20)
+        self.assertEqual(self.calls.count(["palace", "status"]), 21)
         self.assertEqual(self.calls.count(["palace", "cancel"]), 0)
+
+    def test_m2_the_absence_count_binds_when_the_reads_are_far_apart(self):
+        """At a 300-s interval the 600 s are spanned by the 3rd read; the end waits for the 5th."""
+        self.status, self.pbs = "failed", "OTHERJOB"
+        self.assertEqual(self.run_watcher(cap=50, interval=300), 0)
+        self.assertIn("PBS absent: 5 consecutive missing reads over 1200 s >= 5 over 600 s (ABSENCE_RULE)",
+                      (self.dir / "events.log").read_text())
+        self.assertEqual(self.calls.count(["palace", "status"]), 5)
+
+    def scripted_reads(self, script):
+        """Each round (its row read, then its cluster read) takes the next (row status, PBS answer) of SCRIPT; the last
+        one stays."""
+        real = paladin_backend.paladin_call
+        rounds = []
+
+        def scripted(cli, arguments, **options):
+            if arguments[1] == "status":
+                rounds.append(1)
+                self.status, self.pbs = script[min(len(rounds), len(script)) - 1]
+            return real(cli, arguments, **options)
+
+        return mock.patch.object(paladin_backend, "paladin_call", scripted)
+
+    def test_m2_a_pbs_read_that_shows_the_job_resets_the_absences(self):
+        """4 missing reads (span 900 s), one read showing the job queued, then missing again: the end waits for 5 more."""
+        script = [("completed", "NOTFOUND")] * 4 + [("completed", "Q")] + [("completed", "NOTFOUND")]
+        with self.scripted_reads(script):
+            self.assertEqual(self.run_watcher(cap=50, interval=300), 0)
+        events = (self.dir / "events.log").read_text()
+        self.assertIn("DISAGREE the row is terminal (completed) while PBS shows job_state Q", events)
+        self.assertIn("PBS absent: 5 consecutive missing reads over 1200 s", events)
+        self.assertEqual(self.calls.count(["palace", "status"]), 10)
+
+    def test_m2_a_non_terminal_row_resets_the_absences(self):
+        """4 rounds of a terminal row with missing reads, one round the row answers running, then terminal again."""
+        script = [("completed", "NOTFOUND")] * 4 + [("running", "NOTFOUND")] + [("completed", "NOTFOUND")]
+        with self.scripted_reads(script):
+            self.assertEqual(self.run_watcher(cap=10**6, interval=300), 0)
+        self.assertIn("PBS absent: 5 consecutive missing reads over 1200 s", (self.dir / "events.log").read_text())
+        self.assertEqual(self.calls.count(["palace", "status"]), 10)
+
+    def missing_reads_then_running(self, form, reads=2):
+        """The row terminal (failed) from the start; the first READS PBS reads are missing in FORM; then PBS answers R (the
+        job lives: the hypothesis of r1848 m-2, a row ahead of PBS + a coincident missing read)."""
+        self.status, self.cancel, self.pbs = "failed", "row-only", form
+        real = paladin_backend.remote_shell
+        seen = []
+
+        def missing_then_r(host, command, **options):
+            if "qdel" not in command:
+                seen.append(command)
+                if len(seen) > reads and self.pbs == form:
+                    self.pbs = "R"
+            return real(host, command, **options)
+
+        with mock.patch.object(paladin_backend, "remote_shell", missing_then_r):
+            code = self.run_watcher(cap=50, submitted_ago=1000)
+        events = (self.dir / "events.log").read_text()
+        self.assertNotIn("END exit 0", events)
+        self.assertEqual(events.count("WAIT the row is terminal (failed) but this round's PBS read is missing"), reads)
+        self.assertIn("DISAGREE the row is terminal (failed) while PBS shows job_state R: not ended", events)
+        self.assertEqual(code, 11)
+        self.assertIn("running by PBS R", self.end()["Reason"])
+        self.assertEqual(sum(1 for command in self.commands if "qdel" in command), 1)
+        self.assertEqual(self.end()["PBSAtVerification"], {"State": "F", "ExitStatus": 0})
+        return events
+
+    def test_m2_a_terminal_row_with_an_empty_qstat_answer_is_no_verdict(self):
+        self.assertIn("(an empty qstat answer): no verdict", self.missing_reads_then_running("NOTFOUND"))
+
+    def test_m2_a_terminal_row_with_another_job_s_answer_is_no_verdict(self):
+        self.assertIn("(another job's answer (OTHERJOB)): no verdict", self.missing_reads_then_running("OTHERJOB"))
+
+    def test_m2_a_terminal_row_with_no_cluster_answer_is_no_verdict(self):
+        self.assertIn("(no answer): no verdict", self.missing_reads_then_running("ssh"))
+
+    def test_m2_pbs_s_unknown_job_answer_shows_the_job_gone(self):
+        self.status, self.pbs = "completed", "GONE"
+        self.assertEqual(self.run_watcher(cap=50), 0)
+        self.assertIn("END exit 0: the PBS job has ended (PBS: Unknown Job Id (PBS does not know the job); row completed)",
+                      (self.dir / "events.log").read_text())
+        self.assertEqual(self.calls.count(["palace", "status"]), 1)
+
+    def test_m2_an_end_whose_row_turns_terminal_under_a_missing_read_is_not_verified_by_the_row(self):
+        """END_RULE side: the end request accepted, the row canceled, PBS answers empty: was Verified true by the row with 0
+        qdels; now WAIT, the qdel by the job id, verified by the finished-job answer."""
+        self.cancel = "row-only"
+        real = paladin_backend.paladin_call
+
+        def empty_after_the_end_request(cli, arguments, **options):
+            answer = real(cli, arguments, **options)
+            if arguments[1] == "cancel":
+                self.pbs = "NOTFOUND"
+            return answer
+
+        with mock.patch.object(paladin_backend, "paladin_call", empty_after_the_end_request):
+            self.assertEqual(self.run_watcher(cap=50), 11)
+        self.assertIn("WAIT the row is terminal (canceled) but this round's PBS read is missing (an empty qstat answer)",
+                      (self.dir / "events.log").read_text())
+        self.assertEqual(self.end()["Rounds"][0]["Qdel"]["Command"], "/pbs/qdel j7")
+        self.assertEqual((self.end()["Verified"], self.end()["PBSAtVerification"]), (True, {"State": "F", "ExitStatus": 0}))
+
+    def test_m2_an_end_under_silent_pbs_is_verified_by_the_absences(self):
+        """END_RULE side: the row canceled, every PBS read empty and every qdel refused: verified only once the absences
+        reach 5 over >= 600 s (production grace 120 s, interval 30 s), never by the first read."""
+        self.cancel, self.qdel = "row-only", ["rc1"] * self.module.END_MAX_ROUNDS
+        real = paladin_backend.paladin_call
+
+        def empty_after_the_end_request(cli, arguments, **options):
+            answer = real(cli, arguments, **options)
+            if arguments[1] == "cancel":
+                self.pbs = "NOTFOUND"
+            return answer
+
+        with mock.patch.object(paladin_backend, "paladin_call", empty_after_the_end_request):
+            self.assertEqual(self.run_watcher(cap=50, interval=30, grace=120), 11)
+        end = self.end()
+        self.assertTrue(end["Verified"])
+        self.assertRegex(end["VerifiedBy"], r"^the row terminal \(canceled\); PBS absent: \d+ consecutive missing reads over "
+                                            r"(6\d\d) s >= 5 over 600 s \(ABSENCE_RULE\)$")
+        self.assertGreaterEqual(len(end["Rounds"]), 2)
+        self.assertEqual(end["Rounds"][0]["VerifiedBy"], None)
 
     def test_the_verifying_round_s_pbs_read_is_recorded(self):
         self.assertEqual(self.run_watcher(cap=50), 11)
@@ -1860,9 +1989,13 @@ class WatcherInProcess(GuardedTestCase):
         self.assertEqual((marker["Job"], marker["RowJobIDs"]), ("j7", ["j8"]))
         self.assertIn("the row also named j8", marker["Check"])
 
-    def parse(self, job, answer):
-        """JOB_PARSER executed IN THIS PROCESS on one qstat -xf -F json answer (no process started)."""
-        with mock.patch.object(sys, "argv", ["-c", job]), mock.patch.object(sys, "stdin", io.StringIO(answer)), \
+    def parse(self, job, answer, said=None):
+        """JOB_PARSER executed IN THIS PROCESS on one qstat -xf -F json answer (no process started); SAID = qstat's stderr."""
+        argv = ["-c", job]
+        if said is not None:
+            (self.dir / "qstat.err").write_text(said)
+            argv.append(str(self.dir / "qstat.err"))
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stdin", io.StringIO(answer)), \
                 contextlib.redirect_stdout(io.StringIO()) as printed:
             try:
                 exec(compile(self.module.JOB_PARSER, "<JOB_PARSER>", "exec"), {"__name__": "__main__"})
@@ -1881,7 +2014,18 @@ class WatcherInProcess(GuardedTestCase):
         self.assertEqual(self.parse("121051", mine), "R - - n1 n2")
         self.assertEqual(self.parse("121051", json.dumps({"Jobs": {}})), "NOTFOUND - -")
         self.assertNotIn("'", self.module.JOB_PARSER)  # embedded between single quotes
-        self.assertIn("python3 -c '" + self.module.JOB_PARSER + "' \"$JOB\")", self.module.SAMPLE_SCRIPT)
+        self.assertIn("python3 -c '" + self.module.JOB_PARSER + "' \"$JOB\" \"$ERRF\")", self.module.SAMPLE_SCRIPT)
+
+    def test_m2_the_parser_reads_pbs_s_unknown_job_answer_for_this_job_only(self):
+        """The real form (soca-green-job, 2026-11-15T21:06Z: qstat -xf -F json 999999, rc 153): stdout without Jobs."""
+        answer = json.dumps({"timestamp": 1794776512, "pbs_version": "23.06.06", "pbs_server": "ip-192-168-54-24"})
+        said = "qstat: Unknown Job Id 999999.ip-192-168-54-24.us-west-2.compute.internal\n"
+        self.assertEqual(self.parse("999999", answer, said), "GONE - -")
+        self.assertEqual(self.parse("999999.ip-192-168-54-24", answer, said), "GONE - -")
+        self.assertEqual(self.parse("999998", answer, said), "NOTFOUND - -")  # another job's 'Unknown Job Id'
+        self.assertEqual(self.parse("999999", answer, ""), "NOTFOUND - -")  # an empty answer
+        self.assertEqual(self.parse("999999", answer), "NOTFOUND - -")  # no stderr file named
+        self.assertEqual(self.parse("999999", "", "qstat: cannot connect to server\n"), "NOTFOUND - -")
 
     def test_another_job_s_answer_is_a_missing_read_that_keeps_the_memory_bar_on_the_kept_hosts(self):
         real = paladin_backend.remote_shell
