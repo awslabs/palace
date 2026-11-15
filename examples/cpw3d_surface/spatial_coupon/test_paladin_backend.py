@@ -593,7 +593,8 @@ class DriveWithFakeCLI(FakeCLICase):
                 outcomes["B"] = str(error)
 
         def find(cli, identity):
-            if "B" not in outcomes:  # the first driver's first lookup: the second driver starts now, in its own thread
+            if not outcomes:  # the first driver's first lookup: the second driver starts now, in its own thread
+                outcomes["B"] = "started"
                 thread = threading.Thread(target=second_driver)
                 thread.start()
                 thread.join(60)
