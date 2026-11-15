@@ -31793,6 +31793,9 @@ void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &re
   // rank; the library's load is unchanged).
   coverage_thresholds.build_target = request.coverage.build_target;
   coverage_thresholds.max_uncovered_share = request.coverage.max_uncovered_share;
+  coverage_mark_not_applied = request.coverage.policy ==
+                              config::ElectrostaticSolverData::ResponseCorrectionData::
+                                  CoverageData::Policy::MARK_NOT_APPLIED;
   if (!request.coverage.validated_regime.empty())
   {
     MFEM_VERIFY(request.IsAutomatic(),

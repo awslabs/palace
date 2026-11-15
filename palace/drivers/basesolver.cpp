@@ -681,7 +681,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
         response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
         response.GetCoverageValidatedRegime(),
         iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0), solve_level,
-        solve_levels);
+        solve_levels, response.CoverageMarkNotApplied());
     coverage_block_written = true;
     coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
