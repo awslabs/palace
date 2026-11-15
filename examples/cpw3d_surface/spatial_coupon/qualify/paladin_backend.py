@@ -422,6 +422,10 @@ def pause(seconds):
     time.sleep(seconds)
 
 
+class SessionNotValid(PaladinError):
+    """The session check before a submit did not pass (SESSION_RULE): nothing was submitted."""
+
+
 class WatcherNotStarted(PaladinError):
     """A run whose watcher did not start (WATCHER_RULE); .watcher = its record."""
 
@@ -597,6 +601,38 @@ class RunWatchers:
         return None
 
 
+SESSION_RULE = ("decision 1822 (b): before every paladin submit the Midway session's expiry (the expiry field of the "
+                "session-named entries of ~/.midway/cookie; no value or name is read or recorded) must be >= max(1800 s, the "
+                "stage's CapSeconds + 3600 s) ahead; else STOP before the submit, with no intent and no State (the stage stays "
+                "resumable after mwinit)")
+MIDWAY_COOKIE = "~/.midway/cookie"
+SESSION_MIN_AHEAD_SECONDS, SESSION_BEYOND_CAP_SECONDS = 1800.0, 3600.0
+
+
+def session_check(cookie, need_seconds, *, now=None):
+    """SESSION_RULE on the Netscape cookie file `cookie`: {ExpiryUTC, AheadSeconds, NeedSeconds, Entries, Verdict}."""
+    expiries = []
+    try:
+        with open(os.path.expanduser(cookie), errors="replace") as f:
+            for line in f:
+                if line.startswith("#") and not line.startswith("#HttpOnly_"):
+                    continue
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) >= 7 and "session" in fields[5].lower() and fields[4].strip().isdigit():
+                    expiries.append(int(fields[4]))
+    except OSError:
+        pass
+    current = (now or utc_now)().timestamp()
+    if not expiries:
+        return {"ExpiryUTC": None, "AheadSeconds": None, "NeedSeconds": need_seconds, "Entries": 0, "Verdict": "NONE",
+                "Rule": SESSION_RULE}
+    expiry = min(expiries)
+    ahead = expiry - current
+    return {"ExpiryUTC": datetime.datetime.fromtimestamp(expiry, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "AheadSeconds": round(ahead), "NeedSeconds": need_seconds, "Entries": len(expiries),
+            "Verdict": "OK" if ahead >= need_seconds else "SHORT", "Rule": SESSION_RULE}
+
+
 # The tables, logs and meshes paladin 0.2.16 uploads: the run's top level and each AMR iteration's
 # top level (ERRATUM-1802 E-1), never other sub-directories or suffixes.
 UPLOADED_SUFFIXES = (".csv", ".json", ".mesh", ".meshgz")
@@ -606,7 +642,8 @@ class PaladinJob:
     """The paladin runs of ONE run_stages plan, in order (module docstring)."""
 
     def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
-                 log=print, now=utc_now, sleep=None, exclusive=True, watchers=None, pbs_bin=DEFAULT_PBS_BIN):
+                 log=print, now=utc_now, sleep=None, exclusive=True, watchers=None, pbs_bin=DEFAULT_PBS_BIN,
+                 session_cookie=None):
         with open(plan_path, "rb") as f:
             data = f.read()
         self.plan = json.loads(data)
@@ -621,6 +658,7 @@ class PaladinJob:
         # plan are refused too); False when the caller holds its root's lock (qualify_library.run_qualify).
         self.exclusive, self.locks = exclusive, []
         self.watchers, self.pbs_bin = watchers or RunWatchers(), pbs_bin
+        self.session_cookie = session_cookie
         self.host = None if block["Host"] == "local" else block["Host"]
         self.confirmed = set()
         self.case = self.plan["Case"]
@@ -807,6 +845,15 @@ class PaladinJob:
         name = stage["Name"]
         if not stage.get("CapSeconds"):
             raise PaladinError(f"{name}: no CapSeconds: a paladin run is submitted only with a cap ({WATCHER_RULE})")
+        session = session_check(self.session_cookie or MIDWAY_COOKIE,
+                                max(SESSION_MIN_AHEAD_SECONDS, float(stage["CapSeconds"]) + SESSION_BEYOND_CAP_SECONDS),
+                                now=self.now)
+        record.setdefault("SessionChecks", []).append({**session, "UTC": self.now().isoformat()})
+        self.save()
+        if session["Verdict"] != "OK":
+            raise SessionNotValid(f"{name}: the Midway session check reads {session['Verdict']} (expiry {session['ExpiryUTC']}, "
+                                  f"{session['AheadSeconds']} s ahead, {session['NeedSeconds']:.0f} s needed): STOP before the "
+                                  f"submit; run mwinit, then resume ({SESSION_RULE})")
         path, config = self.write_run_config(stage)
         record["RunConfig"] = {"Path": path, "SHA256": sha256_of(path)}
         record["SchemaCheck"] = self.tool_line([self.block["SchemaCheck"], self.block["Selector"], path], r"VALID ",

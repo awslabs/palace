@@ -74,6 +74,15 @@ def fake_block(root):
             "ZeroHoleScan": str(root / "zero_hole.py")}
 
 
+def write_cookie(path, seconds_ahead):
+    """A Netscape cookie file in ~/.midway/cookie's form: one session entry expiring `seconds_ahead` from now."""
+    expiry = int(time.time() + seconds_ahead)
+    Path(path).write_text("# Netscape HTTP Cookie File\n"
+                          f"#HttpOnly_.midway.example\tTRUE\t/\tTRUE\t{expiry}\tsession\tVALUE-NOT-TO-BE-READ\n"
+                          f".midway.example\tTRUE\t/\tTRUE\t{expiry + 10**6}\tother\tx\n")
+    return str(path)
+
+
 class RecordingWatchers:
     """A stand-in for paladin_backend.RunWatchers: records each watcher start (argv, directory), none runs."""
 
@@ -230,6 +239,7 @@ class FakeCLICase(unittest.TestCase):
         self.pause = mock.patch.object(paladin_backend, "pause", side_effect=self.slept.append)
         self.pause.start()
         self.watchers = RecordingWatchers()
+        self.cookie = write_cookie(self.root / "cookie", 86400)
         self.script()
 
     def tearDown(self):
@@ -250,7 +260,8 @@ class FakeCLICase(unittest.TestCase):
     def job(self, now=paladin_backend.utc_now):
         return paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                           local_dir=str(self.out), archive_estimates_gb={self.archive: 0.001},
-                                          log=lambda message: None, now=now, watchers=self.watchers)
+                                          log=lambda message: None, now=now, watchers=self.watchers,
+                                          session_cookie=self.cookie)
 
     def drive(self, now=paladin_backend.utc_now):
         return paladin_backend.drive(self.job(now), poll_seconds=0, sleep=lambda seconds: None)
@@ -791,6 +802,46 @@ class DriveWithFakeCLI(FakeCLICase):
             self.drive()
         self.assertEqual(self.submitted(), [])
 
+    # Decision 1822 (b): the session check before every submit (SESSION_RULE).
+    def test_a_session_that_expires_between_stages_stops_before_the_next_submit_and_resumes(self):
+        real = paladin_backend.PaladinJob.finish
+
+        def finish(job, stage, record, data):
+            real(job, stage, record, data)
+            if stage["Name"] == "w":
+                write_cookie(self.cookie, 600)  # the session now expires in 10 min: < 900 + 3600 s
+
+        with mock.patch.object(paladin_backend.PaladinJob, "finish", finish), \
+                self.assertRaises(paladin_backend.SessionNotValid) as stop:
+            self.drive()
+        self.assertIn("SHORT", str(stop.exception))
+        records = self.records()
+        self.assertEqual(records["w"]["State"], "complete")
+        self.assertNotIn("SubmitIntents", records["r"])  # stopped BEFORE the submit: resumable
+        self.assertNotIn("State", records["r"])
+        self.assertEqual(self.submitted(), ["chainport-w"])
+        self.assertNotIn("VALUE-NOT-TO-BE-READ", (self.out / "paladin-status.json").read_text())
+        write_cookie(self.cookie, 86400)  # mwinit
+        state = self.drive()
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        self.assertEqual(state["Stages"]["r"]["SessionChecks"][-1]["Verdict"], "OK")
+        self.assertEqual(state["Stages"]["r"]["SessionChecks"][-1]["NeedSeconds"], 4500.0)
+
+    def test_no_session_or_an_expired_one_refuses_the_first_submit(self):
+        for content in ("", None, -60):
+            with self.subTest(content=content):
+                if content is None:
+                    os.unlink(self.cookie)
+                elif content == "":
+                    Path(self.cookie).write_text("# Netscape HTTP Cookie File\n")
+                else:
+                    write_cookie(self.cookie, content)
+                with self.assertRaises(paladin_backend.SessionNotValid):
+                    self.drive()
+                self.assertEqual(self.submitted(), [])
+        check = paladin_backend.session_check(write_cookie(self.cookie, 7200), 1800)
+        self.assertEqual((check["Verdict"], check["Entries"]), ("OK", 1))  # the 'other' entry is not a session entry
+
     def test_a_multi_node_plan_is_refused(self):
         plan_path, _ = three_stage_plan(self.root / "multi", nodes=2)
         with self.assertRaises(paladin_backend.PaladinError):
@@ -802,7 +853,8 @@ class DriveWithFakeCLI(FakeCLICase):
         profile.write_text(json.dumps({"Paladin": self.block}))
         common = [str(self.plan_path), "--profile", str(profile), "--out", str(self.out)]
         with mock.patch("sys.stdout"), mock.patch("sys.stderr"), \
-                mock.patch.object(paladin_backend, "RunWatchers", RecordingWatchers):
+                mock.patch.object(paladin_backend, "RunWatchers", RecordingWatchers), \
+                mock.patch.object(paladin_backend, "MIDWAY_COOKIE", self.cookie):
             self.assertEqual(paladin_backend.main(common + ["--dry-run"]), 0)
             self.assertEqual(self.calls(), [])
             self.script({"chainport-local-edge": "failed"})
@@ -843,13 +895,15 @@ class RunWatcherProcesses(FakeCLICase):
         self.path.stop()
         for directory in (self.out / "watchers").glob("*"):
             self.wait_for(lambda: not self.watchers.alive(str(directory)), 30)
+        for process in self.watchers.processes:
+            process.wait(30)
         super().tearDown()
 
     def job(self, now=paladin_backend.utc_now):
         return paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                           local_dir=str(self.out), archive_estimates_gb={self.archive: 0.001},
                                           log=lambda message: None, now=now, watchers=self.watchers,
-                                          pbs_bin=str(self.fake_bin))
+                                          pbs_bin=str(self.fake_bin), session_cookie=self.cookie)
 
     @staticmethod
     def wait_for(condition, seconds):

@@ -142,6 +142,9 @@ class PaladinJobWrappers(unittest.TestCase):
         self.pause.start()
         self.watchers = mock.patch.object(paladin_backend, "RunWatchers", test_paladin_backend.RecordingWatchers)
         self.watchers.start()
+        self.cookie = mock.patch.object(paladin_backend, "MIDWAY_COOKIE",
+                                        test_paladin_backend.write_cookie(self.root / "cookie", 86400))
+        self.cookie.start()
         estimate = self.root / "stage-estimate.json"
         estimate.write_text(json.dumps({"Stages": {"k4": {"ArchiveGBEstimate": 0.001}}}))
         main = self.plan_path.parent
@@ -158,6 +161,7 @@ class PaladinJobWrappers(unittest.TestCase):
         os.symlink(main, self.local)
 
     def tearDown(self):
+        self.cookie.stop()
         self.watchers.stop()
         self.pause.stop()
         self.environment.stop()
