@@ -116,6 +116,86 @@ Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry,
   return stretch;
 }
 
+namespace
+{
+
+// Size of the elements of the PML regions of the attributes in depth, for each active face
+// of the layer of the form: the mean over the elements in the layer of the face of the
+// extent of the depth over their vertices, on the mesh, so that it follows its refinement.
+// The depth is the coordinate along the axis of the face for the Cartesian PML, and the
+// depth of the form for an extruded layer. Elements in the layers of two faces (at the
+// edges and corners of a box, where the columns of an extruded box fan out) are left out,
+// unless no element is in the layer of the face only. A global reduction.
+std::array<double, 6> MeasureElementSize(const mfem::ParMesh &mesh,
+                                         const std::vector<int> &attributes,
+                                         const Stretch &form)
+{
+  // Extents and counts of the elements in the layer of the face only, [0, 6) and [6, 12),
+  // and of all of those in the layer of the face, [12, 18) and [18, 24).
+  std::array<double, 24> sums{};
+  mfem::Array<int> verts;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (!std::ranges::binary_search(attributes, mesh.GetAttribute(e)))
+    {
+      continue;
+    }
+    mesh.GetElementVertices(e, verts);
+    std::array<double, 6> lo, hi;
+    lo.fill(std::numeric_limits<double>::infinity());
+    hi.fill(-std::numeric_limits<double>::infinity());
+    std::array<double, 3> c{};
+    for (const int v : verts)
+    {
+      const double *x = mesh.GetVertex(v);
+      const double xi = form.extruded ? EvaluateDepth(form, {x[0], x[1], x[2]}).xi : 0.0;
+      for (int f = 0; f < 6; f++)
+      {
+        const double depth = form.extruded ? xi : x[f / 2];
+        lo[f] = std::min(lo[f], depth);
+        hi[f] = std::max(hi[f], depth);
+      }
+      for (int a = 0; a < 3; a++)
+      {
+        c[a] += x[a] / verts.Size();
+      }
+    }
+    std::array<bool, 6> in_layer{};
+    int num_layers = 0;
+    for (int f = 0; f < 6; f++)
+    {
+      in_layer[f] = form.geometry.thickness[f] > 0.0 &&
+                    (form.extruded || ((f % 2 == 0) ? c[f / 2] < form.geometry.inner[f]
+                                                    : c[f / 2] > form.geometry.inner[f]));
+      num_layers += in_layer[f];
+    }
+    for (int f = 0; f < 6; f++)
+    {
+      if (in_layer[f])
+      {
+        sums[12 + f] += hi[f] - lo[f];
+        sums[18 + f] += 1.0;
+        if (num_layers == 1)
+        {
+          sums[f] += hi[f] - lo[f];
+          sums[6 + f] += 1.0;
+        }
+      }
+    }
+  }
+  Mpi::GlobalSum(24, sums.data(), mesh.GetComm());
+  std::array<double, 6> element_size{};
+  for (int f = 0; f < 6; f++)
+  {
+    element_size[f] = (sums[6 + f] > 0.0)    ? sums[f] / sums[6 + f]
+                      : (sums[18 + f] > 0.0) ? sums[12 + f] / sums[18 + f]
+                                             : 0.0;
+  }
+  return element_size;
+}
+
+}  // namespace
+
 Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes,
              const std::vector<config::MaterialData> &materials, const Mesh &mesh,
              const mfem::Array<int> &attr_mat, const mfem::DenseTensor &mu_inv,
@@ -184,28 +264,33 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
     attr_background[it->second - 1] = bg->second;
   }
 
-  // The extrusion built the layer of an extruded PML, of known thickness and element size:
-  // the stretch is along the direction of the extrusion, at the depth of the form the
-  // extrusion found for the surface. The layer of a box is the Cartesian PML whose inner
-  // faces are the bounding box of the surface, on its sides with a face of the surface.
+  // The extrusion built the layer of an extruded PML, of known thickness: the stretch is
+  // along the direction of the extrusion, at the depth of the form the extrusion found for
+  // the surface, with the element size measured on the mesh as for the other PML. The layer
+  // of a box is the Cartesian PML whose inner faces are the bounding box of the surface, on
+  // its sides with a face of the surface.
   if (data.IsExtruded())
   {
     const auto &ex = data.extrusion;
-    LayerGeometry geometry;
-    std::array<double, 6> element_size{};
+    Stretch form;
     const bool box = (ex.depth == config::PMLData::Extrusion::Depth::BOX);
     for (int f = 0; f < (box ? 6 : 1); f++)
     {
-      geometry.inner[f] = box ? ex.box[f % 2][f / 2] : 0.0;
-      geometry.thickness[f] = (!box || ex.box_sides[f]) ? ex.thickness : 0.0;
-      element_size[f] = ex.thickness / ex.layers;
+      form.geometry.inner[f] = box ? ex.box[f % 2][f / 2] : 0.0;
+      form.geometry.thickness[f] = (!box || ex.box_sides[f]) ? ex.thickness : 0.0;
     }
-    stretch = BuildStretch(data, geometry, n_r, element_size, fe_order);
-    stretch.extruded = !box;
-    stretch.depth = ex.depth;
-    stretch.center = ex.center;
-    stretch.distance = ex.distance;
-    stretch.plane = ex.plane;
+    form.extruded = !box;
+    form.depth = ex.depth;
+    form.center = ex.center;
+    form.distance = ex.distance;
+    form.plane = ex.plane;
+    stretch = BuildStretch(data, form.geometry, n_r,
+                           MeasureElementSize(pmesh, attributes, form), fe_order);
+    stretch.extruded = form.extruded;
+    stretch.depth = form.depth;
+    stretch.center = form.center;
+    stretch.distance = form.distance;
+    stretch.plane = form.plane;
     return;
   }
 
@@ -256,52 +341,10 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
                             "\"Thickness\")!"
                           : "\"Thickness\" must be positive for at least one "
                             "\"Direction\"!"));
-  // Size of the PML elements normal to each active face: the mean extent along the axis of
-  // the face of the elements in the layer of the face (whose center is beyond the inner
-  // interface).
-  std::array<double, 6> element_size{};
-  {
-    std::array<double, 12> sums{};  // Extents [0, 6), counts [6, 12)
-    mfem::Array<int> verts;
-    for (int e = 0; e < pmesh.GetNE(); e++)
-    {
-      if (!IsPMLAttribute(pmesh.GetAttribute(e)))
-      {
-        continue;
-      }
-      pmesh.GetElementVertices(e, verts);
-      std::array<double, 3> lo, hi, c{};
-      lo.fill(std::numeric_limits<double>::infinity());
-      hi.fill(-std::numeric_limits<double>::infinity());
-      for (const int v : verts)
-      {
-        const double *x = pmesh.GetVertex(v);
-        for (int a = 0; a < 3; a++)
-        {
-          lo[a] = std::min(lo[a], x[a]);
-          hi[a] = std::max(hi[a], x[a]);
-          c[a] += x[a] / verts.Size();
-        }
-      }
-      for (int f = 0; f < 6; f++)
-      {
-        const int a = f / 2;
-        const double depth =
-            (f % 2 == 0) ? geometry.inner[f] - c[a] : c[a] - geometry.inner[f];
-        if (geometry.thickness[f] > 0.0 && depth > 0.0)
-        {
-          sums[f] += hi[a] - lo[a];
-          sums[6 + f] += 1.0;
-        }
-      }
-    }
-    Mpi::GlobalSum(12, sums.data(), pmesh.GetComm());
-    for (int f = 0; f < 6; f++)
-    {
-      element_size[f] = (sums[6 + f] > 0.0) ? sums[f] / sums[6 + f] : 0.0;
-    }
-  }
-  stretch = BuildStretch(data, geometry, n_r, element_size, fe_order);
+  Stretch form;
+  form.geometry = geometry;
+  stretch = BuildStretch(data, geometry, n_r, MeasureElementSize(pmesh, attributes, form),
+                         fe_order);
 
   // Every element of a PML region must be in the layer (no stretch would be applied in a
   // region beyond an inactive face, or between the inner interface and the physical

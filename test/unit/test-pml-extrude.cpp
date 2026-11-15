@@ -1987,15 +1987,26 @@ TEST_CASE("SpaceOperator normal extruded PML matches the Cartesian PML",
   // thickness and profile, give the same operators for an anisotropic, lossy background,
   // and so do the layer of the whole box, extruded per component, and the block with all of
   // its faces, edges, and corners, for the static stretch and the frequency-dependent one
-  // with α > 0 at a complex frequency.
+  // with α > 0 at a complex frequency. After a uniform refinement, both measure the element
+  // size of the layer on the mesh, half of t / N, for the same default σ_max.
   MPI_Comm comm = Mpi::World();
   const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
   const bool box = GENERATE(false, true);
   const bool frequency_dependent = GENERATE(false, true);
+  const bool refined = GENERATE(false, true);
   auto serial_mesh =
       std::make_unique<mfem::Mesh>(box ? MakeBox(type, 2, 2) : MakeBoxTop(type, 2, 2));
-  auto extruded = MakePML({{"Attributes", {box ? 1 : 2}}, {"SigmaMax", 2.0}});
+  json entry = {{"Attributes", {box ? 1 : 2}}};
+  if (!refined)
+  {
+    entry["SigmaMax"] = 2.0;
+  }
+  auto extruded = MakePML(entry);
   ExtrudeEntry(serial_mesh, extruded);
+  if (refined)
+  {
+    serial_mesh->UniformRefinement();
+  }
   REQUIRE(extruded.extrusion.depth == (box ? config::PMLData::Extrusion::Depth::BOX
                                            : config::PMLData::Extrusion::Depth::NORMAL));
   config::PMLData cartesian;
@@ -2003,8 +2014,11 @@ TEST_CASE("SpaceOperator normal extruded PML matches the Cartesian PML",
   cartesian.autodetect_geometry = box;
   cartesian.directions[5] = true;
   cartesian.thickness[5] = 0.5;
-  cartesian.sigma_auto = false;
-  cartesian.sigma_max.fill(2.0);
+  if (!refined)
+  {
+    cartesian.sigma_auto = false;
+    cartesian.sigma_max.fill(2.0);
+  }
   for (auto *data : {&extruded, &cartesian})
   {
     data->reference_frequency = 1.5;
@@ -2038,6 +2052,15 @@ TEST_CASE("SpaceOperator normal extruded PML matches the Cartesian PML",
     const auto &layer = space_op[k]->GetMaterialOp().GetPMLLayers().at(0);
     REQUIRE(layer.GetStretch().extruded == (k == 0 && !box));
     REQUIRE(layer.IsFrequencyDependent() == frequency_dependent);
+    const auto &stretch = layer.GetStretch();
+    for (int f = 0; f < 6; f++)
+    {
+      if (stretch.geometry.thickness[f] > 0.0)
+      {
+        INFO("k = " << k << ", f = " << f);
+        CHECK(stretch.element_size[f] == Approx(refined ? 0.125 : 0.25));
+      }
+    }
   }
   // The stiffness and mass matrices, and the PML terms of A2(ω) of the frequency-dependent
   // stretch.

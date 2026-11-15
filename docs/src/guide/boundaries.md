@@ -287,7 +287,9 @@ The absorption of the layer is limited by its discretization: a strongly absorbi
 reflects and absorbs spuriously when its stretch changes too much between neighboring
 elements. By default (`"SigmaMax": "Auto"`), the conductivity of each face is therefore
 computed from the size ``h`` of the PML elements normal to the face, measured on the mesh
-(`"Thickness"` / `"Layers"` for the extruded PML), and the finite element order ``p``, as
+after its refinement for the meshed and the extruded PML alike, over the elements in the
+layer of that face only if there are any (not the edges and corners of a box), and the
+finite element order ``p``, as
 ``\sigma_\text{max} = 0.8 (n + 1) p / (\eta_0 n_r h)`` for the grading order ``n`` and
 the smallest refractive index ``n_r`` of the materials of the PML regions of the block. The
 theoretical reflection at normal incidence of a layer of ``N`` elements is then
