@@ -348,6 +348,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - A non-finite numeric cell of a CSV output table is written as a bare token (`nan`,
+    `+inf` / `-inf`, and `inf` / `-inf` in an integer column) instead of being padded to
+    the column width, so that a reader that takes only a bare token as missing (pandas'
+    default `read_csv`) reads the column as numbers; the trimmed token and every finite,
+    text and header cell are unchanged (the padded `NULL` of a missing cell stays).
+
   - The Maxwell `surface-Q-corrected.csv` and `surface-response-confidence.csv` column
     `matched edge fraction` is renamed `matched edge length fraction` (a length figure, not
     an energy coverage; values unchanged).
