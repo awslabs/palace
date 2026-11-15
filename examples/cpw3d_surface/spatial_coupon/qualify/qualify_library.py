@@ -1034,6 +1034,14 @@ def upload_case(record, context, *, remote, profile, adopt_remote_case=False):
             "AdoptedRemoteCase": bool(existed and adopt_remote_case), "Rule": REMOTE_CASE_RULE}
 
 
+def monitor_wait_seconds(args, paladin):
+    """The wait between two polls of the run loop: --monitor-interval, at least paladin_backend.DRIVE_MIN_POLL_SECONDS on
+    the paladin route (decision 1836 m-8; the PBS route keeps --monitor-interval as given)."""
+    if paladin is None:
+        return args.monitor_interval
+    return max(float(args.monitor_interval), paladin_backend.DRIVE_MIN_POLL_SECONDS)
+
+
 def wait(seconds, slice_seconds=10):
     """Sleep in short slices against the wall clock (one long sleep of an idle driver was
     observed not to return on macOS; the slices keep the driver's timers short)."""
@@ -2330,7 +2338,7 @@ def run_qualify_run(args, *, log, driver_locks):
                     drop_coupon(record, context)
                 checkpoint()
             break
-        wait(args.monitor_interval)
+        wait(monitor_wait_seconds(args, paladin))
         still_active = []
         for record, context, job in active:
             if record.get("StoppedBy") is not None:

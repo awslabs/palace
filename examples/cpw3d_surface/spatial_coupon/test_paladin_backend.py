@@ -84,6 +84,55 @@ def write_cookie(path, seconds_ahead):
 
 
 START_LIMIT = 5  # decision 1830 (2): a test that requests a 5th watcher start FAILS there (no unbounded starts)
+REAL_RUN_WATCHERS = paladin_backend.RunWatchers  # the default starter (real processes), kept for the one opt-in class
+REAL_SESSION_DIRECTORY = os.path.realpath(os.path.expanduser("~/.midway"))
+
+
+def under_the_real_session_directory(path):
+    path = os.path.realpath(os.path.expanduser(str(path)))
+    return path == REAL_SESSION_DIRECTORY or path.startswith(REAL_SESSION_DIRECTORY + os.sep)
+
+
+class GuardedTestCase(unittest.TestCase):
+    """Decision 1836 m-7 / ruling 1837: the base of every test class here and in test_qualify_paladin.  A test FAILS when
+    it reaches the DEFAULT watcher starter (a job built without an explicit starter that starts a watcher), a real
+    watcher start (unless its class sets REAL_WATCHER_PROCESSES: RunWatcherProcesses only), or a session file under the
+    real home's ~/.midway.  Each violation is recorded and raised; a cleanup fails the test on any recorded one (also
+    when the code under test swallowed the raise)."""
+
+    REAL_WATCHER_PROCESSES = False
+
+    def setUp(self):
+        super().setUp()
+        self.guard_violations = []
+        guard = self
+
+        def violation(what):
+            guard.guard_violations.append(what)
+            raise AssertionError(f"test guard (decision 1836 m-7): {what}")
+
+        class DefaultStarterReached:
+            def __init__(self, *args, **options):
+                violation("the DEFAULT watcher starter was reached (a job built without an explicit starter)")
+
+        def real_start(starter, argv, directory, **options):
+            violation(f"a REAL watcher start in a class without REAL_WATCHER_PROCESSES: {directory}")
+
+        real_session_check = paladin_backend.session_check
+
+        def session_check(cookie, need_seconds, **options):
+            if under_the_real_session_directory(cookie):
+                violation(f"the real session file was read: {cookie}")
+            return real_session_check(cookie, need_seconds, **options)
+
+        patches = [mock.patch.object(paladin_backend, "RunWatchers", DefaultStarterReached),
+                   mock.patch.object(paladin_backend, "session_check", session_check)]
+        if not self.REAL_WATCHER_PROCESSES:
+            patches.append(mock.patch.object(REAL_RUN_WATCHERS, "start", real_start))
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.addCleanup(lambda: self.assertEqual(self.guard_violations, [], "test guard (decision 1836 m-7)"))
 
 
 class RecordingWatchers:
@@ -148,7 +197,7 @@ def three_stage_plan(root, *, nodes=None):
     return main / "plan.json", archive
 
 
-class ResponseArchiveKeys(unittest.TestCase):
+class ResponseArchiveKeys(GuardedTestCase):
     def test_the_stage_forms_of_build_plan(self):
         self.assertEqual(paladin_backend.response_archive_keys(WORKER),
                          {"Mode": "Archive", "Directory": ARCHIVE, "SourceTiming": True})
@@ -181,8 +230,9 @@ class ResponseArchiveKeys(unittest.TestCase):
             paladin_backend.run_config(out, REDUCER)
 
 
-class BlockSizingLookup(unittest.TestCase):
+class BlockSizingLookup(GuardedTestCase):
     def setUp(self):
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.block = fake_block(self.tmp.name)
 
@@ -236,10 +286,11 @@ class BlockSizingLookup(unittest.TestCase):
                          ["live", "live", "completed", "failed", "cancelled", "out-of-memory", "unknown"])
 
 
-class FakeCLICase(unittest.TestCase):
+class FakeCLICase(GuardedTestCase):
     """The fake cluster, tools and records of the drive tests (no test of its own)."""
 
     def setUp(self):
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.block = fake_block(self.root)
@@ -294,6 +345,10 @@ class FakeCLICase(unittest.TestCase):
 
     def records(self):
         return json.loads((self.out / "paladin-status.json").read_text())["Stages"]
+
+    def watchers_root(self):
+        """WATCHER_RULE: one root per plan (decision 1836 m-8)."""
+        return Path(os.path.realpath(self.plan_path.parent)) / "paladin-watchers"
 
 
 class DriveWithFakeCLI(FakeCLICase):
@@ -686,7 +741,8 @@ class DriveWithFakeCLI(FakeCLICase):
         def second_driver():
             job = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                              local_dir=str(self.root / "out-B"), archive_estimates_gb={self.archive: 0.001},
-                                             log=lambda message: None)
+                                             log=lambda message: None, watchers=RecordingWatchers(),
+                                             session_cookie=self.cookie)  # decision 1836 m-7: never the host's own
             try:
                 paladin_backend.drive(job, poll_seconds=0, sleep=lambda seconds: None)
                 outcomes["B"] = "drove"
@@ -840,7 +896,7 @@ class DriveWithFakeCLI(FakeCLICase):
                                 ("--bar", "0.85"), ("--grace", "120.0"), ("--submitted", intent["UTC"])):
                 self.assertEqual(argv[argv.index(flag) + 1], value)
             self.assertEqual(json.loads(argv[argv.index("--identity") + 1])["stage"], name)
-            self.assertEqual(directory, str(self.out / "watchers" / f"nonce-{intent['Nonce']}"))
+            self.assertEqual(directory, str(self.watchers_root() / f"nonce-{intent['Nonce']}"))
             self.assertEqual((Path(directory) / "run-id").read_text().strip(), str(state["Stages"][name]["RunID"]))
             self.assertEqual(intent["RunID"], state["Stages"][name]["RunID"])
 
@@ -942,7 +998,7 @@ class DriveWithFakeCLI(FakeCLICase):
         def ended_then_dead(seconds):
             polls.append(seconds)
             record = self.records()["w"]
-            directory = self.out / "watchers" / f"run-{record['RunID']}"
+            directory = self.watchers_root() / f"run-{record['RunID']}"
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "end.json").write_text(json.dumps({"Kind": "cap", "Verified": True}))
             self.watchers.live.clear()
@@ -951,6 +1007,26 @@ class DriveWithFakeCLI(FakeCLICase):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended_then_dead)
         self.assertIn("4 advances without completion", str(stop.exception))
         self.assertEqual(len(self.watchers.started), 1)  # the nonce watcher only
+
+    def test_two_out_directories_of_one_plan_share_one_watcher_per_run(self):
+        """Review r1833 MINOR-8: two --out directories adopting one run gave two watchers; now one root per plan."""
+        def ended(seconds):
+            raise KeyboardInterrupt("the driver process ends in its wait")
+
+        self.script({"chainport-w": "hang"})
+        with self.assertRaises(KeyboardInterrupt):
+            paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
+        run_id = self.records()["w"]["RunID"]
+        self.watchers.live.add(str(self.watchers_root() / f"run-{run_id}"))  # the nonce watcher holds run-<id> (NONCE_RULE)
+        other = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
+                                           local_dir=str(self.root / "out-B"), archive_estimates_gb={self.archive: 0.001},
+                                           log=lambda message: None, watchers=self.watchers, session_cookie=self.cookie)
+        self.assertEqual(other.watchers_root(), self.job().watchers_root())
+        with self.assertRaises(KeyboardInterrupt):
+            paladin_backend.drive(other, poll_seconds=0, sleep=ended)  # the second --out directory adopts the run
+        self.assertEqual(json.loads((self.root / "out-B" / "paladin-status.json").read_text())["Stages"]["w"]["RunID"], run_id)
+        self.assertEqual(len(self.watchers.started), 1)  # no second watcher for the run
+        self.assertEqual(self.submitted(), ["chainport-w"])
 
     def test_a_run_whose_watcher_does_not_start_is_ended_early(self):
         recording = self.watchers.start
@@ -972,7 +1048,7 @@ class DriveWithFakeCLI(FakeCLICase):
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
         record = self.records()["w"]
-        directory = self.out / "watchers" / f"run-{record['RunID']}"  # where the nonce watcher writes (NONCE_RULE)
+        directory = self.watchers_root() / f"run-{record['RunID']}"  # where the nonce watcher writes (NONCE_RULE)
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "end.json").write_text(json.dumps({"Kind": "cap"}))
         paladin_backend.paladin_call(self.block["CLI"], ["palace", "cancel", str(record["RunID"]), "--json"])
@@ -990,7 +1066,7 @@ class DriveWithFakeCLI(FakeCLICase):
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
         record = self.records()["w"]
-        directory = self.out / "watchers" / f"run-{record['RunID']}"
+        directory = self.watchers_root() / f"run-{record['RunID']}"
         directory.mkdir(parents=True, exist_ok=True)  # the recording stand-in writes nothing
         (directory / paladin_backend.UNVERIFIED_MARKER).write_text(json.dumps(
             {"RunID": record["RunID"], "Job": record["JobID"], "Check": "by hand: paladin palace status ..."}))
@@ -1246,7 +1322,7 @@ class DriveWithFakeCLI(FakeCLICase):
         self.assertFalse(paladin_backend.under("/data/a/../b", "/data/a"))
 
 
-class CountingRunWatchers(paladin_backend.RunWatchers):
+class CountingRunWatchers(REAL_RUN_WATCHERS):
     """The real watcher starts, counted: the START_LIMIT-th start request fails the test (decision 1830 (2))."""
 
     def __init__(self):
@@ -1263,7 +1339,11 @@ class CountingRunWatchers(paladin_backend.RunWatchers):
 class RunWatcherProcesses(FakeCLICase):
     """Decision 1820 (4): REAL paladin_run_watcher.py processes (nohup, their own session) against the fake
     CLI and a fake PBS (qstat / qdel) and exec-host ssh on PATH; the watcher's interval 1 s, grace 5 s,
-    the worker's cap 3 s."""
+    the worker's cap 3 s.  THE ONE OPT-IN CLASS of real watcher processes (ruling 1837): the counting starter
+    (the 5th start request fails the test), only the fake CLI / PBS / session file in a temp directory, and every
+    started process ended by its recorded pid in tearDown (a leftover fails the test)."""
+
+    REAL_WATCHER_PROCESSES = True
 
     def setUp(self):
         super().setUp()
@@ -1283,16 +1363,25 @@ class RunWatcherProcesses(FakeCLICase):
         plan["Stages"][0]["CapSeconds"] = 3
         self.plan_path.write_text(json.dumps(plan))
         self.watchers = CountingRunWatchers()
+        for path in (self.root, self.cookie, self.out, fake_bin, self.block["CLI"], self.state):  # ruling 1837 (1)
+            self.assertFalse(under_the_real_session_directory(path), path)
 
     def tearDown(self):
         for patch in self.timing:
             patch.stop()
         self.path.stop()
-        for directory in (self.out / "watchers").glob("*"):
-            self.wait_for(lambda: not self.watchers.alive(str(directory)), 30)
-        for process in self.watchers.processes:
-            process.wait(30)
+        leftovers = []
+        for process in self.watchers.processes:  # ruling 1837 (2): by the recorded pid, never by name or group
+            if not self.wait_for(lambda: process.poll() is not None, 30):
+                leftovers.append(process.pid)
+                process.terminate()
+                try:
+                    process.wait(10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(10)
         super().tearDown()
+        self.assertEqual(leftovers, [], "watcher processes left running at the end of the test (ended by pid)")
 
     def job(self, now=paladin_backend.utc_now):
         return paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
@@ -1318,7 +1407,7 @@ class RunWatcherProcesses(FakeCLICase):
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
         record = self.records()["w"]
-        directory = self.out / "watchers" / f"run-{record['RunID']}"  # the nonce watcher moves there (NONCE_RULE)
+        directory = self.watchers_root() / f"run-{record['RunID']}"  # the nonce watcher moves there (NONCE_RULE)
         self.assertTrue(self.wait_for(lambda: self.watchers.alive(str(directory)), 30))  # it outlives the driver
         self.assertTrue(self.wait_for(lambda: (directory / "end.json").is_file(), 30))
         self.assertTrue(self.wait_for(lambda: not self.watchers.alive(str(directory)), 30))
@@ -1366,7 +1455,7 @@ class RunWatcherProcesses(FakeCLICase):
         for name in ("w", "r", "local-edge"):
             nonce = Path(state["Stages"][name]["SubmitIntents"][-1]["Watcher"]["Dir"])
             self.assertTrue(self.wait_for(lambda: not self.watchers.alive(str(nonce)), 30))
-            directory = self.out / "watchers" / f"run-{state['Stages'][name]['RunID']}"
+            directory = self.watchers_root() / f"run-{state['Stages'][name]['RunID']}"
             self.assertTrue(self.wait_for(lambda: not self.watchers.alive(str(directory)), 30))
             self.assertFalse((directory / "end.json").exists())
             self.assertRegex((directory / "events.log").read_text(), r"END exit 0: the (row is terminal|PBS job has ended)")
@@ -1391,7 +1480,7 @@ class Bounds(FakeCLICase):
         job = self.job()
         job.ensure_watcher("w", 7, job_id="j", submitted=paladin_backend.utc_now().isoformat(), cap_seconds=60)
         job.ensure_watcher("other-name", 7, job_id="j", submitted=paladin_backend.utc_now().isoformat(), cap_seconds=60)
-        self.assertEqual([directory for _, directory in self.watchers.started], [str(self.out / "watchers" / "run-7")])
+        self.assertEqual([directory for _, directory in self.watchers.started], [str(self.watchers_root() / "run-7")])
 
     def test_the_drive_loop_is_bounded_and_sleeps_at_least_its_minimum(self):
         self.script({"chainport-w": "hang"})
@@ -1416,12 +1505,13 @@ class FakeTime:
         self.now += seconds
 
 
-class WatcherInProcess(unittest.TestCase):
+class WatcherInProcess(GuardedTestCase):
     """paladin_run_watcher.Watcher run IN THIS PROCESS against scripted reads and a fake clock (no process started;
     decision 1830 (2)): the cap, the memory bar, the qdel fallback, the read bound, one watcher per directory; and
     decision 1836 (review r1833 MAJOR-1): W1 / W2 / W3, the expired session, an unverified end, the blind clock."""
 
     def setUp(self):
+        super().setUp()
         import paladin_run_watcher
         self.module = paladin_run_watcher
         self.tmp = tempfile.TemporaryDirectory()
@@ -1707,8 +1797,51 @@ class WatcherInProcess(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
 
+class GuardSelfTest(unittest.TestCase):
+    """Decision 1836 m-7: the guard of GuardedTestCase fails each forbidden form (nested test runs; no process is
+    started and the real session file is not opened: the guard raises before the read)."""
+
+    def run_nested(self, body, *, real_processes=False):
+        class Nested(GuardedTestCase):
+            REAL_WATCHER_PROCESSES = real_processes
+
+            def test_body(self):
+                body(self)
+
+        result = unittest.TestResult()
+        Nested("test_body").run(result)
+        return result
+
+    def test_each_forbidden_form_fails_the_test(self):
+        def default_starter_through_a_job(test):
+            with tempfile.TemporaryDirectory() as root:
+                plan_path, _ = three_stage_plan(root)
+                job = paladin_backend.PaladinJob(str(plan_path), block=fake_block(root), remote_dir=root,
+                                                 local_dir=os.path.join(root, "out"))
+                job.dry_run()  # a dry run does not reach the default starter ...
+                job.watchers  # noqa: B018 (... its first use does)
+
+        def real_session_file(test):
+            paladin_backend.session_check(paladin_backend.MIDWAY_COOKIE, 1800)
+
+        def real_start_swallowed(test):
+            try:
+                REAL_RUN_WATCHERS().start(["true"], "/nonexistent/watchers/run-1")
+            except AssertionError:
+                pass  # swallowed by the code under test: the cleanup still fails the test
+
+        for body in (default_starter_through_a_job, real_session_file, real_start_swallowed):
+            with self.subTest(body=body.__name__):
+                result = self.run_nested(body)
+                self.assertFalse(result.wasSuccessful())
+                self.assertIn("decision 1836 m-7", str(result.failures + result.errors))
+        allowed = self.run_nested(lambda test: None, real_processes=True)
+        self.assertTrue(allowed.wasSuccessful())
+        self.assertIs(paladin_backend.RunWatchers, REAL_RUN_WATCHERS)  # every patch undone
+
+
 @unittest.skipUnless((RECORDS / "plan.json").exists(), "records of 274fe1a150c0 absent")
-class PlanOfRecord(unittest.TestCase):
+class PlanOfRecord(GuardedTestCase):
     def test_fab_plan_of_274fe1a150c0(self):
         with tempfile.TemporaryDirectory() as out:
             block = fake_block(out)

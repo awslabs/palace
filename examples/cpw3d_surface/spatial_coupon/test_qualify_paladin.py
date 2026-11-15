@@ -30,8 +30,9 @@ import test_paladin_backend  # noqa: E402  (the fake block and plan)
 PROFILE = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
 
 
-class BackendSwitch(unittest.TestCase):
+class BackendSwitch(test_paladin_backend.GuardedTestCase):
     def setUp(self):
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.block = test_paladin_backend.fake_block(self.root)
@@ -125,8 +126,18 @@ class BackendSwitch(unittest.TestCase):
                                            profile, "/r", self.block["ImageBinarySHA256"])
 
 
-class PaladinJobWrappers(unittest.TestCase):
+class MonitorWait(test_paladin_backend.GuardedTestCase):
+    def test_the_paladin_route_s_poll_loop_sleeps_at_least_its_minimum(self):
+        """Decision 1836 m-8 (review r1833 MINOR-8): --monitor-interval 0 is raised to the minimum on the paladin route only."""
+        args = types.SimpleNamespace(monitor_interval=0)
+        self.assertEqual(qualify_library.monitor_wait_seconds(args, {"Selector": "x"}), paladin_backend.DRIVE_MIN_POLL_SECONDS)
+        self.assertEqual(qualify_library.monitor_wait_seconds(args, None), 0)  # the PBS route as given (the off proof)
+        self.assertEqual(qualify_library.monitor_wait_seconds(types.SimpleNamespace(monitor_interval=90), {"Selector": "x"}), 90.0)
+
+
+class PaladinJobWrappers(test_paladin_backend.GuardedTestCase):
     def setUp(self):
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.block = test_paladin_backend.fake_block(self.root)

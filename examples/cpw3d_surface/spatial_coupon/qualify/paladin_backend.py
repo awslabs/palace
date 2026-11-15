@@ -644,8 +644,9 @@ def archive_name(source, rank):
 
 
 WATCHER_RULE = ("decision 1820 (4) / 1836: every run has an UNATTENDED run watcher (paladin_run_watcher.py; nohup, its own "
-                "session, its own lock, pid file, events.log and end.json under <local>/watchers/run-<id>) started at its submit "
-                "and for an adopted run without a live one: it ends the run early at the stage's CapSeconds (from the PBS start, "
+                "session, its own lock, pid file, events.log and end.json under <the plan's directory>/paladin-watchers/run-<id>: one "
+                "root per plan, so two --out directories share one lock per run) started BEFORE its submit call (nonce-<N>: "
+                "the submit window, NONCE_RULE), re-checked at every live poll, and for an adopted run without a live one: it ends the run early at the stage's CapSeconds (from the PBS start, "
                 "else the submit time) and at the memory bar (0.85 of MemTotal, measured); an empty or failed PBS read is a missing "
                 "read, never 'ended', and the limits stay in force under it (its READ_RULE); the early end = 'palace cancel', then "
                 "qdel by the PBS job id (the primary path when the session has expired: no session needed), repeated with a "
@@ -754,7 +755,7 @@ class PaladinJob:
         # LOCK_RULE: the job's local state directory and the plan's directory (two --out directories of one
         # plan are refused too); False when the caller holds its root's lock (qualify_library.run_qualify).
         self.exclusive, self.locks = exclusive, []
-        self.watchers, self.pbs_bin = watchers or RunWatchers(), pbs_bin
+        self.starter, self.pbs_bin = watchers, pbs_bin  # None = the default RunWatchers, built at its first use
         self.watcher_starts = {}  # run id -> watcher starts in this driver process (<= WATCHER_STARTS_PER_RUN)
         self.session_cookie = session_cookie
         self.lane_root = lane_root  # m-3: the standalone form's root on /data (None: qualify_library's own roots)
@@ -779,6 +780,14 @@ class PaladinJob:
                                    f"{self.plan_sha256[:16]}: not resumable")
         else:
             self.state = {"Backend": "paladin", "Case": self.case, "PlanSHA256": self.plan_sha256, "Stages": {}}
+
+    @property
+    def watchers(self):
+        """The watcher starter (WATCHER_RULE): the caller's, else the default RunWatchers, built at its first use (a dry
+        run never builds it)."""
+        if self.starter is None:
+            self.starter = RunWatchers()
+        return self.starter
 
     def lock(self):
         """LOCK_RULE, once per driver process (at the first advance(); a dry run takes no lock)."""
@@ -1090,7 +1099,8 @@ class PaladinJob:
         os.replace(os.path.join(directory, "run-id.tmp"), os.path.join(directory, "run-id"))
 
     def watchers_root(self):
-        return os.path.join(os.path.abspath(self.local_dir), "watchers")
+        """WATCHER_RULE: one root per plan (beside the plan's driver lock), whatever the --out directory."""
+        return os.path.join(os.path.dirname(os.path.realpath(self.plan_path)), "paladin-watchers")
 
     def unverified_ends(self):
         """The END-UNVERIFIED.json markers of this job's run watchers (WATCHER_RULE)."""
