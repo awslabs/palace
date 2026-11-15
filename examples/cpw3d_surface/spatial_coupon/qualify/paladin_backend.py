@@ -701,10 +701,12 @@ class RunWatchers:
         return None
 
 
-SESSION_RULE = ("decision 1822 (b): before every paladin submit the Midway session's expiry (the expiry field of the "
-                "session-named entries of ~/.midway/cookie; no value or name is read or recorded) must be >= max(1800 s, the "
+SESSION_RULE = ("decision 1822 (b): before every paladin submit the Midway session's expiry must be >= max(1800 s, the "
                 "stage's CapSeconds + 3600 s) ahead; else STOP before the submit, with no intent and no State (the stage stays "
-                "resumable after mwinit)")
+                "resumable after mwinit). WHAT IS READ (decision 1844): each line of ~/.midway/cookie is split into its fields and "
+                "ONLY two are used: the NAME field (to select the session-named entries) and the EXPIRY field; the VALUE field "
+                "is never used, printed or recorded. Recorded: the earliest expiry, the seconds ahead, the seconds needed and "
+                "the count of session entries; never a name or a value")
 MIDWAY_COOKIE = "~/.midway/cookie"
 SESSION_MIN_AHEAD_SECONDS, SESSION_BEYOND_CAP_SECONDS = 1800.0, 3600.0
 
