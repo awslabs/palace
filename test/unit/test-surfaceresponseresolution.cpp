@@ -216,7 +216,7 @@ TEST_CASE("Resolution census PREFLIGHT reads the worse of the edge and spatial g
   CHECK(under.edge_status == "RESOLVED");
   CHECK(under.spatial_status == "UNDER-RESOLVED");
   CHECK(under.status == S::UNDER_RESOLVED);
-  CHECK(under.edge_length == 10.0e-6);
+  CHECK(under.edge_length == Catch::Approx(10.0e-6).epsilon(1e-14));
   CHECK(under.edge_shares[0] == 0.9);
   const auto spatial_ne =
       Row({9.5, 0.5, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0, 2.0}, 2.0, 2.0);
