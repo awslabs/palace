@@ -5,6 +5,7 @@
 import argparse
 import csv
 import math
+import sys
 from pathlib import Path
 
 
@@ -16,6 +17,29 @@ RAW_FILES = (
     "terminal-Cm.csv",
     "terminal-V.csv",
 )
+
+
+# The suffix of the MarkNotApplied twin columns (kCoveragePartialColumnSuffix, surfaceresponsecoverage.hpp).
+PARTIAL_COLUMN_SUFFIX = " partial (uncovered part raw)"
+NOT_APPLIED_EXIT = 3
+
+
+class CorrectionNotApplied(RuntimeError):
+    """NOT-APPLIED (decision 1847 E-1): a corrected cell is nan with its value in the `... partial (uncovered part raw)` twin
+    (Coverage.Policy MarkNotApplied marked it): the corrected output is not checked and never reads as valid."""
+
+
+def check_not_applied(rows):
+    """Raise CorrectionNotApplied at the first non-finite corrected cell whose twin column exists."""
+    for row_index, row in enumerate(rows, start=1):
+        for key, value in row.items():
+            twin = key + PARTIAL_COLUMN_SUFFIX
+            if twin in row and isinstance(value, float) and not math.isfinite(value):
+                raise CorrectionNotApplied(
+                    f"NOT-APPLIED: '{key}' in corrected row {row_index}, interface "
+                    f"{row.get('interface')} is marked not applied by the coverage policy "
+                    f"(its value is in '{twin}'): the corrected output is not checked"
+                )
 
 
 def _cell(value):
@@ -73,6 +97,7 @@ def check(corrected_output, baseline_output, tolerance):
 
     raw_rows = read_rows(corrected_output / "surface-Q.csv")
     corrected_rows = read_rows(corrected_output / "surface-Q-corrected.csv")
+    check_not_applied(corrected_rows)
     groups = corrected_groups(corrected_rows)
     if len(raw_rows) != len(groups):
         raise RuntimeError(
@@ -280,15 +305,20 @@ def check(corrected_output, baseline_output, tolerance):
                     )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("corrected_output", type=Path)
     parser.add_argument("baseline_output", type=Path)
     parser.add_argument("--tolerance", type=float, default=1.0e-10)
-    args = parser.parse_args()
-    check(args.corrected_output, args.baseline_output, args.tolerance)
+    args = parser.parse_args(argv)
+    try:
+        check(args.corrected_output, args.baseline_output, args.tolerance)
+    except CorrectionNotApplied as error:
+        print(error)
+        return NOT_APPLIED_EXIT
     print("Raw outputs are unchanged and corrected surface output is valid.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
