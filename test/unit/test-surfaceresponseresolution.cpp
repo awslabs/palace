@@ -562,6 +562,30 @@ TEST_CASE("Resolution census summary counts a single plane's repeated cell once"
   }
 }
 
+TEST_CASE("Resolution census Flagged list is capped, FlaggedCount is not",
+          "[SurfaceResponseResolution][Serial]")
+{
+  // Review r1846 mn-B: Flagged keeps the first kResolutionFlaggedListCap flagged cells;
+  // FlaggedCount and the per-Type counts count every one.
+  ResolutionRunRecord record;
+  ResolutionCell cell;
+  cell.type = "SA";
+  cell.status = ResolutionStatus::UNDER_RESOLVED;
+  const int count = kResolutionFlaggedListCap + 50;
+  for (int mode = 1; mode <= count; mode++)
+  {
+    record.entries.push_back({{{"m", static_cast<double>(mode)}}, cell});
+  }
+  const auto metadata = ResolutionRunMetadata(record, 1, 1);
+  CHECK(kResolutionFlaggedListCap == 200);
+  CHECK(metadata["Flagged"].size() == static_cast<std::size_t>(kResolutionFlaggedListCap));
+  CHECK(metadata["Flagged"].back()["Keys"]["m"].get<double>() ==
+        static_cast<double>(kResolutionFlaggedListCap));
+  CHECK(metadata["FlaggedCount"] == count);
+  CHECK(metadata["WorstByType"]["SA"]["Flagged"] == count);
+  CHECK(metadata["WorstByType"]["SA"]["Cells"] == count);
+}
+
 TEST_CASE("Resolution census block without a cell names its reason",
           "[SurfaceResponseResolution][Serial]")
 {

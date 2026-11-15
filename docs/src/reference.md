@@ -2874,8 +2874,9 @@ all-planes cell: a `Type` whose energy on one plane is not RESOLVED never reads 
 They count DISTINCT readings: in a run with a single plane each plane cell repeats the
 all-planes cell of its measurement and `Type` (the same patches), and such a plane cell is
 counted once (`"RepeatedPlaneCells"` gives how many; the table keeps both rows; `"Cells"`
-counts the table's rows). A
-run that measures no cell (a raw fallback that applies no patch) names its reason in
+counts the table's rows). `"Flagged"` lists at most the first 200 flagged cells;
+`"FlaggedCount"` counts every one, and `surface-response-resolution.csv` holds the full
+list (a layout with many planes reaches the cap sooner). A run that measures no cell (a raw fallback that applies no patch) names its reason in
 `"NoCellsReason"`, as the coverage block does; without a reason it does not read
 `"Complete"`. With `PatchEnergy`,
 `surface-response-resolution-patches.csv` gives every patch's reading. A SelfConsistent-only

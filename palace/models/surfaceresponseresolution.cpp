@@ -691,7 +691,7 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
     if (cell.status != ResolutionStatus::RESOLVED)
     {
       summary.flagged++;
-      if (++flagged_count <= 200)
+      if (++flagged_count <= kResolutionFlaggedListCap)
       {
         nlohmann::json keys = nlohmann::json::object();
         for (const auto &[name, value] : entry.keys)
