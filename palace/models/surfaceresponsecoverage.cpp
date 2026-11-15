@@ -935,7 +935,7 @@ void CoverageRunRecord::Add(const std::vector<std::pair<std::string, double>> &k
 nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                    const CoverageThresholds &thresholds,
                                    const CoverageValidatedRegime &regime,
-                                   double energy_scale)
+                                   double energy_scale, int level, int levels)
 {
   auto Number = [](double value)
   { return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr); };
@@ -953,10 +953,11 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                            {"Tolerance", regime.tolerance},
                            {"Ranges", static_cast<int>(regime.ranges.size())}};
   metadata["Cells"] = static_cast<int>(record.entries.size());
-  // Ruling 1689 M-4: the measured cell set, written at the END of the run with "Complete":
-  // true (a killed run never writes it; gate v2 fails without it or when the coverage
-  // table's row count differs). DESIGN-v2 s4.5's expected set "Of" / "Certificate" and the
-  // stage-0 PortAdjacent count are DEFERRED to the library-tool lane.
+  // Ruling 1689 M-4: the measured cell set, written at the END of each solve with
+  // "Complete": true (gate v2 fails without it or when the coverage table's row count
+  // differs; erratum 1784 E-3: a run killed during a later AMR level keeps this block of
+  // an earlier level, without "Final"). DESIGN-v2 s4.5's expected set "Of" / "Certificate"
+  // and the stage-0 PortAdjacent count are DEFERRED to the library-tool lane.
   {
     std::set<std::vector<double>> measurements;
     std::vector<std::string> types;
@@ -1119,6 +1120,11 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                     : nlohmann::json(record.no_cells_reason);
   }
   metadata["Complete"] = !record.entries.empty() || !record.no_cells_reason.empty();
+  // Erratum 1784 E-3: "Complete" says the block holds every cell of its level; under AMR
+  // the root holds the last COMPLETED level's block until the next level writes, so the
+  // block names its level and only BaseSolver's write after the AMR loop adds "Final".
+  metadata["Level"] = level;
+  metadata["Levels"] = levels;
   return metadata;
 }
 

@@ -282,6 +282,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   RefineEdgeTubes(iodata, *mesh.back());
 
   // Perform initial solve and estimation.
+  solve_level = 1;
+  solve_levels = use_amr ? refinement.max_it + 1 : 1;
   auto [indicators, ntdof] = Solve(mesh);
   auto marking_indicators =
       BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
@@ -452,6 +454,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
+    solve_level = it + 1;
     std::tie(indicators, ntdof) = Solve(mesh);
     marking_indicators =
         BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
@@ -464,6 +467,19 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
              (refinement.max_size > 0
                   ? ", max. size = " + std::to_string(refinement.max_size)
                   : ""));
+  // Erratum 1784 E-3: the AMR loop has ended (or no AMR ran): the root's coverage block is
+  // the final level's.
+  SaveCoverageFinalMetadata();
+}
+
+void BaseSolver::SaveCoverageFinalMetadata() const
+{
+  if (root && coverage_block_written)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"]["Coverage"]["Final"] = true;
+    WriteMetadata(post_dir, meta);
+  }
 }
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
@@ -620,7 +636,9 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
         response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
         response.GetCoverageValidatedRegime(),
-        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0), solve_level,
+        solve_levels);
+    coverage_block_written = true;
     coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.

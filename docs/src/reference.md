@@ -2687,13 +2687,19 @@ names the bars as interim thresholds and the untargeted interfaces once, and in
 flagged cell, the counts of served pending and status-less models, `UntargetedInterfaces`,
 `ConfiguredTargetsNotServed` (each such interface with its `Type` and the reason),
 `CellSet` (the kind of cell key, the number of measurements, the `Type`s and the number of
-cells: the rows of `surface-response-coverage.csv`) and `"Complete": true`. That block is
-written at the END of a run (also when no cell was measured: `Cells` 0, `NoCellsReason`
-naming why, e.g. `RawFallback: NoMatchedFeature: no correction applied`, and a banner line;
-with no cell and no reason `"Complete"` is false),
-so a killed run has none: its tables hold the finished cells only and cannot be read as
-complete. The expected cell set of a design (the cells a run should have measured) and a
-coverage certificate are not written by this version.
+cells: the rows of `surface-response-coverage.csv`), `"Complete": true`, `Level` and
+`Levels`. That block is written at the END of each solve (also when no cell was measured:
+`Cells` 0, `NoCellsReason` naming why, e.g. `RawFallback: NoMatchedFeature: no correction
+applied`, and a banner line; with no cell and no reason `"Complete"` is false): `Level` is
+the solve of the adaptive sequence that wrote it (1 = the initial mesh) and `Levels` the
+largest number of solves (`Refinement.MaxIts` + 1; 1 without AMR). `"Final": true` is added
+only once the AMR loop has ended (a run without AMR: after its only solve). Under AMR the
+root output holds the last COMPLETED level until the next level writes, so a run killed
+during a later level keeps an earlier level's block, which reads `"Complete": true` but
+has no `Final`; a run killed during its first solve has no block at all. Only a block with
+`"Final": true` is the coverage of a finished run; the tables of a killed run hold the
+finished cells only. The expected cell set of a design (the cells a run should have
+measured) and a coverage certificate are not written by this version.
 
 The regime status says whether the covered correction factor lies in the range validated
 for this library and excitation class (`ElectrostaticTerminal`, `Eigenmode`, `Driven`):

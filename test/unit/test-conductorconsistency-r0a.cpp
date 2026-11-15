@@ -2613,6 +2613,88 @@ TEST_CASE_METHOD(
 #endif
 }
 
+// Erratum 1784 E-3 (review MJ-C): under AMR the root palace.json holds the last COMPLETED
+// level's coverage block until the next level writes, so the block names its Level of
+// Levels and "Final": true is written only after the AMR loop has ended: an archived level
+// (iteration1) never carries Final, the root of a finished run does, and so does a run
+// without AMR (Level 1 of 1). A run killed during its last level keeps the earlier level's
+// block without Final (the run-level test of the erratum).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Coverage block names its AMR level and is Final only after the AMR loop",
+    "[electrostaticsolver][surfaceresponseoperator][surfaceresponsecoverage][amr]"
+    "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "shorted-cpw-stub-final.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "esfinal");
+  json config = ConvexIslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  auto ReadCoverage = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    const json meta = json::parse(input);
+    REQUIRE(meta.contains("SurfaceResponse"));
+    REQUIRE(meta.at("SurfaceResponse").contains("Coverage"));
+    return meta.at("SurfaceResponse").at("Coverage");
+  };
+
+  // AMR, MaxIts 1: two levels; the first archived in iteration1 before the second solve.
+  json adaptive = config;
+  adaptive["Model"]["Refinement"] = {{"MaxIts", 1},
+                                     {"Tol", 1.0e-9},
+                                     {"UpdateFraction", 0.5},
+                                     {"Nonconformal", true},
+                                     {"SaveAdaptIterations", true}};
+  const fs::path amr_dir = temp.temp_dir / "coverage-final-amr";
+  adaptive["Problem"]["Output"] = amr_dir.string();
+  test::RunElectrostatic(adaptive);
+  Mpi::Barrier(Mpi::World());
+  // A run without AMR.
+  json single = config;
+  single["Model"]["Refinement"] = {{"MaxIts", 0}};
+  const fs::path single_dir = temp.temp_dir / "coverage-final-single";
+  single["Problem"]["Output"] = single_dir.string();
+  test::RunElectrostatic(single);
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const json archived = ReadCoverage(amr_dir / "iteration1" / "palace.json");
+  CHECK(archived.at("Level") == 1);
+  CHECK(archived.at("Levels") == 2);
+  CHECK(archived.at("Complete") == true);
+  CHECK_FALSE(archived.contains("Final"));
+  const json final_level = ReadCoverage(amr_dir / "palace.json");
+  CHECK(final_level.at("Level") == 2);
+  CHECK(final_level.at("Levels") == 2);
+  CHECK(final_level.at("Final") == true);
+  const json no_amr = ReadCoverage(single_dir / "palace.json");
+  CHECK(no_amr.at("Level") == 1);
+  CHECK(no_amr.at("Levels") == 1);
+  CHECK(no_amr.at("Final") == true);
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "Electrostatic Diagnostics.ExclusionEnergy writes the exclusion-energy "
                  "table and changes nothing else (section 8)",

@@ -49,6 +49,20 @@ protected:
   fs::path post_dir;
   bool root;
 
+  // Erratum 1784 E-3: the solve of the AMR sequence in progress (1 = the initial mesh) and
+  // the largest number of solves (Refinement.MaxIts + 1 with AMR, 1 without), set by
+  // SolveEstimateMarkRefine before each Solve and written as Level / Levels in the
+  // coverage block of palace.json; whether a coverage block was written (its Final flag
+  // is added after the AMR loop has ended, SaveCoverageFinalMetadata).
+  mutable int solve_level = 0, solve_levels = 0;
+  mutable bool coverage_block_written = false;
+
+  // Root only: palace.json SurfaceResponse.Coverage.Final = true, once the AMR loop has
+  // ended (a run without AMR: after its only solve). Nothing is written when no coverage
+  // block was written. A run killed during a solve keeps the earlier level's block (or
+  // none) without Final.
+  void SaveCoverageFinalMetadata() const;
+
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
   virtual std::pair<ErrorIndicator, long long int>

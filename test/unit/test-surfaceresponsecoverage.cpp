@@ -459,9 +459,14 @@ TEST_CASE("Coverage measurement per Type and the run record",
   CoverageRunRecord record;
   record.Add({{"m", 1.0}}, measurement);
   record.Add({{"m", 2.0}}, unmeasured);
-  const auto metadata =
-      CoverageRunMetadata(record, CoverageThresholds{}, CoverageValidatedRegime{}, 2.0);
+  const auto metadata = CoverageRunMetadata(record, CoverageThresholds{},
+                                            CoverageValidatedRegime{}, 2.0, 2, 3);
   CHECK(metadata.at("Policy") == "Warn");
+  // Erratum 1784 E-3: the block names the level that wrote it (2 of 3 here) and never
+  // carries "Final" (written by BaseSolver after the AMR loop only).
+  CHECK(metadata.at("Level") == 2);
+  CHECK(metadata.at("Levels") == 3);
+  CHECK_FALSE(metadata.contains("Final"));
   CHECK(metadata.at("Thresholds").at("Interim") == true);
   CHECK(metadata.at("ValidatedRegime").is_null());
   CHECK(metadata.at("Cells") == 4);
@@ -586,8 +591,8 @@ TEST_CASE("Coverage untargeted interfaces, the cell set and the banner edge case
   CoverageRunRecord record;
   record.Add({{"m", 1.0}}, measurement);
   record.Add({{"m", 2.0}}, measurement);
-  const auto metadata =
-      CoverageRunMetadata(record, CoverageThresholds{}, CoverageValidatedRegime{}, 1.0);
+  const auto metadata = CoverageRunMetadata(record, CoverageThresholds{},
+                                            CoverageValidatedRegime{}, 1.0, 1, 1);
   CHECK(metadata.at("Complete") == true);
   const auto &cell_set = metadata.at("CellSet");
   CHECK(cell_set.at("Kind") == "m");
@@ -617,7 +622,7 @@ TEST_CASE("Coverage untargeted interfaces, the cell set and the banner edge case
         std::string::npos);
   // Review m-6: an empty record is never silent.
   const auto empty = CoverageRunMetadata(CoverageRunRecord{}, CoverageThresholds{},
-                                         CoverageValidatedRegime{}, 1.0);
+                                         CoverageValidatedRegime{}, 1.0, 1, 1);
   CHECK(empty.at("Cells") == 0);
   // Ruling 1738: zero cells without a reason is NOT complete; with the reason it is, and
   // the reason is printed.
@@ -628,8 +633,8 @@ TEST_CASE("Coverage untargeted interfaces, the cell set and the banner edge case
         std::string::npos);
   CoverageRunRecord fallback;
   fallback.no_cells_reason = "RawFallback: NoMatchedFeature: no correction applied";
-  const auto reasoned =
-      CoverageRunMetadata(fallback, CoverageThresholds{}, CoverageValidatedRegime{}, 1.0);
+  const auto reasoned = CoverageRunMetadata(fallback, CoverageThresholds{},
+                                            CoverageValidatedRegime{}, 1.0, 1, 1);
   CHECK(reasoned.at("Complete") == true);
   CHECK(reasoned.at("NoCellsReason") == fallback.no_cells_reason);
   CHECK(CoverageRunBanner(reasoned).find("(RawFallback: NoMatchedFeature: no correction "
@@ -676,8 +681,8 @@ TEST_CASE("Coverage configured target not served", "[SurfaceResponseCoverage][Se
   CHECK(measurement.WorstCoverageCell() == sa);
   CoverageRunRecord record;
   record.Add({{"m", 1.0}}, measurement);
-  const auto metadata =
-      CoverageRunMetadata(record, CoverageThresholds{}, CoverageValidatedRegime{}, 1.0);
+  const auto metadata = CoverageRunMetadata(record, CoverageThresholds{},
+                                            CoverageValidatedRegime{}, 1.0, 1, 1);
   const auto &listed = metadata.at("ConfiguredTargetsNotServed");
   REQUIRE(listed.size() == 1);
   CHECK(listed[0].at("Interface") == 2);
