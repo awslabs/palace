@@ -2616,7 +2616,14 @@ correction actually covers. The definitions are energies of the RAW field:
     explicit models instead of a `"Library"` has no records at all: all of its served energy
     is no-status.
   - The covered correction factor is the corrected (fabricated) energy of the covered part
-    divided by its raw energy.
+    divided by its raw energy, on the closed partition: the fabricated energy of the
+    applied patches over the SERVED raw within-``R`` energy ``W - U``. The raw energy of
+    conductor-consistency-excluded claims is NOT served (it is kept raw and counted in
+    ``U``), so it is in neither term. A validated range must be derived on this same basis:
+    a ratio that counts those claims in its denominator (the fabricated energy over the
+    raw energy of every model claim, excluded ones included) is smaller than this factor by
+    the factor ``1 + E_{CC} / (W - U)`` (``E_{CC}`` the excluded claims' raw energy)
+    wherever such an exclusion acts, and equal to it where none does.
 
 The files (plain text, the cell keys of the run's other tables; written as each mode,
 frequency or source completes; under AMR in every iteration's directory; `nan` where a
@@ -2721,7 +2728,11 @@ with the `Sha256` of the loaded library file, refused when it does not match; `T
 ``\tau`` in ``[0, 0.1]``; `Ranges` of `Type`, `ExcitationClass`, `FactorMin`, `FactorMax`,
 `N` (the number of validation windows, an integer of at least 1: printed in the banner) and
 `Provenance` (a non-empty object or text), each required); `IN` when ``F_{min}/(1+\tau) \leq F \leq F_{max}(1+\tau)``. Without the file
-every cell reads `NO-RANGE`.
+every cell reads `NO-RANGE`. The product does not check on which basis a file's ranges were
+derived: they must be on the basis of the covered correction factor above (the
+fabricated energy over the served raw energy on the closed partition, the
+conductor-consistency-excluded claims not served), and the range's `Provenance` should name
+that basis in its rule text.
 
 The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
 `Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` accepts `"Warn"` only (any
