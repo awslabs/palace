@@ -1308,6 +1308,8 @@ class PaladinJob:
         record["RowStatus"] = status
         if run_class(status) != "live":
             return data
+        if self.watcher_end(record) is None:
+            self.watch(stage, record)  # decision 1836 m-4 (a): a dead watcher is restarted while the driver lives
         clock, clock_name = self.cap_clock(record, data)
         record["CapClock"] = clock_name
         cap = stage.get("CapSeconds")

@@ -35,8 +35,9 @@ by the PBS job id, which needs no paladin session, is the PRIMARY end path.  end
 records every round and Verified true / false; an early end not verified after the last round
 leaves END-UNVERIFIED.json beside it (the driver and every resume STOP on it, naming the run and
 the manual check).  Exit 11 (cap) / 10 (memory) verified, 12 not verified; 3 = another watcher
-holds --dir (the driver names --dir by the run id: one watcher per run); 5 = the read bound (the
-cap + one day) reached.
+holds --dir (the driver names --dir by the run id: one watcher per run); 5 = the life bound
+reached: the PBS start + the cap + one day, or, before any start is seen, the submit time +
+QUEUE_LIFE_SECONDS + the cap + one day (decision 1836 m-4 (b): a queued run keeps its watcher).
 NONCE_RULE (decision 1836 m-1, review r1833 MINOR-1: the submit window): with --run-id 0 the watcher
 is started BEFORE the submit call, keyed by the SubmitIntent's --nonce, in <local>/watchers/nonce-<N>.
 Until it knows its run it only reads: every --interval the driver's hint file 'run-id' in --dir
@@ -100,6 +101,7 @@ done
 ENDED_STATES = ("F", "X")  # PBS's finished job / finished subjob
 # Decision 1830 (3): a minimum sleep between reads and a hard bound on the reads (the cap + one day, at the interval).
 WATCHER_MIN_INTERVAL_SECONDS, WATCHER_LIFE_BEYOND_CAP_SECONDS = 1.0, 86400.0
+QUEUE_LIFE_SECONDS = 7 * 86400.0  # decision 1836 m-4 (b): the longest queue wait a watcher outlives
 # READ_RULE / END_RULE (module docstring; decision 1836).
 BLIND_SECONDS = 600.0
 END_MAX_ROUNDS, END_BACKOFF_MAX_SECONDS = 8, 1800.0
@@ -315,7 +317,12 @@ class Watcher:
                    f"interval={args.interval:.0f}s host={args.host} pid={os.getpid()}")
         interval = max(float(args.interval), WATCHER_MIN_INTERVAL_SECONDS)
         last_read = time.time()
-        for _ in range(int((args.cap_seconds + WATCHER_LIFE_BEYOND_CAP_SECONDS) / interval) + 10):
+        for _ in range(int((QUEUE_LIFE_SECONDS + args.cap_seconds + WATCHER_LIFE_BEYOND_CAP_SECONDS) / interval) + 10):
+            # The life bound counts from the PBS start (decision 1836 m-4 (b)).
+            deadline = ((self.start_epoch + args.cap_seconds + WATCHER_LIFE_BEYOND_CAP_SECONDS) if self.start_epoch else
+                        (submitted + QUEUE_LIFE_SECONDS + args.cap_seconds + WATCHER_LIFE_BEYOND_CAP_SECONDS))
+            if time.time() >= deadline:
+                break
             if not os.path.isdir(args.dir):
                 return 0
             status = self.status()
@@ -354,8 +361,9 @@ class Watcher:
                     if used >= args.bar:
                         return self.end_early("memory", f"{host} used {used:.4f} of MemTotal >= bar {args.bar}")
             time.sleep(interval)
-        self.event(f"END exit 5: the iteration bound (cap + {WATCHER_LIFE_BEYOND_CAP_SECONDS:.0f} s) reached with the run "
-                   f"not terminal (decision 1830 (3))")
+        self.event(f"END exit 5: the life bound ({'the PBS start' if self.start_epoch else 'the submit time + the queue life'} "
+                   f"+ cap + {WATCHER_LIFE_BEYOND_CAP_SECONDS:.0f} s) reached with the run not terminal (decision 1830 (3), "
+                   f"1836 m-4 (b))")
         return 5
 
 

@@ -912,6 +912,41 @@ class DriveWithFakeCLI(FakeCLICase):
                 if argv[argv.index("--run-id") + 1] != "0"}  # the run watchers (the nonce watcher of the window aside)
         self.assertEqual(caps, {first: "900.0", first + 1: "0.0"})
 
+    def test_b4_a_watcher_that_dies_while_the_driver_lives_is_restarted_at_the_next_poll(self):
+        """Review r1833 B4: one start over 6 polls with the watcher dead (was); now the next poll restarts it, and a
+        watcher that keeps dying is restarted at most 3 times (then STOP)."""
+        self.script({"chainport-w": "hang"})
+        polls = []
+
+        def dies_each_time(seconds):
+            polls.append(seconds)
+            self.watchers.live.clear()  # the watcher process is gone after every poll
+
+        with mock.patch.object(paladin_backend, "DRIVE_MAX_ADVANCES", 6), self.assertRaises(paladin_backend.PaladinError) as stop:
+            paladin_backend.drive(self.job(), poll_seconds=0, sleep=dies_each_time)
+        self.assertIn("3 watcher starts in this driver process", str(stop.exception))
+        run_id = self.records()["w"]["RunID"]
+        self.assertEqual([Path(directory).name for _, directory in self.watchers.started],
+                         [f"nonce-{self.records()['w']['SubmitIntents'][-1]['Nonce']}"] + [f"run-{run_id}"] * 3)
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_no_watcher_restart_after_its_end_json(self):
+        self.script({"chainport-w": "hang"})
+        polls = []
+
+        def ended_then_dead(seconds):
+            polls.append(seconds)
+            record = self.records()["w"]
+            directory = self.out / "watchers" / f"run-{record['RunID']}"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "end.json").write_text(json.dumps({"Kind": "cap", "Verified": True}))
+            self.watchers.live.clear()
+
+        with mock.patch.object(paladin_backend, "DRIVE_MAX_ADVANCES", 4), self.assertRaises(paladin_backend.PaladinError) as stop:
+            paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended_then_dead)
+        self.assertIn("4 advances without completion", str(stop.exception))
+        self.assertEqual(len(self.watchers.started), 1)  # the nonce watcher only
+
     def test_a_run_whose_watcher_does_not_start_is_ended_early(self):
         recording = self.watchers.start
         self.watchers.start = lambda argv, directory: None if "/run-" in directory else recording(argv, directory)
@@ -1327,7 +1362,7 @@ class WatcherInProcess(unittest.TestCase):
         self.status_fails = False  # the row's read missing
         self.qdel = []  # the outcomes of the next qdel calls: ok | rc1 | ssh; none left = ok
         self.pbs = "R"  # R | Q | NOTFOUND | F | ssh (the cluster read fails)
-        self.start_ago, self.memory = 100, (1000, 900)
+        self.start_ago, self.start_at, self.memory = 100, None, (1000, 900)  # the PBS start: now - start_ago, or start_at
         self.commands = []
 
         def paladin_call(cli, arguments, **options):
@@ -1359,7 +1394,8 @@ class WatcherInProcess(unittest.TestCase):
             if self.pbs == "ssh":
                 raise paladin_backend.PaladinError("ssh soca-green-job: no answer in 120 s")
             kept = command.split()[5:]  # bash -s -- JOB PBS_BIN [KEPT_HOSTS...]
-            lines = [f"STATE {self.pbs}", f"STIME {int(self.clock.now) - self.start_ago if self.pbs == 'R' else '-'}",
+            stime = self.start_at or int(self.clock.now) - self.start_ago
+            lines = [f"STATE {self.pbs}", f"STIME {stime if self.pbs == 'R' else '-'}",
                      f"EXIT {0 if self.pbs == 'F' else '-'}"]
             hosts = ["node"] if self.pbs == "R" else kept if self.pbs == "NOTFOUND" else []
             if self.pbs == "R":
@@ -1511,16 +1547,37 @@ class WatcherInProcess(unittest.TestCase):
 
     def test_a_queued_row_under_an_empty_qstat_answer_is_not_capped(self):
         self.status, self.pbs = "queued", "NOTFOUND"
-        with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0):
-            self.assertEqual(self.run_watcher(cap=5, submitted_ago=1000), 5)
+        with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 300.0), \
+                mock.patch.object(self.module, "QUEUE_LIFE_SECONDS", 0.0):
+            self.assertEqual(self.run_watcher(cap=5, interval=30), 5)
         self.assertEqual(self.calls.count(["palace", "cancel"]), 0)
 
     def test_the_read_bound(self):
         self.status, self.pbs = "queued", "Q"
-        with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0):
+        with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0), \
+                mock.patch.object(self.module, "QUEUE_LIFE_SECONDS", 0.0):
             self.assertEqual(self.run_watcher(cap=5), 5)
-        self.assertEqual(self.calls.count(["palace", "status"]), 15)  # int(5 / 1) + 10 reads
+        # the life bound: the submit time + 0 + 5 s + 0 (the submit time is read from the real clock, the fake clock
+        # started a moment before it: 5 or 6 reads)
+        self.assertIn(self.calls.count(["palace", "status"]), (5, 6))
         self.assertFalse((self.dir / "end.json").exists())
+
+    def test_a_run_queued_beyond_cap_plus_one_day_keeps_its_watcher_and_is_capped_from_its_pbs_start(self):
+        """Review r1833 MINOR-4 (b): the life bound counted from the watcher's start ended it while queued (exit 5)."""
+        self.status, self.pbs, self.start_ago = "queued", "Q", 0
+        real = paladin_backend.remote_shell
+        reads = []
+
+        def starts_after_a_long_queue(host, command, **options):
+            reads.append(1)
+            if len(reads) == 30:  # 30 reads x 30 s = 900 s queued > cap 50 + the life beyond it 600 s (patched)
+                self.status, self.pbs, self.start_at = "running", "R", int(self.clock.now)
+            return real(host, command, **options)
+
+        with mock.patch.object(paladin_backend, "remote_shell", starts_after_a_long_queue), \
+                mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 600.0):
+            self.assertEqual(self.run_watcher(cap=50, interval=30), 11)
+        self.assertIn("from the PBS start", self.end()["Reason"])
 
     # Decision 1836 m-1 (review r1833 MINOR-1): the nonce phase of the submit-window watcher (NONCE_RULE).
     def run_nonce(self, search=600.0):
