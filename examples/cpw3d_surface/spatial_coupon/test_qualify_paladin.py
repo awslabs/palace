@@ -163,6 +163,8 @@ class PaladinJobWrappers(test_paladin_backend.GuardedTestCase):
         self.pause.start()
         self.watchers = mock.patch.object(paladin_backend, "RunWatchers", test_paladin_backend.RecordingWatchers)
         self.watchers.start()
+        self.backstops = mock.patch.object(paladin_backend, "ClusterBackstops", test_paladin_backend.RecordingBackstops)
+        self.backstops.start()  # BACKSTOP_RULE: the counting stand-in (decision 1858)
         self.cookie = mock.patch.object(paladin_backend, "MIDWAY_COOKIE",
                                         test_paladin_backend.write_cookie(self.root / "cookie", 86400))
         self.cookie.start()
@@ -183,6 +185,7 @@ class PaladinJobWrappers(test_paladin_backend.GuardedTestCase):
 
     def tearDown(self):
         self.cookie.stop()
+        self.backstops.stop()
         self.watchers.stop()
         self.pause.stop()
         self.environment.stop()

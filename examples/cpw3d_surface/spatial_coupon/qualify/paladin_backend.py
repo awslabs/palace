@@ -22,7 +22,9 @@ the stages of one plan in order, one step per advance():
     type) choosing --instance-type, and for an archive writer the /data guard (the archive
     directory created, free >= 150 GB, the estimate <= 10 % of free, the directory empty);
   - while it runs: describe-run polled; past the stage's CapSeconds from its start the run is
-    cancelled (recorded; the row then reads canceled: the stage STOPS as timed-out);
+    cancelled (recorded; the row then reads canceled: the stage STOPS as timed-out); an
+    unattended run watcher on this host (WATCHER_RULE) and a qdel-only PBS-side backstop on the
+    cluster's ssh host (BACKSTOP_RULE) keep the limit when the driver or this host is gone;
   - after it ends: the completion read (a row failed by the upload alone counts as completed
     only if PREREG-ESSURR-NOTE-1's five conditions hold), pin_check_v2 postrun (its PASS line),
     the resolved configuration's leaf diff (only paladin's own paths may differ), the outputs
@@ -152,6 +154,9 @@ PALADIN_KEYS = {
     "MemTotalGiB": "MemTotal per instance type, GiB, in the order of preference (E-2 sizing)",
     "ZeroHoleScan": "zero_hole_scan_fbc2_v1.py, run on Host over an archive in place",
 }
+# The Paladin block's optional key (BACKSTOP_RULE): absent = the backstop with these settings; {"Mode": "none"} = the profile
+# says explicitly that there is none.
+BACKSTOP_DEFAULTS = {"Mode": "qdel", "GraceSeconds": 300.0, "IntervalSeconds": 60.0}
 PALADIN_ROUTE_RULE = ("one route per run (decision 1799 (l)): a cluster profile carries a Launcher block (form X, PBS) or a "
                       "Paladin block (form Y-b), never both; --backend paladin needs the Paladin block and --backend pbs "
                       "(the default) refuses it")
@@ -166,7 +171,7 @@ def paladin_block_of(profile):
         raise ValueError(f"the cluster profile carries both a Launcher and a Paladin block ({PALADIN_ROUTE_RULE})")
     if not isinstance(block, dict):
         raise ValueError("the Paladin block must be an object")
-    unknown = sorted(set(block) - set(PALADIN_KEYS))
+    unknown = sorted(set(block) - set(PALADIN_KEYS) - {"Backstop"})
     missing = sorted(set(PALADIN_KEYS) - set(block))
     if unknown or missing:
         raise ValueError(f"the Paladin block: unknown keys {unknown}, missing keys {missing} (exactly {sorted(PALADIN_KEYS)})")
@@ -183,12 +188,31 @@ def paladin_block_of(profile):
     if (not isinstance(memory, dict) or not memory or
             any(not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0 for value in memory.values())):
         raise ValueError("Paladin.MemTotalGiB must map at least one instance type to a positive MemTotal in GiB")
+    backstop_of(block)  # BACKSTOP_RULE: a malformed Backstop key is refused with the block
     with open(block["PinRecord"]) as f:
         record = json.load(f)
     if record.get("selector") != block["Selector"]:
         raise ValueError(f"the pin record {block['PinRecord']} is of selector {record.get('selector')!r}, "
                          f"not Paladin.Selector {block['Selector']!r}")
     return dict(block)
+
+
+def backstop_of(block):
+    """BACKSTOP_RULE: the backstop settings of a Paladin block ({Mode, GraceSeconds, IntervalSeconds}), or ValueError."""
+    given = block.get("Backstop")
+    if given is None:
+        return dict(BACKSTOP_DEFAULTS)
+    if given == {"Mode": "none"}:
+        return {"Mode": "none"}
+    if not isinstance(given, dict) or given.get("Mode") != "qdel" or set(given) - set(BACKSTOP_DEFAULTS):
+        raise ValueError(f"Paladin.Backstop must be absent, {{\"Mode\": \"none\"}} or {{\"Mode\": \"qdel\"[, \"GraceSeconds\": S]"
+                         f"[, \"IntervalSeconds\": S]}}, not {given!r}")
+    settings = {**BACKSTOP_DEFAULTS, **given}
+    for key in ("GraceSeconds", "IntervalSeconds"):
+        if isinstance(settings[key], bool) or not isinstance(settings[key], (int, float)) or settings[key] < 0:
+            raise ValueError(f"Paladin.Backstop.{key} must be a number >= 0, not {settings[key]!r}")
+    settings["GraceSeconds"], settings["IntervalSeconds"] = float(settings["GraceSeconds"]), float(settings["IntervalSeconds"])
+    return settings
 
 
 def backend_of(backend, profile):
@@ -209,7 +233,7 @@ def route_line(block):
     """The ONE line a paladin run prints at its start."""
     return (f"route paladin: selector {block['Selector']}, pin record {block['PinRecord']} "
             f"(sha256 {sha256_of(block['PinRecord'])[:16]}), image {block['ImageSHA256'][:16]}, "
-            f"in-image {block['ImageBinary']} {block['ImageBinarySHA256'][:16]}")
+            f"in-image {block['ImageBinary']} {block['ImageBinarySHA256'][:16]}, backstop {backstop_of(block)['Mode']}")
 
 
 # ERRATUM-1702 E-2, the interim sizing rule of every container job.
@@ -701,6 +725,98 @@ class RunWatchers:
         return None
 
 
+BACKSTOP_RULE = ("decision 1858 (review r1848 (c) 1): the run watcher lives on the driver's host; a qdel-ONLY BACKSTOP per run "
+                 "runs on the cluster's ssh host (paladin_backstop.py, setsid nohup there; its state file, log and end record on "
+                 "/data under <the plan's directory>/paladin-backstops/run-<id>): ONE job id, refused unless the job's owner and "
+                 "name match, a qdel only at the PBS start + the stage's CapSeconds + GraceSeconds, ended when the job has left "
+                 "PBS (F / X / an Exit_status / 'Unknown Job Id'; a missing read is never 'left'). Before EVERY submit the script "
+                 "is installed on Host (its sha256 read back) and its --check passes, else STOP with no intent and no submit "
+                 "(fail-closed); after the submit answer it is started and must show its first read within "
+                 "BACKSTOP_START_WAIT_SECONDS, else the run is ended early and the drive STOPs; at every live poll, adoption "
+                 "and resume its status is read: a failed read is re-read at the next poll, a backstop gone without the job "
+                 "having left is restarted (<= BACKSTOP_STARTS_PER_RUN starts per run per driver process), a refusal or a "
+                 "failed restart STOPs (the run stays with its run watcher); a run ended by the backstop's qdel is State "
+                 "timed-out, nothing resubmitted. A profile whose Paladin.Backstop is {\"Mode\": \"none\"} has none (recorded)")
+BACKSTOP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paladin_backstop.py")
+BACKSTOP_STARTS_PER_RUN, BACKSTOP_START_WAIT_SECONDS, BACKSTOP_START_READ_SECONDS = 3, 30.0, 2.0
+BACKSTOP_LIFE_SECONDS = 8 * 86400.0  # the run watcher's bound mirrored: 7 days of queue + 1 day beyond the cap
+
+
+class BackstopNotStarted(PaladinError):
+    """The backstop of a run did not start after its submit (BACKSTOP_RULE): the run was ended early."""
+
+
+class ClusterBackstops:
+    """The backstops on the cluster's ssh host (BACKSTOP_RULE), through remote_shell; `sleep` between the start reads."""
+
+    def __init__(self, sleep=time.sleep):
+        self.sleep = sleep
+
+    def install(self, host, root, pbs_bin):
+        """The script copied to root (its sha256 read back) and its --check: {Script, SHA256, User, Host}, or PaladinError."""
+        with open(BACKSTOP_PATH) as f:
+            source = f.read()
+        local = hashlib.sha256(source.encode()).hexdigest()
+        script = f"{root}/paladin_backstop.py"
+        q = shlex.quote
+        text = remote_text(host, f"mkdir -p {q(root)} && cat > {q(script)}.tmp && mv {q(script)}.tmp {q(script)} && "
+                                 f"sha256sum {q(script)}", stdin=source, what=f"the backstop's copy to {root}")
+        remote = (text.split() or [""])[0]
+        if remote != local:
+            raise PaladinError(f"the backstop's copy {script} hashes to {remote[:16]}, the chain's file to {local[:16]}")
+        line = remote_text(host, f"python3 {q(script)} --check {q(root)} --pbs-bin {q(pbs_bin)}",
+                           what="the backstop's --check").strip()
+        fields = dict(part.split("=", 1) for part in line.split()[2:] if "=" in part)
+        if not line.startswith("BACKSTOP-CHECK OK ") or not fields.get("user") or not fields.get("host"):
+            raise PaladinError(f"the backstop's --check on {host or 'this host'} answers {line[:200]!r}")
+        return {"Script": script, "SHA256": local, "User": fields["user"], "Host": fields["host"]}
+
+    def status(self, host, directory):
+        """{Alive, Host, FirstRead, End} of the backstop in directory, or None (the read failed: nothing is known)."""
+        q = shlex.quote(directory)
+        command = (f"hostname; pid=$(cat {q}/backstop.pid 2>/dev/null); "
+                   f"if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null && grep -q paladin_backstop /proc/$pid/cmdline 2>/dev/null; "
+                   f"then echo ALIVE \"$pid\"; else echo DEAD \"${{pid:--}}\"; fi; "
+                   f"grep -c ' FIRST-READ ' {q}/backstop.log 2>/dev/null || true; echo ---END---; "
+                   f"cat {q}/backstop.end.json 2>/dev/null || true")
+        try:
+            result = remote_shell(host, command, timeout=120)
+        except PaladinError:
+            return None
+        if result.returncode != 0 or "---END---" not in result.stdout:
+            return None
+        head, tail = result.stdout.split("---END---", 1)
+        lines = head.split()
+        try:
+            end = json.loads(tail) if tail.strip() else None
+        except ValueError:
+            end = None
+        if len(lines) < 3:
+            return None
+        return {"Host": lines[0], "Alive": lines[1] == "ALIVE", "PID": lines[2], "FirstRead": lines[3:4] not in ([], ["0"]),
+                "End": end}
+
+    def start(self, host, directory, script, state):
+        """The backstop started in directory (an earlier end record kept aside); its pid once it has read the job, else
+        None (it did not start, it ended, or it refused)."""
+        q = shlex.quote
+        d = q(directory)
+        remote_text(host, f"mkdir -p {d} && if [ -f {d}/backstop.end.json ]; then mv {d}/backstop.end.json "
+                          f"{d}/backstop.end.$(date -u +%Y%m%dT%H%M%SZ).json; fi && rm -f {d}/backstop.pid && "
+                          f"cat > {d}/state.json.tmp && mv {d}/state.json.tmp {d}/state.json && "
+                          f"(setsid nohup python3 {q(script)} {d}/state.json > {d}/nohup.out 2>&1 < /dev/null &) && echo STARTED",
+                    stdin=json.dumps(state, indent=1), what=f"the backstop's start in {directory}")
+        for attempt in range(int(BACKSTOP_START_WAIT_SECONDS / BACKSTOP_START_READ_SECONDS) + 1):  # a count bound
+            if attempt:
+                self.sleep(BACKSTOP_START_READ_SECONDS)
+            status = self.status(host, directory)
+            if status and status["End"]:
+                return None
+            if status and status["Alive"] and status["FirstRead"]:
+                return int(status["PID"])
+        return None
+
+
 SESSION_RULE = ("decision 1822 (b): before every paladin submit the Midway session's expiry must be >= max(1800 s, the "
                 "stage's CapSeconds + 3600 s) ahead; else STOP before the submit, with no intent and no State (the stage stays "
                 "resumable after mwinit). WHAT IS READ (decision 1844): each line of ~/.midway/cookie is split into its fields and "
@@ -745,7 +861,7 @@ class PaladinJob:
 
     def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
                  log=print, now=utc_now, sleep=None, exclusive=True, watchers=None, pbs_bin=DEFAULT_PBS_BIN,
-                 session_cookie=None, lane_root=None):
+                 session_cookie=None, lane_root=None, backstops=None):
         with open(plan_path, "rb") as f:
             data = f.read()
         self.plan = json.loads(data)
@@ -763,6 +879,9 @@ class PaladinJob:
         self.watcher_starts = {}  # run id -> watcher starts in this driver process (<= WATCHER_STARTS_PER_RUN)
         self.session_cookie = session_cookie
         self.lane_root = lane_root  # m-3: the standalone form's root on /data (None: qualify_library's own roots)
+        self.backstop = backstop_of(block)  # BACKSTOP_RULE
+        self.backstop_starter = backstops  # None = the default ClusterBackstops, built at its first use
+        self.backstop_starts = {}  # run id -> backstop starts in this driver process (<= BACKSTOP_STARTS_PER_RUN)
         self.host = None if block["Host"] == "local" else block["Host"]
         self.confirmed = set()
         self.case = self.plan["Case"]
@@ -792,6 +911,13 @@ class PaladinJob:
         if self.starter is None:
             self.starter = RunWatchers()
         return self.starter
+
+    @property
+    def backstops(self):
+        """The backstop starter (BACKSTOP_RULE): the caller's, else the default ClusterBackstops, built at its first use."""
+        if self.backstop_starter is None:
+            self.backstop_starter = ClusterBackstops()
+        return self.backstop_starter
 
     def lock(self):
         """LOCK_RULE, once per driver process (at the first advance(); a dry run takes no lock)."""
@@ -993,6 +1119,8 @@ class PaladinJob:
             self.refuse_unusable_archive(name, mode["Directory"])
         record["PinCheckBefore"] = self.tool_line([self.block["PinCheck"], "check", "--record", self.block["PinRecord"]],
                                                   r"PASS ", f"pin_check_v2 check before {name}")
+        record["BackstopCheck"] = self.backstop_check(name)  # BACKSTOP_RULE: fail-closed, before the intent
+        self.save()
         record["Instance"] = self.sizing
         record["Nodes"], record["RanksPerNode"] = 1, self.ranks
         record["Identity"] = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
@@ -1060,6 +1188,103 @@ class PaladinJob:
         raise WatcherNotStarted(f"{name}: the run watcher of run {run_id} did not start (twice): the run is ended early "
                                 f"({'done' if watcher['EarlyEnded'] else 'FAILED: end it by hand'}): STOP ({WATCHER_RULE})",
                                 watcher)
+
+    def backstops_root(self):
+        """BACKSTOP_RULE: the backstops' directory on /data, in the plan's directory."""
+        if not self.remote_dir:
+            raise PaladinError(f"{self.case}: no remote directory: no place for the backstops ({BACKSTOP_RULE})")
+        return f"{self.remote_dir.rstrip('/')}/paladin-backstops"
+
+    def backstop_check(self, name):
+        """BACKSTOP_RULE before a submit: the installed script and its --check ({Mode none} when the profile has none), or
+        PaladinError (STOP before the submit)."""
+        if self.backstop["Mode"] == "none":
+            self.log(f"{self.case}: {name}: NO backstop (the profile's Paladin.Backstop is Mode none)")
+            return {"Mode": "none", "UTC": self.now().isoformat(), "Rule": BACKSTOP_RULE}
+        try:
+            check = self.backstops.install(self.host, self.backstops_root(), self.pbs_bin)
+        except PaladinError as error:
+            raise PaladinError(f"{name}: the PBS-side backstop cannot be started on {self.block['Host']}: STOP before the "
+                               f"submit ({error}; {BACKSTOP_RULE})") from None
+        return {**check, "Mode": "qdel", "UTC": self.now().isoformat()}
+
+    def ensure_backstop(self, stage, record):
+        """BACKSTOP_RULE for the stage's live run: started when none was, re-read and restarted when gone; a refusal, a
+        failed restart or the start bound = PaladinError (the first start's failure ends the run early)."""
+        name, run_id = stage["Name"], record["RunID"]
+        if self.backstop["Mode"] == "none":
+            record["Backstop"] = {"Mode": "none", "Rule": BACKSTOP_RULE}
+            return
+        directory = f"{self.backstops_root()}/run-{run_id}"
+        starts = record.setdefault("Backstops", [])
+        first = not starts
+        if not first:
+            status = self.backstops.status(self.host, directory)
+            record["BackstopStatus"] = {"UTC": self.now().isoformat(), "Read": status}
+            if status is None or status["Host"] != starts[-1].get("Host"):
+                self.log(f"{self.case}: {name} run {run_id}: the backstop's status read is missing "
+                         f"({'no answer' if status is None else 'another host ' + status['Host']}): re-read at the next poll")
+                self.save()
+                return
+            end = status["End"] or {}
+            if status["Alive"] or end.get("Exit") in (0, 11):
+                self.save()
+                return
+            if end.get("Exit") == 13:
+                self.save()
+                raise PaladinError(f"{name}: run {run_id}: the backstop REFUSED ({end.get('Reason')}): STOP; the run stays "
+                                   f"with its run watcher ({BACKSTOP_RULE})")
+            self.log(f"{self.case}: {name} run {run_id}: the backstop is gone ({end or 'no end record'}): restarted")
+        if self.backstop_starts.get(run_id, 0) >= BACKSTOP_STARTS_PER_RUN:
+            raise PaladinError(f"{name}: run {run_id}: {BACKSTOP_STARTS_PER_RUN} backstop starts in this driver process "
+                               f"already: no further start; check the backstop by hand ({BACKSTOP_RULE})")
+        self.backstop_starts[run_id] = self.backstop_starts.get(run_id, 0) + 1
+        entry = {"Dir": directory, "PID": None, "UTC": self.now().isoformat(), "Rule": BACKSTOP_RULE}
+        try:
+            job = record.get("JobID") or (self.describe(run_id).get("block") or {}).get("job_id")
+            if not job:
+                raise PaladinError("no PBS job id known for the run")
+            record["JobID"] = record.get("JobID") or job
+            check = record.get("BackstopCheck") if (record.get("BackstopCheck") or {}).get("Mode") == "qdel" else None
+            check = check or self.backstop_check(name)
+            submitted = parse_time(record.get("Submitted") or (record.get("Adopted") or {}).get("UTC")) or self.now()
+            cap = float(stage["CapSeconds"])
+            state = {"RunID": run_id, "JobID": str(job), "JobName": f"{self.block['Lane']}-{name}", "Owner": check["User"],
+                     "LimitSeconds": cap, "GraceSeconds": self.backstop["GraceSeconds"],
+                     "IntervalSeconds": self.backstop["IntervalSeconds"],
+                     "LifeUntilEpoch": submitted.timestamp() + BACKSTOP_LIFE_SECONDS + cap + self.backstop["GraceSeconds"],
+                     "PBSBin": self.pbs_bin}
+            entry.update(Host=check["Host"], Script=check["Script"], ScriptSHA256=check["SHA256"], State=state)
+            entry["PID"] = self.backstops.start(self.host, directory, check["Script"], state)
+        except PaladinError as error:
+            entry["Error"] = str(error)[:300]
+        starts.append(entry)
+        self.save()
+        if entry["PID"]:
+            self.log(f"{self.case}: {name} run {run_id}: PBS-side backstop pid {entry['PID']} on {entry['Host']} (limit "
+                     f"{entry['State']['LimitSeconds']:.0f} + {entry['State']['GraceSeconds']:.0f} s from the PBS start)")
+            return
+        if first:
+            try:
+                paladin_call(self.block["CLI"], ["palace", "cancel", str(run_id), "--json"])
+                entry["EarlyEnded"] = True
+            except PaladinError as error:
+                entry["EarlyEnded"], entry["CancelError"] = False, str(error)[:300]
+            self.save()
+            raise BackstopNotStarted(f"{name}: the PBS-side backstop of run {run_id} did not start ({entry.get('Error')}): the "
+                                     f"run is ended early ({'done' if entry['EarlyEnded'] else 'FAILED: end it by hand'}): "
+                                     f"STOP ({BACKSTOP_RULE})")
+        raise PaladinError(f"{name}: run {run_id}: the backstop's restart failed ({entry.get('Error')}): STOP; the run stays "
+                           f"with its run watcher ({BACKSTOP_RULE})")
+
+    def backstop_end(self, record):
+        """BACKSTOP_RULE: the end record of the run's backstop when it fired a qdel, else None (also when unread)."""
+        starts = record.get("Backstops") or []
+        if not starts:
+            return None
+        status = self.backstops.status(self.host, starts[-1]["Dir"])
+        end = (status or {}).get("End") or {}
+        return end if end.get("Qdels") else None
 
     def nonce_dir(self, intent):
         return os.path.join(self.watchers_root(), f"nonce-{intent['Nonce']}")
@@ -1132,6 +1357,7 @@ class PaladinJob:
         if started is not None:
             record.setdefault("Watchers", []).append(started)
         self.save()
+        self.ensure_backstop(stage, record)  # BACKSTOP_RULE: the PBS-side line, beside the watcher
 
     def open_intent(self, record):
         """The last SubmitIntent when it has no Outcome (the driver ended inside its submit), else None."""
@@ -1399,6 +1625,12 @@ class PaladinJob:
             record["WallSeconds"] = (completed - started).total_seconds()
             record["NodeHours"] = record["WallSeconds"] / 3600.0
         cls = run_class(status)
+        fired = self.backstop_end(record) if cls != "completed" else None
+        if fired:
+            record["BackstopEnd"], record["State"] = fired, "timed-out"
+            self.save()
+            raise PaladinError(f"{name}: run {record['RunID']} ended {status} by the PBS-side backstop's qdel at its limit "
+                               f"(State timed-out): nothing is resubmitted ({BACKSTOP_RULE}; {RESUME_RULE})")
         if cls in ("cancelled", "out-of-memory", "unknown"):
             ended_by = self.watcher_end(record)
             record["WatcherEnd"] = ended_by

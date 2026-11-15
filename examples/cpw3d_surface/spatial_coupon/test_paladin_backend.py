@@ -88,6 +88,7 @@ def write_cookie(path, seconds_ahead):
 
 START_LIMIT = 5  # decision 1830 (2): a test that requests a 5th watcher start FAILS there (no unbounded starts)
 REAL_RUN_WATCHERS = paladin_backend.RunWatchers  # the default starter (real processes), kept for the one opt-in class
+REAL_CLUSTER_BACKSTOPS = paladin_backend.ClusterBackstops  # the default backstop starter (ssh), tested with remote_shell faked
 REAL_SESSION_DIRECTORY = os.path.realpath(os.path.expanduser("~/.midway"))
 
 
@@ -98,7 +99,8 @@ def under_the_real_session_directory(path):
 
 class GuardedTestCase(unittest.TestCase):
     """Decision 1836 m-7 / ruling 1837: the base of every test class here and in test_qualify_paladin.  A test FAILS when
-    it reaches the DEFAULT watcher starter (a job built without an explicit starter that starts a watcher), a real
+    it reaches the DEFAULT watcher starter (a job built without an explicit starter that starts a watcher), the DEFAULT
+    backstop starter (ClusterBackstops: ssh to the cluster; decision 1858), a real
     watcher start (unless its class sets REAL_WATCHER_PROCESSES: RunWatcherProcesses only), or a session file under the
     real home's ~/.midway.  Each violation is recorded and raised; a cleanup fails the test on any recorded one (also
     when the code under test swallowed the raise)."""
@@ -118,6 +120,10 @@ class GuardedTestCase(unittest.TestCase):
             def __init__(self, *args, **options):
                 violation("the DEFAULT watcher starter was reached (a job built without an explicit starter)")
 
+        class DefaultBackstopsReached:
+            def __init__(self, *args, **options):
+                violation("the DEFAULT backstop starter was reached (a job built without an explicit one)")
+
         def real_start(starter, argv, directory, **options):
             violation(f"a REAL watcher start in a class without REAL_WATCHER_PROCESSES: {directory}")
 
@@ -129,6 +135,7 @@ class GuardedTestCase(unittest.TestCase):
             return real_session_check(cookie, need_seconds, **options)
 
         patches = [mock.patch.object(paladin_backend, "RunWatchers", DefaultStarterReached),
+                   mock.patch.object(paladin_backend, "ClusterBackstops", DefaultBackstopsReached),
                    mock.patch.object(paladin_backend, "session_check", session_check)]
         if not self.REAL_WATCHER_PROCESSES:
             patches.append(mock.patch.object(REAL_RUN_WATCHERS, "start", real_start))
@@ -170,6 +177,43 @@ class RecordingWatchers:
         nonces = {argv[argv.index("--nonce") + 1] for argv, _ in started if "--nonce" in argv}
         return ({int(argv[argv.index("--run-id") + 1]) for argv, _ in started} - {0} |
                 {int(run_id) for run_id, run in runs.items() if (run.get("metadata") or {}).get("nonce") in nonces})
+
+
+class RecordingBackstops:
+    """A stand-in for paladin_backend.ClusterBackstops (BACKSTOP_RULE): records each install, start and status read,
+    nothing runs; the START_LIMIT-th start request fails the test.  mode: ok | install-fails | start-fails | gone (every
+    status: dead, no end record) | gone-once (the next status: dead, then ok) | refused (end exit 13) | unread (no answer) |
+    fired (end exit 11 after a qdel)."""
+
+    HOST = "fake-cluster-host"
+
+    def __init__(self, mode="ok"):
+        self.mode, self.installs, self.started, self.statuses = mode, [], [], []
+
+    def install(self, host, root, pbs_bin):
+        self.installs.append((host, root, pbs_bin))
+        if self.mode == "install-fails":
+            raise paladin_backend.PaladinError("ssh soca-green-job: no answer in 120 s (the recording stand-in)")
+        return {"Script": f"{root}/paladin_backstop.py", "SHA256": "f" * 64, "User": "simlap", "Host": self.HOST}
+
+    def start(self, host, directory, script, state):
+        if len(self.started) + 1 >= START_LIMIT:
+            raise AssertionError(f"backstop start request {len(self.started) + 1}: the test's bound (decision 1830 (2))")
+        self.started.append((directory, state))
+        return None if self.mode == "start-fails" else 777
+
+    def status(self, host, directory):
+        self.statuses.append(directory)
+        if self.mode == "unread":
+            return None
+        if self.mode == "gone-once":
+            self.mode = "ok"
+            return {"Host": self.HOST, "Alive": False, "PID": "777", "FirstRead": True, "End": None}
+        end = {"refused": {"Exit": 13, "Reason": "REFUSED: job owner 'other' (the recording stand-in)", "Qdels": []},
+               "fired": {"Exit": 11, "Reason": "the job has left PBS (job_state F, Exit_status 271) after the backstop qdel",
+                         "Qdels": [{"ReturnCode": 0}]}}.get(self.mode)
+        return {"Host": self.HOST, "Alive": self.mode not in ("gone", "refused", "fired"), "PID": "777", "FirstRead": True,
+                "End": end}
 
 
 def three_stage_plan(root, *, nodes=None):
@@ -312,6 +356,7 @@ class FakeCLICase(GuardedTestCase):
         self.pause = mock.patch.object(paladin_backend, "pause", side_effect=self.slept.append)
         self.pause.start()
         self.watchers = RecordingWatchers()
+        self.backstops = RecordingBackstops()
         self.cookie = write_cookie(self.root / "cookie", 86400)
         self.script()
 
@@ -334,7 +379,7 @@ class FakeCLICase(GuardedTestCase):
         return paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                           local_dir=str(self.out), archive_estimates_gb={self.archive: 0.001},
                                           log=lambda message: None, now=now, watchers=self.watchers,
-                                          session_cookie=self.cookie)
+                                          session_cookie=self.cookie, backstops=self.backstops)
 
     def drive(self, now=paladin_backend.utc_now):
         return paladin_backend.drive(self.job(now), poll_seconds=0, sleep=lambda seconds: None)
@@ -592,6 +637,7 @@ class DriveWithFakeCLI(FakeCLICase):
         (self.root / "runs").mkdir()
         self.script()
         self.watchers = RecordingWatchers()  # a fresh recording stand-in (its start bound counts per fake cluster)
+        self.backstops = RecordingBackstops(self.backstops.mode)  # the same for the backstops (BACKSTOP_RULE)
 
     # Decision 1836 m-2 / m-3 (review r1833 MINOR-2 / MINOR-3): an unknown receipt keeps the intent open; the close tool.
     def submit_without_an_answer(self, *, answer=None):
@@ -746,7 +792,8 @@ class DriveWithFakeCLI(FakeCLICase):
             job = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                              local_dir=str(self.root / "out-B"), archive_estimates_gb={self.archive: 0.001},
                                              log=lambda message: None, watchers=RecordingWatchers(),
-                                             session_cookie=self.cookie)  # decision 1836 m-7: never the host's own
+                                             session_cookie=self.cookie,  # decision 1836 m-7: never the host's own
+                                             backstops=RecordingBackstops())
             try:
                 paladin_backend.drive(job, poll_seconds=0, sleep=lambda seconds: None)
                 outcomes["B"] = "drove"
@@ -1035,7 +1082,8 @@ class DriveWithFakeCLI(FakeCLICase):
         self.watchers.live.add(str(self.watchers_root() / f"run-{run_id}"))  # the nonce watcher holds run-<id> (NONCE_RULE)
         other = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                            local_dir=str(self.root / "out-B"), archive_estimates_gb={self.archive: 0.001},
-                                           log=lambda message: None, watchers=self.watchers, session_cookie=self.cookie)
+                                           log=lambda message: None, watchers=self.watchers, session_cookie=self.cookie,
+                                           backstops=self.backstops)
         self.assertEqual(other.watchers_root(), self.job().watchers_root())
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(other, poll_seconds=0, sleep=ended)  # the second --out directory adopts the run
@@ -1327,6 +1375,7 @@ class DriveWithFakeCLI(FakeCLICase):
         common = [str(self.plan_path), "--profile", str(profile), "--out", str(self.out)]
         with mock.patch("sys.stdout"), mock.patch("sys.stderr"), \
                 mock.patch.object(paladin_backend, "RunWatchers", RecordingWatchers), \
+                mock.patch.object(paladin_backend, "ClusterBackstops", RecordingBackstops), \
                 mock.patch.object(paladin_backend, "MIDWAY_COOKIE", self.cookie):
             self.assertEqual(paladin_backend.main(common + ["--dry-run"]), 0)
             self.assertEqual(self.calls(), [])
@@ -1362,7 +1411,7 @@ class DriveWithFakeCLI(FakeCLICase):
         job = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                          local_dir=str(self.out), archive_estimates_gb={self.archive: 0.001},
                                          log=lambda message: None, watchers=self.watchers, session_cookie=self.cookie,
-                                         lane_root=str(self.root / "elsewhere"))
+                                         lane_root=str(self.root / "elsewhere"), backstops=self.backstops)
         with self.assertRaises(paladin_backend.PaladinError) as stop:
             paladin_backend.drive(job, poll_seconds=0, sleep=lambda seconds: None)
         self.assertIn("outside the lane root", str(stop.exception))
@@ -1436,7 +1485,7 @@ class RunWatcherProcesses(FakeCLICase):
         return paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
                                           local_dir=str(self.out), archive_estimates_gb={self.archive: 0.001},
                                           log=lambda message: None, now=now, watchers=self.watchers,
-                                          pbs_bin=str(self.fake_bin), session_cookie=self.cookie)
+                                          pbs_bin=str(self.fake_bin), session_cookie=self.cookie, backstops=self.backstops)
 
     @staticmethod
     def wait_for(condition, seconds):
@@ -1509,6 +1558,378 @@ class RunWatcherProcesses(FakeCLICase):
             self.assertFalse((directory / "end.json").exists())
             self.assertRegex((directory / "events.log").read_text(), r"END exit 0: the (row is terminal|PBS job has ended)")
         self.assertEqual(state["Stages"]["local-edge"]["State"], "complete")
+
+
+class BackstopDrive(FakeCLICase):
+    """Decision 1858 (review r1848 (c) 1): BACKSTOP_RULE in the drive, against the counting stand-in (no ssh, no process)."""
+
+    def interrupted_while_running(self, job=None):
+        """The worker (plan 'hang') submitted, polled once (running), then the driver process ends."""
+        def ended(seconds):
+            raise KeyboardInterrupt("the driver process ends")
+
+        with self.assertRaises(KeyboardInterrupt):
+            paladin_backend.drive(job or self.job(), poll_seconds=0, sleep=ended)
+        return self.records()["w"]
+
+    def test_every_submitted_run_gets_a_backstop_with_its_stage_limit(self):
+        state = self.drive()
+        self.assertEqual(len(self.backstops.installs), 3)  # one install + check before each submit
+        self.assertEqual([root for _, root, _ in self.backstops.installs],
+                         [f"{self.plan_path.parent}/paladin-backstops"] * 3)
+        runs = json.loads(self.state.read_text())["Runs"]
+        for name in ("w", "r", "local-edge"):
+            record = state["Stages"][name]
+            self.assertEqual(record["BackstopCheck"]["Mode"], "qdel")
+            entry = record["Backstops"][0]
+            self.assertEqual((entry["PID"], entry["Host"], entry["Dir"]),
+                             (777, RecordingBackstops.HOST, f"{self.plan_path.parent}/paladin-backstops/run-{record['RunID']}"))
+            self.assertEqual({key: entry["State"][key] for key in ("RunID", "JobID", "JobName", "Owner", "LimitSeconds",
+                                                                   "GraceSeconds", "IntervalSeconds")},
+                             {"RunID": record["RunID"], "JobID": runs[str(record["RunID"])]["job_id"],
+                              "JobName": f"chainport-{name}", "Owner": "simlap", "LimitSeconds": 900.0,
+                              "GraceSeconds": 300.0, "IntervalSeconds": 60.0})
+        self.assertEqual(len(self.backstops.started), 3)
+
+    def test_a_backstop_that_cannot_be_installed_refuses_the_submit(self):
+        self.backstops.mode = "install-fails"
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("the PBS-side backstop cannot be started", str(stop.exception))
+        self.assertIn("STOP before the submit", str(stop.exception))
+        self.assertEqual(self.submitted(), [])
+        self.assertNotIn("SubmitIntents", self.records()["w"])  # no intent: the stage stays resumable
+        self.assertEqual((self.watchers.started, self.backstops.started), ([], []))
+
+    def test_a_backstop_that_does_not_start_ends_the_run_early_and_stops(self):
+        self.backstops.mode = "start-fails"
+        with self.assertRaises(paladin_backend.BackstopNotStarted) as stop:
+            self.drive()
+        record = self.records()["w"]
+        self.assertIn("the run is ended early (done)", str(stop.exception))
+        self.assertEqual([call[:3] for call in self.calls() if call[:2] == ["palace", "cancel"]],
+                         [["palace", "cancel", str(record["RunID"])]])
+        self.assertEqual(self.submitted(), ["chainport-w"])
+        self.assertTrue(record["Backstops"][0]["EarlyEnded"])
+
+    def test_a_profile_without_a_backstop_submits_and_records_it(self):
+        self.block = {**self.block, "Backstop": {"Mode": "none"}}
+        state = self.drive()
+        self.assertEqual((self.backstops.installs, self.backstops.started, self.backstops.statuses), ([], [], []))
+        for name in ("w", "r", "local-edge"):
+            self.assertEqual(state["Stages"][name]["BackstopCheck"]["Mode"], "none")
+            self.assertEqual(state["Stages"][name]["Backstop"]["Mode"], "none")
+        self.assertTrue(paladin_backend.route_line(self.block).endswith(", backstop none"))
+
+    def test_a_resume_re_reads_the_backstop_and_restarts_a_gone_one(self):
+        self.script({"chainport-w": "hang"})
+        record = self.interrupted_while_running()
+        self.assertEqual(len(self.backstops.started), 1)
+        self.backstops.mode = "gone-once"  # the backstop process is gone (its host restarted), the run lives
+        self.interrupted_while_running()  # the resume: the adoption reads it gone and restarts it; the poll reads it alive
+        self.assertEqual(len(self.backstops.started), 2)
+        self.assertEqual(self.backstops.started[1][0], f"{self.plan_path.parent}/paladin-backstops/run-{record['RunID']}")
+        self.backstops.mode = "ok"
+        statuses = len(self.backstops.statuses)
+        self.interrupted_while_running()
+        self.assertEqual(len(self.backstops.started), 2)  # alive: no start
+        self.assertGreater(len(self.backstops.statuses), statuses)
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_the_backstop_starts_are_bounded_per_run_and_driver_process(self):
+        self.script({"chainport-w": "hang"})
+        self.backstops.mode = "gone"  # every status read: gone; every start: 'started'
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn(f"{paladin_backend.BACKSTOP_STARTS_PER_RUN} backstop starts in this driver process", str(stop.exception))
+        self.assertEqual(len(self.backstops.started), paladin_backend.BACKSTOP_STARTS_PER_RUN)
+
+    def test_a_refusing_backstop_stops_the_drive_and_leaves_the_run_with_its_watcher(self):
+        self.script({"chainport-w": "hang"})
+        self.interrupted_while_running()
+        self.backstops.mode = "refused"
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("the backstop REFUSED", str(stop.exception))
+        self.assertEqual(len(self.backstops.started), 1)
+        self.assertEqual([call for call in self.calls() if call[:2] == ["palace", "cancel"]], [])
+
+    def test_an_unread_backstop_status_is_re_read_at_the_next_poll(self):
+        self.backstops.mode = "unread"
+        state = self.drive()
+        self.assertEqual(state["Stages"]["local-edge"]["State"], "complete")
+        self.assertEqual(len(self.backstops.started), 3)  # the first starts only: an unread status is never 'gone'
+        self.assertIsNone(state["Stages"]["w"]["BackstopStatus"]["Read"])
+
+    def test_a_run_ended_by_the_backstop_is_timed_out_and_never_resubmitted(self):
+        self.script({"chainport-w": "hang"})
+        record = self.interrupted_while_running()
+        fake = json.loads(self.state.read_text())  # the backstop's qdel: paladin reads the row failed (L4 of round 3)
+        fake["Runs"][str(record["RunID"])].update(status="failed", completed=paladin_backend.utc_now().isoformat())
+        self.state.write_text(json.dumps(fake))
+        self.backstops.mode = "fired"
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("by the PBS-side backstop's qdel at its limit (State timed-out)", str(stop.exception))
+        record = self.records()["w"]
+        self.assertEqual((record["State"], record["BackstopEnd"]["Exit"]), ("timed-out", 11))
+        self.assertNotIn("CompletionRead", record)
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_the_backstop_key_of_the_block(self):
+        self.assertEqual(paladin_backend.backstop_of(self.block), paladin_backend.BACKSTOP_DEFAULTS)
+        self.assertEqual(paladin_backend.backstop_of({"Backstop": {"Mode": "qdel", "GraceSeconds": 0, "IntervalSeconds": 15}}),
+                         {"Mode": "qdel", "GraceSeconds": 0.0, "IntervalSeconds": 15.0})
+        for given in ({"Mode": "off"}, {"Mode": "none", "GraceSeconds": 0}, {"Mode": "qdel", "GraceSeconds": -1},
+                      {"Mode": "qdel", "Extra": 1}, {"Mode": "qdel", "IntervalSeconds": True}, "none", None or []):
+            with self.subTest(given=given), self.assertRaises(ValueError):
+                paladin_backend.backend_of("paladin", {"Paladin": {**self.block, "Backstop": given}})
+        self.assertEqual(paladin_backend.backend_of("paladin", {"Paladin": {**self.block, "Backstop": {"Mode": "none"}}})
+                         ["Backstop"], {"Mode": "none"})
+
+
+class ClusterBackstopCommands(GuardedTestCase):
+    """ClusterBackstops' commands with remote_shell faked IN THIS PROCESS (no ssh, no process started)."""
+
+    def setUp(self):
+        super().setUp()
+        self.commands, self.answers = [], []
+
+        def remote_shell(host, command, **options):
+            self.commands.append((host, command, options.get("stdin")))
+            answer = self.answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return subprocess.CompletedProcess(["ssh"], answer[0], stdout=answer[1], stderr="")
+
+        patch = mock.patch.object(paladin_backend, "remote_shell", remote_shell)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.slept = []
+        self.starter = REAL_CLUSTER_BACKSTOPS(sleep=self.slept.append)
+        self.local = hashlib.sha256(Path(paladin_backend.BACKSTOP_PATH).read_bytes()).hexdigest()
+
+    def test_install_copies_the_script_reads_its_sha256_back_and_runs_its_check(self):
+        self.answers = [(0, f"{self.local}  /data/p/paladin-backstops/paladin_backstop.py\n"),
+                        (0, "BACKSTOP-CHECK OK user=simlap host=ip-1\n")]
+        check = self.starter.install("soca-green-job", "/data/p/paladin-backstops", "/pbs")
+        self.assertEqual(check, {"Script": "/data/p/paladin-backstops/paladin_backstop.py", "SHA256": self.local,
+                                 "User": "simlap", "Host": "ip-1"})
+        self.assertEqual(self.commands[0][2], Path(paladin_backend.BACKSTOP_PATH).read_text())  # the chain's file by stdin
+        self.assertIn("python3 /data/p/paladin-backstops/paladin_backstop.py --check /data/p/paladin-backstops --pbs-bin /pbs",
+                      self.commands[1][1])
+        for answers, why in (([(0, "0" * 64 + "  x\n")], "hashes to"),
+                             ([(0, f"{self.local}  x\n"), (0, "BACKSTOP-CHECK FAIL /pbs/qdel is not executable\n")],
+                              "answers 'BACKSTOP-CHECK FAIL"),
+                             ([(255, "")], "failed (rc 255)")):
+            with self.subTest(why=why):
+                self.answers = list(answers)
+                with self.assertRaises(paladin_backend.PaladinError) as refused:
+                    self.starter.install("soca-green-job", "/data/p/paladin-backstops", "/pbs")
+                self.assertIn(why, str(refused.exception))
+
+    def test_status_reads_the_pid_the_first_read_and_the_end_record(self):
+        end = {"Exit": 11, "Reason": "left", "Qdels": [{"ReturnCode": 0}]}
+        self.answers = [(0, "ip-1\nALIVE 123\n1\n---END---\n"), (0, f"ip-1\nDEAD 123\n1\n---END---\n{json.dumps(end)}"),
+                        (0, "ip-1\nDEAD -\n0\n---END---\n"), (255, ""), paladin_backend.PaladinError("no answer")]
+        self.assertEqual(self.starter.status("h", "/d"), {"Host": "ip-1", "Alive": True, "PID": "123", "FirstRead": True,
+                                                          "End": None})
+        self.assertEqual(self.starter.status("h", "/d")["End"], end)
+        self.assertEqual(self.starter.status("h", "/d"), {"Host": "ip-1", "Alive": False, "PID": "-", "FirstRead": False,
+                                                          "End": None})
+        self.assertIsNone(self.starter.status("h", "/d"))
+        self.assertIsNone(self.starter.status("h", "/d"))
+
+    def test_start_waits_for_the_first_read_within_its_count_bound(self):
+        self.answers = [(0, "STARTED\n"), (0, "ip-1\nALIVE 9\n0\n---END---\n"), (0, "ip-1\nALIVE 9\n0\n---END---\n"),
+                        (0, "ip-1\nALIVE 9\n1\n---END---\n")]
+        self.assertEqual(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}), 9)
+        self.assertEqual(self.slept, [paladin_backend.BACKSTOP_START_READ_SECONDS] * 2)
+        self.assertIn("setsid nohup python3 /d/paladin_backstop.py /d/run-7/state.json", self.commands[0][1])
+        self.assertEqual(json.loads(self.commands[0][2]), {"RunID": 7})
+        reads = int(paladin_backend.BACKSTOP_START_WAIT_SECONDS / paladin_backend.BACKSTOP_START_READ_SECONDS) + 1
+        self.answers = [(0, "STARTED\n")] + [(0, "ip-1\nALIVE 9\n0\n---END---\n")] * reads
+        self.assertIsNone(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}))
+        self.assertEqual(self.answers, [])
+        refused = {"Exit": 13, "Reason": "REFUSED", "Qdels": []}
+        self.answers = [(0, "STARTED\n"), (0, f"ip-1\nDEAD 9\n1\n---END---\n{json.dumps(refused)}")]
+        self.assertIsNone(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}))
+
+
+class FakeClock:
+    """time() / sleep() of the backstop script: sleep advances time (no real wait)."""
+
+    def __init__(self, now):
+        self.now, self.slept = now, []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+class BackstopScript(GuardedTestCase):
+    """paladin_backstop.py's rules IN THIS PROCESS: scripted qstat / qdel answers and a fake clock (no process started)."""
+
+    STIME = "Sun Nov 15 20:04:10 2026"
+
+    def setUp(self):
+        super().setUp()
+        import paladin_backstop
+        self.module = paladin_backstop
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name) / "run-7"
+        self.dir.mkdir()
+        self.start = int(time.mktime(time.strptime(self.STIME, "%a %b %d %H:%M:%S %Y")))
+        self.clock = FakeClock(self.start + 10)
+        self.calls, self.answers = [], []  # an answer: (job_state, Exit_status, owner, name) | "empty" | "gone" | "other" | OSError
+        self.after_qdel = ("F", 271, "simlap", "chainport-w")
+
+        def run(command, **options):
+            self.calls.append([os.path.basename(command[0]), *command[1:]])
+            if os.path.basename(command[0]) == "qdel":
+                self.answers = [self.after_qdel]
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            if isinstance(answer, Exception):
+                raise answer
+            return subprocess.CompletedProcess(command, *self.qstat(answer, command[-1]))
+
+        self.run = run
+
+    def qstat(self, answer, job):
+        server = "ip-192-168-54-24.us-west-2.compute.internal"
+        if answer == "empty":
+            return 0, json.dumps({"timestamp": 1, "pbs_server": server, "Jobs": {}}), ""
+        if answer == "gone":
+            return 153, json.dumps({"timestamp": 1, "pbs_server": server}), f"qstat: Unknown Job Id {job}.{server}\n"
+        if answer == "other":
+            return 0, json.dumps({"Jobs": {f"999.{server}": {"job_state": "R"}}}), ""
+        state, code, owner, name = answer
+        entry = {"job_state": state, "Job_Owner": f"{owner}@{server}", "Job_Name": name, "stime": self.STIME}
+        if code is not None:
+            entry["Exit_status"] = code
+        return 0, json.dumps({"Jobs": {f"{job}.{server}": entry}}), ""
+
+    def backstop(self, limit=60, grace=30, interval=10, life=10**5):
+        state = {"RunID": 7, "JobID": "122610", "JobName": "chainport-w", "Owner": "simlap", "LimitSeconds": limit,
+                 "GraceSeconds": grace, "IntervalSeconds": interval, "LifeUntilEpoch": self.start + life, "PBSBin": "/pbs"}
+        (self.dir / "state.json").write_text(json.dumps(state))
+        code = self.module.Backstop(str(self.dir / "state.json"), run=self.run, clock=self.clock).loop()
+        return code, json.loads((self.dir / "backstop.end.json").read_text()), (self.dir / "backstop.log").read_text()
+
+    def qdels(self):
+        return [call for call in self.calls if call[0] == "qdel"]
+
+    def test_parse_answer_reads_only_this_job(self):
+        parse = self.module.parse_answer
+        self.assertEqual(parse("122610", *self.qstat(("R", None, "simlap", "n"), "122610")[1:])["State"], "R")
+        self.assertEqual(parse("122610", *self.qstat(("R", None, "simlap", "n"), "122610")[1:])["Owner"], "simlap")
+        self.assertEqual(parse("122610", *self.qstat("other", "122610")[1:])["State"], "OTHERJOB")
+        self.assertEqual(parse("122610", *self.qstat("empty", "122610")[1:])["State"], "NOTFOUND")
+        self.assertEqual(parse("122610", *self.qstat("gone", "122610")[1:])["State"], "GONE")
+        self.assertEqual(parse("122610", *self.qstat("gone", "122611")[1:])["State"], "NOTFOUND")  # another job's answer
+        self.assertEqual(parse("122610", "", "")["State"], "NOTFOUND")
+
+    def test_it_fires_only_at_the_pbs_start_plus_the_limit_plus_the_grace(self):
+        self.answers = [("R", None, "simlap", "chainport-w")]
+        code, end, log = self.backstop(limit=60, grace=30, interval=10)
+        self.assertEqual(code, 11)
+        self.assertEqual(len(self.qdels()), 1)
+        self.assertEqual(self.qdels()[0], ["qdel", "122610"])
+        fired = end["Qdels"][0]["Epoch"] - self.start
+        self.assertGreaterEqual(fired, 90)
+        self.assertLess(fired, 100)
+        self.assertIn("LIMIT ", log)
+        self.assertIn("after the backstop qdel", end["Reason"])
+        self.assertIn("FIRST-READ R", log)
+
+    def test_it_refuses_another_owner_or_job_name(self):
+        for answer in (("R", None, "other", "chainport-w"), ("R", None, "simlap", "cmesh-r-run")):
+            with self.subTest(answer=answer):
+                self.calls = []
+                self.answers = [answer]
+                code, end, _ = self.backstop(limit=0, grace=0)
+                self.assertEqual(code, 13)
+                self.assertIn("REFUSED", end["Reason"])
+                self.assertEqual(self.qdels(), [])
+
+    def test_a_missing_read_is_never_left(self):
+        self.answers = ["empty", "other", OSError("qstat: no answer"), ("R", None, "simlap", "chainport-w"), "empty",
+                        ("F", 0, "simlap", "chainport-w")]
+        code, end, log = self.backstop(limit=10**4)
+        self.assertEqual(code, 0)
+        self.assertEqual(log.count("READ missing"), 4)
+        self.assertEqual(self.qdels(), [])
+        self.assertIn("job_state F, Exit_status 0", end["Reason"])
+
+    def test_it_ends_when_the_job_has_left_pbs(self):
+        for answer, shown in ((("F", 0, "simlap", "chainport-w"), "job_state F"), ("gone", "Unknown Job Id"),
+                              (("E", 271, "simlap", "chainport-w"), "job_state E, Exit_status 271")):
+            with self.subTest(answer=answer):
+                self.calls = []
+                self.answers = [answer]
+                code, end, _ = self.backstop()
+                self.assertEqual((code, len(self.calls)), (0, 1))
+                self.assertIn(shown, end["Reason"])
+
+    def test_the_qdel_is_repeated_at_most_three_times_300_s_apart(self):
+        self.answers = [("R", None, "simlap", "chainport-w")]
+        self.after_qdel = ("R", None, "simlap", "chainport-w")  # the job does not leave
+        code, end, _ = self.backstop(limit=0, grace=0, interval=60, life=3600)
+        self.assertEqual(code, 5)
+        epochs = [entry["Epoch"] for entry in end["Qdels"]]
+        self.assertEqual(len(epochs), self.module.QDEL_MAX)
+        self.assertEqual([b - a for a, b in zip(epochs, epochs[1:])], [300, 300])
+
+    def test_a_queued_job_never_fires_and_the_life_bound_ends_it(self):
+        self.answers = [("Q", None, "simlap", "chainport-w")]
+        real = self.qstat
+
+        def queued(answer, job):
+            rc, out, err = real(answer, job)
+            data = json.loads(out)
+            for entry in data["Jobs"].values():
+                entry.pop("stime")
+            return rc, json.dumps(data), err
+
+        self.qstat = queued
+        code, end, _ = self.backstop(limit=0, grace=0, interval=60, life=600)
+        self.assertEqual((code, self.qdels()), (5, []))
+        self.assertIn("life bound", end["Reason"])
+
+    def test_a_removed_state_file_ends_it(self):
+        self.answers = [("R", None, "simlap", "chainport-w")]
+        real_sleep = self.clock.sleep
+
+        def removed(seconds):
+            (self.dir / "state.json").unlink()
+            real_sleep(seconds)
+
+        self.clock.sleep = removed
+        state = {"RunID": 7, "JobID": "122610", "JobName": "chainport-w", "Owner": "simlap", "LimitSeconds": 10**4,
+                 "GraceSeconds": 0, "IntervalSeconds": 10, "LifeUntilEpoch": self.start + 10**5, "PBSBin": "/pbs"}
+        (self.dir / "state.json").write_text(json.dumps(state))
+        self.assertEqual(self.module.Backstop(str(self.dir / "state.json"), run=self.run, clock=self.clock).loop(), 0)
+        self.assertIn("removed", json.loads((self.dir / "backstop.end.json").read_text())["Reason"])
+
+    def test_the_check(self):
+        pbs = Path(self.tmp.name) / "pbs"
+        pbs.mkdir()
+        for name in ("qstat", "qdel"):
+            (pbs / name).write_text("#!/bin/sh\n")
+            (pbs / name).chmod(0o755)
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(self.module.main(["--check", str(self.dir / "backstops"), "--pbs-bin", str(pbs)]), 0)
+        self.assertRegex(printed.getvalue(), r"^BACKSTOP-CHECK OK user=\S+ host=\S+\n$")
+        (pbs / "qdel").unlink()
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(self.module.main(["--check", str(self.dir / "backstops"), "--pbs-bin", str(pbs)]), 1)
+        self.assertIn("BACKSTOP-CHECK FAIL", printed.getvalue())
+        self.assertIn("qdel is not executable", printed.getvalue())
 
 
 class Bounds(FakeCLICase):
@@ -2123,6 +2544,14 @@ class GuardSelfTest(unittest.TestCase):
                 job.dry_run()  # a dry run does not reach the default starter ...
                 job.watchers  # noqa: B018 (... its first use does)
 
+        def default_backstops_through_a_job(test):
+            with tempfile.TemporaryDirectory() as root:
+                plan_path, _ = three_stage_plan(root)
+                job = paladin_backend.PaladinJob(str(plan_path), block=fake_block(root), remote_dir=root,
+                                                 local_dir=os.path.join(root, "out"))
+                job.dry_run()  # a dry run does not reach the default backstop starter ...
+                job.backstops  # noqa: B018 (... its first use does)
+
         def real_session_file(test):
             paladin_backend.session_check(paladin_backend.MIDWAY_COOKIE, 1800)
 
@@ -2132,7 +2561,7 @@ class GuardSelfTest(unittest.TestCase):
             except AssertionError:
                 pass  # swallowed by the code under test: the cleanup still fails the test
 
-        for body in (default_starter_through_a_job, real_session_file, real_start_swallowed):
+        for body in (default_starter_through_a_job, default_backstops_through_a_job, real_session_file, real_start_swallowed):
             with self.subTest(body=body.__name__):
                 result = self.run_nested(body)
                 self.assertFalse(result.wasSuccessful())
@@ -2140,6 +2569,7 @@ class GuardSelfTest(unittest.TestCase):
         allowed = self.run_nested(lambda test: None, real_processes=True)
         self.assertTrue(allowed.wasSuccessful())
         self.assertIs(paladin_backend.RunWatchers, REAL_RUN_WATCHERS)  # every patch undone
+        self.assertIs(paladin_backend.ClusterBackstops, REAL_CLUSTER_BACKSTOPS)
 
 
 @unittest.skipUnless((RECORDS / "plan.json").exists(), "records of 274fe1a150c0 absent")
