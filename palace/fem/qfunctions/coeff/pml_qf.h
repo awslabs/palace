@@ -374,9 +374,8 @@ CEED_QFUNCTION_HELPER bool PMLIsExtruded(const CeedIntScalar *ctx)
   return ctx[PALACE_PML_HEADER_SIZE + 25].first != PALACE_PML_CARTESIAN;
 }
 
-// ξ̃ - ξ = ∫₀^ξ (s - 1) dξ' for the extruded stretch: in closed form without the complex
-// frequency shift, and otherwise with 8-point Gauss-Legendre quadrature. Depths beyond the
-// layer (from rounding) have the stretch of its outer edge.
+// ξ̃ - ξ = ∫₀^ξ (s - 1) dξ' for the extruded stretch, to roundoff for any shift and order.
+// Depths beyond the layer (from rounding) have the stretch of its outer edge.
 CEED_QFUNCTION_HELPER void PMLStretchIntegral(const CeedIntScalar *ctx, CeedScalar xi,
                                               CeedScalar *re, CeedScalar *im)
 {
@@ -400,19 +399,55 @@ CEED_QFUNCTION_HELPER void PMLStretchIntegral(const CeedIntScalar *ctx, CeedScal
   }
   else
   {
-    const CeedScalar gl_x[4] = {0.1834346424956498, 0.5255324099163290, 0.7966664774136267,
-                                0.9602898564975363};
-    const CeedScalar gl_w[4] = {0.3626837833783620, 0.3137066458778873, 0.2223810344533745,
-                                0.1012285362903763};
-    for (CeedInt k = 0; k < 8; k++)
+    // σ_max t F for F = ∫₀^r uⁿ / (a uⁿ + b) du, a = α_max, b = iω, with p = a rⁿ / b: for
+    // |p| < 1/4 the series F = (r rⁿ / b) Σ_j (-p)ʲ / (n (j + 1) + 1) to |p|ʲ < 1e-17 (at
+    // most 25 terms), and otherwise partial fractions over the roots z_k of zⁿ = -b / a,
+    //   F = (1 / a) (r + (1 / n) Σ_k z_k log(1 - r / z_k)) ,
+    // which loses a factor of about n / |p| to cancellation. On the path [0, r] the
+    // principal logarithm crosses no branch cut unless s is infinite on it. b = 0 is
+    // s - 1 = σ / α.
+    const CeedScalar b_re = -omega_im, b_im = omega_re,
+                     b_abs = sqrt(b_re * b_re + b_im * b_im);
+    const CeedScalar rn = PMLIntPow(r, order);
+    if (alpha_max * rn < 0.25 * b_abs)
     {
-      const CeedScalar u = 0.5 * r * (1.0 + ((k < 4) ? -gl_x[k] : gl_x[k - 4]));
-      const CeedScalar w = 0.5 * r * t * gl_w[(k < 4) ? k : k - 4];
-      CeedScalar s_re, s_im;
-      PMLStretchFactor(ctx, u, sigma_max, 1.0, alpha_max, &s_re, &s_im);
-      q_re += w * (s_re - 1.0);
-      q_im += w * s_im;
+      CeedScalar p_re, p_im, S_re = 0.0, S_im = 0.0, T_re = 1.0, T_im = 0.0;
+      PMLComplexDiv(-alpha_max * rn, 0.0, b_re, b_im, &p_re, &p_im);
+      for (CeedInt j = 0; j < 25 && T_re * T_re + T_im * T_im > 1.0e-34; j++)
+      {
+        const CeedScalar c = 1.0 / (order * (j + 1) + 1);
+        S_re += c * T_re;
+        S_im += c * T_im;
+        PMLComplexMult(T_re, T_im, p_re, p_im, &T_re, &T_im);
+      }
+      PMLComplexDiv(r * rn, 0.0, b_re, b_im, &q_re, &q_im);
+      PMLComplexMult(q_re, q_im, S_re, S_im, &q_re, &q_im);
     }
+    else if (b_abs == 0.0)
+    {
+      q_re = r / alpha_max;
+    }
+    else
+    {
+      // z_k = |z| e^{iφ_k}, φ_k = (arg(-b) + 2πk) / n, and 1 - r / z_k = 1 - ρ e^{-iφ_k}
+      // for ρ = r / |z|.
+      const CeedScalar z = pow(b_abs / alpha_max, 1.0 / order), rho = r / z,
+                       theta = atan2(-b_im, -b_re);
+      CeedScalar L_re = order * rho, L_im = 0.0;
+      for (CeedInt k = 0; k < order; k++)
+      {
+        const CeedScalar phi = (theta + 6.283185307179586 * k) / order, c = cos(phi),
+                         s = sin(phi), w_re = 1.0 - rho * c, w_im = rho * s;
+        const CeedScalar l_re = 0.5 * log(w_re * w_re + w_im * w_im),
+                         l_im = atan2(w_im, w_re);
+        L_re += c * l_re - s * l_im;
+        L_im += c * l_im + s * l_re;
+      }
+      q_re = z * L_re / (order * alpha_max);
+      q_im = z * L_im / (order * alpha_max);
+    }
+    q_re *= sigma_max * t;
+    q_im *= sigma_max * t;
     CeedScalar s_re, s_im;
     PMLStretchFactor(ctx, 1.0, sigma_max, 1.0, alpha_max, &s_re, &s_im);
     q_re += beyond * (s_re - 1.0);

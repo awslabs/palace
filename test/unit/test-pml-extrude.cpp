@@ -1654,6 +1654,35 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
     }
   }
 
+  SECTION("Tangential stretch with a large frequency shift")
+  {
+    // J̃ = s d dᵀ + (r̃ / r) (I - d dᵀ) at the outer edge of the layer for α / ω = 1, 3 and
+    // 10 (σ / ω = 20, κ = 1, real ω), where ξ̃ by 8-point Gauss-Legendre quadrature was off
+    // by 8e-7, 5e-5 and 3e-4 in r̃ / r.
+    auto p_a = MakeExtrudedStretch(true);
+    p_a.sigma_max[0] = 20.0;
+    p_a.kappa_max.fill(1.0);
+    const std::array<double, 3> dir = {0.48, -0.6, 0.64};
+    const double xi = p_a.geometry.thickness[0], r = 1.0 + xi;
+    const std::array<double, 3> x = {r * dir[0], r * dir[1], r * dir[2]};
+    for (double alpha : {1.0, 3.0, 10.0})
+    {
+      p_a.alpha_max.fill(alpha);
+      const auto [s, xi_t] = ReferenceProfile(p_a, xi, 1.0);
+      const auto q = (1.0 + xi_t) / r;
+      const auto J = pml::EvaluateJacobian(p_a, x, 1.0, false);
+      for (int j = 0; j < 3; j++)
+      {
+        for (int i = 0; i < 3; i++)
+        {
+          const double dd = dir[i] * dir[j];
+          INFO("alpha = " << alpha << ", i = " << i << ", j = " << j);
+          CHECK(std::abs(J[i + 3 * j] - (s * dd + q * ((i == j) - dd))) < 1.0e-12);
+        }
+      }
+    }
+  }
+
   SECTION("Cartesian PML on a face of a box")
   {
     // For normal extrusion of a face (d ∇ξᵀ = n nᵀ, ∇d = 0), J̃ = I + (s - 1) n nᵀ is the
@@ -1978,9 +2007,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
     ApplyReference(true, x, y_ref);
     ApplyReference(false, x, t);
     y_ref.Add(-omega * omega, t);
-    // With α > 0, ξ̃ is by 8-point Gauss-Legendre quadrature, here accurate to about 1e-10
-    // at the outer edge of the layer.
-    CHECK_THAT(RelErr(), Matchers::WithinAbs(0.0, 1.0e-10));
+    CHECK_THAT(RelErr(), Matchers::WithinAbs(0.0, 1.0e-12));
   }
   BilinearForm::pa_order_threshold = pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = p_trial;
